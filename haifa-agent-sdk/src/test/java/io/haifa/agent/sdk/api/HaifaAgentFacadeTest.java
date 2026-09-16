@@ -27,9 +27,7 @@ import io.haifa.agent.sdk.conversation.ConversationStatus;
 import io.haifa.agent.sdk.conversation.RenameConversationCommand;
 import io.haifa.agent.sdk.conversation.StartConversationCommand;
 import io.haifa.agent.sdk.conversation.SubmitConversationTurnCommand;
-import io.haifa.agent.sdk.product.ProductCapabilities;
 import io.haifa.agent.sdk.product.ProductProfile;
-import io.haifa.agent.sdk.product.ProductProviderSuitability;
 import io.haifa.agent.sdk.tool.JavaTool;
 import io.haifa.agent.sdk.tool.JavaToolContext;
 import io.haifa.agent.sdk.tool.JavaToolSpec;
@@ -58,35 +56,30 @@ public class HaifaAgentFacadeTest {
 
     @Test
     void registersOneTypedJavaToolWithoutManualPlatformAssembly() {
-        try (HaifaAgent agent = HaifaAgents.builder()
-                .product(SdkTestFixtures.profile("java-tool", Map.of()))
-                .contributeAll(SdkTestFixtures.baseContributions())
-                .tool(new WeatherTool())
-                .build()) {
-            assertThat(agent.assembly().profile().allowedTools()).containsExactly("weather_get");
-            assertThat(agent.assembly()
-                            .profile()
-                            .requirement(ProductCapabilities.TOOL)
-                            .allowedContributions())
-                    .extracting("providerId")
-                    .containsExactly("sdk.java-tools");
+        try (HaifaAgent agent =
+                SdkTestFixtures.builder("java-tool").tool(new WeatherTool()).build()) {
+            assertThat(agent.profile().allowedTools()).isEmpty();
+            assertThat(agent.diagnostics()).isEmpty();
         }
     }
 
     @Test
-    void registersAListOfToolsWithoutMutatingAnotherBuilder() {
-        ProductProfile profile = SdkTestFixtures.profile("java-tool-list", Map.of());
+    void registeringToolsDoesNotMutateTheProductProfile() {
+        ProductProfile profile = SdkTestFixtures.profile("java-tool-list");
 
         try (HaifaAgent withTools = HaifaAgents.builder(profile)
-                        .contributeAll(SdkTestFixtures.baseContributions())
+                        .model(SdkTestFixtures.modelContribution())
+                        .persistence(SdkTestFixtures.persistenceContribution())
+                        .conversation(SdkTestFixtures.conversationContribution())
                         .tools(List.of(new WeatherTool(), new GeocodeTool()))
                         .build();
                 HaifaAgent withoutTools = HaifaAgents.builder(profile)
-                        .contributeAll(SdkTestFixtures.baseContributions())
+                        .model(SdkTestFixtures.modelContribution())
+                        .persistence(SdkTestFixtures.persistenceContribution())
+                        .conversation(SdkTestFixtures.conversationContribution())
                         .build()) {
-            assertThat(withTools.assembly().profile().allowedTools())
-                    .containsExactlyInAnyOrder("weather_get", "geocode");
-            assertThat(withoutTools.assembly().profile().allowedTools()).isEmpty();
+            assertThat(withTools.profile().allowedTools()).isEmpty();
+            assertThat(withoutTools.profile().allowedTools()).isEmpty();
             assertThat(profile.allowedTools()).isEmpty();
         }
     }
@@ -95,9 +88,7 @@ public class HaifaAgentFacadeTest {
     void appliesProductPublicToolPolicyDecoratorDuringRuntimeAssembly() {
         AtomicBoolean decorated = new AtomicBoolean();
 
-        try (HaifaAgent ignored = HaifaAgents.builder()
-                .product(SdkTestFixtures.profile("personal", Map.of()))
-                .contributeAll(SdkTestFixtures.baseContributions())
+        try (HaifaAgent ignored = SdkTestFixtures.builder("personal")
                 .publicToolPolicyDecorator(delegate -> {
                     decorated.set(true);
                     return delegate;
@@ -111,9 +102,7 @@ public class HaifaAgentFacadeTest {
     void completesMultiRunConversationAndLifecycleCommands() throws Exception {
         AtomicInteger ids = new AtomicInteger();
         IdentifierGenerator identifiers = () -> "sdk-test-" + ids.incrementAndGet();
-        try (HaifaAgent agent = HaifaAgents.builder()
-                .product(SdkTestFixtures.profile("personal", Map.of()))
-                .contributeAll(SdkTestFixtures.baseContributions())
+        try (HaifaAgent agent = SdkTestFixtures.builder("personal")
                 .identifierGenerator(identifiers)
                 .timeProvider(() -> Instant.parse("2026-07-28T00:00:00Z"))
                 .build()) {
@@ -154,7 +143,7 @@ public class HaifaAgentFacadeTest {
             assertThat(agent.conversations().list(ConversationQuery.active(10)).items())
                     .extracting("sessionId")
                     .containsExactly(started.sessionId());
-            assertThat(agent.assembly().profile().productId().value()).isEqualTo("personal");
+            assertThat(agent.profile().productId().value()).isEqualTo("personal");
         }
     }
 
@@ -163,8 +152,7 @@ public class HaifaAgentFacadeTest {
         AtomicInteger ids = new AtomicInteger();
         AtomicReference<SdkCaller> caller =
                 new AtomicReference<>(new SdkCaller(new TenantRef("tenant"), new PrincipalRef("alice", "user")));
-        try (HaifaAgent agent = HaifaAgents.builder(SdkTestFixtures.profile("personal", Map.of()))
-                .contributeAll(SdkTestFixtures.baseContributions())
+        try (HaifaAgent agent = SdkTestFixtures.builder("personal")
                 .callerProvider(caller::get)
                 .identifierGenerator(() -> "scope-test-" + ids.incrementAndGet())
                 .timeProvider(() -> Instant.parse("2026-07-28T00:00:00Z"))
@@ -188,9 +176,7 @@ public class HaifaAgentFacadeTest {
 
     @Test
     void lightweightChatFailsWithStableClosedError() {
-        HaifaAgent agent = HaifaAgents.builder(SdkTestFixtures.profile("personal", Map.of()))
-                .contributeAll(SdkTestFixtures.baseContributions())
-                .build();
+        HaifaAgent agent = SdkTestFixtures.builder("personal").build();
         agent.close();
 
         assertThatThrownBy(() -> agent.chat("hello"))
@@ -200,9 +186,7 @@ public class HaifaAgentFacadeTest {
 
     @Test
     void cachedConversationServiceFailsWithStableSafeErrorAfterClose() {
-        HaifaAgent agent = HaifaAgents.builder(SdkTestFixtures.profile("personal", Map.of()))
-                .contributeAll(SdkTestFixtures.baseContributions())
-                .build();
+        HaifaAgent agent = SdkTestFixtures.builder("personal").build();
         var conversations = agent.conversations();
 
         agent.close();
@@ -253,20 +237,14 @@ public class HaifaAgentFacadeTest {
                     "req-402-test");
         };
         ModelContribution failingContribution = new ModelContribution(
-                SdkTestFixtures.metadata(
-                        SdkTestFixtures.MODEL_COORDINATE,
-                        ProductCapabilities.MODEL,
-                        snapshot.configurationDigest(),
-                        ProductProviderSuitability.DEVELOPMENT),
                 Map.of(ModelAdapterCoordinate.from(snapshot), failingModel),
                 snapshot,
                 Map.of(snapshot.modelId().value(), snapshot));
 
-        try (HaifaAgent agent = HaifaAgents.builder()
-                .product(SdkTestFixtures.profile("personal", Map.of()))
-                .contribute(failingContribution)
-                .contribute(SdkTestFixtures.persistenceContribution())
-                .contribute(SdkTestFixtures.conversationContribution())
+        try (HaifaAgent agent = HaifaAgents.builder(SdkTestFixtures.profile("personal"))
+                .model(failingContribution)
+                .persistence(SdkTestFixtures.persistenceContribution())
+                .conversation(SdkTestFixtures.conversationContribution())
                 .build()) {
             var started = agent.conversations()
                     .start(new StartConversationCommand("start-payment-fail", "Payment test", "hello"));

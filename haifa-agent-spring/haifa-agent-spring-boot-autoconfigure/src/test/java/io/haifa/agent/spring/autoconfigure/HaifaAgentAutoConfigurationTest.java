@@ -28,7 +28,7 @@ public class HaifaAgentAutoConfigurationTest {
             assertThat(context).hasSingleBean(HaifaAgent.class);
             var agent = context.getBean(HaifaAgent.class);
             created.set(agent);
-            assertThat(agent.assembly().profile().runProfileId()).isEqualTo("deepseek-v4-flash");
+            assertThat(agent.profile().runProfileId()).isEqualTo("deepseek-v4-flash");
         });
 
         assertThatThrownBy(() -> created.get().runs())
@@ -48,9 +48,8 @@ public class HaifaAgentAutoConfigurationTest {
                 .run(context -> {
                     assertThat(context).hasSingleBean(HaifaAgent.class);
                     var agent = context.getBean(HaifaAgent.class);
-                    assertThat(agent.assembly().profile().instructions())
-                            .isEqualTo("Answer with verified weather only.");
-                    assertThat(agent.assembly().profile().allowedTools()).containsExactly("weather_get");
+                    assertThat(agent.profile().instructions()).isEqualTo("Answer with verified weather only.");
+                    assertThat(agent.profile().allowedTools()).isEmpty();
                     assertThat(agent.metadata().name()).isEqualTo("spring-weather-agent");
 
                     var properties = context.getBean(HaifaAgentProperties.class);
@@ -69,10 +68,7 @@ public class HaifaAgentAutoConfigurationTest {
                         () -> builder -> builder.instructions("Customized by the trusted Spring host."))
                 .run(context -> {
                     assertThat(context).hasSingleBean(HaifaAgent.class);
-                    assertThat(context.getBean(HaifaAgent.class)
-                                    .assembly()
-                                    .profile()
-                                    .instructions())
+                    assertThat(context.getBean(HaifaAgent.class).profile().instructions())
                             .isEqualTo("Customized by the trusted Spring host.");
                 });
     }

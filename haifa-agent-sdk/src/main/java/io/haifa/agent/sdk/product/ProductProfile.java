@@ -7,12 +7,10 @@ import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.sdk.api.SdkConfigurationDigest;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.TreeMap;
 
-/** Trusted immutable product capability and policy declaration. */
+/** Trusted immutable product selection and default declaration. */
 public record ProductProfile(
         String schemaVersion,
         ProductId productId,
@@ -25,7 +23,6 @@ public record ProductProfile(
         AgentRunBudget budget,
         AgentRunLimits limits,
         ProductPolicies policies,
-        Map<ProductCapabilityId, ProductCapabilityRequirement> capabilityRequirements,
         Set<String> allowedTools,
         Set<String> allowedSkills,
         String configurationDigest) {
@@ -47,13 +44,6 @@ public record ProductProfile(
         budget = Objects.requireNonNull(budget, "budget must not be null");
         limits = Objects.requireNonNull(limits, "limits must not be null");
         policies = Objects.requireNonNull(policies, "policies must not be null");
-        capabilityRequirements =
-                Map.copyOf(Objects.requireNonNull(capabilityRequirements, "capabilityRequirements must not be null"));
-        capabilityRequirements.forEach((id, requirement) -> {
-            if (!id.equals(requirement.capabilityId())) {
-                throw new IllegalArgumentException("capability requirement key must match its capabilityId");
-            }
-        });
         allowedTools = normalized(allowedTools, "allowedTools");
         allowedSkills = normalized(allowedSkills, "allowedSkills");
         configurationDigest = ProductValues.requireDigest(configurationDigest, "configurationDigest");
@@ -69,7 +59,6 @@ public record ProductProfile(
                 budget,
                 limits,
                 policies,
-                capabilityRequirements,
                 allowedTools,
                 allowedSkills);
         if (!expected.equals(configurationDigest)) {
@@ -87,7 +76,6 @@ public record ProductProfile(
             String instructions,
             AgentRunBudget budget,
             AgentRunLimits limits,
-            Map<ProductCapabilityId, ProductCapabilityRequirement> requirements,
             Set<String> allowedTools,
             Set<String> allowedSkills) {
         return create(
@@ -101,7 +89,6 @@ public record ProductProfile(
                 budget,
                 limits,
                 ProductPolicies.safeDefaults(),
-                requirements,
                 allowedTools,
                 allowedSkills);
     }
@@ -117,10 +104,8 @@ public record ProductProfile(
             AgentRunBudget budget,
             AgentRunLimits limits,
             ProductPolicies policies,
-            Map<ProductCapabilityId, ProductCapabilityRequirement> requirements,
             Set<String> allowedTools,
             Set<String> allowedSkills) {
-        Map<ProductCapabilityId, ProductCapabilityRequirement> safeRequirements = Map.copyOf(requirements);
         Set<String> safeTools = normalized(allowedTools, "allowedTools");
         Set<String> safeSkills = normalized(allowedSkills, "allowedSkills");
         ProductPolicies safePolicies = Objects.requireNonNull(policies, "policies must not be null");
@@ -136,7 +121,6 @@ public record ProductProfile(
                 budget,
                 limits,
                 safePolicies,
-                safeRequirements,
                 safeTools,
                 safeSkills,
                 digest(
@@ -151,13 +135,8 @@ public record ProductProfile(
                         budget,
                         limits,
                         safePolicies,
-                        safeRequirements,
                         safeTools,
                         safeSkills));
-    }
-
-    public ProductCapabilityRequirement requirement(ProductCapabilityId capabilityId) {
-        return capabilityRequirements.getOrDefault(capabilityId, ProductCapabilityRequirement.none(capabilityId));
     }
 
     private static String digest(
@@ -172,7 +151,6 @@ public record ProductProfile(
             AgentRunBudget budget,
             AgentRunLimits limits,
             ProductPolicies policies,
-            Map<ProductCapabilityId, ProductCapabilityRequirement> requirements,
             Set<String> allowedTools,
             Set<String> allowedSkills) {
         List<String> fields = new ArrayList<>();
@@ -216,15 +194,6 @@ public record ProductProfile(
         add(fields, "execution.externalNetworkAllowed", policies.execution().externalNetworkAllowed());
         add(fields, "execution.maxParallelExecutions", policies.execution().maxParallelExecutions());
         add(fields, "execution.maxExecutionMillis", policies.execution().maxExecutionMillis());
-        new TreeMap<>(requirements).forEach((id, requirement) -> {
-            add(fields, "capability.id", id.value());
-            add(fields, "capability.mode", requirement.mode().name());
-            add(fields, "capability.minimumSuitability", requirement.minimumSuitability());
-            requirement.allowedContributions().stream().sorted().forEach(coordinate -> {
-                add(fields, "capability.providerId", coordinate.providerId());
-                add(fields, "capability.version", coordinate.version());
-            });
-        });
         addSorted(fields, "allowedTool", allowedTools);
         addSorted(fields, "allowedSkill", allowedSkills);
         return SdkConfigurationDigest.sha256(fields.toArray(String[]::new));
