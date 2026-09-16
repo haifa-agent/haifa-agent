@@ -15,10 +15,13 @@ import io.haifa.agent.model.api.ModelFinishReason;
 import io.haifa.agent.model.api.ModelProviderId;
 import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
+import io.haifa.agent.policy.api.PolicyPresets;
+import io.haifa.agent.policy.core.DefaultPolicyDecisionService;
 import io.haifa.agent.sdk.api.HaifaAgentBuilder;
 import io.haifa.agent.sdk.api.HaifaAgents;
 import io.haifa.agent.sdk.contribution.InMemoryConversationContribution;
 import io.haifa.agent.sdk.contribution.ModelContribution;
+import io.haifa.agent.sdk.contribution.PolicyPlatformContribution;
 import io.haifa.agent.sdk.internal.InMemoryPersistenceContribution;
 import io.haifa.agent.sdk.product.ProductId;
 import io.haifa.agent.sdk.product.ProductProfile;
@@ -56,7 +59,9 @@ public final class SdkTestFixtures {
         return HaifaAgents.builder(profile(productId))
                 .model(modelContribution())
                 .persistence(persistenceContribution())
-                .conversation(conversationContribution());
+                .conversation(conversationContribution())
+                .policy(new PolicyPlatformContribution(
+                        PolicyPresets.standardApproval(), new DefaultPolicyDecisionService()));
     }
 
     public static ModelContribution modelContribution() {

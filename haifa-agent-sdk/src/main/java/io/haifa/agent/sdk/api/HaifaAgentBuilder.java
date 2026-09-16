@@ -5,17 +5,6 @@ import io.haifa.agent.common.id.UuidV7IdentifierGenerator;
 import io.haifa.agent.common.time.SystemTimeProvider;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.run.AgentRunType;
-import io.haifa.agent.policy.api.ApprovalMode;
-import io.haifa.agent.policy.api.PolicyChallenge;
-import io.haifa.agent.policy.api.PolicyEffect;
-import io.haifa.agent.policy.api.PolicyRiskLevel;
-import io.haifa.agent.policy.api.PolicyRule;
-import io.haifa.agent.policy.api.PolicyRuleMatcher;
-import io.haifa.agent.policy.api.PolicyRuleRef;
-import io.haifa.agent.policy.api.PolicyRuleSet;
-import io.haifa.agent.policy.api.PolicyRuleSource;
-import io.haifa.agent.policy.api.PolicySideEffect;
-import io.haifa.agent.policy.core.DefaultPolicyDecisionService;
 import io.haifa.agent.runtime.core.RuntimeCoreBuilder;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedDefinition;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
@@ -24,7 +13,6 @@ import io.haifa.agent.runtime.core.execution.LocalExecutionScheduler;
 import io.haifa.agent.runtime.core.retry.ModelRetryPolicy;
 import io.haifa.agent.runtime.core.retry.RetryPolicy;
 import io.haifa.agent.runtime.core.retry.RuntimeBackoffPolicy;
-import io.haifa.agent.runtime.core.tool.DefaultToolPolicyRequestAdapter;
 import io.haifa.agent.runtime.core.tool.PublicToolPolicy;
 import io.haifa.agent.sdk.contribution.ApprovalPlatformContribution;
 import io.haifa.agent.sdk.contribution.ArtifactPlatformContribution;
@@ -40,7 +28,6 @@ import io.haifa.agent.sdk.internal.JavaToolAssembly;
 import io.haifa.agent.sdk.internal.ProcessLocalPromptDiagnostics;
 import io.haifa.agent.sdk.internal.SafeConversationService;
 import io.haifa.agent.sdk.memory.AgentMemories;
-import io.haifa.agent.sdk.policy.TrustedSkillScriptPublicToolPolicy;
 import io.haifa.agent.sdk.product.ProductProfile;
 import io.haifa.agent.sdk.product.ProductRunProfile;
 import io.haifa.agent.sdk.spi.SdkConversationContribution;
@@ -337,27 +324,15 @@ public final class HaifaAgentBuilder {
             if (skillPlatform != null) {
                 runtimeBuilder.skillPlatform(
                         skillPlatform.catalog(), skillPlatform.contentLoader(), skillPlatform.trust());
-                if (!skillPlatform.trust().scriptExecutionGrants().isEmpty()) {
-                    runtimeBuilder.publicToolPolicyDecorator(
-                            delegate -> publicToolPolicyDecorator.apply(new TrustedSkillScriptPublicToolPolicy(
-                                    delegate,
-                                    persistence.runtimePersistence().state(),
-                                    new DefaultToolPolicyRequestAdapter(
-                                            effectiveProfile.productId().value(), ApprovalMode.ASK),
-                                    time)));
-                } else {
-                    runtimeBuilder.publicToolPolicyDecorator(publicToolPolicyDecorator);
-                }
-            } else {
-                runtimeBuilder.publicToolPolicyDecorator(publicToolPolicyDecorator);
             }
+            runtimeBuilder.publicToolPolicyDecorator(publicToolPolicyDecorator);
             if (memory != null) {
                 runtimeBuilder.memory(memory.service(), memory.retriever());
             }
+            // No implicit policy: a tool platform without an explicit product policy fails closed in
+            // RuntimeCoreBuilder instead of inheriting rules from the SDK assembly layer.
             if (policy != null) {
                 runtimeBuilder.policy(policy.rules(), policy.evaluator());
-            } else if (tool != null) {
-                runtimeBuilder.policy(defaultSdkPolicyRules(), new DefaultPolicyDecisionService());
             }
             if (approval != null) {
                 runtimeBuilder.approvalVerification(approval.verification());
@@ -468,63 +443,6 @@ public final class HaifaAgentBuilder {
                     "assembly",
                     "Product Profile allows a Skill alias not supplied by its Skill platform");
         }
-    }
-
-    private static PolicyRuleSet defaultSdkPolicyRules() {
-        List<PolicyRule> rules = new ArrayList<>();
-        rules.add(new PolicyRule(
-                new PolicyRuleRef("sdk-critical-risk", "1"),
-                PolicyRuleSource.MANAGED,
-                200,
-                new PolicyRuleMatcher(
-                        Optional.empty(),
-                        Optional.empty(),
-                        Optional.empty(),
-                        Optional.empty(),
-                        Optional.empty(),
-                        Optional.empty(),
-                        Optional.empty(),
-                        Optional.of(PolicyRiskLevel.CRITICAL),
-                        Set.of()),
-                PolicyEffect.DENY,
-                Optional.empty(),
-                "SDK_CRITICAL_RISK_DENY",
-                "Critical operations are denied"));
-        for (PolicySideEffect effect : List.of(
-                PolicySideEffect.FILE_WRITE,
-                PolicySideEffect.PROCESS_EXECUTION,
-                PolicySideEffect.NETWORK_ACCESS,
-                PolicySideEffect.EXTERNAL_SYSTEM_MUTATION,
-                PolicySideEffect.PERMISSION_ELEVATION)) {
-            rules.add(new PolicyRule(
-                    new PolicyRuleRef("sdk-ask-" + effect.name().toLowerCase(java.util.Locale.ROOT), "1"),
-                    PolicyRuleSource.MANAGED,
-                    100,
-                    new PolicyRuleMatcher(
-                            Optional.empty(),
-                            Optional.empty(),
-                            Optional.empty(),
-                            Optional.empty(),
-                            Optional.empty(),
-                            Optional.empty(),
-                            Optional.empty(),
-                            Optional.empty(),
-                            Set.of(effect)),
-                    PolicyEffect.ASK,
-                    Optional.of(PolicyChallenge.APPROVAL),
-                    "SDK_SIDE_EFFECT_APPROVAL_REQUIRED",
-                    "Approval is required"));
-        }
-        PolicyRule defaultRule = new PolicyRule(
-                new PolicyRuleRef("sdk-default", "1"),
-                PolicyRuleSource.MANAGED,
-                0,
-                PolicyRuleMatcher.any(),
-                PolicyEffect.ALLOW,
-                Optional.empty(),
-                "SDK_DEFAULT_ALLOW",
-                "Allowed by default SDK policy");
-        return PolicyRuleSet.of(rules, Optional.of(defaultRule), ApprovalMode.ASK);
     }
 
     private static void closeAfterFailedBuild(List<AutoCloseable> lifecycle, Throwable original) {
