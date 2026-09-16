@@ -148,6 +148,11 @@ public interface RuntimeStoreMapper {
 
     int recordCommandResult(@Param("row") IdempotencyRow row);
 
+    AppliedCommandRow findAppliedCommand(
+            @Param("callerScope") String callerScope, @Param("operation") String operation, @Param("key") String key);
+
+    int insertAppliedCommand(@Param("row") AppliedCommandRow row);
+
     ToolJournalRow findToolJournal(@Param("runId") String runId, @Param("key") String key);
 
     int insertToolJournal(@Param("row") ToolJournalRow row);
