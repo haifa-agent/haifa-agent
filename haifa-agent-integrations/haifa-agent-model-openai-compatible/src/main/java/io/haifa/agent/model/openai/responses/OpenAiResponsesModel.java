@@ -567,17 +567,31 @@ public final class OpenAiResponsesModel implements AgentChatModel {
                 retainReasoning
                         ? java.util.Optional.of(SensitiveModelReasoning.of(reasoning.toString()))
                         : java.util.Optional.empty(),
-                structuredOutput(request, content.toString(), calls));
+                structuredOutput(request, content.toString(), calls, finish, status));
     }
 
     private java.util.Optional<Map<String, Object>> structuredOutput(
-            AgentChatRequest request, String content, List<ModelToolCall> toolCalls) {
+            AgentChatRequest request,
+            String content,
+            List<ModelToolCall> toolCalls,
+            ModelFinishReason finish,
+            String status) {
         if (request.structuredOutput().isEmpty() || !toolCalls.isEmpty()) return java.util.Optional.empty();
         try {
             JsonNode value = json.readTree(content);
             if (!value.isObject()) throw new IllegalArgumentException("structured output must be an object");
             return java.util.Optional.of(json.convertValue(value, new TypeReference<Map<String, Object>>() {}));
         } catch (JsonProcessingException | IllegalArgumentException exception) {
+            if (finish == ModelFinishReason.LENGTH || "incomplete".equals(status)) {
+                throw failure(
+                        request,
+                        ModelErrorCategory.OUTPUT_LIMIT_EXCEEDED,
+                        false,
+                        200,
+                        "structured_output_truncated",
+                        "provider response was truncated before structured output completed",
+                        exception);
+            }
             throw failure(
                     request,
                     ModelErrorCategory.MALFORMED_RESPONSE,

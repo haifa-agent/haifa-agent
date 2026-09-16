@@ -1399,13 +1399,12 @@ class SemanticCompactionCoordinatorTest {
             throw new RuntimeException("second batch failed");
         };
 
-        org.assertj.core.api.Assertions.assertThatThrownBy(
-                        () -> coordinator.forceCompactOnOverflow(run, 1, createBinding(store, run, model)))
-                .isInstanceOf(RuntimeException.class)
-                .hasMessageContaining("second batch failed");
+        coordinator.forceCompactOnOverflow(run, 1, createBinding(store, run, model));
+
         assertThat(calls.get()).isEqualTo(2);
-        assertThat(store.latestVersion(run.sessionId())).isZero();
-        assertThat(store.latestValid(run.sessionId())).isEmpty();
+        ConversationSummary summary = store.latestValid(run.sessionId()).orElseThrow();
+        assertThat(summary.quality()).isEqualTo(CompactionQuality.DETERMINISTIC_DEGRADED);
+        assertThat(summary.semanticSummary()).isEmpty();
     }
 
     private static SemanticCompactionCoordinator coordinator(
