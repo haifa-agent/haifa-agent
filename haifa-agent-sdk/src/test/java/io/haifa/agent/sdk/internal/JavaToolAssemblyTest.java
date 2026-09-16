@@ -43,20 +43,26 @@ import org.junit.jupiter.api.Test;
 public class JavaToolAssemblyTest {
 
     @Test
-    void mergesJavaToolIntoExistingCatalogAndPreservesDispatchSequence() {
-        JavaToolAssembly.Prepared prepared = JavaToolAssembly.prepare(existingPlatform(), List.of(new WeatherTool()));
-        ToolPlatformContribution merged = prepared.platform();
+    void registersJavaToolOnceAndPreservesDispatchSequence() {
+        JavaToolAssembly.Prepared prepared = JavaToolAssembly.prepare(null, List.of(new WeatherTool()));
+        ToolPlatformContribution platform = prepared.platform();
 
-        assertThat(merged.catalog().snapshot().bindings())
+        assertThat(platform.catalog().snapshot().bindings())
                 .extracting(binding -> binding.alias().value())
-                .containsExactly("existing", "weather_get");
+                .containsExactly("weather_get");
         assertThat(prepared.javaToolAliases()).containsExactly("weather_get");
-        merged.catalog().snapshot().bindings().forEach(merged.invoker()::validateBinding);
+        assertThat(platform.catalog().snapshot().digest())
+                .isEqualTo(platform.catalog()
+                        .findByAlias(new ToolAlias("weather_get"))
+                        .orElseThrow()
+                        .catalogDigest());
+        platform.catalog().snapshot().bindings().forEach(platform.invoker()::validateBinding);
 
-        var weather = merged.catalog().findByAlias(new ToolAlias("weather_get")).orElseThrow();
+        var weather =
+                platform.catalog().findByAlias(new ToolAlias("weather_get")).orElseThrow();
         AtomicBoolean dispatched = new AtomicBoolean();
         AtomicBoolean acknowledged = new AtomicBoolean();
-        ToolResult result = merged.invoker()
+        ToolResult result = platform.invoker()
                 .invoke(new ToolInvocationRequest(
                         weather,
                         new ToolCallId("call-1"),
@@ -86,7 +92,7 @@ public class JavaToolAssemblyTest {
         assertThat(dispatched).isTrue();
         assertThat(acknowledged).isTrue();
 
-        assertThatThrownBy(() -> merged.invoker()
+        assertThatThrownBy(() -> platform.invoker()
                         .invoke(new ToolInvocationRequest(
                                 weather,
                                 new ToolCallId("call-2"),
@@ -135,15 +141,19 @@ public class JavaToolAssemblyTest {
     }
 
     @Test
-    void rejectsDuplicateJavaToolAliasesAndBaseCatalogConflicts() {
+    void rejectsDuplicateJavaToolAliases() {
         assertThatThrownBy(() -> JavaToolAssembly.prepare(null, List.of(new WeatherTool(), new DuplicateWeatherTool())))
                 .isInstanceOf(HaifaAgentException.class)
                 .extracting("code")
                 .isEqualTo("JAVA_TOOL_ALIAS_CONFLICT");
-        assertThatThrownBy(() -> JavaToolAssembly.prepare(existingPlatform(), List.of(new ExistingAliasTool())))
+    }
+
+    @Test
+    void rejectsCombiningJavaToolsWithAnExistingToolPlatform() {
+        assertThatThrownBy(() -> JavaToolAssembly.prepare(existingPlatform(), List.of(new WeatherTool())))
                 .isInstanceOf(HaifaAgentException.class)
                 .extracting("code")
-                .isEqualTo("JAVA_TOOL_ALIAS_CONFLICT");
+                .isEqualTo("JAVA_TOOL_PLATFORM_UNSUPPORTED");
     }
 
     private static ToolPlatformContribution existingPlatform() {
@@ -228,20 +238,6 @@ public class JavaToolAssemblyTest {
         @Override
         public JavaToolSpec<WeatherRequest, WeatherResponse> spec() {
             return JavaToolSpec.builder("weather_get", WeatherRequest.class, WeatherResponse.class)
-                    .pure()
-                    .build();
-        }
-
-        @Override
-        public WeatherResponse invoke(WeatherRequest input, JavaToolContext context) {
-            return new WeatherResponse(input.city());
-        }
-    }
-
-    private static final class ExistingAliasTool implements JavaTool<WeatherRequest, WeatherResponse> {
-        @Override
-        public JavaToolSpec<WeatherRequest, WeatherResponse> spec() {
-            return JavaToolSpec.builder("existing", WeatherRequest.class, WeatherResponse.class)
                     .pure()
                     .build();
         }
