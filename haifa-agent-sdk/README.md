@@ -195,7 +195,7 @@ Memory 或 Tool 正文。查询先沿用当前 Caller 的 Run 授权；未授权
 - 公共 API 不暴露 `RuntimeCoreBuilder`、Runtime Core 内部 bootstrap 类型、SQLite/MyBatis、
   Spring、Provider Client、`Path`、Connection 或 Credential 明文。
 - Caller 的 Tenant/Principal 来自可信 `SdkCallerProvider`，不从 Conversation 命令正文接收。
-- 诊断只包含逻辑产品/能力/Contribution 标识和 digest，不包含 Prompt、Memory、Tool 正文、
+- 诊断只包含逻辑产品、组件标识和非机密装配事实，不包含 Prompt、Memory、Tool 正文、
   Provider 原始配置或绝对路径。
 - SDK 不依赖任何产品 Application。Coding、Personal、Document 等上层产品用各自
   `ProductProfile` 选择不同模块实现，但都复用同一 Runtime 状态机和 SDK 装配器。
