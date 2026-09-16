@@ -835,6 +835,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   background: white;
   box-shadow: 0 4px 18px rgb(39 49 76 / 4%);
   overflow-wrap: anywhere;
+  scroll-margin-top: 14px;
 }
 .message.user { align-self: flex-end; border-color: #d7e0fb; background: #edf3ff; border-bottom-right-radius: 5px; }
 .message.assistant { align-self: flex-start; border-color: #e9ecef; border-bottom-left-radius: 5px; background: #f8f9fa; }
