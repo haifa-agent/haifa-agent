@@ -17,6 +17,8 @@ import io.haifa.agent.model.openai.EnvironmentCredentialResolver;
 import io.haifa.agent.model.openai.OpenAiCompatibleChatModel;
 import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
 import io.haifa.agent.model.openai.OpenAiCompatibleModelConfiguration;
+import io.haifa.agent.policy.api.PolicyPresets;
+import io.haifa.agent.policy.core.DefaultPolicyDecisionService;
 import io.haifa.agent.sdk.api.AgentMetadata;
 import io.haifa.agent.sdk.api.HaifaAgent;
 import io.haifa.agent.sdk.api.HaifaAgents;
@@ -24,6 +26,7 @@ import io.haifa.agent.sdk.api.ModelImageResolver;
 import io.haifa.agent.sdk.api.SdkCallerProvider;
 import io.haifa.agent.sdk.contribution.InMemoryConversationContribution;
 import io.haifa.agent.sdk.contribution.ModelContribution;
+import io.haifa.agent.sdk.contribution.PolicyPlatformContribution;
 import io.haifa.agent.sdk.contribution.SdkContributions;
 import io.haifa.agent.sdk.product.ProductId;
 import io.haifa.agent.sdk.product.ProductProfile;
@@ -228,7 +231,9 @@ public final class HaifaAgentStarterBuilder {
                 .persistence(persistenceContribution())
                 .conversation(conversationContribution())
                 .modelImageResolver(modelImageResolver)
-                .tools(tools);
+                .tools(tools)
+                .policy(new PolicyPlatformContribution(
+                        PolicyPresets.standardApproval(), new DefaultPolicyDecisionService()));
         if (defaultInstructions) {
             builder.starterDefaultInstructionsInUse();
         }
