@@ -8,13 +8,9 @@ import io.haifa.agent.personalassistant.application.mcp.PersonalMcpPlatform;
 import io.haifa.agent.personalassistant.application.skill.PersonalSkillPlatform;
 import io.haifa.agent.personalassistant.application.web.PersonalWebPlatform;
 import io.haifa.agent.runtime.core.skill.SkillToolCatalogContribution;
-import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
 import io.haifa.agent.sdk.contribution.SkillPlatformContribution;
 import io.haifa.agent.sdk.contribution.SkillToolContributions;
 import io.haifa.agent.sdk.contribution.ToolPlatformContribution;
-import io.haifa.agent.sdk.product.ProductCapabilities;
-import io.haifa.agent.sdk.product.ProductContributionCoordinate;
-import io.haifa.agent.sdk.product.ProductProviderSuitability;
 import io.haifa.agent.sdk.spi.SdkPersistenceContribution;
 import io.haifa.agent.skill.api.SkillTrustSnapshot;
 import io.haifa.agent.tool.core.DefaultToolInvoker;
@@ -26,10 +22,6 @@ import java.util.Set;
 /** Freezes product, Skill, and MCP Tools into one catalog and one Runtime Tool pipeline. */
 public record PersonalToolPlatform(
         ToolPlatformContribution tool, SkillPlatformContribution skill, Set<String> trustedScriptToolAliases) {
-    public static final ProductContributionCoordinate TOOL_COORDINATE =
-            new ProductContributionCoordinate("haifa-personal-tools", "1.0.0");
-    public static final ProductContributionCoordinate SKILL_COORDINATE =
-            new ProductContributionCoordinate("haifa-personal-skills", "1.0.0");
 
     public static PersonalToolPlatform create(
             SdkPersistenceContribution persistence,
@@ -62,32 +54,10 @@ public record PersonalToolPlatform(
                 skills.trustManifest().digest(), skills.packageTrust().packageReviewGrants(), List.of());
 
         var tool = new ToolPlatformContribution(
-                metadata(
-                        TOOL_COORDINATE,
-                        ProductCapabilities.TOOL,
-                        "sha256:" + catalog.snapshot().digest(),
-                        "Personal unified Tool catalog"),
                 catalog,
                 new DefaultToolInvoker(catalog),
                 new ExecutionToolSchemaValidator(new JsonSchema202012Validator()));
-        var skill = new SkillPlatformContribution(
-                metadata(
-                        SKILL_COORDINATE,
-                        ProductCapabilities.SKILL,
-                        skills.catalog().snapshot().digest().value(),
-                        "Personal bundled and trusted local Skills"),
-                skills.catalog(),
-                skills.contentLoader(),
-                trust);
+        var skill = new SkillPlatformContribution(skills.catalog(), skills.contentLoader(), trust);
         return new PersonalToolPlatform(tool, skill, Set.of());
-    }
-
-    private static SdkContributionMetadata metadata(
-            ProductContributionCoordinate coordinate,
-            io.haifa.agent.sdk.product.ProductCapabilityId capability,
-            String digest,
-            String description) {
-        return new SdkContributionMetadata(
-                coordinate, capability, digest, ProductProviderSuitability.PRODUCTION, description);
     }
 }

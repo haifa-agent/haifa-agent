@@ -28,15 +28,10 @@ import io.haifa.agent.sdk.api.HaifaAgents;
 import io.haifa.agent.sdk.api.ModelAudioResolver;
 import io.haifa.agent.sdk.api.ModelImageResolver;
 import io.haifa.agent.sdk.api.SdkCallerProvider;
-import io.haifa.agent.sdk.api.SdkConfigurationDigest;
 import io.haifa.agent.sdk.contribution.ArtifactPlatformContribution;
 import io.haifa.agent.sdk.contribution.MemoryPlatformContribution;
 import io.haifa.agent.sdk.contribution.ModelContribution;
 import io.haifa.agent.sdk.contribution.PolicyPlatformContribution;
-import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
-import io.haifa.agent.sdk.product.ProductCapabilities;
-import io.haifa.agent.sdk.product.ProductContributionCoordinate;
-import io.haifa.agent.sdk.product.ProductProviderSuitability;
 import io.haifa.agent.sdk.product.ProductRunProfile;
 import io.haifa.agent.sdk.spi.SdkConversationContribution;
 import io.haifa.agent.sdk.spi.SdkPersistenceContribution;
@@ -76,23 +71,8 @@ public final class PersonalAssistantAssembler {
                     dependencies.web(),
                     dependencies.execution(),
                     dependencies.clock()::instant);
-            var coordinates = new PersonalAssistantProfile.ContributionCoordinates(
-                    dependencies.model().coordinate(),
-                    dependencies.persistence().coordinate(),
-                    dependencies.conversation().coordinate(),
-                    dependencies.memory().coordinate(),
-                    dependencies.policy().coordinate(),
-                    tools.tool().coordinate(),
-                    tools.skill().coordinate(),
-                    dependencies.web().credential().coordinate(),
-                    dependencies.execution().approval().coordinate(),
-                    dependencies.artifact().coordinate());
             var profile = PersonalAssistantProfile.create(
-                    coordinates,
-                    skills.aliases(),
-                    mcp.aliases(),
-                    dependencies.web().aliases(),
-                    tools.trustedScriptToolAliases());
+                    skills.aliases(), mcp.aliases(), dependencies.web().aliases(), tools.trustedScriptToolAliases());
             Set<String> plannerTools = new LinkedHashSet<>(dependencies.web().aliases());
             mcp.aliases().stream()
                     .filter(alias ->
@@ -230,16 +210,16 @@ public final class PersonalAssistantAssembler {
                                     .stream())
                     .forEach(agentBuilder::runProfile);
             var agent = agentBuilder
-                    .contribute(dependencies.model())
-                    .contribute(dependencies.persistence())
-                    .contribute(dependencies.conversation())
-                    .contribute(dependencies.memory())
-                    .contribute(dependencies.policy())
-                    .contribute(dependencies.artifact())
-                    .contribute(tools.tool())
-                    .contribute(tools.skill())
-                    .contribute(dependencies.web().credential())
-                    .contribute(dependencies.execution().approval())
+                    .model(dependencies.model())
+                    .persistence(dependencies.persistence())
+                    .conversation(dependencies.conversation())
+                    .memory(dependencies.memory())
+                    .policy(dependencies.policy())
+                    .artifacts(dependencies.artifact())
+                    .toolPlatform(tools.tool())
+                    .skillPlatform(tools.skill())
+                    .credentials(dependencies.web().credential())
+                    .approval(dependencies.execution().approval())
                     .build();
             return new PersonalAssistantApplication(
                     agent,
@@ -612,18 +592,11 @@ public final class PersonalAssistantAssembler {
         }
 
         private static ArtifactPlatformContribution defaultArtifact(Clock clock) {
-            return new ArtifactPlatformContribution(
-                    new SdkContributionMetadata(
-                            new ProductContributionCoordinate("haifa-personal-in-memory-artifact", "1.0.0"),
-                            ProductCapabilities.ARTIFACT,
-                            SdkConfigurationDigest.sha256("personal-in-memory-artifact-v1"),
-                            ProductProviderSuitability.DEVELOPMENT,
-                            "Personal Assistant in-memory Artifact storage"),
-                    new ArtifactService(
-                            new InMemoryArtifactStore(),
-                            new InMemoryArtifactPayloadStore(),
-                            new UuidV7IdentifierGenerator(),
-                            clock::instant));
+            return new ArtifactPlatformContribution(new ArtifactService(
+                    new InMemoryArtifactStore(),
+                    new InMemoryArtifactPayloadStore(),
+                    new UuidV7IdentifierGenerator(),
+                    clock::instant));
         }
     }
 }

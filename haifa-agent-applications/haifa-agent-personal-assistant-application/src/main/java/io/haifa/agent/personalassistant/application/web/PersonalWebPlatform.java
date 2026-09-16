@@ -4,12 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.credential.core.DefaultCredentialBroker;
-import io.haifa.agent.sdk.api.SdkConfigurationDigest;
 import io.haifa.agent.sdk.contribution.CredentialPlatformContribution;
-import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
-import io.haifa.agent.sdk.product.ProductCapabilities;
-import io.haifa.agent.sdk.product.ProductContributionCoordinate;
-import io.haifa.agent.sdk.product.ProductProviderSuitability;
 import io.haifa.agent.web.DefaultWebUrlPolicy;
 import io.haifa.agent.web.WebContentFormat;
 import io.haifa.agent.web.WebFetchProvider;
@@ -52,9 +47,6 @@ import java.util.Set;
 /** Product-level Web provider selection and in-memory credential binding. */
 public record PersonalWebPlatform(
         List<WebToolCatalogContribution> contributions, CredentialPlatformContribution credential) {
-    public static final ProductContributionCoordinate CREDENTIAL_COORDINATE =
-            new ProductContributionCoordinate("haifa-personal-web-credentials", "1.0.0");
-
     public PersonalWebPlatform {
         contributions = List.copyOf(contributions);
         java.util.Objects.requireNonNull(credential);
@@ -229,17 +221,7 @@ public record PersonalWebPlatform(
 
     private static PersonalWebPlatform platform(
             List<WebToolCatalogContribution> contributions, DefaultCredentialBroker broker) {
-        String digest = SdkConfigurationDigest.sha256(contributions.stream()
-                .map(WebToolCatalogContribution::providerBindingReference)
-                .sorted()
-                .toArray(String[]::new));
-        var metadata = new SdkContributionMetadata(
-                CREDENTIAL_COORDINATE,
-                ProductCapabilities.CREDENTIAL,
-                digest,
-                ProductProviderSuitability.PRODUCTION,
-                "Personal Assistant Web Tool credentials");
-        return new PersonalWebPlatform(contributions, new CredentialPlatformContribution(metadata, broker));
+        return new PersonalWebPlatform(contributions, new CredentialPlatformContribution(broker));
     }
 
     private static DefaultCredentialBroker credentialBroker(

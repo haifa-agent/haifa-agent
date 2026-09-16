@@ -9,14 +9,8 @@ import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.core.tool.ToolResult;
-import io.haifa.agent.sdk.SdkTestFixtures;
+import io.haifa.agent.sdk.api.HaifaAgentException;
 import io.haifa.agent.sdk.contribution.ToolPlatformContribution;
-import io.haifa.agent.sdk.product.ProductAssemblyException;
-import io.haifa.agent.sdk.product.ProductCapabilities;
-import io.haifa.agent.sdk.product.ProductCapabilityRequirement;
-import io.haifa.agent.sdk.product.ProductContributionCoordinate;
-import io.haifa.agent.sdk.product.ProductProfile;
-import io.haifa.agent.sdk.product.ProductProviderSuitability;
 import io.haifa.agent.sdk.tool.JavaTool;
 import io.haifa.agent.sdk.tool.JavaToolContext;
 import io.haifa.agent.sdk.tool.JavaToolSpec;
@@ -40,7 +34,6 @@ import io.haifa.agent.tool.core.JsonSchema202012Validator;
 import io.haifa.agent.tool.core.ToolCatalogBuilder;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -48,28 +41,16 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 
 public class JavaToolAssemblyTest {
-    private static final ProductContributionCoordinate EXISTING_COORDINATE =
-            new ProductContributionCoordinate("tool.existing", "1.0");
 
     @Test
-    void mergesJavaToolIntoExistingCatalogAndUpdatesProfileInternally() {
-        ToolPlatformContribution existing = existingPlatform();
-        ProductProfile profile = profileWithExistingTool();
-
-        JavaToolAssembly.Prepared prepared =
-                JavaToolAssembly.prepare(profile, List.of(existing), List.of(new WeatherTool()));
-        ToolPlatformContribution merged = prepared.contributions().stream()
-                .filter(ToolPlatformContribution.class::isInstance)
-                .map(ToolPlatformContribution.class::cast)
-                .findFirst()
-                .orElseThrow();
+    void mergesJavaToolIntoExistingCatalogAndPreservesDispatchSequence() {
+        JavaToolAssembly.Prepared prepared = JavaToolAssembly.prepare(existingPlatform(), List.of(new WeatherTool()));
+        ToolPlatformContribution merged = prepared.platform();
 
         assertThat(merged.catalog().snapshot().bindings())
                 .extracting(binding -> binding.alias().value())
                 .containsExactly("existing", "weather_get");
-        assertThat(prepared.profile().allowedTools()).containsExactlyInAnyOrder("existing", "weather_get");
-        assertThat(prepared.profile().requirement(ProductCapabilities.TOOL).allowedContributions())
-                .containsExactly(JavaToolAssembly.COORDINATE);
+        assertThat(prepared.javaToolAliases()).containsExactly("weather_get");
         merged.catalog().snapshot().bindings().forEach(merged.invoker()::validateBinding);
 
         var weather = merged.catalog().findByAlias(new ToolAlias("weather_get")).orElseThrow();
@@ -130,40 +111,39 @@ public class JavaToolAssemblyTest {
 
     @Test
     void producesTheSameCatalogDigestRegardlessOfJavaToolRegistrationOrder() {
-        ProductProfile profile = SdkTestFixtures.profile("java-tool-order", Map.of());
-
-        JavaToolAssembly.Prepared first =
-                JavaToolAssembly.prepare(profile, List.of(), List.of(new WeatherTool(), new GeocodeTool()));
+        JavaToolAssembly.Prepared first = JavaToolAssembly.prepare(null, List.of(new WeatherTool(), new GeocodeTool()));
         JavaToolAssembly.Prepared second =
-                JavaToolAssembly.prepare(profile, List.of(), List.of(new GeocodeTool(), new WeatherTool()));
+                JavaToolAssembly.prepare(null, List.of(new GeocodeTool(), new WeatherTool()));
 
-        assertThat(toolPlatform(first).catalog().snapshot().digest())
-                .isEqualTo(toolPlatform(second).catalog().snapshot().digest());
-        assertThat(toolPlatform(first).catalog().snapshot().bindings())
+        assertThat(first.platform().catalog().snapshot().digest())
+                .isEqualTo(second.platform().catalog().snapshot().digest());
+        assertThat(first.platform().catalog().snapshot().bindings())
                 .extracting(binding -> binding.alias().value())
                 .containsExactly("geocode", "weather_get");
+        assertThat(first.javaToolAliases()).containsExactlyInAnyOrder("weather_get", "geocode");
     }
 
     @Test
-    void rejectsDuplicateToolNamesAndMultipleBasePlatforms() {
-        ProductProfile profile = SdkTestFixtures.profile("java-tool-conflicts", Map.of());
+    void noJavaToolsReturnsBasePlatformUnchanged() {
+        ToolPlatformContribution base = existingPlatform();
 
-        assertThatThrownBy(() -> JavaToolAssembly.prepare(
-                        profile, List.of(), List.of(new WeatherTool(), new DuplicateNameTool())))
-                .isInstanceOf(ProductAssemblyException.class)
-                .hasMessageContaining("duplicate Java Tool alias");
-        assertThatThrownBy(() -> JavaToolAssembly.prepare(
-                        profile, List.of(existingPlatform(), existingPlatform()), List.of(new WeatherTool())))
-                .isInstanceOf(ProductAssemblyException.class)
-                .hasMessageContaining("multiple Tool contributions");
+        JavaToolAssembly.Prepared prepared = JavaToolAssembly.prepare(base, List.of());
+
+        assertThat(prepared.platform()).isSameAs(base);
+        assertThat(prepared.javaToolAliases()).isEmpty();
+        assertThat(JavaToolAssembly.prepare(null, List.of()).platform()).isNull();
     }
 
-    private static ToolPlatformContribution toolPlatform(JavaToolAssembly.Prepared prepared) {
-        return prepared.contributions().stream()
-                .filter(ToolPlatformContribution.class::isInstance)
-                .map(ToolPlatformContribution.class::cast)
-                .findFirst()
-                .orElseThrow();
+    @Test
+    void rejectsDuplicateJavaToolAliasesAndBaseCatalogConflicts() {
+        assertThatThrownBy(() -> JavaToolAssembly.prepare(null, List.of(new WeatherTool(), new DuplicateWeatherTool())))
+                .isInstanceOf(HaifaAgentException.class)
+                .extracting("code")
+                .isEqualTo("JAVA_TOOL_ALIAS_CONFLICT");
+        assertThatThrownBy(() -> JavaToolAssembly.prepare(existingPlatform(), List.of(new ExistingAliasTool())))
+                .isInstanceOf(HaifaAgentException.class)
+                .extracting("code")
+                .isEqualTo("JAVA_TOOL_ALIAS_CONFLICT");
     }
 
     private static ToolPlatformContribution existingPlatform() {
@@ -207,38 +187,7 @@ public class JavaToolAssemblyTest {
         var catalog = new ToolCatalogBuilder()
                 .register(new ToolAlias("existing"), definition, "existing", provider)
                 .freeze();
-        return new ToolPlatformContribution(
-                SdkTestFixtures.metadata(
-                        EXISTING_COORDINATE,
-                        ProductCapabilities.TOOL,
-                        "sha256:" + catalog.snapshot().digest(),
-                        ProductProviderSuitability.PRODUCTION),
-                catalog,
-                new DefaultToolInvoker(catalog),
-                new JsonSchema202012Validator());
-    }
-
-    private static ProductProfile profileWithExistingTool() {
-        ProductProfile base = SdkTestFixtures.profile("java-tool-assembly", Map.of());
-        var requirements = new LinkedHashMap<>(base.capabilityRequirements());
-        requirements.put(
-                ProductCapabilities.TOOL,
-                ProductCapabilityRequirement.required(
-                        ProductCapabilities.TOOL, Set.of(EXISTING_COORDINATE), ProductProviderSuitability.PRODUCTION));
-        return ProductProfile.create(
-                base.productId(),
-                base.productVersion(),
-                base.definitionId(),
-                base.definitionVersion(),
-                base.runProfileId(),
-                base.runProfileVersion(),
-                base.instructions(),
-                base.budget(),
-                base.limits(),
-                base.policies(),
-                requirements,
-                Set.of("existing"),
-                base.allowedSkills());
+        return new ToolPlatformContribution(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator());
     }
 
     public record WeatherRequest(String city) {}
@@ -275,10 +224,24 @@ public class JavaToolAssemblyTest {
         }
     }
 
-    private static final class DuplicateNameTool implements JavaTool<WeatherRequest, WeatherResponse> {
+    private static final class DuplicateWeatherTool implements JavaTool<WeatherRequest, WeatherResponse> {
         @Override
         public JavaToolSpec<WeatherRequest, WeatherResponse> spec() {
             return JavaToolSpec.builder("weather_get", WeatherRequest.class, WeatherResponse.class)
+                    .pure()
+                    .build();
+        }
+
+        @Override
+        public WeatherResponse invoke(WeatherRequest input, JavaToolContext context) {
+            return new WeatherResponse(input.city());
+        }
+    }
+
+    private static final class ExistingAliasTool implements JavaTool<WeatherRequest, WeatherResponse> {
+        @Override
+        public JavaToolSpec<WeatherRequest, WeatherResponse> spec() {
+            return JavaToolSpec.builder("existing", WeatherRequest.class, WeatherResponse.class)
                     .pure()
                     .build();
         }

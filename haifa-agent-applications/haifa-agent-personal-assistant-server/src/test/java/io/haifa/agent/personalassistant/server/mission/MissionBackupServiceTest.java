@@ -17,13 +17,8 @@ import io.haifa.agent.personalassistant.application.mission.MissionExecutionCoor
 import io.haifa.agent.personalassistant.application.mission.MissionPlanValidator;
 import io.haifa.agent.personalassistant.application.mission.MissionRuntimeAccess;
 import io.haifa.agent.runtime.core.model.continuation.PlaintextModelContinuationProtector;
-import io.haifa.agent.sdk.api.SdkConfigurationDigest;
-import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
 import io.haifa.agent.sdk.conversation.ConversationRecord;
 import io.haifa.agent.sdk.conversation.ConversationStatus;
-import io.haifa.agent.sdk.product.ProductCapabilities;
-import io.haifa.agent.sdk.product.ProductContributionCoordinate;
-import io.haifa.agent.sdk.product.ProductProviderSuitability;
 import io.haifa.agent.store.sqlite.SqliteConnectionFactory;
 import io.haifa.agent.store.sqlite.SqliteSdkProductContributions;
 import io.haifa.agent.store.sqlite.SqliteStoreConfiguration;
@@ -208,22 +203,7 @@ class MissionBackupServiceTest {
 
     private static SqliteSdkProductContributions personalSqlite(Path database) {
         return SqliteSdkProductContributions.initialize(
-                SqliteStoreConfiguration.defaults(database),
-                CLOCK,
-                new PlaintextModelContinuationProtector(),
-                metadata("pa-persistence", ProductCapabilities.PERSISTENCE),
-                metadata("pa-conversation", ProductCapabilities.CONVERSATION),
-                metadata("pa-memory", ProductCapabilities.MEMORY));
-    }
-
-    private static SdkContributionMetadata metadata(
-            String id, io.haifa.agent.sdk.product.ProductCapabilityId capability) {
-        return new SdkContributionMetadata(
-                new ProductContributionCoordinate(id, "1.0.0"),
-                capability,
-                SdkConfigurationDigest.sha256(id, "shared-v1"),
-                ProductProviderSuitability.PRODUCTION,
-                id);
+                SqliteStoreConfiguration.defaults(database), CLOCK, new PlaintextModelContinuationProtector());
     }
 
     private static void initializeArtifact(Path database) throws Exception {

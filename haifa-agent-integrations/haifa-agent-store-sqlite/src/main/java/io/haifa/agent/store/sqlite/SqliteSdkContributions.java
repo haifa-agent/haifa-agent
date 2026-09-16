@@ -1,11 +1,10 @@
 package io.haifa.agent.store.sqlite;
 
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationProtector;
-import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
 import java.time.Clock;
 import java.util.Objects;
 
-/** Opens one SQLite foundation and exposes the two independently selectable SDK capabilities. */
+/** Opens one SQLite foundation and exposes the two independently selectable SDK components. */
 public record SqliteSdkContributions(
         SqliteSdkPersistenceContribution persistence, SqliteSdkConversationContribution conversation) {
     public SqliteSdkContributions {
@@ -14,16 +13,12 @@ public record SqliteSdkContributions(
     }
 
     public static SqliteSdkContributions initialize(
-            SqliteStoreConfiguration configuration,
-            Clock clock,
-            ModelContinuationProtector protector,
-            SdkContributionMetadata persistenceMetadata,
-            SdkContributionMetadata conversationMetadata) {
+            SqliteStoreConfiguration configuration, Clock clock, ModelContinuationProtector protector) {
         SqliteStoreFoundation foundation = SqliteStoreFoundation.initialize(configuration, clock);
         try {
             return new SqliteSdkContributions(
-                    new SqliteSdkPersistenceContribution(persistenceMetadata, foundation, protector),
-                    new SqliteSdkConversationContribution(conversationMetadata, foundation));
+                    new SqliteSdkPersistenceContribution(foundation, protector),
+                    new SqliteSdkConversationContribution(foundation));
         } catch (RuntimeException | Error exception) {
             foundation.close();
             throw exception;

@@ -19,21 +19,14 @@ import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationPro
 import io.haifa.agent.sdk.api.HaifaAgent;
 import io.haifa.agent.sdk.api.HaifaAgents;
 import io.haifa.agent.sdk.api.SdkCallerProvider;
-import io.haifa.agent.sdk.api.SdkConfigurationDigest;
 import io.haifa.agent.sdk.contribution.ModelContribution;
 import io.haifa.agent.sdk.contribution.PolicyPlatformContribution;
-import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
 import io.haifa.agent.sdk.product.ProductArtifactPolicy;
-import io.haifa.agent.sdk.product.ProductCapabilities;
-import io.haifa.agent.sdk.product.ProductCapabilityId;
-import io.haifa.agent.sdk.product.ProductCapabilityRequirement;
-import io.haifa.agent.sdk.product.ProductContributionCoordinate;
 import io.haifa.agent.sdk.product.ProductExecutionPolicy;
 import io.haifa.agent.sdk.product.ProductId;
 import io.haifa.agent.sdk.product.ProductMemoryPolicy;
 import io.haifa.agent.sdk.product.ProductPolicies;
 import io.haifa.agent.sdk.product.ProductProfile;
-import io.haifa.agent.sdk.product.ProductProviderSuitability;
 import io.haifa.agent.sdk.product.ProductVersion;
 import io.haifa.agent.store.sqlite.SqliteSdkProductContributions;
 import io.haifa.agent.store.sqlite.SqliteStoreConfiguration;
@@ -43,7 +36,6 @@ import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.time.Clock;
 import java.util.Base64;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -52,7 +44,7 @@ import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
 
 /**
- * Single-process durable reference assembly using the existing SQLite contributions.
+ * Single-process durable reference assembly using the existing SQLite components.
  *
  * <p>This class belongs to an unpublished application example module. It is host integration
  * guidance, not SDK API or a production compatibility commitment. Applications should copy and
@@ -60,13 +52,6 @@ import javax.crypto.spec.SecretKeySpec;
  */
 public final class SqliteDurableReferenceAssemblyExample {
     private static final String VERSION = "1.0.0";
-    private static final ProductContributionCoordinate MODEL = coordinate("example.model");
-    private static final ProductContributionCoordinate PERSISTENCE = coordinate("example.sqlite.persistence");
-    private static final ProductContributionCoordinate CONVERSATION = coordinate("example.sqlite.conversation");
-    private static final ProductContributionCoordinate MEMORY = coordinate("example.sqlite.memory");
-    private static final ProductContributionCoordinate POLICY = coordinate("example.sqlite.policy");
-    private static final ProductContributionCoordinate ARTIFACT =
-            new ProductContributionCoordinate("haifa-sqlite-artifact", VERSION);
 
     private SqliteDurableReferenceAssemblyExample() {}
 
@@ -81,30 +66,21 @@ public final class SqliteDurableReferenceAssemblyExample {
         var sqlite = SqliteSdkProductContributions.initialize(
                 SqliteStoreConfiguration.defaults(database),
                 Clock.systemUTC(),
-                new AesGcmModelContinuationProtector(continuationKey, new SecureRandom()),
-                metadata(PERSISTENCE, ProductCapabilities.PERSISTENCE, "sqlite-runtime-v7"),
-                metadata(CONVERSATION, ProductCapabilities.CONVERSATION, "sqlite-conversation-v1"),
-                metadata(MEMORY, ProductCapabilities.MEMORY, "sqlite-memory-v1"));
+                new AesGcmModelContinuationProtector(continuationKey, new SecureRandom()));
         PolicyPlatformContribution policy = policyContribution();
         ModelContribution models = new ModelContribution(
-                new SdkContributionMetadata(
-                        MODEL,
-                        ProductCapabilities.MODEL,
-                        snapshot.configurationDigest(),
-                        ProductProviderSuitability.PRODUCTION,
-                        "Application-owned model catalog"),
                 Map.of(ModelAdapterCoordinate.from(snapshot), model),
                 snapshot,
                 Map.of(snapshot.modelId().value(), snapshot));
         try {
             return HaifaAgents.builder(profile(snapshot))
                     .callerProvider(callers)
-                    .contribute(models)
-                    .contribute(sqlite.persistence())
-                    .contribute(sqlite.conversation())
-                    .contribute(sqlite.memory())
-                    .contribute(policy)
-                    .contribute(sqlite.artifact())
+                    .model(models)
+                    .persistence(sqlite.persistence())
+                    .conversation(sqlite.conversation())
+                    .memory(sqlite.memory())
+                    .policy(policy)
+                    .artifacts(sqlite.artifact())
                     .build();
         } catch (RuntimeException | Error exception) {
             sqlite.persistence().close();
@@ -123,18 +99,11 @@ public final class SqliteDurableReferenceAssemblyExample {
                 DeterministicExampleSupport.model("sqlite-answer"),
                 DeterministicExampleSupport.snapshot(),
                 SdkCallerProvider.defaultPublicUser())) {
-            System.out.println(agent.assembly().assemblyDigest());
+            System.out.println(agent.profile().configurationDigest());
         }
     }
 
     private static ProductProfile profile(ResolvedModelSnapshot snapshot) {
-        Map<ProductCapabilityId, ProductCapabilityRequirement> requirements = new LinkedHashMap<>();
-        require(requirements, ProductCapabilities.MODEL, MODEL);
-        require(requirements, ProductCapabilities.PERSISTENCE, PERSISTENCE);
-        require(requirements, ProductCapabilities.CONVERSATION, CONVERSATION);
-        require(requirements, ProductCapabilities.MEMORY, MEMORY);
-        require(requirements, ProductCapabilities.POLICY, POLICY);
-        require(requirements, ProductCapabilities.ARTIFACT, ARTIFACT);
         ProductPolicies policies = new ProductPolicies(
                 ProductMemoryPolicy.safeDefault(),
                 new ProductArtifactPolicy(
@@ -158,29 +127,8 @@ public final class SqliteDurableReferenceAssemblyExample {
                 new AgentRunBudget(65_536, 8_192, 65_536, 16, 16, 0, "USD", 100),
                 new AgentRunLimits(16, 0, 1, 120_000, 60_000, 16, 16, 0),
                 policies,
-                requirements,
                 Set.of(),
                 Set.of());
-    }
-
-    private static void require(
-            Map<ProductCapabilityId, ProductCapabilityRequirement> requirements,
-            ProductCapabilityId capability,
-            ProductContributionCoordinate coordinate) {
-        requirements.put(
-                capability,
-                ProductCapabilityRequirement.required(
-                        capability, Set.of(coordinate), ProductProviderSuitability.PRODUCTION));
-    }
-
-    private static SdkContributionMetadata metadata(
-            ProductContributionCoordinate coordinate, ProductCapabilityId capability, String digestSeed) {
-        return new SdkContributionMetadata(
-                coordinate,
-                capability,
-                SdkConfigurationDigest.sha256(digestSeed),
-                ProductProviderSuitability.PRODUCTION,
-                "SQLite " + capability.value());
     }
 
     private static PolicyPlatformContribution policyContribution() {
@@ -194,13 +142,8 @@ public final class SqliteDurableReferenceAssemblyExample {
                 "SDK_EXAMPLE_TOOL_DENIED",
                 "The durable SDK example does not enable public tools");
         return new PolicyPlatformContribution(
-                metadata(POLICY, ProductCapabilities.POLICY, "application-policy-v1"),
                 PolicyRuleSet.of(List.of(), Optional.of(defaultRule), ApprovalMode.DENY),
                 new DefaultPolicyDecisionService());
-    }
-
-    private static ProductContributionCoordinate coordinate(String providerId) {
-        return new ProductContributionCoordinate(providerId, VERSION);
     }
 
     private static String requiredEnvironment(String name) {
