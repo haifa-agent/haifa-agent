@@ -35,7 +35,7 @@ class ConversationReconciliationTest {
         Instant now = Instant.parse("2026-07-28T00:00:00Z");
         AtomicInteger idSequence = new AtomicInteger();
         IdentifierGenerator ids = () -> "reconcile-" + idSequence.incrementAndGet();
-        var profile = SdkTestFixtures.profile("personal", Map.of());
+        var profile = SdkTestFixtures.profile("personal");
         var model = SdkTestFixtures.modelContribution();
         var persistence = SdkTestFixtures.persistenceContribution();
         var conversations = new InMemoryConversationStore();

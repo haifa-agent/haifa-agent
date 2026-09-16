@@ -59,10 +59,6 @@ import io.haifa.agent.personalassistant.application.product.PersonalAssistantPro
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
 import io.haifa.agent.personalassistant.server.observability.LoggingAgentChatModel;
 import io.haifa.agent.sdk.contribution.ModelContribution;
-import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
-import io.haifa.agent.sdk.product.ProductCapabilities;
-import io.haifa.agent.sdk.product.ProductContributionCoordinate;
-import io.haifa.agent.sdk.product.ProductProviderSuitability;
 import java.net.ProxySelector;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -214,16 +210,7 @@ public final class PersonalModelFactory {
                 trustedProjectResolver,
                 codexAccountResolver,
                 proxySelector);
-        ModelContribution contribution = new ModelContribution(
-                new SdkContributionMetadata(
-                        new ProductContributionCoordinate("haifa-personal-model", "1.0.0"),
-                        ProductCapabilities.MODEL,
-                        snapshot.configurationDigest(),
-                        deterministic ? ProductProviderSuitability.DEVELOPMENT : ProductProviderSuitability.PRODUCTION,
-                        deterministic ? "Explicit offline acceptance model" : "OpenAI-compatible Personal model"),
-                adapters,
-                snapshot,
-                snapshots);
+        ModelContribution contribution = new ModelContribution(adapters, snapshot, snapshots);
         TenantRef tenant = new TenantRef("personal-product");
         PrincipalRef principal = new PrincipalRef("personal-user", "user");
         PersonalModelProductDefaults productDefaults = new PersonalModelProductDefaults();

@@ -5,22 +5,15 @@ import io.haifa.agent.core.agent.AgentDefinitionVersion;
 import io.haifa.agent.core.run.AgentRunBudget;
 import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.sdk.product.ProductArtifactPolicy;
-import io.haifa.agent.sdk.product.ProductCapabilities;
-import io.haifa.agent.sdk.product.ProductCapabilityId;
-import io.haifa.agent.sdk.product.ProductCapabilityRequirement;
-import io.haifa.agent.sdk.product.ProductContributionCoordinate;
 import io.haifa.agent.sdk.product.ProductExecutionPolicy;
 import io.haifa.agent.sdk.product.ProductId;
 import io.haifa.agent.sdk.product.ProductMemoryPolicy;
 import io.haifa.agent.sdk.product.ProductPolicies;
 import io.haifa.agent.sdk.product.ProductProfile;
-import io.haifa.agent.sdk.product.ProductProviderSuitability;
 import io.haifa.agent.sdk.product.ProductVersion;
-import java.util.LinkedHashMap;
-import java.util.Map;
 import java.util.Set;
 
-/** Frozen Personal Assistant MVP capability declaration. */
+/** Frozen Personal Assistant MVP profile declaration. */
 public final class PersonalAssistantProfile {
     public static final String PRODUCT_TOOL_ALIAS = "personal_checklist";
     public static final String SKILL_LOAD_ALIAS = "skill_load";
@@ -37,31 +30,10 @@ public final class PersonalAssistantProfile {
     private PersonalAssistantProfile() {}
 
     public static ProductProfile create(
-            ContributionCoordinates coordinates,
-            Set<String> localSkillAliases,
-            Set<String> mcpToolAliases,
-            Set<String> webToolAliases) {
-        return create(coordinates, localSkillAliases, mcpToolAliases, webToolAliases, Set.of());
-    }
-
-    public static ProductProfile create(
-            ContributionCoordinates coordinates,
             Set<String> localSkillAliases,
             Set<String> mcpToolAliases,
             Set<String> webToolAliases,
             Set<String> trustedScriptToolAliases) {
-        Map<ProductCapabilityId, ProductCapabilityRequirement> requirements = new LinkedHashMap<>();
-        required(requirements, ProductCapabilities.MODEL, coordinates.model());
-        required(requirements, ProductCapabilities.PERSISTENCE, coordinates.persistence());
-        required(requirements, ProductCapabilities.CONVERSATION, coordinates.conversation());
-        required(requirements, ProductCapabilities.MEMORY, coordinates.memory());
-        required(requirements, ProductCapabilities.POLICY, coordinates.policy());
-        required(requirements, ProductCapabilities.TOOL, coordinates.tool());
-        required(requirements, ProductCapabilities.SKILL, coordinates.skill());
-        required(requirements, ProductCapabilities.ARTIFACT, coordinates.artifact());
-        required(requirements, ProductCapabilities.APPROVAL, coordinates.approval());
-        required(requirements, ProductCapabilities.CREDENTIAL, coordinates.credential());
-
         Set<String> skills = java.util.stream.Stream.concat(
                         java.util.stream.Stream.of(
                                 BUNDLED_SKILL_ALIAS, EXECUTION_SKILL_ALIAS, GITHUB_PROJECT_WATCH_SKILL_ALIAS),
@@ -105,29 +77,7 @@ public final class PersonalAssistantProfile {
                 new AgentRunBudget(512_000, 128_000, 512_000, 64, 64, 0, "USD", 0),
                 new AgentRunLimits(64, 0, 1, 300_000, 120_000, 64, 64, 0),
                 policies,
-                requirements,
                 allowedTools,
                 skills);
     }
-
-    private static void required(
-            Map<ProductCapabilityId, ProductCapabilityRequirement> target,
-            ProductCapabilityId id,
-            ProductContributionCoordinate coordinate) {
-        target.put(
-                id,
-                ProductCapabilityRequirement.required(id, Set.of(coordinate), ProductProviderSuitability.DEVELOPMENT));
-    }
-
-    public record ContributionCoordinates(
-            ProductContributionCoordinate model,
-            ProductContributionCoordinate persistence,
-            ProductContributionCoordinate conversation,
-            ProductContributionCoordinate memory,
-            ProductContributionCoordinate policy,
-            ProductContributionCoordinate tool,
-            ProductContributionCoordinate skill,
-            ProductContributionCoordinate credential,
-            ProductContributionCoordinate approval,
-            ProductContributionCoordinate artifact) {}
 }

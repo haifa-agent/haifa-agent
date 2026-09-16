@@ -1,27 +1,18 @@
 package io.haifa.agent.sdk.internal;
 
 import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
-import io.haifa.agent.sdk.contribution.AbstractSdkContribution;
-import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
-import io.haifa.agent.sdk.product.ProductCapabilities;
 import io.haifa.agent.sdk.spi.SdkPersistenceContribution;
 import java.util.Objects;
 
 /** Internal process-local persistence implementation. */
-public final class InMemoryPersistenceContribution extends AbstractSdkContribution
-        implements SdkPersistenceContribution {
+public final class InMemoryPersistenceContribution implements SdkPersistenceContribution {
     private final RuntimePersistencePorts runtimePersistence;
 
-    public InMemoryPersistenceContribution(SdkContributionMetadata metadata) {
-        this(metadata, RuntimePersistencePorts.inMemory());
+    public InMemoryPersistenceContribution() {
+        this(RuntimePersistencePorts.inMemory());
     }
 
-    public InMemoryPersistenceContribution(
-            SdkContributionMetadata metadata, RuntimePersistencePorts runtimePersistence) {
-        super(metadata);
-        if (!ProductCapabilities.PERSISTENCE.equals(metadata.capabilityId())) {
-            throw new IllegalArgumentException("persistence contribution must provide the persistence capability");
-        }
+    public InMemoryPersistenceContribution(RuntimePersistencePorts runtimePersistence) {
         this.runtimePersistence = Objects.requireNonNull(runtimePersistence, "runtimePersistence must not be null");
     }
 

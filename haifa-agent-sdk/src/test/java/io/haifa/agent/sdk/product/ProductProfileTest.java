@@ -7,40 +7,25 @@ import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.agent.AgentDefinitionVersion;
 import io.haifa.agent.core.run.AgentRunBudget;
 import io.haifa.agent.core.run.AgentRunLimits;
-import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class ProductProfileTest {
-    private static final ProductCapabilityId EXTRA = new ProductCapabilityId("extra");
 
     @Test
-    void digestIsStableAndIncludesStructuredPoliciesWithoutDelimiterCollisions() {
-        var firstCoordinate = new ProductContributionCoordinate("a", "b@c");
-        var secondCoordinate = new ProductContributionCoordinate("a@b", "c");
-        assertThat(firstCoordinate.externalForm()).isEqualTo(secondCoordinate.externalForm());
-        assertThat(firstCoordinate).isNotEqualByComparingTo(secondCoordinate);
-
-        ProductProfile first = profile(
-                ProductPolicies.safeDefaults(),
-                ProductCapabilityRequirement.required(
-                        EXTRA, Set.of(firstCoordinate), ProductProviderSuitability.DEVELOPMENT));
-        ProductProfile repeated = profile(
-                ProductPolicies.safeDefaults(),
-                ProductCapabilityRequirement.required(
-                        EXTRA, Set.of(firstCoordinate), ProductProviderSuitability.DEVELOPMENT));
-        ProductProfile differentCoordinate = profile(
-                ProductPolicies.safeDefaults(),
-                ProductCapabilityRequirement.required(
-                        EXTRA, Set.of(secondCoordinate), ProductProviderSuitability.DEVELOPMENT));
+    void digestIsStableAndIncludesStructuredPoliciesAndAllowLists() {
+        ProductProfile first = profile(ProductPolicies.safeDefaults(), Set.of("memory.search"), Set.of());
+        ProductProfile repeated = profile(ProductPolicies.safeDefaults(), Set.of("memory.search"), Set.of());
+        ProductProfile differentTools = profile(ProductPolicies.safeDefaults(), Set.of("web_search"), Set.of());
+        ProductProfile differentSkills =
+                profile(ProductPolicies.safeDefaults(), Set.of("memory.search"), Set.of("plan"));
         ProductProfile differentPolicy = profile(
                 new ProductPolicies(
                         new ProductMemoryPolicy(true, 32_000, 99),
                         ProductArtifactPolicy.disabled(),
                         ProductExecutionPolicy.disabled()),
-                ProductCapabilityRequirement.required(
-                        EXTRA, Set.of(firstCoordinate), ProductProviderSuitability.DEVELOPMENT));
-
+                Set.of("memory.search"),
+                Set.of());
         ProductProfile differentQuotaMode = ProductProfile.create(
                 new ProductId("profile-test"),
                 new ProductVersion("1.0.0"),
@@ -52,35 +37,36 @@ class ProductProfileTest {
                 AgentRunBudget.disabled(),
                 new AgentRunLimits(2, 0, 1, 10_000, 10_000, 64, 32, 8),
                 ProductPolicies.safeDefaults(),
-                Map.of(
-                        EXTRA,
-                        ProductCapabilityRequirement.required(
-                                EXTRA, Set.of(firstCoordinate), ProductProviderSuitability.DEVELOPMENT)),
-                Set.of(),
-                Set.of());
-        ProductProfile differentLimits = ProductProfile.create(
-                new ProductId("profile-test"),
-                new ProductVersion("1.0.0"),
-                new AgentDefinitionId("profile-test-agent"),
-                new AgentDefinitionVersion(1, 0, 0),
-                "profile-test-chat",
-                "1.0.0",
-                "Safe instructions.",
-                new AgentRunBudget(1_000, 1_000, 1_000, 2, 2, 0, "USD", 100),
-                new AgentRunLimits(2, 0, 1, 10_000, 10_000, 128, 64, 16),
-                ProductPolicies.safeDefaults(),
-                Map.of(
-                        EXTRA,
-                        ProductCapabilityRequirement.required(
-                                EXTRA, Set.of(firstCoordinate), ProductProviderSuitability.DEVELOPMENT)),
-                Set.of(),
+                Set.of("memory.search"),
                 Set.of());
 
         assertThat(repeated.configurationDigest()).isEqualTo(first.configurationDigest());
-        assertThat(differentCoordinate.configurationDigest()).isNotEqualTo(first.configurationDigest());
+        assertThat(differentTools.configurationDigest()).isNotEqualTo(first.configurationDigest());
+        assertThat(differentSkills.configurationDigest()).isNotEqualTo(first.configurationDigest());
         assertThat(differentPolicy.configurationDigest()).isNotEqualTo(first.configurationDigest());
         assertThat(differentQuotaMode.configurationDigest()).isNotEqualTo(first.configurationDigest());
-        assertThat(differentLimits.configurationDigest()).isNotEqualTo(first.configurationDigest());
+    }
+
+    @Test
+    void rejectsDigestThatDoesNotMatchFrozenFields() {
+        ProductProfile valid = profile(ProductPolicies.safeDefaults(), Set.of(), Set.of());
+        assertThatThrownBy(() -> new ProductProfile(
+                        valid.schemaVersion(),
+                        valid.productId(),
+                        valid.productVersion(),
+                        valid.definitionId(),
+                        valid.definitionVersion(),
+                        valid.runProfileId(),
+                        valid.runProfileVersion(),
+                        valid.instructions(),
+                        valid.budget(),
+                        valid.limits(),
+                        valid.policies(),
+                        valid.allowedTools(),
+                        valid.allowedSkills(),
+                        "sha256:" + "0".repeat(64)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("digest");
     }
 
     @Test
@@ -93,33 +79,7 @@ class ProductProfileTest {
                 .hasMessageContaining("disabled execution");
     }
 
-    @Test
-    void strictEnterpriseProfileDoesNotAssembleTerminalCapabilities() {
-        ProductCapabilityId terminal = new ProductCapabilityId("terminal");
-        ProductProfile enterprise = ProductProfile.create(
-                new ProductId("strict-enterprise-sdk"),
-                new ProductVersion("1.0.0"),
-                new AgentDefinitionId("strict-enterprise-agent"),
-                new AgentDefinitionVersion(1, 0, 0),
-                "strict-enterprise",
-                "1.0.0",
-                "Operate only through explicitly contributed business capabilities.",
-                new AgentRunBudget(1_000, 1_000, 1_000, 2, 2, 0, "USD", 100),
-                new AgentRunLimits(2, 0, 1, 10_000, 10_000),
-                new ProductPolicies(
-                        ProductMemoryPolicy.safeDefault(),
-                        ProductArtifactPolicy.disabled(),
-                        ProductExecutionPolicy.disabled()),
-                Map.of(terminal, ProductCapabilityRequirement.none(terminal)),
-                Set.of("memory.search"),
-                Set.of());
-
-        assertThat(enterprise.policies().execution().enabled()).isFalse();
-        assertThat(enterprise.requirement(terminal).mode()).isEqualTo(ProductCapabilityMode.NONE);
-        assertThat(enterprise.allowedTools()).doesNotContain("execution_run", "shell", "terminal");
-    }
-
-    private static ProductProfile profile(ProductPolicies policies, ProductCapabilityRequirement extraRequirement) {
+    private static ProductProfile profile(ProductPolicies policies, Set<String> tools, Set<String> skills) {
         return ProductProfile.create(
                 new ProductId("profile-test"),
                 new ProductVersion("1.0.0"),
@@ -131,8 +91,7 @@ class ProductProfileTest {
                 new AgentRunBudget(1_000, 1_000, 1_000, 2, 2, 0, "USD", 100),
                 new AgentRunLimits(2, 0, 1, 10_000, 10_000),
                 policies,
-                Map.of(EXTRA, extraRequirement),
-                Set.of(),
-                Set.of());
+                tools,
+                skills);
     }
 }

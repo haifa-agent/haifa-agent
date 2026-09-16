@@ -591,7 +591,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     }
 
     public String productDigest() {
-        return agent.assembly().assemblyDigest();
+        return agent.profile().configurationDigest();
     }
 
     public PersonalCapabilityRegistry capabilities() {

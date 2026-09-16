@@ -22,18 +22,13 @@ import io.haifa.agent.sdk.api.HaifaAgent;
 import io.haifa.agent.sdk.api.HaifaAgents;
 import io.haifa.agent.sdk.api.ModelImageResolver;
 import io.haifa.agent.sdk.api.SdkCallerProvider;
-import io.haifa.agent.sdk.api.SdkConfigurationDigest;
 import io.haifa.agent.sdk.contribution.InMemoryConversationContribution;
 import io.haifa.agent.sdk.contribution.ModelContribution;
-import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
 import io.haifa.agent.sdk.contribution.SdkContributions;
-import io.haifa.agent.sdk.product.ProductCapabilities;
-import io.haifa.agent.sdk.product.ProductCapabilityRequirement;
-import io.haifa.agent.sdk.product.ProductContributionCoordinate;
 import io.haifa.agent.sdk.product.ProductId;
 import io.haifa.agent.sdk.product.ProductProfile;
-import io.haifa.agent.sdk.product.ProductProviderSuitability;
 import io.haifa.agent.sdk.product.ProductVersion;
+import io.haifa.agent.sdk.spi.SdkPersistenceContribution;
 import io.haifa.agent.sdk.tool.JavaTool;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -64,12 +59,6 @@ public final class HaifaAgentStarterBuilder {
 
     private static final String VERSION = "1.0.0";
     private static final String ADAPTER_TYPE = "openai-compatible";
-    private static final ProductContributionCoordinate MODEL_COORDINATE =
-            new ProductContributionCoordinate("starter.model.catalog", VERSION);
-    private static final ProductContributionCoordinate PERSISTENCE_COORDINATE =
-            new ProductContributionCoordinate("starter.persistence.memory", VERSION);
-    private static final ProductContributionCoordinate CONVERSATION_COORDINATE =
-            new ProductContributionCoordinate("starter.conversation.memory", VERSION);
 
     private String instructions = "You are a helpful assistant. Answer clearly and concisely.";
     private String name = AgentMetadata.DEFAULT_NAME;
@@ -235,9 +224,9 @@ public final class HaifaAgentStarterBuilder {
         var builder = HaifaAgents.builder(profile)
                 .metadata(new AgentMetadata(name))
                 .callerProvider(callers)
-                .contribute(model.contribution())
-                .contribute(persistenceContribution())
-                .contribute(conversationContribution())
+                .model(model.contribution())
+                .persistence(persistenceContribution())
+                .conversation(conversationContribution())
                 .modelImageResolver(modelImageResolver)
                 .tools(tools);
         if (defaultInstructions) {
@@ -301,14 +290,6 @@ public final class HaifaAgentStarterBuilder {
                 false,
                 4 * 1024 * 1024);
         ModelContribution contribution = new ModelContribution(
-                metadata(
-                        MODEL_COORDINATE,
-                        ProductCapabilities.MODEL,
-                        snapshot.configurationDigest(),
-                        ProductProviderSuitability.PRODUCTION,
-                        isVision
-                                ? "DeepSeek Vision with Thinking disabled"
-                                : "DeepSeek V4 Flash with Thinking disabled"),
                 Map.of(ModelAdapterCoordinate.from(snapshot), model),
                 snapshot,
                 Map.of(snapshot.modelId().value(), snapshot));
@@ -333,34 +314,11 @@ public final class HaifaAgentStarterBuilder {
             }
             snapshots.put(modelId, registration.snapshot());
         });
-        ModelContribution contribution = new ModelContribution(
-                metadata(
-                        MODEL_COORDINATE,
-                        ProductCapabilities.MODEL,
-                        selected.snapshot().configurationDigest(),
-                        ProductProviderSuitability.DEVELOPMENT,
-                        "Explicit Starter model catalog"),
-                adapters,
-                selected.snapshot(),
-                snapshots);
+        ModelContribution contribution = new ModelContribution(adapters, selected.snapshot(), snapshots);
         return new ModelBundle(contribution, selected.snapshot(), Map.copyOf(snapshots));
     }
 
     private ProductProfile profile(ResolvedModelSnapshot snapshot) {
-        Map<io.haifa.agent.sdk.product.ProductCapabilityId, ProductCapabilityRequirement> requirements = Map.of(
-                ProductCapabilities.MODEL,
-                ProductCapabilityRequirement.required(
-                        ProductCapabilities.MODEL, Set.of(MODEL_COORDINATE), ProductProviderSuitability.DEVELOPMENT),
-                ProductCapabilities.PERSISTENCE,
-                ProductCapabilityRequirement.required(
-                        ProductCapabilities.PERSISTENCE,
-                        Set.of(PERSISTENCE_COORDINATE),
-                        ProductProviderSuitability.DEVELOPMENT),
-                ProductCapabilities.CONVERSATION,
-                ProductCapabilityRequirement.required(
-                        ProductCapabilities.CONVERSATION,
-                        Set.of(CONVERSATION_COORDINATE),
-                        ProductProviderSuitability.DEVELOPMENT));
         return ProductProfile.create(
                 new ProductId("haifa-sdk-starter"),
                 new ProductVersion(VERSION),
@@ -371,7 +329,6 @@ public final class HaifaAgentStarterBuilder {
                 instructions,
                 new AgentRunBudget(65_536, 8_192, 65_536, 16, 16, 0, "USD", 100),
                 new AgentRunLimits(16, 0, 1, 120_000, 60_000, 16, 16, 0),
-                requirements,
                 Set.of(),
                 Set.of());
     }
@@ -389,31 +346,12 @@ public final class HaifaAgentStarterBuilder {
                 Map.of());
     }
 
-    private static io.haifa.agent.sdk.product.ProductContribution persistenceContribution() {
-        return SdkContributions.inMemoryPersistence(metadata(
-                PERSISTENCE_COORDINATE,
-                ProductCapabilities.PERSISTENCE,
-                SdkConfigurationDigest.sha256("starter-persistence-memory-v1"),
-                ProductProviderSuitability.DEVELOPMENT,
-                "Process-local Runtime persistence"));
+    private static SdkPersistenceContribution persistenceContribution() {
+        return SdkContributions.inMemoryPersistence();
     }
 
     private static InMemoryConversationContribution conversationContribution() {
-        return new InMemoryConversationContribution(metadata(
-                CONVERSATION_COORDINATE,
-                ProductCapabilities.CONVERSATION,
-                SdkConfigurationDigest.sha256("starter-conversation-memory-v1"),
-                ProductProviderSuitability.DEVELOPMENT,
-                "Process-local Conversation storage"));
-    }
-
-    private static SdkContributionMetadata metadata(
-            ProductContributionCoordinate coordinate,
-            io.haifa.agent.sdk.product.ProductCapabilityId capability,
-            String digest,
-            ProductProviderSuitability suitability,
-            String summary) {
-        return new SdkContributionMetadata(coordinate, capability, digest, suitability, summary);
+        return new InMemoryConversationContribution();
     }
 
     private static String requireText(String value, String field) {
