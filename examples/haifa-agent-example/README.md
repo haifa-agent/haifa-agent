@@ -30,7 +30,7 @@ Install the public artifacts from the repository root, then build and verify thi
 ```bash
 # 1. From repository root: install public artifacts
 ./mvnw \
-  -pl :haifa-agent-bom,:haifa-agent-spring-bom,:haifa-agent-sdk-starter,:haifa-agent-spring-boot-starter \
+  -pl :haifa-agent-bom,:haifa-agent-spring-bom,:haifa-agent-sdk,:haifa-agent-sdk-starter,:haifa-agent-spring-boot-starter \
   -am -DskipTests install
 
 # 2. In examples directory: clean and verify offline

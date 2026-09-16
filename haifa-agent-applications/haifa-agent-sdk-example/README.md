@@ -22,7 +22,7 @@ after Runtime validates the frozen schema and persists the terminal result; it d
 unvalidated JSON string in the SDK and exposes no typed partial stream.
 
 `SqliteDurableReferenceAssemblyExample` is a single-process durable reference assembly: applications
-assemble the existing SQLite contributions and provide their own `HaifaAgent`. This application
+assemble the existing SQLite components and provide their own `HaifaAgent`. This application
 example module is not a published SDK artifact, its classes are not Stable API, and application code
 must not depend on the example classes. Haifa does not publish a provider-specific production Starter.
 
