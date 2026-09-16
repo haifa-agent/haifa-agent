@@ -917,6 +917,75 @@ class OpenAiCompatibleChatModelTest {
                 });
     }
 
+    @Test
+    void emitsPrunedToolResultAsPlainTextNoticeWithoutStructuredData() throws Exception {
+        response.set(
+                Response.json(
+                        200,
+                        """
+                {"id":"resp-pruned","model":"deepseek-v4-pro",
+                 "choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"understood"}}],
+                 "usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12}}
+                """));
+
+        ProviderToolCallCorrelationId corrId = new ProviderToolCallCorrelationId("call-read-1");
+        String prunedNotice =
+                "File content [Historical large pure-read payload pruned; rerun to inspect current state.]";
+        ModelMessage toolMessage = ModelMessage.tool(corrId, prunedNotice, Map.of(), false);
+
+        AgentChatRequest req = request(
+                List.of(
+                        ModelMessage.text(ModelMessageRole.USER, "read file"),
+                        ModelMessage.assistant(
+                                "", List.of(new ModelToolCall(corrId, "file_read", Map.of("path", "file.txt")))),
+                        toolMessage),
+                List.of());
+
+        model().invoke(req);
+
+        JsonNode sent = json.readTree(requestBody.get());
+        JsonNode messagesNode = sent.path("messages");
+        assertThat(messagesNode).hasSize(3);
+
+        JsonNode toolNode = messagesNode.get(2);
+        assertThat(toolNode.path("role").asText()).isEqualTo("tool");
+        assertThat(toolNode.path("tool_call_id").asText()).isEqualTo("call-read-1");
+        assertThat(toolNode.path("content").asText()).isEqualTo(prunedNotice);
+        assertThat(toolNode.path("content").asText()).doesNotContain("structuredData");
+    }
+
+    @Test
+    void emitsTruncatedToolCallArgumentsOnTheWire() throws Exception {
+        response.set(
+                Response.json(
+                        200,
+                        """
+                {"id":"resp-truncated","model":"deepseek-v4-pro",
+                 "choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"done"}}],
+                 "usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12}}
+                """));
+
+        ProviderToolCallCorrelationId corrId = new ProviderToolCallCorrelationId("call-write-1");
+        String placeholder = "[Code content truncated (5000 chars); file written to src/Foo.java]";
+        ModelToolCall toolCall = new ModelToolCall(
+                corrId, "write_to_file", Map.of("targetFile", "src/Foo.java", "codeContent", placeholder));
+
+        AgentChatRequest req = request(
+                List.of(
+                        ModelMessage.text(ModelMessageRole.USER, "write file"),
+                        ModelMessage.assistant("", List.of(toolCall))),
+                List.of());
+
+        model().invoke(req);
+
+        JsonNode sent = json.readTree(requestBody.get());
+        JsonNode toolCallNode = sent.path("messages").get(1).path("tool_calls").get(0);
+        String argumentsStr = toolCallNode.path("function").path("arguments").asText();
+        JsonNode parsedArgs = json.readTree(argumentsStr);
+        assertThat(parsedArgs.path("codeContent").asText()).isEqualTo(placeholder);
+        assertThat(parsedArgs.path("targetFile").asText()).isEqualTo("src/Foo.java");
+    }
+
     private void assertMalformed() {
         assertThatThrownBy(() -> model().invoke(simpleRequest()))
                 .isInstanceOf(ModelInvocationException.class)
