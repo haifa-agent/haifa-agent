@@ -30,9 +30,12 @@ import io.haifa.agent.core.message.MessageRole;
 import io.haifa.agent.core.message.MessageStatus;
 import io.haifa.agent.core.message.MessageVisibility;
 import io.haifa.agent.core.run.AgentRun;
+import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.runtime.core.control.CancellationObservedException;
 import io.haifa.agent.runtime.core.model.FrozenModelBinding;
+import io.haifa.agent.runtime.core.model.ModelMessageProjectionPlan;
+import io.haifa.agent.runtime.core.model.ModelMessageProjectionPlanner;
 import io.haifa.agent.runtime.core.storage.OptimisticLockException;
 import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
@@ -40,6 +43,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.LinkedHashSet;
@@ -50,6 +54,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -70,6 +76,7 @@ public final class SemanticCompactionCoordinator {
     private final IdentifierGenerator ids;
     private final TimeProvider time;
     private final RuntimeEventAppender events;
+    private final ModelMessageProjectionPlanner projectionPlanner;
 
     public SemanticCompactionCoordinator(
             RuntimeStateRepository state,
@@ -81,6 +88,30 @@ public final class SemanticCompactionCoordinator {
             IdentifierGenerator ids,
             TimeProvider time,
             RuntimeEventAppender events) {
+        this(
+                state,
+                summaries,
+                invoker,
+                triggerEvaluator,
+                policy,
+                deterministicCompressor,
+                ids,
+                time,
+                events,
+                new ModelMessageProjectionPlanner(state));
+    }
+
+    public SemanticCompactionCoordinator(
+            RuntimeStateRepository state,
+            ConversationSummaryRepository summaries,
+            SummaryModelInvoker invoker,
+            CompactionTriggerEvaluator triggerEvaluator,
+            CompressionPolicy policy,
+            ContextCompressor deterministicCompressor,
+            IdentifierGenerator ids,
+            TimeProvider time,
+            RuntimeEventAppender events,
+            ModelMessageProjectionPlanner projectionPlanner) {
         this.state = Objects.requireNonNull(state, "state must not be null");
         this.summaries = Objects.requireNonNull(summaries, "summaries must not be null");
         this.invoker = Objects.requireNonNull(invoker, "invoker must not be null");
@@ -91,6 +122,7 @@ public final class SemanticCompactionCoordinator {
         this.ids = Objects.requireNonNull(ids, "ids must not be null");
         this.time = Objects.requireNonNull(time, "time must not be null");
         this.events = Objects.requireNonNull(events, "events must not be null");
+        this.projectionPlanner = Objects.requireNonNull(projectionPlanner, "projectionPlanner must not be null");
     }
 
     /**
@@ -118,8 +150,26 @@ public final class SemanticCompactionCoordinator {
         Optional<ConversationSummary> previousSummary = snapshot.latestValid();
         long expectedPreviousVersion = snapshot.latestVersion();
         List<List<AgentMessage>> activeGroups = groupsAfterSummary(visible, previousSummary);
+
+        Map<io.haifa.agent.core.run.AgentRunId, Map<ToolCallId, ToolCall>> toolCallsByRun = new HashMap<>();
+        Function<ToolCallId, ToolCall> resolver = callId -> {
+            for (AgentMessage message : visible) {
+                io.haifa.agent.core.run.AgentRunId messageRunId =
+                        message.runId().orElse(run.id());
+                Map<ToolCallId, ToolCall> runCalls =
+                        toolCallsByRun.computeIfAbsent(messageRunId, rId -> state.toolCalls(rId).stream()
+                                .collect(Collectors.toMap(ToolCall::id, Function.identity(), (a, b) -> a)));
+                ToolCall call = runCalls.get(callId);
+                if (call != null) {
+                    return call;
+                }
+            }
+            return null;
+        };
+
         long currentTokens =
-                previousSummary.map(ConversationSummary::estimatedTokens).orElse(0) + estimateGroups(activeGroups);
+                previousSummary.map(ConversationSummary::estimatedTokens).orElse(0)
+                        + estimateGroups(activeGroups, resolver);
 
         long contextWindow = binding.configuration().model().contextWindow();
         long outputReserve = binding.configuration().model().maxOutputTokens();
@@ -140,6 +190,31 @@ public final class SemanticCompactionCoordinator {
         CompactionTriggerDecision decision = triggerEvaluator.evaluate(
                 contextWindow, outputReserve, fixedPrefix, otherSources, currentTokens, activeGroups.size());
         if (!decision.shouldCompact()) {
+            return;
+        }
+
+        long softLimit = decision.budgetBreakdown().softLimitTokens();
+        ModelMessageProjectionPlan projectionPlan = projectionPlanner.plan(
+                visible, resolver, ModelMessageProjectionPlanner.DEFAULT_PURE_READ_TOOLS, softLimit);
+        if (projectionPlan.bypassCompactionRecommended()) {
+            log.info(
+                    "Bypassing semantic compaction for session {} due to projection pruning: saved {} tokens, projected {} < softLimit {}",
+                    run.sessionId().value(),
+                    projectionPlan.tokensSavedByPruning(),
+                    projectionPlan.projectedActiveTokens(),
+                    softLimit);
+            events.append(
+                    run.id(),
+                    "session.compaction-bypassed",
+                    Map.of(
+                            "rawActiveTokens", projectionPlan.rawActiveTokens(),
+                            "projectedActiveTokens", projectionPlan.projectedActiveTokens(),
+                            "tokensSaved", projectionPlan.tokensSavedByPruning(),
+                            "prunedToolResultsCount",
+                                    projectionPlan.prunedToolResults().size(),
+                            "truncatedToolCallsCount",
+                                    projectionPlan.truncatedToolCalls().size()),
+                    time.now());
             return;
         }
 
@@ -858,29 +933,51 @@ public final class SemanticCompactionCoordinator {
     }
 
     private long estimateGroups(List<List<AgentMessage>> groups) {
+        return estimateGroups(groups, callId -> null);
+    }
+
+    private long estimateGroups(List<List<AgentMessage>> groups, Function<ToolCallId, ToolCall> resolver) {
         long total = 0;
         for (List<AgentMessage> group : groups) {
-            total += estimateGroup(group);
+            total += estimateGroup(group, resolver);
         }
         return total;
     }
 
     private long estimateGroup(List<AgentMessage> group) {
+        return estimateGroup(group, callId -> null);
+    }
+
+    private long estimateGroup(List<AgentMessage> group, Function<ToolCallId, ToolCall> resolver) {
         long total = 0;
         for (AgentMessage message : group) {
             for (var part : message.contents()) {
                 if (part instanceof io.haifa.agent.core.content.TextPart text) {
                     total += HeuristicTokenEstimator.tokens(text.text());
                 } else if (part instanceof ToolCallPart call) {
-                    total += HeuristicTokenEstimator.tokens(call.toolName())
-                            + HeuristicTokenEstimator.tokens(
-                                    call.providerCorrelationId().value())
-                            + 16;
+                    ToolCall authoritative = resolver != null ? resolver.apply(call.toolCallId()) : null;
+                    if (authoritative != null) {
+                        total += HeuristicTokenEstimator.tokens(authoritative.toolName())
+                                + HeuristicTokenEstimator.tokens(
+                                        authoritative.arguments().values());
+                    } else {
+                        total += HeuristicTokenEstimator.tokens(call.toolName())
+                                + HeuristicTokenEstimator.tokens(
+                                        call.providerCorrelationId().value())
+                                + 16;
+                    }
                 } else if (part instanceof ToolResultPart res) {
-                    total += HeuristicTokenEstimator.tokens(res.summary())
-                            + HeuristicTokenEstimator.tokens(
-                                    res.providerCorrelationId().value())
-                            + 16;
+                    ToolCall authoritative = resolver != null ? resolver.apply(res.toolCallId()) : null;
+                    if (authoritative != null && authoritative.result().isPresent()) {
+                        var tr = authoritative.result().get();
+                        total += HeuristicTokenEstimator.tokens(tr.summary())
+                                + HeuristicTokenEstimator.tokens(tr.structuredData());
+                    } else {
+                        total += HeuristicTokenEstimator.tokens(res.summary())
+                                + HeuristicTokenEstimator.tokens(
+                                        res.providerCorrelationId().value())
+                                + 16;
+                    }
                 }
             }
         }

@@ -19,6 +19,8 @@ import io.haifa.agent.context.item.ContextItemType;
 import io.haifa.agent.context.item.ConversationSummaryContent;
 import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.content.TextPart;
+import io.haifa.agent.core.content.ToolCallPart;
+import io.haifa.agent.core.content.ToolResultPart;
 import io.haifa.agent.core.message.AgentMessage;
 import io.haifa.agent.core.message.AgentMessageId;
 import io.haifa.agent.core.message.MessageCursor;
@@ -28,6 +30,8 @@ import io.haifa.agent.core.message.MessageVisibility;
 import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.core.tool.ToolCall;
+import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.AgentChatResponse;
@@ -410,6 +414,125 @@ class SemanticCompactionCoordinatorTest {
         assertThat(latestOpt).isPresent();
         assertThat(latestOpt.get().semanticSummary()).isPresent();
         assertThat(latestOpt.get().semanticSummary().get().schemaVersion()).isEqualTo("v1");
+    }
+
+    @Test
+    @DisplayName(
+            "evaluateAndCompactIfNeeded bypasses semantic compaction when projection pruning drops tokens below soft limit")
+    void testAutomaticCompactionBypassedWhenProjectionPruningDropsTokensBelowSoftLimit() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        RunControlRegistry controls = new RunControlRegistry();
+        AtomicInteger idGen = new AtomicInteger();
+        IdentifierGenerator ids = () -> "id-" + idGen.incrementAndGet();
+        TimeProvider time = () -> NOW;
+
+        CompressionPolicy policy =
+                CompressionPolicy.defaults().withSemanticCompactionEnabled(true).withTailTokenBounds(5, 50);
+
+        RunAwaiter awaiter = new RunAwaiter();
+        RunTransitionCoordinator transitions =
+                new RunTransitionCoordinator(store, store, store, store, ids, time, awaiter, store);
+
+        SummaryModelInvoker invoker = new SummaryModelInvoker(transitions, controls, ids, time, policy);
+        CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(policy);
+        DeterministicContextCompressor deterministic = new DeterministicContextCompressor();
+
+        SemanticCompactionCoordinator coordinator = new SemanticCompactionCoordinator(
+                store, store, invoker, evaluator, policy, deterministic, ids, time, store);
+
+        AgentRun run = createAndSaveRun(store);
+        AgentSessionId session = run.sessionId();
+
+        // 4 turns of tool interactions:
+        // Turn 1: file_read with large structured data (50,000 chars)
+        // Turn 2: file_read with large structured data (50,000 chars)
+        // Turn 3: small assistant + tool turn (tail protected)
+        // Turn 4: small assistant + tool turn (tail protected)
+        for (int i = 1; i <= 4; i++) {
+            ToolCallId callId = new ToolCallId("bypass-call-" + i);
+            io.haifa.agent.core.tool.ProviderToolCallCorrelationId corrId =
+                    new io.haifa.agent.core.tool.ProviderToolCallCorrelationId("bypass-corr-" + i);
+            Map<String, Object> data =
+                    (i <= 2) ? Map.of("largeJson", "a".repeat(50_000)) : Map.of("result", "small " + i);
+            ToolCall call = new ToolCall(
+                    callId,
+                    run.id(),
+                    new io.haifa.agent.core.step.AgentStepId("step-" + i),
+                    corrId,
+                    new io.haifa.agent.core.tool.RuntimeIdempotencyKey("idemp-" + i),
+                    "file_read",
+                    "1.0.0",
+                    new io.haifa.agent.core.tool.ToolArguments(
+                            "input.schema", "1.0.0", Map.of("path", "file" + i + ".txt")),
+                    NOW.plusSeconds(i * 10));
+            call.beginValidation();
+            call.beginPolicyCheck();
+            call.start(NOW.plusSeconds(i * 10 + 1));
+            call.complete(
+                    new io.haifa.agent.core.tool.ToolResult(true, "Read file " + i, data, List.of(), List.of(), false),
+                    NOW.plusSeconds(i * 10 + 2));
+            store.appendToolCall(call);
+
+            store.appendSessionMessage(new SessionMessageDraft(
+                    new AgentMessageId("m-a-" + i),
+                    session,
+                    Optional.of(run.id()),
+                    Optional.empty(),
+                    MessageRole.ASSISTANT,
+                    MessageStatus.COMPLETED,
+                    MessageVisibility.AGENT_VISIBLE,
+                    List.of(new ToolCallPart(callId, corrId, "file_read", "1.0.0")),
+                    Map.of(),
+                    NOW.plusSeconds(i * 10 + 1)));
+
+            store.appendSessionMessage(new SessionMessageDraft(
+                    new AgentMessageId("m-t-" + i),
+                    session,
+                    Optional.of(run.id()),
+                    Optional.empty(),
+                    MessageRole.TOOL,
+                    MessageStatus.COMPLETED,
+                    MessageVisibility.AGENT_VISIBLE,
+                    List.of(new ToolResultPart(callId, corrId, "Read file " + i)),
+                    Map.of(),
+                    NOW.plusSeconds(i * 10 + 2)));
+        }
+
+        AtomicInteger callCount = new AtomicInteger();
+        AgentChatModel chatModel = request -> {
+            callCount.incrementAndGet();
+            return new AgentChatResponse(
+                    "res-1",
+                    "deepseek-v4-pro",
+                    VALID_SUMMARY_JSON,
+                    List.of(),
+                    ModelFinishReason.STOP,
+                    ModelUsage.unpriced(50, 20),
+                    "",
+                    Map.of());
+        };
+
+        FrozenModelBinding binding = createBindingWithContextWindow(store, run, chatModel, 40_000);
+
+        // Act: Evaluate and compact if needed
+        coordinator.evaluateAndCompactIfNeeded(run, 1, binding);
+
+        // Assert:
+        // 1. Zero compaction calls were made to LLM
+        assertThat(callCount.get()).isZero();
+
+        // 2. No conversation summary was committed
+        assertThat(store.latestValid(session)).isEmpty();
+
+        // 3. Telemetry event "session.compaction-bypassed" was published
+        var events = store.eventsFor(run.id());
+        var bypassEvents = events.stream()
+                .filter(e -> "session.compaction-bypassed".equals(e.type()))
+                .toList();
+        assertThat(bypassEvents).hasSize(1);
+        var event = bypassEvents.getFirst();
+        assertThat(event.data()).containsKeys("rawActiveTokens", "projectedActiveTokens", "tokensSaved");
+        assertThat(((Number) event.data().get("tokensSaved")).longValue()).isGreaterThan(20_000L);
     }
 
     @Test
