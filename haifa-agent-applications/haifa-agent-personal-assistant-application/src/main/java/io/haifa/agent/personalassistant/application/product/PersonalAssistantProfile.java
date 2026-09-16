@@ -58,13 +58,7 @@ public final class PersonalAssistantProfile {
         required(requirements, ProductCapabilities.POLICY, coordinates.policy());
         required(requirements, ProductCapabilities.TOOL, coordinates.tool());
         required(requirements, ProductCapabilities.SKILL, coordinates.skill());
-        required(requirements, ProductCapabilities.MCP, coordinates.mcp());
         required(requirements, ProductCapabilities.ARTIFACT, coordinates.artifact());
-        none(requirements, ProductCapabilities.PROJECT);
-        none(requirements, ProductCapabilities.WORKSPACE);
-        none(requirements, ProductCapabilities.GIT);
-        required(requirements, ProductCapabilities.SHELL, coordinates.shell());
-        required(requirements, ProductCapabilities.EXECUTION, coordinates.execution());
         required(requirements, ProductCapabilities.APPROVAL, coordinates.approval());
         required(requirements, ProductCapabilities.CREDENTIAL, coordinates.credential());
 
@@ -113,8 +107,7 @@ public final class PersonalAssistantProfile {
                 policies,
                 requirements,
                 allowedTools,
-                skills,
-                Set.of());
+                skills);
     }
 
     private static void required(
@@ -126,10 +119,6 @@ public final class PersonalAssistantProfile {
                 ProductCapabilityRequirement.required(id, Set.of(coordinate), ProductProviderSuitability.DEVELOPMENT));
     }
 
-    private static void none(Map<ProductCapabilityId, ProductCapabilityRequirement> target, ProductCapabilityId id) {
-        target.put(id, ProductCapabilityRequirement.none(id));
-    }
-
     public record ContributionCoordinates(
             ProductContributionCoordinate model,
             ProductContributionCoordinate persistence,
@@ -138,10 +127,7 @@ public final class PersonalAssistantProfile {
             ProductContributionCoordinate policy,
             ProductContributionCoordinate tool,
             ProductContributionCoordinate skill,
-            ProductContributionCoordinate mcp,
             ProductContributionCoordinate credential,
-            ProductContributionCoordinate execution,
-            ProductContributionCoordinate shell,
             ProductContributionCoordinate approval,
             ProductContributionCoordinate artifact) {}
 }

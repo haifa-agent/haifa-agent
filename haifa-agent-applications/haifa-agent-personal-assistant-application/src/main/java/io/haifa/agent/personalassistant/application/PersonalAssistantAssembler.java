@@ -84,10 +84,7 @@ public final class PersonalAssistantAssembler {
                     dependencies.policy().coordinate(),
                     tools.tool().coordinate(),
                     tools.skill().coordinate(),
-                    tools.mcp().coordinate(),
                     dependencies.web().credential().coordinate(),
-                    dependencies.execution().execution().coordinate(),
-                    dependencies.execution().shell().coordinate(),
                     dependencies.execution().approval().coordinate(),
                     dependencies.artifact().coordinate());
             var profile = PersonalAssistantProfile.create(
@@ -241,10 +238,7 @@ public final class PersonalAssistantAssembler {
                     .contribute(dependencies.artifact())
                     .contribute(tools.tool())
                     .contribute(tools.skill())
-                    .contribute(tools.mcp())
                     .contribute(dependencies.web().credential())
-                    .contribute(dependencies.execution().execution())
-                    .contribute(dependencies.execution().shell())
                     .contribute(dependencies.execution().approval())
                     .build();
             return new PersonalAssistantApplication(
