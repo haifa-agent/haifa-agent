@@ -28,7 +28,7 @@ public class HaifaAgentAutoConfigurationTest {
             assertThat(context).hasSingleBean(HaifaAgent.class);
             var agent = context.getBean(HaifaAgent.class);
             created.set(agent);
-            assertThat(agent.profile().runProfileId()).isEqualTo("deepseek-v4-flash");
+            assertThat(agent.profile().defaultRunProfile().id()).isEqualTo("deepseek-v4-flash");
         });
 
         assertThatThrownBy(() -> created.get().runs())

@@ -59,11 +59,13 @@ public class ProductIsolationAndLifecycleTest {
 
     @Test
     void artifactComponentRequiresEnabledArtifactPolicy() {
-        var artifact = new ArtifactPlatformContribution(new ArtifactService(
-                new InMemoryArtifactStore(),
-                new InMemoryArtifactPayloadStore(),
-                () -> "artifact-test-id",
-                () -> Instant.parse("2026-07-28T00:00:00Z")));
+        var artifact = new ArtifactPlatformContribution(
+                new ArtifactService(
+                        new InMemoryArtifactStore(),
+                        new InMemoryArtifactPayloadStore(),
+                        () -> "artifact-test-id",
+                        () -> Instant.parse("2026-07-28T00:00:00Z")),
+                io.haifa.agent.sdk.product.ProductArtifactPolicy.disabled());
         var profile = SdkTestFixtures.profile("artifact-disabled");
 
         assertThatThrownBy(() -> HaifaAgents.builder(profile)

@@ -10,6 +10,8 @@ import io.haifa.agent.memory.core.DefaultMemoryService;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationProtector;
 import io.haifa.agent.sdk.contribution.ArtifactPlatformContribution;
 import io.haifa.agent.sdk.contribution.MemoryPlatformContribution;
+import io.haifa.agent.sdk.product.ProductArtifactPolicy;
+import io.haifa.agent.sdk.product.ProductMemoryPolicy;
 import java.time.Clock;
 import java.util.List;
 import java.util.Objects;
@@ -29,7 +31,13 @@ public record SqliteSdkProductContributions(
     }
 
     public static SqliteSdkProductContributions initialize(
-            SqliteStoreConfiguration configuration, Clock clock, ModelContinuationProtector protector) {
+            SqliteStoreConfiguration configuration,
+            Clock clock,
+            ModelContinuationProtector protector,
+            ProductMemoryPolicy memoryPolicy,
+            ProductArtifactPolicy artifactPolicy) {
+        Objects.requireNonNull(memoryPolicy, "memoryPolicy must not be null");
+        Objects.requireNonNull(artifactPolicy, "artifactPolicy must not be null");
         SqliteStoreFoundation foundation = SqliteStoreFoundation.initialize(configuration, clock);
         try {
             SqliteMemoryStore store =
@@ -60,12 +68,14 @@ public record SqliteSdkProductContributions(
             return new SqliteSdkProductContributions(
                     new SqliteSdkPersistenceContribution(foundation, protector),
                     new SqliteSdkConversationContribution(foundation),
-                    new MemoryPlatformContribution(service, retriever),
-                    new ArtifactPlatformContribution(new ArtifactService(
-                            foundation.artifacts(),
-                            foundation.artifactPayloads(),
-                            new UuidV7IdentifierGenerator(),
-                            clock::instant)));
+                    new MemoryPlatformContribution(service, retriever, memoryPolicy),
+                    new ArtifactPlatformContribution(
+                            new ArtifactService(
+                                    foundation.artifacts(),
+                                    foundation.artifactPayloads(),
+                                    new UuidV7IdentifierGenerator(),
+                                    clock::instant),
+                            artifactPolicy));
         } catch (RuntimeException | Error exception) {
             foundation.close();
             throw exception;
