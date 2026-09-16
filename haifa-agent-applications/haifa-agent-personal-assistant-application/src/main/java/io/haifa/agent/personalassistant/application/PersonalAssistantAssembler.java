@@ -260,7 +260,8 @@ public final class PersonalAssistantAssembler {
             io.haifa.agent.sdk.product.ProductProfile profile, Dependencies dependencies, PersonalToolPlatform tools) {
         List<String> fields = new java.util.ArrayList<>();
         fields.add("personal-assistant-product-v1");
-        fields.add(profile.configurationDigest());
+        fields.add(profile.productId().value());
+        fields.add(profile.productVersion().value());
         io.haifa.agent.model.api.ResolvedModelSnapshot model =
                 dependencies.model().snapshot();
         fields.add("model.id");
@@ -634,11 +635,13 @@ public final class PersonalAssistantAssembler {
         }
 
         private static ArtifactPlatformContribution defaultArtifact(Clock clock) {
-            return new ArtifactPlatformContribution(new ArtifactService(
-                    new InMemoryArtifactStore(),
-                    new InMemoryArtifactPayloadStore(),
-                    new UuidV7IdentifierGenerator(),
-                    clock::instant));
+            return new ArtifactPlatformContribution(
+                    new ArtifactService(
+                            new InMemoryArtifactStore(),
+                            new InMemoryArtifactPayloadStore(),
+                            new UuidV7IdentifierGenerator(),
+                            clock::instant),
+                    io.haifa.agent.personalassistant.application.product.PersonalAssistantProfile.ARTIFACT_POLICY);
         }
     }
 }

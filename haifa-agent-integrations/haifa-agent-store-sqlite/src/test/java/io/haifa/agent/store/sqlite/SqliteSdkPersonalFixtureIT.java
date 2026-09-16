@@ -133,7 +133,6 @@ class SqliteSdkPersonalFixtureIT {
                 new AesGcmModelContinuationProtector(new SecretKeySpec(new byte[32], "AES"), new SecureRandom());
         AtomicInteger ids = new AtomicInteger();
         IdentifierGenerator identifiers = () -> "personal-sqlite-" + ids.incrementAndGet();
-        String assemblyDigest;
         String sessionId;
 
         SqliteSdkContributions firstStore = sqliteContributions(directory, protector);
@@ -144,8 +143,6 @@ class SqliteSdkPersonalFixtureIT {
                 .identifierGenerator(identifiers)
                 .timeProvider(() -> SqliteTestSupport.NOW)
                 .build()) {
-            assemblyDigest = agent.profile().configurationDigest();
-
             var started =
                     agent.conversations().start(new StartConversationCommand("start-1", "Personal chat", "hello"));
             agent.runs().await(started.activeRunId().orElseThrow());
@@ -170,7 +167,6 @@ class SqliteSdkPersonalFixtureIT {
                 .identifierGenerator(identifiers)
                 .timeProvider(() -> SqliteTestSupport.NOW)
                 .build()) {
-            assertThat(reopened.profile().configurationDigest()).isEqualTo(assemblyDigest);
             var page = reopened.conversations().list(ConversationQuery.active(10));
             assertThat(page.items()).singleElement().satisfies(conversation -> {
                 assertThat(conversation.sessionId().value()).isEqualTo(sessionId);
@@ -275,9 +271,8 @@ class SqliteSdkPersonalFixtureIT {
                 new ProductVersion("1.0.0"),
                 new AgentDefinitionId("personal-assistant-agent"),
                 new AgentDefinitionVersion(1, 0, 0),
-                "personal-chat",
-                "1.0.0",
                 "Act as a careful personal assistant.",
+                new io.haifa.agent.sdk.product.ProductRunProfileRef("personal-chat", "1.0.0"),
                 new AgentRunBudget(10_000, 10_000, 10_000, 8, 8, 0, "USD", 1_000),
                 new AgentRunLimits(8, 0, 1, 30_000, 30_000),
                 Set.of(),
@@ -383,7 +378,11 @@ class SqliteSdkPersonalFixtureIT {
     private static SqliteSdkProductContributions sqliteProductContributions(
             Path directory, AesGcmModelContinuationProtector protector) {
         return SqliteSdkProductContributions.initialize(
-                SqliteTestSupport.configuration(directory), SqliteTestSupport.CLOCK, protector);
+                SqliteTestSupport.configuration(directory),
+                SqliteTestSupport.CLOCK,
+                protector,
+                io.haifa.agent.sdk.product.ProductMemoryPolicy.safeDefault(),
+                io.haifa.agent.sdk.product.ProductArtifactPolicy.disabled());
     }
 
     private static SdkCaller memoryReviewer() {

@@ -57,7 +57,7 @@ class ConversationReconciliationTest {
                         List.of()))
                 .profiles((id, overrides) -> new ResolvedProfile(
                         id,
-                        profile.runProfileVersion(),
+                        profile.defaultRunProfile().version(),
                         AgentRunType.CHAT,
                         profile.budget(),
                         profile.limits(),
@@ -101,7 +101,7 @@ class ConversationReconciliationTest {
                 dispatchKey,
                 profile.definitionId(),
                 Optional.of(profile.definitionVersion()),
-                profile.runProfileId(),
+                profile.defaultRunProfile().id(),
                 sessionId,
                 Optional.empty(),
                 "message",

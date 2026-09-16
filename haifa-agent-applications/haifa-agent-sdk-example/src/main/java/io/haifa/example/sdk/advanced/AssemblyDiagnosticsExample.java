@@ -11,7 +11,9 @@ public final class AssemblyDiagnosticsExample {
             var profile = agent.profile();
             System.out.printf(
                     "product=%s agent=%s runProfile=%s%n",
-                    profile.productId().value(), agent.metadata().name(), profile.runProfileId());
+                    profile.productId().value(),
+                    agent.metadata().name(),
+                    profile.defaultRunProfile().id());
             agent.diagnostics()
                     .forEach(diagnostic -> System.out.printf(
                             "%s %s %s%n", diagnostic.severity(), diagnostic.code(), diagnostic.safeMessage()));

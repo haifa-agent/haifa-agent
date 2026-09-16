@@ -134,9 +134,10 @@ record、通配泛型、任意 POJO 或非 String Map key。注解式 Tool 不�
 
 ## Product Profile 与显式装配
 
-- `ProductProfile` 冻结产品 ID/版本、Definition/Profile 引用、预算、限制、指令、Policy 及
-  Tool/Skill allowlist，并校验 canonical SHA-256 digest。它不再保存 Capability Requirement 或
-  Contribution coordinate。
+- `ProductProfile` 只冻结产品身份（ID/版本）、Agent Definition 版本、instructions、单一
+  `defaultRunProfile` 引用、预算、限制及 Tool/Skill allowlist。它不再保存 Policy、Capability
+  Requirement、Contribution coordinate 或 product configuration digest；子系统的治理配置由对应
+  typed 组件拥有，Runtime Configuration Snapshot 仍是唯一的执行冻结事实。
 - `HaifaAgentBuilder` 直接接收 typed 组件：`model`、`persistence`、`conversation` 为必需；
   `toolPlatform`、`skillPlatform`、`memory`、`artifacts`、`policy`、`approval`、`credentials` 为可选。
   缺少必需组件时构建以稳定错误码失败，可选组件缺失即对应能力不存在；不再存在 candidate resolution、
@@ -146,7 +147,7 @@ record、通配泛型、任意 POJO 或非 String Map key。注解式 Tool 不�
   完成连接、发现、schema/risk 映射和逐项 allowlist，再作为统一 Tool Catalog 的一部分注入；SDK
   不提供绕过 Tool Pipeline 的 MCP 执行通道。
 - 命名 `ProductRunProfile` 只由可信产品装配注册，ID 冲突和未知 Profile fail closed；模型请求选项
-  只接受非空 JSON-compatible 标量、Map 和 List，并在配置摘要与物理模型调用中保持一致。
+  只接受非空 JSON-compatible 标量、Map 和 List，并在 Run 冻结配置与物理模型调用中保持一致。
 
 ## Conversation 公共边界
 
@@ -195,9 +196,9 @@ Core 或 Provider 异常。同步请求失败属于 `RuntimeApiErrorCode`，异�
 上下文过长、已产生部分输出和取消仍由 Runtime 硬拒绝重试，Provider/Model Binding 也不会隐式切换。
 Run Event Feed 使用 `ModelAttemptLifecycle` 暴露逻辑请求、Attempt、等待和耗尽的脱敏稳定视图。
 
-- `ProductPolicies` 将 Memory 人工审查与查询边界、Artifact 配额/Media Type/本地容量门禁及
-  Execution 主机/网络/并发/超时政策冻结进 Profile canonical digest；本阶段不允许关闭
-  Memory Candidate 人工审查。
+- Memory 治理（人工审查、候选与查询边界）由 `MemoryPlatformContribution` 拥有，Artifact 配额/Media
+  Type/本地容量门禁由 `ArtifactPlatformContribution` 拥有；Execution 约束由 `policy` 规则与 `approval`
+  验证表达。Profile 不再承载这些策略，本阶段仍不允许关闭 Memory Candidate 人工审查。
 - Model、Tool Platform、Skill、Context、Memory、Artifact、Policy、Approval 和 Credential 均通过显式
   typed 组件注册。MCP Tool 由 Integration 直接写入统一 Tool Catalog，不再是独立 SDK
   Capability，也不存在第二条 MCP 执行通道。

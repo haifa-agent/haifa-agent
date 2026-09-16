@@ -53,7 +53,7 @@ public class HaifaAgentStarterBuilderTest {
                 .environment(ignored -> "test-secret")
                 .tool(new WeatherTool())
                 .build()) {
-            assertThat(agent.profile().runProfileId()).isEqualTo("deepseek-v4-flash");
+            assertThat(agent.profile().defaultRunProfile().id()).isEqualTo("deepseek-v4-flash");
             assertThat(agent.profile().instructions()).contains("helpful assistant");
             assertThat(agent.profile().allowedTools()).isEmpty();
             assertThat(agent.diagnostics()).extracting("code").contains("DEFAULT_INSTRUCTIONS_IN_USE");
@@ -72,7 +72,7 @@ public class HaifaAgentStarterBuilderTest {
                 .environment(ignored -> "test-secret")
                 .defaultModel(HaifaAgentStarterBuilder.VISION_MODEL_ID)
                 .build()) {
-            assertThat(agent.profile().runProfileId()).isEqualTo(HaifaAgentStarterBuilder.VISION_MODEL_ID);
+            assertThat(agent.profile().defaultRunProfile().id()).isEqualTo(HaifaAgentStarterBuilder.VISION_MODEL_ID);
         }
     }
 
@@ -234,7 +234,7 @@ public class HaifaAgentStarterBuilderTest {
                 .build();
 
         try (var agent = HaifaAgentStarter.builder().model(configured).build()) {
-            assertThat(agent.profile().runProfileId()).isEqualTo("typed-deepseek");
+            assertThat(agent.profile().defaultRunProfile().id()).isEqualTo("typed-deepseek");
             assertThat(configured.snapshot().invocationOptions()).containsEntry("thinking", "disabled");
             assertThat(configured.snapshot().providerOptions()).containsEntry("haifa_request_timeout_millis", 75_000L);
         }

@@ -22,11 +22,10 @@ import io.haifa.agent.sdk.api.SdkCallerProvider;
 import io.haifa.agent.sdk.contribution.ModelContribution;
 import io.haifa.agent.sdk.contribution.PolicyPlatformContribution;
 import io.haifa.agent.sdk.product.ProductArtifactPolicy;
-import io.haifa.agent.sdk.product.ProductExecutionPolicy;
 import io.haifa.agent.sdk.product.ProductId;
 import io.haifa.agent.sdk.product.ProductMemoryPolicy;
-import io.haifa.agent.sdk.product.ProductPolicies;
 import io.haifa.agent.sdk.product.ProductProfile;
+import io.haifa.agent.sdk.product.ProductRunProfileRef;
 import io.haifa.agent.sdk.product.ProductVersion;
 import io.haifa.agent.store.sqlite.SqliteSdkProductContributions;
 import io.haifa.agent.store.sqlite.SqliteStoreConfiguration;
@@ -52,6 +51,16 @@ import javax.crypto.spec.SecretKeySpec;
  */
 public final class SqliteDurableReferenceAssemblyExample {
     private static final String VERSION = "1.0.0";
+    private static final ProductMemoryPolicy MEMORY_POLICY = ProductMemoryPolicy.safeDefault();
+    private static final ProductArtifactPolicy ARTIFACT_POLICY = new ProductArtifactPolicy(
+            1_048_576,
+            16,
+            16L * 1_048_576,
+            Set.of("application/json", "text/markdown"),
+            false,
+            64L * 1_048_576,
+            128L * 1_048_576,
+            false);
 
     private SqliteDurableReferenceAssemblyExample() {}
 
@@ -66,7 +75,9 @@ public final class SqliteDurableReferenceAssemblyExample {
         var sqlite = SqliteSdkProductContributions.initialize(
                 SqliteStoreConfiguration.defaults(database),
                 Clock.systemUTC(),
-                new AesGcmModelContinuationProtector(continuationKey, new SecureRandom()));
+                new AesGcmModelContinuationProtector(continuationKey, new SecureRandom()),
+                MEMORY_POLICY,
+                ARTIFACT_POLICY);
         PolicyPlatformContribution policy = policyContribution();
         ModelContribution models = new ModelContribution(
                 Map.of(ModelAdapterCoordinate.from(snapshot), model),
@@ -99,34 +110,21 @@ public final class SqliteDurableReferenceAssemblyExample {
                 DeterministicExampleSupport.model("sqlite-answer"),
                 DeterministicExampleSupport.snapshot(),
                 SdkCallerProvider.defaultPublicUser())) {
-            System.out.println(agent.profile().configurationDigest());
+            System.out.println(agent.profile().productId().value() + "@"
+                    + agent.profile().productVersion().value());
         }
     }
 
     private static ProductProfile profile(ResolvedModelSnapshot snapshot) {
-        ProductPolicies policies = new ProductPolicies(
-                ProductMemoryPolicy.safeDefault(),
-                new ProductArtifactPolicy(
-                        1_048_576,
-                        16,
-                        16L * 1_048_576,
-                        Set.of("application/json", "text/markdown"),
-                        false,
-                        64L * 1_048_576,
-                        128L * 1_048_576,
-                        false),
-                ProductExecutionPolicy.disabled());
         return ProductProfile.create(
                 new ProductId("sdk-sqlite-example"),
                 new ProductVersion(VERSION),
                 new AgentDefinitionId("sdk-sqlite-example-agent"),
                 new AgentDefinitionVersion(1, 0, 0),
-                snapshot.modelId().value(),
-                VERSION,
                 "Answer carefully using only explicitly contributed capabilities.",
+                new ProductRunProfileRef(snapshot.modelId().value(), VERSION),
                 new AgentRunBudget(65_536, 8_192, 65_536, 16, 16, 0, "USD", 100),
                 new AgentRunLimits(16, 0, 1, 120_000, 60_000, 16, 16, 0),
-                policies,
                 Set.of(),
                 Set.of());
     }
