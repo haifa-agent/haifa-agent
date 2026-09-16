@@ -128,40 +128,44 @@ public class HaifaAgentFacadeTest {
             var started = agent.conversations().start(new StartConversationCommand("start-1", "First chat", "hello"));
             var duplicate = agent.conversations().start(new StartConversationCommand("start-1", "First chat", "hello"));
 
-            assertThat(duplicate.sessionId()).isEqualTo(started.sessionId());
-            agent.runs().await(started.activeRunId().orElseThrow());
-            var idle = agent.conversations().find(started.sessionId()).orElseThrow();
-            assertThat(idle.activeRunId()).isEmpty();
+            assertThat(duplicate.record().sessionId())
+                    .isEqualTo(started.record().sessionId());
+            agent.runs().await(started.runId());
+            var idle = agent.conversations().find(started.record().sessionId()).orElseThrow();
+            assertThat(idle.status()).isEqualTo(ConversationStatus.ACTIVE);
 
             var submitted = agent.conversations()
                     .submit(new SubmitConversationTurnCommand(idle.sessionId(), idle.revision(), "turn-2", "continue"));
-            agent.runs().await(submitted.activeRunId().orElseThrow());
-            var afterSecondRun = agent.conversations().find(started.sessionId()).orElseThrow();
-            assertThat(agent.conversations().turns(started.sessionId()))
+            agent.runs().await(submitted.runId());
+            var afterSecondRun =
+                    agent.conversations().find(started.record().sessionId()).orElseThrow();
+            assertThat(agent.conversations().turns(started.record().sessionId()))
                     .extracting("text")
                     .containsExactly("hello", "answer-1", "continue", "answer-2");
 
             var renamed = agent.conversations()
                     .rename(new RenameConversationCommand(
-                            started.sessionId(), afterSecondRun.revision(), "rename-1", "Renamed"));
+                            started.record().sessionId(), afterSecondRun.revision(), "rename-1", "Renamed"));
             var renameRetry = agent.conversations()
                     .rename(new RenameConversationCommand(
-                            started.sessionId(), afterSecondRun.revision(), "rename-1", "Renamed"));
+                            started.record().sessionId(), afterSecondRun.revision(), "rename-1", "Renamed"));
             assertThat(renameRetry.displayName()).isEqualTo(renamed.displayName());
 
             var archived = agent.conversations()
-                    .archive(new ChangeConversationStatusCommand(started.sessionId(), renamed.revision(), "archive-1"));
+                    .archive(new ChangeConversationStatusCommand(
+                            started.record().sessionId(), renamed.revision(), "archive-1"));
             var archiveRetry = agent.conversations()
-                    .archive(new ChangeConversationStatusCommand(started.sessionId(), renamed.revision(), "archive-1"));
+                    .archive(new ChangeConversationStatusCommand(
+                            started.record().sessionId(), renamed.revision(), "archive-1"));
             assertThat(archiveRetry.status()).isEqualTo(ConversationStatus.ARCHIVED);
             var restored = agent.conversations()
                     .unarchive(new ChangeConversationStatusCommand(
-                            started.sessionId(), archived.revision(), "unarchive-1"));
+                            started.record().sessionId(), archived.revision(), "unarchive-1"));
 
             assertThat(restored.status()).isEqualTo(ConversationStatus.ACTIVE);
             assertThat(agent.conversations().list(ConversationQuery.active(10)).items())
                     .extracting("sessionId")
-                    .containsExactly(started.sessionId());
+                    .containsExactly(started.record().sessionId());
             assertThat(agent.profile().productId().value()).isEqualTo("personal");
         }
     }
@@ -178,14 +182,16 @@ public class HaifaAgentFacadeTest {
                 .build()) {
             var conversation =
                     agent.conversations().start(new StartConversationCommand("start", "Private", "secret text"));
-            var runId = conversation.activeRunId().orElseThrow();
+            var runId = conversation.runId();
             agent.runs().await(runId);
             caller.set(new SdkCaller(new TenantRef("tenant"), new PrincipalRef("bob", "user")));
 
-            assertThat(agent.conversations().find(conversation.sessionId())).isEmpty();
+            assertThat(agent.conversations().find(conversation.record().sessionId()))
+                    .isEmpty();
             assertThat(agent.conversations().list(ConversationQuery.active(10)).items())
                     .isEmpty();
-            assertThatThrownBy(() -> agent.conversations().turns(conversation.sessionId()))
+            assertThatThrownBy(() ->
+                            agent.conversations().turns(conversation.record().sessionId()))
                     .isInstanceOf(IllegalStateException.class)
                     .hasMessage("CONVERSATION_UNAVAILABLE");
             assertThat(agent.runs().promptDiagnostics(runId).available()).isFalse();
@@ -267,7 +273,7 @@ public class HaifaAgentFacadeTest {
                 .build()) {
             var started = agent.conversations()
                     .start(new StartConversationCommand("start-payment-fail", "Payment test", "hello"));
-            var runId = started.activeRunId().orElseThrow();
+            var runId = started.runId();
             var finalSnapshot = agent.runs().await(runId);
             assertThat(finalSnapshot.status()).isEqualTo(AgentRunStatus.FAILED);
             assertThat(finalSnapshot.error()).isPresent();

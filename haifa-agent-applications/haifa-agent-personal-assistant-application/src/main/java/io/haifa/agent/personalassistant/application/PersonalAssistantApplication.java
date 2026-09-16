@@ -37,6 +37,7 @@ import io.haifa.agent.sdk.api.HaifaAgent;
 import io.haifa.agent.sdk.conversation.ChangeConversationStatusCommand;
 import io.haifa.agent.sdk.conversation.ConversationQuery;
 import io.haifa.agent.sdk.conversation.ConversationRecord;
+import io.haifa.agent.sdk.conversation.ConversationRun;
 import io.haifa.agent.sdk.conversation.ConversationStatus;
 import io.haifa.agent.sdk.conversation.ConversationTurn;
 import io.haifa.agent.sdk.conversation.ConversationTurnQuery;
@@ -234,11 +235,13 @@ public final class PersonalAssistantApplication implements AutoCloseable {
             List<ContentPart> inputs) {
         PersonalModelOption selected = selection.option();
         requireMediaInput(selected, inputs);
-        ConversationRecord started = agent.conversations()
+        ConversationRun started = agent.conversations()
                 .start(new StartConversationCommand(
                         idempotencyKey, displayName, message, Optional.of(selection.runProfileId()), inputs));
         modelPreferences.create(
-                started.sessionId().value(), PersonalModelPreferenceDraft.from(selection), TimePrecision.now(clock));
+                started.record().sessionId().value(),
+                PersonalModelPreferenceDraft.from(selection),
+                TimePrecision.now(clock));
         return conversation(started);
     }
 
@@ -371,13 +374,9 @@ public final class PersonalAssistantApplication implements AutoCloseable {
             String sessionId, long expectedRevision, String idempotencyKey, PersonalModelSelectionRequest request) {
         PersonalResolvedModelSelection selection = models.resolve(request);
         PersonalModelOption selected = selection.option();
-        ConversationRecord conversation = agent.conversations()
+        agent.conversations()
                 .find(new AgentSessionId(sessionId))
                 .orElseThrow(() -> new IllegalStateException("CONVERSATION_UNAVAILABLE"));
-        if (conversation.activeRunId().isPresent()
-                || conversation.activeDispatchKey().isPresent()) {
-            throw new IllegalStateException("MODEL_SELECTION_ACTIVE_RUN");
-        }
         PersonalModelPreference changed = modelPreferences.change(
                 sessionId,
                 expectedRevision,
@@ -647,12 +646,20 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     }
 
     private ConversationView conversation(ConversationRecord value) {
+        return conversation(value, Optional.empty());
+    }
+
+    private ConversationView conversation(ConversationRun value) {
+        return conversation(value.record(), Optional.of(value.runId().value()));
+    }
+
+    private ConversationView conversation(ConversationRecord value, Optional<String> activeRunId) {
         ModelSelectionView model = modelSelection(value.sessionId().value());
         return new ConversationView(
                 value.sessionId().value(),
                 value.displayName(),
                 value.status().name(),
-                value.activeRunId().map(AgentRunId::value),
+                activeRunId,
                 value.createdAt(),
                 value.lastActivityAt(),
                 value.revision(),

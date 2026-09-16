@@ -64,7 +64,7 @@ public class MavenConsumerTest {
                 .build()) {
             var conversation = agent.conversations()
                     .start(new StartConversationCommand("external-smoke", "Weather", "Weather in Shanghai?"));
-            var completed = agent.runs().await(conversation.activeRunId().orElseThrow());
+            var completed = agent.runs().await(conversation.runId());
 
             assertEquals("Sunny in Shanghai", completed.output().orElseThrow());
             assertEquals(new WeatherRequest("Shanghai"), toolInput.get());

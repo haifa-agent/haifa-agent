@@ -101,7 +101,7 @@ public class HaifaAgentStarterBuilderTest {
                 HaifaAgentStarter.builder().model(model, testSnapshot()).build()) {
             var conversation =
                     agent.conversations().start(new StartConversationCommand("hello-1", "Hello Haifa", "Say hello."));
-            var completed = agent.runs().await(conversation.activeRunId().orElseThrow());
+            var completed = agent.runs().await(conversation.runId());
 
             assertThat(completed.output()).contains("Hello from Haifa Agent!");
         }
@@ -208,13 +208,8 @@ public class HaifaAgentStarterBuilderTest {
                     .start(new StartConversationCommand(
                             "multi-2", "Selected", "Use the selected model.", Optional.of("second-model")));
 
-            assertThat(agent.runs()
-                            .await(defaultConversation.activeRunId().orElseThrow())
-                            .output())
-                    .contains("first-provider");
-            assertThat(agent.runs()
-                            .await(selectedConversation.activeRunId().orElseThrow())
-                            .output())
+            assertThat(agent.runs().await(defaultConversation.runId()).output()).contains("first-provider");
+            assertThat(agent.runs().await(selectedConversation.runId()).output())
                     .contains("second-provider");
         }
     }
@@ -286,7 +281,7 @@ public class HaifaAgentStarterBuilderTest {
                 .build()) {
             var conversation = agent.conversations()
                     .start(new StartConversationCommand("tool-1", "Weather", "Weather in Shanghai?"));
-            var completed = agent.runs().await(conversation.activeRunId().orElseThrow());
+            var completed = agent.runs().await(conversation.runId());
 
             assertThat(completed.status())
                     .as(
