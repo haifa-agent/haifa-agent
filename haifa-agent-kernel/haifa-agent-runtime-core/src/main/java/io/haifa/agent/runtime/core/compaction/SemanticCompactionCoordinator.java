@@ -77,6 +77,8 @@ public final class SemanticCompactionCoordinator {
     private final TimeProvider time;
     private final RuntimeEventAppender events;
     private final ModelMessageProjectionPlanner projectionPlanner;
+    private final Set<io.haifa.agent.core.run.AgentRunId> activeBudgetCompactionFailedRuns =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     public SemanticCompactionCoordinator(
             RuntimeStateRepository state,
@@ -193,6 +195,14 @@ public final class SemanticCompactionCoordinator {
             return;
         }
 
+        if (decision.reason() == CompactionTriggerReason.ACTIVE_HISTORY_BUDGET
+                && activeBudgetCompactionFailedRuns.contains(run.id())) {
+            log.info(
+                    "Skipping active history budget compaction for run {} because a previous attempt failed in this run",
+                    run.id().value());
+            return;
+        }
+
         long softLimit = decision.budgetBreakdown().softLimitTokens();
         ModelMessageProjectionPlan projectionPlan = projectionPlanner.plan(
                 visible, resolver, ModelMessageProjectionPlanner.DEFAULT_PURE_READ_TOOLS, softLimit);
@@ -304,11 +314,20 @@ public final class SemanticCompactionCoordinator {
             return;
         }
 
-        List<AgentMessage> sourceToCompact =
+        List<AgentMessage> candidateSource =
                 activeGroups.subList(0, split).stream().flatMap(List::stream).toList();
-        if (sourceToCompact.isEmpty()) {
+        if (candidateSource.isEmpty()) {
             return;
         }
+
+        List<AgentMessage> allActiveMessages =
+                activeGroups.stream().flatMap(List::stream).toList();
+        int validatedCutoff = CutoffPointValidator.validateCutoff(allActiveMessages, candidateSource.size());
+        if (validatedCutoff <= 0) {
+            log.info("Cutoff point validator rolled cutoff back to 0; skipping compaction for this cycle");
+            return;
+        }
+        List<AgentMessage> sourceToCompact = allActiveMessages.subList(0, validatedCutoff);
 
         Optional<SemanticConversationSummaryV1> workingSemantic =
                 previousSummary.flatMap(ConversationSummary::semanticSummary);
@@ -380,6 +399,24 @@ public final class SemanticCompactionCoordinator {
             throw cancelled;
         } catch (Exception ex) {
             log.warn("Semantic compaction failed: {}", ex.getMessage());
+            if (reason == CompactionTriggerReason.ACTIVE_HISTORY_BUDGET) {
+                log.warn(
+                        "Active history budget compaction failed for run {}, continuing gracefully without compaction: {}",
+                        run.id().value(),
+                        ex.getMessage());
+                activeBudgetCompactionFailedRuns.add(run.id());
+                events.append(
+                        run.id(),
+                        "session.compaction-failed",
+                        Map.of(
+                                "reason", reason.name(),
+                                "failureCategory", failureCategory(ex),
+                                "validationErrorCode", validationErrorCode(ex),
+                                "physicalCalls", physicalCalls,
+                                "degraded", true),
+                        time.now());
+                return;
+            }
             boolean degraded = policy.allowDeterministicDegradedFallback() || overflow;
             events.append(
                     run.id(),

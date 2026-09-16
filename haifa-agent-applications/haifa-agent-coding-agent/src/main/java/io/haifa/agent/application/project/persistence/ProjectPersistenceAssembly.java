@@ -49,6 +49,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Product-layer assembly of Runtime persistence adapters and optional JSONL projection. */
 public final class ProjectPersistenceAssembly implements AutoCloseable {
+    public static final long CODING_AGENT_ACTIVE_HISTORY_BUDGET_TOKENS = 96_000L;
+
     private final ProjectPersistenceMode mode;
     private final RuntimePersistencePorts ports;
     private final ProjectProductSessionStore productSessions;
@@ -195,7 +197,7 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
                 ports.state(),
                 ports.conversationSummaries(),
                 new DeterministicContextCompressor(),
-                CompressionPolicy.defaults(),
+                CompressionPolicy.defaults().withActiveHistoryBudgetTokens(CODING_AGENT_ACTIVE_HISTORY_BUDGET_TOKENS),
                 identifiers,
                 time);
         return sessionId -> ports.unitOfWork().execute(() -> {
@@ -223,6 +225,10 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
     public RuntimeCoreBuilder configure(RuntimeCoreBuilder builder) {
         Objects.requireNonNull(builder, "builder must not be null");
         builder.persistence(ports).workerId(workerId);
+        CompressionPolicy currentPolicy = builder.compressionPolicy();
+        CompressionPolicy updatedPolicy = (currentPolicy != null ? currentPolicy : CompressionPolicy.defaults())
+                .withActiveHistoryBudgetTokens(CODING_AGENT_ACTIVE_HISTORY_BUDGET_TOKENS);
+        builder.compressionPolicy(updatedPolicy);
         return builder;
     }
 

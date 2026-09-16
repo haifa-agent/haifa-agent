@@ -66,6 +66,12 @@ class PersonalAssistantProfileTest {
     }
 
     @Test
+    void activeHistoryBudgetConfiguredTo32k() {
+        assertThat(PersonalAssistantAssembler.PERSONAL_ASSISTANT_ACTIVE_HISTORY_BUDGET_TOKENS)
+                .isEqualTo(32_000L);
+    }
+
+    @Test
     void profileRequiresGovernedExecutionButStillDisablesCodingWorkspaceCapabilities() {
         ProductContributionCoordinate coordinate = new ProductContributionCoordinate("test", "1");
         String mcpAlias = "personal_mcp_calculate";

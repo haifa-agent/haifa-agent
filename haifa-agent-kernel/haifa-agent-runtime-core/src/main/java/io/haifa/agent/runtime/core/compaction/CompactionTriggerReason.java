@@ -9,5 +9,6 @@ public enum CompactionTriggerReason {
     PROVIDER_CONTEXT_TOO_LONG,
     MODEL_DOWNSHIFT,
     SOURCE_REDACTED_REBUILD,
-    MANUAL
+    MANUAL,
+    ACTIVE_HISTORY_BUDGET
 }

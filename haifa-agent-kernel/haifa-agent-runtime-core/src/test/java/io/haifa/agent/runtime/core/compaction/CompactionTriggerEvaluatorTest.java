@@ -92,4 +92,32 @@ class CompactionTriggerEvaluatorTest {
         assertThat(decision.shouldCompact()).isFalse();
         assertThat(decision.reason()).isEqualTo(CompactionTriggerReason.NONE);
     }
+
+    @Test
+    @DisplayName(
+            "evaluate triggers ACTIVE_HISTORY_BUDGET when tokens exceed activeHistoryBudgetTokens but below capacity limit")
+    void testActiveHistoryBudgetTrigger() {
+        long budget = 96_000L;
+        CompressionPolicy policy =
+                CompressionPolicy.defaults().withSemanticCompactionEnabled(true).withActiveHistoryBudgetTokens(budget);
+        CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(policy);
+
+        ContextBudgetBreakdown breakdown = evaluator.calculateBreakdown(200_000L, 4_096L, 2_000L, 1_000L, 97_000L);
+        assertThat(breakdown.softLimitTokens()).isEqualTo(budget);
+
+        // Under budget: should not compact
+        CompactionTriggerDecision underBudget = evaluator.evaluate(200_000L, 4_096L, 2_000L, 1_000L, 90_000L, 5);
+        assertThat(underBudget.shouldCompact()).isFalse();
+        assertThat(underBudget.reason()).isEqualTo(CompactionTriggerReason.NONE);
+
+        // Over budget, below capacity soft limit: should compact with ACTIVE_HISTORY_BUDGET
+        CompactionTriggerDecision overBudget = evaluator.evaluate(200_000L, 4_096L, 2_000L, 1_000L, 97_000L, 5);
+        assertThat(overBudget.shouldCompact()).isTrue();
+        assertThat(overBudget.reason()).isEqualTo(CompactionTriggerReason.ACTIVE_HISTORY_BUDGET);
+
+        // Over capacity soft limit: should compact with SOFT_TOKEN_THRESHOLD
+        CompactionTriggerDecision overCapacity = evaluator.evaluate(200_000L, 4_096L, 2_000L, 1_000L, 175_000L, 5);
+        assertThat(overCapacity.shouldCompact()).isTrue();
+        assertThat(overCapacity.reason()).isEqualTo(CompactionTriggerReason.SOFT_TOKEN_THRESHOLD);
+    }
 }

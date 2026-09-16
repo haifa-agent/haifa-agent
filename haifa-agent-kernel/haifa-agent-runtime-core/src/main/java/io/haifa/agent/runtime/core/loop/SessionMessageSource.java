@@ -33,6 +33,7 @@ import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallId;
+import io.haifa.agent.runtime.core.compaction.CompactionFileOperationsTracker;
 import io.haifa.agent.runtime.core.storage.OptimisticLockException;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import java.nio.charset.StandardCharsets;
@@ -427,6 +428,11 @@ public final class SessionMessageSource {
 
     private ContextItem summaryItem(ConversationSummary summary) {
         Optional<String> renderedMarkdown = summary.semanticSummary().map(SemanticSummaryRenderer::renderMarkdown);
+        if (renderedMarkdown.isPresent() && !summary.sourceMessageIds().isEmpty()) {
+            var fileOps = CompactionFileOperationsTracker.track(summary.sourceMessageIds(), messages);
+            renderedMarkdown = Optional.of(
+                    CompactionFileOperationsTracker.appendToFileOperations(renderedMarkdown.get(), fileOps));
+        }
         return new ContextItem(
                 new ContextItemId("summary-" + summary.id().value() + "-"
                         + summary.version().value()),

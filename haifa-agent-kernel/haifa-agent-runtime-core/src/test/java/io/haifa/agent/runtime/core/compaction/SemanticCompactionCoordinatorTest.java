@@ -1530,6 +1530,67 @@ class SemanticCompactionCoordinatorTest {
         assertThat(summary.semanticSummary()).isEmpty();
     }
 
+    @Test
+    @DisplayName(
+            "Active history budget compaction failure is non-blocking and suppresses subsequent attempts in same run")
+    void testActiveHistoryBudgetFailureIsNonBlockingAndSuppressesSubsequentAttempts() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AtomicInteger idGen = new AtomicInteger();
+        IdentifierGenerator ids = () -> "id-" + idGen.incrementAndGet();
+
+        CompressionPolicy policy = CompressionPolicy.defaults()
+                .withSemanticCompactionEnabled(true)
+                .withActiveHistoryBudgetTokens(10L)
+                .withTailTokenBounds(5, 10)
+                .withDegradedFallback(false);
+
+        SemanticCompactionCoordinator coordinator = coordinator(store, ids, policy);
+        AgentRun run = createAndSaveRun(store);
+        AgentSessionId session = run.sessionId();
+
+        store.appendSessionMessage(
+                draft("m-u1", session, run.id().value(), MessageRole.USER, "First turn user message"));
+        store.appendSessionMessage(
+                draft("m-a1", session, run.id().value(), MessageRole.ASSISTANT, "First turn assistant reply"));
+        store.appendSessionMessage(
+                draft("m-u2", session, run.id().value(), MessageRole.USER, "Second turn user message"));
+        store.appendSessionMessage(draft(
+                "m-a2",
+                session,
+                run.id().value(),
+                MessageRole.ASSISTANT,
+                "Second turn assistant reply with detailed content: " + "more details and explanation ".repeat(10)));
+
+        AtomicInteger callCount = new AtomicInteger();
+        AgentChatModel failingModel = request -> {
+            callCount.incrementAndGet();
+            throw new RuntimeException("Simulated LLM failure during active budget compaction");
+        };
+
+        FrozenModelBinding binding = createBinding(store, run, failingModel);
+
+        coordinator.evaluateAndCompactIfNeeded(run, 1, binding);
+
+        assertThat(callCount.get()).isEqualTo(1);
+        assertThat(store.latestValid(session)).isEmpty();
+
+        var events = store.eventsFor(run.id());
+        var failEvents = events.stream()
+                .filter(e -> "session.compaction-failed".equals(e.type()))
+                .toList();
+        assertThat(failEvents).hasSize(1);
+        assertThat(failEvents.getFirst().data().get("reason"))
+                .isEqualTo(CompactionTriggerReason.ACTIVE_HISTORY_BUDGET.name());
+        assertThat(failEvents.getFirst().data().get("degraded")).isEqualTo(true);
+
+        coordinator.evaluateAndCompactIfNeeded(run, 2, binding);
+        assertThat(callCount.get()).isEqualTo(1);
+        assertThat(store.eventsFor(run.id()).stream()
+                        .filter(e -> "session.compaction-failed".equals(e.type()))
+                        .count())
+                .isEqualTo(1);
+    }
+
     private static SemanticCompactionCoordinator coordinator(
             InMemoryRuntimeStore store, IdentifierGenerator ids, CompressionPolicy policy) {
         TimeProvider time = () -> NOW;
