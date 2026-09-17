@@ -46,12 +46,29 @@ class PersonalAssistantProfileTest {
     }
 
     @Test
-    void activeHistoryBudgetConfiguredTo32k() {
-        assertThat(PersonalAssistantAssembler.PERSONAL_ASSISTANT_ACTIVE_HISTORY_BUDGET_TOKENS)
-                .isEqualTo(32_000L);
+    void activeHistoryBudgetConfiguredDynamically() {
+        assertThat(PersonalAssistantAssembler.PERSONAL_ASSISTANT_ACTIVE_HISTORY_BUDGET_PERCENT)
+                .isEqualTo(25);
+        assertThat(PersonalAssistantAssembler.PERSONAL_ASSISTANT_MIN_ACTIVE_HISTORY_BUDGET_TOKENS)
+                .isEqualTo(48_000L);
+        assertThat(PersonalAssistantAssembler.PERSONAL_ASSISTANT_MAX_ACTIVE_HISTORY_BUDGET_TOKENS)
+                .isEqualTo(96_000L);
+        assertThat(PersonalAssistantAssembler.PERSONAL_ASSISTANT_TARGET_TAIL_TOKEN_PERCENT)
+                .isEqualTo(40);
+        assertThat(PersonalAssistantAssembler.PERSONAL_ASSISTANT_MIN_TAIL_TOKENS)
+                .isEqualTo(24_000);
+        assertThat(PersonalAssistantAssembler.PERSONAL_ASSISTANT_MAX_TAIL_TOKENS)
+                .isEqualTo(32_000);
+
         var policy = PersonalAssistantAssembler.defaultCompressionPolicy();
         assertThat(policy.semanticCompactionEnabled()).isTrue();
-        assertThat(policy.activeHistoryBudgetTokens()).hasValue(32_000L);
+        assertThat(policy.activeHistoryBudgetPercent()).isEqualTo(25);
+        assertThat(policy.minActiveHistoryBudgetTokens()).isEqualTo(48_000L);
+        assertThat(policy.maxActiveHistoryBudgetTokens()).isEqualTo(96_000L);
+        assertThat(policy.targetTailTokenPercent()).isEqualTo(40);
+        assertThat(policy.minTailTokens()).isEqualTo(24_000);
+        assertThat(policy.maxTailTokens()).isEqualTo(32_000);
+        assertThat(policy.activeHistoryBudgetTokens()).isEmpty();
     }
 
     @Test

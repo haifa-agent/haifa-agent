@@ -23,6 +23,7 @@ import io.haifa.agent.application.project.product.coding.CodingSessionService;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
+import io.haifa.agent.context.compression.CompressionPolicy;
 import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
@@ -1091,6 +1092,28 @@ class ProjectPersistenceAssemblyTest {
             assertThat(builder.compressionPolicy().activeHistoryBudgetTokens())
                     .isPresent()
                     .hasValue(128_000L);
+        }
+    }
+
+    @Test
+    void configurePopulatesDynamicCompressionPolicyDefaults() {
+        try (ProjectPersistenceAssembly assembly = ProjectPersistenceAssembly.open(
+                ProjectPersistenceConfiguration.memory(), CLOCK, new TestIds("budget-dynamic"), null)) {
+            RuntimeCoreBuilder builder = new RuntimeCoreBuilder();
+            assembly.configure(builder);
+            assertThat(builder.compressionPolicy()).isNotNull();
+            CompressionPolicy policy = builder.compressionPolicy();
+            assertThat(policy.activeHistoryBudgetPercent())
+                    .isEqualTo(ProjectPersistenceAssembly.CODING_AGENT_ACTIVE_HISTORY_BUDGET_PERCENT);
+            assertThat(policy.minActiveHistoryBudgetTokens())
+                    .isEqualTo(ProjectPersistenceAssembly.CODING_AGENT_MIN_ACTIVE_HISTORY_BUDGET_TOKENS);
+            assertThat(policy.maxActiveHistoryBudgetTokens())
+                    .isEqualTo(ProjectPersistenceAssembly.CODING_AGENT_MAX_ACTIVE_HISTORY_BUDGET_TOKENS);
+            assertThat(policy.targetTailTokenPercent())
+                    .isEqualTo(ProjectPersistenceAssembly.CODING_AGENT_TARGET_TAIL_TOKEN_PERCENT);
+            assertThat(policy.minTailTokens()).isEqualTo(ProjectPersistenceAssembly.CODING_AGENT_MIN_TAIL_TOKENS);
+            assertThat(policy.maxTailTokens()).isEqualTo(ProjectPersistenceAssembly.CODING_AGENT_MAX_TAIL_TOKENS);
+            assertThat(policy.activeHistoryBudgetTokens()).isEmpty();
         }
     }
 
