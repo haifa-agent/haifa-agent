@@ -40,7 +40,7 @@ class Tui4jTerminalIoTest {
     }
 
     @Test
-    void productionProgramEnablesCellMotionAndResetsMouseReportingAroundItsLifecycle() throws Exception {
+    void productionProgramLeavesMouseReportingDisabledForNativeTextSelection() throws Exception {
         var output = new ByteArrayOutputStream();
         try (var inputWriter = new PipedOutputStream();
                 var input = new PipedInputStream(inputWriter)) {
@@ -59,8 +59,7 @@ class Tui4jTerminalIoTest {
         assertThat(terminalOutput)
                 .startsWith(reset)
                 .endsWith(reset)
-                .contains("\u001B[?1002h", "\u001B[?1006h")
-                .doesNotContain("\u001B[?1003h");
+                .doesNotContain("\u001B[?1000h", "\u001B[?1002h", "\u001B[?1003h", "\u001B[?1006h");
         assertThat(terminalOutput.split(java.util.regex.Pattern.quote(reset), -1))
                 .hasSizeGreaterThanOrEqualTo(3);
     }

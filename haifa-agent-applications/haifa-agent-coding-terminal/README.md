@@ -168,10 +168,10 @@ message，也不显示异常类或堆栈。
 - viewport 只在用户主动 PageUp 后停止自动跟随并在新内容到达时显示 `new output below`；Run 状态引起的
   Header、Status 或 Editor 布局高度变化不会误判为用户滚动，PageDown 回到底部后恢复自动跟随；用户
   明确提交新消息或 Steer 时也会恢复自动跟随，避免上一轮回翻状态把新一轮输出持续藏在下方。
-- 终端启用 SGR cell-motion 鼠标事件上报。滚轮只路由到 Transcript viewport，普通左键拖拽由应用
-  按终端 cell 选择并高亮 Transcript，释放时通过 tui4j clipboard command 交给宿主系统剪贴板；拖到
-  viewport 上下边缘会持续回看。`PageUp/PageDown` 仍是键盘回退，方向键 Up/Down 继续保留单行输入历史和
-  多行光标移动语义。
+- 终端保持禁用应用级鼠标事件上报（不启用 SGR cell-motion），启动与退出时输出防御性 reset 序列。
+  划词文本选择与系统剪贴板复制由宿主终端（Windows Terminal、VS Code 终端、iTerm2 等）原生接管，
+  支持在整个屏幕任意区域拖拽选中与复制。`PageUp/PageDown` 负责应用拥有的 Transcript 视口翻页导航，
+  方向键 Up/Down 继续保留单行输入历史和多行光标移动语义。
 
 终端采用 tui4j `Program`、`Model`、`Viewport` 和 `Textarea`。Runtime 回调只写入有界 Action Queue；
 50ms tick 在 Program 事件循环中排空队列，再由既有 Reducer 归约到唯一 `TerminalUiState` 并生成
@@ -186,9 +186,9 @@ tick 重试，不会终止渲染轮询或截断后续回复。
 正常退出或异常关闭时退出 alternate screen，并恢复主屏内容、Attributes、Signal Handler、回显、
 keypad 和光标。
 
-alternate screen 不提供可靠的终端原生历史回滚，因此 Transcript viewport 由应用拥有：鼠标滚轮回看、
-左键拖拽选择并在释放时复制，`PageUp/PageDown` 提供等价键盘导航。选择复制按 grapheme 与终端 cell
-边界处理 CJK、emoji 和 combining mark；窗口尺寸变化、进入安全输入或按 Escape 会清除当前选择。
+alternate screen 不提供可靠的终端原生历史回滚，因此 Transcript 历史由应用维护视口，通过
+`PageUp/PageDown` 提供键盘翻页导航；用户将历史文本滚动到当前视口后，可直接使用宿主终端的原生鼠标
+划词进行文本选择与剪贴板复制，应用不介入选择计算或剪贴板传输。
 
 Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、surrogate pair、emoji ZWJ
 序列和 combining mark 的左右移动、退格与删除不会拆分可见字符；多行上下移动按终端 cell width
@@ -301,9 +301,8 @@ key，并在所有重启间保持不变。
     Selector 消费。
 13. Active Enter 后观察 Steer 从 accepted 保持到 applied；Alt+Enter 后观察持久 Follow-up Queue，
     Alt+Up 恢复且重启后不重复。
-14. 用 PageUp 或 Transcript 区域内滚轮离开底部后产生新输出，确认 viewport 不跳动且出现
-    `new output below`；PageDown 或滚轮回到底部后提示消失。左键拖拽确认应用高亮选区、释放后可粘贴
-    复制文本；覆盖跨行、CJK/emoji、拖到上下边缘持续滚动、Escape 取消和窗口 Resize 清除选择。
+14. 用 PageUp 离开底部后产生新输出，确认 viewport 不跳动且出现 `new output below`；PageDown
+    回到底部后提示消失。普通鼠标拖拽确认由宿主终端原生高亮选区与复制，支持全屏各区域选择。
 15. 分别粘贴带 bracketed-paste 标记和不带标记的多行文本，确认所有行停留在 Editor，末尾换行也不
     提交；随后单独按 Enter 才提交一次。
 16. PageUp 回翻后直接提交新消息，确认新一轮自动回到底部且不显示陈旧的 `new output below`；模型交互
