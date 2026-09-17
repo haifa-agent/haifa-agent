@@ -127,6 +127,46 @@ class CompactionFileOperationsTrackerTest {
         assertThat(ops.toXmlTags()).isEqualTo("<read-files>\nconfig.yaml\n</read-files>");
     }
 
+    @Test
+    void truncatesWhenExceedingMaxFilesPerTag() {
+        java.util.Set<String> files = new java.util.TreeSet<>();
+        for (int i = 1; i <= 60; i++) {
+            files.add(String.format("file-%03d.txt", i));
+        }
+        var ops = new CompactionFileOperationsTracker.FileOperations(files, files);
+        String xml = ops.toXmlTags();
+
+        assertThat(xml).contains("<modified-files>");
+        assertThat(xml).contains("<!-- ... 10 more modified files omitted -->");
+        assertThat(xml).contains("<read-files>");
+        assertThat(xml).contains("<!-- ... 10 more read files omitted -->");
+        assertThat(xml).contains("file-050.txt");
+        assertThat(xml).doesNotContain("file-051.txt\n");
+    }
+
+    @Test
+    void matchesNamespacedToolNames() {
+        Map<ToolCallId, ToolCall> calls = new HashMap<>();
+        ToolCallId call1 = new ToolCallId("ns-read");
+        calls.put(call1, createCall(call1, "mcp__server__file_read", Map.of("path", "server_config.json")));
+
+        ToolCallId call2 = new ToolCallId("ns-mod");
+        calls.put(call2, createCall(call2, "ide:write_to_file", Map.of("filePath", "app.py")));
+
+        AgentMessage msg = assistantMessage(
+                "m-ns",
+                1,
+                List.of(
+                        new ToolCallPart(
+                                call1, new ProviderToolCallCorrelationId("c-ns1"), "mcp__server__file_read", "1.0"),
+                        new ToolCallPart(
+                                call2, new ProviderToolCallCorrelationId("c-ns2"), "ide:write_to_file", "1.0")));
+
+        var ops = CompactionFileOperationsTracker.track(List.of(msg), calls::get);
+        assertThat(ops.readFiles()).containsExactly("server_config.json");
+        assertThat(ops.modifiedFiles()).containsExactly("app.py");
+    }
+
     private static ToolCall createCall(ToolCallId id, String toolName, Map<String, Object> args) {
         return new ToolCall(
                 id,

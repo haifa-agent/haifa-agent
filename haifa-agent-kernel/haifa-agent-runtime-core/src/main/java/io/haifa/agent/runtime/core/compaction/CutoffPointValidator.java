@@ -65,9 +65,9 @@ public final class CutoffPointValidator {
                 return safeCutoff;
             }
 
-            // Find the earliest assistant message that initiated an unclosed tool call and roll back to before it
+            // Find the earliest message that initiated an unclosed tool call and roll back to before it
             int rollbackIndex = safeCutoff - 1;
-            int earliestAssistant = -1;
+            int earliestUnclosedCallMsg = -1;
             while (rollbackIndex >= 0) {
                 AgentMessage m = messages.get(rollbackIndex);
                 boolean containsUnclosed = false;
@@ -78,13 +78,13 @@ public final class CutoffPointValidator {
                     }
                 }
                 if (containsUnclosed) {
-                    earliestAssistant = rollbackIndex;
+                    earliestUnclosedCallMsg = rollbackIndex;
                 }
                 rollbackIndex--;
             }
 
-            if (earliestAssistant >= 0) {
-                safeCutoff = earliestAssistant;
+            if (earliestUnclosedCallMsg >= 0) {
+                safeCutoff = earliestUnclosedCallMsg;
             } else {
                 safeCutoff--;
             }

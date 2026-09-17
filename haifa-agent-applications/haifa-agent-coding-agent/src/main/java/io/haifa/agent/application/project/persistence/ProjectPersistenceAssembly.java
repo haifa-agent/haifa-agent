@@ -226,9 +226,11 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
         Objects.requireNonNull(builder, "builder must not be null");
         builder.persistence(ports).workerId(workerId);
         CompressionPolicy currentPolicy = builder.compressionPolicy();
-        CompressionPolicy updatedPolicy = (currentPolicy != null ? currentPolicy : CompressionPolicy.defaults())
-                .withActiveHistoryBudgetTokens(CODING_AGENT_ACTIVE_HISTORY_BUDGET_TOKENS);
-        builder.compressionPolicy(updatedPolicy);
+        if (currentPolicy == null || currentPolicy.activeHistoryBudgetTokens().isEmpty()) {
+            CompressionPolicy updatedPolicy = (currentPolicy != null ? currentPolicy : CompressionPolicy.defaults())
+                    .withActiveHistoryBudgetTokens(CODING_AGENT_ACTIVE_HISTORY_BUDGET_TOKENS);
+            builder.compressionPolicy(updatedPolicy);
+        }
         return builder;
     }
 

@@ -1582,6 +1582,9 @@ class SemanticCompactionCoordinatorTest {
         assertThat(failEvents.getFirst().data().get("reason"))
                 .isEqualTo(CompactionTriggerReason.ACTIVE_HISTORY_BUDGET.name());
         assertThat(failEvents.getFirst().data().get("degraded")).isEqualTo(true);
+        assertThat(failEvents.getFirst().data().get("failureCategory")).isEqualTo("MODEL_OR_RUNTIME");
+        assertThat(failEvents.getFirst().data().get("validationErrorCode")).isEqualTo("NONE");
+        assertThat(failEvents.getFirst().data().values().toString()).doesNotContain("Simulated LLM failure");
 
         coordinator.evaluateAndCompactIfNeeded(run, 2, binding);
         assertThat(callCount.get()).isEqualTo(1);
@@ -1589,6 +1592,120 @@ class SemanticCompactionCoordinatorTest {
                         .filter(e -> "session.compaction-failed".equals(e.type()))
                         .count())
                 .isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("Cutoff rollback aligns LLM summarization and committed checkpoint with safe atomic group boundary")
+    void testCutoffRollbackAlignsLlmSummaryAndCheckpointCommitWithAtomicGroupBoundary() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AtomicInteger idGen = new AtomicInteger();
+        IdentifierGenerator ids = () -> "id-" + idGen.incrementAndGet();
+
+        CompressionPolicy policy =
+                CompressionPolicy.defaults().withSemanticCompactionEnabled(true).withTailTokenBounds(5, 10);
+
+        SemanticCompactionCoordinator coordinator = coordinator(store, ids, policy);
+        AgentRun run = createAndSaveRun(store);
+        AgentSessionId session = run.sessionId();
+
+        // Turn 1
+        store.appendSessionMessage(draft("m-u1", session, run.id().value(), MessageRole.USER, "Turn 1 user"));
+        store.appendSessionMessage(
+                draft("m-a1", session, run.id().value(), MessageRole.ASSISTANT, "Turn 1 assistant reply"));
+
+        // Turn 2 with complete tool interaction
+        ToolCallId call1 = new ToolCallId("call-closed");
+        ToolCall tc1 = new ToolCall(
+                call1,
+                run.id(),
+                new io.haifa.agent.core.step.AgentStepId("s1"),
+                new io.haifa.agent.core.tool.ProviderToolCallCorrelationId("c1"),
+                new io.haifa.agent.core.tool.RuntimeIdempotencyKey("k1"),
+                "file_read",
+                "1.0",
+                new io.haifa.agent.core.tool.ToolArguments("schema", "1.0", Map.of("path", "file.txt")),
+                NOW);
+        store.appendToolCall(tc1);
+        store.appendSessionMessage(new SessionMessageDraft(
+                new AgentMessageId("m-a2"),
+                session,
+                Optional.of(run.id()),
+                Optional.empty(),
+                MessageRole.ASSISTANT,
+                MessageStatus.COMPLETED,
+                MessageVisibility.AGENT_VISIBLE,
+                List.of(new ToolCallPart(
+                        call1, new io.haifa.agent.core.tool.ProviderToolCallCorrelationId("c1"), "file_read", "1.0")),
+                Map.of(),
+                NOW));
+        store.appendSessionMessage(new SessionMessageDraft(
+                new AgentMessageId("m-t2"),
+                session,
+                Optional.of(run.id()),
+                Optional.empty(),
+                MessageRole.TOOL,
+                MessageStatus.COMPLETED,
+                MessageVisibility.AGENT_VISIBLE,
+                List.of(new ToolResultPart(
+                        call1, new io.haifa.agent.core.tool.ProviderToolCallCorrelationId("c1"), "file content")),
+                Map.of(),
+                NOW));
+
+        // Turn 3 with UNCLOSED tool call
+        ToolCallId call2 = new ToolCallId("call-unclosed");
+        ToolCall tc2 = new ToolCall(
+                call2,
+                run.id(),
+                new io.haifa.agent.core.step.AgentStepId("s2"),
+                new io.haifa.agent.core.tool.ProviderToolCallCorrelationId("c2"),
+                new io.haifa.agent.core.tool.RuntimeIdempotencyKey("k2"),
+                "file_write",
+                "1.0",
+                new io.haifa.agent.core.tool.ToolArguments("schema", "1.0", Map.of("path", "out.txt")),
+                NOW);
+        store.appendToolCall(tc2);
+        store.appendSessionMessage(new SessionMessageDraft(
+                new AgentMessageId("m-a3"),
+                session,
+                Optional.of(run.id()),
+                Optional.empty(),
+                MessageRole.ASSISTANT,
+                MessageStatus.COMPLETED,
+                MessageVisibility.AGENT_VISIBLE,
+                List.of(new ToolCallPart(
+                        call2, new io.haifa.agent.core.tool.ProviderToolCallCorrelationId("c2"), "file_write", "1.0")),
+                Map.of(),
+                NOW));
+
+        // Turn 4 (tail)
+        store.appendSessionMessage(draft("m-u4", session, run.id().value(), MessageRole.USER, "Turn 4 user message"));
+        store.appendSessionMessage(draft(
+                "m-a4",
+                session,
+                run.id().value(),
+                MessageRole.ASSISTANT,
+                "Turn 4 assistant reply with detailed content: " + "tail text ".repeat(10)));
+
+        List<AgentChatRequest> capturedRequests = new ArrayList<>();
+        AgentChatModel model = request -> {
+            capturedRequests.add(request);
+            return response("res-h1", VALID_SUMMARY_JSON);
+        };
+
+        coordinator.forceCompactOnOverflow(run, 1, createBinding(store, run, model));
+
+        assertThat(capturedRequests).isNotEmpty();
+        String prompt = capturedRequests.getFirst().messages().getLast().content();
+        assertThat(prompt).contains("Turn 1 user");
+        assertThat(prompt).contains("file_read");
+        assertThat(prompt).doesNotContain("file_write");
+
+        var summary = store.latestValid(session).orElseThrow();
+        List<String> sourceIds =
+                summary.sourceMessageIds().stream().map(AgentMessageId::value).toList();
+        assertThat(sourceIds).contains("m-u1", "m-a1", "m-a2", "m-t2");
+        assertThat(sourceIds).doesNotContain("m-a3", "m-u4", "m-a4");
+        assertThat(summary.coveredThrough().value()).isEqualTo(5L);
     }
 
     private static SemanticCompactionCoordinator coordinator(

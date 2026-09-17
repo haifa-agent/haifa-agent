@@ -56,6 +56,12 @@ import java.util.Set;
 public final class PersonalAssistantAssembler {
     public static final long PERSONAL_ASSISTANT_ACTIVE_HISTORY_BUDGET_TOKENS = 32_000L;
 
+    public static CompressionPolicy defaultCompressionPolicy() {
+        return CompressionPolicy.defaults()
+                .withSemanticCompactionEnabled(true)
+                .withActiveHistoryBudgetTokens(PERSONAL_ASSISTANT_ACTIVE_HISTORY_BUDGET_TOKENS);
+    }
+
     private PersonalAssistantAssembler() {}
 
     public static PersonalAssistantApplication assemble(Dependencies dependencies) {
@@ -113,9 +119,7 @@ public final class PersonalAssistantAssembler {
                             tools.tool().catalog(), dependencies.web(), dependencies.policy()))
                     .modelImageResolver(dependencies.imageResolver())
                     .modelAudioResolver(dependencies.audioResolver())
-                    .compressionPolicy(CompressionPolicy.defaults()
-                            .withSemanticCompactionEnabled(true)
-                            .withActiveHistoryBudgetTokens(PERSONAL_ASSISTANT_ACTIVE_HISTORY_BUDGET_TOKENS))
+                    .compressionPolicy(defaultCompressionPolicy())
                     .toolRetry(
                             2,
                             PersonalAssistantAssembler::isTransientToolFailure,

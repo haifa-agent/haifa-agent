@@ -69,6 +69,9 @@ class PersonalAssistantProfileTest {
     void activeHistoryBudgetConfiguredTo32k() {
         assertThat(PersonalAssistantAssembler.PERSONAL_ASSISTANT_ACTIVE_HISTORY_BUDGET_TOKENS)
                 .isEqualTo(32_000L);
+        var policy = PersonalAssistantAssembler.defaultCompressionPolicy();
+        assertThat(policy.semanticCompactionEnabled()).isTrue();
+        assertThat(policy.activeHistoryBudgetTokens()).hasValue(32_000L);
     }
 
     @Test

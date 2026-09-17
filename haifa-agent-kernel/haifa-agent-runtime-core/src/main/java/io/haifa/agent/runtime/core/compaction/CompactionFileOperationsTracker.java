@@ -3,10 +3,12 @@ package io.haifa.agent.runtime.core.compaction;
 import io.haifa.agent.core.content.ToolCallPart;
 import io.haifa.agent.core.message.AgentMessage;
 import io.haifa.agent.core.message.AgentMessageId;
+import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -15,6 +17,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * Deterministically tracks file read and modification operations across compacted session history.
@@ -22,6 +25,8 @@ import java.util.function.Function;
  * to prevent LLM hallucination and ensure accurate downstream file context.
  */
 public final class CompactionFileOperationsTracker {
+
+    public static final int MAX_FILES_PER_TAG = 50;
 
     private static final Set<String> READ_TOOLS = Set.of("file_read", "workspace_file_read", "read_file", "view_file");
 
@@ -53,7 +58,14 @@ public final class CompactionFileOperationsTracker {
             StringBuilder sb = new StringBuilder();
             if (!modifiedFiles.isEmpty()) {
                 sb.append("<modified-files>\n");
+                int count = 0;
                 for (String path : modifiedFiles) {
+                    if (count++ >= MAX_FILES_PER_TAG) {
+                        sb.append("<!-- ... ")
+                                .append(modifiedFiles.size() - MAX_FILES_PER_TAG)
+                                .append(" more modified files omitted -->\n");
+                        break;
+                    }
                     sb.append(path).append("\n");
                 }
                 sb.append("</modified-files>");
@@ -63,7 +75,14 @@ public final class CompactionFileOperationsTracker {
                     sb.append("\n");
                 }
                 sb.append("<read-files>\n");
+                int count = 0;
                 for (String path : readFiles) {
+                    if (count++ >= MAX_FILES_PER_TAG) {
+                        sb.append("<!-- ... ")
+                                .append(readFiles.size() - MAX_FILES_PER_TAG)
+                                .append(" more read files omitted -->\n");
+                        break;
+                    }
                     sb.append(path).append("\n");
                 }
                 sb.append("</read-files>");
@@ -107,8 +126,7 @@ public final class CompactionFileOperationsTracker {
 
         Set<String> readFiles = new TreeSet<>();
         Set<String> modifiedFiles = new TreeSet<>();
-        java.util.Map<io.haifa.agent.core.run.AgentRunId, java.util.Map<ToolCallId, ToolCall>> toolCallsByRun =
-                new java.util.HashMap<>();
+        Map<AgentRunId, Map<ToolCallId, ToolCall>> toolCallsByRun = new HashMap<>();
 
         for (AgentMessageId messageId : messageIds) {
             Optional<AgentMessage> messageOpt = state.message(messageId);
@@ -116,15 +134,14 @@ public final class CompactionFileOperationsTracker {
                 continue;
             }
             AgentMessage message = messageOpt.get();
-            io.haifa.agent.core.run.AgentRunId runId = message.runId().orElse(null);
+            AgentRunId runId = message.runId().orElse(null);
             for (var content : message.contents()) {
                 if (content instanceof ToolCallPart callPart) {
                     ToolCall call = null;
                     if (runId != null) {
-                        java.util.Map<ToolCallId, ToolCall> runCalls =
+                        Map<ToolCallId, ToolCall> runCalls =
                                 toolCallsByRun.computeIfAbsent(runId, rId -> state.toolCalls(rId).stream()
-                                        .collect(java.util.stream.Collectors.toMap(
-                                                ToolCall::id, Function.identity(), (a, b) -> a)));
+                                        .collect(Collectors.toMap(ToolCall::id, Function.identity(), (a, b) -> a)));
                         call = runCalls.get(callPart.toolCallId());
                     }
                     if (call != null) {
@@ -158,11 +175,26 @@ public final class CompactionFileOperationsTracker {
             return;
         }
 
-        if (MUTATION_TOOLS.contains(toolName)) {
+        if (matchesTool(toolName, MUTATION_TOOLS)) {
             modifiedFiles.add(path.trim());
-        } else if (READ_TOOLS.contains(toolName)) {
+        } else if (matchesTool(toolName, READ_TOOLS)) {
             readFiles.add(path.trim());
         }
+    }
+
+    private static boolean matchesTool(String toolName, Set<String> targetTools) {
+        if (targetTools.contains(toolName)) {
+            return true;
+        }
+        for (String target : targetTools) {
+            if (toolName.endsWith("_" + target)
+                    || toolName.endsWith(":" + target)
+                    || toolName.endsWith("/" + target)
+                    || toolName.endsWith("." + target)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static String extractFilePath(Map<String, Object> arguments) {
