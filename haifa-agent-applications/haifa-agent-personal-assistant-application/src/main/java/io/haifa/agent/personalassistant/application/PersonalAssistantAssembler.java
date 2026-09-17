@@ -4,6 +4,7 @@ import io.haifa.agent.artifact.ArtifactService;
 import io.haifa.agent.artifact.InMemoryArtifactPayloadStore;
 import io.haifa.agent.artifact.InMemoryArtifactStore;
 import io.haifa.agent.common.id.UuidV7IdentifierGenerator;
+import io.haifa.agent.context.compression.CompressionPolicy;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunBudget;
@@ -53,6 +54,14 @@ import java.util.Set;
 
 /** Explicit Composition helper; no classpath scanning or Bean ordering participates in product assembly. */
 public final class PersonalAssistantAssembler {
+    public static final long PERSONAL_ASSISTANT_ACTIVE_HISTORY_BUDGET_TOKENS = 32_000L;
+
+    public static CompressionPolicy defaultCompressionPolicy() {
+        return CompressionPolicy.defaults()
+                .withSemanticCompactionEnabled(true)
+                .withActiveHistoryBudgetTokens(PERSONAL_ASSISTANT_ACTIVE_HISTORY_BUDGET_TOKENS);
+    }
+
     private PersonalAssistantAssembler() {}
 
     public static PersonalAssistantApplication assemble(Dependencies dependencies) {
@@ -110,6 +119,7 @@ public final class PersonalAssistantAssembler {
                             tools.tool().catalog(), dependencies.web(), dependencies.policy()))
                     .modelImageResolver(dependencies.imageResolver())
                     .modelAudioResolver(dependencies.audioResolver())
+                    .compressionPolicy(defaultCompressionPolicy())
                     .toolRetry(
                             2,
                             PersonalAssistantAssembler::isTransientToolFailure,

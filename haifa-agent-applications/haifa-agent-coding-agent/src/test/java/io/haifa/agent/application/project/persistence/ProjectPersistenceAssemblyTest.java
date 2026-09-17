@@ -1064,6 +1064,36 @@ class ProjectPersistenceAssemblyTest {
         }
     }
 
+    @Test
+    void configureSetsActiveHistoryBudgetTokensTo96k() {
+        try (ProjectPersistenceAssembly assembly = ProjectPersistenceAssembly.open(
+                ProjectPersistenceConfiguration.memory(), CLOCK, new TestIds("budget"), null)) {
+            RuntimeCoreBuilder builder = new RuntimeCoreBuilder();
+            assembly.configure(builder);
+            assertThat(builder.compressionPolicy()).isNotNull();
+            assertThat(builder.compressionPolicy().activeHistoryBudgetTokens())
+                    .isPresent()
+                    .hasValue(96_000L);
+            assertThat(ProjectPersistenceAssembly.CODING_AGENT_ACTIVE_HISTORY_BUDGET_TOKENS)
+                    .isEqualTo(96_000L);
+        }
+    }
+
+    @Test
+    void configurePreservesExistingActiveHistoryBudgetTokens() {
+        try (ProjectPersistenceAssembly assembly = ProjectPersistenceAssembly.open(
+                ProjectPersistenceConfiguration.memory(), CLOCK, new TestIds("budget-preserve"), null)) {
+            RuntimeCoreBuilder builder = new RuntimeCoreBuilder();
+            builder.compressionPolicy(io.haifa.agent.context.compression.CompressionPolicy.defaults()
+                    .withActiveHistoryBudgetTokens(128_000L));
+            assembly.configure(builder);
+            assertThat(builder.compressionPolicy()).isNotNull();
+            assertThat(builder.compressionPolicy().activeHistoryBudgetTokens())
+                    .isPresent()
+                    .hasValue(128_000L);
+        }
+    }
+
     private static final class TestIds implements IdentifierGenerator {
         private final String prefix;
         private final AtomicInteger sequence = new AtomicInteger();

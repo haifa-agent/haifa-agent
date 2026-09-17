@@ -28,7 +28,10 @@ public final class CompactionTriggerEvaluator {
         long calculatedHeadroom = (availableSessionTokens * policy.softTriggerHeadroomPercent()) / 100L;
         long triggerHeadroomTokens =
                 Math.clamp(calculatedHeadroom, (long) policy.minTriggerHeadroom(), (long) policy.maxTriggerHeadroom());
-        long softLimitTokens = Math.max(0L, availableSessionTokens - triggerHeadroomTokens);
+        long capacitySoftLimit = computeCapacitySoftLimit(availableSessionTokens, triggerHeadroomTokens);
+        long softLimitTokens = policy.activeHistoryBudgetTokens().isPresent()
+                ? Math.min(capacitySoftLimit, policy.activeHistoryBudgetTokens().getAsLong())
+                : capacitySoftLimit;
 
         return new ContextBudgetBreakdown(
                 contextWindowTokens,
@@ -58,9 +61,22 @@ public final class CompactionTriggerEvaluator {
 
         // Need at least 2 turns to be able to compact older turns while retaining tail
         if (turnCount >= 2 && currentSessionTokens >= breakdown.softLimitTokens()) {
-            return CompactionTriggerDecision.compact(CompactionTriggerReason.SOFT_TOKEN_THRESHOLD, breakdown);
+            long capacitySoftLimit =
+                    computeCapacitySoftLimit(breakdown.availableSessionTokens(), breakdown.triggerHeadroomTokens());
+            CompactionTriggerReason reason = CompactionTriggerReason.SOFT_TOKEN_THRESHOLD;
+            if (policy.activeHistoryBudgetTokens().isPresent()
+                    && currentSessionTokens
+                            >= policy.activeHistoryBudgetTokens().getAsLong()
+                    && currentSessionTokens < capacitySoftLimit) {
+                reason = CompactionTriggerReason.ACTIVE_HISTORY_BUDGET;
+            }
+            return CompactionTriggerDecision.compact(reason, breakdown);
         }
 
         return CompactionTriggerDecision.doNotCompact(breakdown);
+    }
+
+    private static long computeCapacitySoftLimit(long availableSessionTokens, long triggerHeadroomTokens) {
+        return Math.max(0L, availableSessionTokens - triggerHeadroomTokens);
     }
 }

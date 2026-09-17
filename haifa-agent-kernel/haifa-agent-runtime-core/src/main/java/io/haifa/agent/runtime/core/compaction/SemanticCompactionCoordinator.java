@@ -30,6 +30,7 @@ import io.haifa.agent.core.message.MessageRole;
 import io.haifa.agent.core.message.MessageStatus;
 import io.haifa.agent.core.message.MessageVisibility;
 import io.haifa.agent.core.run.AgentRun;
+import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.runtime.core.control.CancellationObservedException;
@@ -43,6 +44,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.HexFormat;
@@ -77,6 +79,20 @@ public final class SemanticCompactionCoordinator {
     private final TimeProvider time;
     private final RuntimeEventAppender events;
     private final ModelMessageProjectionPlanner projectionPlanner;
+    private static final int MAX_FAILED_RUNS_CACHE = 1024;
+    private final Set<AgentRunId> activeBudgetCompactionFailedRuns = Collections.synchronizedSet(new LinkedHashSet<>() {
+        @Override
+        public boolean add(AgentRunId id) {
+            if (size() >= MAX_FAILED_RUNS_CACHE) {
+                var it = iterator();
+                if (it.hasNext()) {
+                    it.next();
+                    it.remove();
+                }
+            }
+            return super.add(id);
+        }
+    });
 
     public SemanticCompactionCoordinator(
             RuntimeStateRepository state,
@@ -193,6 +209,14 @@ public final class SemanticCompactionCoordinator {
             return;
         }
 
+        if (decision.reason() == CompactionTriggerReason.ACTIVE_HISTORY_BUDGET
+                && activeBudgetCompactionFailedRuns.contains(run.id())) {
+            log.info(
+                    "Skipping active history budget compaction for run {} because a previous attempt failed in this run",
+                    run.id().value());
+            return;
+        }
+
         long softLimit = decision.budgetBreakdown().softLimitTokens();
         ModelMessageProjectionPlan projectionPlan = projectionPlanner.plan(
                 visible, resolver, ModelMessageProjectionPlanner.DEFAULT_PURE_READ_TOOLS, softLimit);
@@ -304,11 +328,39 @@ public final class SemanticCompactionCoordinator {
             return;
         }
 
-        List<AgentMessage> sourceToCompact =
+        List<AgentMessage> candidateSource =
                 activeGroups.subList(0, split).stream().flatMap(List::stream).toList();
-        if (sourceToCompact.isEmpty()) {
+        if (candidateSource.isEmpty()) {
             return;
         }
+
+        List<AgentMessage> allActiveMessages =
+                activeGroups.stream().flatMap(List::stream).toList();
+        int validatedCutoff = CutoffPointValidator.validateCutoff(allActiveMessages, candidateSource.size());
+        if (validatedCutoff <= 0) {
+            log.info("Cutoff point validator rolled cutoff back to 0; skipping compaction for this cycle");
+            return;
+        }
+
+        int safeSplit = 0;
+        int accumulatedCount = 0;
+        for (int i = 0; i < activeGroups.size(); i++) {
+            int groupSize = activeGroups.get(i).size();
+            if (accumulatedCount + groupSize <= validatedCutoff) {
+                accumulatedCount += groupSize;
+                safeSplit = i + 1;
+            } else {
+                break;
+            }
+        }
+        if (safeSplit <= 0) {
+            log.info("Cutoff point validator safe group split is 0; skipping compaction for this cycle");
+            return;
+        }
+
+        List<AgentMessage> sourceToCompact = activeGroups.subList(0, safeSplit).stream()
+                .flatMap(List::stream)
+                .toList();
 
         Optional<SemanticConversationSummaryV1> workingSemantic =
                 previousSummary.flatMap(ConversationSummary::semanticSummary);
@@ -322,8 +374,8 @@ public final class SemanticCompactionCoordinator {
         int physicalCalls = 0;
         int batchStart = 0;
         try {
-            while (batchStart < split) {
-                int batchEnd = nextBatchEnd(activeGroups, batchStart, split, available);
+            while (batchStart < safeSplit) {
+                int batchEnd = nextBatchEnd(activeGroups, batchStart, safeSplit, available);
                 List<AgentMessage> batchSource = activeGroups.subList(batchStart, batchEnd).stream()
                         .flatMap(List::stream)
                         .toList();
@@ -379,15 +431,36 @@ public final class SemanticCompactionCoordinator {
         } catch (CancellationObservedException cancelled) {
             throw cancelled;
         } catch (Exception ex) {
-            log.warn("Semantic compaction failed: {}", ex.getMessage());
+            String category = failureCategory(ex);
+            String errorCode = validationErrorCode(ex);
+            if (reason == CompactionTriggerReason.ACTIVE_HISTORY_BUDGET) {
+                log.warn(
+                        "Active history budget compaction failed for run {} [category={}, code={}], continuing gracefully without compaction",
+                        run.id().value(),
+                        category,
+                        errorCode);
+                activeBudgetCompactionFailedRuns.add(run.id());
+                events.append(
+                        run.id(),
+                        "session.compaction-failed",
+                        Map.of(
+                                "reason", reason.name(),
+                                "failureCategory", category,
+                                "validationErrorCode", errorCode,
+                                "physicalCalls", physicalCalls,
+                                "degraded", true),
+                        time.now());
+                return;
+            }
+            log.warn("Semantic compaction failed: category={}, code={}", category, errorCode);
             boolean degraded = policy.allowDeterministicDegradedFallback() || overflow;
             events.append(
                     run.id(),
                     "session.compaction-failed",
                     Map.of(
                             "reason", reason.name(),
-                            "failureCategory", failureCategory(ex),
-                            "validationErrorCode", validationErrorCode(ex),
+                            "failureCategory", category,
+                            "validationErrorCode", errorCode,
                             "physicalCalls", physicalCalls,
                             "degraded", degraded),
                     time.now());

@@ -2,6 +2,7 @@ package io.haifa.agent.runtime.core.loop;
 
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
+import io.haifa.agent.context.budget.HeuristicTokenEstimator;
 import io.haifa.agent.context.compression.CompressionPolicy;
 import io.haifa.agent.context.compression.CompressionRequest;
 import io.haifa.agent.context.compression.ContextCompressor;
@@ -33,6 +34,7 @@ import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallId;
+import io.haifa.agent.runtime.core.compaction.CompactionFileOperationsTracker;
 import io.haifa.agent.runtime.core.storage.OptimisticLockException;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import java.nio.charset.StandardCharsets;
@@ -47,6 +49,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /** Loads cross-Run session facts and keeps tool protocol turns atomic during window selection. */
 public final class SessionMessageSource {
@@ -77,12 +80,15 @@ public final class SessionMessageSource {
         }
     }
 
+    private record SummaryRenderKey(SummaryId id, SummaryVersion version) {}
+
     private final RuntimeStateRepository messages;
     private final ConversationSummaryRepository summaries;
     private final ContextCompressor compressor;
     private final CompressionPolicy policy;
     private final IdentifierGenerator ids;
     private final TimeProvider time;
+    private final Map<SummaryRenderKey, String> renderedMarkdownCache = new ConcurrentHashMap<>();
 
     public SessionMessageSource(
             RuntimeStateRepository messages,
@@ -426,7 +432,19 @@ public final class SessionMessageSource {
     }
 
     private ContextItem summaryItem(ConversationSummary summary) {
-        Optional<String> renderedMarkdown = summary.semanticSummary().map(SemanticSummaryRenderer::renderMarkdown);
+        Optional<String> renderedMarkdown = summary.semanticSummary().map(sem -> {
+            SummaryRenderKey key = new SummaryRenderKey(summary.id(), summary.version());
+            return renderedMarkdownCache.computeIfAbsent(key, k -> {
+                String md = SemanticSummaryRenderer.renderMarkdown(sem);
+                if (!summary.sourceMessageIds().isEmpty()) {
+                    var fileOps = CompactionFileOperationsTracker.track(summary.sourceMessageIds(), messages);
+                    md = CompactionFileOperationsTracker.appendToFileOperations(md, fileOps);
+                }
+                return md;
+            });
+        });
+        int estimatedTokens =
+                renderedMarkdown.map(HeuristicTokenEstimator::tokens).orElse(summary.estimatedTokens());
         return new ContextItem(
                 new ContextItemId("summary-" + summary.id().value() + "-"
                         + summary.version().value()),
@@ -441,7 +459,7 @@ public final class SessionMessageSource {
                                 .map(ToolCallId::value)
                                 .toList(),
                         renderedMarkdown),
-                summary.estimatedTokens(),
+                estimatedTokens,
                 ContextPriority.HIGH,
                 ContextRetention.COMPRESSIBLE,
                 new ContextSecurity(summary.securityLabels()),

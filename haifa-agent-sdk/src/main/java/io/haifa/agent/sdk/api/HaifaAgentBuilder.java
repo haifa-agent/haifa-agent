@@ -4,6 +4,7 @@ import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.id.UuidV7IdentifierGenerator;
 import io.haifa.agent.common.time.SystemTimeProvider;
 import io.haifa.agent.common.time.TimeProvider;
+import io.haifa.agent.context.compression.CompressionPolicy;
 import io.haifa.agent.core.run.AgentRunType;
 import io.haifa.agent.policy.api.ApprovalMode;
 import io.haifa.agent.policy.api.PolicyChallenge;
@@ -85,8 +86,18 @@ public final class HaifaAgentBuilder {
     private final Map<String, ProductRunProfile> runProfiles = new LinkedHashMap<>();
     private AgentMetadata metadata = AgentMetadata.defaults();
     private boolean starterDefaultInstructionsInUse;
+    private CompressionPolicy compressionPolicy;
 
     HaifaAgentBuilder() {}
+
+    public HaifaAgentBuilder compressionPolicy(CompressionPolicy value) {
+        this.compressionPolicy = Objects.requireNonNull(value, "compressionPolicy must not be null");
+        return this;
+    }
+
+    public CompressionPolicy compressionPolicy() {
+        return compressionPolicy;
+    }
 
     public HaifaAgentBuilder product(ProductProfile value) {
         profile = Objects.requireNonNull(value, "value must not be null");
@@ -341,6 +352,9 @@ public final class HaifaAgentBuilder {
             }
             if (credential != null) {
                 runtimeBuilder.credentialBroker(credential.broker());
+            }
+            if (compressionPolicy != null) {
+                runtimeBuilder.compressionPolicy(compressionPolicy);
             }
 
             var runtime = runtimeBuilder.build();
