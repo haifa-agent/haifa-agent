@@ -536,18 +536,12 @@ if (!Number.isInteger(attempt) || attempt < 1 || attempt > 30) {
   throw new Error("--attempt must be between 1 and 30");
 }
 const mode = argumentsByName.get("--mode") ?? "full";
-if (!["full", "approval", "viewport", "governance", "mouse", "streaming"].includes(mode)) {
-  throw new Error("--mode must be full, approval, viewport, governance, mouse, or streaming");
+if (!["full", "approval", "viewport", "governance", "streaming"].includes(mode)) {
+  throw new Error("--mode must be full, approval, viewport, governance, or streaming");
 }
 const providerMode = argumentsByName.get("--provider") ?? "deepseek";
 if (!["deepseek", "stub"].includes(providerMode)) {
   throw new Error("--provider must be deepseek or stub");
-}
-if (mode === "mouse" && providerMode !== "stub") {
-  throw new Error("--mode mouse requires --provider stub");
-}
-if (mode === "mouse" && process.platform === "win32") {
-  throw new Error("--mode mouse requires a POSIX PTY because ConPTY text writes cannot synthesize mouse input");
 }
 const approvalMode = mode === "approval" || mode === "governance" ? "ask" : "auto";
 const jar = path.resolve(
@@ -921,53 +915,6 @@ try {
     const streamingOutput = terminalOutput.slice(streamingOutputStart);
     observations.streamingAvoidedFullScreenClear =
       !streamingOutput.includes("\u001b[2J") && !streamingOutput.includes("\u001b[3J");
-
-    if (mode === "mouse") {
-      const bottomFrame = screen.text();
-      await send(
-        sgrMouse(64, 1, 4) + sgrMouse(64, 1, 4),
-        "mouse-wheel-up-transcript",
-        800,
-      );
-      const scrolledFrame = screen.text();
-      observations.mouseWheelScrolledTranscript =
-        scrolledFrame !== bottomFrame && !scrolledFrame.includes("STUB-LONG-LINE-40");
-
-      const selectionTarget = visibleMarkerCoordinate(screen, /STUB-LONG-LINE-\d{2}/);
-      if (!selectionTarget) throw new Error("No visible long-output marker was available for mouse selection");
-      const selectionOutputStart = terminalOutput.length;
-      await send(
-        sgrMouse(0, selectionTarget.column, selectionTarget.row),
-        "mouse-selection-press",
-        100,
-      );
-      await send(
-        sgrMouse(
-          32,
-          selectionTarget.column + selectionTarget.text.length - 1,
-          selectionTarget.row,
-        ),
-        "mouse-selection-drag",
-        100,
-      );
-      await send(
-        sgrMouse(
-          0,
-          selectionTarget.column + selectionTarget.text.length - 1,
-          selectionTarget.row,
-          true,
-        ),
-        "mouse-selection-release",
-        500,
-      );
-      const selectionOutput = terminalOutput.slice(selectionOutputStart);
-      const encodedSelection = osc52Payload(selectionOutput);
-      observations.mouseSelectionHighlighted = selectionOutput.includes("\u001b[7m");
-      observations.mouseSelectionOsc52Observed =
-        encodedSelection != null &&
-        Buffer.from(encodedSelection, "base64").toString("utf8") === selectionTarget.text;
-      await send("\u001b", "mouse-selection-clear", 100);
-    }
   } else {
     await sendAndWaitForTraceStop(
       "修复 src/main/java/sample/Clamp.java：小于 minimum 时返回 minimum，大于 maximum 时返回 maximum，" +
@@ -1053,7 +1000,13 @@ const commonAssertions = {
   started: hasTerminalText("Haifa Coding Agent"),
   alternateScreenEntered: terminalOutput.includes("\u001b[?1049h"),
   alternateScreenExited: terminalOutput.includes("\u001b[?1049l"),
-  mouseAnyMotionDisabled: !terminalOutput.includes("\u001b[?1003h"),
+  mouseReportingDisabled:
+    !terminalOutput.includes("\u001b[?1000h") &&
+    !terminalOutput.includes("\u001b[?1002h") &&
+    !terminalOutput.includes("\u001b[?1003h") &&
+    !terminalOutput.includes("\u001b[?1006h"),
+  mouseReportingReset:
+    terminalOutput.includes("\u001b[?1002l") && terminalOutput.includes("\u001b[?1006l"),
   helpOpened: observations.helpOpened === true,
   commandSelectorVisible: terminalOutput.includes("Commands"),
   unbracketedMultilinePasteStayedDraft: observations.unbracketedMultilinePasteStayedDraft === true,
@@ -1070,25 +1023,20 @@ const streamingAssertions = {
   started: hasTerminalText("Haifa Coding Agent"),
   alternateScreenEntered: terminalOutput.includes("\u001b[?1049h"),
   alternateScreenExited: terminalOutput.includes("\u001b[?1049l"),
-  mouseAnyMotionDisabled: !terminalOutput.includes("\u001b[?1003h"),
+  mouseReportingDisabled:
+    !terminalOutput.includes("\u001b[?1000h") &&
+    !terminalOutput.includes("\u001b[?1002h") &&
+    !terminalOutput.includes("\u001b[?1003h") &&
+    !terminalOutput.includes("\u001b[?1006h"),
+  mouseReportingReset:
+    terminalOutput.includes("\u001b[?1002l") && terminalOutput.includes("\u001b[?1006l"),
   noKeyLeak: keyLeakFiles.length === 0,
   exitedSuccessfully: exited?.exitCode === 0,
   streamingAvoidedFullScreenClear: observations.streamingAvoidedFullScreenClear === true,
   longModelOutputCompleted: observations.longModelOutputCompleted === true,
   longModelOutputVisible: terminalOutput.includes("STUB-LONG-LINE-40"),
 };
-const assertions = mode === "mouse" ? {
-  ...commonAssertions,
-  mouseCellMotionEnabled:
-    terminalOutput.includes("\u001b[?1002h") && terminalOutput.includes("\u001b[?1006h"),
-  mouseCellMotionReset:
-    terminalOutput.includes("\u001b[?1002l") && terminalOutput.includes("\u001b[?1006l"),
-  longModelOutputCompleted: observations.longModelOutputCompleted === true,
-  longModelOutputVisible: terminalOutput.includes("STUB-LONG-LINE-40"),
-  mouseWheelScrolledTranscript: observations.mouseWheelScrolledTranscript === true,
-  mouseSelectionHighlighted: observations.mouseSelectionHighlighted === true,
-  sqliteCreated: fs.existsSync(database) && fs.statSync(database).size > 0,
-} : mode === "streaming" ? streamingAssertions : mode === "viewport" ? {
+const assertions = mode === "streaming" ? streamingAssertions : mode === "viewport" ? {
   ...commonAssertions,
   viewportBounded: observations.viewportBounded === true,
   latestViewportLineVisible: terminalOutput.includes("VIEWPORT-LINE-12"),
@@ -1168,15 +1116,6 @@ const manifest = {
     requestCount: provider.requests.length,
     requests: provider.requests,
   },
-  ...(mode === "mouse"
-    ? {
-        clipboardObservation: {
-          osc52MatchedSelectedText: observations.mouseSelectionOsc52Observed === true,
-          gated: false,
-          reason: "Local clipboard APIs are not observable through a headless PTY; exact copy text is unit-tested",
-        },
-      }
-    : {}),
   artifacts: {
     ansi: ansiFile,
     text: textFile,
