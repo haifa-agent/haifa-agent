@@ -161,10 +161,9 @@ public final class SummaryModelInvoker {
         } else if (response.content() != null && !response.content().isBlank()) {
             try {
                 outputMap = SimpleJsonParser.parseObject(response.content());
-            } catch (Exception parseException) {
+            } catch (Exception ignored) {
                 throw new SemanticSummaryValidationException(
-                        "Failed to parse JSON structured output from model response: " + parseException.getMessage(),
-                        List.of("JSON_PARSE_ERROR"));
+                        "Failed to parse JSON structured output from model response", List.of("JSON_PARSE_ERROR"));
             }
         }
 
@@ -175,10 +174,9 @@ public final class SummaryModelInvoker {
 
         try {
             return SemanticConversationSummaryV1.fromMap(outputMap);
-        } catch (Exception mappingException) {
+        } catch (Exception ignored) {
             throw new SemanticSummaryValidationException(
-                    "Failed to map structured output to SemanticConversationSummaryV1: "
-                            + mappingException.getMessage(),
+                    "Failed to map structured output to SemanticConversationSummaryV1",
                     List.of("SCHEMA_MAPPING_ERROR"));
         }
     }

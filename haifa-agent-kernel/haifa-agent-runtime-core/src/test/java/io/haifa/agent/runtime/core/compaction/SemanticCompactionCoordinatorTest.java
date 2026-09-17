@@ -1751,4 +1751,207 @@ class SemanticCompactionCoordinatorTest {
                 Map.of(),
                 NOW);
     }
+
+    @Test
+    @DisplayName("session.compacted emits all Phase 3 safety and performance telemetry metrics")
+    void testSessionCompactedEmitsAllTelemetryMetrics() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AtomicInteger idGen = new AtomicInteger();
+        IdentifierGenerator ids = () -> "id-" + idGen.incrementAndGet();
+
+        CompressionPolicy policy =
+                CompressionPolicy.defaults().withSemanticCompactionEnabled(true).withTailTokenBounds(5, 10);
+
+        SemanticCompactionCoordinator coordinator = coordinator(store, ids, policy);
+        AgentRun run = createAndSaveRun(store);
+        AgentSessionId session = run.sessionId();
+
+        store.appendSessionMessage(draft("m1", session, run.id().value(), MessageRole.USER, "Turn 1 user message"));
+        store.appendSessionMessage(
+                draft("m2", session, run.id().value(), MessageRole.ASSISTANT, "Turn 1 assistant reply"));
+        store.appendSessionMessage(draft("m3", session, run.id().value(), MessageRole.USER, "Turn 2 user message"));
+        store.appendSessionMessage(
+                draft("m4", session, run.id().value(), MessageRole.ASSISTANT, "Turn 2 assistant reply tail"));
+
+        AgentChatModel model = request -> response("res-1", VALID_SUMMARY_JSON);
+        CompactionEvaluationOutcome outcome =
+                coordinator.forceCompactOnOverflow(run, 1, createBinding(store, run, model));
+
+        assertThat(outcome.compacted()).isTrue();
+        assertThat(outcome.semanticCompactionReason()).isEqualTo("PROVIDER_CONTEXT_TOO_LONG");
+        assertThat(outcome.tier1PruningBypassedSummary()).isFalse();
+        assertThat(outcome.projectedActiveHistoryTokensBefore()).isGreaterThan(0L);
+        assertThat(outcome.projectedActiveHistoryTokensAfter()).isGreaterThan(0L);
+
+        var compactEvents = store.eventsFor(run.id()).stream()
+                .filter(e -> "session.compacted".equals(e.type()))
+                .toList();
+        assertThat(compactEvents).hasSize(1);
+        Map<String, Object> data = compactEvents.getFirst().data();
+        assertThat(data)
+                .containsKeys(
+                        "semanticCompactionReason",
+                        "tier1PruningBypassedSummary",
+                        "projectedActiveHistoryTokensBefore",
+                        "projectedActiveHistoryTokensAfter",
+                        "omittedToolPayloadTokens",
+                        "omittedToolResultCount",
+                        "compactionSummaryCacheHitRate",
+                        "compactionEvaluationElapsedMillis");
+        assertThat(data.get("tier1PruningBypassedSummary")).isEqualTo(false);
+        assertThat(data.get("semanticCompactionReason")).isEqualTo("PROVIDER_CONTEXT_TOO_LONG");
+        assertThat((Long) data.get("projectedActiveHistoryTokensBefore")).isGreaterThan(0L);
+        assertThat((Long) data.get("projectedActiveHistoryTokensAfter")).isGreaterThan(0L);
+    }
+
+    @Test
+    @DisplayName("session.compaction-bypassed emits all Phase 3 safety and performance telemetry metrics")
+    void testSessionCompactionBypassedEmitsAllTelemetryMetrics() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AtomicInteger idGen = new AtomicInteger();
+        IdentifierGenerator ids = () -> "id-" + idGen.incrementAndGet();
+
+        CompressionPolicy policy =
+                CompressionPolicy.defaults().withSemanticCompactionEnabled(true).withTailTokenBounds(5, 50);
+
+        SemanticCompactionCoordinator coordinator = coordinator(store, ids, policy);
+        AgentRun run = createAndSaveRun(store);
+        AgentSessionId session = run.sessionId();
+
+        for (int i = 1; i <= 4; i++) {
+            ToolCallId callId = new ToolCallId("bypass-telemetry-call-" + i);
+            io.haifa.agent.core.tool.ProviderToolCallCorrelationId corrId =
+                    new io.haifa.agent.core.tool.ProviderToolCallCorrelationId("bypass-telemetry-corr-" + i);
+            Map<String, Object> data =
+                    (i <= 2) ? Map.of("largeJson", "a".repeat(50_000)) : Map.of("result", "small " + i);
+            ToolCall call = new ToolCall(
+                    callId,
+                    run.id(),
+                    new io.haifa.agent.core.step.AgentStepId("step-" + i),
+                    corrId,
+                    new io.haifa.agent.core.tool.RuntimeIdempotencyKey("idemp-" + i),
+                    "file_read",
+                    "1.0.0",
+                    new io.haifa.agent.core.tool.ToolArguments(
+                            "input.schema", "1.0.0", Map.of("path", "file" + i + ".txt")),
+                    NOW.plusSeconds(i * 10));
+            call.beginValidation();
+            call.beginPolicyCheck();
+            call.start(NOW.plusSeconds(i * 10 + 1));
+            call.complete(
+                    new io.haifa.agent.core.tool.ToolResult(true, "Read file " + i, data, List.of(), List.of(), false),
+                    NOW.plusSeconds(i * 10 + 2));
+            store.appendToolCall(call);
+
+            store.appendSessionMessage(new SessionMessageDraft(
+                    new AgentMessageId("m-a-" + i),
+                    session,
+                    Optional.of(run.id()),
+                    Optional.empty(),
+                    MessageRole.ASSISTANT,
+                    MessageStatus.COMPLETED,
+                    MessageVisibility.AGENT_VISIBLE,
+                    List.of(new ToolCallPart(callId, corrId, "file_read", "1.0.0")),
+                    Map.of(),
+                    NOW.plusSeconds(i * 10 + 1)));
+
+            store.appendSessionMessage(new SessionMessageDraft(
+                    new AgentMessageId("m-t-" + i),
+                    session,
+                    Optional.of(run.id()),
+                    Optional.empty(),
+                    MessageRole.TOOL,
+                    MessageStatus.COMPLETED,
+                    MessageVisibility.AGENT_VISIBLE,
+                    List.of(new ToolResultPart(callId, corrId, "Read file " + i)),
+                    Map.of(),
+                    NOW.plusSeconds(i * 10 + 2)));
+        }
+
+        AgentChatModel model = request -> {
+            throw new AssertionError("Model should not be invoked when compaction is bypassed via Tier 1");
+        };
+
+        FrozenModelBinding binding = createBindingWithContextWindow(store, run, model, 40_000);
+        CompactionEvaluationOutcome outcome = coordinator.evaluateAndCompactIfNeeded(run, 1, binding);
+
+        assertThat(outcome.tier1PruningBypassedSummary()).isTrue();
+        assertThat(outcome.omittedToolResultCount()).isGreaterThan(0);
+        assertThat(outcome.omittedToolPayloadTokens()).isGreaterThan(0L);
+
+        var bypassEvents = store.eventsFor(run.id()).stream()
+                .filter(e -> "session.compaction-bypassed".equals(e.type()))
+                .toList();
+        assertThat(bypassEvents).hasSize(1);
+        Map<String, Object> data = bypassEvents.getFirst().data();
+        assertThat(data)
+                .containsKeys(
+                        "semanticCompactionReason",
+                        "tier1PruningBypassedSummary",
+                        "projectedActiveHistoryTokensBefore",
+                        "projectedActiveHistoryTokensAfter",
+                        "omittedToolPayloadTokens",
+                        "omittedToolResultCount",
+                        "compactionSummaryCacheHitRate",
+                        "compactionEvaluationElapsedMillis");
+        assertThat(data.get("tier1PruningBypassedSummary")).isEqualTo(true);
+    }
+
+    @Test
+    @DisplayName("session.compaction-failed sanitizes malicious exceptions and emits all Phase 3 telemetry metrics")
+    void testSessionCompactionFailedSanitizesMaliciousExceptionAndEmitsAllTelemetryMetrics() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AtomicInteger idGen = new AtomicInteger();
+        IdentifierGenerator ids = () -> "id-" + idGen.incrementAndGet();
+
+        CompressionPolicy policy = CompressionPolicy.defaults()
+                .withSemanticCompactionEnabled(true)
+                .withActiveHistoryBudgetTokens(50)
+                .withTailTokenBounds(5, 10);
+
+        SemanticCompactionCoordinator coordinator = coordinator(store, ids, policy);
+        AgentRun run = createAndSaveRun(store);
+        AgentSessionId session = run.sessionId();
+
+        store.appendSessionMessage(draft("m1", session, run.id().value(), MessageRole.USER, "Turn 1 user ".repeat(30)));
+        store.appendSessionMessage(
+                draft("m2", session, run.id().value(), MessageRole.ASSISTANT, "Turn 1 assistant ".repeat(30)));
+        store.appendSessionMessage(draft("m3", session, run.id().value(), MessageRole.USER, "Turn 2 user ".repeat(30)));
+        store.appendSessionMessage(
+                draft("m4", session, run.id().value(), MessageRole.ASSISTANT, "Turn 2 assistant tail ".repeat(10)));
+
+        String sensitiveToken = "sk-proj-SUPER_SECRET_KEY_123456789";
+        AgentChatModel failingModel = request -> {
+            throw new RuntimeException("Provider connection failed with secret: " + sensitiveToken);
+        };
+
+        CompactionEvaluationOutcome outcome =
+                coordinator.evaluateAndCompactIfNeeded(run, 1, createBinding(store, run, failingModel));
+
+        assertThat(outcome.compacted()).isFalse();
+        assertThat(outcome.semanticCompactionReason()).isEqualTo("ACTIVE_HISTORY_BUDGET");
+
+        var failEvents = store.eventsFor(run.id()).stream()
+                .filter(e -> "session.compaction-failed".equals(e.type()))
+                .toList();
+        assertThat(failEvents).hasSize(1);
+        Map<String, Object> data = failEvents.getFirst().data();
+        assertThat(data)
+                .containsKeys(
+                        "semanticCompactionReason",
+                        "tier1PruningBypassedSummary",
+                        "projectedActiveHistoryTokensBefore",
+                        "projectedActiveHistoryTokensAfter",
+                        "omittedToolPayloadTokens",
+                        "omittedToolResultCount",
+                        "compactionSummaryCacheHitRate",
+                        "compactionEvaluationElapsedMillis",
+                        "failureCategory",
+                        "validationErrorCode");
+
+        // Absolute sanitization invariant check
+        for (var event : store.eventsFor(run.id())) {
+            assertThat(event.data().values().toString()).doesNotContain(sensitiveToken);
+        }
+    }
 }
