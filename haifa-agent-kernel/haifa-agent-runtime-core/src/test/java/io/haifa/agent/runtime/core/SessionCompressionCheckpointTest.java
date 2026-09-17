@@ -558,7 +558,15 @@ class SessionCompressionCheckpointTest {
                                 "sessionTokenBudget",
                                 "summarySourceHash",
                                 "runConfigurationDigest",
-                                "instructionComponentDigests"));
+                                "instructionComponentDigests",
+                                "semanticCompactionReason",
+                                "tier1PruningBypassedSummary",
+                                "projectedActiveHistoryTokensBefore",
+                                "projectedActiveHistoryTokensAfter",
+                                "omittedToolPayloadTokens",
+                                "omittedToolResultCount",
+                                "compactionSummaryCacheHitRate",
+                                "compactionEvaluationElapsedMillis"));
     }
 
     @Test

@@ -4,6 +4,7 @@ import io.haifa.agent.artifact.ArtifactService;
 import io.haifa.agent.artifact.InMemoryArtifactPayloadStore;
 import io.haifa.agent.artifact.InMemoryArtifactStore;
 import io.haifa.agent.common.id.UuidV7IdentifierGenerator;
+import io.haifa.agent.context.compression.CompressionPolicy;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunBudget;
@@ -49,6 +50,24 @@ import java.util.Set;
 
 /** Explicit Composition helper; no classpath scanning or Bean ordering participates in product assembly. */
 public final class PersonalAssistantAssembler {
+    public static final int PERSONAL_ASSISTANT_ACTIVE_HISTORY_BUDGET_PERCENT = 25;
+    public static final long PERSONAL_ASSISTANT_MIN_ACTIVE_HISTORY_BUDGET_TOKENS = 48_000L;
+    public static final long PERSONAL_ASSISTANT_MAX_ACTIVE_HISTORY_BUDGET_TOKENS = 96_000L;
+    public static final int PERSONAL_ASSISTANT_TARGET_TAIL_TOKEN_PERCENT = 40;
+    public static final int PERSONAL_ASSISTANT_MIN_TAIL_TOKENS = 24_000;
+    public static final int PERSONAL_ASSISTANT_MAX_TAIL_TOKENS = 32_000;
+
+    public static CompressionPolicy defaultCompressionPolicy() {
+        return CompressionPolicy.defaults()
+                .withSemanticCompactionEnabled(true)
+                .withDynamicActiveBudget(
+                        PERSONAL_ASSISTANT_ACTIVE_HISTORY_BUDGET_PERCENT,
+                        PERSONAL_ASSISTANT_MIN_ACTIVE_HISTORY_BUDGET_TOKENS,
+                        PERSONAL_ASSISTANT_MAX_ACTIVE_HISTORY_BUDGET_TOKENS)
+                .withTailTokenBounds(PERSONAL_ASSISTANT_MIN_TAIL_TOKENS, PERSONAL_ASSISTANT_MAX_TAIL_TOKENS)
+                .withTargetTailTokenPercent(PERSONAL_ASSISTANT_TARGET_TAIL_TOKEN_PERCENT);
+    }
+
     private PersonalAssistantAssembler() {}
 
     public static PersonalAssistantApplication assemble(Dependencies dependencies) {
@@ -88,6 +107,7 @@ public final class PersonalAssistantAssembler {
                             tools.tool().catalog(), dependencies.web(), dependencies.policy()))
                     .modelImageResolver(dependencies.imageResolver())
                     .modelAudioResolver(dependencies.audioResolver())
+                    .compressionPolicy(defaultCompressionPolicy())
                     .toolRetry(
                             2,
                             PersonalAssistantAssembler::isTransientToolFailure,

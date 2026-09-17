@@ -24,6 +24,7 @@ import io.haifa.agent.model.api.ModelInvocationException;
 import io.haifa.agent.model.api.ModelRequestId;
 import io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt;
 import io.haifa.agent.runtime.core.checkpoint.CheckpointManager;
+import io.haifa.agent.runtime.core.compaction.CompactionEvaluationOutcome;
 import io.haifa.agent.runtime.core.compaction.SemanticCompactionCoordinator;
 import io.haifa.agent.runtime.core.control.CancellationObservedException;
 import io.haifa.agent.runtime.core.control.RunControlRegistry;
@@ -287,10 +288,13 @@ public final class DefaultAgentLoop implements AgentLoop {
                     time.now()));
 
             FrozenModelBinding model = models.bind(run);
+            CompactionEvaluationOutcome preBuildOutcome = CompactionEvaluationOutcome.NONE;
             if (compactionCoordinator != null) {
-                compactionCoordinator.evaluateAndCompactIfNeeded(run, progress.iteration(), model);
+                preBuildOutcome = compactionCoordinator.evaluateAndCompactIfNeeded(run, progress.iteration(), model);
             }
-            RuntimeContextBuildResult built = buildContext(run, progress, model);
+            ContextBuildExecution buildExecution = buildContext(run, progress, model, preBuildOutcome);
+            RuntimeContextBuildResult built = buildExecution.built();
+            CompactionEvaluationOutcome compactionOutcome = buildExecution.outcome();
             recordPromptDiagnostics(built);
             recordTrace(new RuntimeTraceEvent(
                     traceContext.traceId(),
@@ -339,6 +343,21 @@ public final class DefaultAgentLoop implements AgentLoop {
                             Map.entry(
                                     "forcedRebuildAttempt",
                                     built.context().report().forcedRebuildAttempt()),
+                            Map.entry("semanticCompactionReason", compactionOutcome.semanticCompactionReason()),
+                            Map.entry("tier1PruningBypassedSummary", compactionOutcome.tier1PruningBypassedSummary()),
+                            Map.entry(
+                                    "projectedActiveHistoryTokensBefore",
+                                    compactionOutcome.projectedActiveHistoryTokensBefore()),
+                            Map.entry(
+                                    "projectedActiveHistoryTokensAfter",
+                                    compactionOutcome.projectedActiveHistoryTokensAfter()),
+                            Map.entry("omittedToolPayloadTokens", compactionOutcome.omittedToolPayloadTokens()),
+                            Map.entry("omittedToolResultCount", compactionOutcome.omittedToolResultCount()),
+                            Map.entry(
+                                    "compactionSummaryCacheHitRate", compactionOutcome.compactionSummaryCacheHitRate()),
+                            Map.entry(
+                                    "compactionEvaluationElapsedMillis",
+                                    compactionOutcome.compactionEvaluationElapsedMillis()),
                             Map.entry("windowGeneration", built.windowIdentity()),
                             Map.entry(
                                     "compactionGeneration",
@@ -1050,16 +1069,23 @@ public final class DefaultAgentLoop implements AgentLoop {
                 && modelError.category() == ModelErrorCategory.CONTEXT_TOO_LONG;
     }
 
-    private RuntimeContextBuildResult buildContext(AgentRun run, AgentLoopContext progress, FrozenModelBinding model) {
+    private record ContextBuildExecution(RuntimeContextBuildResult built, CompactionEvaluationOutcome outcome) {}
+
+    private ContextBuildExecution buildContext(
+            AgentRun run,
+            AgentLoopContext progress,
+            FrozenModelBinding model,
+            CompactionEvaluationOutcome initialOutcome) {
         try {
-            return contextBuilder.build(run, progress, model);
+            return new ContextBuildExecution(contextBuilder.build(run, progress, model), initialOutcome);
         } catch (LocalContextOverflowException overflow) {
             progress.recordForcedContextRebuild();
+            CompactionEvaluationOutcome overflowOutcome = initialOutcome;
             if (compactionCoordinator != null) {
-                compactionCoordinator.forceCompactOnOverflow(run, progress.iteration(), model);
+                overflowOutcome = compactionCoordinator.forceCompactOnOverflow(run, progress.iteration(), model);
             }
             try {
-                return contextBuilder.build(run, progress, model);
+                return new ContextBuildExecution(contextBuilder.build(run, progress, model), overflowOutcome);
             } catch (LocalContextOverflowException exhausted) {
                 throw new ContextRebuildExhaustedException(
                         "local context remained too long after the single forced rebuild");

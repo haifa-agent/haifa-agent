@@ -214,6 +214,31 @@ public record RuntimeConfigurationSnapshot(
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
     }
 
+    public RuntimeConfigurationSnapshot withModel(ResolvedModelSnapshot newModel) {
+        Objects.requireNonNull(newModel, "newModel must not be null");
+        return new RuntimeConfigurationSnapshot(
+                reference,
+                definitionId,
+                definitionVersion,
+                profileId,
+                profileVersion,
+                runType,
+                budget,
+                limits,
+                toolBindings,
+                skillBindings,
+                skillCatalogDigest,
+                skillResolutionPolicyRef,
+                skillTrust,
+                allowedChildAgents,
+                agentInstruction,
+                overrides,
+                capabilities,
+                newModel,
+                modelRequestOptions,
+                structuredOutput);
+    }
+
     private static String requireText(String value, String field) {
         String normalized =
                 Objects.requireNonNull(value, field + " must not be null").trim();

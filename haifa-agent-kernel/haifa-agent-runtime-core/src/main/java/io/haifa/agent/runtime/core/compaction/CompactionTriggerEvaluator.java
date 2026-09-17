@@ -28,7 +28,22 @@ public final class CompactionTriggerEvaluator {
         long calculatedHeadroom = (availableSessionTokens * policy.softTriggerHeadroomPercent()) / 100L;
         long triggerHeadroomTokens =
                 Math.clamp(calculatedHeadroom, (long) policy.minTriggerHeadroom(), (long) policy.maxTriggerHeadroom());
-        long softLimitTokens = Math.max(0L, availableSessionTokens - triggerHeadroomTokens);
+        long capacitySoftLimit = computeCapacitySoftLimit(availableSessionTokens, triggerHeadroomTokens);
+        long activeBudget;
+        if (policy.activeHistoryBudgetTokens().isPresent()) {
+            activeBudget = policy.activeHistoryBudgetTokens().getAsLong();
+        } else if (policy.activeHistoryBudgetPercent() > 0) {
+            long ratioBudget = (availableSessionTokens * policy.activeHistoryBudgetPercent()) / 100L;
+            activeBudget = Math.clamp(
+                    ratioBudget, policy.minActiveHistoryBudgetTokens(), policy.maxActiveHistoryBudgetTokens());
+        } else {
+            activeBudget = capacitySoftLimit;
+        }
+        long softLimitTokens = Math.min(capacitySoftLimit, activeBudget);
+        long resolvedActiveBudget = softLimitTokens > 0 ? softLimitTokens : availableSessionTokens;
+        long calculatedTail = (resolvedActiveBudget * policy.targetTailTokenPercent()) / 100L;
+        long clampedTail = Math.clamp(calculatedTail, (long) policy.minTailTokens(), (long) policy.maxTailTokens());
+        long resolvedTailTokens = Math.min(clampedTail, resolvedActiveBudget);
 
         return new ContextBudgetBreakdown(
                 contextWindowTokens,
@@ -39,7 +54,8 @@ public final class CompactionTriggerEvaluator {
                 availableSessionTokens,
                 triggerHeadroomTokens,
                 softLimitTokens,
-                currentSessionTokens);
+                currentSessionTokens,
+                resolvedTailTokens);
     }
 
     public CompactionTriggerDecision evaluate(
@@ -58,9 +74,24 @@ public final class CompactionTriggerEvaluator {
 
         // Need at least 2 turns to be able to compact older turns while retaining tail
         if (turnCount >= 2 && currentSessionTokens >= breakdown.softLimitTokens()) {
-            return CompactionTriggerDecision.compact(CompactionTriggerReason.SOFT_TOKEN_THRESHOLD, breakdown);
+            long capacitySoftLimit =
+                    computeCapacitySoftLimit(breakdown.availableSessionTokens(), breakdown.triggerHeadroomTokens());
+            CompactionTriggerReason reason = CompactionTriggerReason.SOFT_TOKEN_THRESHOLD;
+            boolean hasActiveBudget =
+                    policy.activeHistoryBudgetTokens().isPresent() || policy.activeHistoryBudgetPercent() > 0;
+            if (hasActiveBudget
+                    && breakdown.softLimitTokens() < capacitySoftLimit
+                    && currentSessionTokens >= breakdown.softLimitTokens()
+                    && currentSessionTokens < capacitySoftLimit) {
+                reason = CompactionTriggerReason.ACTIVE_HISTORY_BUDGET;
+            }
+            return CompactionTriggerDecision.compact(reason, breakdown);
         }
 
         return CompactionTriggerDecision.doNotCompact(breakdown);
+    }
+
+    private static long computeCapacitySoftLimit(long availableSessionTokens, long triggerHeadroomTokens) {
+        return Math.max(0L, availableSessionTokens - triggerHeadroomTokens);
     }
 }
