@@ -169,6 +169,9 @@ public final class CompactionFileOperationsTracker {
     }
 
     private static void processToolCall(ToolCall call, Set<String> readFiles, Set<String> modifiedFiles) {
+        if (call == null || call.result().isEmpty() || !call.result().get().successful()) {
+            return;
+        }
         String toolName = call.toolName().toLowerCase(Locale.ROOT);
         String path = extractFilePath(call.arguments().values());
         if (path == null || path.isBlank()) {

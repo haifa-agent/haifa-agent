@@ -38,13 +38,7 @@ public final class ModelMessageProjectionPlanner {
     public static final int ARG_TRUNCATION_CHAR_LIMIT = 1024;
 
     public static final Set<String> DEFAULT_PURE_READ_TOOLS = Set.of(
-            "file_read",
-            "workspace_file_read",
-            "directory_list",
-            "project_search",
-            "grep_search",
-            "find_by_name",
-            "read_url_content");
+            "file_read", "workspace_file_read", "directory_list", "project_search", "grep_search", "find_by_name");
 
     private static final Set<String> OVERSIZED_ARGUMENT_KEYS = Set.of(
             "codeContent", "replacementContent", "content", "newContent", "patch", "file_content", "text", "data");

@@ -50,7 +50,6 @@ import java.util.Set;
 
 /** Explicit Composition helper; no classpath scanning or Bean ordering participates in product assembly. */
 public final class PersonalAssistantAssembler {
-    public static final long PERSONAL_ASSISTANT_ACTIVE_HISTORY_BUDGET_TOKENS = 32_000L;
     public static final int PERSONAL_ASSISTANT_ACTIVE_HISTORY_BUDGET_PERCENT = 25;
     public static final long PERSONAL_ASSISTANT_MIN_ACTIVE_HISTORY_BUDGET_TOKENS = 48_000L;
     public static final long PERSONAL_ASSISTANT_MAX_ACTIVE_HISTORY_BUDGET_TOKENS = 96_000L;

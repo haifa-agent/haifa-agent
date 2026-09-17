@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.haifa.agent.core.content.ContentPart;
 import io.haifa.agent.core.content.ToolCallPart;
+import io.haifa.agent.core.error.AgentError;
+import io.haifa.agent.core.error.AgentErrorCode;
 import io.haifa.agent.core.message.AgentMessage;
 import io.haifa.agent.core.message.AgentMessageId;
 import io.haifa.agent.core.message.MessageRole;
@@ -17,6 +19,8 @@ import io.haifa.agent.core.tool.RuntimeIdempotencyKey;
 import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallId;
+import io.haifa.agent.core.tool.ToolExecutionError;
+import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
 import java.time.Instant;
@@ -167,8 +171,65 @@ class CompactionFileOperationsTrackerTest {
         assertThat(ops.modifiedFiles()).containsExactly("app.py");
     }
 
+    @Test
+    void ignoresFailedOrUnfinishedToolCalls() {
+        Map<ToolCallId, ToolCall> calls = new HashMap<>();
+
+        // Successful read -> should be recorded
+        ToolCallId okRead = new ToolCallId("ok-read");
+        calls.put(okRead, createCall(okRead, "file_read", Map.of("path", "src/SuccessRead.java"), true, true));
+
+        // Failed read -> should NOT be recorded
+        ToolCallId failedRead = new ToolCallId("failed-read");
+        calls.put(failedRead, createCall(failedRead, "file_read", Map.of("path", "src/FailedRead.java"), true, false));
+
+        // Unfinished read -> should NOT be recorded
+        ToolCallId unfinishedRead = new ToolCallId("unfin-read");
+        calls.put(
+                unfinishedRead,
+                createCall(unfinishedRead, "file_read", Map.of("path", "src/UnfinishedRead.java"), false, false));
+
+        // Successful mutation -> should be recorded
+        ToolCallId okMod = new ToolCallId("ok-mod");
+        calls.put(okMod, createCall(okMod, "write_to_file", Map.of("TargetFile", "src/SuccessMod.java"), true, true));
+
+        // Failed mutation -> should NOT be recorded
+        ToolCallId failedMod = new ToolCallId("failed-mod");
+        calls.put(
+                failedMod,
+                createCall(failedMod, "replace_file_content", Map.of("TargetFile", "src/FailedMod.java"), true, false));
+
+        // Unfinished mutation -> should NOT be recorded
+        ToolCallId unfinishedMod = new ToolCallId("unfin-mod");
+        calls.put(
+                unfinishedMod,
+                createCall(unfinishedMod, "apply_patch", Map.of("TargetFile", "src/UnfinishedMod.java"), false, false));
+
+        AgentMessage msg = assistantMessage(
+                "msg-mixed",
+                1,
+                List.of(
+                        new ToolCallPart(okRead, new ProviderToolCallCorrelationId("c1"), "file_read", "1.0"),
+                        new ToolCallPart(failedRead, new ProviderToolCallCorrelationId("c2"), "file_read", "1.0"),
+                        new ToolCallPart(unfinishedRead, new ProviderToolCallCorrelationId("c3"), "file_read", "1.0"),
+                        new ToolCallPart(okMod, new ProviderToolCallCorrelationId("c4"), "write_to_file", "1.0"),
+                        new ToolCallPart(
+                                failedMod, new ProviderToolCallCorrelationId("c5"), "replace_file_content", "1.0"),
+                        new ToolCallPart(
+                                unfinishedMod, new ProviderToolCallCorrelationId("c6"), "apply_patch", "1.0")));
+
+        var ops = CompactionFileOperationsTracker.track(List.of(msg), calls::get);
+        assertThat(ops.readFiles()).containsExactly("src/SuccessRead.java");
+        assertThat(ops.modifiedFiles()).containsExactly("src/SuccessMod.java");
+    }
+
     private static ToolCall createCall(ToolCallId id, String toolName, Map<String, Object> args) {
-        return new ToolCall(
+        return createCall(id, toolName, args, true, true);
+    }
+
+    private static ToolCall createCall(
+            ToolCallId id, String toolName, Map<String, Object> args, boolean completed, boolean successful) {
+        var call = new ToolCall(
                 id,
                 RUN_ID,
                 new AgentStepId("step-1"),
@@ -178,6 +239,27 @@ class CompactionFileOperationsTrackerTest {
                 "1.0.0",
                 new ToolArguments("schema.1", "1.0", args),
                 Instant.parse("2026-07-21T00:00:00Z"));
+        if (!completed) {
+            return call;
+        }
+        call.beginValidation();
+        call.beginPolicyCheck();
+        call.start(Instant.parse("2026-07-21T00:00:01Z"));
+        if (successful) {
+            call.complete(
+                    new ToolResult(true, "ok", Map.of(), List.of(), List.of(), false),
+                    Instant.parse("2026-07-21T00:00:02Z"));
+        } else {
+            call.fail(
+                    new ToolExecutionError(new AgentError(
+                            AgentErrorCode.TOOL_INVOCATION_FAILED,
+                            Map.of(),
+                            "tool failed",
+                            Instant.parse("2026-07-21T00:00:02Z"))),
+                    new ToolResult(false, "failed", Map.of(), List.of(), List.of(), false),
+                    Instant.parse("2026-07-21T00:00:02Z"));
+        }
+        return call;
     }
 
     private static AgentMessage assistantMessage(String id, long sequence, List<ContentPart> contents) {

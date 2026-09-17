@@ -278,7 +278,7 @@ public final class SemanticCompactionCoordinator {
                 false,
                 projectionPlan,
                 currentTokens,
-                softLimit,
+                decision.budgetBreakdown().resolvedRetainedTailTokens(),
                 startNanos);
     }
 
@@ -355,7 +355,7 @@ public final class SemanticCompactionCoordinator {
                 true,
                 projectionPlan,
                 currentTokens,
-                0L,
+                policy.minTailTokens(),
                 startNanos);
     }
 
@@ -371,7 +371,7 @@ public final class SemanticCompactionCoordinator {
             boolean overflow,
             ModelMessageProjectionPlan projectionPlan,
             long initialEstimatedTokens,
-            long softLimit,
+            long targetTailBudget,
             long startNanos) {
         List<List<AgentMessage>> activeGroups = groupsAfterSummary(visible, previousSummary);
         if (activeGroups.isEmpty()) {
@@ -382,16 +382,6 @@ public final class SemanticCompactionCoordinator {
         long outputReserve = binding.configuration().model().maxOutputTokens();
         int safetyMargin = Math.min(16_384, Math.max(256, (int) (contextWindow / 20)));
         long available = Math.max(1000L, contextWindow - outputReserve - safetyMargin);
-
-        long targetTailBudget;
-        if (overflow) {
-            targetTailBudget = policy.minTailTokens();
-        } else {
-            long resolvedActiveBudget = softLimit > 0 ? softLimit : available;
-            long calculated = (resolvedActiveBudget * policy.targetTailTokenPercent()) / 100L;
-            long clamped = Math.clamp(calculated, (long) policy.minTailTokens(), (long) policy.maxTailTokens());
-            targetTailBudget = Math.min(clamped, resolvedActiveBudget);
-        }
 
         int split = tailSplit(activeGroups, targetTailBudget);
         if (split <= 0) {
