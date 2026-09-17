@@ -221,28 +221,34 @@ public final class SemanticCompactionCoordinator {
         }
 
         long softLimit = decision.budgetBreakdown().softLimitTokens();
+        List<AgentMessage> activeMessages =
+                activeGroups.stream().flatMap(List::stream).toList();
         ModelMessageProjectionPlan projectionPlan = projectionPlanner.plan(
-                visible, resolver, ModelMessageProjectionPlanner.DEFAULT_PURE_READ_TOOLS, softLimit);
+                activeMessages, resolver, ModelMessageProjectionPlanner.DEFAULT_PURE_READ_TOOLS, softLimit);
         if (projectionPlan.bypassCompactionRecommended()) {
             long elapsed = elapsedMillis(startNanos);
+            long prevTokens =
+                    previousSummary.map(ConversationSummary::estimatedTokens).orElse(0);
+            long beforeTokens = prevTokens + projectionPlan.rawActiveTokens();
+            long afterTokens = prevTokens + projectionPlan.projectedActiveTokens();
             log.info(
                     "Bypassing semantic compaction for session {} due to projection pruning: saved {} tokens, projected {} < softLimit {}",
                     run.sessionId().value(),
                     projectionPlan.tokensSavedByPruning(),
-                    projectionPlan.projectedActiveTokens(),
+                    afterTokens,
                     softLimit);
             Map<String, Object> eventData = new LinkedHashMap<>();
             eventData.put("semanticCompactionReason", decision.reason().name());
             eventData.put("tier1PruningBypassedSummary", true);
-            eventData.put("projectedActiveHistoryTokensBefore", projectionPlan.rawActiveTokens());
-            eventData.put("projectedActiveHistoryTokensAfter", projectionPlan.projectedActiveTokens());
+            eventData.put("projectedActiveHistoryTokensBefore", beforeTokens);
+            eventData.put("projectedActiveHistoryTokensAfter", afterTokens);
             eventData.put("omittedToolPayloadTokens", projectionPlan.tokensSavedByPruning());
             eventData.put(
                     "omittedToolResultCount", projectionPlan.prunedToolResults().size());
             eventData.put("compactionSummaryCacheHitRate", 0.0);
             eventData.put("compactionEvaluationElapsedMillis", elapsed);
-            eventData.put("rawActiveTokens", projectionPlan.rawActiveTokens());
-            eventData.put("projectedActiveTokens", projectionPlan.projectedActiveTokens());
+            eventData.put("rawActiveTokens", beforeTokens);
+            eventData.put("projectedActiveTokens", afterTokens);
             eventData.put("tokensSaved", projectionPlan.tokensSavedByPruning());
             eventData.put(
                     "prunedToolResultsCount", projectionPlan.prunedToolResults().size());
@@ -252,8 +258,8 @@ public final class SemanticCompactionCoordinator {
             events.append(run.id(), "session.compaction-bypassed", eventData, time.now());
             return CompactionEvaluationOutcome.bypassed(
                     decision.reason(),
-                    projectionPlan.rawActiveTokens(),
-                    projectionPlan.projectedActiveTokens(),
+                    beforeTokens,
+                    afterTokens,
                     projectionPlan.tokensSavedByPruning(),
                     projectionPlan.prunedToolResults().size(),
                     elapsed);
@@ -301,6 +307,36 @@ public final class SemanticCompactionCoordinator {
         Optional<ConversationSummary> previousSummary = snapshot.latestValid();
         long expectedPreviousVersion = snapshot.latestVersion();
 
+        List<List<AgentMessage>> activeGroups = groupsAfterSummary(visible, previousSummary);
+        if (activeGroups.size() < 2) {
+            return CompactionEvaluationOutcome.untriggered(0L, elapsedMillis(startNanos));
+        }
+
+        Map<io.haifa.agent.core.run.AgentRunId, Map<ToolCallId, ToolCall>> toolCallsByRun = new HashMap<>();
+        Function<ToolCallId, ToolCall> resolver = callId -> {
+            for (AgentMessage message : visible) {
+                io.haifa.agent.core.run.AgentRunId messageRunId =
+                        message.runId().orElse(run.id());
+                Map<ToolCallId, ToolCall> runCalls =
+                        toolCallsByRun.computeIfAbsent(messageRunId, rId -> state.toolCalls(rId).stream()
+                                .collect(Collectors.toMap(ToolCall::id, Function.identity(), (a, b) -> a)));
+                ToolCall call = runCalls.get(callId);
+                if (call != null) {
+                    return call;
+                }
+            }
+            return null;
+        };
+
+        long currentTokens =
+                previousSummary.map(ConversationSummary::estimatedTokens).orElse(0)
+                        + estimateGroups(activeGroups, resolver);
+
+        List<AgentMessage> activeMessages =
+                activeGroups.stream().flatMap(List::stream).toList();
+        ModelMessageProjectionPlan projectionPlan = projectionPlanner.plan(
+                activeMessages, resolver, ModelMessageProjectionPlanner.DEFAULT_PURE_READ_TOOLS, 0L);
+
         log.warn(
                 "Forcing semantic compaction on overflow for session {}",
                 run.sessionId().value());
@@ -314,8 +350,8 @@ public final class SemanticCompactionCoordinator {
                 expectedPreviousVersion,
                 CompactionTriggerReason.PROVIDER_CONTEXT_TOO_LONG,
                 true,
-                ModelMessageProjectionPlan.EMPTY,
-                0L,
+                projectionPlan,
+                currentTokens,
                 startNanos);
     }
 
@@ -532,6 +568,9 @@ public final class SemanticCompactionCoordinator {
             throw (ex instanceof RuntimeException re) ? re : new RuntimeException(ex);
         }
 
+        List<List<AgentMessage>> tailGroups = activeGroups.subList(safeSplit, activeGroups.size());
+        long retainedTailTokens = estimateGroups(tailGroups);
+
         return commitSummary(
                 run,
                 previousSummary,
@@ -543,6 +582,7 @@ public final class SemanticCompactionCoordinator {
                 expectedPreviousVersion,
                 projectionPlan,
                 initialEstimatedTokens,
+                retainedTailTokens,
                 cacheHitRate,
                 startNanos);
     }
@@ -681,6 +721,7 @@ public final class SemanticCompactionCoordinator {
             long expectedPreviousVersion,
             ModelMessageProjectionPlan projectionPlan,
             long initialEstimatedTokens,
+            long retainedTailTokens,
             double cacheHitRate,
             long startNanos) {
         MessageCursor coveredFrom = previousSummary
@@ -697,6 +738,7 @@ public final class SemanticCompactionCoordinator {
 
         String markdown = SemanticSummaryRenderer.renderMarkdown(summary);
         int estimatedTokens = Math.max(1, HeuristicTokenEstimator.tokens(markdown));
+        long projectedActiveHistoryTokensAfter = (long) estimatedTokens + retainedTailTokens;
 
         List<String> facts =
                 summary.goals().stream().map(SemanticSummaryItem::text).toList();
@@ -758,7 +800,7 @@ public final class SemanticCompactionCoordinator {
             data.put("semanticCompactionReason", reason.name());
             data.put("tier1PruningBypassedSummary", false);
             data.put("projectedActiveHistoryTokensBefore", initialEstimatedTokens);
-            data.put("projectedActiveHistoryTokensAfter", (long) estimatedTokens);
+            data.put("projectedActiveHistoryTokensAfter", projectedActiveHistoryTokensAfter);
             data.put("omittedToolPayloadTokens", projectionPlan.tokensSavedByPruning());
             data.put(
                     "omittedToolResultCount", projectionPlan.prunedToolResults().size());
@@ -776,7 +818,7 @@ public final class SemanticCompactionCoordinator {
             return CompactionEvaluationOutcome.compacted(
                     reason,
                     initialEstimatedTokens,
-                    estimatedTokens,
+                    projectedActiveHistoryTokensAfter,
                     projectionPlan.tokensSavedByPruning(),
                     projectionPlan.prunedToolResults().size(),
                     cacheHitRate,

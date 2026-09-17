@@ -1780,6 +1780,8 @@ class SemanticCompactionCoordinatorTest {
         assertThat(outcome.compacted()).isTrue();
         assertThat(outcome.semanticCompactionReason()).isEqualTo("PROVIDER_CONTEXT_TOO_LONG");
         assertThat(outcome.tier1PruningBypassedSummary()).isFalse();
+        assertThat(outcome.projectedActiveHistoryTokensBefore()).isGreaterThan(0L);
+        assertThat(outcome.projectedActiveHistoryTokensAfter()).isGreaterThan(0L);
 
         var compactEvents = store.eventsFor(run.id()).stream()
                 .filter(e -> "session.compacted".equals(e.type()))
@@ -1798,6 +1800,8 @@ class SemanticCompactionCoordinatorTest {
                         "compactionEvaluationElapsedMillis");
         assertThat(data.get("tier1PruningBypassedSummary")).isEqualTo(false);
         assertThat(data.get("semanticCompactionReason")).isEqualTo("PROVIDER_CONTEXT_TOO_LONG");
+        assertThat((Long) data.get("projectedActiveHistoryTokensBefore")).isGreaterThan(0L);
+        assertThat((Long) data.get("projectedActiveHistoryTokensAfter")).isGreaterThan(0L);
     }
 
     @Test
@@ -1924,7 +1928,7 @@ class SemanticCompactionCoordinatorTest {
         CompactionEvaluationOutcome outcome =
                 coordinator.evaluateAndCompactIfNeeded(run, 1, createBinding(store, run, failingModel));
 
-        assertThat(outcome.degradedOrFailed()).isTrue();
+        assertThat(outcome.compacted()).isFalse();
         assertThat(outcome.semanticCompactionReason()).isEqualTo("ACTIVE_HISTORY_BUDGET");
 
         var failEvents = store.eventsFor(run.id()).stream()

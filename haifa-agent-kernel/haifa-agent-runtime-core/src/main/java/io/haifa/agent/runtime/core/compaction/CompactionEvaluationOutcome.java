@@ -5,7 +5,6 @@ package io.haifa.agent.runtime.core.compaction;
  * Carries structured telemetry metrics for both compaction events and trace reporting.
  */
 public record CompactionEvaluationOutcome(
-        boolean evaluationPerformed,
         CompactionTriggerReason triggerReason,
         boolean tier1PruningBypassedSummary,
         long projectedActiveHistoryTokensBefore,
@@ -14,11 +13,10 @@ public record CompactionEvaluationOutcome(
         int omittedToolResultCount,
         double compactionSummaryCacheHitRate,
         long compactionEvaluationElapsedMillis,
-        boolean compacted,
-        boolean degradedOrFailed) {
+        boolean compacted) {
 
     public static final CompactionEvaluationOutcome NONE =
-            new CompactionEvaluationOutcome(false, null, false, 0L, 0L, 0L, 0, 0.0, 0L, false, false);
+            new CompactionEvaluationOutcome(null, false, 0L, 0L, 0L, 0, 0.0, 0L, false);
 
     public String semanticCompactionReason() {
         return triggerReason != null ? triggerReason.name() : "NONE";
@@ -26,7 +24,7 @@ public record CompactionEvaluationOutcome(
 
     public static CompactionEvaluationOutcome untriggered(long estimatedTokens, long elapsedMillis) {
         return new CompactionEvaluationOutcome(
-                true, null, false, estimatedTokens, estimatedTokens, 0L, 0, 0.0, elapsedMillis, false, false);
+                null, false, estimatedTokens, estimatedTokens, 0L, 0, 0.0, elapsedMillis, false);
     }
 
     public static CompactionEvaluationOutcome bypassed(
@@ -37,17 +35,7 @@ public record CompactionEvaluationOutcome(
             int prunedCount,
             long elapsedMillis) {
         return new CompactionEvaluationOutcome(
-                true,
-                reason,
-                true,
-                rawTokens,
-                projectedTokens,
-                tokensSaved,
-                prunedCount,
-                0.0,
-                elapsedMillis,
-                false,
-                false);
+                reason, true, rawTokens, projectedTokens, tokensSaved, prunedCount, 0.0, elapsedMillis, false);
     }
 
     public static CompactionEvaluationOutcome compacted(
@@ -59,7 +47,6 @@ public record CompactionEvaluationOutcome(
             double cacheHitRate,
             long elapsedMillis) {
         return new CompactionEvaluationOutcome(
-                true,
                 reason,
                 false,
                 beforeTokens,
@@ -68,8 +55,7 @@ public record CompactionEvaluationOutcome(
                 omittedCount,
                 cacheHitRate,
                 elapsedMillis,
-                true,
-                false);
+                true);
     }
 
     public static CompactionEvaluationOutcome failed(
@@ -80,7 +66,6 @@ public record CompactionEvaluationOutcome(
             double cacheHitRate,
             long elapsedMillis) {
         return new CompactionEvaluationOutcome(
-                true,
                 reason,
                 false,
                 beforeTokens,
@@ -89,7 +74,6 @@ public record CompactionEvaluationOutcome(
                 omittedCount,
                 cacheHitRate,
                 elapsedMillis,
-                false,
-                true);
+                false);
     }
 }

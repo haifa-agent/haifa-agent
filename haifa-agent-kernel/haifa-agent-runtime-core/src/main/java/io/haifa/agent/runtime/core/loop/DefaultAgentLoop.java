@@ -288,13 +288,13 @@ public final class DefaultAgentLoop implements AgentLoop {
                     time.now()));
 
             FrozenModelBinding model = models.bind(run);
-            CompactionEvaluationOutcome[] outcomeRef =
-                    new CompactionEvaluationOutcome[] {CompactionEvaluationOutcome.NONE};
+            CompactionEvaluationOutcome preBuildOutcome = CompactionEvaluationOutcome.NONE;
             if (compactionCoordinator != null) {
-                outcomeRef[0] = compactionCoordinator.evaluateAndCompactIfNeeded(run, progress.iteration(), model);
+                preBuildOutcome = compactionCoordinator.evaluateAndCompactIfNeeded(run, progress.iteration(), model);
             }
-            RuntimeContextBuildResult built = buildContext(run, progress, model, outcomeRef);
-            CompactionEvaluationOutcome compactionOutcome = outcomeRef[0];
+            ContextBuildExecution buildExecution = buildContext(run, progress, model, preBuildOutcome);
+            RuntimeContextBuildResult built = buildExecution.built();
+            CompactionEvaluationOutcome compactionOutcome = buildExecution.outcome();
             recordPromptDiagnostics(built);
             recordTrace(new RuntimeTraceEvent(
                     traceContext.traceId(),
@@ -1069,20 +1069,23 @@ public final class DefaultAgentLoop implements AgentLoop {
                 && modelError.category() == ModelErrorCategory.CONTEXT_TOO_LONG;
     }
 
-    private RuntimeContextBuildResult buildContext(
+    private record ContextBuildExecution(RuntimeContextBuildResult built, CompactionEvaluationOutcome outcome) {}
+
+    private ContextBuildExecution buildContext(
             AgentRun run,
             AgentLoopContext progress,
             FrozenModelBinding model,
-            CompactionEvaluationOutcome[] outcomeRef) {
+            CompactionEvaluationOutcome initialOutcome) {
         try {
-            return contextBuilder.build(run, progress, model);
+            return new ContextBuildExecution(contextBuilder.build(run, progress, model), initialOutcome);
         } catch (LocalContextOverflowException overflow) {
             progress.recordForcedContextRebuild();
+            CompactionEvaluationOutcome overflowOutcome = initialOutcome;
             if (compactionCoordinator != null) {
-                outcomeRef[0] = compactionCoordinator.forceCompactOnOverflow(run, progress.iteration(), model);
+                overflowOutcome = compactionCoordinator.forceCompactOnOverflow(run, progress.iteration(), model);
             }
             try {
-                return contextBuilder.build(run, progress, model);
+                return new ContextBuildExecution(contextBuilder.build(run, progress, model), overflowOutcome);
             } catch (LocalContextOverflowException exhausted) {
                 throw new ContextRebuildExhaustedException(
                         "local context remained too long after the single forced rebuild");

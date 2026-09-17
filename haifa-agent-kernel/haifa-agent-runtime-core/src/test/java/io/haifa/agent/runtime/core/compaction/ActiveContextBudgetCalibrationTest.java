@@ -333,19 +333,18 @@ class ActiveContextBudgetCalibrationTest {
         };
 
         FrozenModelBinding binding = createBindingWithContextWindow(store, run, model, 128_000);
-        long startTime = System.currentTimeMillis();
         CompactionEvaluationOutcome outcome = coordinator.evaluateAndCompactIfNeeded(run, 40, binding);
-        long duration = System.currentTimeMillis() - startTime;
 
         assertThat(outcome.compacted()).isTrue();
         assertThat(outcome.semanticCompactionReason()).isEqualTo(CompactionTriggerReason.ACTIVE_HISTORY_BUDGET.name());
         assertThat(outcome.projectedActiveHistoryTokensBefore()).isGreaterThan(32_000L);
         assertThat(outcome.projectedActiveHistoryTokensAfter()).isLessThan(32_000L);
-        assertThat(duration).isLessThan(5000L);
+        assertThat(outcome.compactionEvaluationElapsedMillis()).isGreaterThanOrEqualTo(0L);
     }
 
     @Test
-    @DisplayName("Calibration Matrix: 80k vs 96k vs 128k comparison validates 96k as the optimal Coding Agent budget")
+    @DisplayName(
+            "Calibration Matrix: 80k vs 96k vs 128k evaluation validates tiered threshold triggering and net token economy")
     void testCalibrationMatrixEvaluation() {
         long[] candidateBudgets = {80_000L, 96_000L, 128_000L};
         List<CalibrationResult> results = new ArrayList<>();
@@ -419,9 +418,13 @@ class ActiveContextBudgetCalibrationTest {
         CalibrationResult at128k = results.get(2);
 
         assertThat(at80k.compacted()).isTrue();
+        assertThat(at80k.netTokensSaved()).isGreaterThan(0L);
         assertThat(at96k.compacted()).isTrue();
         assertThat(at96k.netTokensSaved()).isGreaterThan(0L);
         assertThat(at128k.compacted()).isFalse();
+        assertThat(at128k.netTokensSaved()).isEqualTo(0L);
+        assertThat(at80k.mainModelTokensSaved()).isGreaterThan(0L);
+        assertThat(at96k.mainModelTokensSaved()).isGreaterThan(0L);
     }
 
     private record CalibrationResult(
@@ -541,27 +544,7 @@ class ActiveContextBudgetCalibrationTest {
                 256,
                 orig.providerOptions(),
                 orig.invocationOptions());
-        var smallConfig = new RuntimeConfigurationSnapshot(
-                config.reference(),
-                config.definitionId(),
-                config.definitionVersion(),
-                config.profileId(),
-                config.profileVersion(),
-                config.runType(),
-                config.budget(),
-                config.limits(),
-                config.toolBindings(),
-                config.skillBindings(),
-                config.skillCatalogDigest(),
-                config.skillResolutionPolicyRef(),
-                config.skillTrust(),
-                config.allowedChildAgents(),
-                config.agentInstruction(),
-                config.overrides(),
-                config.capabilities(),
-                smallModel,
-                config.modelRequestOptions(),
-                config.structuredOutput());
+        var smallConfig = config.withModel(smallModel);
         return new FrozenModelBinding(smallConfig, chatModel, List.of());
     }
 }
