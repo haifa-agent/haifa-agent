@@ -30,7 +30,17 @@
 .mission-delivery-warning svg { flex: 0 0 auto; margin-top: 2px; }
 .mission-delivery-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .mission-delivery-actions .primary { border-color: #465fba; background: #526ac7; color: #fff; }
-.mission-return { white-space: nowrap; }
+.mission-return {
+  color: #27233e;
+  background: #fff;
+  border-color: rgb(255 255 255 / 35%);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.mission-return:hover {
+  background: #f4f3fb;
+  color: #1d1930;
+}
 .dialog-backdrop.mission-backdrop { padding: 0; background: rgb(22 24 39 / 38%); }
 .mission-dialog { width: 100vw; height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; border: 0; border-radius: 0; background: #fff; box-shadow: none; }
 .mission-dialog-header { min-height: 72px; padding: 0 24px; display: grid; grid-template-columns: 260px minmax(0, 1fr) auto; align-items: center; gap: 24px; color: #fff; border-bottom: 1px solid rgb(255 255 255 / 8%); background: linear-gradient(118deg, #28243f, #373255 48%, #27233e); }
@@ -825,6 +835,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   background: white;
   box-shadow: 0 4px 18px rgb(39 49 76 / 4%);
   overflow-wrap: anywhere;
+  scroll-margin-top: 14px;
 }
 .message.user { align-self: flex-end; border-color: #d7e0fb; background: #edf3ff; border-bottom-right-radius: 5px; }
 .message.assistant { align-self: flex-start; border-color: #e9ecef; border-bottom-left-radius: 5px; background: #f8f9fa; }
@@ -1556,7 +1567,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .retry-send-button:hover { color: #8f3e4e; border-color: #e6b7c0; background: #fdeef1; }
 .retry-send-button:disabled { opacity: .5; cursor: not-allowed; }
 
-.button { justify-content: center; gap: 6px; min-height: 34px; padding: 7px 11px; border: 1px solid #d9dfea; border-radius: 9px; background: white; cursor: pointer; }
+.button { color: #27314f; justify-content: center; gap: 6px; min-height: 34px; padding: 7px 11px; border: 1px solid #d9dfea; border-radius: 9px; background: white; cursor: pointer; }
 .button:disabled { opacity: .58; cursor: not-allowed; }
 .button[aria-busy="true"]:disabled { cursor: wait; }
 .primary-button { color: white; border-color: #4c6fff; background: #4c6fff; }

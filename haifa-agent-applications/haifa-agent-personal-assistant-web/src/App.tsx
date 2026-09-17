@@ -1254,6 +1254,11 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     closeModelCenter: closeModelCenterState,
   } = useModelCenterState({ client });
 
+  const messagesRef = useRef<HTMLDivElement | null>(null);
+  const justSubmittedMessageRef = useRef<boolean>(false);
+  const lastScrolledCompletedTurnId = useRef<string | null>(null);
+  const lastScrolledUserTurnId = useRef<string | null>(null);
+
   const closeImageTools = useCallback(() => {
     setImageToolsOpen(false);
     setImageUrlInputOpen(false);
@@ -1570,6 +1575,113 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     state.selectedConversationId,
   ]);
 
+  useEffect(() => {
+    justSubmittedMessageRef.current = false;
+    lastScrolledCompletedTurnId.current = null;
+    lastScrolledUserTurnId.current = null;
+  }, [state.selectedConversationId]);
+
+  const correspondingUserTurn = completedAnswerTurn
+    ? [...state.turns]
+        .filter(
+          (turn) =>
+            turn.sequence < completedAnswerTurn.sequence &&
+            turn.role.toLowerCase() === "user",
+        )
+        .sort((a, b) => b.sequence - a.sequence)[0] ?? null
+    : null;
+
+  // Auto-scroll when assistant completes an answer:
+  // - Short text (entire round fits in viewport): scroll to bottom
+  // - Medium / Long text (exceeds viewport): scroll so user question touches top
+  useEffect(() => {
+    if (!completedAnswerTurn || !correspondingUserTurn) return;
+    if (lastScrolledCompletedTurnId.current === completedAnswerTurn.id) return;
+    if (!justSubmittedMessageRef.current) return;
+
+    lastScrolledCompletedTurnId.current = completedAnswerTurn.id;
+    justSubmittedMessageRef.current = false;
+
+    let attempts = 0;
+    const checkAndScroll = () => {
+      const container = messagesRef.current;
+      const userEl = document.getElementById(`conversation-turn-${correspondingUserTurn.id}`);
+      const assistantEl = document.getElementById(`conversation-turn-${completedAnswerTurn.id}`);
+
+      if (!container || !userEl || !assistantEl) {
+        if (++attempts < 6) {
+          window.requestAnimationFrame(checkAndScroll);
+        }
+        return;
+      }
+
+      const containerRect = container.getBoundingClientRect();
+      const userRect = userEl.getBoundingClientRect();
+      const assistantRect = assistantEl.getBoundingClientRect();
+
+      const viewportHeight = container.clientHeight;
+      const totalTurnHeight = assistantRect.bottom - userRect.top;
+      const userTopInContainer = userRect.top - containerRect.top + container.scrollTop;
+
+      if (totalTurnHeight <= viewportHeight - 32) {
+        if (typeof container.scrollTo === "function") {
+          container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+        } else {
+          container.scrollTop = container.scrollHeight;
+        }
+      } else {
+        const targetScrollTop = Math.max(0, userTopInContainer - 14);
+        if (typeof container.scrollTo === "function") {
+          container.scrollTo({ top: targetScrollTop, behavior: "smooth" });
+        } else {
+          container.scrollTop = targetScrollTop;
+        }
+      }
+    };
+
+    window.requestAnimationFrame(checkAndScroll);
+  }, [completedAnswerTurn?.id, correspondingUserTurn?.id]);
+
+  // When a new user message is submitted, auto-scroll to reveal it
+  const latestTurn = state.turns[state.turns.length - 1];
+  useEffect(() => {
+    if (
+      justSubmittedMessageRef.current &&
+      latestTurn &&
+      latestTurn.role.toLowerCase() === "user" &&
+      latestTurn.id !== lastScrolledUserTurnId.current
+    ) {
+      lastScrolledUserTurnId.current = latestTurn.id;
+      window.requestAnimationFrame(() => {
+        const container = messagesRef.current;
+        if (!container) return;
+        if (typeof container.scrollTo === "function") {
+          container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+        } else {
+          container.scrollTop = container.scrollHeight;
+        }
+      });
+    }
+  }, [latestTurn?.id, latestTurn?.role]);
+
+  // When recommended questions load, keep visible if already near bottom
+  useEffect(() => {
+    if (!recommendedQuestions || recommendedQuestions.loading || !recommendedQuestions.questions.length) return;
+    if (recommendedQuestions.turnId !== completedAnswerTurn?.id) return;
+    window.requestAnimationFrame(() => {
+      const container = messagesRef.current;
+      if (!container) return;
+      const distFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+      if (distFromBottom < 120) {
+        if (typeof container.scrollTo === "function") {
+          container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+        } else {
+          container.scrollTop = container.scrollHeight;
+        }
+      }
+    });
+  }, [recommendedQuestions?.turnId, recommendedQuestions?.loading, recommendedQuestions?.questions.length, completedAnswerTurn?.id]);
+
   const execute = useCallback(async (label: string, operation: () => Promise<void>) => {
     dispatch({ type: "commandStarted", command: { id: crypto.randomUUID(), label } });
     try {
@@ -1616,6 +1728,16 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
       return;
     }
     messageSubmissionInFlight.current = true;
+    justSubmittedMessageRef.current = true;
+    window.requestAnimationFrame(() => {
+      const container = messagesRef.current;
+      if (!container) return;
+      if (typeof container.scrollTo === "function") {
+        container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+      } else {
+        container.scrollTop = container.scrollHeight;
+      }
+    });
     const key = crypto.randomUUID();
     const sentImages = pendingImages.map((image) => ({ ...image }));
     const sentAudios = pendingAudios.map((audio) => ({ ...audio }));
@@ -2241,7 +2363,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
               <CircleAlert size={17} /><span>{state.error}</span><button onClick={() => window.location.reload()}>重新加载</button>
             </div>
           )}
-          <div className="messages" aria-busy={state.loading}>
+          <div ref={messagesRef} className="messages" aria-busy={state.loading}>
             {!state.turns.length && !state.streamDraft && !state.interaction ? (
               <div className="empty hero-empty">
                 <div className="assistant-mark"><Brain size={28} /></div>
@@ -2269,7 +2391,11 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                     ? recommendedQuestions
                     : null;
                   return (
-                    <article className={`message ${assistant ? "assistant" : "user"}${turn.images?.length || turn.audios?.length ? " has-images" : ""}${research || embeddedResearch ? " research-report-message" : ""}${deliveryMission ? " mission-delivery-message" : ""}`} key={turn.id}>
+                    <article
+                      id={`conversation-turn-${turn.id}`}
+                      className={`message ${assistant ? "assistant" : "user"}${turn.images?.length || turn.audios?.length ? " has-images" : ""}${research || embeddedResearch ? " research-report-message" : ""}${deliveryMission ? " mission-delivery-message" : ""}`}
+                      key={turn.id}
+                    >
                       <span className="message-role">{assistant ? "Haifa" : "你"}</span>
                       {turn.images?.length > 0 && <TurnImages images={turn.images} />}
                       {turn.audios?.length > 0 && <TurnAudios audios={turn.audios} />}

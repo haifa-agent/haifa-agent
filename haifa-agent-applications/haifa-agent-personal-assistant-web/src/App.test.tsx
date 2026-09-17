@@ -2645,4 +2645,58 @@ describe("Personal Assistant application", () => {
     expect(await screen.findByRole("dialog", { name: "模型与连接" })).toBeTruthy();
     expect(api.submitMessage).not.toHaveBeenCalled();
   });
+
+  it("scrolls messages container appropriately when assistant completes an answer", async () => {
+    const api = client();
+    let currentTurns = turns;
+    vi.mocked(api.turns).mockImplementation(async () => currentTurns);
+
+    const { container } = render(<App client={api} />);
+    const messages = container.querySelector<HTMLElement>(".messages")!;
+    expect(messages).toBeTruthy();
+
+    const scrollToMock = vi.fn();
+    messages.scrollTo = scrollToMock;
+
+    const textarea = screen.getByPlaceholderText("输入消息，Enter 发送");
+    fireEvent.change(textarea, { target: { value: "什么时候中秋节" } });
+
+    const newUserTurn: Turn = {
+      id: "turn-3",
+      role: "USER",
+      runId: "run-2",
+      sequence: 3,
+      text: "什么时候中秋节",
+      images: [],
+      audios: [],
+      createdAt: "2026-09-16T00:00:00Z",
+    };
+    const newAssistantTurn: Turn = {
+      id: "turn-4",
+      role: "ASSISTANT",
+      runId: "run-2",
+      sequence: 4,
+      text: "中秋节是2026年9月25日",
+      images: [],
+      audios: [],
+      createdAt: "2026-09-16T00:00:01Z",
+    };
+    currentTurns = [...turns, newUserTurn, newAssistantTurn];
+    vi.mocked(api.run).mockResolvedValue({
+      ...run,
+      id: "run-2",
+      status: "COMPLETED",
+    });
+
+    fireEvent.submit(textarea.closest("form")!);
+
+    await waitFor(() => {
+      expect(screen.getByText("什么时候中秋节")).toBeTruthy();
+      expect(screen.getByText("中秋节是2026年9月25日")).toBeTruthy();
+    });
+
+    await waitFor(() => {
+      expect(scrollToMock).toHaveBeenCalled();
+    });
+  });
 });
