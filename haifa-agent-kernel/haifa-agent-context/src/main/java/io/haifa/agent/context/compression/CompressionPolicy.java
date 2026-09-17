@@ -18,6 +18,9 @@ public record CompressionPolicy(
         int maxCompactionPhysicalCalls,
         boolean allowDeterministicDegradedFallback,
         boolean semanticCompactionEnabled,
+        int activeHistoryBudgetPercent,
+        long minActiveHistoryBudgetTokens,
+        long maxActiveHistoryBudgetTokens,
         OptionalLong activeHistoryBudgetTokens) {
 
     public CompressionPolicy(int recentMessageGroups, int maxSummaryFacts, int forcedRecentMessageGroups) {
@@ -81,6 +84,43 @@ public record CompressionPolicy(
                 OptionalLong.empty());
     }
 
+    public CompressionPolicy(
+            int recentMessageGroups,
+            int maxSummaryFacts,
+            int forcedRecentMessageGroups,
+            int retainedTailTokenPercent,
+            int forcedRetainedTailTokenPercent,
+            int softTriggerHeadroomPercent,
+            int minTriggerHeadroom,
+            int maxTriggerHeadroom,
+            int targetTailTokenPercent,
+            int minTailTokens,
+            int maxTailTokens,
+            int maxCompactionPhysicalCalls,
+            boolean allowDeterministicDegradedFallback,
+            boolean semanticCompactionEnabled,
+            OptionalLong activeHistoryBudgetTokens) {
+        this(
+                recentMessageGroups,
+                maxSummaryFacts,
+                forcedRecentMessageGroups,
+                retainedTailTokenPercent,
+                forcedRetainedTailTokenPercent,
+                softTriggerHeadroomPercent,
+                minTriggerHeadroom,
+                maxTriggerHeadroom,
+                targetTailTokenPercent,
+                minTailTokens,
+                maxTailTokens,
+                maxCompactionPhysicalCalls,
+                allowDeterministicDegradedFallback,
+                semanticCompactionEnabled,
+                0,
+                0L,
+                Long.MAX_VALUE,
+                activeHistoryBudgetTokens);
+    }
+
     public CompressionPolicy {
         if (recentMessageGroups < 1 || maxSummaryFacts < 1 || forcedRecentMessageGroups < 1) {
             throw new IllegalArgumentException("compression policy limits must be positive");
@@ -109,6 +149,12 @@ public record CompressionPolicy(
         if (maxCompactionPhysicalCalls < 1) {
             throw new IllegalArgumentException("maxCompactionPhysicalCalls must be positive");
         }
+        if (activeHistoryBudgetPercent < 0 || activeHistoryBudgetPercent > 100) {
+            throw new IllegalArgumentException("activeHistoryBudgetPercent must be between 0 and 100");
+        }
+        if (minActiveHistoryBudgetTokens < 0 || maxActiveHistoryBudgetTokens < minActiveHistoryBudgetTokens) {
+            throw new IllegalArgumentException("active history budget bounds are invalid");
+        }
         if (activeHistoryBudgetTokens == null) {
             activeHistoryBudgetTokens = OptionalLong.empty();
         }
@@ -119,7 +165,24 @@ public record CompressionPolicy(
 
     public static CompressionPolicy defaults() {
         return new CompressionPolicy(
-                12, 32, 4, 50, 25, 15, 8_000, 32_000, 25, 8_000, 24_000, 3, false, true, OptionalLong.empty());
+                12,
+                32,
+                4,
+                50,
+                25,
+                15,
+                8_000,
+                32_000,
+                25,
+                8_000,
+                24_000,
+                3,
+                false,
+                true,
+                0,
+                0L,
+                Long.MAX_VALUE,
+                OptionalLong.empty());
     }
 
     public CompressionPolicy withActiveHistoryBudgetTokens(long tokens) {
@@ -141,7 +204,38 @@ public record CompressionPolicy(
                 maxCompactionPhysicalCalls,
                 allowDeterministicDegradedFallback,
                 semanticCompactionEnabled,
+                activeHistoryBudgetPercent,
+                minActiveHistoryBudgetTokens,
+                maxActiveHistoryBudgetTokens,
                 OptionalLong.of(tokens));
+    }
+
+    public CompressionPolicy withDynamicActiveBudget(int percent, long minTokens, long maxTokens) {
+        if (percent < 0 || percent > 100) {
+            throw new IllegalArgumentException("percent must be between 0 and 100");
+        }
+        if (minTokens < 0 || maxTokens < minTokens) {
+            throw new IllegalArgumentException("budget bounds are invalid");
+        }
+        return new CompressionPolicy(
+                recentMessageGroups,
+                maxSummaryFacts,
+                forcedRecentMessageGroups,
+                retainedTailTokenPercent,
+                forcedRetainedTailTokenPercent,
+                softTriggerHeadroomPercent,
+                minTriggerHeadroom,
+                maxTriggerHeadroom,
+                targetTailTokenPercent,
+                minTailTokens,
+                maxTailTokens,
+                maxCompactionPhysicalCalls,
+                allowDeterministicDegradedFallback,
+                semanticCompactionEnabled,
+                percent,
+                minTokens,
+                maxTokens,
+                OptionalLong.empty());
     }
 
     public CompressionPolicy withSemanticCompactionEnabled(boolean enabled) {
@@ -160,6 +254,9 @@ public record CompressionPolicy(
                 maxCompactionPhysicalCalls,
                 allowDeterministicDegradedFallback,
                 enabled,
+                activeHistoryBudgetPercent,
+                minActiveHistoryBudgetTokens,
+                maxActiveHistoryBudgetTokens,
                 activeHistoryBudgetTokens);
     }
 
@@ -179,6 +276,9 @@ public record CompressionPolicy(
                 maxCompactionPhysicalCalls,
                 allowed,
                 semanticCompactionEnabled,
+                activeHistoryBudgetPercent,
+                minActiveHistoryBudgetTokens,
+                maxActiveHistoryBudgetTokens,
                 activeHistoryBudgetTokens);
     }
 
@@ -198,6 +298,31 @@ public record CompressionPolicy(
                 maxCompactionPhysicalCalls,
                 allowDeterministicDegradedFallback,
                 semanticCompactionEnabled,
+                activeHistoryBudgetPercent,
+                minActiveHistoryBudgetTokens,
+                maxActiveHistoryBudgetTokens,
+                activeHistoryBudgetTokens);
+    }
+
+    public CompressionPolicy withTargetTailTokenPercent(int percent) {
+        return new CompressionPolicy(
+                recentMessageGroups,
+                maxSummaryFacts,
+                forcedRecentMessageGroups,
+                retainedTailTokenPercent,
+                forcedRetainedTailTokenPercent,
+                softTriggerHeadroomPercent,
+                minTriggerHeadroom,
+                maxTriggerHeadroom,
+                percent,
+                minTailTokens,
+                maxTailTokens,
+                maxCompactionPhysicalCalls,
+                allowDeterministicDegradedFallback,
+                semanticCompactionEnabled,
+                activeHistoryBudgetPercent,
+                minActiveHistoryBudgetTokens,
+                maxActiveHistoryBudgetTokens,
                 activeHistoryBudgetTokens);
     }
 

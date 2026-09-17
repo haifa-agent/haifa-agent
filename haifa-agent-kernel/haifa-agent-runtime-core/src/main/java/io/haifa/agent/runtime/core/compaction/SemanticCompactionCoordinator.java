@@ -232,8 +232,9 @@ public final class SemanticCompactionCoordinator {
             long beforeTokens = prevTokens + projectionPlan.rawActiveTokens();
             long afterTokens = prevTokens + projectionPlan.projectedActiveTokens();
             log.info(
-                    "Bypassing semantic compaction for session {} due to projection pruning: saved {} tokens, projected {} < softLimit {}",
+                    "Bypassing semantic compaction for session {} due to projection pruning: activeBudget={}, saved {} tokens, projected {} < softLimit {}",
                     run.sessionId().value(),
+                    softLimit,
                     projectionPlan.tokensSavedByPruning(),
                     afterTokens,
                     softLimit);
@@ -266,9 +267,10 @@ public final class SemanticCompactionCoordinator {
         }
 
         log.info(
-                "Triggering semantic compaction for session {} reason: {}",
+                "Triggering semantic compaction for session {} reason: {}, activeBudget={}",
                 run.sessionId().value(),
-                decision.reason());
+                decision.reason(),
+                softLimit);
         return compactSession(
                 run,
                 iteration,
@@ -281,6 +283,7 @@ public final class SemanticCompactionCoordinator {
                 false,
                 projectionPlan,
                 currentTokens,
+                softLimit,
                 startNanos);
     }
 
@@ -332,13 +335,18 @@ public final class SemanticCompactionCoordinator {
                 previousSummary.map(ConversationSummary::estimatedTokens).orElse(0)
                         + estimateGroups(activeGroups, resolver);
 
+        // Tier 1 projection pruning is executed before Tier 2 compaction
         List<AgentMessage> activeMessages =
                 activeGroups.stream().flatMap(List::stream).toList();
+        long contextWindow = binding.configuration().model().contextWindow();
+        long outputReserve = binding.configuration().model().maxOutputTokens();
+        int safetyMargin = Math.min(16_384, Math.max(256, (int) (contextWindow / 20)));
+        long available = Math.max(1000L, contextWindow - outputReserve - safetyMargin);
         ModelMessageProjectionPlan projectionPlan = projectionPlanner.plan(
-                activeMessages, resolver, ModelMessageProjectionPlanner.DEFAULT_PURE_READ_TOOLS, 0L);
+                activeMessages, resolver, ModelMessageProjectionPlanner.DEFAULT_PURE_READ_TOOLS, available);
 
-        log.warn(
-                "Forcing semantic compaction on overflow for session {}",
+        log.info(
+                "Forcing semantic compaction due to context overflow for session {}",
                 run.sessionId().value());
         return compactSession(
                 run,
@@ -352,6 +360,7 @@ public final class SemanticCompactionCoordinator {
                 true,
                 projectionPlan,
                 currentTokens,
+                0L,
                 startNanos);
     }
 
@@ -367,6 +376,7 @@ public final class SemanticCompactionCoordinator {
             boolean overflow,
             ModelMessageProjectionPlan projectionPlan,
             long initialEstimatedTokens,
+            long softLimit,
             long startNanos) {
         List<List<AgentMessage>> activeGroups = groupsAfterSummary(visible, previousSummary);
         if (activeGroups.isEmpty()) {
@@ -382,8 +392,10 @@ public final class SemanticCompactionCoordinator {
         if (overflow) {
             targetTailBudget = policy.minTailTokens();
         } else {
-            long calculated = (available * policy.targetTailTokenPercent()) / 100L;
-            targetTailBudget = Math.clamp(calculated, (long) policy.minTailTokens(), (long) policy.maxTailTokens());
+            long resolvedActiveBudget = softLimit > 0 ? softLimit : available;
+            long calculated = (resolvedActiveBudget * policy.targetTailTokenPercent()) / 100L;
+            long clamped = Math.clamp(calculated, (long) policy.minTailTokens(), (long) policy.maxTailTokens());
+            targetTailBudget = Math.min(clamped, resolvedActiveBudget);
         }
 
         int split = tailSplit(activeGroups, targetTailBudget);

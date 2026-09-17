@@ -51,11 +51,22 @@ import java.util.Set;
 /** Explicit Composition helper; no classpath scanning or Bean ordering participates in product assembly. */
 public final class PersonalAssistantAssembler {
     public static final long PERSONAL_ASSISTANT_ACTIVE_HISTORY_BUDGET_TOKENS = 32_000L;
+    public static final int PERSONAL_ASSISTANT_ACTIVE_HISTORY_BUDGET_PERCENT = 25;
+    public static final long PERSONAL_ASSISTANT_MIN_ACTIVE_HISTORY_BUDGET_TOKENS = 48_000L;
+    public static final long PERSONAL_ASSISTANT_MAX_ACTIVE_HISTORY_BUDGET_TOKENS = 96_000L;
+    public static final int PERSONAL_ASSISTANT_TARGET_TAIL_TOKEN_PERCENT = 40;
+    public static final int PERSONAL_ASSISTANT_MIN_TAIL_TOKENS = 24_000;
+    public static final int PERSONAL_ASSISTANT_MAX_TAIL_TOKENS = 32_000;
 
     public static CompressionPolicy defaultCompressionPolicy() {
         return CompressionPolicy.defaults()
                 .withSemanticCompactionEnabled(true)
-                .withActiveHistoryBudgetTokens(PERSONAL_ASSISTANT_ACTIVE_HISTORY_BUDGET_TOKENS);
+                .withDynamicActiveBudget(
+                        PERSONAL_ASSISTANT_ACTIVE_HISTORY_BUDGET_PERCENT,
+                        PERSONAL_ASSISTANT_MIN_ACTIVE_HISTORY_BUDGET_TOKENS,
+                        PERSONAL_ASSISTANT_MAX_ACTIVE_HISTORY_BUDGET_TOKENS)
+                .withTailTokenBounds(PERSONAL_ASSISTANT_MIN_TAIL_TOKENS, PERSONAL_ASSISTANT_MAX_TAIL_TOKENS)
+                .withTargetTailTokenPercent(PERSONAL_ASSISTANT_TARGET_TAIL_TOKEN_PERCENT);
     }
 
     private PersonalAssistantAssembler() {}
