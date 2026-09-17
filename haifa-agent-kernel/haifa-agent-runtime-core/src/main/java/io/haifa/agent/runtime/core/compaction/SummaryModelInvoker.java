@@ -38,6 +38,11 @@ import java.util.Optional;
  */
 public final class SummaryModelInvoker {
 
+    /**
+     * Default upper bound for compaction summary output tokens, bounded by the model's max output limit.
+     */
+    private static final int DEFAULT_MAX_SUMMARY_OUTPUT_TOKENS = 32_768;
+
     private final RunTransitionCoordinator transitions;
     private final RunControlRegistry controls;
     private final IdentifierGenerator ids;
@@ -112,7 +117,9 @@ public final class SummaryModelInvoker {
                 ModelMessage.text(ModelMessageRole.SYSTEM, systemPrompt),
                 ModelMessage.text(ModelMessageRole.USER, userPrompt));
 
-        int maxOutput = Math.min(32768, binding.configuration().model().maxOutputTokens());
+        int maxOutput = Math.min(
+                DEFAULT_MAX_SUMMARY_OUTPUT_TOKENS,
+                binding.configuration().model().maxOutputTokens());
         Duration timeout = Duration.ofMillis(Math.max(1, run.limits().maxIdleTimeMillis()));
 
         AgentChatRequest request = new AgentChatRequest(

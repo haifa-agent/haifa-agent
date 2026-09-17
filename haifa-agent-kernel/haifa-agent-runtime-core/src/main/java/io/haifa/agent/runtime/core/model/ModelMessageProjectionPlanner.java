@@ -149,7 +149,7 @@ public final class ModelMessageProjectionPlanner {
 
         long rawActiveTokens = estimateRawActiveTokens(messages, toolCallResolver);
         long projectedActiveTokens = Math.max(0L, rawActiveTokens - tokensSaved);
-        boolean bypassRecommended = softTokenLimit > 0 && projectedActiveTokens <= softTokenLimit;
+        boolean bypassRecommended = softTokenLimit > 0 && tokensSaved > 0 && projectedActiveTokens <= softTokenLimit;
 
         return new ModelMessageProjectionPlan(
                 prunedToolResults,
@@ -194,9 +194,16 @@ public final class ModelMessageProjectionPlanner {
             if (entry.getValue() instanceof String text
                     && text.length() > ARG_TRUNCATION_CHAR_LIMIT
                     && isOversizedArgumentKey(entry.getKey())) {
-                String placeholder = targetPath != null
-                        ? "[Code content truncated (" + text.length() + " chars); file written to " + targetPath + "]"
-                        : "[Content truncated (" + text.length() + " chars)]";
+                boolean successful = call.result().map(ToolResult::successful).orElse(false);
+                String placeholder;
+                if (targetPath != null) {
+                    placeholder = successful
+                            ? "[Code content truncated (" + text.length() + " chars); file written to " + targetPath
+                                    + "]"
+                            : "[Code content truncated (" + text.length() + " chars); target: " + targetPath + "]";
+                } else {
+                    placeholder = "[Content truncated (" + text.length() + " chars)]";
+                }
                 modified.put(entry.getKey(), placeholder);
             } else {
                 modified.put(entry.getKey(), entry.getValue());

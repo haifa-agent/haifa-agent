@@ -49,7 +49,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Product-layer assembly of Runtime persistence adapters and optional JSONL projection. */
 public final class ProjectPersistenceAssembly implements AutoCloseable {
-    public static final long CODING_AGENT_ACTIVE_HISTORY_BUDGET_TOKENS = 96_000L;
     public static final int CODING_AGENT_ACTIVE_HISTORY_BUDGET_PERCENT = 50;
     public static final long CODING_AGENT_MIN_ACTIVE_HISTORY_BUDGET_TOKENS = 64_000L;
     public static final long CODING_AGENT_MAX_ACTIVE_HISTORY_BUDGET_TOKENS = Long.MAX_VALUE;
@@ -242,11 +241,16 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
         Objects.requireNonNull(builder, "builder must not be null");
         builder.persistence(ports).workerId(workerId);
         CompressionPolicy currentPolicy = builder.compressionPolicy();
-        if (currentPolicy == null
-                || (currentPolicy.activeHistoryBudgetTokens().isEmpty()
-                        && currentPolicy.activeHistoryBudgetPercent() == 0)) {
-            builder.compressionPolicy(defaultCompressionPolicy());
+        CompressionPolicy base = currentPolicy != null ? currentPolicy : CompressionPolicy.defaults();
+        if (base.activeHistoryBudgetTokens().isEmpty() && base.activeHistoryBudgetPercent() == 0) {
+            base = base.withDynamicActiveBudget(
+                            CODING_AGENT_ACTIVE_HISTORY_BUDGET_PERCENT,
+                            CODING_AGENT_MIN_ACTIVE_HISTORY_BUDGET_TOKENS,
+                            CODING_AGENT_MAX_ACTIVE_HISTORY_BUDGET_TOKENS)
+                    .withTailTokenBounds(CODING_AGENT_MIN_TAIL_TOKENS, CODING_AGENT_MAX_TAIL_TOKENS)
+                    .withTargetTailTokenPercent(CODING_AGENT_TARGET_TAIL_TOKEN_PERCENT);
         }
+        builder.compressionPolicy(base);
         return builder;
     }
 

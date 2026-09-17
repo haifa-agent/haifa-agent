@@ -173,6 +173,8 @@ class OpenAiResponsesModelTest {
                     ModelInvocationException failure = (ModelInvocationException) ex;
                     assertThat(failure.category()).isEqualTo(ModelErrorCategory.OUTPUT_LIMIT_EXCEEDED);
                     assertThat(failure.providerCode()).isEqualTo("structured_output_truncated");
+                    assertThat(failure.getCause()).isNull();
+                    assertThat(failure.getMessage()).doesNotContain("resp-truncated");
                 });
     }
 
@@ -208,6 +210,8 @@ class OpenAiResponsesModelTest {
                     ModelInvocationException failure = (ModelInvocationException) ex;
                     assertThat(failure.category()).isEqualTo(ModelErrorCategory.MALFORMED_RESPONSE);
                     assertThat(failure.providerCode()).isEqualTo("structured_output_invalid");
+                    assertThat(failure.getCause()).isNull();
+                    assertThat(failure.getMessage()).doesNotContain("not valid json");
                 });
     }
 

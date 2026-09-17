@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.haifa.agent.core.content.ToolCallPart;
 import io.haifa.agent.core.content.ToolResultPart;
+import io.haifa.agent.core.error.AgentError;
+import io.haifa.agent.core.error.AgentErrorCode;
 import io.haifa.agent.core.message.AgentMessage;
 import io.haifa.agent.core.message.AgentMessageId;
 import io.haifa.agent.core.message.MessageRole;
@@ -17,6 +19,7 @@ import io.haifa.agent.core.tool.RuntimeIdempotencyKey;
 import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallId;
+import io.haifa.agent.core.tool.ToolExecutionError;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import java.time.Instant;
@@ -209,6 +212,73 @@ class ModelMessageProjectionPlannerTest {
     }
 
     @Test
+    void truncatesOversizedArgumentsWithNeutralPlaceholderWhenResultFailed() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        ModelMessageProjectionPlanner planner = new ModelMessageProjectionPlanner(store);
+
+        List<AgentMessage> messages = new ArrayList<>();
+        Map<ToolCallId, ToolCall> toolCalls = new HashMap<>();
+
+        // Add 4 turns (candidate count = 4 - 2 = 2, eligible = 2)
+        addCompletedToolTurn(
+                messages,
+                toolCalls,
+                "call-write-failed",
+                "corr-write-failed",
+                "write_to_file",
+                Map.of(
+                        "TargetFile",
+                        "D:/project/FailedCode.java",
+                        "CodeContent",
+                        "public class Failed {\n" + "    int x = 1;\n".repeat(200) + "}"),
+                "write failed",
+                Map.of("error", "permission denied"),
+                false); // successful = false
+        addCompletedToolTurn(
+                messages,
+                toolCalls,
+                "call-read-1",
+                "corr-read-1",
+                "file_read",
+                Map.of("path", "src/Read1.java"),
+                "read",
+                Map.of("data", "r1"),
+                true);
+        addCompletedToolTurn(
+                messages,
+                toolCalls,
+                "call-tail-1",
+                "corr-tail-1",
+                "file_read",
+                Map.of("path", "src/Tail1.java"),
+                "read",
+                Map.of("data", "t1"),
+                true);
+        addCompletedToolTurn(
+                messages,
+                toolCalls,
+                "call-tail-2",
+                "corr-tail-2",
+                "file_read",
+                Map.of("path", "src/Tail2.java"),
+                "read",
+                Map.of("data", "t2"),
+                true);
+
+        ModelMessageProjectionPlan plan = planner.plan(messages, toolCalls::get, Set.of("file_read"), 0);
+
+        ToolCallId writeCallId = new ToolCallId("call-write-failed");
+        assertThat(plan.isToolCallTruncated(writeCallId)).isTrue();
+        Map<String, Object> truncatedArgs = plan.truncatedArguments(writeCallId);
+        assertThat(truncatedArgs).isNotNull();
+        String truncatedCode = (String) truncatedArgs.get("CodeContent");
+        assertThat(truncatedCode)
+                .contains("[Code content truncated")
+                .contains("target: D:/project/FailedCode.java")
+                .doesNotContain("file written to");
+    }
+
+    @Test
     void bypassCompactionRecommendedWhenProjectedTokensDropBelowLimit() {
         InMemoryRuntimeStore store = new InMemoryRuntimeStore();
         ModelMessageProjectionPlanner planner = new ModelMessageProjectionPlanner(store);
@@ -242,6 +312,36 @@ class ModelMessageProjectionPlannerTest {
         assertThat(plan.bypassCompactionRecommended()).isTrue();
     }
 
+    @Test
+    void bypassNotRecommendedWhenTokensSavedIsZeroEvenIfProjectedBelowLimit() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        ModelMessageProjectionPlanner planner = new ModelMessageProjectionPlanner(store);
+
+        List<AgentMessage> messages = new ArrayList<>();
+        Map<ToolCallId, ToolCall> toolCalls = new HashMap<>();
+
+        // Add completed turns with small payloads where no pruning happens
+        for (int i = 1; i <= 4; i++) {
+            addCompletedToolTurn(
+                    messages,
+                    toolCalls,
+                    "small-call-" + i,
+                    "small-corr-" + i,
+                    "unknown_custom_tool",
+                    Map.of("path", "small/file" + i),
+                    "small",
+                    Map.of("data", "x"),
+                    true);
+        }
+
+        // soft limit is 50,000, projected active tokens is well below 50,000 (~100 tokens), but tokensSaved is 0
+        ModelMessageProjectionPlan plan = planner.plan(messages, toolCalls::get, Set.of("file_read"), 50_000);
+
+        assertThat(plan.tokensSavedByPruning()).isEqualTo(0L);
+        assertThat(plan.projectedActiveTokens()).isLessThan(50_000L);
+        assertThat(plan.bypassCompactionRecommended()).isFalse();
+    }
+
     private static void addCompletedToolTurn(
             List<AgentMessage> messages,
             Map<ToolCallId, ToolCall> toolCalls,
@@ -270,7 +370,15 @@ class ModelMessageProjectionPlannerTest {
         toolCall.start(NOW);
 
         ToolResult result = new ToolResult(successful, summary, structuredData, List.of(), List.of(), false);
-        toolCall.complete(result, NOW);
+        if (successful) {
+            toolCall.complete(result, NOW);
+        } else {
+            toolCall.fail(
+                    new ToolExecutionError(
+                            new AgentError(AgentErrorCode.TOOL_BUSINESS_FAILURE, Map.of(), summary, NOW)),
+                    result,
+                    NOW);
+        }
         toolCalls.put(callId, toolCall);
 
         long seq = messages.size() + 1;

@@ -590,7 +590,7 @@ public final class OpenAiResponsesModel implements AgentChatModel {
                         200,
                         "structured_output_truncated",
                         "provider response was truncated before structured output completed",
-                        exception);
+                        null);
             }
             throw failure(
                     request,
@@ -599,7 +599,7 @@ public final class OpenAiResponsesModel implements AgentChatModel {
                     200,
                     "structured_output_invalid",
                     "provider returned invalid structured output",
-                    exception);
+                    null);
         }
     }
 

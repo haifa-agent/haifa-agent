@@ -1066,17 +1066,18 @@ class ProjectPersistenceAssemblyTest {
     }
 
     @Test
-    void configureSetsActiveHistoryBudgetTokensTo96k() {
+    void configurePreservesCustomCompressionPolicySettingsWhenAddingDynamicDefaults() {
         try (ProjectPersistenceAssembly assembly = ProjectPersistenceAssembly.open(
-                ProjectPersistenceConfiguration.memory(), CLOCK, new TestIds("budget"), null)) {
+                ProjectPersistenceConfiguration.memory(), CLOCK, new TestIds("budget-custom"), null)) {
             RuntimeCoreBuilder builder = new RuntimeCoreBuilder();
+            builder.compressionPolicy(CompressionPolicy.defaults().withSemanticCompactionEnabled(false));
             assembly.configure(builder);
             assertThat(builder.compressionPolicy()).isNotNull();
-            assertThat(builder.compressionPolicy().activeHistoryBudgetTokens())
-                    .isPresent()
-                    .hasValue(96_000L);
-            assertThat(ProjectPersistenceAssembly.CODING_AGENT_ACTIVE_HISTORY_BUDGET_TOKENS)
-                    .isEqualTo(96_000L);
+            CompressionPolicy policy = builder.compressionPolicy();
+            assertThat(policy.semanticCompactionEnabled()).isFalse();
+            assertThat(policy.activeHistoryBudgetPercent())
+                    .isEqualTo(ProjectPersistenceAssembly.CODING_AGENT_ACTIVE_HISTORY_BUDGET_PERCENT);
+            assertThat(policy.activeHistoryBudgetTokens()).isEmpty();
         }
     }
 
