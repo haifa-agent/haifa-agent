@@ -40,9 +40,10 @@ public final class CompactionTriggerEvaluator {
             activeBudget = capacitySoftLimit;
         }
         long softLimitTokens = Math.min(capacitySoftLimit, activeBudget);
-        long calculatedTail = (softLimitTokens * policy.targetTailTokenPercent()) / 100L;
+        long resolvedActiveBudget = softLimitTokens > 0 ? softLimitTokens : availableSessionTokens;
+        long calculatedTail = (resolvedActiveBudget * policy.targetTailTokenPercent()) / 100L;
         long clampedTail = Math.clamp(calculatedTail, (long) policy.minTailTokens(), (long) policy.maxTailTokens());
-        long resolvedTailTokens = Math.min(clampedTail, softLimitTokens);
+        long resolvedTailTokens = Math.min(clampedTail, resolvedActiveBudget);
 
         return new ContextBudgetBreakdown(
                 contextWindowTokens,
