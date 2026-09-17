@@ -9,7 +9,6 @@ import com.williamcallahan.tui4j.compat.bubbletea.Model;
 import com.williamcallahan.tui4j.compat.bubbletea.PasteMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.UpdateResult;
 import com.williamcallahan.tui4j.compat.bubbletea.WindowSizeMessage;
-import com.williamcallahan.tui4j.compat.bubbletea.input.MouseAction;
 import com.williamcallahan.tui4j.compat.bubbletea.input.MouseButton;
 import com.williamcallahan.tui4j.compat.bubbletea.input.MouseMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.input.key.Key;
@@ -28,14 +27,12 @@ import io.haifa.agent.core.run.AgentRunId;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 import java.util.function.LongSupplier;
 
 /** Production tui4j adapter around the authoritative terminal Controller and Reducer state. */
 final class Tui4jCodingTerminalModel implements Model {
     private static final Duration EVENT_POLL_INTERVAL = Duration.ofMillis(50);
     private static final Duration UNBRACKETED_PASTE_GUARD_INTERVAL = Duration.ofMillis(100);
-    private static final Duration SELECTION_AUTO_SCROLL_INTERVAL = Duration.ofMillis(75);
     private static final int MAX_SECRET_CHARACTERS = 65_536;
 
     private final CodingTerminalController controller;
@@ -44,7 +41,6 @@ final class Tui4jCodingTerminalModel implements Model {
     private final Viewport transcript;
     private final TerminalShortcutProfile shortcuts;
     private final Tui4jTerminalView view;
-    private final TerminalTextSelection selection = new TerminalTextSelection();
     private final List<String> history = new ArrayList<>();
     private final StringBuilder secretBuffer = new StringBuilder();
     private final LongSupplier monotonicNanos;
@@ -66,10 +62,6 @@ final class Tui4jCodingTerminalModel implements Model {
     private long deferredEnterSequence;
     private DeferredEnter pendingEnter;
     private boolean secretPresentation;
-    private String displayedTranscriptContent = "";
-    private long selectionAutoScrollSequence;
-    private int selectionAutoScrollDirection;
-    private int selectionAutoScrollColumn;
 
     Tui4jCodingTerminalModel(CodingTerminalController controller, TerminalEventPump pump) {
         this(controller, pump, System::nanoTime, null);
@@ -119,8 +111,6 @@ final class Tui4jCodingTerminalModel implements Model {
             command = nextTick();
         } else if (message instanceof DeferredEnterMessage deferred) {
             command = commitDeferredEnter(deferred);
-        } else if (message instanceof SelectionAutoScrollMessage scrolling) {
-            command = continueSelectionAutoScroll(scrolling);
         } else if (message instanceof SubmissionCompletedMessage completed) {
             if (completed.result().submission().equals(pendingSubmission)) {
                 controller.completeMessageSubmission(completed.result());
@@ -128,10 +118,6 @@ final class Tui4jCodingTerminalModel implements Model {
                 syncComponents();
             }
         } else if (message instanceof WindowSizeMessage resized) {
-            TerminalUiState current = controller.state();
-            if (current.columns() != resized.width() || current.rows() != resized.height()) {
-                clearSelection();
-            }
             pump.offer(new TerminalUiAction.TerminalResized(resized.width(), resized.height()));
             controller.drainEvents();
             syncComponents();
@@ -163,39 +149,13 @@ final class Tui4jCodingTerminalModel implements Model {
     }
 
     private Command mouse(MouseMessage mouse) {
-        Tui4jTerminalView.TranscriptRegion region = view.transcriptRegion();
-        if (mouse.isWheel()) {
-            if (!region.contains(mouse.row())) return Command.none();
-            if (mouse.getButton() == MouseButton.MouseButtonWheelUp) {
-                requestTranscriptScroll(-transcript.getMouseWheelDelta());
-            } else if (mouse.getButton() == MouseButton.MouseButtonWheelDown) {
-                requestTranscriptScroll(transcript.getMouseWheelDelta());
-            }
+        if (!mouse.isWheel()) {
             return Command.none();
         }
-
-        if (mouse.getAction() == MouseAction.MouseActionPress && mouse.getButton() == MouseButton.MouseButtonLeft) {
-            Optional<TerminalTextSelection.Point> point = transcriptPoint(mouse, false);
-            if (point.isEmpty()) {
-                clearSelection();
-                return Command.none();
-            }
-            stopSelectionAutoScroll();
-            selection.start(point.orElseThrow());
-            return Command.none();
-        }
-        if (mouse.getAction() == MouseAction.MouseActionMotion && selection.selecting()) {
-            transcriptPoint(mouse, true).ifPresent(selection::extend);
-            return updateSelectionAutoScroll(mouse, region);
-        }
-        if (mouse.getAction() == MouseAction.MouseActionRelease && selection.selecting()) {
-            transcriptPoint(mouse, true).ifPresent(selection::finish);
-            stopSelectionAutoScroll();
-            return selection
-                    .range()
-                    .flatMap(range -> TerminalScreenCells.selectedText(transcriptContent, range))
-                    .map(Command::copyToClipboard)
-                    .orElseGet(Command::none);
+        if (mouse.getButton() == MouseButton.MouseButtonWheelUp) {
+            requestTranscriptScroll(-transcript.getMouseWheelDelta());
+        } else if (mouse.getButton() == MouseButton.MouseButtonWheelDown) {
+            requestTranscriptScroll(transcript.getMouseWheelDelta());
         }
         return Command.none();
     }
@@ -203,14 +163,6 @@ final class Tui4jCodingTerminalModel implements Model {
     @Override
     public String view() {
         TerminalUiState state = controller.state();
-        String desiredTranscript = selection
-                .range()
-                .map(range -> TerminalScreenCells.highlight(transcriptContent, range))
-                .orElse(transcriptContent);
-        if (!desiredTranscript.equals(displayedTranscriptContent)) {
-            transcript.setContent(desiredTranscript);
-            displayedTranscriptContent = desiredTranscript;
-        }
         int requestedScrollRows = pendingTranscriptScrollRows;
         pendingTranscriptScrollRows = 0;
         Duration elapsed = activityElapsed(state);
@@ -253,12 +205,6 @@ final class Tui4jCodingTerminalModel implements Model {
             }
         }
         TerminalUiState state = controller.state();
-        if (key.type() == KeyType.keyESC
-                && state.selector().isEmpty()
-                && selection.range().isPresent()) {
-            clearSelection();
-            return Command.none();
-        }
         if (state.selector().isPresent()) {
             if ("completion".equals(state.selector().orElseThrow().kind()) && editCompletion(key)) {
                 return Command.none();
@@ -453,67 +399,6 @@ final class Tui4jCodingTerminalModel implements Model {
         pendingTranscriptScrollRows = (int) Math.max(-1_000_000L, Math.min(1_000_000L, requested));
     }
 
-    private Optional<TerminalTextSelection.Point> transcriptPoint(MouseMessage mouse, boolean clampToRegion) {
-        Tui4jTerminalView.TranscriptRegion region = view.transcriptRegion();
-        if (region.height() < 1) return Optional.empty();
-        if (!clampToRegion && !region.contains(mouse.row())) return Optional.empty();
-        int visibleRow = region.relativeRow(mouse.row());
-        int logicalRow = transcript.getYOffset() + visibleRow;
-        int lastRow = TerminalScreenCells.lineCount(transcriptContent) - 1;
-        if (lastRow < 0) return Optional.empty();
-        logicalRow = Math.max(0, Math.min(lastRow, logicalRow));
-        int column = Math.max(0, Math.min(controller.state().columns() - 1, mouse.column()));
-        return Optional.of(new TerminalTextSelection.Point(logicalRow, column));
-    }
-
-    private Command updateSelectionAutoScroll(MouseMessage mouse, Tui4jTerminalView.TranscriptRegion region) {
-        int direction = mouse.row() <= region.topRow() ? -1 : mouse.row() >= region.bottomRow() ? 1 : 0;
-        selectionAutoScrollColumn = Math.max(0, mouse.column());
-        if (direction == 0) {
-            stopSelectionAutoScroll();
-            return Command.none();
-        }
-        if (selectionAutoScrollDirection == direction) return Command.none();
-        selectionAutoScrollDirection = direction;
-        long sequence = ++selectionAutoScrollSequence;
-        return selectionAutoScrollTick(sequence);
-    }
-
-    private Command continueSelectionAutoScroll(SelectionAutoScrollMessage scrolling) {
-        if (scrolling.sequence() != selectionAutoScrollSequence
-                || selectionAutoScrollDirection == 0
-                || !selection.selecting()) {
-            return Command.none();
-        }
-        if ((selectionAutoScrollDirection < 0 && transcript.atTop())
-                || (selectionAutoScrollDirection > 0 && transcript.atBottom())) {
-            stopSelectionAutoScroll();
-            return Command.none();
-        }
-        requestTranscriptScroll(selectionAutoScrollDirection);
-        Tui4jTerminalView.TranscriptRegion region = view.transcriptRegion();
-        int nextOffset = Math.max(
-                0, Math.min(transcript.getMaxYOffset(), transcript.getYOffset() + selectionAutoScrollDirection));
-        int visibleRow = selectionAutoScrollDirection < 0 ? 0 : Math.max(0, region.height() - 1);
-        int row = Math.min(TerminalScreenCells.lineCount(transcriptContent) - 1, nextOffset + visibleRow);
-        selection.extend(new TerminalTextSelection.Point(Math.max(0, row), selectionAutoScrollColumn));
-        return selectionAutoScrollTick(scrolling.sequence());
-    }
-
-    private Command selectionAutoScrollTick(long sequence) {
-        return Command.tick(SELECTION_AUTO_SCROLL_INTERVAL, ignored -> new SelectionAutoScrollMessage(sequence));
-    }
-
-    private void stopSelectionAutoScroll() {
-        selectionAutoScrollDirection = 0;
-        selectionAutoScrollSequence++;
-    }
-
-    private void clearSelection() {
-        selection.clear();
-        stopSelectionAutoScroll();
-    }
-
     private boolean editCompletion(KeyPressMessage key) {
         TerminalUiState state = controller.state();
         String buffer = state.editorBuffer();
@@ -682,7 +567,6 @@ final class Tui4jCodingTerminalModel implements Model {
         TerminalUiState state = controller.state();
         boolean secureInput = controller.secureInputRequested();
         if (secureInput) {
-            clearSelection();
             String mask = "•".repeat(secretBuffer.codePointCount(0, secretBuffer.length()));
             if (!editor.value().equals(mask) || editorCursor != mask.length()) {
                 synchronizeEditor(mask, mask.length());
@@ -715,14 +599,8 @@ final class Tui4jCodingTerminalModel implements Model {
         if (transcriptChanged) {
             String nextTranscript = view.transcriptContent(state);
             if (!nextTranscript.equals(transcriptContent)) {
-                if (selection.range().isPresent()
-                        && !TerminalScreenCells.plainText(nextTranscript)
-                                .startsWith(TerminalScreenCells.plainText(transcriptContent))) {
-                    clearSelection();
-                }
                 transcript.setContent(nextTranscript);
                 transcriptContent = nextTranscript;
-                displayedTranscriptContent = nextTranscript;
                 if (followTranscript) {
                     transcript.gotoBottom();
                     newOutputPending = false;
@@ -784,8 +662,6 @@ final class Tui4jCodingTerminalModel implements Model {
     }
 
     private record PollMessage() implements Message {}
-
-    private record SelectionAutoScrollMessage(long sequence) implements Message {}
 
     private record DeferredEnter(long sequence, TerminalInput.Kind kind) {}
 
