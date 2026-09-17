@@ -1,48 +1,49 @@
 package io.haifa.agent.sdk.tool;
 
-import io.haifa.agent.credential.api.CredentialRequirement;
 import io.haifa.agent.tool.api.SemanticVersion;
 import io.haifa.agent.tool.api.ToolAlias;
 import io.haifa.agent.tool.api.ToolApprovalRequirement;
 import io.haifa.agent.tool.api.ToolIdempotency;
 import io.haifa.agent.tool.api.ToolName;
-import io.haifa.agent.tool.api.ToolProviderId;
-import io.haifa.agent.tool.api.ToolResourceRequirements;
 import io.haifa.agent.tool.api.ToolRisk;
 import io.haifa.agent.tool.api.ToolSideEffect;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.LinkedHashSet;
-import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 
-/** Immutable metadata used to derive one Java Tool definition and frozen binding. */
+/**
+ * Immutable metadata used to derive one Java Tool definition and frozen binding.
+ *
+ * <p>This is the ordinary SDK entry for typed in-process Java Tools: it declares the Tool name,
+ * input/output record types, a human title and description, a timeout, and whether the Tool is a pure
+ * function or declares side effects. Everything else a {@link io.haifa.agent.tool.api.ToolDefinition}
+ * can carry (provider identity, concurrency policy, resource requirements, credential requirements,
+ * approval requirement, provenance, tags) is fixed by the SDK Tool platform and is not mirrored here;
+ * a Tool that needs those fields registers itself through the Tool API instead.
+ *
+ * <p>Declaring the Tool as {@link Builder#pure()} is the only way to lower its risk, idempotency and
+ * approval requirement. Any other declaration keeps the conservative defaults: medium risk, unknown
+ * idempotency and policy-decided approval. Declaring side effects also drops the pure declaration, so
+ * a side-effecting Tool can never keep the "never needs approval" state.
+ */
 public final class JavaToolSpec<I extends Record, O extends Record> {
     private final ToolName name;
     private final ToolAlias alias;
     private final SemanticVersion version;
-    private final ToolProviderId providerId;
     private final Class<I> inputType;
     private final Class<O> outputType;
     private final String title;
     private final String description;
     private final Duration timeout;
-    private final String concurrencyPolicy;
-    private final ToolIdempotency idempotency;
-    private final ToolRisk risk;
+    private final boolean pure;
     private final Set<ToolSideEffect> sideEffects;
-    private final ToolResourceRequirements resources;
-    private final List<CredentialRequirement> credentialRequirements;
-    private final ToolApprovalRequirement approvalRequirement;
-    private final String provenance;
-    private final Set<String> tags;
 
     private JavaToolSpec(Builder<I, O> builder) {
         name = new ToolName(builder.name);
         alias = new ToolAlias(name.value());
         version = new SemanticVersion(builder.version);
-        providerId = new ToolProviderId(builder.providerId);
         inputType = requireRecord(builder.inputType, "inputType");
         outputType = requireRecord(builder.outputType, "outputType");
         title = text(builder.title, "title");
@@ -51,16 +52,8 @@ public final class JavaToolSpec<I extends Record, O extends Record> {
         if (timeout.isZero() || timeout.isNegative()) {
             throw new IllegalArgumentException("timeout must be positive");
         }
-        concurrencyPolicy = text(builder.concurrencyPolicy, "concurrencyPolicy");
-        idempotency = Objects.requireNonNull(builder.idempotency, "idempotency must not be null");
-        risk = Objects.requireNonNull(builder.risk, "risk must not be null");
+        pure = builder.pure;
         sideEffects = Set.copyOf(builder.sideEffects);
-        resources = Objects.requireNonNull(builder.resources, "resources must not be null");
-        credentialRequirements = List.copyOf(builder.credentialRequirements);
-        approvalRequirement =
-                Objects.requireNonNull(builder.approvalRequirement, "approvalRequirement must not be null");
-        provenance = text(builder.provenance, "provenance");
-        tags = Set.copyOf(builder.tags);
     }
 
     public static <I extends Record, O extends Record> Builder<I, O> builder(
@@ -78,10 +71,6 @@ public final class JavaToolSpec<I extends Record, O extends Record> {
 
     public SemanticVersion version() {
         return version;
-    }
-
-    public ToolProviderId providerId() {
-        return providerId;
     }
 
     public Class<I> inputType() {
@@ -104,40 +93,27 @@ public final class JavaToolSpec<I extends Record, O extends Record> {
         return timeout;
     }
 
-    public String concurrencyPolicy() {
-        return concurrencyPolicy;
-    }
-
-    public ToolIdempotency idempotency() {
-        return idempotency;
-    }
-
-    public ToolRisk risk() {
-        return risk;
+    public boolean pure() {
+        return pure;
     }
 
     public Set<ToolSideEffect> sideEffects() {
         return sideEffects;
     }
 
-    public ToolResourceRequirements resources() {
-        return resources;
+    /** A pure Tool is {@code PURE}; every other Tool keeps the conservative {@code UNKNOWN}. */
+    public ToolIdempotency idempotency() {
+        return pure ? ToolIdempotency.PURE : ToolIdempotency.UNKNOWN;
     }
 
-    public List<CredentialRequirement> credentialRequirements() {
-        return credentialRequirements;
+    /** A pure Tool is {@code LOW} risk; every other Tool stays {@code MEDIUM}. */
+    public ToolRisk risk() {
+        return pure ? ToolRisk.LOW : ToolRisk.MEDIUM;
     }
 
+    /** A pure Tool never needs approval; every other Tool is decided by Policy. */
     public ToolApprovalRequirement approvalRequirement() {
-        return approvalRequirement;
-    }
-
-    public String provenance() {
-        return provenance;
-    }
-
-    public Set<String> tags() {
-        return tags;
+        return pure ? ToolApprovalRequirement.NEVER : ToolApprovalRequirement.POLICY;
     }
 
     private static <T extends Record> Class<T> requireRecord(Class<T> type, String field) {
@@ -160,36 +136,22 @@ public final class JavaToolSpec<I extends Record, O extends Record> {
         private final Class<I> inputType;
         private final Class<O> outputType;
         private String version = "1.0.0";
-        private String providerId;
         private String title;
         private String description;
         private Duration timeout = Duration.ofSeconds(30);
-        private String concurrencyPolicy = "per-run";
-        private ToolIdempotency idempotency = ToolIdempotency.UNKNOWN;
-        private ToolRisk risk = ToolRisk.MEDIUM;
+        private boolean pure;
         private final Set<ToolSideEffect> sideEffects = new LinkedHashSet<>();
-        private ToolResourceRequirements resources = ToolResourceRequirements.none();
-        private List<CredentialRequirement> credentialRequirements = List.of();
-        private ToolApprovalRequirement approvalRequirement = ToolApprovalRequirement.POLICY;
-        private String provenance = "java-sdk";
-        private final Set<String> tags = new LinkedHashSet<>();
 
         private Builder(String name, Class<I> inputType, Class<O> outputType) {
             this.name = text(name, "name");
             this.inputType = Objects.requireNonNull(inputType, "inputType must not be null");
             this.outputType = Objects.requireNonNull(outputType, "outputType must not be null");
-            this.providerId = "java." + this.name;
             this.title = this.name;
             this.description = this.name;
         }
 
         public Builder<I, O> version(String value) {
             version = value;
-            return this;
-        }
-
-        public Builder<I, O> providerId(String value) {
-            providerId = value;
             return this;
         }
 
@@ -208,61 +170,25 @@ public final class JavaToolSpec<I extends Record, O extends Record> {
             return this;
         }
 
-        public Builder<I, O> concurrencyPolicy(String value) {
-            concurrencyPolicy = value;
+        /** Declares a deterministic, side-effect-free function. */
+        public Builder<I, O> pure() {
+            pure = true;
+            sideEffects.clear();
             return this;
         }
 
-        public Builder<I, O> idempotency(ToolIdempotency value) {
-            idempotency = value;
-            return this;
-        }
-
-        public Builder<I, O> risk(ToolRisk value) {
-            risk = value;
-            return this;
-        }
-
+        /**
+         * Declares the Tool's side effects. Any declared side effect also drops the pure declaration,
+         * so the Tool keeps policy-decided approval.
+         */
         public Builder<I, O> sideEffects(ToolSideEffect... values) {
             sideEffects.clear();
             sideEffects.addAll(Arrays.asList(values));
-            return this;
-        }
-
-        public Builder<I, O> resources(ToolResourceRequirements value) {
-            resources = value;
-            return this;
-        }
-
-        public Builder<I, O> credentialRequirements(List<CredentialRequirement> values) {
-            credentialRequirements = List.copyOf(values);
-            return this;
-        }
-
-        public Builder<I, O> approvalRequirement(ToolApprovalRequirement value) {
-            approvalRequirement = value;
-            return this;
-        }
-
-        public Builder<I, O> provenance(String value) {
-            provenance = value;
-            return this;
-        }
-
-        public Builder<I, O> tags(String... values) {
-            tags.clear();
-            tags.addAll(Arrays.asList(values));
-            return this;
-        }
-
-        /** Applies low-risk, side-effect-free defaults for a deterministic pure function. */
-        public Builder<I, O> pure() {
-            idempotency = ToolIdempotency.PURE;
-            risk = ToolRisk.LOW;
-            sideEffects.clear();
-            resources = ToolResourceRequirements.none();
-            credentialRequirements = List.of();
-            approvalRequirement = ToolApprovalRequirement.NEVER;
+            if (sideEffects.contains(ToolSideEffect.NETWORK_ACCESS)) {
+                throw new IllegalArgumentException(
+                        "Java Tools cannot declare NETWORK_ACCESS; register through the Tool API with constrained hosts");
+            }
+            if (!sideEffects.isEmpty()) pure = false;
             return this;
         }
 

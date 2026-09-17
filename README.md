@@ -42,7 +42,7 @@ Tool、MCP、Skill、Memory、Workspace、Policy、Credential、持久化与恢�
 | 概念 | 在 Haifa Agent 中的含义 |
 | --- | --- |
 | `AgentDefinition` | Agent 的版本化定义。Run 创建时冻结其版本引用，不随运行中配置变化漂移。 |
-| `ProductProfile` | 可信宿主声明的产品边界，包括模型、预算、限制、指令和 Capability allowlist。 |
+| `ProductProfile` | 可信宿主声明的产品边界与默认值，包括模型、指令、预算、限制和 Tool/Skill allowlist。 |
 | `HaifaAgent` | 已完成装配、由宿主持有并负责资源生命周期的 Runtime 实例，不是某一次 Run。 |
 | Conversation / Session | 面向用户的多轮容器；可以包含多个 Run，但同一会话最多只有一个活动 Run。 |
 | `AgentRun` | 一次权威执行及其状态机；`AgentRunSnapshot` 是运行视图，`AgentRunResult` 是最终结果。 |
@@ -298,7 +298,7 @@ Spring Boot Starter 默认创建单例 `HaifaAgent`，自动收集 `JavaTool` Be
 
 ### SDK、协议与产品
 
-- 纯 Java `haifa-agent-sdk` Facade、可信 `ProductProfile`、确定性 Capability Contribution 装配、
+- 纯 Java `haifa-agent-sdk` Facade、可信 `ProductProfile`、显式类型化组件装配、
   Conversation/Run API、轻量 `chat()` 和类型化最终输出；
 - Spring Boot Starter 与自动装配；
 - 公共 Contract、持久 Run Event Feed，以及框架中立 HTTP/JSON + SSE 参考 Adapter；

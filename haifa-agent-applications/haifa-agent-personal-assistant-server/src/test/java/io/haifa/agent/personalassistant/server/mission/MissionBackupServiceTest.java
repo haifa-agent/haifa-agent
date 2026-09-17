@@ -17,13 +17,8 @@ import io.haifa.agent.personalassistant.application.mission.MissionExecutionCoor
 import io.haifa.agent.personalassistant.application.mission.MissionPlanValidator;
 import io.haifa.agent.personalassistant.application.mission.MissionRuntimeAccess;
 import io.haifa.agent.runtime.core.model.continuation.PlaintextModelContinuationProtector;
-import io.haifa.agent.sdk.api.SdkConfigurationDigest;
-import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
 import io.haifa.agent.sdk.conversation.ConversationRecord;
 import io.haifa.agent.sdk.conversation.ConversationStatus;
-import io.haifa.agent.sdk.product.ProductCapabilities;
-import io.haifa.agent.sdk.product.ProductContributionCoordinate;
-import io.haifa.agent.sdk.product.ProductProviderSuitability;
 import io.haifa.agent.store.sqlite.SqliteConnectionFactory;
 import io.haifa.agent.store.sqlite.SqliteSdkProductContributions;
 import io.haifa.agent.store.sqlite.SqliteStoreConfiguration;
@@ -40,8 +35,6 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
-import java.util.OptionalLong;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -58,32 +51,18 @@ class MissionBackupServiceTest {
         Path database = directory.resolve("personal-v1.sqlite");
         initializeArtifact(database);
         AgentSessionId sessionId = new AgentSessionId("personal-v1-conversation");
+        TenantRef tenant = new TenantRef("local");
+        PrincipalRef principal = new PrincipalRef("public-user", "user");
         ConversationRecord conversation = new ConversationRecord(
-                sessionId,
-                new TenantRef("local"),
-                new PrincipalRef("public-user", "user"),
-                "Shared V1",
-                ConversationStatus.ACTIVE,
-                Optional.empty(),
-                OptionalLong.empty(),
-                Optional.empty(),
-                CLOCK.instant(),
-                CLOCK.instant(),
-                0);
+                sessionId, "Shared V1", CLOCK.instant(), CLOCK.instant(), 0, ConversationStatus.ACTIVE);
 
         SqliteSdkProductContributions first = personalSqlite(database);
         first.persistence()
                 .runtimePersistence()
                 .sessions()
                 .insert(AgentSession.open(
-                        sessionId,
-                        conversation.tenant(),
-                        conversation.principal(),
-                        null,
-                        SessionScope.USER,
-                        CLOCK.instant(),
-                        Map.of()));
-        first.conversation().conversationStore().create(conversation);
+                        sessionId, tenant, principal, null, SessionScope.USER, CLOCK.instant(), Map.of()));
+        first.conversation().conversationStore().create(conversation, tenant, principal);
         first.persistence().close();
 
         SqliteSdkProductContributions reopened = personalSqlite(database);
@@ -211,19 +190,8 @@ class MissionBackupServiceTest {
                 SqliteStoreConfiguration.defaults(database),
                 CLOCK,
                 new PlaintextModelContinuationProtector(),
-                metadata("pa-persistence", ProductCapabilities.PERSISTENCE),
-                metadata("pa-conversation", ProductCapabilities.CONVERSATION),
-                metadata("pa-memory", ProductCapabilities.MEMORY));
-    }
-
-    private static SdkContributionMetadata metadata(
-            String id, io.haifa.agent.sdk.product.ProductCapabilityId capability) {
-        return new SdkContributionMetadata(
-                new ProductContributionCoordinate(id, "1.0.0"),
-                capability,
-                SdkConfigurationDigest.sha256(id, "shared-v1"),
-                ProductProviderSuitability.PRODUCTION,
-                id);
+                io.haifa.agent.sdk.product.ProductMemoryPolicy.safeDefault(),
+                io.haifa.agent.sdk.product.ProductArtifactPolicy.disabled());
     }
 
     private static void initializeArtifact(Path database) throws Exception {

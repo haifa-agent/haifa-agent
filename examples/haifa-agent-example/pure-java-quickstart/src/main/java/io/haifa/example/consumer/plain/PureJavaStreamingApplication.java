@@ -21,7 +21,7 @@ public final class PureJavaStreamingApplication {
                             "streaming-" + System.currentTimeMillis(),
                             "StreamingDemo",
                             "Explain why the sky is blue in two sentences."));
-            var runId = conversation.activeRunId().orElseThrow();
+            var runId = conversation.runId();
 
             System.out.println("Streaming response:");
             try (var subscription = agent.runs().subscribeOutput(runId, RunOutputCursor.BEFORE_FIRST, event -> {

@@ -5,9 +5,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.haifa.agent.execution.core.tool.ExecutionToolDefinitionFactory;
 import io.haifa.agent.execution.core.tool.ExecutionToolSchemaValidator;
 import io.haifa.agent.personalassistant.application.product.PersonalAssistantProfile;
-import io.haifa.agent.sdk.product.ProductCapabilities;
-import io.haifa.agent.sdk.product.ProductCapabilityMode;
-import io.haifa.agent.sdk.product.ProductContributionCoordinate;
 import io.haifa.agent.tool.api.ToolDispatchState;
 import io.haifa.agent.tool.api.ToolInvocationException;
 import io.haifa.agent.tool.core.JsonSchema202012Validator;
@@ -19,25 +16,8 @@ import org.junit.jupiter.api.Test;
 class PersonalAssistantProfileTest {
     @Test
     void conversationProfileExcludesMissionOnlyDeepResearchSkill() {
-        ProductContributionCoordinate coordinate = new ProductContributionCoordinate("test", "1");
         var profile = PersonalAssistantProfile.create(
-                new PersonalAssistantProfile.ContributionCoordinates(
-                        coordinate,
-                        coordinate,
-                        coordinate,
-                        coordinate,
-                        coordinate,
-                        coordinate,
-                        coordinate,
-                        coordinate,
-                        coordinate,
-                        coordinate,
-                        coordinate,
-                        coordinate,
-                        coordinate),
-                Set.of(PersonalAssistantProfile.DEEP_RESEARCH_SKILL_ALIAS, "user-skill"),
-                Set.of(),
-                Set.of());
+                Set.of(PersonalAssistantProfile.DEEP_RESEARCH_SKILL_ALIAS, "user-skill"), Set.of(), Set.of(), Set.of());
 
         assertThat(profile.allowedSkills())
                 .contains(
@@ -75,39 +55,13 @@ class PersonalAssistantProfileTest {
     }
 
     @Test
-    void profileRequiresGovernedExecutionButStillDisablesCodingWorkspaceCapabilities() {
-        ProductContributionCoordinate coordinate = new ProductContributionCoordinate("test", "1");
+    void profileDisclosesGovernedExecutionToolsAndSkills() {
         String mcpAlias = "personal_mcp_calculate";
         var profile = PersonalAssistantProfile.create(
-                new PersonalAssistantProfile.ContributionCoordinates(
-                        coordinate,
-                        coordinate,
-                        coordinate,
-                        coordinate,
-                        coordinate,
-                        coordinate,
-                        coordinate,
-                        coordinate,
-                        coordinate,
-                        coordinate,
-                        coordinate,
-                        coordinate,
-                        coordinate),
                 Set.of(),
                 Set.of(mcpAlias),
-                Set.of(PersonalAssistantProfile.WEB_SEARCH_ALIAS, PersonalAssistantProfile.WEB_FETCH_ALIAS));
-        assertThat(profile.requirement(ProductCapabilities.TOOL).mode()).isEqualTo(ProductCapabilityMode.REQUIRED);
-        assertThat(profile.requirement(ProductCapabilities.SKILL).mode()).isEqualTo(ProductCapabilityMode.REQUIRED);
-        assertThat(profile.requirement(ProductCapabilities.MCP).mode()).isEqualTo(ProductCapabilityMode.REQUIRED);
-        assertThat(profile.requirement(ProductCapabilities.SHELL).mode()).isEqualTo(ProductCapabilityMode.REQUIRED);
-        assertThat(profile.requirement(ProductCapabilities.EXECUTION).mode()).isEqualTo(ProductCapabilityMode.REQUIRED);
-        assertThat(profile.requirement(ProductCapabilities.APPROVAL).mode()).isEqualTo(ProductCapabilityMode.REQUIRED);
-        assertThat(profile.requirement(ProductCapabilities.CREDENTIAL).mode())
-                .isEqualTo(ProductCapabilityMode.REQUIRED);
-        assertThat(profile.requirement(ProductCapabilities.ARTIFACT).mode()).isEqualTo(ProductCapabilityMode.REQUIRED);
-        assertThat(profile.requirement(ProductCapabilities.PROJECT).mode()).isEqualTo(ProductCapabilityMode.NONE);
-        assertThat(profile.requirement(ProductCapabilities.WORKSPACE).mode()).isEqualTo(ProductCapabilityMode.NONE);
-        assertThat(profile.requirement(ProductCapabilities.GIT).mode()).isEqualTo(ProductCapabilityMode.NONE);
+                Set.of(PersonalAssistantProfile.WEB_SEARCH_ALIAS, PersonalAssistantProfile.WEB_FETCH_ALIAS),
+                Set.of());
         assertThat(profile.allowedTools())
                 .contains(
                         PersonalAssistantProfile.PRODUCT_TOOL_ALIAS,

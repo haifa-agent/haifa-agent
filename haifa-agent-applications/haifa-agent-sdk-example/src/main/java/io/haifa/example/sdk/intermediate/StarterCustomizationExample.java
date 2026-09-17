@@ -8,7 +8,7 @@ import io.haifa.agent.starter.HaifaAgentStarter;
 import io.haifa.example.sdk.support.DeterministicExampleSupport;
 import java.time.Duration;
 
-/** Applies trusted instructions, connection bounds, a model contribution, and an application Tool. */
+/** Applies trusted instructions, connection bounds, a model configuration, and an application Tool. */
 public final class StarterCustomizationExample {
     private StarterCustomizationExample() {}
 
@@ -24,7 +24,7 @@ public final class StarterCustomizationExample {
             var conversation = agent.conversations()
                     .start(new StartConversationCommand(
                             "custom-starter-start", "Customized Starter", "What support is available?"));
-            var completed = agent.runs().await(conversation.activeRunId().orElseThrow());
+            var completed = agent.runs().await(conversation.runId());
             System.out.println(completed.output().orElseThrow());
         }
     }

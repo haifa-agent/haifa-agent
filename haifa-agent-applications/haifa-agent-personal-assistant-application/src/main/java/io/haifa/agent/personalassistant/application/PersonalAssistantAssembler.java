@@ -34,10 +34,6 @@ import io.haifa.agent.sdk.contribution.ArtifactPlatformContribution;
 import io.haifa.agent.sdk.contribution.MemoryPlatformContribution;
 import io.haifa.agent.sdk.contribution.ModelContribution;
 import io.haifa.agent.sdk.contribution.PolicyPlatformContribution;
-import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
-import io.haifa.agent.sdk.product.ProductCapabilities;
-import io.haifa.agent.sdk.product.ProductContributionCoordinate;
-import io.haifa.agent.sdk.product.ProductProviderSuitability;
 import io.haifa.agent.sdk.product.ProductRunProfile;
 import io.haifa.agent.sdk.spi.SdkConversationContribution;
 import io.haifa.agent.sdk.spi.SdkPersistenceContribution;
@@ -85,26 +81,8 @@ public final class PersonalAssistantAssembler {
                     dependencies.web(),
                     dependencies.execution(),
                     dependencies.clock()::instant);
-            var coordinates = new PersonalAssistantProfile.ContributionCoordinates(
-                    dependencies.model().coordinate(),
-                    dependencies.persistence().coordinate(),
-                    dependencies.conversation().coordinate(),
-                    dependencies.memory().coordinate(),
-                    dependencies.policy().coordinate(),
-                    tools.tool().coordinate(),
-                    tools.skill().coordinate(),
-                    tools.mcp().coordinate(),
-                    dependencies.web().credential().coordinate(),
-                    dependencies.execution().execution().coordinate(),
-                    dependencies.execution().shell().coordinate(),
-                    dependencies.execution().approval().coordinate(),
-                    dependencies.artifact().coordinate());
             var profile = PersonalAssistantProfile.create(
-                    coordinates,
-                    skills.aliases(),
-                    mcp.aliases(),
-                    dependencies.web().aliases(),
-                    tools.trustedScriptToolAliases());
+                    skills.aliases(), mcp.aliases(), dependencies.web().aliases(), tools.trustedScriptToolAliases());
             Set<String> plannerTools = new LinkedHashSet<>(dependencies.web().aliases());
             mcp.aliases().stream()
                     .filter(alias ->
@@ -243,19 +221,16 @@ public final class PersonalAssistantAssembler {
                                     .stream())
                     .forEach(agentBuilder::runProfile);
             var agent = agentBuilder
-                    .contribute(dependencies.model())
-                    .contribute(dependencies.persistence())
-                    .contribute(dependencies.conversation())
-                    .contribute(dependencies.memory())
-                    .contribute(dependencies.policy())
-                    .contribute(dependencies.artifact())
-                    .contribute(tools.tool())
-                    .contribute(tools.skill())
-                    .contribute(tools.mcp())
-                    .contribute(dependencies.web().credential())
-                    .contribute(dependencies.execution().execution())
-                    .contribute(dependencies.execution().shell())
-                    .contribute(dependencies.execution().approval())
+                    .model(dependencies.model())
+                    .persistence(dependencies.persistence())
+                    .conversation(dependencies.conversation())
+                    .memory(dependencies.memory())
+                    .policy(dependencies.policy())
+                    .artifacts(dependencies.artifact())
+                    .toolPlatform(tools.tool())
+                    .skillPlatform(tools.skill())
+                    .credentials(dependencies.web().credential())
+                    .approval(dependencies.execution().approval())
                     .build();
             return new PersonalAssistantApplication(
                     agent,
@@ -279,6 +254,7 @@ public final class PersonalAssistantAssembler {
                                     dependencies.principal())),
                     dependencies.artifact().service(),
                     skills.bindingReferences(),
+                    productDigest(profile, dependencies, tools),
                     new RuntimeFetchEvidenceReader(dependencies.persistence().runtimePersistence()));
         } catch (RuntimeException | Error exception) {
             try {
@@ -288,6 +264,142 @@ public final class PersonalAssistantAssembler {
             }
             throw exception;
         }
+    }
+
+    private static String productDigest(
+            io.haifa.agent.sdk.product.ProductProfile profile, Dependencies dependencies, PersonalToolPlatform tools) {
+        List<String> fields = new java.util.ArrayList<>();
+        fields.add("personal-assistant-product-v2");
+        appendProfileFields(fields, profile);
+        io.haifa.agent.model.api.ResolvedModelSnapshot model =
+                dependencies.model().snapshot();
+        fields.add("model.id");
+        fields.add(model.modelId().value());
+        fields.add("model.digest");
+        fields.add(model.configurationDigest());
+        dependencies.model().snapshots().entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .forEach(entry -> {
+                    fields.add("model.snapshot.id");
+                    fields.add(entry.getKey());
+                    fields.add("model.snapshot.digest");
+                    fields.add(entry.getValue().configurationDigest());
+                });
+        fields.add("tool.catalog.digest");
+        fields.add(tools.tool().catalog().snapshot().digest());
+        fields.add("skill.catalog.digest");
+        fields.add(tools.skill().catalog().snapshot().digest().value());
+        fields.add("policy.rules.digest");
+        fields.add(dependencies.policy().rules().contentDigest());
+        io.haifa.agent.sdk.product.ProductMemoryPolicy memoryPolicy =
+                dependencies.memory().policy();
+        fields.add("memory.policy.manualReviewRequired");
+        fields.add(Boolean.toString(memoryPolicy.manualReviewRequired()));
+        fields.add("memory.policy.maxCandidateContentChars");
+        fields.add(Integer.toString(memoryPolicy.maxCandidateContentChars()));
+        fields.add("memory.policy.maxQueryLimit");
+        fields.add(Integer.toString(memoryPolicy.maxQueryLimit()));
+        io.haifa.agent.sdk.product.ProductArtifactPolicy artifactPolicy =
+                dependencies.artifact().policy();
+        fields.add("artifact.policy.maxArtifactBytes");
+        fields.add(Long.toString(artifactPolicy.maxArtifactBytes()));
+        fields.add("artifact.policy.maxArtifactsPerRun");
+        fields.add(Integer.toString(artifactPolicy.maxArtifactsPerRun()));
+        fields.add("artifact.policy.maxArtifactBytesPerRun");
+        fields.add(Long.toString(artifactPolicy.maxArtifactBytesPerRun()));
+        fields.add("artifact.policy.allowedMediaTypes");
+        artifactPolicy.allowedMediaTypes().stream().sorted().forEach(fields::add);
+        fields.add("artifact.policy.rangeSupported");
+        fields.add(Boolean.toString(artifactPolicy.rangeSupported()));
+        fields.add("artifact.policy.localSoftLimitBytes");
+        fields.add(Long.toString(artifactPolicy.localSoftLimitBytes()));
+        fields.add("artifact.policy.localHardLimitBytes");
+        fields.add(Long.toString(artifactPolicy.localHardLimitBytes()));
+        fields.add("artifact.policy.requiredCompletionGate");
+        fields.add(Boolean.toString(artifactPolicy.requiredCompletionGate()));
+        fields.add("web.contribution.binding");
+        dependencies.web().contributions().stream()
+                .sorted(java.util.Comparator.comparing(item -> item.alias().value()))
+                .forEach(item -> {
+                    fields.add(item.alias().value());
+                    fields.add(item.providerBindingReference());
+                });
+        fields.add("execution.shellRuntime.os");
+        fields.add(dependencies.execution().shellRuntime().operatingSystem());
+        fields.add("execution.shellRuntime.languages");
+        dependencies.execution().shellRuntime().scriptLanguages().stream()
+                .sorted()
+                .forEach(fields::add);
+        fields.add("persistence.class");
+        fields.add(dependencies.persistence().getClass().getName());
+        fields.add("conversation.class");
+        fields.add(dependencies.conversation().getClass().getName());
+        fields.add("artifact.class");
+        fields.add(dependencies.artifact().service().getClass().getName());
+        fields.add("approval.class");
+        fields.add(dependencies.execution().approval().verification().getClass().getName());
+        fields.add("credential.class");
+        fields.add(dependencies.web().credential().broker().getClass().getName());
+        fields.add("memory.class");
+        fields.add(dependencies.memory().service().getClass().getName());
+        return SdkConfigurationDigest.sha256(fields.toArray(String[]::new));
+    }
+
+    private static void appendProfileFields(List<String> fields, io.haifa.agent.sdk.product.ProductProfile profile) {
+        fields.add("product.id");
+        fields.add(profile.productId().value());
+        fields.add("product.version");
+        fields.add(profile.productVersion().value());
+        fields.add("definition.id");
+        fields.add(profile.definitionId().value());
+        fields.add("definition.major");
+        fields.add(String.valueOf(profile.definitionVersion().major()));
+        fields.add("definition.minor");
+        fields.add(String.valueOf(profile.definitionVersion().minor()));
+        fields.add("definition.patch");
+        fields.add(String.valueOf(profile.definitionVersion().patch()));
+        fields.add("instructions");
+        fields.add(profile.instructions());
+        fields.add("defaultRunProfile.id");
+        fields.add(profile.defaultRunProfile().id());
+        fields.add("defaultRunProfile.version");
+        fields.add(profile.defaultRunProfile().version());
+        fields.add("budget.quotaMode");
+        fields.add(profile.budget().quotaMode().name());
+        fields.add("budget.maxInputTokens");
+        fields.add(String.valueOf(profile.budget().maxInputTokens()));
+        fields.add("budget.maxOutputTokens");
+        fields.add(String.valueOf(profile.budget().maxOutputTokens()));
+        fields.add("budget.maxCachedInputTokens");
+        fields.add(String.valueOf(profile.budget().maxCachedInputTokens()));
+        fields.add("budget.maxCostCurrency");
+        fields.add(profile.budget().maxCostCurrency());
+        fields.add("budget.maxCostMinorUnits");
+        fields.add(String.valueOf(profile.budget().maxCostMinorUnits()));
+        fields.add("limits.maxIterations");
+        fields.add(String.valueOf(profile.limits().maxIterations()));
+        fields.add("limits.maxDepth");
+        fields.add(String.valueOf(profile.limits().maxDepth()));
+        fields.add("limits.maxParallelChildren");
+        fields.add(String.valueOf(profile.limits().maxParallelChildren()));
+        fields.add("limits.maxWallTimeMillis");
+        fields.add(String.valueOf(profile.limits().maxWallTimeMillis()));
+        fields.add("limits.maxIdleTimeMillis");
+        fields.add(String.valueOf(profile.limits().maxIdleTimeMillis()));
+        fields.add("limits.maxModelCalls");
+        fields.add(String.valueOf(profile.limits().maxModelCalls()));
+        fields.add("limits.maxToolCalls");
+        fields.add(String.valueOf(profile.limits().maxToolCalls()));
+        fields.add("limits.maxChildRuns");
+        fields.add(String.valueOf(profile.limits().maxChildRuns()));
+        profile.allowedTools().stream().sorted().forEach(alias -> {
+            fields.add("allowedTool");
+            fields.add(alias);
+        });
+        profile.allowedSkills().stream().sorted().forEach(alias -> {
+            fields.add("allowedSkill");
+            fields.add(alias);
+        });
     }
 
     private static List<ProductRunProfile> missionRunProfiles(
@@ -629,17 +741,12 @@ public final class PersonalAssistantAssembler {
 
         private static ArtifactPlatformContribution defaultArtifact(Clock clock) {
             return new ArtifactPlatformContribution(
-                    new SdkContributionMetadata(
-                            new ProductContributionCoordinate("haifa-personal-in-memory-artifact", "1.0.0"),
-                            ProductCapabilities.ARTIFACT,
-                            SdkConfigurationDigest.sha256("personal-in-memory-artifact-v1"),
-                            ProductProviderSuitability.DEVELOPMENT,
-                            "Personal Assistant in-memory Artifact storage"),
                     new ArtifactService(
                             new InMemoryArtifactStore(),
                             new InMemoryArtifactPayloadStore(),
                             new UuidV7IdentifierGenerator(),
-                            clock::instant));
+                            clock::instant),
+                    io.haifa.agent.personalassistant.application.product.PersonalAssistantProfile.ARTIFACT_POLICY);
         }
     }
 }

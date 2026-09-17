@@ -16,7 +16,7 @@ class HaifaAgentStarterLiveIT {
             var conversation = agent.conversations()
                     .start(new StartConversationCommand(
                             "live-starter-1", "Starter live smoke", "Reply with one short greeting."));
-            var completed = agent.runs().await(conversation.activeRunId().orElseThrow());
+            var completed = agent.runs().await(conversation.runId());
 
             assertThat(completed.output()).isPresent();
         }

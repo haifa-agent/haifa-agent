@@ -2,7 +2,8 @@
 
 面向首次接入者的纯 Java 安全默认装配。Starter 默认使用 DeepSeek V4 Flash、环境变量
 `DEEPSEEK_API_KEY`、进程内 Runtime Persistence 和 Conversation Store，不启用文件、Shell、Git、MCP、
-Web、Memory、Artifact 或 Execution。
+Web、Memory、Artifact 或 Execution。它显式安装 `PolicyPresets.standardApproval()`（关键风险拒绝、副作用
+动作询问、其余允许），SDK 本身不再隐式构造任何 Policy 规则。
 
 可信宿主可以通过 `model(OpenAiCompatibleModelConfiguration)` 减少现有 OpenAI-compatible Integration 的
 装配样板，也可以继续通过高级 `model(adapter, snapshot)` 注册模型；两种入口都支持多个 Provider/模型，

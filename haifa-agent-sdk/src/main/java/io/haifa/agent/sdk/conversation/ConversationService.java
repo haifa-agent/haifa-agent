@@ -6,7 +6,7 @@ import java.util.Optional;
 
 /** Product-neutral multi-run conversation boundary. Deletion is intentionally absent from version 1. */
 public interface ConversationService {
-    ConversationRecord start(StartConversationCommand command);
+    ConversationRun start(StartConversationCommand command);
 
     Optional<ConversationRecord> find(AgentSessionId sessionId);
 
@@ -18,7 +18,7 @@ public interface ConversationService {
         return turns(sessionId, ConversationTurnQuery.first(100)).items();
     }
 
-    ConversationRecord submit(SubmitConversationTurnCommand command);
+    ConversationRun submit(SubmitConversationTurnCommand command);
 
     ConversationRecord rename(RenameConversationCommand command);
 

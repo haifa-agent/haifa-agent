@@ -16,7 +16,8 @@ class PureJavaQuickstartApplicationTest {
                 .credentialEnvironmentVariable("PATH")
                 .tool(tool)
                 .build()) {
-            assertNotNull(agent.assembly());
+            assertNotNull(agent.profile());
+            assertNotNull(agent.diagnostics());
         }
     }
 
@@ -66,7 +67,8 @@ class PureJavaQuickstartApplicationTest {
                 .defaultModel("deepseek-v4-flash-vision-exp")
                 .modelImageResolver(imageStore)
                 .build()) {
-            assertNotNull(agent.assembly());
+            assertNotNull(agent.profile());
+            assertNotNull(agent.diagnostics());
             assertNotNull(agent.runs());
         }
     }

@@ -1,10 +1,9 @@
 package io.haifa.agent.sdk.contribution;
 
 import io.haifa.agent.sdk.internal.InMemoryPersistenceContribution;
-import io.haifa.agent.sdk.product.ProductContribution;
-import java.util.Objects;
+import io.haifa.agent.sdk.spi.SdkPersistenceContribution;
 
-/** Public factories for SDK-owned capability contributions with safe, narrow signatures. */
+/** Public factories for SDK-owned components with safe, narrow signatures. */
 public final class SdkContributions {
     private SdkContributions() {}
 
@@ -14,7 +13,7 @@ public final class SdkContributions {
      * <p>All state is discarded when the process exits. Production applications must use a
      * durable persistence provider.
      */
-    public static ProductContribution inMemoryPersistence(SdkContributionMetadata metadata) {
-        return new InMemoryPersistenceContribution(Objects.requireNonNull(metadata, "metadata must not be null"));
+    public static SdkPersistenceContribution inMemoryPersistence() {
+        return new InMemoryPersistenceContribution();
     }
 }

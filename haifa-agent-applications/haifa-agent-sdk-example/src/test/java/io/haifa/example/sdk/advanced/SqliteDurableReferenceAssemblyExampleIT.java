@@ -23,8 +23,8 @@ class SqliteDurableReferenceAssemblyExampleIT {
                 SdkCallerProvider.defaultPublicUser())) {
             var conversation = first.conversations()
                     .start(new StartConversationCommand("sqlite-start", "SQLite", "Persist this conversation."));
-            first.runs().await(conversation.activeRunId().orElseThrow());
-            sessionId = conversation.sessionId().value();
+            first.runs().await(conversation.runId());
+            sessionId = conversation.record().sessionId().value();
         }
 
         try (var reopened = SqliteDurableReferenceAssemblyExample.open(
