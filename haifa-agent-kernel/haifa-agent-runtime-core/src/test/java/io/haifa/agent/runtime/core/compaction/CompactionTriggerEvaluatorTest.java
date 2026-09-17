@@ -122,13 +122,13 @@ class CompactionTriggerEvaluatorTest {
     }
 
     @Test
-    @DisplayName("Coding Agent dynamic budget and tail scale with context window")
-    void codingAgentDynamicBudgetAndTailMatrix() {
-        CompressionPolicy caPolicy = CompressionPolicy.defaults()
+    @DisplayName("Dynamic budget and tail scale with context window (unbounded upper limit)")
+    void dynamicBudgetAndTailScaleWithContextWindow() {
+        CompressionPolicy policy = CompressionPolicy.defaults()
                 .withDynamicActiveBudget(50, 64_000L, Long.MAX_VALUE)
                 .withTailTokenBounds(24_000, Integer.MAX_VALUE)
                 .withTargetTailTokenPercent(30);
-        CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(caPolicy);
+        CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(policy);
 
         long outputReserve = 4_096L;
         long fixedPrefix = 2_000L;
@@ -167,13 +167,13 @@ class CompactionTriggerEvaluatorTest {
     }
 
     @Test
-    @DisplayName("Personal Assistant dynamic budget clamps between 48k and 96k, tail between 24k and 32k")
-    void personalAssistantDynamicBudgetAndTailMatrix() {
-        CompressionPolicy paPolicy = CompressionPolicy.defaults()
+    @DisplayName("Bounded dynamic budget clamps between min and max tokens, tail clamps within bounds")
+    void boundedDynamicBudgetAndTailMatrix() {
+        CompressionPolicy policy = CompressionPolicy.defaults()
                 .withDynamicActiveBudget(25, 48_000L, 96_000L)
                 .withTailTokenBounds(24_000, 32_000)
                 .withTargetTailTokenPercent(40);
-        CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(paPolicy);
+        CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(policy);
 
         long outputReserve = 4_096L;
         long fixedPrefix = 2_000L;
@@ -207,8 +207,8 @@ class CompactionTriggerEvaluatorTest {
     @Test
     @DisplayName("evaluate triggers ACTIVE_HISTORY_BUDGET when tokens exceed dynamic budget")
     void dynamicActiveBudgetTriggersCompaction() {
-        CompressionPolicy caPolicy = CompressionPolicy.defaults().withDynamicActiveBudget(50, 64_000L, Long.MAX_VALUE);
-        CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(caPolicy);
+        CompressionPolicy policy = CompressionPolicy.defaults().withDynamicActiveBudget(50, 64_000L, Long.MAX_VALUE);
+        CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(policy);
 
         // 256k context window -> budget is 118,052
         CompactionTriggerDecision underBudget = evaluator.evaluate(256_000L, 4_096L, 2_000L, 1_000L, 100_000L, 5);
