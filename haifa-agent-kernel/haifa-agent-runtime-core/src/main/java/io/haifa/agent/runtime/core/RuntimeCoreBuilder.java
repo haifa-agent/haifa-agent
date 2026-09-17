@@ -263,6 +263,10 @@ public final class RuntimeCoreBuilder {
         return this;
     }
 
+    public CompressionPolicy compressionPolicy() {
+        return compressionPolicy;
+    }
+
     public RuntimeCoreBuilder callers(CallerContextProvider value) {
         callers = value;
         return this;

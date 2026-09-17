@@ -141,6 +141,113 @@ class OpenAiResponsesModelTest {
     }
 
     @Test
+    void structuredOutputThrowsOutputLimitExceededWhenTruncatedByLength() {
+        response.set(
+                Response.json(
+                        200,
+                        """
+                        {"id":"resp-trunc","object":"response","status":"incomplete","model":"gpt-test",
+                         "incomplete_details":{"reason":"max_output_tokens"},
+                         "output":[{"id":"msg-1","type":"message","role":"assistant","status":"incomplete",
+                           "content":[{"type":"output_text","text":"{\\"summary\\": \\"incomplete json..."}]}],
+                         "usage":{"input_tokens":10,"output_tokens":20}}
+                        """));
+        var requirement = new StructuredOutputRequirement(
+                "json-schema:test", "sha256:test", "TestSummary", Map.of("type", "object"));
+        var request = new AgentChatRequest(
+                new ModelCallId("call-trunc"),
+                new AgentRunId("run-trunc"),
+                1,
+                1,
+                standardSnapshot(false),
+                List.of(ModelMessage.text(ModelMessageRole.USER, "summarize")),
+                List.of(),
+                20,
+                Duration.ofSeconds(5),
+                Map.of(),
+                java.util.Optional.of(requirement));
+
+        assertThatThrownBy(() -> model().invoke(request))
+                .isInstanceOf(ModelInvocationException.class)
+                .satisfies(ex -> {
+                    ModelInvocationException failure = (ModelInvocationException) ex;
+                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.OUTPUT_LIMIT_EXCEEDED);
+                    assertThat(failure.providerCode()).isEqualTo("structured_output_truncated");
+                    assertThat(failure.getCause()).isNull();
+                    assertThat(failure.getMessage()).doesNotContain("resp-truncated");
+                });
+    }
+
+    @Test
+    void structuredOutputThrowsMalformedResponseWhenJsonInvalidWithoutTruncation() {
+        response.set(
+                Response.json(
+                        200,
+                        """
+                        {"id":"resp-malformed","object":"response","status":"completed","model":"gpt-test",
+                         "output":[{"id":"msg-1","type":"message","role":"assistant","status":"completed",
+                           "content":[{"type":"output_text","text":"not valid json"}]}],
+                         "usage":{"input_tokens":10,"output_tokens":10}}
+                        """));
+        var requirement = new StructuredOutputRequirement(
+                "json-schema:test", "sha256:test", "TestSummary", Map.of("type", "object"));
+        var request = new AgentChatRequest(
+                new ModelCallId("call-malformed"),
+                new AgentRunId("run-malformed"),
+                1,
+                1,
+                standardSnapshot(false),
+                List.of(ModelMessage.text(ModelMessageRole.USER, "summarize")),
+                List.of(),
+                100,
+                Duration.ofSeconds(5),
+                Map.of(),
+                java.util.Optional.of(requirement));
+
+        assertThatThrownBy(() -> model().invoke(request))
+                .isInstanceOf(ModelInvocationException.class)
+                .satisfies(ex -> {
+                    ModelInvocationException failure = (ModelInvocationException) ex;
+                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.MALFORMED_RESPONSE);
+                    assertThat(failure.providerCode()).isEqualTo("structured_output_invalid");
+                    assertThat(failure.getCause()).isNull();
+                    assertThat(failure.getMessage()).doesNotContain("not valid json");
+                });
+    }
+
+    @Test
+    void structuredOutputParsesSuccessfullyWhenValid() {
+        response.set(
+                Response.json(
+                        200,
+                        """
+                        {"id":"resp-ok","object":"response","status":"completed","model":"gpt-test",
+                         "output":[{"id":"msg-1","type":"message","role":"assistant","status":"completed",
+                           "content":[{"type":"output_text","text":"{\\"summary\\":\\"done\\"}"}]}],
+                         "usage":{"input_tokens":10,"output_tokens":10}}
+                        """));
+        var requirement = new StructuredOutputRequirement(
+                "json-schema:test", "sha256:test", "TestSummary", Map.of("type", "object"));
+        var request = new AgentChatRequest(
+                new ModelCallId("call-ok"),
+                new AgentRunId("run-ok"),
+                1,
+                1,
+                standardSnapshot(false),
+                List.of(ModelMessage.text(ModelMessageRole.USER, "summarize")),
+                List.of(),
+                100,
+                Duration.ofSeconds(5),
+                Map.of(),
+                java.util.Optional.of(requirement));
+
+        var actual = model().invoke(request);
+        assertThat(actual.structuredOutput()).hasValueSatisfying(map -> {
+            assertThat(map).containsEntry("summary", "done");
+        });
+    }
+
+    @Test
     void mapsFunctionCallOutputWithExactCallId() {
         response.set(
                 Response.json(

@@ -53,19 +53,33 @@ public final class ModelMessageAssembler {
     private final RuntimeStateRepository state;
     private final ModelImageResolver images;
     private final ModelAudioResolver audios;
+    private final ModelMessageProjectionPlanner planner;
 
     public ModelMessageAssembler(RuntimeStateRepository state) {
-        this(state, ModelImageResolver.unsupported(), ModelAudioResolver.unsupported());
+        this(
+                state,
+                ModelImageResolver.unsupported(),
+                ModelAudioResolver.unsupported(),
+                new ModelMessageProjectionPlanner(state));
     }
 
     public ModelMessageAssembler(RuntimeStateRepository state, ModelImageResolver images) {
-        this(state, images, ModelAudioResolver.unsupported());
+        this(state, images, ModelAudioResolver.unsupported(), new ModelMessageProjectionPlanner(state));
     }
 
     public ModelMessageAssembler(RuntimeStateRepository state, ModelImageResolver images, ModelAudioResolver audios) {
+        this(state, images, audios, new ModelMessageProjectionPlanner(state));
+    }
+
+    public ModelMessageAssembler(
+            RuntimeStateRepository state,
+            ModelImageResolver images,
+            ModelAudioResolver audios,
+            ModelMessageProjectionPlanner planner) {
         this.state = Objects.requireNonNull(state, "state must not be null");
         this.images = Objects.requireNonNull(images, "images must not be null");
         this.audios = Objects.requireNonNull(audios, "audios must not be null");
+        this.planner = Objects.requireNonNull(planner, "planner must not be null");
     }
 
     public List<ModelMessage> assemble(AgentRunId runId, AgentContext context) {
@@ -77,11 +91,12 @@ public final class ModelMessageAssembler {
         Set<ModelMessage> priorModelAssistants = Collections.newSetFromMap(new IdentityHashMap<>());
         context.prompts().forEach(prompt -> messages.add(ModelMessage.text(ModelMessageRole.SYSTEM, prompt.text())));
         Map<AgentRunId, Map<io.haifa.agent.core.tool.ToolCallId, ToolCall>> toolCallsByRun = new HashMap<>();
+        ModelMessageProjectionPlan projectionPlan = planner.plan(runId, context, model);
         for (ContextItem item : context.items()) {
             if (item.content() instanceof MessageGroupContextContent group) {
                 group.messages()
-                        .forEach(message -> messages.addAll(
-                                mapMessage(runId, message, toolCallsByRun, model, priorModelAssistants)));
+                        .forEach(message -> messages.addAll(mapMessage(
+                                runId, message, toolCallsByRun, model, priorModelAssistants, projectionPlan)));
             } else if (item.content() instanceof TextContextContent text) {
                 messages.add(ModelMessage.text(mapRole(text.role()), text.text()));
             } else if (item.content() instanceof MemoryReferenceContent memory) {
@@ -217,7 +232,8 @@ public final class ModelMessageAssembler {
             AgentMessage message,
             Map<AgentRunId, Map<io.haifa.agent.core.tool.ToolCallId, ToolCall>> toolCallsByRun,
             ResolvedModelSnapshot model,
-            Set<ModelMessage> priorModelAssistants) {
+            Set<ModelMessage> priorModelAssistants,
+            ModelMessageProjectionPlan projectionPlan) {
         AgentRunId messageRunId = message.runId().orElse(currentRunId);
         Map<io.haifa.agent.core.tool.ToolCallId, ToolCall> authoritativeCalls =
                 toolCallsByRun.computeIfAbsent(messageRunId, this::toolCallsById);
@@ -239,6 +255,14 @@ public final class ModelMessageAssembler {
                                     if (!canonical.summary().equals(result.summary())) {
                                         throw new IllegalStateException("tool result summary does not match authority");
                                     }
+                                    if (projectionPlan.isToolResultPruned(call.id())) {
+                                        return ModelMessage.tool(
+                                                call.providerCorrelationId(),
+                                                canonical.summary()
+                                                        + ModelMessageProjectionPlanner.PRUNED_PAYLOAD_NOTICE,
+                                                Map.of(),
+                                                canonical.truncated());
+                                    }
                                     return ModelMessage.tool(
                                             call.providerCorrelationId(),
                                             canonical.summary(),
@@ -259,10 +283,10 @@ public final class ModelMessageAssembler {
                                 || !call.toolVersion().equals(part.toolVersion())) {
                             throw new IllegalStateException("tool call protocol reference does not match authority");
                         }
-                        return new ModelToolCall(
-                                call.providerCorrelationId(),
-                                call.toolName(),
-                                call.arguments().values());
+                        Map<String, Object> arguments = projectionPlan.isToolCallTruncated(call.id())
+                                ? projectionPlan.truncatedArguments(call.id())
+                                : call.arguments().values();
+                        return new ModelToolCall(call.providerCorrelationId(), call.toolName(), arguments);
                     })
                     .toList();
             if (isPriorModel(message, model)) {

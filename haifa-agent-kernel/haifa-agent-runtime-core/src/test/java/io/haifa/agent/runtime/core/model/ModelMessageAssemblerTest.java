@@ -52,6 +52,7 @@ import io.haifa.agent.model.api.ModelDefinitionId;
 import io.haifa.agent.model.api.ModelMessage;
 import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelProviderId;
+import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.model.api.SensitiveModelReasoning;
 import io.haifa.agent.runtime.core.bootstrap.DefaultResolvedModelSnapshots;
@@ -883,6 +884,161 @@ class ModelMessageAssemblerTest {
                         ModelMessageRole.TOOL); // result 2
         assertThat(messages.get(1).content()).contains("conversation-summary");
         assertThat(messages.get(2).content()).isEqualTo("run multi-step");
+    }
+
+    @Test
+    void prunesHistoricalPureReadPayloadsOnTheWire() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentSessionId sessionId = new AgentSessionId("session-pruning");
+        List<AgentMessage> messages = new java.util.ArrayList<>();
+
+        for (int i = 1; i <= 4; i++) {
+            ToolCallId callId = new ToolCallId("call-" + i);
+            ProviderToolCallCorrelationId corrId = new ProviderToolCallCorrelationId("corr-" + i);
+            String toolName = (i == 2) ? "grep_search" : "file_read";
+            ToolCall call = new ToolCall(
+                    callId,
+                    RUN_ID,
+                    new AgentStepId("step-" + i),
+                    corrId,
+                    new RuntimeIdempotencyKey("idemp-" + i),
+                    toolName,
+                    "1.0.0",
+                    new ToolArguments("input.schema", "1.0.0", Map.of("path", "file" + i + ".txt")),
+                    Instant.parse("2026-07-21T00:00:00Z").plusSeconds(i * 10));
+            call.beginValidation();
+            call.beginPolicyCheck();
+            call.start(Instant.parse("2026-07-21T00:00:01Z").plusSeconds(i * 10));
+            call.complete(
+                    new io.haifa.agent.core.tool.ToolResult(
+                            true,
+                            "Summary for turn " + i,
+                            Map.of("rawPayload", "large payload content " + i),
+                            List.of(),
+                            List.of(),
+                            false),
+                    Instant.parse("2026-07-21T00:00:02Z").plusSeconds(i * 10));
+            store.appendToolCall(call);
+
+            AgentMessage assistantMsg = message(
+                    "msg-assistant-" + i,
+                    sessionId,
+                    RUN_ID,
+                    MessageRole.ASSISTANT,
+                    i * 2 - 1,
+                    List.of(new ToolCallPart(callId, corrId, toolName, "1.0.0")));
+            AgentMessage toolMsg = message(
+                    "msg-tool-" + i,
+                    sessionId,
+                    RUN_ID,
+                    MessageRole.TOOL,
+                    i * 2,
+                    List.of(new ToolResultPart(callId, corrId, "Summary for turn " + i)));
+            messages.add(assistantMsg);
+            messages.add(toolMsg);
+        }
+
+        AgentContext context = new AgentContext(
+                List.of(prompt()),
+                List.of(item("all-messages", ContextItemType.MESSAGE, new MessageGroupContextContent(messages))),
+                List.of(),
+                new ContextWindowBudget(100_000, 10_000, 1_000, 80_000),
+                100);
+
+        List<ModelMessage> assembled = new ModelMessageAssembler(store).assemble(RUN_ID, context);
+
+        List<ModelMessage> toolMessages = assembled.stream()
+                .filter(m -> m.role() == ModelMessageRole.TOOL)
+                .toList();
+        assertThat(toolMessages).hasSize(4);
+
+        assertThat(toolMessages.get(0).toolResultData()).isEmpty();
+        assertThat(toolMessages.get(0).content()).contains("Summary for turn 1");
+        assertThat(toolMessages.get(0).content()).endsWith(ModelMessageProjectionPlanner.PRUNED_PAYLOAD_NOTICE);
+
+        assertThat(toolMessages.get(1).toolResultData()).isEmpty();
+        assertThat(toolMessages.get(1).content()).contains("Summary for turn 2");
+        assertThat(toolMessages.get(1).content()).endsWith(ModelMessageProjectionPlanner.PRUNED_PAYLOAD_NOTICE);
+
+        assertThat(toolMessages.get(2).toolResultData()).containsEntry("rawPayload", "large payload content 3");
+        assertThat(toolMessages.get(2).content()).isEqualTo("Summary for turn 3");
+
+        assertThat(toolMessages.get(3).toolResultData()).containsEntry("rawPayload", "large payload content 4");
+        assertThat(toolMessages.get(3).content()).isEqualTo("Summary for turn 4");
+    }
+
+    @Test
+    void truncatesOversizedToolCallArgumentsOnTheWire() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentSessionId sessionId = new AgentSessionId("session-truncation");
+        List<AgentMessage> messages = new java.util.ArrayList<>();
+
+        String massiveCode = "public class Big {\n" + "    // code line\n".repeat(100) + "}";
+        assertThat(massiveCode.length()).isGreaterThan(1024);
+
+        for (int i = 1; i <= 4; i++) {
+            ToolCallId callId = new ToolCallId("trunc-call-" + i);
+            ProviderToolCallCorrelationId corrId = new ProviderToolCallCorrelationId("trunc-corr-" + i);
+            Map<String, Object> args = (i == 1)
+                    ? Map.of("codeContent", massiveCode, "targetFile", "src/Big.java")
+                    : Map.of("path", "file" + i + ".txt");
+            ToolCall call = new ToolCall(
+                    callId,
+                    RUN_ID,
+                    new AgentStepId("step-" + i),
+                    corrId,
+                    new RuntimeIdempotencyKey("trunc-idemp-" + i),
+                    "write_to_file",
+                    "1.0.0",
+                    new ToolArguments("input.schema", "1.0.0", args),
+                    Instant.parse("2026-07-21T00:00:00Z").plusSeconds(i * 10));
+            call.beginValidation();
+            call.beginPolicyCheck();
+            call.start(Instant.parse("2026-07-21T00:00:01Z").plusSeconds(i * 10));
+            call.complete(
+                    new io.haifa.agent.core.tool.ToolResult(true, "Done " + i, Map.of(), List.of(), List.of(), false),
+                    Instant.parse("2026-07-21T00:00:02Z").plusSeconds(i * 10));
+            store.appendToolCall(call);
+
+            AgentMessage assistantMsg = message(
+                    "trunc-assistant-" + i,
+                    sessionId,
+                    RUN_ID,
+                    MessageRole.ASSISTANT,
+                    i * 2 - 1,
+                    List.of(new ToolCallPart(callId, corrId, "write_to_file", "1.0.0")));
+            AgentMessage toolMsg = message(
+                    "trunc-tool-" + i,
+                    sessionId,
+                    RUN_ID,
+                    MessageRole.TOOL,
+                    i * 2,
+                    List.of(new ToolResultPart(callId, corrId, "Done " + i)));
+            messages.add(assistantMsg);
+            messages.add(toolMsg);
+        }
+
+        AgentContext context = new AgentContext(
+                List.of(prompt()),
+                List.of(item("all-messages", ContextItemType.MESSAGE, new MessageGroupContextContent(messages))),
+                List.of(),
+                new ContextWindowBudget(100_000, 10_000, 1_000, 80_000),
+                100);
+
+        List<ModelMessage> assembled = new ModelMessageAssembler(store).assemble(RUN_ID, context);
+
+        ModelMessage turn1Assistant = assembled.get(1);
+        assertThat(turn1Assistant.toolCalls()).hasSize(1);
+        ModelToolCall turn1Call = turn1Assistant.toolCalls().getFirst();
+        assertThat(turn1Call.arguments().get("codeContent"))
+                .isEqualTo(
+                        "[Code content truncated (" + massiveCode.length() + " chars); file written to src/Big.java]");
+
+        ToolCall persistedCall = store.toolCalls(RUN_ID).stream()
+                .filter(c -> c.id().value().equals("trunc-call-1"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(persistedCall.arguments().values().get("codeContent")).isEqualTo(massiveCode);
     }
 
     private static AgentMessage message(

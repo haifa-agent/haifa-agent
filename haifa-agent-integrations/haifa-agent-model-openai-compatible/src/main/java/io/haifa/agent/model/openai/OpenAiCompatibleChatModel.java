@@ -577,7 +577,7 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                     200,
                     "structured_output_invalid",
                     "provider returned invalid structured output",
-                    exception);
+                    null);
         }
     }
 
