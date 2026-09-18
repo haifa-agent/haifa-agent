@@ -1025,6 +1025,14 @@ def backend_launch(
     )
 
 
+def frontend_dependencies_installed(value: Paths) -> bool:
+    markers = (
+        value.web / "node_modules/serve/build/main.js",
+        value.web / "node_modules/lucide-react/dist/lucide-react.d.ts",
+    )
+    return all(marker.is_file() for marker in markers)
+
+
 def start_environment(args: argparse.Namespace, value: Paths) -> None:
     if args.rebuild and any(port_open(port) for port in (FRONTEND_PORT, BACKEND_PORT, MCP_PORT)):
         fail(rebuild_port_conflict_message())
@@ -1110,7 +1118,7 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
     )
 
     serve_script = value.web / "node_modules/serve/build/main.js"
-    if not serve_script.is_file():
+    if not frontend_dependencies_installed(value):
         print("Installing locked frontend dependencies...")
         run_checked(npm, "ci", cwd=value.web)
     frontend_index = value.web / "dist/index.html"
