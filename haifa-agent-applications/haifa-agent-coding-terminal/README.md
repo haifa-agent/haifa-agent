@@ -40,7 +40,7 @@ SQLite Mapper、Sandbox Provider、`ProcessBuilder` 或 CLI 包，也不产生�
 只有：
 
 ```text
-haifa-agent-applications/haifa-agent-cli/target/haifa-agent-cli-0.1.0-SNAPSHOT.jar
+haifa-agent-applications/haifa-agent-cli/target/haifa-agent-cli-0.1.0.jar
 ```
 
 ## tui4j 迁移状态
@@ -255,7 +255,7 @@ Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、s
 java -version # 必须是 Java 21
 .\mvnw.cmd -pl :haifa-agent-cli -am package
 
-$jar = ".\haifa-agent-applications\haifa-agent-cli\target\haifa-agent-cli-0.1.0-SNAPSHOT.jar"
+$jar = ".\haifa-agent-applications\haifa-agent-cli\target\haifa-agent-cli-0.1.0.jar"
 java -jar $jar --help
 java -jar $jar --terminal `
   --workspace D:\haifa-agent-config\workspaces\terminal-manual `

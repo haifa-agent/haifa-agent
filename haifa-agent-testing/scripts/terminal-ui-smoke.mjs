@@ -112,7 +112,7 @@ const jar = path.resolve(
       "haifa-agent-applications",
       "haifa-agent-cli",
       "target",
-      "haifa-agent-cli-0.1.0-SNAPSHOT.jar",
+      "haifa-agent-cli-0.1.0.jar",
     ),
 );
 const pty = loadPty(argumentsByName.get("--node-pty"));

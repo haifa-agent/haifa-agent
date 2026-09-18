@@ -372,7 +372,7 @@ class RealEnvironmentTest(unittest.TestCase):
                 stop_state=root / "runtime/last-stop.json",
                 maven_wrapper=root / "mvnw",
             )
-            source = paths.server / "target/haifa-agent-personal-assistant-server-0.1.0-SNAPSHOT.jar"
+            source = paths.server / "target/haifa-agent-personal-assistant-server-0.1.0.jar"
             self.write_server_jar(source, b"first build")
 
             first = real_environment.stage_server_jar(source, paths)
