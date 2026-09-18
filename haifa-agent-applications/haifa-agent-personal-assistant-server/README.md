@@ -425,7 +425,7 @@ http://127.0.0.1:20001/actuator/health
 Maven 只构建后端 executable JAR，不需要 Node.js/npm，也不读取相邻 Web 目录。前端构建和部署
 命令见 `../haifa-agent-personal-assistant-web/README.md`。
 
-真实 DeepSeek、外部 Utility MCP 和独立 Web 的可重复环境搭建方法见
+真实 DeepSeek、产品默认 `embedded-echo` MCP 和独立 Web 的可重复环境搭建方法见
 [`REAL_ENVIRONMENT.md`](REAL_ENVIRONMENT.md)。PowerShell 与 POSIX Shell 入口都要求 Python 3；两者只负责
 参数兼容和解释器发现，启动、健康检查、状态文件与安全停止逻辑统一由根目录
 [`scripts/real_environment.py`](../../scripts/real_environment.py) 实现。
@@ -447,8 +447,8 @@ macOS 可直接使用与 Windows PowerShell 版本行为对齐的启动脚本：
 ./scripts/start-real-environment.sh --rebuild
 ```
 
-Key、Utility MCP、Skill 和 Continuation Key 路径均可通过参数或专用环境变量覆盖；脚本不会把凭据
-写入参数、状态文件或日志。
+Provider 凭据只从进程环境读取，脚本不再接受任何 Key 文件参数；只有 Provider 选择、Continuation Key
+文件、仓库路径和超时可通过参数或专用环境变量覆盖。脚本不会把凭据写入参数、状态文件或日志。
 
 默认受信目录包含 DeepSeek、ChatGPT Codex、阿里云百炼、SiliconFlow、Kimi 和智谱；默认模型仍为
 DeepSeek，选择其他 Provider 前必须先完成其对应认证。PowerShell 与 Bash 启动脚本共用同一个配置生成器。
