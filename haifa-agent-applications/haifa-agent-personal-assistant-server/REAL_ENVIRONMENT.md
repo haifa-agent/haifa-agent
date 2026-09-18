@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | Personal Assistant Web | `http://127.0.0.1:20000/` | Node.js `serve` 直接提供 `dist/` |
 | Personal Assistant Server | `http://127.0.0.1:20001/` | Spring Boot executable JAR，或 IDE 当前编译 classpath |
-| Personal Server 内置 MCP | `http://127.0.0.1:20002/mcp` | Server 进程内的 `embedded-echo`（脚本不再启动外部 MCP） |
+| MCP | 默认关闭 | 需要时显式配置外部 loopback MCP（`HAIFA_PERSONAL_MCP_*`） |
 
 Web 在浏览器中直接请求 `http://127.0.0.1:20001/api/v1`。Server 已限定允许来自
 loopback `20000` 的 Origin，方案中没有反向代理。
@@ -103,7 +103,7 @@ Main 参数会原样传给 Python，例如在 IDE Program arguments 中填写：
    遇到未完成 `repackage` 的普通 JAR 时自动重新执行 `package`，二次校验失败则拒绝启动；
 5. 只在 `node_modules` 不存在时执行 `npm ci`，只在 `dist` 不存在时构建前端；
 6. 以真实模型和所选 Web Provider 启动 20001 后端；脚本不再注入 MCP 覆盖项，也不注入本地 Skill 根
-   目录，因此后端使用产品默认的 `embedded-echo` MCP 且不加载本地 Skill；
+   目录，因此后端不连接任何 MCP Server（产品默认 `mcp.mode=disabled`）且不加载本地 Skill；
 7. 用 Node.js `serve` 启动 20000 前端；
 8. 等待两个 HTTP 健康检查成功，并输出 PID、各组件工作目录、数据/日志目录、访问
    地址和状态文件位置。
@@ -112,8 +112,8 @@ Main 参数会原样传给 Python，例如在 IDE Program arguments 中填写：
 脚本不会杀掉端口上的未知进程；如果端口被非目标服务占用，它会直接失败并保留现场。
 升级脚本前已经直接从 `target/` 启动的后端需要完成一次“`--stop` 后重新启动”，才会迁移到运行副本；
 停止流程继续识别旧命令行路径，不需要使用 `--force`。
-升级脚本前由脚本启动的 20002 Utility MCP 不再由脚本管理：必须先用旧脚本停止它，否则它会占用
-20002 并让后端进程内的 `embedded-echo` MCP 绑定失败。
+升级脚本前由脚本启动的 20002 Utility MCP 不再由脚本管理：需要 MCP Tool 时请自行启动它并按产品
+README 显式配置 `HAIFA_PERSONAL_MCP_*`；不需要时请手工停止它。
 
 如果 PowerShell 的脚本执行策略阻止本次运行，可仅对当前进程临时放开：
 
@@ -202,9 +202,10 @@ HAIFA_PERSONAL_EXECUTION_TRUSTED_HOST_ENABLED=true
 HAIFA_PERSONAL_PYTHON_PATH='D:\Program Files\Python311\python.exe'
 ```
 
-脚本不再设置 `HAIFA_PERSONAL_MCP_*` 覆盖项，也不再设置 `HAIFA_PERSONAL_SKILL_ROOT`：MCP 由产品
-默认配置决定（`mcp.mode=embedded-echo`，只暴露本地 `echo` Tool，端口 `20002`），本地 Skill 根目录保持
-为空。需要外部 MCP 或本地 Skill 时，按产品 README 手工配置后端环境变量，脚本不代为管理。
+脚本不再设置 `HAIFA_PERSONAL_MCP_*` 覆盖项，也不再设置 `HAIFA_PERSONAL_SKILL_ROOT`：产品默认
+`mcp.mode=disabled`，即不连接任何 MCP Server、也不暴露任何 MCP Tool；本地 Skill 根目录保持为空。
+需要外部 MCP 或本地 Skill 时，按产品 README 手工配置后端环境变量，脚本不代为管理；MCP Server 未
+启动且声明为 `OPTIONAL` 时，PA 只输出 WARN 并正常启动。
 
 `HAIFA_PERSONAL_EXECUTION_TRUSTED_HOST_ENABLED=true` 只确认当前本机部署允许启动受控
 宿主进程；具体命令或脚本调用仍需经过 Runtime 的 exact approval。
