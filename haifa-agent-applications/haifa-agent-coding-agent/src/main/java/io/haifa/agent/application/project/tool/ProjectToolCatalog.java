@@ -1,5 +1,6 @@
 package io.haifa.agent.application.project.tool;
 
+import io.haifa.agent.execution.api.ExecutionLimits;
 import io.haifa.agent.execution.api.ExecutionScratchSpaceSpec;
 import io.haifa.agent.mcp.tool.McpToolCatalogContribution;
 import io.haifa.agent.runtime.core.skill.SkillToolCatalogContribution;
@@ -54,7 +55,7 @@ public final class ProjectToolCatalog {
                 Objects.requireNonNull(maximumExecutionTimeout, "maximumExecutionTimeout must not be null");
         if (maximumExecutionTimeout.isZero()
                 || maximumExecutionTimeout.isNegative()
-                || maximumExecutionTimeout.compareTo(Duration.ofMinutes(30)) > 0) {
+                || maximumExecutionTimeout.compareTo(ExecutionLimits.MAXIMUM_ALLOWED_TIMEOUT) > 0) {
             throw new IllegalArgumentException("maximumExecutionTimeout is out of range");
         }
     }
@@ -300,7 +301,7 @@ public final class ProjectToolCatalog {
                 new ToolSchema("haifa." + name + ".output", version, outputSchema(name)),
                 execution ? ToolExecutionMode.HOST_PROCESS : ToolExecutionMode.IN_PROCESS,
                 true,
-                execution ? Duration.ofMinutes(30) : Duration.ofSeconds(30),
+                execution ? maximumExecutionTimeout : Duration.ofSeconds(30),
                 write || attach ? "per-workspace-write" : "per-workspace-read",
                 idempotency,
                 risk,

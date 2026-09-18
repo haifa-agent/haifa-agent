@@ -37,6 +37,37 @@ class CliFeatureConfigurationTest {
     }
 
     @Test
+    void acceptsTwoHourExecutionMaximumAndRejectsBeyondTheSharedCeiling() throws Exception {
+        Path configuration = Files.createTempFile("haifa-cli-execution-timeout", ".yaml");
+        Files.writeString(
+                configuration,
+                """
+                    execution:
+                      maxTimeoutMillis: 7200000
+                    """);
+
+        CliConfiguration accepted = new CliConfigurationLoader()
+                .load(
+                        CliArguments.parse(new String[] {"-m", "timeout", "--config", configuration.toString()}),
+                        Path.of("."));
+        assertThat(accepted.execution().maximumTimeout()).isEqualTo(java.time.Duration.ofHours(2));
+
+        Files.writeString(
+                configuration,
+                """
+                    execution:
+                      maxTimeoutMillis: 7200001
+                    """);
+        assertThatThrownBy(() -> new CliConfigurationLoader()
+                        .load(
+                                CliArguments.parse(
+                                        new String[] {"-m", "timeout", "--config", configuration.toString()}),
+                                Path.of(".")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("execution timeout configuration is out of range");
+    }
+
+    @Test
     void resolvesExplicitApprovalThresholdAndCompatibilityModes() throws Exception {
         Path thresholdConfiguration = Files.createTempFile("haifa-cli-threshold", ".yaml");
         Files.writeString(thresholdConfiguration, "approval:\n  threshold: high\n");
