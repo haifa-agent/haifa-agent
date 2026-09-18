@@ -673,6 +673,29 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
+    void leavesNoPendingSecureInputWhenStoredAttributeLookupFails() {
+        var authentication = new CapturingAuthenticationClient(
+                new AtomicReference<>(), new AtomicReference<>(), List.of(), Map.of());
+        authentication.attributeLookupFailure = new IllegalStateException("AUTH_STORE_UNAVAILABLE");
+        var fixture = fixture(authentication);
+
+        fixture.model.update(new PasteMessage("/login api aliyun-bailian"));
+        commitPlainEnter(fixture);
+
+        assertThat(fixture.controller.secureInputRequested()).isFalse();
+        assertThat(fixture.controller.bailianConfigStep()).isEqualTo(CodingTerminalController.BailianConfigStep.NONE);
+        assertThat(fixture.controller.state().recoverableError()).isPresent();
+
+        authentication.attributeLookupFailure = null;
+        fixture.model.update(new PasteMessage("/login api aliyun-bailian"));
+        commitPlainEnter(fixture);
+
+        assertThat(fixture.controller.secureInputRequested()).isTrue();
+        assertThat(fixture.controller.bailianConfigStep())
+                .isEqualTo(CodingTerminalController.BailianConfigStep.API_KEY);
+    }
+
+    @Test
     void updatesExistingAliyunBailianConfigurationRetainingValuesOnEmptyEnter() {
         AtomicReference<char[]> saved = new AtomicReference<>();
         AtomicReference<Map<String, String>> savedAttrs = new AtomicReference<>();
@@ -939,6 +962,7 @@ class Tui4jCodingTerminalModelTest {
         private final AtomicReference<Map<String, String>> savedAttributes;
         private final List<CodingAuthenticationView> existingConnections;
         private final Map<String, String> existingAttributes;
+        private RuntimeException attributeLookupFailure;
 
         private CapturingAuthenticationClient(AtomicReference<char[]> saved) {
             this(saved, new AtomicReference<>(), List.of(), Map.of());
@@ -992,6 +1016,9 @@ class Tui4jCodingTerminalModelTest {
 
         @Override
         public Optional<Map<String, String>> providerAttributes(String providerId) {
+            if (attributeLookupFailure != null) {
+                throw attributeLookupFailure;
+            }
             return Optional.of(existingAttributes);
         }
 

@@ -153,6 +153,19 @@ class LocalModelAuthenticationServiceTest {
         assertThat(cred.region()).contains("cn-hangzhou");
     }
 
+    @Test
+    void rejectsEmptySecretWithoutAttributesEvenWhenKeyIsStored() {
+        InMemoryStore store = new InMemoryStore();
+        var service = service(store, Map.of());
+        service.saveApiKey("deepseek", "sk-original-key".toCharArray());
+
+        assertThatThrownBy(() -> service.saveApiKey("deepseek", new char[0]))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("AUTH_SECRET_INVALID");
+        assertThat(service.findApiKeyCredential("deepseek").orElseThrow().apiKey())
+                .isEqualTo("sk-original-key");
+    }
+
     private static LocalModelAuthenticationService service(InMemoryStore store, Map<String, String> environment) {
         return new LocalModelAuthenticationService(
                 store,

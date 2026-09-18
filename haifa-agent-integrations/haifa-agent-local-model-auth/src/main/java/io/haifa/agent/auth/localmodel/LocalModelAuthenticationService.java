@@ -80,15 +80,24 @@ public final class LocalModelAuthenticationService implements AutoCloseable {
     }
 
     public LocalModelConnectionView saveApiKey(String providerId, char[] secret) {
-        return saveApiKey(providerId, secret, Map.of());
+        return saveApiKey(providerId, secret, Map.of(), false);
     }
 
+    /**
+     * Saves an API key with provider attributes. An empty {@code secret} keeps the currently stored key and only
+     * replaces its attributes; it is still rejected when no key is stored yet.
+     */
     public LocalModelConnectionView saveApiKey(String providerId, char[] secret, Map<String, String> attributes) {
+        return saveApiKey(providerId, secret, attributes, true);
+    }
+
+    private LocalModelConnectionView saveApiKey(
+            String providerId, char[] secret, Map<String, String> attributes, boolean keepExistingWhenEmpty) {
         char[] callerSecret = Objects.requireNonNull(secret, "secret must not be null");
         Objects.requireNonNull(attributes, "attributes must not be null");
         try {
             String provider = normalizeProvider(providerId);
-            if (callerSecret.length == 0) {
+            if (callerSecret.length == 0 && keepExistingWhenEmpty) {
                 var existing = findApiKeyCredential(provider);
                 if (existing.isPresent()) {
                     StoredApiKeyCredential credential = new StoredApiKeyCredential(
