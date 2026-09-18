@@ -7,11 +7,7 @@ models:
       endpoint: https://api.deepseek.com
       credentialRef: model-auth://deepseek/default
       nativeStreaming: true
-      allowedBindings: [deepseek-chat-pro, deepseek-chat-flash, deepseek-responses-flash, deepseek-responses-pro, deepseek-anthropic-flash, deepseek-anthropic-pro, deepseek-v4-flash-vision-exp, deepseek-responses-v4-flash-vision-exp, deepseek-anthropic-v4-flash-vision-exp]
-      bindingEndpointOverrides:
-        deepseek-anthropic-flash: https://api.deepseek.com/anthropic
-        deepseek-anthropic-pro: https://api.deepseek.com/anthropic
-        deepseek-anthropic-v4-flash-vision-exp: https://api.deepseek.com/anthropic
+      allowedBindings: [deepseek-chat-pro, deepseek-chat-flash, deepseek-responses-flash, deepseek-responses-pro, deepseek-v4-flash-vision-exp, deepseek-responses-v4-flash-vision-exp]
     - id: openai-codex
       endpoint: https://chatgpt.com/backend-api/codex
       credentialRef: model-auth://openai-codex/default
@@ -21,7 +17,7 @@ models:
       allowedBindings: [gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, gpt-5.3-codex-spark]
     - id: aliyun-bailian
       endpoint: https://default-workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
-      credentialRef: env://DASHSCOPE_API_KEY
+      credentialRef: ${HAIFA_BAILIAN_CREDENTIAL_REF:model-auth://aliyun-bailian/default}
       nativeStreaming: true
       workspaceId: ${HAIFA_BAILIAN_WORKSPACE_ID:default-workspace}
       region: ${HAIFA_BAILIAN_REGION:cn-beijing}

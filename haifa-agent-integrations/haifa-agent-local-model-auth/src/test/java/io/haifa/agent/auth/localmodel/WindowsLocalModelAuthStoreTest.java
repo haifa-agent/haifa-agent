@@ -42,6 +42,35 @@ class WindowsLocalModelAuthStoreTest {
     }
 
     @Test
+    void saveAndFindApiKeyCredentialWithAttributes() {
+        var reference = LocalModelAuthReference.parse("model-auth://aliyun-bailian/default");
+        var credential = new StoredApiKeyCredential(
+                reference, "sk-dashscope-secret", java.util.Map.of("workspace_id", "ws-my-ws", "region", "cn-beijing"));
+
+        store.save(credential);
+
+        var found = store.find(reference);
+        assertThat(found).isPresent();
+        assertThat(found.get()).isInstanceOf(StoredApiKeyCredential.class);
+        var apiKeyCred = (StoredApiKeyCredential) found.get();
+        assertThat(apiKeyCred.apiKey()).isEqualTo("sk-dashscope-secret");
+        assertThat(apiKeyCred.workspaceId()).contains("ws-my-ws");
+        assertThat(apiKeyCred.region()).contains("cn-beijing");
+        assertThat(apiKeyCred.attributes())
+                .containsEntry("workspace_id", "ws-my-ws")
+                .containsEntry("region", "cn-beijing");
+
+        assertThat(client.snapshot())
+                .containsKey("haifa:model-auth:aliyun-bailian/default")
+                .hasEntrySatisfying("haifa:model-auth:aliyun-bailian/default", payload -> {
+                    assertThat(payload).contains("\"kind\":\"API_KEY\"");
+                    assertThat(payload).contains("\"api_key\":\"sk-dashscope-secret\"");
+                    assertThat(payload).contains("\"workspace_id\":\"ws-my-ws\"");
+                    assertThat(payload).contains("\"region\":\"cn-beijing\"");
+                });
+    }
+
+    @Test
     void saveAndFindExternalCredential() {
         var reference = LocalModelAuthReference.parse("model-auth://openai-codex/default");
         var credential = new StoredExternalCredential(

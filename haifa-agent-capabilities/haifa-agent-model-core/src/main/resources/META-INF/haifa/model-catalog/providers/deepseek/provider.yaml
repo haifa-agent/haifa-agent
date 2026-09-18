@@ -9,8 +9,5 @@ bindings:
   - resource: bindings/deepseek-chat-flash.yaml
   - resource: bindings/deepseek-responses-flash.yaml
   - resource: bindings/deepseek-responses-pro.yaml
-  - resource: bindings/deepseek-anthropic-flash.yaml
-  - resource: bindings/deepseek-anthropic-pro.yaml
   - resource: bindings/deepseek-v4-flash-vision-exp.yaml
   - resource: bindings/deepseek-responses-v4-flash-vision-exp.yaml
-  - resource: bindings/deepseek-anthropic-v4-flash-vision-exp.yaml

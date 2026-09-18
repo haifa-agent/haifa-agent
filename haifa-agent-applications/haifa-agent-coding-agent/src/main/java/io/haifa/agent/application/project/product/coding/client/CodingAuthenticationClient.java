@@ -61,6 +61,15 @@ public interface CodingAuthenticationClient {
 
     CodingAuthenticationView saveApiKey(String providerId, char[] apiKey);
 
+    default CodingAuthenticationView saveApiKey(
+            String providerId, char[] apiKey, java.util.Map<String, String> attributes) {
+        return saveApiKey(providerId, apiKey);
+    }
+
+    default java.util.Optional<java.util.Map<String, String>> providerAttributes(String providerId) {
+        return java.util.Optional.empty();
+    }
+
     boolean logout(String connectionId);
 
     static CodingAuthenticationClient unavailable() {

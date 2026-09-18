@@ -73,15 +73,15 @@ class ModelCatalogDeploymentTest {
                         new CredentialRef("env://DEEPSEEK_API_KEY"),
                         true,
                         true,
-                        Set.of(new ModelDefinitionId("deepseek-anthropic-pro")),
+                        Set.of(new ModelDefinitionId("deepseek-chat-pro")),
                         Map.of(
-                                new ModelDefinitionId("deepseek-anthropic-pro"),
-                                URI.create("https://api.deepseek.com/anthropic")))));
+                                new ModelDefinitionId("deepseek-chat-pro"),
+                                URI.create("https://custom.deepseek.com/chat")))));
 
         ModelCatalogProjection projection = manifest.project(deployment);
 
         assertThat(projection.providers().getFirst().apiBindings().getFirst().endpoint())
-                .contains(URI.create("https://api.deepseek.com/anthropic"));
+                .contains(URI.create("https://custom.deepseek.com/chat"));
     }
 
     @Test

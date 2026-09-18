@@ -186,11 +186,8 @@ class CliModelConfigurationTest {
                         "deepseek-chat-flash",
                         "deepseek-responses-flash",
                         "deepseek-responses-pro",
-                        "deepseek-anthropic-flash",
-                        "deepseek-anthropic-pro",
                         "deepseek-v4-flash-vision-exp",
                         "deepseek-responses-v4-flash-vision-exp",
-                        "deepseek-anthropic-v4-flash-vision-exp",
                         "gpt-5.6-sol",
                         "gpt-5.6-terra",
                         "gpt-5.6-luna",
@@ -290,14 +287,6 @@ class CliModelConfigurationTest {
                     assertThat(model.endpoint()).hasToString("https://daily-cloudcode-pa.googleapis.com/v1internal");
                     assertThat(model.credentialRef()).isEqualTo("model-auth://google-antigravity/default");
                     assertThat(model.dialect()).isEqualTo("antigravity-direct");
-                });
-        assertThat(result.availableModels())
-                .filteredOn(model -> model.id().equals("deepseek-anthropic-flash"))
-                .singleElement()
-                .satisfies(model -> {
-                    assertThat(model.style()).isEqualTo(ModelApiStyles.ANTHROPIC_MESSAGES);
-                    assertThat(model.dialect()).isEqualTo("deepseek-anthropic-messages");
-                    assertThat(model.endpoint()).hasToString("https://api.deepseek.com/anthropic");
                 });
         assertThat(new CliCodingModelCatalog(result)
                         .available(
@@ -439,7 +428,7 @@ class CliModelConfigurationTest {
         assertThat(defaults.model().id()).isEqualTo("deepseek-responses-flash");
         assertThat(defaults.availableModels())
                 .extracting(CliConfiguration.Model::id)
-                .containsExactly("deepseek-responses-flash", "deepseek-chat-pro", "deepseek-anthropic-flash");
+                .containsExactly("deepseek-responses-flash", "deepseek-chat-pro");
         assertThat(snapshot.apiStyle()).isEqualTo(ModelApiStyles.OPENAI_RESPONSES);
         assertThat(snapshot.dialect()).isEqualTo("deepseek-openai-responses");
         assertThat(snapshot.capabilities()).contains(ModelCapability.REASONING);
@@ -549,22 +538,6 @@ class CliModelConfigurationTest {
         assertThatThrownBy(() -> LocalCodingAgent.modelSnapshot(result))
                 .isInstanceOf(io.haifa.agent.model.api.ModelParameterResolutionException.class)
                 .hasMessageContaining("REASONING_MODE_UNSUPPORTED");
-    }
-
-    @Test
-    void freezesDeepSeekAnthropicEndpointAndDisabledThinking() {
-        var model = CliConfiguration.defaults().availableModels().stream()
-                .filter(candidate -> candidate.id().equals("deepseek-anthropic-flash"))
-                .findFirst()
-                .orElseThrow();
-
-        var snapshot = LocalCodingAgent.modelSnapshot(model);
-
-        assertThat(snapshot.apiStyle()).isEqualTo(ModelApiStyles.ANTHROPIC_MESSAGES);
-        assertThat(snapshot.adapterType()).isEqualTo(ModelApiStyles.ANTHROPIC_MESSAGES_ADAPTER);
-        assertThat(snapshot.dialect()).isEqualTo("deepseek-anthropic-messages");
-        assertThat(snapshot.endpoint()).hasToString("https://api.deepseek.com/anthropic");
-        assertThat(snapshot.invocationOptions()).containsEntry("thinking", "disabled");
     }
 
     @Test

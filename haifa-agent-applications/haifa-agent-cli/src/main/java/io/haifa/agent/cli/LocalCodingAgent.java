@@ -24,8 +24,11 @@ import io.haifa.agent.auth.localmodel.ExternalLoginAttemptId;
 import io.haifa.agent.auth.localmodel.ExternalLoginCoordinator;
 import io.haifa.agent.auth.localmodel.ExternalLoginMethod;
 import io.haifa.agent.auth.localmodel.ExternalLoginRegistry;
+import io.haifa.agent.auth.localmodel.LocalModelAuthReference;
+import io.haifa.agent.auth.localmodel.LocalModelAuthStore;
 import io.haifa.agent.auth.localmodel.LocalModelAuthenticationService;
 import io.haifa.agent.auth.localmodel.LocalModelCredentialResolver;
+import io.haifa.agent.auth.localmodel.StoredApiKeyCredential;
 import io.haifa.agent.auth.localmodel.WindowsLocalModelAuthStore;
 import io.haifa.agent.auth.localmodel.antigravity.AntigravityExternalLoginMethod;
 import io.haifa.agent.auth.localmodel.antigravity.AntigravityLocalCompatibilityRegistrationFactory;
@@ -327,6 +330,7 @@ final class LocalCodingAgent implements AutoCloseable {
                 resolveContinuationProtector(configuration, environmentResolver),
                 environmentResolver,
                 executionEnvironment,
+                authStore,
                 authentication,
                 model -> connectionState(authenticationService, model));
     }
@@ -394,6 +398,7 @@ final class LocalCodingAgent implements AutoCloseable {
                 continuationProtector,
                 System::getenv,
                 System.getenv(),
+                null,
                 CodingAuthenticationClient.unavailable(),
                 ignored -> CodingModelState.Connection.CONNECTED);
     }
@@ -407,6 +412,7 @@ final class LocalCodingAgent implements AutoCloseable {
             ModelContinuationProtector continuationProtector,
             Function<String, String> environmentResolver,
             Map<String, String> executionEnvironment,
+            io.haifa.agent.auth.localmodel.LocalModelAuthStore authStore,
             CodingAuthenticationClient authentication,
             Function<CliConfiguration.Model, CodingModelState.Connection> connectionState) {
         Objects.requireNonNull(environmentResolver, "environmentResolver must not be null");
@@ -601,7 +607,7 @@ final class LocalCodingAgent implements AutoCloseable {
                     .anyMatch(binding -> binding.definition().name().value().equals("workspace_attach"));
             Map<String, ResolvedModelSnapshot> modelSnapshots = configuration.availableModels().stream()
                     .collect(java.util.stream.Collectors.toUnmodifiableMap(
-                            CliConfiguration.Model::id, LocalCodingAgent::modelSnapshot));
+                            CliConfiguration.Model::id, m -> modelSnapshot(m, authStore)));
             List<RuntimeTraceEvent> traces = new CopyOnWriteArrayList<>();
             var outcomeProjection = new CodingRunOutcomeProjectionService(
                     persistence.ports().events(), persistence.ports().runs());
@@ -688,11 +694,7 @@ final class LocalCodingAgent implements AutoCloseable {
                                     configuration.maxModelCalls(),
                                     configuration.maxToolCalls(),
                                     8),
-                            Optional.ofNullable(modelSnapshots.get(profileId))
-                                    .or(() -> "cli-coding".equals(profileId)
-                                            ? Optional.of(modelSnapshots.get(
-                                                    configuration.model().id()))
-                                            : Optional.empty())
+                            resolveCurrentSnapshot(profileId, configuration, authStore)
                                     .orElseThrow(() -> new IllegalArgumentException(
                                             "MODEL_SELECTION_REQUIRED: configured model is unavailable")),
                             Map.of(),
@@ -1208,8 +1210,12 @@ final class LocalCodingAgent implements AutoCloseable {
     }
 
     static ResolvedModelSnapshot modelSnapshot(CliConfiguration.Model model) {
+        return modelSnapshot(model, null);
+    }
+
+    static ResolvedModelSnapshot modelSnapshot(CliConfiguration.Model model, LocalModelAuthStore authStore) {
         if (OpenAiCompatibleDialects.ALIYUN_BAILIAN.equals(model.dialect())) {
-            return resolveCatalogParameters(model, bailianModelSnapshot(model));
+            return resolveCatalogParameters(model, bailianModelSnapshot(model, authStore));
         }
         Map<String, Object> providerOptions = new java.util.LinkedHashMap<>();
         if (ModelApiStyles.OPENAI_CHAT_COMPLETIONS.equals(model.style())) {
@@ -1321,7 +1327,27 @@ final class LocalCodingAgent implements AutoCloseable {
         };
     }
 
-    private static ResolvedModelSnapshot bailianModelSnapshot(CliConfiguration.Model model) {
+    private static ResolvedModelSnapshot bailianModelSnapshot(
+            CliConfiguration.Model model, LocalModelAuthStore authStore) {
+        String workspaceId = model.workspaceId();
+        String region = model.region();
+        if (authStore != null && model.credentialRef().startsWith("model-auth://")) {
+            try {
+                var reference = LocalModelAuthReference.parse(model.credentialRef());
+                var credential = authStore.find(reference);
+                if (credential.isPresent() && credential.get() instanceof StoredApiKeyCredential apiKeyCred) {
+                    workspaceId = apiKeyCred
+                            .workspaceId()
+                            .filter(java.util.function.Predicate.not(String::isBlank))
+                            .orElse(workspaceId);
+                    region = apiKeyCred
+                            .region()
+                            .filter(java.util.function.Predicate.not(String::isBlank))
+                            .orElse(region);
+                }
+            } catch (Exception ignored) {
+            }
+        }
         Map<String, Object> invocationOptions = new java.util.LinkedHashMap<>(
                 OpenAiCompatibleDialects.configuredInvocationOptions(model.dialect(), model.reasoningMode()));
         if (model.reasoningEffort() != null) {
@@ -1330,7 +1356,7 @@ final class LocalCodingAgent implements AutoCloseable {
         }
         var provider = AliyunBailianProviderFactory.provider(
                 new AliyunBailianProviderFactory.ProviderConfiguration(
-                        "cli-v1", model.workspaceId(), model.region(), new CredentialRef(model.credentialRef())),
+                        "cli-v1", workspaceId, region, new CredentialRef(model.credentialRef())),
                 List.of(new AliyunBailianProviderFactory.ModelProfile(
                         new ModelDefinitionId(model.id()),
                         "cli-v1",
@@ -1360,6 +1386,17 @@ final class LocalCodingAgent implements AutoCloseable {
                 definition.maxOutputTokens(),
                 Map.copyOf(providerOptions),
                 definition.options());
+    }
+
+    private static Optional<ResolvedModelSnapshot> resolveCurrentSnapshot(
+            String profileId, CliConfiguration configuration, LocalModelAuthStore authStore) {
+        if ("cli-coding".equals(profileId)) {
+            return Optional.of(modelSnapshot(configuration.model(), authStore));
+        }
+        return configuration.availableModels().stream()
+                .filter(m -> m.id().equals(profileId))
+                .findFirst()
+                .map(m -> modelSnapshot(m, authStore));
     }
 
     private static Set<String> deniedEnvironmentNames(CliConfiguration configuration) {

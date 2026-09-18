@@ -22,6 +22,10 @@ final class StoredModelCredentialPayloadCodec {
         if (credential instanceof StoredApiKeyCredential apiKey) {
             node.put("kind", "API_KEY");
             node.put("api_key", apiKey.apiKey());
+            if (!apiKey.attributes().isEmpty()) {
+                ObjectNode attrsNode = node.putObject("attributes");
+                apiKey.attributes().forEach(attrsNode::put);
+            }
         } else if (credential instanceof StoredExternalCredential external) {
             node.put("kind", "EXTERNAL");
             node.put("method_id", external.methodId().value());
@@ -65,7 +69,23 @@ final class StoredModelCredentialPayloadCodec {
             }
             String kind = requiredText(node, "kind");
             if ("API_KEY".equals(kind)) {
-                return new StoredApiKeyCredential(reference, requiredText(node, "api_key"));
+                String apiKey = requiredText(node, "api_key");
+                java.util.Map<String, String> attributes = new java.util.LinkedHashMap<>();
+                JsonNode attrs = node.get("attributes");
+                if (attrs != null && attrs.isObject()) {
+                    attrs.fields().forEachRemaining(entry -> {
+                        if (entry.getValue().isTextual()) {
+                            attributes.put(entry.getKey(), entry.getValue().textValue());
+                        }
+                    });
+                }
+                if (node.has("workspace_id") && !attributes.containsKey("workspace_id")) {
+                    attributes.put("workspace_id", node.get("workspace_id").asText());
+                }
+                if (node.has("region") && !attributes.containsKey("region")) {
+                    attributes.put("region", node.get("region").asText());
+                }
+                return new StoredApiKeyCredential(reference, apiKey, attributes);
             }
             if ("EXTERNAL".equals(kind)) {
                 return new StoredExternalCredential(

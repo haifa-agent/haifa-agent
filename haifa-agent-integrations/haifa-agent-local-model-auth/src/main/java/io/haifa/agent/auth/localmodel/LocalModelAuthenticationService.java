@@ -6,6 +6,7 @@ import java.net.URI;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Function;
@@ -79,19 +80,45 @@ public final class LocalModelAuthenticationService implements AutoCloseable {
     }
 
     public LocalModelConnectionView saveApiKey(String providerId, char[] secret) {
+        return saveApiKey(providerId, secret, Map.of());
+    }
+
+    public LocalModelConnectionView saveApiKey(String providerId, char[] secret, Map<String, String> attributes) {
         char[] callerSecret = Objects.requireNonNull(secret, "secret must not be null");
+        Objects.requireNonNull(attributes, "attributes must not be null");
         try {
             String provider = normalizeProvider(providerId);
+            if (callerSecret.length == 0) {
+                var existing = findApiKeyCredential(provider);
+                if (existing.isPresent()) {
+                    StoredApiKeyCredential credential = new StoredApiKeyCredential(
+                            existing.get().reference(),
+                            existing.get().apiKey(),
+                            attributes.isEmpty() ? existing.get().attributes() : attributes);
+                    store.save(credential);
+                    return credential.safeView(false);
+                }
+            }
             if (callerSecret.length < 1 || callerSecret.length > MAX_SECRET_LENGTH) {
                 throw new IllegalArgumentException("AUTH_SECRET_INVALID");
             }
             StoredApiKeyCredential credential = new StoredApiKeyCredential(
-                    LocalModelAuthReference.parse("model-auth://" + provider + "/default"), new String(callerSecret));
+                    LocalModelAuthReference.parse("model-auth://" + provider + "/default"),
+                    new String(callerSecret),
+                    attributes);
             store.save(credential);
             return credential.safeView(false);
         } finally {
             Arrays.fill(callerSecret, '\0');
         }
+    }
+
+    public Optional<StoredApiKeyCredential> findApiKeyCredential(String providerId) {
+        Objects.requireNonNull(providerId, "providerId must not be null");
+        String provider = normalizeProvider(providerId);
+        return store.find(LocalModelAuthReference.parse("model-auth://" + provider + "/default"))
+                .filter(StoredApiKeyCredential.class::isInstance)
+                .map(StoredApiKeyCredential.class::cast);
     }
 
     public ExternalLoginAttemptSnapshot startExternalLogin(ExternalLoginMethodId methodId, ExternalLoginMode mode) {
