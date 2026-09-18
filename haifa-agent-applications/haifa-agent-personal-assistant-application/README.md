@@ -1,0 +1,234 @@
+# Haifa Personal Assistant Application
+
+## Conversation model preferences
+
+A Conversation stores one exact binding ID, preference schema version, closed PA user preferences, preference digest,
+revision, and idempotency evidence. The application resolves those preferences through the shared model profile
+resolver before each new run and freezes the resulting effective parameters into that run's model snapshot. Switching
+is rejected while a run is active; existing and resumed runs continue to use their original snapshot.
+
+For exact verified DeepSeek Chat Completions and Anthropic Messages bindings, PA maps `RECOMMENDED` to
+thinking/high, `FAST` to thinking disabled, and `DEEP` to thinking with high or max effort. Response length remains a
+closed product preference and is clamped by the binding profile. Responses bindings can be selectable while their
+reasoning control remains read-only at the reviewed `ENABLED/HIGH` Profile. Provider fields and raw token values never
+enter PA preferences.
+
+Activity projection now correlates lifecycle events by stable Model/Tool/Execution operation ID,
+retains the durable event ID and parent Tool relationship, and folds requested/started/completed
+timestamps into one activity. Run views also include the caller-visible authoritative Plan/Todo
+snapshot when one exists; no plan is synthesized from prompts or event counts.
+
+The safe Activity projection includes durable Model, Tool, Skill, and MCP lifecycle
+events. Model activities expose only model identity, physical attempt coordinates,
+status, token counts, finish reason, and normalized failure codes.
+
+`PersonalModelOption` keeps the exact Profile status and last verified date alongside the version and digest. Product
+HTTP mappings may expose only the fields needed by their surface: ordinary PA model selection remains control-driven,
+while the loopback Admin projection can show safe validation metadata without accessing provider connections,
+credentials, or reasoning content.
+
+Conversation 保存受信任的内部 Model ID 偏好。新 Conversation 可显式选择模型；空闲态切换使用独立
+revision 和幂等键，只影响下一 Turn 的新 Run。模型缺失时新 Run fail closed，历史 Run 仍使用原快照。
+
+Run streaming use case 合并两条明确分离的来源：durable Run Event Feed 提供状态、Tool、Interaction 和
+Activity；`subscribeOutput` 提供当前进程活动 Run 的 transient Assistant Delta/lifecycle。两者使用独立
+sequence，订阅统一可关闭。进程重启后不恢复未完成 Delta；终态正文从 Conversation Turns 的权威
+`session_message` 查询。
+
+Personal Assistant 的纯 Java 产品应用层。它只通过 Phase 20 SDK、Conversation Service 和公共
+Runtime 视图实现用例，不依赖 Spring、SQLite 实现、HTTP DTO 或 Controller。
+
+## Personal Mission Phase 1–4
+
+创建 Mission 时会读取所属 Conversation 当时选中的模型，并冻结 `modelId`、Provider/Model 展示名和
+Provider Snapshot `configurationDigest`。Planner、Task、Normalizer、Synthesis 与有限 repair 全部使用
+这一个冻结 binding；普通对话之后切换模型不会改变既有 Mission。若当前模型已从目录移除，或相同
+Model ID 的 Snapshot digest 已漂移，Mission 执行 fail closed，不回退到系统默认模型。Mission 公共
+Snapshot schema 为 `pa.mission-snapshot/v2`。
+
+活跃 Mission 不阻止所属 Conversation 修改后续普通对话使用的模型偏好；Mission 始终继续使用创建时
+冻结的 binding。普通对话自身存在活动 Run 时仍禁止切换，避免当前 Run 与界面所示偏好产生歧义。
+
+Phase 4 makes Mission usage authoritative at the product boundary. Model tokens, model calls, and
+Tool calls are settled exactly once from Runtime results. Frozen per-Mission token, Tool-call,
+Task, retry, execution-time, and wall-clock limits stop new work deterministically; an active Task
+that reaches its execution or Mission deadline is cancelled and enters the existing bounded
+partial-synthesis path instead of being silently abandoned.
+
+Phase 3 adds an explicit `DEEP_RESEARCH` Mission mode with a frozen Research Brief and the
+bundled `deep-research@2.3.0` Skill. The Mission persists the full resolved Skill coordinate
+(scope, source version, declared version, and package content digest), while each Research Task
+runs in an isolated ephemeral Session through the existing Runtime Tool pipeline. Strict task schemas preserve
+source identity and claim-to-evidence closure. Final Synthesis returns Markdown directly; a deterministic Report
+Quality Gate and code-owned `pa.research-delivery/v2` manifest preserve Task coverage, unresolved questions,
+partial/degraded completion, and five immutable research Artifacts. Relative Brief ranges are frozen to explicit UTC
+dates at creation. Fetched content remains untrusted data.
+
+The 2.3.0 package applies one shared, prompt-only research-type table to the same frozen Brief in Task execution and
+Final Synthesis. Its claim-first DISCOVER/DEEPEN/CROSS_CHECK method prioritizes primary and independent evidence,
+deduplicates fetched canonical URLs, reuses dependency evidence, and stops when another call cannot close a material
+gap. The trusted publisher adds an evidence status section, unresolved and single-source limitations, and computes
+source, Claim, duplicate-operation, Token-ratio and Quality Gate revision metrics without trusting model-supplied
+counts. It adds no public research enum or higher Mission Tool, Token, source, fetch, or deadline budget.
+
+Mission stages use explicit Run Profile Tool boundaries. Planner and Research Task freeze only read-only Web
+Search/Fetch and Wikipedia MCP Tools; the explicitly selected Deep Research Product Skill is preloaded into each
+Research Task instead of asking the model to rediscover it. Synthesis freezes an empty Tool set. A zero Tool budget is
+not used as an implicit capability policy.
+
+The primary Research Task budget permits up to 40 calls to that read-only allowlist. Runtime enters a deterministic
+finalize-only turn after 24 completed Tool calls, caps each fetched page at 10,000 characters, and reserves context
+for the final result. The Profile also bounds the Run to 24 model calls and 384,000 total model tokens. This is a
+bounded execution limit, not permission to expose any additional Tool.
+
+Each Attempt also freezes a digest-bound Task Run Input containing the bounded Mission/Task objective, direct
+dependency result snapshots and digests, result schema, execution Profile, and research limits. A Task with completed
+dependencies uses the separate dependency-aware Profile: prior structured results are projected as valid JSON within
+a 48,000-character ceiling, repeated searches are prohibited, Runtime enters finalize-only after 16 completed calls
+with a hard safety ceiling of 32, and each fetch is capped at 8,000 characters. The Profile is bounded to 20 model
+calls and 384,000 total model tokens. The persisted Outbox payload and Attempt request digest identify the same
+immutable input across claim recovery and retry.
+
+Research evidence IDs are namespaced by the frozen Task ID at the trusted normalization boundary. Unicode model IDs
+are normalized to lower-case ASCII kebab IDs there, and Claim source references are rewritten to the same identity.
+Final publication canonicalizes and deduplicates those Task-local aliases by public locator before enforcing the
+Mission-wide 192-source limit (aligned with the 24 max sources per Task across 8 Tasks). The bounded final unverified-claim index supports the existing eight-Task by
+forty-claims-per-Task ceiling, so
+strict citation closure never requires dropping an unverified claim merely to satisfy a smaller synthesis array.
+Only completed journal evidence with an exact case-sensitive canonical URL and canonical `sha256:` content digest
+survives Task normalization. Conflicting digests become `CONFLICT`; all other source states clear fetch-only metadata.
+Retrieval status does not establish factual support: v2 findings retain an explicit evidence assessment and preserve
+conservative model judgments. A normative or first-party fact may be verified from one fetched authoritative primary
+source; empirical or interpretive claims require at least two genuinely independent fetched sources.
+Synthesis uses stable initial,
+revision-1 and revision-2 Runtime idempotency keys and isolates synthesis sessions per revision attempt. The product checks marked Markdown before publication, then
+checks the four published Artifact refs before publishing `research-delivery.json` last; the model never supplies
+Artifact references or the delivery manifest.
+
+Research Task Runs use a 10-minute wall-clock limit and a 4-minute idle limit so a long final structured response can
+complete after multi-round evidence collection. Planner and Synthesis retain their narrower stage-specific limits
+(Synthesis provides a 256,000 input/cached token budget and a 180s wall-time limit).
+The Mission-wide deadline defaults to two hours and remains a hard upper bound; individual Task limits, Mission token
+and Tool budgets, cancellation, and capacity admission continue to bound resource use.
+
+Planner, Task Normalizer and Standard Mission Synthesis use the Provider's native JSON response format. Research
+Task deliberately does not combine that option with iterative Tool calls, and Deep Research final Synthesis uses a
+separate Markdown Profile without JSON response formatting. The preloaded Skill still requires exactly one Task JSON
+object, while the final report uses stable section, Task and source markers validated by the product boundary.
+
+Standard Mission Synthesis emits `pa.mission-final-result/v2`, separating a concise `directAnswer` from required,
+reader-facing `answerMarkdown`. The deterministic product gate scales minimum depth to settled Task input and requires
+every completed Task objective and Mission acceptance criterion in both the completion ledger and report. If the first
+candidate is rejected by the deterministic final-result or quality validator, the coordinator permits one
+stable-idempotency repair Run in the same ephemeral Synthesis Session and validates the repaired candidate again.
+Usage from that repair is cumulative; a second invalid candidate or any non-schema publication failure terminates
+without another model retry.
+
+`mission` 产品包提供显式长任务的纯 Java 聚合与用例：创建规划中 Mission、生成或整体替换有序
+Task DAG、确认并冻结计划、取消、查询 Snapshot，以及命令幂等和 expected revision。一个可信
+owner 的同一 Conversation 同时只能存在一个非终态 Mission；计划确认后 objective、验收标准、Task
+定义和依赖不可再修改。Planner 抛出异常时，已创建的 Mission 原子收敛为 `FAILED` 并保留稳定失败码，
+不会永久停留在 `PLANNING` 或阻塞同一 Conversation 的后续 Mission。
+
+Planner 有确定性 Stub 和一次性 Runtime Run 两种实现。Runtime Planner 使用独立的 ephemeral
+Planner Session、命名 Run Profile 和严格 `pa.mission-plan/v1` JSON；能力、Schema、约束或 allowlist
+校验失败时 fail closed，不从自由文本提取 JSON，也不回退模型。Planner Prompt 冻结当前 UTC 日期，
+并把“过去三年”明确解析为当前日期向前推三年的闭区间。单次模型 Schema Repair 后仍违反任务数、依赖深度
+或其它冻结约束的计划一律 fail closed；产品不会删除可能承载必要前置语义的依赖边。Phase 2 增加产品层 Task Attempt、
+Outbox/Saga 协调、确定性串行 ready 计算、稳定 dispatch key、Runtime 权威状态结算、取消和用户显式重试。
+Task 默认不自动重试；只有部署方显式把 `HAIFA_PERSONAL_MISSION_MAX_AUTO_ATTEMPTS_PER_TASK` 配置为 `2` 时
+才允许一次自动重试。每个 Task Attempt 使用独立 ephemeral Session；它不创建 Conversation，也不进入
+Memory。Pause/Resume、Task Verifier 和 Task Repair 仍不在本阶段范围内；这里只提供上述最终 Synthesis
+Schema 的一次受限 repair，Deep Research 已按上述边界落地。
+
+Personal Run View 在兼容 `errorCode` 之外提供类型化执行错误：code、默认安全 message、
+category、retryability、安全 details、diagnosticId 和 occurredAt。应用层只投影 Runtime
+权威事实，不创建产品私有错误码。
+
+本模块负责：
+
+- Conversation start/list/search/get/turns/submit/rename/archive/unarchive；
+- 完成态回答的可选推荐问题：绑定精确 Conversation/Run，使用最近 6 条有界 Turn 做一次辅助模型推理；
+- Run 查询、取消、最终结果、权威 Usage 与安全 Activity；
+- Interaction 查询与响应；
+- Memory Candidate review 和 Memory invalidate；
+- Personal Mission create/list/get/replace/regenerate/confirm/cancel/task retry 和安全执行 Snapshot；
+- Personal Product Profile；
+- 一个确定性产品 Tool、版本化内置 Skill、可信只读本地 Skill Source；
+- 从公共 `haifa-agent-web` 模块显式装配 Aliyun IQS `web_search` / `web_fetch` 和短生命周期凭据；
+- 显式本地 MCP connect/discover/allowlist；
+- Tool、Skill、MCP 统一冻结到一个 Tool Catalog，并进入同一 Runtime Tool Pipeline。
+
+推荐问题不是新的 Run，也不进入权威 Conversation Turn。它只在精确 Run 已 `COMPLETED`、对应
+Assistant Turn 已持久化且仍是会话最后一条 Turn 时生成；结果仅保留 2～3 个不超过 80 字符的问题，
+最多缓存 256 个完成态 Run。模型必须对快问快答、定义/翻译、简单查询、算术/单位换算/数据计算、
+问候和已完全闭合的请求返回空数组。解析失败、模型失败或不足 2 个有效问题时同样返回空数组，不影响
+主回答。该辅助调用的 Token 不计入已终态 Run 的权威 Usage。
+
+Personal 在产品装配层对冻结目录中精确选中的 `web_search` / `web_fetch` coordinate 生成
+request-bound `ALLOW` Decision，因此公共 Web Search/Fetch 默认不创建 Approval Interaction。
+启动时会复核 Tool 名称、完整 coordinate、Provider binding、`POLICY` 声明、Medium 风险、
+幂等性、Remote Provider、网络 Host 约束和 Side Effect 集；任一事实漂移都会 fail closed。
+其它 Tool 完整委托给 Runtime 原有 Policy，Execution 和高风险业务 Tool 的审批行为不变。
+
+内置 Skill 使用 `STRICT` parser。显式配置的可信只读导入目录使用 `COMPATIBLE` parser，以兼容
+Hermes 等外部 `SKILL.md` 的扩展 front matter；未知或嵌套 metadata 不获得执行权限。Personal 导入
+边界仍限制 128 个文件、8 层目录、2 MiB 包大小、2000 行指令和 20000 估算 Token，脚本资源只索引为
+待审内容，不直接执行。
+
+Personal 默认装配只读产品 Skill `github-project-watch`；系统 `git` / `gh` 由 `execution_run` 直接调用，
+不再内置共享 `git`、`github` Skill。它们只提供 CLI 工作流，
+不保存 Token、不注册 Git/GitHub 子命令 Tool，也不能扩大 frozen Tool 集。PA 不再声明 Project/Workspace/Git
+capability；远程查询使用 `execution_run` 的 `COMMAND` 模式与
+显式 `gh --repo owner/repo ... --json ...`，不要求本地 clone。每次执行仍走现有 exact Approval、网络策略、
+有界 cwd 和 Host Guarded Sandbox。当前阶段未提供 GitHub 外部写入 Skill 或 Webhook Channel。
+
+## Phase 3 command and script execution
+
+The product prompt treats the latest user message as the current objective. A failed or abandoned execution from an
+earlier turn is not resumed on an unrelated follow-up unless the user explicitly requests a retry.
+
+Personal Assistant follows the shared cross-platform mode contract: `COMMAND` omits `language` and `args` and uses
+the trusted host default shell, while `SCRIPT` requires a configured `language`. The bundled execution Skill states
+the same rule so remote models can construct a valid exact-approval request on Windows, macOS, and Linux.
+
+Execution approval prompts are bounded to the Runtime public-view limit. They always retain mode, language, purpose,
+bounded arguments, timeout, invocation digest, and risk metadata; script or command content is shown in full when it
+fits and otherwise as a marked preview with the original character count. Authorization continues to bind the complete
+arguments digest and frozen Tool target rather than the display prompt.
+
+Personal Profile 直接把共享 `execution_run` Tool 注册进统一 Tool Catalog；Tool 名称从冻结绑定、
+模型披露到 Provider 调用始终为 `execution_run`。`PersonalExecutionPlatform` 负责产品级 Tool 装配、Skill 和审批文案，不复制
+Execution Broker、Sandbox 或 Policy，也不再通过 SDK 暴露单独的 Shell/Execution capability。
+
+PA 的 Broker policy 只接受来自当前持久化 Run 中 `execution_run` frozen ToolCall 的 Runtime 请求，
+并按 server-owned `ExecutionToolConfiguration` 重构命令、输入、cwd、environment、profile、scratch、
+limits 与 digest。它拒绝 direct user/internal/managed 入口，也不创建、读取或依赖 Coding Agent 的
+WorkspaceAccess。
+
+每次执行都创建 exact approval。审批内容显示 mode、language、purpose、args、timeout、完整正文、
+调用摘要、Workspace 边界和 Host 风险；拒绝不会进入 STARTED。内置
+`local-script-execution` Skill 只能调用 `execution_run`，不会绕过审批、自动重试副作用执行，或
+宣称当前 Host Guarded Provider 提供强隔离。
+
+本地 Coding 与 loopback-only PA 复用启动进程的 OS 用户 Home、Git Credential Helper、SSH Agent 和
+`gh auth` 登录态；未登录时只返回诊断并提示用户在系统终端运行 `gh auth login`。产品不会读取
+`gh auth token`、私钥或 credential 文件，不建立 PA 私有 Token/OAuth，也不因系统认证可用而扩大 cwd。
+
+本模块不负责 HTTP、Spring 装配、SQLite 初始化、Web 页面，也不创建 Personal 专用
+Contract、Store、Starter、Tools 或 Skills 子工程。
+
+验证：
+
+```powershell
+.\mvnw.cmd -pl :haifa-agent-personal-assistant-application -am test
+```
+
+## Trusted Script and Skill execution
+
+An optional product-owned trust manifest can promote exact reviewed external Skill packages.
+The generic script extension capability, package review, execution platform, and approval flows remain active.
+Removing product-specific vertical tools does not change public Trust, Policy, Runtime, or Execution code.
+A missing manifest keeps the feature disabled; invalid, unknown, duplicate, drifted, expired, or revoked entries fail closed.
+
+Personal Profile 1.0.1 指导模型在当前任务内根据真实结果判断进展、诊断后尝试或请求帮助；此前任务的失败调用仍需当前用户明确请求才能恢复。Runtime 资源/权限/unknown 边界不变。

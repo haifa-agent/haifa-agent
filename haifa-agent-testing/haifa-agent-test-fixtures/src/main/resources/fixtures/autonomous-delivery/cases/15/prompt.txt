@@ -1,0 +1,1 @@
+Verify the behavior in RETRY.md. A first environment probe may fail transiently; one evidence-backed second attempt is expected to succeed. Do not change code if the documented behavior is already satisfied, but run the bounded verification and inspect the diff.

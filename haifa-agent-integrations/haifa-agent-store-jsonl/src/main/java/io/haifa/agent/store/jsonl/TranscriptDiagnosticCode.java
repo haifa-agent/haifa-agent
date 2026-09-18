@@ -1,0 +1,15 @@
+package io.haifa.agent.store.jsonl;
+
+public enum TranscriptDiagnosticCode {
+    UNSUPPORTED_SCHEMA,
+    UNKNOWN_EVENT_TYPE,
+    UNSAFE_PAYLOAD,
+    INVALID_RUN_ID,
+    PATH_ESCAPE,
+    FILE_LOCKED,
+    PERMISSION_DENIED,
+    WRITE_FAILED,
+    SOURCE_UNAVAILABLE,
+    TAIL_TRUNCATED,
+    MIDDLE_CORRUPTION
+}

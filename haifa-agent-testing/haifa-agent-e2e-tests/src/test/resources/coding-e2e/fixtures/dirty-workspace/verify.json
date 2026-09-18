@@ -1,0 +1,7 @@
+{
+  "sources": [
+    "src/main/java/sample/RetryPolicy.java",
+    "src/test/java/sample/RetryPolicyTest.java"
+  ],
+  "mainClass": "sample.RetryPolicyTest"
+}

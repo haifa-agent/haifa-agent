@@ -1,0 +1,1464 @@
+package io.haifa.agent.store.sqlite;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import io.haifa.agent.common.id.IdentifierGenerator;
+import io.haifa.agent.common.time.TimeProvider;
+import io.haifa.agent.core.agent.AgentDefinitionId;
+import io.haifa.agent.core.reference.InteractionRequestRef;
+import io.haifa.agent.core.reference.PrincipalRef;
+import io.haifa.agent.core.reference.TenantRef;
+import io.haifa.agent.core.run.AgentRun;
+import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.core.run.AgentRunStatus;
+import io.haifa.agent.core.run.StructuredOutputRequirement;
+import io.haifa.agent.core.session.AgentSession;
+import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.core.session.SessionScope;
+import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
+import io.haifa.agent.core.tool.ToolResult;
+import io.haifa.agent.credential.api.CredentialBroker;
+import io.haifa.agent.credential.api.CredentialRequirement;
+import io.haifa.agent.credential.api.SecretRedactor;
+import io.haifa.agent.model.api.AgentChatModel;
+import io.haifa.agent.model.api.AgentChatRequest;
+import io.haifa.agent.model.api.AgentChatResponse;
+import io.haifa.agent.model.api.ModelFinishReason;
+import io.haifa.agent.model.api.ModelMessageRole;
+import io.haifa.agent.model.api.ModelStreamEvent;
+import io.haifa.agent.model.api.ModelStreamSink;
+import io.haifa.agent.model.api.ModelToolCall;
+import io.haifa.agent.model.api.ModelUsage;
+import io.haifa.agent.model.api.SensitiveModelReasoning;
+import io.haifa.agent.policy.api.PolicyChallenge;
+import io.haifa.agent.policy.api.PolicyDecision;
+import io.haifa.agent.policy.api.PolicyEffect;
+import io.haifa.agent.runtime.api.AgentRunRequest;
+import io.haifa.agent.runtime.api.InteractionRequestId;
+import io.haifa.agent.runtime.api.InteractionResponse;
+import io.haifa.agent.runtime.api.InteractionResponseId;
+import io.haifa.agent.runtime.api.InteractionResponseType;
+import io.haifa.agent.runtime.api.ResumeAgentRunRequest;
+import io.haifa.agent.runtime.api.RuntimeCommand;
+import io.haifa.agent.runtime.api.RuntimeCommandArguments;
+import io.haifa.agent.runtime.api.RuntimeCommandId;
+import io.haifa.agent.runtime.api.RuntimeCommandType;
+import io.haifa.agent.runtime.api.RuntimeOverrides;
+import io.haifa.agent.runtime.core.DefaultAgentRuntime;
+import io.haifa.agent.runtime.core.RuntimeCoreBuilder;
+import io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt;
+import io.haifa.agent.runtime.core.attempt.ExecutionAttemptId;
+import io.haifa.agent.runtime.core.attempt.ExecutionAttemptStatus;
+import io.haifa.agent.runtime.core.execution.ManualExecutionScheduler;
+import io.haifa.agent.runtime.core.interaction.InteractionRequest;
+import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
+import io.haifa.agent.runtime.core.storage.ExecutionAttemptRepository;
+import io.haifa.agent.runtime.core.storage.OutboxMessage;
+import io.haifa.agent.runtime.core.storage.RuntimeOutboxPublisher;
+import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
+import io.haifa.agent.runtime.core.tool.ToolJournalState;
+import io.haifa.agent.tool.api.SemanticVersion;
+import io.haifa.agent.tool.api.ToolAlias;
+import io.haifa.agent.tool.api.ToolApprovalRequirement;
+import io.haifa.agent.tool.api.ToolDefinition;
+import io.haifa.agent.tool.api.ToolExecutionMode;
+import io.haifa.agent.tool.api.ToolIdempotency;
+import io.haifa.agent.tool.api.ToolInvocationRequest;
+import io.haifa.agent.tool.api.ToolName;
+import io.haifa.agent.tool.api.ToolProvider;
+import io.haifa.agent.tool.api.ToolProviderId;
+import io.haifa.agent.tool.api.ToolResourceRequirements;
+import io.haifa.agent.tool.api.ToolRisk;
+import io.haifa.agent.tool.api.ToolSchema;
+import io.haifa.agent.tool.api.ToolSideEffect;
+import io.haifa.agent.tool.core.DefaultToolInvoker;
+import io.haifa.agent.tool.core.JsonSchema202012Validator;
+import io.haifa.agent.tool.core.ToolCatalogBuilder;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.security.SecureRandom;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.Statement;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayDeque;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Queue;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import javax.crypto.spec.SecretKeySpec;
+import org.junit.jupiter.api.Tag;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+@Tag("slow")
+class SqliteRuntimeRecoveryTest {
+    private static final Instant NOW = Instant.parse("2026-07-25T08:00:00Z");
+    private static final TimeProvider TIME = () -> NOW;
+    private static final AgentSessionId SESSION_ID = new AgentSessionId("sqlite-runtime-session");
+    private static final TenantRef TENANT = new TenantRef("local");
+    private static final PrincipalRef PRINCIPAL = new PrincipalRef("local-user", "user");
+    private static final byte[] PROTECTOR_KEY = new byte[32];
+
+    @TempDir
+    Path directory;
+
+    @Test
+    void persistsIdempotentCancelResultForATerminalRun() {
+        try (SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance instance = runtime(
+                    foundation,
+                    finalModel("completed-before-cancel"),
+                    "process-a",
+                    new TestIds("terminal-cancel"),
+                    builder -> builder.timeProvider(() -> NOW.plusNanos(123_456)));
+            AgentRunId runId =
+                    instance.runtime().start(request("terminal-cancel")).runId();
+            instance.scheduler().runAll();
+            assertThat(instance.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
+
+            assertThat(instance.runtime().handle(runId).cancel().snapshot().status())
+                    .isEqualTo(AgentRunStatus.COMPLETED);
+        }
+    }
+
+    @Test
+    void streamsDeltasInProcessButPersistsOnlyOneCompleteAssistantMessage() throws Exception {
+        AgentChatModel streaming = new AgentChatModel() {
+            @Override
+            public AgentChatResponse invoke(AgentChatRequest request) {
+                return finalResponse("alpha beta");
+            }
+
+            @Override
+            public AgentChatResponse invokeStreaming(AgentChatRequest request, ModelStreamSink sink) {
+                sink.emit(new ModelStreamEvent.ContentDelta(request.callId(), 1, "alpha"));
+                sink.emit(new ModelStreamEvent.ContentDelta(request.callId(), 2, " "));
+                sink.emit(new ModelStreamEvent.ContentDelta(request.callId(), 3, "beta"));
+                return invoke(request);
+            }
+        };
+        try (SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance instance = runtime(foundation, streaming, "stream-worker", new TestIds("stream"));
+            AgentRunId runId =
+                    instance.runtime().start(request("transient-stream")).runId();
+            List<String> deltas = new java.util.concurrent.CopyOnWriteArrayList<>();
+            List<io.haifa.agent.runtime.api.AgentRunOutputEventType> outputTypes =
+                    new java.util.concurrent.CopyOnWriteArrayList<>();
+            var subscription = instance.runtime()
+                    .subscribeOutput(runId, io.haifa.agent.runtime.api.RunOutputCursor.BEFORE_FIRST, event -> {
+                        outputTypes.add(event.type());
+                        if (event.type() == io.haifa.agent.runtime.api.AgentRunOutputEventType.ASSISTANT_TEXT_DELTA) {
+                            deltas.add(event.textDelta());
+                        }
+                    });
+
+            instance.scheduler().runAll();
+
+            assertThat(deltas).containsExactly("alpha", " ", "beta");
+            assertThat(outputTypes)
+                    .endsWith(io.haifa.agent.runtime.api.AgentRunOutputEventType.ASSISTANT_TEXT_COMMITTED);
+            assertThat(subscription.closed()).isTrue();
+            assertThat(instance.ports().state().messages(runId))
+                    .filteredOn(message -> message.role() == io.haifa.agent.core.message.MessageRole.ASSISTANT)
+                    .singleElement()
+                    .satisfies(
+                            message -> assertThat(message.contents().toString()).contains("alpha beta"));
+            try (Connection connection = DriverManager.getConnection(
+                    "jdbc:sqlite:" + directory.resolve("runtime.db").toAbsolutePath())) {
+                assertThat(countWhere(
+                                connection,
+                                "SELECT COUNT(*) FROM runtime_event "
+                                        + "WHERE type = 'model.output.assistant_text_delta'"))
+                        .isZero();
+                assertThat(countWhere(
+                                connection, "SELECT COUNT(*) FROM runtime_event WHERE type LIKE 'model.output.%'"))
+                        .isZero();
+                assertThat(countWhere(
+                                connection,
+                                "SELECT COUNT(*) FROM session_message " + "WHERE run_id = ? AND role = 'ASSISTANT'",
+                                runId.value()))
+                        .isOne();
+            }
+        }
+    }
+
+    @Test
+    void rollsBackRunEventOutboxAndDefersListenerWhenOuterStartUnitFails() throws Exception {
+        try (SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory)) {
+            RuntimePersistencePorts base = foundation.persistencePorts(protector());
+            ensureSession(base);
+            RuntimePersistencePorts failing = withFailingAttemptInsert(base);
+            RuntimeInstance instance = runtime(failing, finalModel("unused"), "process-a", new TestIds("rollback"));
+            AtomicInteger listenerCalls = new AtomicInteger();
+            instance.runtime().addListener(snapshot -> listenerCalls.incrementAndGet());
+
+            assertThatThrownBy(() -> instance.runtime().start(request("rollback")))
+                    .isInstanceOf(SqliteStoreException.class)
+                    .hasRootCauseMessage("injected attempt insert failure");
+
+            assertThat(listenerCalls).hasValue(0);
+            assertThat(base.outbox().pending()).isEmpty();
+            try (Connection connection = foundation.connections().openConnection()) {
+                assertThat(count(connection, "run")).isZero();
+                assertThat(count(connection, "runtime_event")).isZero();
+                assertThat(count(connection, "outbox")).isZero();
+            }
+        }
+    }
+
+    @Test
+    void rollsBackRunAndEventWhenOutboxAppendFailsAfterEvent() throws Exception {
+        try (SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory)) {
+            RuntimePersistencePorts base = foundation.persistencePorts(protector());
+            ensureSession(base);
+            RuntimeInstance instance = runtime(
+                    withFailingOutboxAppend(base),
+                    finalModel("unused"),
+                    "process-a",
+                    new TestIds("event-outbox-rollback"));
+            AtomicInteger listenerCalls = new AtomicInteger();
+            instance.runtime().addListener(snapshot -> listenerCalls.incrementAndGet());
+
+            assertThatThrownBy(() -> instance.runtime().start(request("event-outbox-rollback")))
+                    .isInstanceOf(SqliteStoreException.class)
+                    .hasRootCauseMessage("injected outbox append failure");
+
+            assertThat(listenerCalls).hasValue(0);
+            try (Connection connection = foundation.connections().openConnection()) {
+                assertThat(count(connection, "run")).isZero();
+                assertThat(count(connection, "runtime_event")).isZero();
+                assertThat(count(connection, "outbox")).isZero();
+            }
+        }
+    }
+
+    @Test
+    void reopensSuspendedRunRejectsSameOwnerAndRecoversFromCheckpointWithNewProcess() {
+        AgentRunId runId;
+        try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
+            AtomicReference<DefaultAgentRuntime> runtimeRef = new AtomicReference<>();
+            AtomicReference<AgentRunId> runRef = new AtomicReference<>();
+            AgentChatModel pausingModel = ignored -> {
+                runtimeRef.get().command(pause(runRef.get()));
+                return finalResponse("checkpoint-before-restart");
+            };
+            RuntimeInstance processA =
+                    runtime(first, pausingModel, "process-a", new TestIds("suspend-a"), builder -> builder);
+            runtimeRef.set(processA.runtime());
+            var accepted = processA.runtime().start(request("suspend-restart"));
+            runId = accepted.runId();
+            runRef.set(runId);
+            processA.scheduler().runAll();
+
+            assertThat(processA.runtime().find(runId).orElseThrow().status())
+                    .as(
+                            "attempts=%s events=%s steps=%s",
+                            processA.ports().attempts().attemptsFor(runId).stream()
+                                    .map(attempt -> Map.of(
+                                            "status",
+                                            attempt.status(),
+                                            "error",
+                                            attempt.error()
+                                                    .map(Object::toString)
+                                                    .orElse("")))
+                                    .toList(),
+                            processA.ports().events().eventsFor(runId),
+                            processA.ports().state().steps(runId))
+                    .isEqualTo(AgentRunStatus.SUSPENDED);
+            assertThat(processA.ports().checkpoints().latest(runId)).isPresent();
+        }
+
+        try (SqliteStoreFoundation resumedStore = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance processA =
+                    runtime(resumedStore, finalModel("not-yet"), "process-a", new TestIds("suspend-a2"));
+            processA.runtime().resume(new ResumeAgentRunRequest("resume-before-crash", runId, List.of()));
+            AgentRunExecutionAttempt active =
+                    resumedStore.attempts().activeFor(runId).orElseThrow();
+            long expected = active.version();
+            active.start("process-a", NOW);
+            resumedStore.attempts().save(active, expected);
+
+            assertThatThrownBy(() -> processA.runtime().recover(runId))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("still owned");
+        }
+
+        try (SqliteStoreFoundation recoveredStore = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance processB =
+                    runtime(recoveredStore, finalModel("recovered"), "process-b", new TestIds("suspend-b"));
+            processB.runtime().recover(runId);
+            processB.scheduler().runAll();
+
+            assertThat(processB.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.FAILED);
+            assertThat(processB.ports().attempts().attemptsFor(runId))
+                    .hasSize(2)
+                    .extracting(AgentRunExecutionAttempt::status)
+                    .containsExactly(ExecutionAttemptStatus.PAUSED, ExecutionAttemptStatus.ABANDONED);
+            assertThat(processB.ports().attempts().attemptsFor(runId).getLast().resumedFromCheckpointId())
+                    .isPresent();
+        }
+    }
+
+    @Test
+    void reopensAttemptAndRestoresItsExactCheckpointWithoutAnInMemorySelection() {
+        AgentRunId runId;
+        io.haifa.agent.core.checkpoint.CheckpointId selectedId;
+        try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
+            AtomicReference<DefaultAgentRuntime> runtimeRef = new AtomicReference<>();
+            AtomicReference<AgentRunId> runRef = new AtomicReference<>();
+            RuntimeInstance process = runtime(
+                    first,
+                    ignored -> {
+                        runtimeRef.get().command(pause(runRef.get()));
+                        return finalResponse("paused");
+                    },
+                    "source-worker",
+                    new TestIds("exact-source"));
+            runtimeRef.set(process.runtime());
+            runId = process.runtime().start(request("exact-source")).runId();
+            runRef.set(runId);
+            process.scheduler().runAll();
+            var ports = process.ports();
+            var run = ports.runs().find(runId).orElseThrow();
+            selectedId = ports.checkpoints().latest(runId).orElseThrow().id();
+            process.runtime().resume(new ResumeAgentRunRequest("resume-latest", runId, List.of()));
+            // Close the store before the queued Attempt runs, losing all process-local objects.
+        }
+        try (SqliteStoreFoundation reopened = SqliteTestSupport.foundation(directory)) {
+            var ports = reopened.persistencePorts(protector());
+            var run = ports.runs().find(runId).orElseThrow();
+            var attempt = ports.attempts().activeFor(runId).orElseThrow();
+            assertThat(attempt.resumedFromCheckpointId()).contains(selectedId);
+            var snapshots =
+                    new io.haifa.agent.runtime.core.checkpoint.CheckpointSnapshotBuilder(new TestIds("reopened"), TIME);
+            var manager = new io.haifa.agent.runtime.core.checkpoint.CheckpointManager(
+                    ports.checkpoints(), snapshots, TIME, ports.events());
+            assertThat(manager.restore(run, attempt.resumedFromCheckpointId())
+                            .orElseThrow()
+                            .nextIteration())
+                    .isPositive();
+            assertThat(manager.restore(run, Optional.empty())).isEmpty();
+            assertThatThrownBy(() -> manager.restore(
+                            run, Optional.of(new io.haifa.agent.core.checkpoint.CheckpointId("missing-source"))))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("not the latest boundary");
+            var missingState = new io.haifa.agent.runtime.core.storage.CheckpointRepository() {
+                @Override
+                public void append(
+                        io.haifa.agent.core.checkpoint.Checkpoint checkpoint,
+                        io.haifa.agent.runtime.core.checkpoint.RuntimeCheckpointState state) {
+                    throw new UnsupportedOperationException("read-only test repository");
+                }
+
+                @Override
+                public Optional<io.haifa.agent.core.checkpoint.Checkpoint> latest(AgentRunId id) {
+                    return ports.checkpoints().latest(id);
+                }
+
+                @Override
+                public Optional<io.haifa.agent.runtime.core.checkpoint.RuntimeCheckpointState> state(String id) {
+                    return Optional.empty();
+                }
+
+                @Override
+                public List<io.haifa.agent.core.checkpoint.Checkpoint> checkpointsFor(AgentRunId id) {
+                    return ports.checkpoints().checkpointsFor(id);
+                }
+            };
+            var missingStateManager = new io.haifa.agent.runtime.core.checkpoint.CheckpointManager(
+                    missingState, snapshots, TIME, ports.events());
+            assertThatThrownBy(() -> missingStateManager.restore(run, attempt.resumedFromCheckpointId()))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("state is unavailable");
+        }
+    }
+
+    @Test
+    void readsProtectedReasoningFromItsFactStoreAfterApprovalAcrossRestart() throws Exception {
+        AtomicInteger providerCalls = new AtomicInteger();
+        AgentRunId runId;
+        try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance processA = toolRuntime(
+                    first,
+                    model(reasoningToolResponse("checkpoint-private-reasoning")),
+                    "reasoning-process-a",
+                    new TestIds("reasoning-a"),
+                    providerCalls,
+                    approvalRequired());
+            runId = processA.runtime().start(request("reasoning-checkpoint")).runId();
+            processA.scheduler().runAll();
+
+            assertThat(processA.runtime().find(runId).orElseThrow().status())
+                    .isEqualTo(AgentRunStatus.WAITING_APPROVAL);
+            assertThat(processA.ports().checkpoints().latest(runId)).isPresent();
+            assertThat(processA.ports().state().modelContinuations(runId)).singleElement();
+            assertThat(providerCalls).hasValue(0);
+        }
+
+        AtomicReference<AgentChatRequest> resumedRequest = new AtomicReference<>();
+        AgentChatModel resumedModel = request -> {
+            resumedRequest.set(request);
+            return finalResponse("reasoning continuation recovered");
+        };
+        try (SqliteStoreFoundation reopened = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance processB = toolRuntime(
+                    reopened,
+                    resumedModel,
+                    "reasoning-process-b",
+                    new TestIds("reasoning-b"),
+                    providerCalls,
+                    approvalRequired());
+            var interaction = processB.ports().interactions().pending(runId).orElseThrow();
+            processB.runtime().respond(approvalResponse(runId, interaction.id(), "reasoning-approval"));
+            processB.scheduler().runAll();
+
+            assertThat(processB.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(providerCalls).hasValue(1);
+            assertThat(resumedRequest.get().messages())
+                    .anyMatch(message -> message.role() == ModelMessageRole.ASSISTANT
+                            && message.toolCalls().stream()
+                                    .anyMatch(call ->
+                                            call.providerCorrelationId().value().equals("provider-tool-call"))
+                            && message.reasoning()
+                                    .orElseThrow()
+                                    .use(java.util.function.Function.identity())
+                                    .equals("checkpoint-private-reasoning"))
+                    .anyMatch(message -> message.role() == ModelMessageRole.TOOL
+                            && message.providerCorrelationId()
+                                    .orElseThrow()
+                                    .value()
+                                    .equals("provider-tool-call"));
+            assertThat(processB.ports().attempts().attemptsFor(runId).getLast().resumedFromCheckpointId())
+                    .isPresent();
+            assertLegacyPolicyFamiliesAbsent(reopened.connections());
+        }
+
+        try (var paths = java.nio.file.Files.list(directory)) {
+            for (Path path : paths.filter(java.nio.file.Files::isRegularFile).toList()) {
+                assertThat(new String(java.nio.file.Files.readAllBytes(path), StandardCharsets.ISO_8859_1))
+                        .doesNotContain("checkpoint-private-reasoning");
+            }
+        }
+    }
+
+    @Test
+    void rejectsRestartedToolApprovalWhenTheRequirementDigestChanges() {
+        AtomicInteger providerCalls = new AtomicInteger();
+        AgentRunId runId;
+        InteractionRequestId interactionId;
+        try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance processA = toolRuntime(
+                    first,
+                    model(toolResponse()),
+                    "digest-process-a",
+                    new TestIds("digest-a"),
+                    providerCalls,
+                    approvalRequired());
+            runId = processA.runtime().start(request("digest-restart")).runId();
+            processA.scheduler().runAll();
+            interactionId =
+                    processA.ports().interactions().pending(runId).orElseThrow().id();
+        }
+
+        try (SqliteStoreFoundation reopened = SqliteTestSupport.foundation(directory)) {
+            PolicyDecision changedRequirement = new PolicyDecision(
+                    PolicyEffect.ASK,
+                    Optional.of(PolicyChallenge.APPROVAL),
+                    "TEST_APPROVAL_REQUIRED",
+                    "Test policy requires approval",
+                    "sha256:changed-requirement");
+            RuntimeInstance processB = toolRuntime(
+                    reopened,
+                    finalModel("must-not-run"),
+                    "digest-process-b",
+                    new TestIds("digest-b"),
+                    providerCalls,
+                    changedRequirement);
+
+            processB.runtime().respond(approvalResponse(runId, interactionId, "digest-approval"));
+            processB.scheduler().runAll();
+
+            assertThat(processB.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.FAILED);
+            assertThat(providerCalls).hasValue(0);
+        }
+    }
+
+    @Test
+    void longApprovalWaitSurvivesRestartWithoutConsumingWallTime() {
+        AtomicInteger providerCalls = new AtomicInteger();
+        AgentRunId runId;
+        try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance processA = toolRuntime(
+                    first,
+                    model(toolResponse()),
+                    "long-wait-process-a",
+                    new TestIds("long-wait-a"),
+                    providerCalls,
+                    approvalRequired());
+            runId = processA.runtime().start(request("long-wait-restart")).runId();
+            processA.scheduler().runAll();
+
+            assertThat(processA.runtime().find(runId).orElseThrow().status())
+                    .isEqualTo(AgentRunStatus.WAITING_APPROVAL);
+        }
+
+        Instant resumedAt = NOW.plus(Duration.ofDays(365));
+        try (SqliteStoreFoundation reopened = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance processB = toolRuntime(
+                    reopened,
+                    finalModel("completed after restart and long wait"),
+                    "long-wait-process-b",
+                    new TestIds("long-wait-b"),
+                    providerCalls,
+                    approvalRequired(),
+                    () -> resumedAt);
+            InteractionRequest interaction =
+                    processB.ports().interactions().pending(runId).orElseThrow();
+            processB.runtime()
+                    .respond(new InteractionResponse(
+                            new InteractionResponseId("long-wait-restart-response"),
+                            interaction.id(),
+                            runId,
+                            InteractionResponseType.APPROVE,
+                            List.of(),
+                            "long-wait-restart-key",
+                            resumedAt));
+            processB.scheduler().runAll();
+
+            assertThat(processB.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(processB.ports().runs().find(runId).orElseThrow().accumulatedHumanWaitMillis())
+                    .isEqualTo(Duration.ofDays(365).toMillis());
+            assertThat(providerCalls).hasValue(1);
+        }
+    }
+
+    @Test
+    void recoversFrozenStructuredOutputRequirementAndPersistsValidatedResult() {
+        AgentRunId runId;
+        StructuredOutputRequirement requirement = tripPlanRequirement();
+        try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
+            AtomicReference<DefaultAgentRuntime> runtimeRef = new AtomicReference<>();
+            AtomicReference<AgentRunId> runRef = new AtomicReference<>();
+            AgentChatModel pausingModel = ignored -> {
+                runtimeRef.get().command(pause(runRef.get()));
+                return structuredResponse("checkpoint-before-restart");
+            };
+            RuntimeInstance processA = runtime(
+                    first,
+                    pausingModel,
+                    "structured-process-a",
+                    new TestIds("structured-a"),
+                    builder -> builder.structuredOutputSchemaValidator(new JsonSchema202012Validator()));
+            runtimeRef.set(processA.runtime());
+            runId = processA.runtime()
+                    .start(structuredRequest("structured-resume", requirement))
+                    .runId();
+            runRef.set(runId);
+            processA.scheduler().runAll();
+
+            assertThat(processA.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.SUSPENDED);
+            assertThat(processA.ports()
+                            .state()
+                            .configuration(processA.ports()
+                                    .runs()
+                                    .find(runId)
+                                    .orElseThrow()
+                                    .configurationSnapshot())
+                            .orElseThrow()
+                            .structuredOutput())
+                    .contains(requirement);
+        }
+
+        try (SqliteStoreFoundation recovered = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance processB = runtime(
+                    recovered,
+                    ignored -> structuredResponse("recovered"),
+                    "structured-process-b",
+                    new TestIds("structured-b"),
+                    builder -> builder.structuredOutputSchemaValidator(new JsonSchema202012Validator()));
+            processB.runtime().resume(new ResumeAgentRunRequest("structured-resume-command", runId, List.of()));
+            processB.scheduler().runAll();
+
+            var completed = processB.runtime().find(runId).orElseThrow();
+            assertThat(completed.status()).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(completed.result().orElseThrow().outputSchemaId()).isEqualTo(requirement.schemaId());
+            assertThat(completed.result().orElseThrow().structuredOutput())
+                    .containsExactlyInAnyOrderEntriesOf(Map.of("city", "Shanghai", "days", 2));
+            assertThat(processB.ports().attempts().attemptsFor(runId).getLast().resumedFromCheckpointId())
+                    .isPresent();
+        }
+    }
+
+    @Test
+    void reopensWaitingInteractionAndContinuesAfterResponse() {
+        AgentRunId runId;
+        InteractionRequestId interactionId = new InteractionRequestId("generic-interaction");
+        try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance processA = runtime(first, finalModel("not-run"), "process-a", new TestIds("interaction-a"));
+            runId = processA.runtime().start(request("waiting-interaction")).runId();
+            first.unitOfWork().execute(() -> {
+                AgentRun run = first.runs().find(runId).orElseThrow();
+                long runVersion = run.version();
+                run.start(NOW);
+                first.runs().save(run, runVersion);
+                first.interactions()
+                        .create(new InteractionRequest(
+                                interactionId,
+                                runId,
+                                TENANT,
+                                PRINCIPAL,
+                                "clarification",
+                                "Provide the missing value",
+                                false,
+                                NOW,
+                                NOW.plus(Duration.ofHours(1))));
+                var pause = new io.haifa.agent.runtime.core.checkpoint.CheckpointSnapshotBuilder(
+                                new TestIds("generic-pause"), TIME)
+                        .build(run, 0, 0, io.haifa.agent.core.checkpoint.CheckpointType.INTERACTION, 1);
+                first.checkpoints().append(pause.checkpoint(), pause.state());
+                runVersion = run.version();
+                run.waitForInteraction(new InteractionRequestRef(interactionId.value(), "clarification"), NOW);
+                first.runs().save(run, runVersion);
+                AgentRunExecutionAttempt attempt =
+                        first.attempts().activeFor(runId).orElseThrow();
+                long attemptVersion = attempt.version();
+                attempt.start("process-a", NOW);
+                attempt.finish(ExecutionAttemptStatus.PAUSED, NOW, Optional.empty());
+                first.attempts().save(attempt, attemptVersion);
+                return null;
+            });
+        }
+
+        try (SqliteStoreFoundation reopened = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance processB =
+                    runtime(reopened, finalModel("interaction-resumed"), "process-b", new TestIds("interaction-b"));
+            processB.runtime()
+                    .respond(new InteractionResponse(
+                            new InteractionResponseId("generic-response"),
+                            interactionId,
+                            runId,
+                            InteractionResponseType.CLARIFY,
+                            List.of(),
+                            "generic-response-key",
+                            NOW));
+            processB.scheduler().runAll();
+
+            assertThat(processB.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(processB.ports().interactions().pending(runId)).isEmpty();
+        }
+    }
+
+    @Test
+    void reopensApprovalAndFinishesPersistedPendingResultWithoutCallingProvider() {
+        assertSavedResultSurvivesInterruption(false);
+    }
+
+    @Test
+    void reopensSavedToolCallBeforeJournalMarkerAndClearsDuplicatePayloadWithoutDispatch() {
+        assertSavedResultSurvivesInterruption(true);
+    }
+
+    private void assertSavedResultSurvivesInterruption(boolean toolResultWasSaved) {
+        AtomicInteger providerCalls = new AtomicInteger();
+        AgentRunId runId;
+        try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance processA = toolRuntime(
+                    first,
+                    model(toolResponse()),
+                    "process-a",
+                    new TestIds("pending-a"),
+                    providerCalls,
+                    approvalRequired());
+            runId = processA.runtime().start(request("pending-result")).runId();
+            processA.scheduler().runAll();
+            var interaction = processA.ports().interactions().pending(runId).orElseThrow();
+            processA.runtime().respond(approvalResponse(runId, interaction.id(), "pending-approval"));
+            var call = processA.ports().state().toolCalls(runId).getFirst();
+            // Crash fixture: the approval was applied before the provider produced the saved result.
+            call.approve();
+            call.start(NOW);
+            processA.ports().state().appendToolCall(call);
+            processA.ports().interactions().markResolutionApplied(interaction.id());
+            processA.ports().toolJournal().recordIntent(runId, call.idempotencyKey());
+            processA.ports()
+                    .toolJournal()
+                    .recordPendingResult(
+                            runId,
+                            call.idempotencyKey(),
+                            new ToolResult(true, "persisted", Map.of("value", 1), List.of(), List.of(), false));
+            if (toolResultWasSaved) {
+                call.complete(new ToolResult(true, "persisted", Map.of("value", 1), List.of(), List.of(), false), NOW);
+                processA.ports().state().appendToolCall(call);
+            }
+        }
+
+        try (SqliteStoreFoundation reopened = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance processB = toolRuntime(
+                    reopened,
+                    finalModel("pending-result-recovered"),
+                    "process-b",
+                    new TestIds("pending-b"),
+                    providerCalls,
+                    approvalRequired());
+            processB.runtime().recover(runId);
+            assertThat(processB.scheduler().pending()).isZero();
+            processB.scheduler().runAll();
+
+            assertThat(providerCalls).hasValue(0);
+            var recovered = processB.runtime().find(runId).orElseThrow();
+            assertThat(recovered.status())
+                    .as("recovery error: %s", recovered.error())
+                    .isEqualTo(AgentRunStatus.FAILED);
+            assertThat(processB.ports().state().toolCalls(runId).getFirst().result())
+                    .hasValueSatisfying(result -> assertThat(result.summary()).isEqualTo("persisted"));
+            var source = processB.ports().state().toolCalls(runId).getFirst();
+            assertThat(processB.ports().toolJournal().pendingResult(runId, source.idempotencyKey()))
+                    .isEmpty();
+            assertThat(processB.ports().toolJournal().state(runId, source.idempotencyKey()))
+                    .contains(ToolJournalState.COMPLETED);
+            assertThat(processB.ports().state().messages(runId))
+                    .anySatisfy(message -> assertThat(message.contents()).anySatisfy(content -> assertThat(content)
+                            .isInstanceOf(io.haifa.agent.core.content.ToolResultPart.class)));
+
+            assertThat(processB.ports().interactions().toolApprovalRecords(runId, source.id()))
+                    .singleElement()
+                    .satisfies(record ->
+                            assertThat(record.state()).isEqualTo(io.haifa.agent.runtime.api.InteractionState.APPLIED));
+            assertThat(processB.ports()
+                            .interactions()
+                            .toolApprovalRecords(runId, new io.haifa.agent.core.tool.ToolCallId("other-call")))
+                    .isEmpty();
+        }
+    }
+
+    @Test
+    void persistsAndResumesMultipleApprovalRequiredToolsInModelOrder() {
+        AtomicInteger providerCalls = new AtomicInteger();
+        try (SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance instance = toolRuntime(
+                    foundation,
+                    model(twoToolResponse(), finalResponse("both tools completed")),
+                    "process-a",
+                    new TestIds("sequential-approval"),
+                    providerCalls,
+                    approvalRequired());
+            AgentRunId runId =
+                    instance.runtime().start(request("sequential-approval")).runId();
+            instance.scheduler().runAll();
+            InteractionRequest first =
+                    instance.ports().interactions().pending(runId).orElseThrow();
+
+            instance.runtime().respond(approvalResponse(runId, first.id(), "first-approval"));
+            instance.scheduler().runAll();
+
+            assertThat(instance.runtime().find(runId).orElseThrow().status())
+                    .as(
+                            "attempts=%s steps=%s calls=%s",
+                            instance.ports().attempts().attemptsFor(runId),
+                            instance.ports().state().steps(runId),
+                            instance.ports().state().toolCalls(runId))
+                    .isEqualTo(AgentRunStatus.WAITING_APPROVAL);
+            assertThat(providerCalls).hasValue(1);
+            InteractionRequest second =
+                    instance.ports().interactions().pending(runId).orElseThrow();
+            assertThat(second.id()).isNotEqualTo(first.id());
+
+            instance.runtime().respond(approvalResponse(runId, second.id(), "second-approval"));
+            instance.scheduler().runAll();
+
+            assertThat(instance.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(providerCalls).hasValue(2);
+            assertThat(instance.ports().state().toolCalls(runId))
+                    .hasSize(2)
+                    .allMatch(call -> call.status().name().equals("COMPLETED"));
+            assertThat(instance.ports().attempts().attemptsFor(runId)).hasSize(3);
+        }
+    }
+
+    @Test
+    void continuesConversationAfterRejectedToolFromPreviousRun() {
+        AtomicInteger providerCalls = new AtomicInteger();
+        AtomicInteger modelCalls = new AtomicInteger();
+        AtomicReference<AgentChatRequest> nextRunRequest = new AtomicReference<>();
+        AgentChatModel model = request -> {
+            return switch (modelCalls.incrementAndGet()) {
+                case 1 -> toolResponse();
+                case 2 -> finalResponse("continued after rejection");
+                case 3 -> {
+                    nextRunRequest.set(request);
+                    yield finalResponse("next run completed");
+                }
+                default -> throw new AssertionError("unexpected model call");
+            };
+        };
+        try (SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance instance = toolRuntime(
+                    foundation,
+                    model,
+                    "process-a",
+                    new TestIds("cross-run-rejection"),
+                    providerCalls,
+                    approvalRequired());
+            AgentRunId rejectedRunId =
+                    instance.runtime().start(request("rejected-tool-run")).runId();
+            instance.scheduler().runAll();
+            InteractionRequest interaction =
+                    instance.ports().interactions().pending(rejectedRunId).orElseThrow();
+
+            instance.runtime()
+                    .respond(new InteractionResponse(
+                            new InteractionResponseId("rejected-response"),
+                            interaction.id(),
+                            rejectedRunId,
+                            InteractionResponseType.REJECT,
+                            List.of(),
+                            "rejected-response-key",
+                            NOW));
+            instance.scheduler().runAll();
+
+            assertThat(instance.runtime().find(rejectedRunId).orElseThrow().status())
+                    .isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(instance.ports().state().toolCalls(rejectedRunId))
+                    .singleElement()
+                    .satisfies(call -> assertThat(call.status().name()).isEqualTo("DENIED"));
+
+            AgentRunId nextRunId = instance.runtime()
+                    .start(request("next-run-after-rejection"))
+                    .runId();
+            instance.scheduler().runAll();
+
+            assertThat(instance.runtime().find(nextRunId).orElseThrow().status())
+                    .isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(modelCalls).hasValue(3);
+            assertThat(providerCalls).hasValue(0);
+            assertThat(nextRunRequest.get().messages())
+                    .anyMatch(message -> message.role() == ModelMessageRole.ASSISTANT
+                            && message.toolCalls().stream()
+                                    .anyMatch(call ->
+                                            call.providerCorrelationId().value().equals("provider-tool-call")))
+                    .anyMatch(message -> message.role() == ModelMessageRole.TOOL
+                            && message.providerCorrelationId()
+                                    .orElseThrow()
+                                    .value()
+                                    .equals("provider-tool-call")
+                            && message.content().contains("rejected by the operator"));
+        }
+    }
+
+    @Test
+    void reopensOutcomeUnknownToolAndFailsClosedWithoutCallingProvider() {
+        assertUnknownToolStops(false);
+    }
+
+    @Test
+    void interruptedRunningToolWithoutDispatchEvidenceIsUnknownRatherThanAssumedUnexecuted() {
+        assertUnknownToolStops(true);
+    }
+
+    private void assertUnknownToolStops(boolean dispatchEvidenceMissing) {
+        AtomicInteger providerCalls = new AtomicInteger();
+        AgentRunId runId;
+        try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance processA = toolRuntime(
+                    first,
+                    model(toolResponse()),
+                    "process-a",
+                    new TestIds("unknown-a"),
+                    providerCalls,
+                    approvalRequired());
+            runId = processA.runtime().start(request("outcome-unknown")).runId();
+            processA.scheduler().runAll();
+            var interaction = processA.ports().interactions().pending(runId).orElseThrow();
+            processA.runtime().respond(approvalResponse(runId, interaction.id(), "unknown-approval"));
+            var call = processA.ports().state().toolCalls(runId).getFirst();
+            call.approve();
+            call.start(NOW);
+            processA.ports().state().appendToolCall(call);
+            processA.ports().interactions().markResolutionApplied(interaction.id());
+            processA.ports().toolJournal().recordIntent(runId, call.idempotencyKey());
+            if (!dispatchEvidenceMissing) {
+                processA.ports().toolJournal().recordDispatched(runId, call.idempotencyKey());
+                processA.ports().toolJournal().recordUncertain(runId, call.idempotencyKey());
+            }
+        }
+
+        try (SqliteStoreFoundation reopened = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance processB = toolRuntime(
+                    reopened,
+                    finalModel("must-not-run"),
+                    "process-b",
+                    new TestIds("unknown-b"),
+                    providerCalls,
+                    approvalRequired());
+            processB.runtime().recover(runId);
+            processB.scheduler().runAll();
+
+            assertThat(providerCalls).hasValue(0);
+            assertThat(processB.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.FAILED);
+        }
+    }
+
+    @Test
+    void credentialBearingToolOutputIsRedactedBeforeAnySqliteWalOrShmWrite() throws Exception {
+        String secret = "credential-negative-sample-7fa3c9d2";
+        AtomicInteger modelCalls = new AtomicInteger();
+        AgentChatModel model = ignored -> {
+            if (modelCalls.incrementAndGet() == 1) {
+                return new AgentChatResponse(
+                        "credential-call",
+                        "test-model",
+                        "",
+                        List.of(new ModelToolCall(
+                                new ProviderToolCallCorrelationId("credential-tool-call"),
+                                "credential_test",
+                                Map.of())),
+                        ModelFinishReason.TOOL_CALLS,
+                        ModelUsage.unpriced(1, 1),
+                        "",
+                        Map.of());
+            }
+            return finalResponse("credential-safe-completion");
+        };
+        try (SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance instance = runtime(
+                    foundation,
+                    model,
+                    "credential-worker",
+                    new TestIds("credential"),
+                    builder -> installCredentialTool(builder, secret));
+            AgentRunId runId =
+                    instance.runtime().start(request("credential-redaction")).runId();
+            instance.scheduler().runAll();
+            assertThat(instance.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
+
+            try (var paths = java.nio.file.Files.list(directory)) {
+                for (Path path :
+                        paths.filter(java.nio.file.Files::isRegularFile).toList()) {
+                    assertThat(new String(java.nio.file.Files.readAllBytes(path), StandardCharsets.ISO_8859_1))
+                            .doesNotContain(secret)
+                            .doesNotContain("provider-raw-negative-sample");
+                }
+            }
+        }
+    }
+
+    private RuntimeInstance runtime(
+            SqliteStoreFoundation foundation, AgentChatModel model, String workerId, IdentifierGenerator ids) {
+        return runtime(foundation, model, workerId, ids, builder -> builder);
+    }
+
+    private RuntimeInstance runtime(
+            SqliteStoreFoundation foundation,
+            AgentChatModel model,
+            String workerId,
+            IdentifierGenerator ids,
+            java.util.function.UnaryOperator<RuntimeCoreBuilder> customizer) {
+        return runtime(foundation, model, workerId, ids, customizer, TIME);
+    }
+
+    private RuntimeInstance runtime(
+            SqliteStoreFoundation foundation,
+            AgentChatModel model,
+            String workerId,
+            IdentifierGenerator ids,
+            java.util.function.UnaryOperator<RuntimeCoreBuilder> customizer,
+            TimeProvider time) {
+        RuntimePersistencePorts ports = foundation.persistencePorts(protector());
+        ensureSession(ports);
+        return runtime(ports, model, workerId, ids, customizer, time);
+    }
+
+    private RuntimeInstance runtime(
+            RuntimePersistencePorts ports, AgentChatModel model, String workerId, IdentifierGenerator ids) {
+        return runtime(ports, model, workerId, ids, builder -> builder);
+    }
+
+    private RuntimeInstance runtime(
+            RuntimePersistencePorts ports,
+            AgentChatModel model,
+            String workerId,
+            IdentifierGenerator ids,
+            java.util.function.UnaryOperator<RuntimeCoreBuilder> customizer) {
+        return runtime(ports, model, workerId, ids, customizer, TIME);
+    }
+
+    private RuntimeInstance runtime(
+            RuntimePersistencePorts ports,
+            AgentChatModel model,
+            String workerId,
+            IdentifierGenerator ids,
+            java.util.function.UnaryOperator<RuntimeCoreBuilder> customizer,
+            TimeProvider time) {
+        ManualExecutionScheduler scheduler = new ManualExecutionScheduler();
+        RuntimeCoreBuilder builder = new RuntimeCoreBuilder()
+                .registerChatModel("openai-compatible", "1.0.0", model)
+                .scheduler(scheduler)
+                .persistence(ports)
+                .identifierGenerator(ids)
+                .timeProvider(time)
+                .workerId(workerId);
+        return new RuntimeInstance(customizer.apply(builder).build(), scheduler, ports);
+    }
+
+    private RuntimeInstance toolRuntime(
+            SqliteStoreFoundation foundation,
+            AgentChatModel model,
+            String workerId,
+            IdentifierGenerator ids,
+            AtomicInteger providerCalls,
+            PolicyDecision decision) {
+        return toolRuntime(foundation, model, workerId, ids, providerCalls, decision, TIME);
+    }
+
+    private RuntimeInstance toolRuntime(
+            SqliteStoreFoundation foundation,
+            AgentChatModel model,
+            String workerId,
+            IdentifierGenerator ids,
+            AtomicInteger providerCalls,
+            PolicyDecision decision,
+            TimeProvider time) {
+        return runtime(
+                foundation, model, workerId, ids, builder -> installTool(builder, providerCalls, decision), time);
+    }
+
+    private static RuntimeCoreBuilder installTool(
+            RuntimeCoreBuilder builder, AtomicInteger providerCalls, PolicyDecision decision) {
+        ToolProviderId providerId = new ToolProviderId("sqlite-runtime-test");
+        Map<String, Object> objectSchema =
+                Map.of("$schema", ToolSchema.DRAFT_2020_12, "type", "object", "additionalProperties", true);
+        ToolDefinition definition = new ToolDefinition(
+                new ToolName("write"),
+                new SemanticVersion("1.0.0"),
+                providerId,
+                "write",
+                "SQLite runtime recovery test tool",
+                new ToolSchema("write.input", "1.0", objectSchema),
+                new ToolSchema("write.output", "1.0", objectSchema),
+                ToolExecutionMode.IN_PROCESS,
+                true,
+                Duration.ofSeconds(10),
+                "test",
+                ToolIdempotency.NON_IDEMPOTENT,
+                ToolRisk.HIGH,
+                Set.of(ToolSideEffect.FILE_WRITE),
+                ToolResourceRequirements.none(),
+                List.of(),
+                ToolApprovalRequirement.NEVER,
+                "test",
+                false,
+                Set.of("test"));
+        ToolProvider provider = new ToolProvider() {
+            @Override
+            public ToolProviderId id() {
+                return providerId;
+            }
+
+            @Override
+            public ToolResult invoke(ToolInvocationRequest request) {
+                providerCalls.incrementAndGet();
+                return new ToolResult(true, "provider", Map.of(), List.of(), List.of(), false);
+            }
+        };
+        var catalog = new ToolCatalogBuilder()
+                .register(new ToolAlias("write"), definition, "sqlite-runtime-test", provider)
+                .freeze();
+        return builder.publicToolPolicy((run, binding, request) -> decision)
+                .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator());
+    }
+
+    private static PolicyDecision allow() {
+        return new PolicyDecision(
+                PolicyEffect.ALLOW,
+                Optional.empty(),
+                "TEST_ALLOW",
+                "Test policy allowed the tool",
+                "sha256:sqlite-test-allow");
+    }
+
+    private static PolicyDecision approvalRequired() {
+        return new PolicyDecision(
+                PolicyEffect.ASK,
+                Optional.of(PolicyChallenge.APPROVAL),
+                "TEST_APPROVAL_REQUIRED",
+                "Test policy requires approval",
+                "sha256:sqlite-test-approval");
+    }
+
+    private static RuntimeCoreBuilder installCredentialTool(RuntimeCoreBuilder builder, String secret) {
+        ToolProviderId providerId = new ToolProviderId("sqlite-credential-test");
+        Map<String, Object> objectSchema =
+                Map.of("$schema", ToolSchema.DRAFT_2020_12, "type", "object", "additionalProperties", true);
+        ToolDefinition definition = new ToolDefinition(
+                new ToolName("credential_test"),
+                new SemanticVersion("1.0.0"),
+                providerId,
+                "credential test",
+                "Credential redaction persistence test tool",
+                new ToolSchema("credential.input", "1.0", objectSchema),
+                new ToolSchema("credential.output", "1.0", objectSchema),
+                ToolExecutionMode.IN_PROCESS,
+                true,
+                Duration.ofSeconds(10),
+                "test",
+                ToolIdempotency.IDEMPOTENT,
+                ToolRisk.LOW,
+                Set.of(ToolSideEffect.CREDENTIAL_USE),
+                ToolResourceRequirements.none(),
+                List.of(new CredentialRequirement("test-secret")),
+                ToolApprovalRequirement.NEVER,
+                "test",
+                false,
+                Set.of("test"));
+        ToolProvider provider = new ToolProvider() {
+            @Override
+            public ToolProviderId id() {
+                return providerId;
+            }
+
+            @Override
+            public ToolResult invoke(ToolInvocationRequest request) {
+                return new ToolResult(
+                        true,
+                        "provider-raw-negative-sample " + secret,
+                        Map.of("token", secret),
+                        List.of(),
+                        List.of(),
+                        false);
+            }
+        };
+        var catalog = new ToolCatalogBuilder()
+                .register(new ToolAlias("credential_test"), definition, "sqlite-credential-test", provider)
+                .freeze();
+        SecretRedactor redactor = value -> value == null
+                ? null
+                : value.replace(secret, "[REDACTED]").replace("provider-raw-negative-sample", "[REDACTED]");
+        CredentialBroker broker = new CredentialBroker() {
+            @Override
+            public Optional<String> getSecret(String credentialId) {
+                return Optional.of(secret);
+            }
+
+            @Override
+            public SecretRedactor redactor() {
+                return redactor;
+            }
+        };
+        return builder.credentialBroker(broker)
+                .publicToolPolicy((run, binding, request) -> allow())
+                .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator());
+    }
+
+    private static RuntimePersistencePorts withFailingAttemptInsert(RuntimePersistencePorts base) {
+        ExecutionAttemptRepository attempts = new ExecutionAttemptRepository() {
+            @Override
+            public void insert(AgentRunExecutionAttempt attempt) {
+                throw new IllegalStateException("injected attempt insert failure");
+            }
+
+            @Override
+            public void save(AgentRunExecutionAttempt attempt, long expectedVersion) {
+                base.attempts().save(attempt, expectedVersion);
+            }
+
+            @Override
+            public Optional<AgentRunExecutionAttempt> find(ExecutionAttemptId id) {
+                return base.attempts().find(id);
+            }
+
+            @Override
+            public Optional<AgentRunExecutionAttempt> activeFor(AgentRunId runId) {
+                return base.attempts().activeFor(runId);
+            }
+
+            @Override
+            public List<AgentRunExecutionAttempt> attemptsFor(AgentRunId runId) {
+                return base.attempts().attemptsFor(runId);
+            }
+        };
+        return new RuntimePersistencePorts(
+                base.sessions(),
+                base.runs(),
+                attempts,
+                base.checkpoints(),
+                base.state(),
+                base.events(),
+                base.outbox(),
+                base.idempotency(),
+                base.unitOfWork(),
+                base.toolJournal(),
+                base.interactions(),
+                base.runInputs(),
+                base.conversationSummaries(),
+                base.toolResultAssets(),
+                base.messageRedactions());
+    }
+
+    private static RuntimePersistencePorts withFailingOutboxAppend(RuntimePersistencePorts base) {
+        RuntimeOutboxPublisher outbox = new RuntimeOutboxPublisher() {
+            @Override
+            public void append(OutboxMessage message) {
+                throw new IllegalStateException("injected outbox append failure");
+            }
+
+            @Override
+            public List<OutboxMessage> pending() {
+                return base.outbox().pending();
+            }
+
+            @Override
+            public void markPublished(String eventId) {
+                base.outbox().markPublished(eventId);
+            }
+
+            @Override
+            public boolean markConsumed(String consumerId, String eventId) {
+                return base.outbox().markConsumed(consumerId, eventId);
+            }
+        };
+        return new RuntimePersistencePorts(
+                base.sessions(),
+                base.runs(),
+                base.attempts(),
+                base.checkpoints(),
+                base.state(),
+                base.events(),
+                outbox,
+                base.idempotency(),
+                base.unitOfWork(),
+                base.toolJournal(),
+                base.interactions(),
+                base.runInputs(),
+                base.conversationSummaries(),
+                base.toolResultAssets(),
+                base.messageRedactions());
+    }
+
+    private static void ensureSession(RuntimePersistencePorts ports) {
+        ports.unitOfWork().execute(() -> {
+            if (ports.sessions().find(SESSION_ID).isEmpty()) {
+                ports.sessions()
+                        .insert(AgentSession.open(
+                                SESSION_ID, TENANT, PRINCIPAL, null, SessionScope.USER, NOW, Map.of()));
+            }
+            return null;
+        });
+    }
+
+    private static AesGcmModelContinuationProtector protector() {
+        return new AesGcmModelContinuationProtector(new SecretKeySpec(PROTECTOR_KEY, "AES"), new SecureRandom());
+    }
+
+    private static AgentRunRequest request(String key) {
+        return new AgentRunRequest(
+                key,
+                new AgentDefinitionId("sqlite-runtime-agent"),
+                Optional.empty(),
+                "sqlite-runtime-profile",
+                SESSION_ID,
+                Optional.empty(),
+                "test objective",
+                List.of(),
+                RuntimeOverrides.NONE);
+    }
+
+    private static AgentRunRequest structuredRequest(String key, StructuredOutputRequirement requirement) {
+        return new AgentRunRequest(
+                key,
+                new AgentDefinitionId("sqlite-runtime-agent"),
+                Optional.empty(),
+                "sqlite-runtime-profile",
+                SESSION_ID,
+                Optional.empty(),
+                "test structured objective",
+                List.of(),
+                RuntimeOverrides.NONE,
+                Optional.of(requirement));
+    }
+
+    private static RuntimeCommand pause(AgentRunId runId) {
+        return new RuntimeCommand(
+                new RuntimeCommandId("pause-command"),
+                runId,
+                RuntimeCommandType.PAUSE,
+                RuntimeCommandArguments.NONE,
+                "pause-key",
+                NOW);
+    }
+
+    private static InteractionResponse approvalResponse(AgentRunId runId, InteractionRequestId requestId, String key) {
+        return new InteractionResponse(
+                new InteractionResponseId(key + "-response"),
+                requestId,
+                runId,
+                InteractionResponseType.APPROVE,
+                List.of(),
+                key,
+                NOW);
+    }
+
+    private static AgentChatModel model(AgentChatResponse... responses) {
+        Queue<AgentChatResponse> queue = new ArrayDeque<>(List.of(responses));
+        return ignored -> queue.remove();
+    }
+
+    private static AgentChatModel finalModel(String summary) {
+        return model(finalResponse(summary));
+    }
+
+    private static AgentChatResponse finalResponse(String summary) {
+        return new AgentChatResponse(
+                "response-final",
+                "test-model",
+                summary,
+                List.of(),
+                ModelFinishReason.STOP,
+                ModelUsage.unpriced(1, 1),
+                "",
+                Map.of());
+    }
+
+    private static AgentChatResponse structuredResponse(String summary) {
+        return new AgentChatResponse(
+                "response-structured",
+                "test-model",
+                "{\"city\":\"Shanghai\",\"days\":2}",
+                List.of(),
+                ModelFinishReason.STOP,
+                ModelUsage.unpriced(1, 1),
+                "",
+                Map.of("summary", summary),
+                Optional.empty(),
+                Optional.of(Map.of("city", "Shanghai", "days", 2)));
+    }
+
+    private static StructuredOutputRequirement tripPlanRequirement() {
+        return new StructuredOutputRequirement(
+                "java-record:TripPlan",
+                "sha256:trip-plan",
+                "TripPlan",
+                Map.of(
+                        "type",
+                        "object",
+                        "properties",
+                        Map.of(
+                                "city", Map.of("type", "string"),
+                                "days", Map.of("type", "integer")),
+                        "required",
+                        List.of("city", "days"),
+                        "additionalProperties",
+                        false));
+    }
+
+    private static AgentChatResponse toolResponse() {
+        return new AgentChatResponse(
+                "response-tool",
+                "test-model",
+                "",
+                List.of(new ModelToolCall(new ProviderToolCallCorrelationId("provider-tool-call"), "write", Map.of())),
+                ModelFinishReason.TOOL_CALLS,
+                ModelUsage.unpriced(1, 1),
+                "",
+                Map.of());
+    }
+
+    private static AgentChatResponse reasoningToolResponse(String reasoning) {
+        return new AgentChatResponse(
+                "response-reasoning-tool",
+                "test-model",
+                "",
+                List.of(new ModelToolCall(new ProviderToolCallCorrelationId("provider-tool-call"), "write", Map.of())),
+                ModelFinishReason.TOOL_CALLS,
+                ModelUsage.unpriced(1, 1),
+                "",
+                Map.of(),
+                Optional.of(SensitiveModelReasoning.of(reasoning)));
+    }
+
+    private static AgentChatResponse twoToolResponse() {
+        return new AgentChatResponse(
+                "response-two-tools",
+                "test-model",
+                "",
+                List.of(
+                        new ModelToolCall(
+                                new ProviderToolCallCorrelationId("provider-first-tool-call"),
+                                "write",
+                                Map.of("value", 1)),
+                        new ModelToolCall(
+                                new ProviderToolCallCorrelationId("provider-second-tool-call"),
+                                "write",
+                                Map.of("value", 2))),
+                ModelFinishReason.TOOL_CALLS,
+                ModelUsage.unpriced(1, 1),
+                "",
+                Map.of());
+    }
+
+    private static long count(Connection connection, String table) throws Exception {
+        try (Statement statement = connection.createStatement();
+                ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM " + table)) {
+            assertThat(result.next()).isTrue();
+            return result.getLong(1);
+        }
+    }
+
+    private static void assertLegacyPolicyFamiliesAbsent(SqliteConnectionFactory connections) throws Exception {
+        try (Connection connection = connections.openConnection()) {
+            for (String table : List.of(
+                    "policy_snapshot",
+                    "policy_decision",
+                    "policy_authorization_evidence",
+                    "approval_grant",
+                    "project_trust",
+                    "approval_request_metadata",
+                    "approval_response_metadata")) {
+                try (var statement = connection.prepareStatement(
+                        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?")) {
+                    statement.setString(1, table);
+                    try (ResultSet result = statement.executeQuery()) {
+                        assertThat(result.next()).isTrue();
+                        assertThat(result.getLong(1)).as(table).isZero();
+                    }
+                }
+            }
+        }
+    }
+
+    private static long countWhere(Connection connection, String sql, String... parameters) throws Exception {
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            for (int index = 0; index < parameters.length; index++) {
+                statement.setString(index + 1, parameters[index]);
+            }
+            try (ResultSet result = statement.executeQuery()) {
+                assertThat(result.next()).isTrue();
+                return result.getLong(1);
+            }
+        }
+    }
+
+    private record RuntimeInstance(
+            DefaultAgentRuntime runtime, ManualExecutionScheduler scheduler, RuntimePersistencePorts ports) {}
+
+    private static final class TestIds implements IdentifierGenerator {
+        private final String prefix;
+        private final AtomicInteger sequence = new AtomicInteger();
+
+        private TestIds(String prefix) {
+            this.prefix = prefix;
+        }
+
+        @Override
+        public String nextValue() {
+            return prefix + "-" + sequence.incrementAndGet();
+        }
+    }
+}

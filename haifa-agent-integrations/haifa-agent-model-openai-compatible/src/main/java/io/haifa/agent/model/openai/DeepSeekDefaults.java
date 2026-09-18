@@ -1,15 +1,20 @@
 package io.haifa.agent.model.openai;
 
 import io.haifa.agent.model.api.CredentialRef;
+import io.haifa.agent.model.api.ModelApiBindingDefinition;
+import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelDefinition;
 import io.haifa.agent.model.api.ModelDefinitionId;
 import io.haifa.agent.model.api.ModelProviderDefinition;
 import io.haifa.agent.model.api.ModelProviderId;
+import io.haifa.agent.model.api.ModelReasoningEffort;
+import io.haifa.agent.model.api.ModelReasoningPolicy;
 import io.haifa.agent.model.api.ModelStatus;
 import io.haifa.agent.model.api.ProviderStatus;
 import java.net.URI;
 import java.util.EnumSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -23,6 +28,9 @@ public final class DeepSeekDefaults {
     private DeepSeekDefaults() {}
 
     public static ModelProviderDefinition provider() {
+        LinkedHashMap<String, Object> providerOptions = new LinkedHashMap<>();
+        providerOptions.putAll(
+                ModelReasoningPolicy.enabled(ModelReasoningEffort.HIGH).frozenOptions());
         ModelDefinition model = new ModelDefinition(
                 MODEL_ID,
                 "2026-07-21",
@@ -30,21 +38,35 @@ public final class DeepSeekDefaults {
                 "deepseek-v4-pro",
                 "DeepSeek V4 Pro",
                 ModelStatus.ACTIVE,
-                EnumSet.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING, ModelCapability.STRUCTURED_OUTPUT),
+                EnumSet.of(
+                        ModelCapability.TEXT_CHAT,
+                        ModelCapability.TOOL_CALLING,
+                        ModelCapability.STRUCTURED_OUTPUT,
+                        ModelCapability.REASONING),
                 1_048_576,
                 393_216,
-                Map.of("thinking", "disabled"),
-                Map.of("source", "deepseek-official-docs-2026-07-21"));
+                reasoningOptions(),
+                Map.of("source", "deepseek-official-docs-2026-07-21"),
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS);
         return new ModelProviderDefinition(
                 PROVIDER_ID,
                 "2026-07-21",
                 "DeepSeek",
-                ADAPTER_TYPE,
                 ENDPOINT,
                 new CredentialRef("env://DEEPSEEK_API_KEY"),
+                true,
                 ProviderStatus.ACTIVE,
+                List.of(new ModelApiBindingDefinition(
+                        ModelApiStyles.OPENAI_CHAT_COMPLETIONS, OpenAiCompatibleDialects.DEEPSEEK)),
                 List.of(model),
-                Map.of("thinking", "disabled"),
+                providerOptions,
                 Map.of());
+    }
+
+    private static Map<String, Object> reasoningOptions() {
+        LinkedHashMap<String, Object> options = new LinkedHashMap<>(
+                ModelReasoningPolicy.enabled(ModelReasoningEffort.HIGH).frozenOptions());
+        options.put("requires_reasoning_continuation", true);
+        return options;
     }
 }

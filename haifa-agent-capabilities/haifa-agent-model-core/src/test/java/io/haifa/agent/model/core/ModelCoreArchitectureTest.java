@@ -3,8 +3,11 @@ package io.haifa.agent.model.core;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 
 import com.tngtech.archunit.core.importer.ClassFileImporter;
+import com.tngtech.archunit.core.importer.ImportOption;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
+@Tag("architecture")
 class ModelCoreArchitectureTest {
     @Test
     void modelCoreDoesNotDependOnProviderAdaptersOrFrameworks() {
@@ -13,10 +16,13 @@ class ModelCoreArchitectureTest {
                 .dependOnClassesThat()
                 .resideInAnyPackage(
                         "io.haifa.agent.model.openai..",
-                        "com.fasterxml.jackson..",
                         "org.springframework..",
                         "com.openai..",
-                        "com.deepseek..")
-                .check(new ClassFileImporter().importPackages("io.haifa.agent.model.core"));
+                        "com.deepseek..",
+                        "io.haifa.agent.personalassistant..",
+                        "io.haifa.agent.coding..")
+                .check(new ClassFileImporter()
+                        .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
+                        .importPackages("io.haifa.agent.model.core"));
     }
 }

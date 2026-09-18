@@ -2,8 +2,6 @@ package io.haifa.agent.runtime.core.storage;
 
 import io.haifa.agent.context.compression.ConversationSummary;
 import io.haifa.agent.context.compression.ConversationSummaryRepository;
-import io.haifa.agent.context.compression.SummaryId;
-import io.haifa.agent.context.compression.SummaryVersion;
 import io.haifa.agent.core.checkpoint.Checkpoint;
 import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.message.AgentMessage;
@@ -16,6 +14,8 @@ import io.haifa.agent.core.reference.AssetRef;
 import io.haifa.agent.core.reference.RunConfigurationSnapshotRef;
 import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.core.session.AgentSession;
+import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.step.AgentStep;
 import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallId;
@@ -25,7 +25,15 @@ import io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt;
 import io.haifa.agent.runtime.core.attempt.ExecutionAttemptId;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeConfigurationSnapshot;
 import io.haifa.agent.runtime.core.checkpoint.RuntimeCheckpointState;
+import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
+import io.haifa.agent.runtime.core.model.continuation.ModelContinuationDraft;
+import io.haifa.agent.runtime.core.model.continuation.ModelContinuationException;
+import io.haifa.agent.runtime.core.model.continuation.ModelContinuationFailure;
+import io.haifa.agent.runtime.core.model.continuation.ModelContinuationProtector;
+import io.haifa.agent.runtime.core.model.continuation.ModelContinuationRecord;
 import io.haifa.agent.runtime.core.tool.ToolResultAssetStore;
+import io.haifa.agent.skill.api.SkillActivation;
+import io.haifa.agent.skill.api.SkillAlias;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -34,12 +42,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
 /** Thread-safe deterministic store used by local embeddings and tests. */
 public final class InMemoryRuntimeStore
-        implements RunStateRepository,
+        implements AgentSessionRepository,
+                RunStateRepository,
                 ExecutionAttemptRepository,
                 RuntimeEventAppender,
                 RuntimeOutboxPublisher,
@@ -48,25 +58,35 @@ public final class InMemoryRuntimeStore
                 RuntimeStateRepository,
                 ConversationSummaryRepository,
                 ToolResultAssetStore,
+                MessageRedactionListenerRegistry,
                 RuntimeUnitOfWork {
 
     private record Versioned<T>(T value, long version) {}
 
     private record StoredCheckpoint(Checkpoint checkpoint, RuntimeCheckpointState state) {}
 
+    private final Map<AgentSessionId, Versioned<AgentSession>> sessions = new HashMap<>();
     private final Map<AgentRunId, Versioned<AgentRun>> runs = new HashMap<>();
     private final Map<ExecutionAttemptId, Versioned<AgentRunExecutionAttempt>> attempts = new HashMap<>();
     private final Map<AgentRunId, List<RuntimeEvent>> events = new HashMap<>();
+    private final Map<AgentRunId, Long> eventHeads = new HashMap<>();
+    private final Map<AgentRunId, Long> eventEarliest = new HashMap<>();
+    private final java.util.Set<String> eventIds = new java.util.HashSet<>();
+    private final RuntimeEventIdFactory eventIdsFactory;
     private final List<OutboxMessage> outbox = new ArrayList<>();
     private final java.util.Set<String> publishedOutbox = new java.util.HashSet<>();
     private final java.util.Set<String> consumedOutbox = new java.util.HashSet<>();
     private final Map<AgentRunId, List<StoredCheckpoint>> checkpoints = new HashMap<>();
-    private final Map<String, AgentRunId> idempotentRuns = new HashMap<>();
+    private final Map<String, RunStartIdempotencyBinding> idempotentRuns = new HashMap<>();
     private final java.util.Set<String> appliedCommands = new java.util.HashSet<>();
     private final Map<String, RuntimeCommandResult> commandResults = new HashMap<>();
+    private final Map<String, AppliedCommandResult> appliedCommandResults = new HashMap<>();
     private final Map<AgentRunId, List<AgentMessage>> messages = new HashMap<>();
     private final Map<io.haifa.agent.core.session.AgentSessionId, List<AgentMessage>> sessionMessages = new HashMap<>();
     private final Map<AgentMessageId, AgentMessage> messagesById = new HashMap<>();
+    private final Map<AgentMessageId, ModelContinuationRecord> modelContinuationsByMessage = new HashMap<>();
+    private final Map<String, ModelContinuationRecord> modelContinuationsById = new HashMap<>();
+    private final ModelContinuationProtector modelContinuationProtector = AesGcmModelContinuationProtector.ephemeral();
     private final Map<AgentRunId, List<AgentStep>> steps = new HashMap<>();
     private final Map<AgentRunId, List<ToolCall>> toolCalls = new HashMap<>();
     private final Map<AgentRunId, AgentPlan> plans = new HashMap<>();
@@ -76,8 +96,47 @@ public final class InMemoryRuntimeStore
             new HashMap<>();
     private final Map<String, ToolResult> toolResultAssets = new HashMap<>();
     private final Map<AgentRunId, RuntimeMemorySelection> memorySelections = new HashMap<>();
-    private boolean failNextToolResultAssetWrite;
+    private final Map<AgentRunId, Map<SkillAlias, SkillActivation>> skillActivations = new HashMap<>();
+    private final Map<AgentRunId, Long> skillResourceReadBytes = new HashMap<>();
+    private final ThreadLocal<List<Runnable>> afterCommitListeners = new ThreadLocal<>();
+    private int remainingToolResultAssetWriteFailures;
+    private boolean failNextCompletedToolCallWrite;
     private final List<MessageRedactionListener> messageRedactionListeners = new ArrayList<>();
+
+    public InMemoryRuntimeStore() {
+        this(RuntimeEventIdFactory.deterministic());
+    }
+
+    public InMemoryRuntimeStore(RuntimeEventIdFactory eventIdsFactory) {
+        this.eventIdsFactory = Objects.requireNonNull(eventIdsFactory, "eventIdsFactory must not be null");
+    }
+
+    @Override
+    public synchronized void insert(AgentSession session) {
+        if (sessions.putIfAbsent(session.id(), new Versioned<>(session, session.version())) != null) {
+            throw new IllegalStateException(
+                    "session already exists: " + session.id().value());
+        }
+    }
+
+    @Override
+    public synchronized void save(AgentSession session, long expectedVersion) {
+        Versioned<AgentSession> current = sessions.get(session.id());
+        if (current == null) {
+            throw new IllegalStateException(
+                    "session does not exist: " + session.id().value());
+        }
+        if (current.version() != expectedVersion) {
+            throw new OptimisticLockException(
+                    "session version conflict: expected " + expectedVersion + " but was " + current.version());
+        }
+        sessions.put(session.id(), new Versioned<>(session, session.version()));
+    }
+
+    @Override
+    public synchronized Optional<AgentSession> find(AgentSessionId sessionId) {
+        return Optional.ofNullable(sessions.get(sessionId)).map(Versioned::value);
+    }
 
     @Override
     public synchronized void insert(AgentRun run) {
@@ -156,14 +215,81 @@ public final class InMemoryRuntimeStore
     public synchronized RuntimeEvent append(
             AgentRunId runId, String type, Map<String, Object> data, Instant occurredAt) {
         List<RuntimeEvent> stream = events.computeIfAbsent(runId, ignored -> new ArrayList<>());
-        RuntimeEvent event = new RuntimeEvent(runId, stream.size() + 1L, type, data, occurredAt);
+        long sequence = Math.addExact(eventHeads.getOrDefault(runId, 0L), 1L);
+        String eventId = eventIdsFactory.create(runId, sequence);
+        if (!eventIds.add(eventId)) {
+            throw new IllegalStateException("runtime event id is already bound");
+        }
+        RuntimeEvent event = new RuntimeEvent(eventId, runId, sequence, type, data, occurredAt);
         stream.add(event);
+        eventHeads.put(runId, sequence);
+        eventEarliest.putIfAbsent(runId, sequence);
         return event;
     }
 
     @Override
     public synchronized List<RuntimeEvent> eventsFor(AgentRunId runId) {
         return List.copyOf(events.getOrDefault(runId, List.of()));
+    }
+
+    @Override
+    public synchronized RuntimeEventSlice eventsAfter(
+            AgentRunId runId, long exclusiveSequence, OptionalLong observedHead, int limit) {
+        validateEventRange(exclusiveSequence, observedHead, limit);
+        OptionalLong head = headSequence(runId);
+        long boundedHead =
+                observedHead.isPresent() ? Math.min(observedHead.getAsLong(), head.orElse(0L)) : head.orElse(0L);
+        List<RuntimeEvent> selected = events.getOrDefault(runId, List.of()).stream()
+                .filter(event -> event.sequence() > exclusiveSequence && event.sequence() <= boundedHead)
+                .limit(limit)
+                .toList();
+        long scannedThrough =
+                selected.isEmpty() ? exclusiveSequence : selected.getLast().sequence();
+        return new RuntimeEventSlice(
+                runId,
+                exclusiveSequence,
+                earliestSequence(runId),
+                boundedHead == 0 ? OptionalLong.empty() : OptionalLong.of(boundedHead),
+                scannedThrough,
+                selected);
+    }
+
+    @Override
+    public synchronized OptionalLong earliestSequence(AgentRunId runId) {
+        Long earliest = eventEarliest.get(runId);
+        return earliest == null ? OptionalLong.empty() : OptionalLong.of(earliest);
+    }
+
+    @Override
+    public synchronized OptionalLong headSequence(AgentRunId runId) {
+        Long head = eventHeads.get(runId);
+        return head == null ? OptionalLong.empty() : OptionalLong.of(head);
+    }
+
+    @Override
+    public synchronized long deleteBefore(AgentRunId runId, long retainFromSequence, Instant deletedAt) {
+        Objects.requireNonNull(runId, "runId must not be null");
+        Objects.requireNonNull(deletedAt, "deletedAt must not be null");
+        if (retainFromSequence < 1) throw new IllegalArgumentException("retainFromSequence must be positive");
+        List<RuntimeEvent> stream = events.getOrDefault(runId, new ArrayList<>());
+        long before = stream.size();
+        stream.removeIf(event -> event.sequence() < retainFromSequence);
+        if (stream.isEmpty()) {
+            Long head = eventHeads.get(runId);
+            if (head != null) eventEarliest.put(runId, Math.addExact(head, 1L));
+        } else {
+            eventEarliest.put(runId, stream.getFirst().sequence());
+        }
+        return before - stream.size();
+    }
+
+    private static void validateEventRange(long exclusiveSequence, OptionalLong observedHead, int limit) {
+        if (exclusiveSequence < 0) throw new IllegalArgumentException("exclusiveSequence must not be negative");
+        Objects.requireNonNull(observedHead, "observedHead must not be null");
+        if (observedHead.isPresent() && observedHead.getAsLong() < 1) {
+            throw new IllegalArgumentException("observedHead must be positive");
+        }
+        if (limit < 1 || limit > 10_000) throw new IllegalArgumentException("limit must be in 1..10000");
     }
 
     @Override
@@ -230,13 +356,40 @@ public final class InMemoryRuntimeStore
     }
 
     @Override
-    public synchronized Optional<AgentRunId> findRun(String callerScope, String operation, String key) {
+    public synchronized Optional<RunStartIdempotencyBinding> findRunBinding(
+            String callerScope, String operation, String key) {
         return Optional.ofNullable(idempotentRuns.get(idempotencyKey(callerScope, operation, key)));
     }
 
     @Override
-    public synchronized AgentRunId recordRun(String callerScope, String operation, String key, AgentRunId runId) {
-        return idempotentRuns.computeIfAbsent(idempotencyKey(callerScope, operation, key), ignored -> runId);
+    public synchronized RunStartIdempotencyBinding recordRunBinding(RunStartIdempotencyBinding binding) {
+        Objects.requireNonNull(binding, "binding must not be null");
+        return idempotentRuns.computeIfAbsent(
+                idempotencyKey(binding.callerScope(), binding.operation(), binding.idempotencyKey()),
+                ignored -> binding);
+    }
+
+    @Override
+    public synchronized Optional<AppliedCommandResult> findAppliedCommand(
+            String callerScope, String operation, String idempotencyKey) {
+        return Optional.ofNullable(appliedCommandResults.get(idempotencyKey(callerScope, operation, idempotencyKey)));
+    }
+
+    @Override
+    public synchronized AppliedCommandResult recordAppliedCommand(AppliedCommandResult result) {
+        Objects.requireNonNull(result, "result must not be null");
+        String key = idempotencyKey(result.callerScope(), result.operation(), result.idempotencyKey());
+        AppliedCommandResult existing = appliedCommandResults.putIfAbsent(key, result);
+        if (existing != null && conflicts(existing, result)) {
+            throw new IllegalStateException("applied command idempotency key has conflicting content");
+        }
+        return existing != null ? existing : result;
+    }
+
+    private static boolean conflicts(AppliedCommandResult existing, AppliedCommandResult incoming) {
+        return !existing.requestDigest().equals(incoming.requestDigest())
+                || existing.resultVersion() != incoming.resultVersion()
+                || !existing.resultPayload().equals(incoming.resultPayload());
     }
 
     @Override
@@ -284,6 +437,105 @@ public final class InMemoryRuntimeStore
         message.runId().ifPresent(runId -> messages.computeIfAbsent(runId, ignored -> new ArrayList<>())
                 .add(message));
         return message;
+    }
+
+    @Override
+    public synchronized AgentMessage appendSessionMessageWithContinuation(
+            SessionMessageDraft message, ModelContinuationDraft draft) {
+        if (message.runId().isEmpty()
+                || !message.runId().orElseThrow().equals(draft.runId())
+                || !message.sessionId().equals(draft.sessionId())) {
+            throw new IllegalArgumentException("continuation does not belong to assistant message");
+        }
+        if (modelContinuationsById.containsKey(draft.reference().id())) {
+            throw new IllegalStateException("model continuation id already exists");
+        }
+        String binding = continuationBinding(draft);
+        var protectedReasoning = modelContinuationProtector.protect(draft.reasoning(), binding);
+        ModelContinuationRecord record = new ModelContinuationRecord(
+                draft.reference(),
+                message.id(),
+                draft.runId(),
+                draft.sessionId(),
+                draft.modelCallId(),
+                draft.providerId(),
+                draft.modelId(),
+                draft.configurationDigest(),
+                draft.toolCorrelationIds(),
+                protectedReasoning,
+                draft.createdAt());
+        AgentMessage appended = appendSessionMessage(message);
+        modelContinuationsByMessage.put(message.id(), record);
+        modelContinuationsById.put(record.reference().id(), record);
+        return appended;
+    }
+
+    @Override
+    public synchronized Optional<ModelContinuationRecord> continuationForMessage(AgentMessageId messageId) {
+        return Optional.ofNullable(modelContinuationsByMessage.get(messageId));
+    }
+
+    @Override
+    public synchronized List<ModelContinuationRecord> modelContinuations(AgentRunId runId) {
+        return modelContinuationsByMessage.values().stream()
+                .filter(record -> record.runId().equals(runId))
+                .sorted(Comparator.comparing(
+                        record -> record.assistantMessageId().value()))
+                .toList();
+    }
+
+    @Override
+    public synchronized io.haifa.agent.model.api.SensitiveModelReasoning resolveContinuation(
+            AgentMessageId messageId,
+            io.haifa.agent.model.api.ResolvedModelSnapshot model,
+            java.util.Set<String> toolCorrelationIds) {
+        ModelContinuationRecord record = Optional.ofNullable(modelContinuationsByMessage.get(messageId))
+                .orElseThrow(() -> new ModelContinuationException(
+                        ModelContinuationFailure.MISSING, "required model continuation is unavailable"));
+        if (!"1.0".equals(record.reference().version())) {
+            throw new ModelContinuationException(
+                    ModelContinuationFailure.VERSION_UNSUPPORTED, "model continuation version is unsupported");
+        }
+        if (!record.providerId().equals(model.providerId().value())
+                || !record.modelId().equals(model.providerModelId())
+                || !record.configurationDigest().equals(model.configurationDigest())
+                || !record.toolCorrelationIds().equals(java.util.Set.copyOf(toolCorrelationIds))) {
+            throw new ModelContinuationException(
+                    ModelContinuationFailure.BINDING_MISMATCH, "model continuation binding does not match request");
+        }
+        var reasoning = modelContinuationProtector.reveal(record.protectedReasoning(), continuationBinding(record));
+        if (!reasoning.digest().equals(record.reference().digest())
+                || reasoning.byteLength() != record.reference().byteLength()) {
+            throw new ModelContinuationException(
+                    ModelContinuationFailure.CORRUPT, "model continuation digest does not match payload");
+        }
+        return reasoning;
+    }
+
+    private static String continuationBinding(ModelContinuationDraft draft) {
+        return String.join(
+                "|",
+                draft.reference().id(),
+                draft.runId().value(),
+                draft.sessionId().value(),
+                draft.modelCallId(),
+                draft.providerId(),
+                draft.modelId(),
+                draft.configurationDigest(),
+                draft.toolCorrelationIds().stream().sorted().toList().toString());
+    }
+
+    private static String continuationBinding(ModelContinuationRecord record) {
+        return String.join(
+                "|",
+                record.reference().id(),
+                record.runId().value(),
+                record.sessionId().value(),
+                record.modelCallId(),
+                record.providerId(),
+                record.modelId(),
+                record.configurationDigest(),
+                record.toolCorrelationIds().stream().sorted().toList().toString());
     }
 
     @Override
@@ -350,14 +602,20 @@ public final class InMemoryRuntimeStore
 
     @Override
     public synchronized void appendStep(AgentStep step) {
-        steps.computeIfAbsent(step.runId(), ignored -> new ArrayList<>()).add(step);
+        List<AgentStep> current = steps.computeIfAbsent(step.runId(), ignored -> new ArrayList<>());
+        current.removeIf(existing -> existing.id().equals(step.id()));
+        current.add(step);
     }
 
     @Override
     public synchronized void appendToolCall(ToolCall toolCall) {
-        toolCalls
-                .computeIfAbsent(toolCall.runId(), ignored -> new ArrayList<>())
-                .add(toolCall);
+        if (failNextCompletedToolCallWrite && toolCall.status() == io.haifa.agent.core.tool.ToolCallStatus.COMPLETED) {
+            failNextCompletedToolCallWrite = false;
+            throw new IllegalStateException("injected completed tool call write failure");
+        }
+        List<ToolCall> current = toolCalls.computeIfAbsent(toolCall.runId(), ignored -> new ArrayList<>());
+        current.removeIf(existing -> existing.id().equals(toolCall.id()));
+        current.add(toolCall);
     }
 
     @Override
@@ -411,7 +669,10 @@ public final class InMemoryRuntimeStore
     public synchronized void saveConfiguration(RuntimeConfigurationSnapshot configuration) {
         RuntimeConfigurationSnapshot existing =
                 configurations.putIfAbsent(configuration.reference().snapshotId(), configuration);
-        if (existing != null && !existing.equals(configuration)) {
+        if (existing != null
+                && !existing.reference()
+                        .contentHash()
+                        .equals(configuration.reference().contentHash())) {
             throw new IllegalStateException("configuration snapshot id collision");
         }
     }
@@ -423,19 +684,63 @@ public final class InMemoryRuntimeStore
     }
 
     @Override
+    public synchronized SkillActivation saveSkillActivation(
+            AgentRunId runId, SkillActivation activation, long maximumInstructionBytes, long maximumEstimatedTokens) {
+        if (maximumInstructionBytes < 1 || maximumEstimatedTokens < 1) {
+            throw new IllegalArgumentException("invalid skill activation budget");
+        }
+        Map<SkillAlias, SkillActivation> activations =
+                skillActivations.computeIfAbsent(runId, ignored -> new HashMap<>());
+        SkillActivation existing = activations.get(activation.binding().alias());
+        if (existing != null && !existing.binding().equals(activation.binding())) {
+            throw new IllegalStateException("skill alias is already activated with a different frozen binding");
+        }
+        if (existing != null) return existing;
+        long instructionBytes = Math.addExact(
+                activations.values().stream()
+                        .mapToLong(SkillActivation::instructionBytes)
+                        .sum(),
+                activation.instructionBytes());
+        long estimatedTokens = Math.addExact(
+                activations.values().stream()
+                        .mapToLong(SkillActivation::estimatedTokens)
+                        .sum(),
+                activation.estimatedTokens());
+        if (instructionBytes > maximumInstructionBytes || estimatedTokens > maximumEstimatedTokens) {
+            throw new IllegalStateException("skill activation instruction budget exceeded");
+        }
+        activations.put(activation.binding().alias(), activation);
+        return activation;
+    }
+
+    @Override
+    public synchronized Optional<SkillActivation> skillActivation(AgentRunId runId, SkillAlias alias) {
+        return Optional.ofNullable(
+                skillActivations.getOrDefault(runId, Map.of()).get(alias));
+    }
+
+    @Override
+    public synchronized List<SkillActivation> skillActivations(AgentRunId runId) {
+        return skillActivations.getOrDefault(runId, Map.of()).values().stream()
+                .sorted(Comparator.comparing(activation -> activation.binding().alias()))
+                .toList();
+    }
+
+    @Override
+    public synchronized long addSkillResourceReadBytes(AgentRunId runId, long bytes, long maximum) {
+        if (bytes < 0 || maximum < 1) throw new IllegalArgumentException("invalid skill resource budget");
+        long updated = Math.addExact(skillResourceReadBytes.getOrDefault(runId, 0L), bytes);
+        if (updated > maximum) throw new IllegalStateException("skill resource read budget exceeded");
+        skillResourceReadBytes.put(runId, updated);
+        return updated;
+    }
+
+    @Override
     public synchronized Optional<ConversationSummary> latestValid(
             io.haifa.agent.core.session.AgentSessionId sessionId) {
         return summaries.getOrDefault(sessionId, List.of()).stream()
                 .filter(ConversationSummary::valid)
                 .max(Comparator.comparingLong(summary -> summary.version().value()));
-    }
-
-    @Override
-    public synchronized Optional<ConversationSummary> find(SummaryId id, SummaryVersion version) {
-        return summaries.values().stream()
-                .flatMap(List::stream)
-                .filter(summary -> summary.id().equals(id) && summary.version().equals(version))
-                .findFirst();
     }
 
     @Override
@@ -454,6 +759,25 @@ public final class InMemoryRuntimeStore
         }
         stream.add(summary);
         return summary;
+    }
+
+    @Override
+    public synchronized io.haifa.agent.context.compression.SummarySnapshot latestSnapshot(
+            io.haifa.agent.core.session.AgentSessionId sessionId) {
+        long version = latestVersion(sessionId);
+        Optional<ConversationSummary> valid =
+                latestValid(sessionId).filter(s -> coversValidSource(s, s.coveredThrough()));
+        return new io.haifa.agent.context.compression.SummarySnapshot(valid, version);
+    }
+
+    @Override
+    public synchronized ConversationSummary compareAndSetValid(
+            ConversationSummary summary, long expectedPreviousVersion) {
+        if (!coversValidSource(summary, summary.coveredThrough())) {
+            throw new OptimisticLockException("summary source messages are invalid or have been redacted for session "
+                    + summary.sessionId().value());
+        }
+        return compareAndSet(summary, expectedPreviousVersion);
     }
 
     @Override
@@ -481,8 +805,8 @@ public final class InMemoryRuntimeStore
 
     @Override
     public synchronized AssetRef put(ToolCallId toolCallId, ToolResult result) {
-        if (failNextToolResultAssetWrite) {
-            failNextToolResultAssetWrite = false;
+        if (remainingToolResultAssetWriteFailures > 0) {
+            remainingToolResultAssetWriteFailures--;
             throw new IllegalStateException("injected tool result asset write failure");
         }
         String assetId = "tool-result:" + toolCallId.value();
@@ -499,10 +823,20 @@ public final class InMemoryRuntimeStore
     }
 
     public synchronized void failNextToolResultAssetWrite() {
-        failNextToolResultAssetWrite = true;
+        failNextToolResultAssetWrites(1);
     }
 
-    public synchronized void addMessageRedactionListener(MessageRedactionListener listener) {
+    public synchronized void failNextToolResultAssetWrites(int count) {
+        if (count <= 0) throw new IllegalArgumentException("count must be greater than zero");
+        remainingToolResultAssetWriteFailures = count;
+    }
+
+    public synchronized void failNextCompletedToolCallWrite() {
+        failNextCompletedToolCallWrite = true;
+    }
+
+    @Override
+    public synchronized void register(MessageRedactionListener listener) {
         messageRedactionListeners.add(Objects.requireNonNull(listener));
     }
 
@@ -518,7 +852,25 @@ public final class InMemoryRuntimeStore
 
     @Override
     public synchronized <T> T execute(Supplier<T> work) {
-        return work.get();
+        if (afterCommitListeners.get() != null) return work.get();
+        List<Runnable> listeners = new ArrayList<>();
+        afterCommitListeners.set(listeners);
+        T result;
+        try {
+            result = work.get();
+        } finally {
+            afterCommitListeners.remove();
+        }
+        listeners.forEach(Runnable::run);
+        return result;
+    }
+
+    @Override
+    public synchronized void afterCommit(Runnable listener) {
+        Objects.requireNonNull(listener, "listener must not be null");
+        List<Runnable> listeners = afterCommitListeners.get();
+        if (listeners == null) listener.run();
+        else listeners.add(listener);
     }
 
     private static String idempotencyKey(String callerScope, String operation, String key) {

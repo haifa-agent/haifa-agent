@@ -1,5 +1,28 @@
 # Haifa Agent Execution API
 
+`ExecutionOutputObserver.onStarted()` marks the irreversible dispatch boundary. Process-backed providers notify it
+only after the operating-system process has started; validation, policy, manifest, environment, workspace, and
+scratch provisioning failures remain not dispatched. When a host-local PID is available, the callback includes an
+`ExecutionProcessIdentity`; callers may persist that bounded identity for reconciliation, but it is not a reusable
+process-control authority.
+
 Provider-neutral 的执行契约，定义有界请求、可信调用上下文、幂等执行、取消、结构化结果、输出存储和环境租约端口。
 
-请求只接受 Workspace 逻辑路径和结构化 argv，不接受宿主机路径、明文凭据或无界资源参数。本模块保持纯 Java，不依赖 Sandbox 实现、Spring 或 Provider SDK。
+请求只接受 Workspace 逻辑路径，以及 `ExecutionCommand.direct(argv)` 或 `ExecutionCommand.shell(command)` 两种明确命令形式，不接受宿主机工作目录、明文凭据或无界资源参数。SHELL 保存一个最大 32KB 的完整命令字符串，Shell 类型和路径由可信 Provider 配置决定。本模块保持纯 Java，不依赖 Sandbox 实现、Spring 或 Provider SDK。
+
+`ExecutionScratchSpaceSpec` 描述 Scratch Root 环境名和安全的相对子目录绑定。通过
+`ExecutionScratchSpaceSpec.none()` 声明不使用 scratch space（保持宿主临时目录语义）；公共 Execution API
+默认构造路径统一为 `none()`。只有需要独立隔离的不可信执行环境或产品才显式配置通用 `genericRequired()`
+(`TMPDIR/TMP/TEMP`) 或自定义绑定（如 `GOTMPDIR`、`GOCACHE` 等），物理路径始终由 Sandbox Provider 决定。
+环境名经过 allowlist/secret-name 校验，相对目录拒绝绝对路径、`.`、`..` 和越界；非空 Scratch canonical digest
+进入 Invocation Digest，防止幂等请求混淆。
+`ExecutionLimits` 的单次 `timeout` 必须为正且不超过公共上界 `ExecutionLimits.MAXIMUM_ALLOWED_TIMEOUT`
+（2 小时）；产品可在此之下配置更小的上限。`ExecutionLimits` 的 `maxProcesses` 为可选
+`Optional<Integer>`；默认空表示进程数量上限 unbounded，仅在显式配置时校验 `1..64` 范围。
+
+`ExecutionResult` 只暴露 `scratchProvisioned` 与 `scratchCleanupFailed` 状态，不返回物理目录。
+required Scratch 无法安全创建时必须 fail closed；清理失败使结果保持可审计，不能伪装成功。
+
+一次性执行可通过 `ExecutionBroker.execute(request, observer)` 观察 stdout/stderr chunk；observer 只负责有界展示，唯一权威结果仍是完成后的 `ExecutionResult`。Tool/Runtime cancellation 通过既有 `ExecutionBroker.cancel(executionId)` 收敛。
+
+`ExecutionBroker.openManagedSession(ManagedProcessRequest)` 为需要长驻双向进程的受控能力提供唯一入口。`ManagedProcessSession` 只暴露有界 stdin 写入、stdout/stderr chunk 读取、退出 Future、取消和关闭；授权、环境租约、审计、输出脱敏和进程树收敛仍由既有 Broker/Provider 链路负责。MCP stdio 只能使用此入口，不能直接启动宿主进程。

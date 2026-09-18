@@ -2,8 +2,22 @@
 
 Pure Java context intermediate representation, prompt layering, single-call token budgeting,
 deterministic selection, derived-asset text references, and redacted context tracing.
-Conversation summaries remain rebuildable compression products. Governed long-term Memory stays in
-the Memory capability and reaches this module only through the closed `MemoryReferenceContent` IR.
+Conversation summaries remain rebuildable compression products. The default compression policy uses
+versioned token-tail percentages; fixed message-group limits are only compaction safety bounds, not the
+normal trigger for a rolling window. Governed long-term Memory stays in the Memory capability and reaches
+this module only through the closed `MemoryReferenceContent` IR.
+
+Semantic summaries use the normalized `SemanticConversationSummaryV1` schema. Mandatory carry-forward
+items retain stable identity, text, and provenance unless a terminal decision cites new batch evidence.
+`ConversationSummaryRepository` requires atomic snapshot and source-validating compare-and-set operations;
+adapters may not synthesize those operations from separate reads and writes.
 
 The module depends only on Common, Core, and Model API. It never emits provider DTOs and does not
 invoke a model. Runtime is the sole owner of the `AgentContext` to `ModelMessage` conversion.
+
+The fallback estimator is conservative for mixed-script text and accounts for prompt wire wrappers,
+tool schemas, and recursively structured Tool arguments/results. Its version is recorded in context traces.
+
+`PromptLayer.SKILL` 是低于 Identity、Safety、Policy、Tool Protocol 和 Runtime Instructions 的最弱可移除
+指令层。Context 不依赖 Skill API；Runtime/Application Adapter 只在 Skill 已冻结并受控激活后把内容映射为
+现有 `PromptComponent`。

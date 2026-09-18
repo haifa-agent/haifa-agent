@@ -1,0 +1,62 @@
+{
+  "schemaVersion": "1.0.0",
+  "kind": "CODING_EVALUATION_BASELINE",
+  "baselineId": "coding-polyglot-30-v1/20260820-v1",
+  "sourceMode": "AGGREGATE_REFERENCE_ONLY",
+  "privacy": {
+    "containsCredentials": false,
+    "containsHostPaths": false,
+    "containsPrompts": false,
+    "containsProviderResponses": false,
+    "containsReasoning": false,
+    "containsTrialTranscripts": false
+  },
+  "dataset": {
+    "logicalId": "coding-polyglot-30-v1-cpp-verifier-fixed",
+    "digestAlgorithm": "SHA-256",
+    "digest": "22900ec39227a17a76a293ff8ed1042fe7204f076b404f26f095158d02b3b9f0",
+    "taskCount": 30,
+    "languageCount": 6
+  },
+  "artifacts": {
+    "agentArtifactSha256": "f7c71114621851430ca1344f79962bed9f679e0ae5f86b410ba02b231a643b03",
+    "primaryResultSha256": "5db54072f428f43c8d6662a9c06d2becaea2c95b8c6a5074b228a5eadf74f9d8",
+    "archiveManifestSha256": "6bbc0859cf7e43194d9003c94062ffd7f2acc267eb141f928776dd65ba166fd2"
+  },
+  "metrics": {
+    "verifierResult": {
+      "status": "OBSERVED",
+      "valid": 30,
+      "passed": 10,
+      "failed": 20
+    },
+    "cleanCompletion": {
+      "status": "OBSERVED",
+      "clean": 13,
+      "unclean": 17
+    },
+    "firstEffectiveWrite": {
+      "status": "INFERRED",
+      "failedBeforeRecordedWorkspaceMutation": 9,
+      "definition": "failed trial with no completed dedicated file mutation tool call",
+      "limitation": "execution.run side effects were not independently reconciled in this baseline"
+    },
+    "modelAttempts": {
+      "status": "OBSERVED",
+      "totalPersistedModelCalls": 324,
+      "definition": "sum of run.usage_model_calls across the 30 primary trials"
+    },
+    "toolOutcomeUnknown": {
+      "status": "OBSERVED",
+      "terminalRuns": 5
+    },
+    "completionRepair": {
+      "status": "OBSERVED",
+      "exhaustedTerminalRuns": 2
+    },
+    "modelResponseInvalid": {
+      "status": "OBSERVED",
+      "terminalRuns": 9
+    }
+  }
+}

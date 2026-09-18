@@ -50,4 +50,14 @@ public record ToolDefinition(
         provenance = ToolValues.text(provenance, "provenance");
         tags = ToolValues.set(tags, "tags");
     }
+
+    public ToolEffectClass effectClass() {
+        if (idempotency == ToolIdempotency.PURE) {
+            return ToolEffectClass.PURE_READ;
+        }
+        if (idempotency == ToolIdempotency.IDEMPOTENT || idempotency == ToolIdempotency.IDEMPOTENT_WITH_KEY) {
+            return ToolEffectClass.IDEMPOTENT;
+        }
+        return ToolEffectClass.SIDE_EFFECTING;
+    }
 }

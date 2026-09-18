@@ -39,7 +39,7 @@ class AgentDefinitionSessionTest {
                 AgentType.CODING,
                 "prompt:coding@1",
                 "model:balanced@2",
-                Set.of("file.read", "file.patch"),
+                Set.of("file_read", "file_patch"),
                 Set.of("java"),
                 Set.of("reviewer"),
                 List.of(new AgentCapabilityRequirement("sandbox", ">=1.0", true)),
@@ -100,5 +100,26 @@ class AgentDefinitionSessionTest {
                 NOW,
                 Map.of());
         assertThat(ephemeral.project()).isEmpty();
+    }
+
+    @Test
+    void unarchivesWithoutChangingSessionIdentityOrClosingHistory() {
+        AgentSession session = AgentSession.open(
+                new AgentSessionId("conversation-1"),
+                new TenantRef("local"),
+                new PrincipalRef("user-1", "user"),
+                null,
+                SessionScope.USER,
+                NOW,
+                Map.of());
+
+        session.archive(NOW.plusSeconds(1));
+        session.unarchive(NOW.plusSeconds(2));
+
+        assertThat(session.id()).isEqualTo(new AgentSessionId("conversation-1"));
+        assertThat(session.status()).isEqualTo(AgentSessionStatus.ACTIVE);
+        assertThat(session.closedAt()).isEmpty();
+        assertThat(session.version()).isEqualTo(2);
+        assertThatThrownBy(() -> session.unarchive(NOW.plusSeconds(3))).isInstanceOf(IllegalStateException.class);
     }
 }

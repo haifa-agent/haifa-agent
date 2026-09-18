@@ -1,0 +1,229 @@
+package io.haifa.agent.personalassistant.server.configuration.execution;
+
+import io.haifa.agent.common.id.IdentifierGenerator;
+import io.haifa.agent.common.id.UuidV7IdentifierGenerator;
+import io.haifa.agent.common.time.TimeProvider;
+import io.haifa.agent.core.reference.PrincipalRef;
+import io.haifa.agent.core.reference.TenantRef;
+import io.haifa.agent.execution.api.ExecutionEnvironmentRef;
+import io.haifa.agent.execution.api.ExecutionOutputObserver;
+import io.haifa.agent.execution.api.ExecutionScratchSpaceSpec;
+import io.haifa.agent.execution.api.SandboxProfileRef;
+import io.haifa.agent.execution.core.DefaultExecutionBroker;
+import io.haifa.agent.execution.core.ImmutableSandboxProfileRegistry;
+import io.haifa.agent.execution.core.ImmutableSandboxProviderRegistry;
+import io.haifa.agent.execution.core.store.InMemoryExecutionOutputStore;
+import io.haifa.agent.execution.core.store.InMemoryExecutionStore;
+import io.haifa.agent.execution.core.tool.ExecutionInvocationScopeResolver.ExecutionInvocationScope;
+import io.haifa.agent.execution.core.tool.ExecutionToolConfiguration;
+import io.haifa.agent.execution.core.tool.ExecutionToolProvider;
+import io.haifa.agent.execution.core.tool.ScriptRuntimeResolver;
+import io.haifa.agent.execution.host.tool.HostScriptRuntimeResolver;
+import io.haifa.agent.personalassistant.application.execution.PersonalAssistantExecutionPolicy;
+import io.haifa.agent.personalassistant.application.execution.PersonalExecutionPlatform;
+import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
+import io.haifa.agent.policy.api.ApprovalMode;
+import io.haifa.agent.policy.api.ApprovalVerification;
+import io.haifa.agent.project.core.store.InMemoryWorkspaceStore;
+import io.haifa.agent.project.domain.ProjectId;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceFileService;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
+import io.haifa.agent.project.hostworkspace.SensitivePathPolicy;
+import io.haifa.agent.project.workspace.Workspace;
+import io.haifa.agent.project.workspace.WorkspaceId;
+import io.haifa.agent.project.workspace.WorkspaceRevision;
+import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
+import io.haifa.agent.runtime.core.tool.DefaultPublicToolPolicy;
+import io.haifa.agent.runtime.core.tool.DefaultToolPolicyRequestAdapter;
+import io.haifa.agent.runtime.core.tool.RuntimeToolExecutionVerifier;
+import io.haifa.agent.runtime.core.tool.ToolRequestCanonicalizer;
+import io.haifa.agent.sandbox.api.SandboxConfigurationDigest;
+import io.haifa.agent.sandbox.api.SandboxProfile;
+import io.haifa.agent.sandbox.host.HostExecutionEnvironmentResolver;
+import io.haifa.agent.sandbox.host.HostGuardedSandboxProvider;
+import io.haifa.agent.sandbox.host.HostShell;
+import io.haifa.agent.sandbox.host.ResolvedHostEnvironment;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Duration;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+
+/** Server-owned host execution assembly for the private Personal Assistant workspace. */
+public final class PersonalExecutionRuntime {
+    private PersonalExecutionRuntime() {}
+
+    public static PersonalExecutionPlatform create(
+            Path dataDirectory,
+            TenantRef tenant,
+            PrincipalRef principal,
+            PersonalAssistantProperties.Execution properties,
+            Clock clock,
+            RuntimePersistencePorts persistence,
+            io.haifa.agent.sdk.contribution.PolicyPlatformContribution policy) {
+        return create(dataDirectory, tenant, principal, properties, clock, persistence, policy, Set.of());
+    }
+
+    public static PersonalExecutionPlatform create(
+            Path dataDirectory,
+            TenantRef tenant,
+            PrincipalRef principal,
+            PersonalAssistantProperties.Execution properties,
+            Clock clock,
+            RuntimePersistencePorts persistence,
+            io.haifa.agent.sdk.contribution.PolicyPlatformContribution policy,
+            Set<String> deniedEnvironmentNames) {
+        Path workspaceRoot = prepare(dataDirectory.resolve("execution-workspace"));
+        Path scratchRoot = Path.of(System.getProperty("java.io.tmpdir"), "haifa-agent-host-scratch")
+                .toAbsolutePath()
+                .normalize();
+        IdentifierGenerator identifiers = new UuidV7IdentifierGenerator();
+        TimeProvider time = clock::instant;
+        var workspaces = new InMemoryWorkspaceStore();
+        var locations = new HostWorkspaceLocationStore();
+        WorkspaceId workspaceId = new WorkspaceId("personal-execution");
+        locations.register(workspaceId, workspaceRoot);
+        workspaces.create(Workspace.provision(
+                        workspaceId,
+                        new ProjectId("personal-internal-execution"),
+                        WorkspaceRevision.initial("personal-execution-v1"),
+                        time.now())
+                .activate(time.now()));
+
+        HostShell shell = HostShell.auto();
+        var host = new HostGuardedSandboxProvider(workspaces, locations, identifiers, time, shell, scratchRoot);
+        ScriptRuntimeResolver runtimes = HostScriptRuntimeResolver.currentHost(
+                configuredPath(properties.pythonPath()), configuredPath(properties.powerShellPath()));
+        var resolvedEnvironment = resolveHostEnvironment(
+                System.getenv(),
+                System.getProperty("os.name", ""),
+                Path.of(System.getProperty("user.home", ".")),
+                dataDirectory,
+                workspaceRoot,
+                scratchRoot,
+                deniedEnvironmentNames);
+        Map<String, String> environment = resolvedEnvironment.environment();
+        Set<String> environmentNames = resolvedEnvironment.allowedEnvironmentNames();
+        String profileVersion = "3-"
+                + SandboxConfigurationDigest.sha256Fields(List.of(
+                                host.configurationDigest().value(), HostExecutionEnvironmentResolver.POLICY_VERSION))
+                        .value()
+                        .substring("sha256:".length());
+        SandboxProfile profile = SandboxProfile.hostGuarded(
+                new SandboxProfileRef("personal-host-guarded", profileVersion),
+                host.configurationDigest(),
+                runtimes.executableNames(),
+                environmentNames,
+                true);
+        host.preflight(profile);
+        var configuration = createToolConfiguration(profile, properties, runtimes);
+        var publicToolPolicy = new DefaultPublicToolPolicy(
+                new DefaultToolPolicyRequestAdapter("haifa-personal-assistant", ApprovalMode.ASK),
+                policy.evaluator(),
+                policy.rules());
+        var runtimeVerifier = new RuntimeToolExecutionVerifier(
+                persistence.runs(),
+                persistence.state(),
+                persistence.interactions(),
+                ToolRequestCanonicalizer.identity(),
+                publicToolPolicy);
+        var files = new HostWorkspaceFileService(workspaces, locations, SensitivePathPolicy.defaults());
+        var broker = new DefaultExecutionBroker(
+                new InMemoryExecutionStore(),
+                new InMemoryExecutionOutputStore(),
+                ignored -> io.haifa.agent.execution.api.ResolvedExecutionEnvironment.of(environment),
+                new PersonalAssistantExecutionPolicy(runtimeVerifier, configuration, tenant, principal, workspaceId),
+                new ImmutableSandboxProfileRegistry(List.of(profile)),
+                new ImmutableSandboxProviderRegistry(List.of(host)),
+                workspaces);
+        var provider = new ExecutionToolProvider(
+                broker,
+                identifiers,
+                time,
+                ignored -> new ExecutionInvocationScope(workspaceId, Set.of("execution_run", "workspace.write")),
+                configuration,
+                (resolvedWorkspaceId, inputPaths) -> inputPaths.forEach(path ->
+                        files.stat(new io.haifa.agent.project.path.WorkspacePath(resolvedWorkspaceId, path), false)));
+        return PersonalExecutionPlatform.create(provider, profile, runtimes, (requester, target, responder) -> {
+            boolean samePrincipal = requester.tenant().equals(responder.tenant())
+                    && requester.principal().equals(responder.principal());
+            return new ApprovalVerification(
+                    samePrincipal, samePrincipal ? "LOCAL_PRINCIPAL_MATCH" : "LOCAL_PRINCIPAL_MISMATCH");
+        });
+    }
+
+    static ExecutionToolConfiguration createToolConfiguration(
+            SandboxProfile profile, PersonalAssistantProperties.Execution properties, ScriptRuntimeResolver runtimes) {
+        return new ExecutionToolConfiguration(
+                new ExecutionEnvironmentRef(
+                        List.of("personal-execution-" + profile.contentDigest().value())),
+                profile.ref(),
+                Duration.ofMillis(properties.defaultTimeoutMillis()),
+                Duration.ofMillis(properties.maximumTimeoutMillis()),
+                properties.maximumOutputBytes(),
+                properties.maximumOutputLines(),
+                Optional.empty(),
+                false,
+                runtimes,
+                ExecutionOutputObserver.noop(),
+                java.util.function.UnaryOperator.identity(),
+                ExecutionScratchSpaceSpec.none());
+    }
+
+    private static Optional<Path> configuredPath(String value) {
+        if (value == null || value.isBlank()) return Optional.empty();
+        Path path = Path.of(value).toAbsolutePath().normalize();
+        if (!Files.isRegularFile(path) || !Files.isExecutable(path)) {
+            throw new IllegalArgumentException("configured script runtime is not an executable file");
+        }
+        return Optional.of(path);
+    }
+
+    static ResolvedHostEnvironment resolveHostEnvironment(
+            Map<String, String> hostEnvironment,
+            String operatingSystem,
+            Path jvmUserHome,
+            Path applicationDataRoot,
+            Path workspaceRoot,
+            Path scratchRoot) {
+        return resolveHostEnvironment(
+                hostEnvironment,
+                operatingSystem,
+                jvmUserHome,
+                applicationDataRoot,
+                workspaceRoot,
+                scratchRoot,
+                Set.of());
+    }
+
+    static ResolvedHostEnvironment resolveHostEnvironment(
+            Map<String, String> hostEnvironment,
+            String operatingSystem,
+            Path jvmUserHome,
+            Path applicationDataRoot,
+            Path workspaceRoot,
+            Path scratchRoot,
+            Set<String> deniedEnvironmentNames) {
+        return HostExecutionEnvironmentResolver.resolveHostUser(
+                hostEnvironment,
+                operatingSystem,
+                jvmUserHome,
+                applicationDataRoot,
+                workspaceRoot,
+                scratchRoot,
+                Set.of(),
+                deniedEnvironmentNames);
+    }
+
+    private static Path prepare(Path value) {
+        try {
+            Files.createDirectories(value);
+            return value.toRealPath();
+        } catch (java.io.IOException exception) {
+            throw new IllegalStateException("Personal execution workspace is unavailable", exception);
+        }
+    }
+}

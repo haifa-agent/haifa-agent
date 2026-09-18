@@ -1,27 +1,238 @@
 # Haifa Agent OpenAI-Compatible Model Adapter
 
-使用 Java 21 `HttpClient` 与 Jackson 实现的同步 OpenAI Chat Completions 协议适配器。首个配置目标为 DeepSeek `deepseek-v4-pro`。
+## Profile factory
+
+`OpenAiCompatibleModelProfileFactory` derives a versioned binding profile from an already resolved snapshot. It
+recognizes only exact 4-tuple `(providerId, providerModelId, apiStyle, dialect)` combinations registered in
+the respective protocol registries:
+- `OpenAiCompatibleBindingRegistry`: Chat completions for DeepSeek (`deepseek-v4-flash`, `deepseek-v4-pro`),
+  the reviewed SiliconFlow DeepSeek V4 Flash Chat binding, TokenRhythm DeepSeek V4 Flash Chat binding, selected Bailian Qwen bindings,
+  Kimi K3/K2.7/K2.6, selected Zhipu GLM bindings, and the `personal-local` test fixture.
+- `OpenAiResponsesBindingRegistry`: Responses bindings for DeepSeek, Bailian Qwen Max/Plus, and OpenAI Codex (`gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.3-codex-spark`).
+
+Unknown vendor bindings, unverified model IDs, or style/dialect mutations fail closed as `UNVERIFIED`
+instead of inheriting capabilities merely because they share a transport. Product exposure can
+still keep a verified control read-only. Provider request mapping remains in the dialect/adapter layer.
+
+## API Style 与 dialect
+
+本模块实现彼此独立的 `openai-chat-completions` 与 `openai-responses`。二者复用
+Java HTTP、凭据解析和安全限制，但分别拥有自己的请求/响应 DTO 与 SSE accumulator，不跨 Style 复用
+`messages`、`choices` 或 Item parser。Provider ID 不参与 Style 或 dialect 推断。
+
+普通宿主可以使用 `OpenAiCompatibleModelConfiguration.builder(credentialResolver)` 类型化装配两种已实现
+Style 的 adapter、`ResolvedModelSnapshot`、连接/请求超时和受限调用选项。类型化路径只开放 `standard`
+与 DeepSeek profile；百炼和方舟继续使用各自的受治理工厂，不能借此绕过 workspace、region 或模型
+profile 校验。Builder 只接收 `CredentialRef`，DeepSeek 始终冻结 `thinking=disabled`。
+
+```java
+var configured = OpenAiCompatibleModelConfiguration.builder(new EnvironmentCredentialResolver())
+        .providerId("deepseek")
+        .modelId("deepseek-chat")
+        .providerModelId("deepseek-v4-pro")
+        .dialect(OpenAiCompatibleModelConfiguration.Dialect.DEEPSEEK)
+        .endpoint(URI.create("https://api.deepseek.com"))
+        .credentialRef(new CredentialRef("env://DEEPSEEK_API_KEY"))
+        .capabilities(Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING))
+        .tokenLimits(1_048_576, 8_192)
+        .requestTimeout(Duration.ofSeconds(60))
+        .temperature(0.2)
+        .toolChoice(OpenAiCompatibleModelConfiguration.ToolChoice.AUTO)
+        .build();
+```
+
+`temperature` 仅适用于 Chat Completions；`responseFormat(JSON_OBJECT)` 仅适用于声明
+`STRUCTURED_OUTPUT` 的 Chat Completions/Responses。该格式选项不是 Java record 解码或结构化最终输出 API。
+所有 endpoint 必须是干净的 HTTPS URI。高级宿主仍可直接构造 Adapter 与 Snapshot。
+
+两种内建 Style 的同步和 SSE 解析都把“终态存在但没有文本、Tool Call 或结构化输出”标准化为
+`EMPTY_RESPONSE/empty_response`，并标记为可由 Runtime 在同一冻结请求上有界重试。HTTP 5xx、连接失败
+和流在可消费输出前中断分别归一化为 `SERVER_ERROR`、`TRANSPORT_ERROR`；标准 `Retry-After` 只作为
+类型化等待建议交给 Runtime。流一旦已经发出文本或 Tool 意图，后续协议/传输失败归一化为不可盲重放的
+`PARTIAL_RESPONSE`。Adapter 不自行切换模型、不自行重试、不把空响应合成为成功文本，也不在错误中
+暴露供应商原始 Payload。
+
+## Runtime 结构化最终输出映射
+
+SDK 的 `chat(message, Record.class)` 会把精确输出 Schema 作为 provider-neutral request requirement 传到
+Adapter。该动态 Run 要求与上面的静态 `responseFormat(JSON_OBJECT)` 配置不同：
+
+| API style / dialect | 请求映射 | 终态处理 |
+| --- | --- | --- |
+| Chat Completions `standard` | 原生 `response_format.type=json_schema`，携带 name、strict 与精确 Schema | 无 Tool Call 的最终 content 必须是 JSON object，归一化后由 Runtime 再校验冻结 Schema |
+| Chat Completions DeepSeek/现有非标准 dialect | `response_format.type=json_object`，并以有界 developer instruction 披露最终 Schema | Tool Call 不受最终 Schema 限制；最终 object 仍由 Runtime 作为权威门禁 |
+| OpenAI Responses `standard` | `text.format.type=json_schema`，携带 name、strict 与精确 Schema | 最终 output text 归一化后由 Runtime 再校验冻结 Schema |
+
+Adapter 只负责协议映射和 JSON object 归一化，不决定业务 record 是否有效。Tool Calls 优先进入既有
+Runtime Tool Pipeline；只有最终回答才触发 Schema 门禁。无效 JSON、能力缺失、Provider 拒答和输出截断
+分别保持稳定错误分类，SDK 只从持久化的 `AgentRunResult.structuredOutput` 解码类型化值。
+
+Chat Completions 当前支持：
+
+| Provider | dialect id | 同步 | SSE | Tool Call | Thinking |
+| --- | --- | --- | --- | --- | --- |
+| OpenAI Chat Completions | `standard` | 是 | 是 | 是 | 不发送厂商扩展 |
+| DeepSeek | `deepseek-openai-chat` | 是 | 是 | 是 | enabled/high，安全 continuation |
+| 阿里云百炼 | `aliyun-bailian-openai-chat` | 是 | 是 | 是 | 由受治理 Qwen profile 决定 |
+| Kimi | `kimi-openai-chat` | 是 | 是 | 是 | K3/K2.7 始终推理，K2.6 可切换，安全 continuation |
+| 智谱 GLM | `zhipu-openai-chat` | 是 | 是 | 是 | 动态/强制 thinking、有效 effort 与采样限制由精确 profile 决定 |
+| 火山方舟 | `volcengine-ark-openai-chat` | 是 | 是 | 是 | 由受治理豆包/Endpoint profile 决定 |
+| SiliconFlow | `siliconflow-openai-chat` | 是 | 是 | 是 | 不发送厂商推理控制扩展 |
+| TokenRhythm | `tokenrhythm-openai-chat` | 是 | 是 | 是 | 不发送厂商推理控制扩展 |
+
+配置通过 Provider 下的 `apiBindings` 声明 Style。省略 dialect 即 `standard`；只有存在已验证协议差异
+时才声明非标准 dialect。当前未发布旧配置或快照，不保留旧 options、Provider-ID 猜测或双轨入口。
+
+标准 Chat Completions Provider 的受信配置还会把 Endpoint 主机冻结为 `endpoint_host`，因此
+Provider ID 不参与协议或主机推断。`https` 可指向该配置显式声明的第三方主机；`http` 即使主机匹配，
+也只有在产品同时显式允许不安全本机模型且 Endpoint 为 loopback 时才接受。严格遵守标准
+messages、响应、Tool Call 与 SSE 语义的新厂商只需省略 dialect；非标准字段、
+SSE、usage、错误或 Tool Call 行为才需要独立 dialect。
+
+## OpenAI Responses
+
+`OpenAiResponsesModel` 支持同步 Responses 与语义 SSE，映射 message、function_call、
+function_call_output、reasoning、usage、incomplete/failed 和 Tool 参数分片。请求固定 `store=false`。
+Parser 对累计响应、单事件、事件数、内容和 Tool 参数设限；取消、终态缺失及终态后事件失败关闭。
+
+`standard` 以 OpenAI Responses 契约为准。`deepseek-openai-responses` 只允许已验证的
+`deepseek-v4-flash`/`deepseek-v4-pro`，拒绝图片/文件与非 automatic function selection，要求单调 `sequence_number`，
+并以 Responses 终态收敛而不等待 `[DONE]`。本地 `chatgpt2api` 文本与 SSE 使用 `standard`，但普通
+function tool 当前不产生 `function_call`，所以对应模型能力只声明 `TEXT_CHAT`。
+
+`openai-codex-responses` 是 Coding Agent 的独立受控 Dialect。它复用 Responses 的 item/SSE 解析器，
+但独立约束精确的 Codex endpoint、ChatGPT account Bearer/header 组合、originator/user-agent 和安全错误映射；
+它不把 `https://chatgpt.com/backend-api/codex` 当作任意 OpenAI-compatible base URL。401 不会隐式刷新后重放，
+而是要求重新认证；Codex 429 只解析允许的 plan/reset 字段和稳定错误码，原始响应不会进入异常或日志。
+
+`aliyun-bailian-openai-responses` 只允许已经过 Contract 与真实调用验证的 Qwen Max/Plus 精确型号，
+要求 workspace-scoped `/compatible-mode/v1` Endpoint，并映射 `reasoning.effort`。兼容 SSE 允许空字符串
+delta，但仍要求 delta 字段为字符串；空 delta 不产生公共流事件。
+
+DeepSeek 与百炼 Responses Binding 当前只发布固定的推荐推理 Profile：`ENABLED/HIGH`。共享 Profile
+不声明尚未逐 dialect 验证的关闭能力，也不会把缺失参数解释为关闭。后续只有在对应 Responses dialect
+完成显式关闭映射、请求体 Contract 和真实 API 验证后，才会扩展可选 mode/effort；`standard` 不做推断。
+
+## 阿里云百炼
+
+使用 `AliyunBailianProviderFactory` 从外部治理配置构造 Provider 和模型 profile，不在 adapter 中固定
+易变的 Qwen 型号、版本或限额。Provider 配置必须包含 `workspaceId` 与 CredentialRef，region 缺省为
+`cn-beijing`。Endpoint 不接受外部自由注入，而是固定构造成
+`https://{workspaceId}.{region}.maas.aliyuncs.com/compatible-mode/v1`；`workspaceId` 和 region
+都必须是合法 DNS label。本地示例可使用 `env://DASHSCOPE_API_KEY`，生产应接入现有 Credential
+binding/lease。
+
+当产品通过通用 OpenAI-compatible 配置接入百炼时，dialect 会从同一受信 Endpoint 严格解析并冻结
+`workspace_id` 与 `region`。只接受 HTTPS、无端口/查询/片段、路径精确为 `/compatible-mode/v1`，且
+主机精确匹配 `{workspaceId}.{region}.maas.aliyuncs.com`；错误地域格式、Workspace、路径或外部域名
+都会在装配期 fail closed。该冻结逻辑留在本 adapter，不向 Personal Assistant 公共配置增加百炼字段。
+产品只声明 Provider-neutral reasoning mode；adapter 将 `ENABLED` 映射为百炼 `always` thinking、受保护
+continuation 和恢复所需的冻结选项，将 `DISABLED` 映射为显式关闭，不根据模型名称猜测行为。
+
+模型 profile 显式声明 `thinking_profile=none|hybrid|always`、`thinking_enabled`、
+`supports_tool_stream` 等能力。只有受支持且显式启用时才发送 `thinking_budget`、
+`preserve_thinking`、`reasoning_effort`、`tool_stream`；`tool_stream` 默认不发送。百炼 thinking 复用
+Runtime 的受保护 continuation，raw reasoning 不进入公共输出。
+
+百炼当前支持已验证 Qwen Binding 的 OpenAI Chat Completions 与 Responses。DashScope 原生协议和百炼
+Anthropic-compatible 尚未接入，也不从官方文档存在性推断为可选 Binding。
+
+## 火山方舟
+
+`VolcengineArkProviderFactory` 冻结 region、完整 `/api/v3` endpoint、受信 `endpoint_host` 和模型 profile。
+`providerModelId` 的语义必须由 `ModelReferenceKind.MODEL_ID` 或 `ENDPOINT_ID` 明确声明，禁止依赖 `ep-`
+前缀猜测。Ark dialect 支持 `thinking`、`reasoning_effort`、`max_completion_tokens`、`service_tier` 的
+profile allowlist；默认模型不继承 DeepSeek thinking。响应中的 actual model 仅作为本次结果审计，不修改
+冻结 binding。
+
+### 当前 Chat 兼容矩阵
+
+| Provider profile | Sync/SSE | Tool Calls | Thinking | Tool reasoning continuation | Live |
+| --- | --- | --- | --- | --- | --- |
+| OpenAI-compatible `standard` | 是 | 是 | 无厂商扩展 | 否 | 未提供 |
+| DeepSeek | 是 | 是 | enabled/high|max | 必须 | opt-in |
+| Bailian | 是 | 是 | profile-gated | profile-gated | opt-in |
+| Kimi | 是 | 是 | model-gated | 必须 | opt-in |
+| Zhipu | 是 | 是 | dynamic/forced profile | 必须 | opt-in |
+| Ark | 是 | 是 | profile-gated | profile-gated | opt-in |
+| SiliconFlow DeepSeek V4 Flash | 是 | 是 | 不声明 | 否 | opt-in |
+| TokenRhythm DeepSeek V4 Flash | 是 | 是 | 不声明 | 否 | opt-in |
+
+图片输入不是 dialect 推断结果。冻结模型分别声明 `IMAGE_UPLOAD_INPUT` 与 `IMAGE_URL_INPUT`；前者允许
+宿主解析后的临时图片字节，后者允许由 Provider 获取的外部 HTTPS 图片 URL。纯文本消息继续使用
+字符串 `content`，包含 `ImageUrlPart` 或临时 `ImageDataPart` 的 USER 消息映射为标准 Chat Completions
+`text` / `image_url` 数组。Adapter 不抓取 URL；临时字节仅在请求组装时转换为 data URL，不进入持久化。
+
+| Provider | Endpoint 示例 | Credential 示例 | 模型引用 | 厂商扩展 |
+| --- | --- | --- | --- | --- |
+| OpenAI-compatible | `https://api.openai.com/v1`、受信第三方 HTTPS 主机或显式允许的 loopback `/v1` | `env://OPENAI_API_KEY` | model id | 无 |
+| DeepSeek | `https://api.deepseek.com` | `env://DEEPSEEK_API_KEY` | model id | thinking object |
+| Bailian | `https://{workspaceId}.{region}.maas.aliyuncs.com/compatible-mode/v1` | `env://DASHSCOPE_API_KEY` | Qwen model id/alias | enable_thinking/tool_stream |
+| Kimi | `https://api.moonshot.cn/v1` | `env://KIMI_API_KEY` | reviewed Kimi model id | thinking/keep/reasoning_effort |
+| Zhipu | `https://open.bigmodel.cn/api/paas/v4` | `env://BIGMODEL_API_KEY` | reviewed GLM model id | thinking/reasoning_effort/do_sample |
+| Ark | `https://ark.cn-beijing.volces.com/api/v3` | `env://ARK_API_KEY` | typed Model ID/Endpoint ID | thinking/service_tier/token parameter |
+| SiliconFlow | `https://api.siliconflow.cn/v1` | `env://SILICONFLOW_API_KEY` | reviewed model id | cumulative stream usage |
+| TokenRhythm | `https://tokenrhythm.studio/v1` | `env://TK_API_KEY` | reviewed model id | cumulative stream usage |
+
+标准 OpenAI dialect 可冻结 `native_streaming=false`。此时 Adapter 使用同步 Chat Completions 获取权威
+`usage`，再通过 provider-neutral 默认桥接发出有界 Content/Usage 事件，适用于不实现 SSE usage 的本机中转。
+
+## DeepSeek thinking
+
+The governed DeepSeek default is `thinking=enabled` with `reasoning_effort=high`; explicit disabled snapshots
+remain supported. Enabled requests omit unsupported sampling options, parse sync/stream `reasoning_content`, and
+record `completion_tokens_details.reasoning_tokens`. Reasoning is returned only as a bounded sensitive payload;
+Tool Call continuation is controlled by Runtime and mapped back as assistant `reasoning_content`.
+
+## Synchronous and streaming boundaries
+
+The adapter supports synchronous JSON Chat Completions and `text/event-stream`. Streaming requests send
+`stream=true` and `stream_options.include_usage=true`, then aggregate content, reasoning, tool-call arguments,
+and final usage. A normalized `AgentChatResponse` is returned only after identity, finish reason, usage, and tool
+JSON validation. Reasoning is an internal sensitive event and is never projected to public Runtime output.
+
+`standard` and existing vendor dialects retain strict final-usage validation. `siliconflow-openai-chat` accepts only
+monotonically cumulative usage snapshots, rejects any token field decrease as `non_monotonic_stream_usage`, and
+publishes exactly one final `UsageReported` event after `[DONE]`. The first release accepts only
+`https://api.siliconflow.cn/v1`; insecure HTTP remains restricted to explicitly enabled loopback stubs.
+
+The parser bounds each raw SSE event to 1 MiB before UTF-8 decoding. The configured response limit applies to
+decoded semantic UTF-8 bytes only: content, reasoning, each tool name once, and tool-argument deltas. SSE/JSON
+envelopes and usage metadata do not consume that semantic budget. Responses `*.done` values are cumulative; when
+incremental deltas already exist they must preserve that prefix, and only an unobserved suffix is counted. A `*.done`
+suffix is also emitted as a delta; terminal-response fallback retains its existing bridge behavior. Semantic or transport limit
+failures use non-retryable `OUTPUT_LIMIT_EXCEEDED`; consumer cancellation closes the response body and maps to
+standard `CANCELLED`.
+
+使用 Java 21 `HttpClient` 与 Jackson 实现 OpenAI Chat Completions 协议适配器。
 
 ## 默认配置
 
 ```yaml
-provider-id: deepseek
-provider-version: provider-v1
-adapter-type: openai-compatible
-adapter-version: 1.0.0
-endpoint: https://api.deepseek.com
-credential-ref: env://DEEPSEEK_API_KEY
 models:
-  - id: deepseek-v4-pro
-    version: model-v1
-    provider-model-id: deepseek-v4-pro
-thinking: disabled
-stream: false
+  default: deepseek-responses-flash
+  providers:
+    - id: deepseek
+      endpoint: https://api.deepseek.com
+      credentialRef: env://DEEPSEEK_API_KEY
+      nativeStreaming: true
+      apiBindings:
+        - style: openai-chat-completions
+          dialect: deepseek-openai-chat
+        - style: openai-responses
+          dialect: deepseek-openai-responses
+      models:
+        - id: deepseek-responses-flash
+          providerModelId: deepseek-v4-flash
+          style: openai-responses
+          capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+          contextWindow: 131072
+          maxOutputTokens: 8192
 ```
 
 `DeepSeekDefaults.provider()` 提供无密钥的类型安全示例。生产应用应通过配置构造 Provider，并用 `EnvironmentCredentialResolver` 或自有 Secret Manager Adapter 解析 `CredentialRef`。
 
-首版强制 `thinking.type=disabled`。不能通过调用选项开启思考模式，因为 DeepSeek 在思考模式的 Tool Call 后要求回传 `reasoning_content`，该能力需要独立的持久化与安全设计。
+DeepSeek 默认 `thinking=enabled`、`reasoning_effort=high`；显式 disabled 快照仍受支持。
 
 ## 装配示意
 
@@ -48,10 +259,78 @@ var runtime = new RuntimeCoreBuilder()
 mvn -pl :haifa-agent-model-openai-compatible -am test
 ```
 
-真实冒烟测试默认跳过。显式设置以下变量并执行 Failsafe 才会访问 DeepSeek：
+真实冒烟测试默认跳过。`DeepSeekLiveIT` 必须显式设置以下变量并执行 Failsafe 才会访问
+DeepSeek：
 
 ```text
 HAIFA_DEEPSEEK_LIVE_TEST=true
+DEEPSEEK_API_KEY=<secret>
+```
+
+显式开关启用后，缺少 `DEEPSEEK_API_KEY` 会失败，而不是静默跳过。
+
+Responses Live IT 使用独立显式开关；本地中转只读取通用 OpenAI 变量：
+
+```text
+HAIFA_DEEPSEEK_RESPONSES_LIVE_TEST=true
+DEEPSEEK_API_KEY=<secret>
+HAIFA_DEEPSEEK_RESPONSES_MODEL_ID=deepseek-v4-flash
+
+HAIFA_OPENAI_RESPONSES_LIVE_TEST=true
+OPENAI_BASE_URL=http://127.0.0.1:30000/v1
+OPENAI_API_KEY=<secret>
+OPENAI_MODEL_ID=<model-id>
+
+# 独立探测普通 function Tool Call/Tool Result；不由文本 Live 开关隐式启用
+HAIFA_OPENAI_RESPONSES_TOOL_LIVE_TEST=true
+```
+
+ChatGPT Codex 订阅凭据冒烟由 `OpenAiCodexLiveIT` 覆盖。它默认从操作系统凭据管理器
+读取 `model-auth://openai-codex/default`，并要求显式启用后才进行一次真实调用：
+
+```powershell
+$env:HAIFA_CODEX_LIVE_TEST = 'true'
+$env:HAIFA_CODEX_ORIGINATOR = 'pi'
+$env:HAIFA_CODEX_MODEL_ID = 'gpt-5.6-sol' # optional
+.\build-support\scripts\invoke-haifa-maven.ps1 --layer L3 '--' `
+  -pl :haifa-agent-model-openai-compatible -am `
+  -Pci-integration-only `
+  '-Dit.test=OpenAiCodexLiveIT' `
+  '-Dfailsafe.failIfNoSpecifiedTests=false' verify
+```
+
+若还要允许测试在 Token 过期时刷新，需同时提供本地兼容登录的
+`HAIFA_CODEX_LOCAL_COMPAT_TEST`、`HAIFA_CODEX_OAUTH_CLIENT_ID` 和 `HAIFA_CODEX_REDIRECT_URI`。测试不会输出
+Token、账户 ID、完整请求或供应商原始响应。
+
+百炼 Live IT 还要求显式设置（会产生真实费用）：
+
+```text
+HAIFA_BAILIAN_LIVE_TEST=true
+DASHSCOPE_API_KEY=<secret>
+HAIFA_BAILIAN_WORKSPACE_ID=<required-workspace-id>
+HAIFA_BAILIAN_MODEL_ID=<governed-model-id>
+HAIFA_BAILIAN_REGION=cn-beijing
+```
+
+方舟 Live IT 只调用用户已经创建并授权的 binding，不访问管理面或启停 Endpoint：
+
+```text
+HAIFA_ARK_LIVE_TEST=true
+ARK_API_KEY=<secret>
+HAIFA_ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
+HAIFA_ARK_MODEL_ID=<model-or-endpoint-id>
+HAIFA_ARK_MODEL_REFERENCE_KIND=MODEL_ID|ENDPOINT_ID
+
+HAIFA_SILICONFLOW_LIVE_TEST=true
+SILICONFLOW_API_KEY=<secret>
+
+HAIFA_TOKENRHYTHM_LIVE_TEST=true
+TK_API_KEY=<secret>
+
+# Explicit paid 2x2 comparison: SiliconFlow/DeepSeek x native streaming true/false
+HAIFA_STREAMING_MODE_COMPARISON_LIVE_TEST=true
+SILICONFLOW_API_KEY=<secret>
 DEEPSEEK_API_KEY=<secret>
 ```
 

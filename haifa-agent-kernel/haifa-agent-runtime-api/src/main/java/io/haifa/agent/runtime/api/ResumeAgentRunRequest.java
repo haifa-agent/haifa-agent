@@ -1,6 +1,5 @@
 package io.haifa.agent.runtime.api;
 
-import io.haifa.agent.core.checkpoint.CheckpointId;
 import io.haifa.agent.core.content.ContentPart;
 import io.haifa.agent.core.run.AgentRunId;
 import java.util.List;
@@ -8,15 +7,15 @@ import java.util.Objects;
 
 /** Request to resume a suspended or waiting run with optional additional input. */
 public record ResumeAgentRunRequest(
-        String idempotencyKey,
-        AgentRunId runId,
-        java.util.Optional<CheckpointId> checkpointId,
-        List<ContentPart> inputs) {
+        String idempotencyKey, AgentRunId runId, java.util.OptionalLong expectedRunVersion, List<ContentPart> inputs) {
 
     public ResumeAgentRunRequest {
         idempotencyKey = requireText(idempotencyKey);
         runId = Objects.requireNonNull(runId, "runId must not be null");
-        checkpointId = Objects.requireNonNull(checkpointId, "checkpointId must not be null");
+        expectedRunVersion = Objects.requireNonNull(expectedRunVersion, "expectedRunVersion must not be null");
+        if (expectedRunVersion.isPresent() && expectedRunVersion.getAsLong() < 0) {
+            throw new IllegalArgumentException("expectedRunVersion must not be negative");
+        }
         Objects.requireNonNull(inputs, "inputs must not be null");
         if (inputs.stream().anyMatch(Objects::isNull)) {
             throw new IllegalArgumentException("inputs must not contain null");
@@ -25,11 +24,11 @@ public record ResumeAgentRunRequest(
     }
 
     public ResumeAgentRunRequest(String idempotencyKey, AgentRunId runId, List<ContentPart> inputs) {
-        this(idempotencyKey, runId, java.util.Optional.empty(), inputs);
+        this(idempotencyKey, runId, java.util.OptionalLong.empty(), inputs);
     }
 
     public static ResumeAgentRunRequest withoutInput(AgentRunId runId) {
-        return new ResumeAgentRunRequest("resume-" + runId.value(), runId, java.util.Optional.empty(), List.of());
+        return new ResumeAgentRunRequest("resume-" + runId.value(), runId, java.util.OptionalLong.empty(), List.of());
     }
 
     private static String requireText(String value) {

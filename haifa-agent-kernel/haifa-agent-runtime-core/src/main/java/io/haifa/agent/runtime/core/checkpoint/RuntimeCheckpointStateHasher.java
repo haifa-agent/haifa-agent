@@ -5,31 +5,12 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 
-final class RuntimeCheckpointStateHasher {
+public final class RuntimeCheckpointStateHasher {
     private RuntimeCheckpointStateHasher() {}
 
-    static String digest(RuntimeCheckpointState state) {
-        String canonical = state.runId().value()
-                + "|"
-                + state.nextIteration()
-                + "|"
-                + state.sessionMessageCursor().serialize()
-                + "|"
-                + state.modelConfigurationDigest()
-                + "|"
-                + state.activeSummary()
-                + "|"
-                + state.toolCalls()
-                + "|"
-                + state.forcedContextRebuildAttempts()
-                + "|"
-                + state.selectedMemories()
-                + "|"
-                + state.memoryRetrievalPolicyVersion()
-                + "|"
-                + state.memoryQueryDigest()
-                + "|"
-                + state.capabilityCheckpoints();
+    public static String digest(RuntimeCheckpointState state) {
+        String canonical =
+                state.runId().value() + "|" + state.nextIteration() + "|" + state.forcedContextRebuildAttempts();
         try {
             return "sha256:"
                     + HexFormat.of()

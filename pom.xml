@@ -6,7 +6,7 @@
 
     <groupId>io.haifa</groupId>
     <artifactId>haifa-agent-parent</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>0.1.0</version>
     <packaging>pom</packaging>
 
     <name>Haifa Agent</name>
@@ -18,8 +18,12 @@
         <module>haifa-agent-kernel</module>
         <module>haifa-agent-execution</module>
         <module>haifa-agent-capabilities</module>
+        <module>haifa-agent-sdk</module>
         <module>haifa-agent-integrations</module>
+        <module>haifa-agent-sdk-starter</module>
+        <module>haifa-agent-spring</module>
         <module>haifa-agent-applications</module>
+        <module>haifa-agent-testing</module>
     </modules>
 
     <properties>
@@ -32,10 +36,16 @@
         <junit.version>5.13.4</junit.version>
         <assertj.version>3.27.3</assertj.version>
         <archunit.version>1.4.1</archunit.version>
-        <jackson.version>2.19.2</jackson.version>
+        <jackson.version>2.20.1</jackson.version>
         <slf4j.version>2.0.17</slf4j.version>
         <reactor.version>2024.0.18</reactor.version>
         <mockito.version>5.18.0</mockito.version>
+        <mcp.sdk.version>2.0.0</mcp.sdk.version>
+        <mybatis.version>3.5.19</mybatis.version>
+        <sqlite.jdbc.version>3.53.1.0</sqlite.jdbc.version>
+        <tui4j.jline-backend.version>3.30.0</tui4j.jline-backend.version>
+        <tui4j.version>0.3.3</tui4j.version>
+        <jna.version>5.17.0</jna.version>
 
         <maven.compiler.plugin.version>3.14.0</maven.compiler.plugin.version>
         <maven.surefire.plugin.version>3.5.3</maven.surefire.plugin.version>
@@ -47,9 +57,17 @@
         <maven.source.plugin.version>3.3.1</maven.source.plugin.version>
         <jacoco.version>0.8.13</jacoco.version>
         <spotless.version>2.46.1</spotless.version>
+        <spotless.ratchetFrom></spotless.ratchetFrom>
         <flatten.version>1.7.1</flatten.version>
 
         <skipITs>true</skipITs>
+        <skipUnitTests>false</skipUnitTests>
+        <jacoco.skip>false</jacoco.skip>
+        <argLine></argLine>
+        <haifa.surefire.groups></haifa.surefire.groups>
+        <haifa.surefire.excludedGroups>slow,architecture</haifa.surefire.excludedGroups>
+        <haifa.surefire.reportsDirectory>${project.build.directory}/surefire-reports</haifa.surefire.reportsDirectory>
+        <haifa.failsafe.reportsDirectory>${project.build.directory}/failsafe-reports</haifa.failsafe.reportsDirectory>
     </properties>
 
     <dependencyManagement>
@@ -81,7 +99,17 @@
             </dependency>
             <dependency>
                 <groupId>io.haifa</groupId>
-                <artifactId>haifa-agent-project</artifactId>
+                <artifactId>haifa-agent-project-api</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-project-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-project-host</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
@@ -101,6 +129,11 @@
             </dependency>
             <dependency>
                 <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-execution-host</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
                 <artifactId>haifa-agent-sandbox-api</artifactId>
                 <version>${project.version}</version>
             </dependency>
@@ -116,8 +149,43 @@
             </dependency>
             <dependency>
                 <groupId>io.haifa</groupId>
-                <artifactId>haifa-agent-project-application</artifactId>
+                <artifactId>haifa-agent-web</artifactId>
                 <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-coding-agent</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-coding-terminal</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-personal-assistant-application</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-personal-assistant-server</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-runtime-demo</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.jline</groupId>
+                <artifactId>jline-terminal-jni</artifactId>
+                <version>${tui4j.jline-backend.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.williamcallahan</groupId>
+                <artifactId>tui4j</artifactId>
+                <version>${tui4j.version}</version>
             </dependency>
             <dependency>
                 <groupId>io.haifa</groupId>
@@ -146,6 +214,21 @@
             </dependency>
             <dependency>
                 <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-skill-api</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-skill-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-skill-base</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
                 <artifactId>haifa-agent-model-core</artifactId>
                 <version>${project.version}</version>
             </dependency>
@@ -161,7 +244,67 @@
             </dependency>
             <dependency>
                 <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-sdk</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-sdk-starter</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-spring-boot-autoconfigure</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-spring-boot-starter</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-policy-api</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-policy-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
                 <artifactId>haifa-agent-model-openai-compatible</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-model-anthropic</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-google-gemini</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-local-model-auth</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-local-model-auth-codex-local-compat</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-local-model-auth-antigravity-local-compat</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-mcp</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
@@ -170,11 +313,78 @@
                 <version>${project.version}</version>
             </dependency>
             <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-store-sqlite</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-store-jsonl</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-transport-http</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-test-fixtures</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-integration-tests</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-e2e-tests</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-autonomous-delivery</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.mybatis</groupId>
+                <artifactId>mybatis</artifactId>
+                <version>${mybatis.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.xerial</groupId>
+                <artifactId>sqlite-jdbc</artifactId>
+                <version>${sqlite.jdbc.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>net.java.dev.jna</groupId>
+                <artifactId>jna</artifactId>
+                <version>${jna.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>net.java.dev.jna</groupId>
+                <artifactId>jna-platform</artifactId>
+                <version>${jna.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.modelcontextprotocol.sdk</groupId>
+                <artifactId>mcp-bom</artifactId>
+                <version>${mcp.sdk.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
                 <groupId>com.fasterxml.jackson</groupId>
                 <artifactId>jackson-bom</artifactId>
                 <version>${jackson.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.slf4j</groupId>
+                <artifactId>slf4j-api</artifactId>
+                <version>${slf4j.version}</version>
             </dependency>
             <dependency>
                 <groupId>org.junit</groupId>
@@ -206,6 +416,7 @@
                     <configuration>
                         <parameters>${maven.compiler.parameters}</parameters>
                         <release>${maven.compiler.release}</release>
+                        <useIncrementalCompilation>false</useIncrementalCompilation>
                     </configuration>
                 </plugin>
                 <plugin>
@@ -214,6 +425,11 @@
                     <version>${maven.surefire.plugin.version}</version>
                     <configuration>
                         <useModulePath>false</useModulePath>
+                        <argLine>@{argLine} -Djdk.net.URLClassPath.disableClassPathURLCheck=true</argLine>
+                        <skipTests>${skipUnitTests}</skipTests>
+                        <groups>${haifa.surefire.groups}</groups>
+                        <excludedGroups>${haifa.surefire.excludedGroups}</excludedGroups>
+                        <reportsDirectory>${haifa.surefire.reportsDirectory}</reportsDirectory>
                         <includes>
                             <include>**/*Test.java</include>
                             <include>**/*ContractTest.java</include>
@@ -226,6 +442,8 @@
                     <version>${maven.failsafe.plugin.version}</version>
                     <configuration>
                         <skipITs>${skipITs}</skipITs>
+                        <argLine>@{argLine} -Djdk.net.URLClassPath.disableClassPathURLCheck=true</argLine>
+                        <reportsDirectory>${haifa.failsafe.reportsDirectory}</reportsDirectory>
                         <includes>
                             <include>**/*IT.java</include>
                             <include>**/*LiveIT.java</include>
@@ -257,12 +475,20 @@
                     <groupId>org.jacoco</groupId>
                     <artifactId>jacoco-maven-plugin</artifactId>
                     <version>${jacoco.version}</version>
+                    <configuration>
+                        <skip>${jacoco.skip}</skip>
+                    </configuration>
                 </plugin>
                 <plugin>
                     <groupId>com.diffplug.spotless</groupId>
                     <artifactId>spotless-maven-plugin</artifactId>
                     <version>${spotless.version}</version>
                     <configuration>
+                        <ratchetFrom>${spotless.ratchetFrom}</ratchetFrom>
+                        <upToDateChecking>
+                            <enabled>true</enabled>
+                            <indexFile>${session.executionRootDirectory}/local-tmp/spotless-cache/${project.artifactId}.index</indexFile>
+                        </upToDateChecking>
                         <formats>
                             <format>
                                 <includes>
@@ -360,9 +586,32 @@
 
     <profiles>
         <profile>
+            <id>slow-tests</id>
+            <properties>
+                <skipITs>true</skipITs>
+                <skipUnitTests>false</skipUnitTests>
+                <haifa.surefire.groups>slow</haifa.surefire.groups>
+                <haifa.surefire.excludedGroups></haifa.surefire.excludedGroups>
+            </properties>
+        </profile>
+        <profile>
+            <id>architecture-tests</id>
+            <properties>
+                <skipITs>true</skipITs>
+                <skipUnitTests>false</skipUnitTests>
+                <haifa.surefire.groups>architecture</haifa.surefire.groups>
+                <haifa.surefire.excludedGroups></haifa.surefire.excludedGroups>
+            </properties>
+        </profile>
+        <profile>
             <id>ci-fast</id>
             <properties>
                 <skipITs>true</skipITs>
+                <skipUnitTests>false</skipUnitTests>
+                <jacoco.skip>true</jacoco.skip>
+                <spotless.ratchetFrom></spotless.ratchetFrom>
+                <haifa.surefire.excludedGroups>slow</haifa.surefire.excludedGroups>
+                <haifa.cli.shade.skip>true</haifa.cli.shade.skip>
             </properties>
             <build>
                 <plugins>
@@ -386,6 +635,30 @@
             <id>ci-integration</id>
             <properties>
                 <skipITs>false</skipITs>
+                <skipUnitTests>false</skipUnitTests>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-failsafe-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <goals>
+                                    <goal>integration-test</goal>
+                                    <goal>verify</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
+            <id>ci-integration-only</id>
+            <properties>
+                <skipITs>false</skipITs>
+                <skipUnitTests>true</skipUnitTests>
             </properties>
             <build>
                 <plugins>
@@ -406,6 +679,45 @@
         </profile>
         <profile>
             <id>release</id>
+            <properties>
+                <skipITs>true</skipITs>
+                <skipUnitTests>false</skipUnitTests>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-source-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>attach-sources</id>
+                                <goals>
+                                    <goal>jar-no-fork</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-javadoc-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>attach-javadocs</id>
+                                <goals>
+                                    <goal>jar</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
+            <id>release-artifacts</id>
+            <properties>
+                <skipITs>true</skipITs>
+                <skipUnitTests>true</skipUnitTests>
+            </properties>
             <build>
                 <plugins>
                     <plugin>

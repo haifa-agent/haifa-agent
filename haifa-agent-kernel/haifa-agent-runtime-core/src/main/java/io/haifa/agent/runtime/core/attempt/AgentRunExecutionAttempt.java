@@ -2,6 +2,8 @@ package io.haifa.agent.runtime.core.attempt;
 
 import io.haifa.agent.core.checkpoint.CheckpointId;
 import io.haifa.agent.core.error.AgentError;
+import io.haifa.agent.core.persistence.DomainReconstitution;
+import io.haifa.agent.core.persistence.DomainReconstitutionException;
 import io.haifa.agent.core.run.AgentRunId;
 import java.time.Instant;
 import java.util.Objects;
@@ -38,6 +40,96 @@ public final class AgentRunExecutionAttempt {
                 .orElse(null);
     }
 
+    public static AgentRunExecutionAttempt reconstitute(ExecutionAttemptPersistenceSnapshot snapshot) {
+        Objects.requireNonNull(snapshot, "snapshot must not be null");
+        DomainReconstitution.requireSupportedVersion(snapshot.schemaVersion(), "AgentRunExecutionAttempt");
+        ExecutionAttemptStatus restoredStatus =
+                DomainReconstitution.enumValue(ExecutionAttemptStatus.class, snapshot.status(), "attempt status");
+        DomainReconstitution.requireVersion(snapshot.version(), "attempt");
+        validatePersistedState(snapshot, restoredStatus);
+        try {
+            AgentRunExecutionAttempt attempt = new AgentRunExecutionAttempt(
+                    snapshot.attemptId(),
+                    snapshot.runId(),
+                    snapshot.attemptNumber(),
+                    snapshot.createdAt(),
+                    Optional.ofNullable(snapshot.resumedFromCheckpointId()));
+            attempt.status = restoredStatus;
+            attempt.startedAt = snapshot.startedAt();
+            attempt.heartbeatAt = snapshot.heartbeatAt();
+            attempt.completedAt = snapshot.completedAt();
+            attempt.workerId = snapshot.workerId();
+            attempt.error = snapshot.error();
+            attempt.version = snapshot.version();
+            return attempt;
+        } catch (DomainReconstitutionException exception) {
+            throw exception;
+        } catch (IllegalArgumentException | NullPointerException exception) {
+            throw DomainReconstitution.invalid("AgentRunExecutionAttempt", exception);
+        }
+    }
+
+    private static void validatePersistedState(
+            ExecutionAttemptPersistenceSnapshot snapshot, ExecutionAttemptStatus status) {
+        Instant createdAt = snapshot.createdAt();
+        Instant updatedAt = snapshot.completedAt() != null
+                ? snapshot.completedAt()
+                : snapshot.heartbeatAt() != null
+                        ? snapshot.heartbeatAt()
+                        : snapshot.startedAt() != null ? snapshot.startedAt() : createdAt;
+        DomainReconstitution.requireChronological(createdAt, updatedAt, "attempt");
+        DomainReconstitution.requireWithinHistory(snapshot.startedAt(), createdAt, updatedAt, "startedAt", "attempt");
+        DomainReconstitution.requireWithinHistory(
+                snapshot.heartbeatAt(), createdAt, updatedAt, "heartbeatAt", "attempt");
+        if (snapshot.workerId() != null) {
+            requireText(snapshot.workerId(), "workerId");
+        }
+        boolean startedTuple =
+                snapshot.startedAt() != null && snapshot.heartbeatAt() != null && snapshot.workerId() != null;
+        boolean noStartedTuple =
+                snapshot.startedAt() == null && snapshot.heartbeatAt() == null && snapshot.workerId() == null;
+        boolean valid =
+                switch (status) {
+                    case QUEUED ->
+                        noStartedTuple
+                                && snapshot.completedAt() == null
+                                && snapshot.error() == null
+                                && snapshot.version() == 0;
+                    case RUNNING ->
+                        startedTuple
+                                && snapshot.completedAt() == null
+                                && snapshot.error() == null
+                                && snapshot.version() >= 1;
+                    case SUCCEEDED, PAUSED, CANCELLED, ABANDONED ->
+                        (startedTuple || noStartedTuple)
+                                && snapshot.completedAt() != null
+                                && snapshot.error() == null
+                                && snapshot.version() >= 1;
+                    case FAILED ->
+                        (startedTuple || noStartedTuple) && snapshot.completedAt() != null && snapshot.version() >= 1;
+                };
+        if (!valid) {
+            DomainReconstitution.invalid("attempt state is inconsistent for status " + status);
+        }
+    }
+
+    public ExecutionAttemptPersistenceSnapshot persistenceSnapshot() {
+        return new ExecutionAttemptPersistenceSnapshot(
+                DomainReconstitution.SCHEMA_VERSION,
+                attemptId,
+                runId,
+                attemptNumber,
+                createdAt,
+                resumedFromCheckpointId,
+                status.name(),
+                startedAt,
+                heartbeatAt,
+                completedAt,
+                workerId,
+                error,
+                version);
+    }
+
     public void start(String workerId, Instant at) {
         require(ExecutionAttemptStatus.QUEUED);
         this.workerId = requireText(workerId, "workerId");
@@ -69,7 +161,7 @@ public final class AgentRunExecutionAttempt {
 
     private Instant chronological(Instant at) {
         Objects.requireNonNull(at, "at must not be null");
-        Instant floor = startedAt == null ? createdAt : startedAt;
+        Instant floor = heartbeatAt != null ? heartbeatAt : startedAt == null ? createdAt : startedAt;
         if (at.isBefore(floor)) throw new IllegalArgumentException("attempt time must not move backwards");
         return at;
     }

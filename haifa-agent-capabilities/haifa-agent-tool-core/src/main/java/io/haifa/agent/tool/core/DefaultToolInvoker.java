@@ -2,9 +2,10 @@ package io.haifa.agent.tool.core;
 
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.tool.api.FrozenToolBinding;
-import io.haifa.agent.tool.api.ToolInvocationException;
 import io.haifa.agent.tool.api.ToolInvocationRequest;
 import io.haifa.agent.tool.api.ToolInvoker;
+import io.haifa.agent.tool.api.ToolReconciliation;
+import io.haifa.agent.tool.api.ToolReconciliationRequest;
 import java.util.Objects;
 
 public final class DefaultToolInvoker implements ToolInvoker {
@@ -21,15 +22,21 @@ public final class DefaultToolInvoker implements ToolInvoker {
     }
 
     @Override
+    public ToolReconciliation reconcile(ToolReconciliationRequest request) {
+        FrozenToolBinding match = requireBinding(request.binding());
+        return catalog.provider(match.coordinate().providerId()).reconcile(request);
+    }
+
+    @Override
     public void validateBinding(FrozenToolBinding binding) {
         requireBinding(binding);
     }
 
     private FrozenToolBinding requireBinding(FrozenToolBinding binding) {
         var frozen = catalog.findByCoordinate(binding.coordinate())
-                .orElseThrow(() -> new ToolInvocationException("tool coordinate is not in the frozen catalog"));
+                .orElseThrow(() -> new IllegalStateException("tool coordinate is not in the frozen catalog"));
         if (!frozen.equals(binding)) {
-            throw new ToolInvocationException("tool binding differs from the frozen catalog");
+            throw new IllegalStateException("tool binding differs from the frozen catalog");
         }
         return frozen;
     }

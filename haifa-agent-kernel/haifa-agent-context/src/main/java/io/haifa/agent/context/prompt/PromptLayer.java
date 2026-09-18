@@ -6,5 +6,6 @@ public enum PromptLayer {
     PLATFORM_POLICY,
     AGENT_DEFINITION,
     RUNTIME_CONTROL,
-    TOOL_PROTOCOL
+    TOOL_PROTOCOL,
+    SKILL
 }

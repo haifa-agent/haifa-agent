@@ -6,7 +6,7 @@
     <parent>
         <groupId>io.haifa</groupId>
         <artifactId>haifa-agent-parent</artifactId>
-        <version>0.1.0-SNAPSHOT</version>
+        <version>0.1.0</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
@@ -59,6 +59,8 @@
                                         <exclude>org.springframework.ai:*</exclude>
                                         <exclude>com.alibaba.cloud.ai:*</exclude>
                                         <exclude>io.haifa:haifa-agent-product-*</exclude>
+                                        <exclude>io.haifa:haifa-agent-project-core</exclude>
+                                        <exclude>io.haifa:haifa-agent-project-host</exclude>
                                         <exclude>io.haifa:haifa-agent-runtime-core</exclude>
                                         <exclude>io.haifa:haifa-agent-admin-*</exclude>
                                     </excludes>

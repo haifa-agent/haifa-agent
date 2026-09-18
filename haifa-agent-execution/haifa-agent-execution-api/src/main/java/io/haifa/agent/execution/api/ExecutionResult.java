@@ -1,6 +1,5 @@
 package io.haifa.agent.execution.api;
 
-import io.haifa.agent.project.changeset.FileChangeSetId;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
@@ -13,11 +12,73 @@ public record ExecutionResult(
         Instant endedAt,
         ExecutionOutput stdout,
         ExecutionOutput stderr,
-        FileChangeSetId fileChangeSetId,
         String sandboxSessionRef,
         ResourceUsageSummary resourceUsage,
         ExecutionFailure failure,
-        boolean replayed) {
+        boolean replayed,
+        boolean scratchProvisioned,
+        boolean scratchCleanupFailed,
+        boolean outputIncomplete) {
+    public ExecutionResult(
+            ExecutionId id,
+            ExecutionStatus status,
+            Integer exitCode,
+            Instant startedAt,
+            Instant endedAt,
+            ExecutionOutput stdout,
+            ExecutionOutput stderr,
+            String sandboxSessionRef,
+            ResourceUsageSummary resourceUsage,
+            ExecutionFailure failure,
+            boolean replayed,
+            boolean scratchProvisioned,
+            boolean scratchCleanupFailed) {
+        this(
+                id,
+                status,
+                exitCode,
+                startedAt,
+                endedAt,
+                stdout,
+                stderr,
+                sandboxSessionRef,
+                resourceUsage,
+                failure,
+                replayed,
+                scratchProvisioned,
+                scratchCleanupFailed,
+                false);
+    }
+
+    public ExecutionResult(
+            ExecutionId id,
+            ExecutionStatus status,
+            Integer exitCode,
+            Instant startedAt,
+            Instant endedAt,
+            ExecutionOutput stdout,
+            ExecutionOutput stderr,
+            String sandboxSessionRef,
+            ResourceUsageSummary resourceUsage,
+            ExecutionFailure failure,
+            boolean replayed) {
+        this(
+                id,
+                status,
+                exitCode,
+                startedAt,
+                endedAt,
+                stdout,
+                stderr,
+                sandboxSessionRef,
+                resourceUsage,
+                failure,
+                replayed,
+                false,
+                false,
+                false);
+    }
+
     public ExecutionResult {
         id = Objects.requireNonNull(id, "id must not be null");
         status = Objects.requireNonNull(status, "status must not be null");
@@ -34,8 +95,8 @@ public record ExecutionResult(
         return Optional.ofNullable(exitCode);
     }
 
-    public Optional<FileChangeSetId> optionalFileChangeSetId() {
-        return Optional.ofNullable(fileChangeSetId);
+    public boolean isExited() {
+        return status == ExecutionStatus.EXITED;
     }
 
     public Optional<ExecutionFailure> optionalFailure() {
@@ -51,10 +112,12 @@ public record ExecutionResult(
                 endedAt,
                 stdout,
                 stderr,
-                fileChangeSetId,
                 sandboxSessionRef,
                 resourceUsage,
                 failure,
-                true);
+                true,
+                scratchProvisioned,
+                scratchCleanupFailed,
+                outputIncomplete);
     }
 }

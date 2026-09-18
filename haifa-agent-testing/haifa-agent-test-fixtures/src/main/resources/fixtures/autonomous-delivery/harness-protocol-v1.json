@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "protocolId": "haifa-autonomous-delivery-harness",
+  "protocolVersion": "2.0.0",
+  "matrixBinding": {
+    "explicitCombinationRequired": true,
+    "campaignSchemaVersion": 4,
+    "phaseSummarySchemaVersion": 4,
+    "runManifestSchemaVersion": 4,
+    "matrixRefRequired": true,
+    "agentProfileRequired": true,
+    "requiredFields": [
+      "id",
+      "platform",
+      "terminalBackend",
+      "sandboxProfile",
+      "networkPolicy",
+      "shell",
+      "isolationAssurance",
+      "hostProfile",
+      "maxParallelExternalCalls"
+    ],
+    "campaignAndGateCombinationMustMatch": true,
+    "hostProfileFallbackAllowed": false,
+    "rawMavenXmlRetained": false,
+    "mavenLogHostPathsRedacted": true
+  },
+  "repositoryBinding": {
+    "productCommitRequired": true,
+    "testConfigCommitRequired": true,
+    "cleanWorktreesRequiredForCampaignAndExecute": true,
+    "untrackedFilesCountAsDirty": true,
+    "revisionStabilityCheckedAfterExecute": true
+  },
+  "caseIsolation": {
+    "freshWorkspace": true,
+    "freshRuntimeDatabase": true,
+    "freshTrace": true,
+    "freshTranscript": true,
+    "freshRecording": true,
+    "freshScratch": true,
+    "freshAgentSession": true,
+    "acceptanceOutsideWorkspace": true,
+    "failedRunsRetained": true
+  },
+  "hardBudget": {
+    "maxWallTimeMillis": 1800000,
+    "maxIterations": 80,
+    "maxToolCalls": 96,
+    "maxModelCalls": 64,
+    "maxParallelExternalCalls": 1
+  },
+  "behaviorGates": {
+    "maximumEquivalentFailureAdaptations": 3,
+    "terminateOnEquivalentFailureAttempt": 4,
+    "maximumModelCallsAfterLastProgress": 3,
+    "maximumCompletionRepairs": 2,
+    "reserveDiffAndMinimalValidationForChangeTasks": true
+  },
+  "requiredRepeatArtifacts": [
+    "run-result.json",
+    "attachments",
+    "secret-scan.json",
+    "manifest.sha256"
+  ],
+  "comparisonDimensions": [
+    "hiddenAcceptance",
+    "modelCalls",
+    "toolCalls",
+    "toolFailures",
+    "maxSameFailureCluster",
+    "callsAfterLastProgress",
+    "firstWorkspaceChange",
+    "completionRepairs",
+    "inputTokens",
+    "outputTokens",
+    "wallTimeMillis",
+    "failureAtomicity"
+  ]
+}

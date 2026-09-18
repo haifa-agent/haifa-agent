@@ -18,4 +18,8 @@ public enum RunControlSignal {
     public int priority() {
         return priority;
     }
+
+    public boolean stopsExecution() {
+        return this != NONE && this != PAUSE;
+    }
 }

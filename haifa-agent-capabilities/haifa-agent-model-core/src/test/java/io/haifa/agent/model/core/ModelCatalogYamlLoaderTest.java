@@ -1,0 +1,356 @@
+package io.haifa.agent.model.core;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
+
+import io.haifa.agent.model.api.CredentialRef;
+import io.haifa.agent.model.api.ModelApiStyles;
+import io.haifa.agent.model.api.ModelAuthenticationMethod;
+import io.haifa.agent.model.api.ModelCapability;
+import io.haifa.agent.model.api.ModelDefinitionId;
+import io.haifa.agent.model.api.ModelProfileStatus;
+import io.haifa.agent.model.api.ModelProviderId;
+import io.haifa.agent.model.api.ResolvedModelSnapshot;
+import java.io.ByteArrayInputStream;
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Set;
+import org.junit.jupiter.api.Test;
+
+class ModelCatalogYamlLoaderTest {
+    @Test
+    void suppliesTheCatalogProfileForAnExactFrozenBindingAndRejectsFactDrift() {
+        ModelCatalogManifest catalog = loader(resources()).load();
+        ResolvedModelSnapshot matching = ResolvedModelSnapshot.create(
+                new ModelProviderId("openai"),
+                "deployment",
+                new ModelDefinitionId("openai-chat"),
+                "deployment",
+                "openai-chat-model",
+                ModelApiStyles.OPENAI_CHAT_ADAPTER,
+                "1.0.0",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                "standard",
+                URI.create("https://api.example.test/v1"),
+                new CredentialRef("env://OPENAI_API_KEY"),
+                true,
+                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
+                8192,
+                4096,
+                Map.of(),
+                Map.of());
+
+        assertThat(catalog.profileFor(matching))
+                .hasValueSatisfying(profile -> assertThat(profile.status()).isEqualTo(ModelProfileStatus.VERIFIED));
+        ResolvedModelSnapshot drifted = ResolvedModelSnapshot.create(
+                new ModelProviderId("openai"),
+                "deployment",
+                new ModelDefinitionId("openai-chat"),
+                "deployment",
+                "different-provider-model",
+                ModelApiStyles.OPENAI_CHAT_ADAPTER,
+                "1.0.0",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                "standard",
+                URI.create("https://api.example.test/v1"),
+                new CredentialRef("env://OPENAI_API_KEY"),
+                true,
+                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
+                8192,
+                4096,
+                Map.of(),
+                Map.of());
+
+        assertThat(catalog.profileFor(drifted)).isEmpty();
+    }
+
+    @Test
+    void loadsVerifiedBindingsForOpenAiAnthropicAndGeminiStyles() {
+        ModelCatalogManifest catalog = loader(resources()).load();
+
+        assertThat(catalog.providers()).hasSize(3);
+        assertThat(catalog.binding("openai-chat").orElseThrow().definition().style())
+                .isEqualTo(ModelApiStyles.OPENAI_CHAT_COMPLETIONS);
+        assertThat(catalog.binding("anthropic-messages")
+                        .orElseThrow()
+                        .definition()
+                        .style())
+                .isEqualTo(ModelApiStyles.ANTHROPIC_MESSAGES);
+        assertThat(catalog.binding("gemini-generate").orElseThrow().definition().style())
+                .isEqualTo(ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT);
+        assertThat(catalog.binding("openai-chat").orElseThrow().profile().status())
+                .isEqualTo(ModelProfileStatus.VERIFIED);
+        assertThat(catalog.binding("gemini-generate").orElseThrow().definition().capabilities())
+                .containsExactlyInAnyOrder(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING);
+        assertThat(catalog.digest()).startsWith("sha256:");
+    }
+
+    @Test
+    void loadsPackagedRepresentativeBindings() {
+        ModelCatalogManifest catalog = ModelCatalogYamlLoader.fromClasspath(
+                        getClass().getClassLoader(),
+                        Map.of(
+                                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                                        Set.of(
+                                                "deepseek-openai-chat",
+                                                "aliyun-bailian-openai-chat",
+                                                "siliconflow-openai-chat",
+                                                "kimi-openai-chat",
+                                                "zhipu-openai-chat",
+                                                "tokenrhythm-openai-chat"),
+                                ModelApiStyles.OPENAI_RESPONSES,
+                                        Set.of("deepseek-openai-responses", "openai-codex-responses"),
+                                ModelApiStyles.ANTHROPIC_MESSAGES, Set.of("deepseek-anthropic-messages"),
+                                ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT, Set.of("antigravity-direct")),
+                        Map.of(
+                                new ModelProviderId("deepseek"), Set.of(ModelAuthenticationMethod.API_KEY),
+                                new ModelProviderId("openai-codex"), Set.of(ModelAuthenticationMethod.EXTERNAL_LOGIN),
+                                new ModelProviderId("aliyun-bailian"), Set.of(ModelAuthenticationMethod.API_KEY),
+                                new ModelProviderId("siliconflow"), Set.of(ModelAuthenticationMethod.API_KEY),
+                                new ModelProviderId("kimi"), Set.of(ModelAuthenticationMethod.API_KEY),
+                                new ModelProviderId("zhipu"), Set.of(ModelAuthenticationMethod.API_KEY),
+                                new ModelProviderId("tokenrhythm"), Set.of(ModelAuthenticationMethod.API_KEY),
+                                new ModelProviderId("google-antigravity"),
+                                        Set.of(ModelAuthenticationMethod.EXTERNAL_LOGIN)))
+                .load();
+
+        assertThat(catalog.binding("deepseek-chat-pro").orElseThrow().profile().allowedReasoningEfforts())
+                .containsExactlyInAnyOrder(
+                        io.haifa.agent.model.api.ModelReasoningEffort.HIGH,
+                        io.haifa.agent.model.api.ModelReasoningEffort.MAX);
+        assertThat(catalog.binding("antigravity-gemini").orElseThrow().profile().imageInput())
+                .isPresent();
+        assertThat(catalog.binding("qwen3-vl-plus").orElseThrow().profile().imageInput())
+                .isPresent();
+        assertThat(catalog.binding("deepseek-v4-flash-vision-exp")
+                        .orElseThrow()
+                        .profile()
+                        .imageInput()
+                        .orElseThrow()
+                        .maxImagesPerRequest())
+                .isEqualTo(600);
+        assertThat(catalog.binding("deepseek-v4-flash-vision-exp")
+                        .orElseThrow()
+                        .definition()
+                        .capabilities())
+                .containsExactlyInAnyOrder(
+                        ModelCapability.TEXT_CHAT,
+                        ModelCapability.IMAGE_UPLOAD_INPUT,
+                        ModelCapability.IMAGE_URL_INPUT,
+                        ModelCapability.TOOL_CALLING);
+        assertThat(catalog.binding("siliconflow-glm-5-2")
+                        .orElseThrow()
+                        .profile()
+                        .contextWindowTokens())
+                .isEqualTo(1_048_576);
+        assertThat(catalog.binding("glm-5.3").orElseThrow().profile().allowedReasoningEfforts())
+                .containsExactlyInAnyOrder(
+                        io.haifa.agent.model.api.ModelReasoningEffort.LOW,
+                        io.haifa.agent.model.api.ModelReasoningEffort.HIGH,
+                        io.haifa.agent.model.api.ModelReasoningEffort.MAX);
+        assertThat(catalog.binding("glm-5.3-flash").orElseThrow().definition().capabilities())
+                .containsExactlyInAnyOrder(
+                        ModelCapability.TEXT_CHAT,
+                        ModelCapability.IMAGE_UPLOAD_INPUT,
+                        ModelCapability.IMAGE_URL_INPUT,
+                        ModelCapability.TOOL_CALLING,
+                        ModelCapability.STRUCTURED_OUTPUT,
+                        ModelCapability.REASONING);
+        assertThat(catalog.binding("glm-5.3-flash").orElseThrow().profile().imageInput())
+                .isPresent();
+        assertThat(catalog.binding("gpt-5.6-sol").orElseThrow().definition().style())
+                .isEqualTo(ModelApiStyles.OPENAI_RESPONSES);
+        assertThat(catalog.binding("tokenrhythm-deepseek-v4-flash-0731")
+                        .orElseThrow()
+                        .profile()
+                        .contextWindowTokens())
+                .isEqualTo(1_000_000);
+        assertThat(catalog.binding("gpt-5.6-sol").orElseThrow().definition().capabilities())
+                .contains(ModelCapability.STRUCTURED_OUTPUT);
+        assertThat(catalog.binding("gpt-5.6-terra").orElseThrow().definition().capabilities())
+                .contains(ModelCapability.STRUCTURED_OUTPUT);
+        assertThat(catalog.binding("gpt-5.6-luna").orElseThrow().definition().capabilities())
+                .contains(ModelCapability.STRUCTURED_OUTPUT);
+        assertThat(catalog.binding("gpt-5.3-codex-spark")
+                        .orElseThrow()
+                        .profile()
+                        .contextWindowTokens())
+                .isEqualTo(128_000);
+        assertThat(catalog.binding("antigravity-gemini-3-8-flash")
+                        .orElseThrow()
+                        .profile()
+                        .contextWindowTokens())
+                .isEqualTo(1_048_576);
+        assertThat(catalog.binding("antigravity-gemini-3-7-flash")
+                        .orElseThrow()
+                        .profile()
+                        .maximumOutputTokens())
+                .isEqualTo(65_536);
+        assertThat(catalog.binding("antigravity-gemini-3-1-pro-preview")
+                        .orElseThrow()
+                        .definition()
+                        .providerModelId())
+                .isEqualTo("gemini-pro-agent");
+    }
+
+    @Test
+    void rejectsUnknownBindingField() {
+        Map<String, String> resources = resources();
+        resources.put(
+                "META-INF/haifa/model-catalog/providers/openai/bindings/openai-chat.yaml",
+                binding("openai-chat", "openai-chat-completions", "standard") + "\nunknown: value\n");
+
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> loader(resources).load())
+                .withMessageContaining("unknown field")
+                .withMessageContaining("unknown");
+    }
+
+    @Test
+    void rejectsUnregisteredDialect() {
+        Map<String, String> resources = resources();
+        resources.put(
+                "META-INF/haifa/model-catalog/providers/openai/bindings/openai-chat.yaml",
+                binding("openai-chat", "openai-chat-completions", "not-registered"));
+
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> loader(resources).load())
+                .withMessageContaining("dialect is not registered");
+    }
+
+    @Test
+    void rejectsAuthenticationMethodNotRegisteredForProvider() {
+        Map<String, String> resources = resources();
+        resources.put(
+                "META-INF/haifa/model-catalog/providers/openai/provider.yaml",
+                provider("openai", "openai-chat", "EXTERNAL_LOGIN"));
+
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> loader(resources).load())
+                .withMessageContaining("authentication method is not registered");
+    }
+
+    @Test
+    void rejectsYamlAnchorsAndAliases() {
+        Map<String, String> resources = resources();
+        resources.put(
+                "META-INF/haifa/model-catalog/providers/openai/bindings/openai-chat.yaml",
+                binding("openai-chat", "openai-chat-completions", "standard")
+                        .replace("dialect: standard", "dialect: &registered standard"));
+
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> loader(resources).load())
+                .withMessageContaining("YAML anchors and aliases are not allowed");
+    }
+
+    @Test
+    void rejectsDuplicateBindingIdAcrossProviders() {
+        Map<String, String> resources = resources();
+        resources.put(
+                "META-INF/haifa/model-catalog/providers/anthropic/bindings/anthropic-messages.yaml",
+                binding("openai-chat", "anthropic-messages", "standard"));
+
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> loader(resources).load())
+                .withMessageContaining("duplicate binding id");
+    }
+
+    private static ModelCatalogYamlLoader loader(Map<String, String> resources) {
+        return new ModelCatalogYamlLoader(
+                resource -> {
+                    String value = resources.get(resource);
+                    if (value == null) throw new IllegalArgumentException("missing catalog resource: " + resource);
+                    return new ByteArrayInputStream(value.getBytes(StandardCharsets.UTF_8));
+                },
+                Map.of(
+                        ModelApiStyles.OPENAI_CHAT_COMPLETIONS, Set.of("standard"),
+                        ModelApiStyles.ANTHROPIC_MESSAGES, Set.of("standard"),
+                        ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT, Set.of("standard")),
+                Map.of(
+                        new ModelProviderId("openai"), Set.of(ModelAuthenticationMethod.API_KEY),
+                        new ModelProviderId("anthropic"), Set.of(ModelAuthenticationMethod.API_KEY),
+                        new ModelProviderId("gemini"), Set.of(ModelAuthenticationMethod.EXTERNAL_LOGIN)));
+    }
+
+    private static Map<String, String> resources() {
+        Map<String, String> resources = new LinkedHashMap<>();
+        resources.put(
+                "META-INF/haifa/model-catalog/catalog.yaml",
+                """
+                schemaVersion: haifa.model-catalog/v1
+                providers:
+                  - resource: providers/openai/provider.yaml
+                  - resource: providers/anthropic/provider.yaml
+                  - resource: providers/gemini/provider.yaml
+                """);
+        resources.put(
+                "META-INF/haifa/model-catalog/providers/openai/provider.yaml",
+                provider("openai", "openai-chat", "API_KEY"));
+        resources.put(
+                "META-INF/haifa/model-catalog/providers/anthropic/provider.yaml",
+                provider("anthropic", "anthropic-messages", "API_KEY"));
+        resources.put(
+                "META-INF/haifa/model-catalog/providers/gemini/provider.yaml",
+                provider("gemini", "gemini-generate", "EXTERNAL_LOGIN"));
+        resources.put(
+                "META-INF/haifa/model-catalog/providers/openai/bindings/openai-chat.yaml",
+                binding("openai-chat", "openai-chat-completions", "standard"));
+        resources.put(
+                "META-INF/haifa/model-catalog/providers/anthropic/bindings/anthropic-messages.yaml",
+                binding("anthropic-messages", "anthropic-messages", "standard"));
+        resources.put(
+                "META-INF/haifa/model-catalog/providers/gemini/bindings/gemini-generate.yaml",
+                binding("gemini-generate", "google-gemini-generate-content", "standard"));
+        return resources;
+    }
+
+    private static String provider(String providerId, String bindingId, String authenticationMethod) {
+        return """
+                schemaVersion: haifa.model-catalog-provider/v1
+                providerId: %s
+                version: "1.0"
+                displayName: %s Provider
+                status: ACTIVE
+                authenticationMethods: [%s]
+                bindings:
+                  - resource: bindings/%s.yaml
+                """
+                .formatted(providerId, providerId, authenticationMethod, bindingId);
+    }
+
+    private static String binding(String bindingId, String apiStyle, String dialect) {
+        return """
+                schemaVersion: haifa.model-catalog-binding/v1
+                bindingId: %s
+                version: "1.0"
+                providerModelId: %s-model
+                displayName: %s display
+                status: ACTIVE
+                apiStyle: %s
+                dialect: %s
+                capabilities: [TEXT_CHAT, TOOL_CALLING]
+                profile:
+                  version: "2.0"
+                  reasoningBehavior: NONE
+                  allowedReasoningModes: [DISABLED]
+                  allowedReasoningEfforts: []
+                  maximumReasoningTokens: null
+                  minimumOutputTokens: 1
+                  maximumOutputTokens: 4096
+                  contextWindowTokens: 8192
+                  toolReasoningContinuationRequired: false
+                  nativeStreaming: true
+                  usageStreaming: true
+                  reasoningStreaming: false
+                  partialOutputFailureBehavior: NON_RETRYABLE
+                  inputModalities: [TEXT]
+                  outputModalities: [TEXT]
+                  imageInput: null
+                  status: VERIFIED
+                  lastVerifiedOn: "2026-09-03"
+                """
+                .formatted(bindingId, bindingId, bindingId, apiStyle, dialect);
+    }
+}

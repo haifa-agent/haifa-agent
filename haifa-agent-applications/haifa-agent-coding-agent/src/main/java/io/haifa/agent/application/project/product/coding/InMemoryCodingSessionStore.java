@@ -1,0 +1,560 @@
+package io.haifa.agent.application.project.product.coding;
+
+import io.haifa.agent.core.reference.PrincipalRef;
+import io.haifa.agent.core.reference.TenantRef;
+import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.core.session.AgentSessionStatus;
+import io.haifa.agent.project.domain.ProjectId;
+import io.haifa.agent.runtime.api.RunEventCursor;
+import java.time.Instant;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.OptionalLong;
+
+public final class InMemoryCodingSessionStore implements CodingSessionStore {
+    private final Map<AgentSessionId, CodingModelPreference> modelPreferences = new LinkedHashMap<>();
+    private final Map<String, CodingCommandBinding> commands = new LinkedHashMap<>();
+    private final Map<AgentSessionId, CodingSessionActivity> activities = new LinkedHashMap<>();
+    private final Map<String, CodingFollowUp> followUps = new LinkedHashMap<>();
+    private final Map<AgentSessionId, RunEventCursor> eventCursors = new LinkedHashMap<>();
+
+    @Override
+    public synchronized CodingCommandBinding reserveCommand(CodingCommandBinding candidate) {
+        String key = commandKey(candidate);
+        CodingCommandBinding existing = commands.get(key);
+        if (existing != null) {
+            if (!sameRequest(existing, candidate)) throw conflict("idempotency key is bound to another request");
+            return existing;
+        }
+        commands.put(key, candidate);
+        return candidate;
+    }
+
+    @Override
+    public synchronized CodingCommandBinding completeCommand(String dispatchKey, AgentRunId runId) {
+        var entry = commands.entrySet().stream()
+                .filter(value -> value.getValue().dispatchKey().equals(dispatchKey))
+                .findFirst()
+                .orElseThrow(() -> conflict("coding command is unavailable"));
+        CodingCommandBinding current = entry.getValue();
+        if (current.runId().isPresent() && !current.runId().orElseThrow().equals(runId)) {
+            throw conflict("coding command resolved to another Run");
+        }
+        CodingCommandBinding completed = new CodingCommandBinding(
+                current.callerScopeDigest(),
+                current.operation(),
+                current.idempotencyKeyDigest(),
+                current.requestDigest(),
+                current.dispatchKey(),
+                current.sessionId(),
+                current.projectId(),
+                current.message(),
+                current.attachments(),
+                Optional.of(runId),
+                current.createdAt());
+        entry.setValue(completed);
+        return completed;
+    }
+
+    @Override
+    public synchronized Optional<CodingCommandBinding> findCommandByDispatchKey(String dispatchKey) {
+        return commands.values().stream()
+                .filter(value -> value.dispatchKey().equals(dispatchKey))
+                .findFirst();
+    }
+
+    @Override
+    public synchronized Optional<CodingCommandBinding> findCommandByRunId(AgentRunId runId) {
+        return commands.values().stream()
+                .filter(value -> (value.operation().equals("create-session")
+                                || value.operation().equals("submit-turn"))
+                        && value.runId().filter(runId::equals).isPresent())
+                .findFirst();
+    }
+
+    @Override
+    public synchronized Optional<CodingCommandBinding> findPendingCommand(AgentSessionId sessionId) {
+        return commands.values().stream()
+                .filter(value -> (value.operation().equals("create-session")
+                                || value.operation().equals("submit-turn"))
+                        && value.sessionId().equals(sessionId)
+                        && value.runId().isEmpty())
+                .reduce((first, second) -> second);
+    }
+
+    @Override
+    public synchronized CodingSessionActivity createActivity(CodingSessionActivity activity) {
+        CodingSessionActivity existing = activities.putIfAbsent(activity.sessionId(), activity);
+        if (existing != null && !existing.equals(activity)) throw conflict("coding session activity already exists");
+        return existing == null ? activity : existing;
+    }
+
+    @Override
+    public synchronized Optional<CodingSessionActivity> findActivity(AgentSessionId sessionId) {
+        return Optional.ofNullable(activities.get(sessionId));
+    }
+
+    @Override
+    public synchronized List<CodingSessionActivity> listActivities(
+            TenantRef tenant, PrincipalRef principal, ProjectId projectId, CodingSessionQuery query) {
+        Comparator<CodingSessionActivity> ordering = Comparator.comparing(CodingSessionActivity::lastActivityAt)
+                .thenComparing(value -> value.sessionId().value())
+                .reversed();
+        return activities.values().stream()
+                .filter(value -> value.tenant().equals(tenant)
+                        && value.principal().equals(principal)
+                        && value.projectId().equals(projectId)
+                        && value.status() != AgentSessionStatus.DELETED)
+                .filter(value -> query.text()
+                        .map(text -> {
+                            String needle = text.toLowerCase(java.util.Locale.ROOT);
+                            return value.displayName()
+                                            .toLowerCase(java.util.Locale.ROOT)
+                                            .contains(needle)
+                                    || value.sessionId()
+                                            .value()
+                                            .toLowerCase(java.util.Locale.ROOT)
+                                            .contains(needle);
+                        })
+                        .orElse(true))
+                .filter(value ->
+                        query.after().map(cursor -> after(value, cursor)).orElse(true))
+                .sorted(ordering)
+                .limit((long) query.limit() + 1)
+                .toList();
+    }
+
+    @Override
+    public synchronized CodingSessionActivity rename(
+            AgentSessionId sessionId, long expectedRevision, String displayName, Instant updatedAt) {
+        CodingSessionActivity current = requireActivity(sessionId);
+        requireRevision(current, expectedRevision);
+        if (current.status() == AgentSessionStatus.DELETED) {
+            throw conflict("deleted coding session cannot be renamed");
+        }
+        CodingSessionActivity updated = copyActivity(
+                current,
+                displayName,
+                current.status(),
+                current.activeRunId(),
+                current.activeRunVersion(),
+                current.activeDispatchKey(),
+                updatedAt);
+        activities.put(sessionId, updated);
+        return updated;
+    }
+
+    @Override
+    public synchronized CodingSessionActivity updateStatus(
+            AgentSessionId sessionId, long expectedRevision, AgentSessionStatus status, Instant updatedAt) {
+        CodingSessionActivity current = requireActivity(sessionId);
+        requireRevision(current, expectedRevision);
+        CodingSessionActivity updated = copyActivity(
+                current,
+                current.displayName(),
+                status,
+                current.activeRunId(),
+                current.activeRunVersion(),
+                current.activeDispatchKey(),
+                updatedAt);
+        activities.put(sessionId, updated);
+        return updated;
+    }
+
+    @Override
+    public synchronized CodingSessionActivity reserveActive(
+            AgentSessionId sessionId, long expectedRevision, String dispatchKey, Instant updatedAt) {
+        CodingSessionActivity current = requireActivity(sessionId);
+        if (current.activeDispatchKey().filter(dispatchKey::equals).isPresent()) return current;
+        if (current.revision() != expectedRevision) throw conflict("coding session revision is stale");
+        if (current.activeRunId().isPresent() || current.activeDispatchKey().isPresent()) {
+            throw conflict("coding session already has an active Run or dispatch");
+        }
+        CodingSessionActivity updated = new CodingSessionActivity(
+                current.sessionId(),
+                current.projectId(),
+                current.tenant(),
+                current.principal(),
+                current.displayName(),
+                current.status(),
+                Optional.empty(),
+                OptionalLong.empty(),
+                Optional.of(dispatchKey),
+                current.createdAt(),
+                updatedAt,
+                current.revision() + 1);
+        activities.put(sessionId, updated);
+        return updated;
+    }
+
+    @Override
+    public synchronized CodingSessionActivity activateRun(
+            AgentSessionId sessionId, String dispatchKey, AgentRunId runId, long runVersion, Instant updatedAt) {
+        CodingSessionActivity current = requireActivity(sessionId);
+        if (current.activeRunId().filter(runId::equals).isPresent()) return current;
+        if (current.activeDispatchKey().filter(dispatchKey::equals).isEmpty()) {
+            throw conflict("active dispatch changed before Run activation");
+        }
+        CodingSessionActivity updated = new CodingSessionActivity(
+                current.sessionId(),
+                current.projectId(),
+                current.tenant(),
+                current.principal(),
+                current.displayName(),
+                current.status(),
+                Optional.of(runId),
+                OptionalLong.of(runVersion),
+                Optional.empty(),
+                current.createdAt(),
+                updatedAt,
+                current.revision() + 1);
+        activities.put(sessionId, updated);
+        return updated;
+    }
+
+    @Override
+    public synchronized CodingSessionActivity clearActive(
+            AgentSessionId sessionId, AgentRunId runId, long expectedRevision, Instant updatedAt) {
+        CodingSessionActivity current = requireActivity(sessionId);
+        if (current.activeRunId().isEmpty()) return current;
+        if (current.revision() != expectedRevision
+                || current.activeRunId().filter(runId::equals).isEmpty()) {
+            throw conflict("active Run changed before reconciliation");
+        }
+        CodingSessionActivity updated = new CodingSessionActivity(
+                current.sessionId(),
+                current.projectId(),
+                current.tenant(),
+                current.principal(),
+                current.displayName(),
+                current.status(),
+                Optional.empty(),
+                OptionalLong.empty(),
+                Optional.empty(),
+                current.createdAt(),
+                updatedAt,
+                current.revision() + 1);
+        activities.put(sessionId, updated);
+        return updated;
+    }
+
+    @Override
+    public synchronized CodingFollowUp enqueue(CodingFollowUp candidate) {
+        CodingFollowUp existing = followUps.values().stream()
+                .filter(value -> value.sessionId().equals(candidate.sessionId())
+                        && value.idempotencyKeyDigest().equals(candidate.idempotencyKeyDigest()))
+                .findFirst()
+                .orElse(null);
+        if (existing != null) {
+            if (!existing.requestDigest().equals(candidate.requestDigest())) {
+                throw conflict("follow-up idempotency key is bound to another request");
+            }
+            return existing;
+        }
+        long sequence = followUps.values().stream()
+                        .filter(value -> value.sessionId().equals(candidate.sessionId()))
+                        .mapToLong(CodingFollowUp::sequence)
+                        .max()
+                        .orElse(0)
+                + 1;
+        CodingFollowUp stored = copyFollowUp(
+                candidate,
+                candidate.status(),
+                sequence,
+                candidate.dispatchedRunId(),
+                candidate.updatedAt(),
+                candidate.revision());
+        followUps.put(stored.followUpId(), stored);
+        return stored;
+    }
+
+    @Override
+    public synchronized Optional<CodingFollowUp> findFollowUp(String followUpId) {
+        return Optional.ofNullable(followUps.get(followUpId));
+    }
+
+    @Override
+    public synchronized Optional<CodingFollowUp> findFollowUpByDispatchKey(String dispatchKey) {
+        return followUps.values().stream()
+                .filter(value -> value.dispatchKey().equals(dispatchKey))
+                .findFirst();
+    }
+
+    @Override
+    public synchronized Optional<CodingFollowUp> findFollowUpByDispatchedRunId(AgentRunId runId) {
+        return followUps.values().stream()
+                .filter(value -> value.dispatchedRunId().filter(runId::equals).isPresent())
+                .findFirst();
+    }
+
+    @Override
+    public synchronized List<CodingFollowUp> listRestorableFollowUps(AgentSessionId sessionId, int limit) {
+        if (limit < 1 || limit > 100) throw new IllegalArgumentException("limit must be between 1 and 100");
+        return followUps.values().stream()
+                .filter(value -> value.sessionId().equals(sessionId) && value.status() == CodingFollowUpStatus.PENDING)
+                .sorted(Comparator.comparingLong(CodingFollowUp::sequence))
+                .limit(limit)
+                .toList();
+    }
+
+    @Override
+    public synchronized Optional<CodingDispatchClaim> claimNextForDispatch(
+            AgentSessionId sessionId, long expectedActivityRevision, Instant updatedAt) {
+        CodingSessionActivity activity = requireActivity(sessionId);
+        CodingFollowUp current = followUps.values().stream()
+                .filter(value -> value.sessionId().equals(sessionId)
+                        && (value.status() == CodingFollowUpStatus.PENDING
+                                || value.status() == CodingFollowUpStatus.CLAIMED))
+                .min(Comparator.comparingLong(CodingFollowUp::sequence))
+                .orElse(null);
+        if (current == null) return Optional.empty();
+        if (current.status() == CodingFollowUpStatus.CLAIMED) {
+            if (activity.activeDispatchKey()
+                    .filter(current.dispatchKey()::equals)
+                    .isEmpty()) {
+                throw conflict("claimed follow-up has no matching active dispatch");
+            }
+            return Optional.of(new CodingDispatchClaim(activity, current));
+        }
+        if (activity.revision() != expectedActivityRevision
+                || activity.activeRunId().isPresent()
+                || activity.activeDispatchKey().isPresent()) {
+            throw conflict("coding session changed before follow-up claim");
+        }
+        CodingFollowUp claimed = copyFollowUp(
+                current,
+                CodingFollowUpStatus.CLAIMED,
+                current.sequence(),
+                Optional.empty(),
+                updatedAt,
+                current.revision() + 1);
+        CodingSessionActivity reserved = new CodingSessionActivity(
+                activity.sessionId(),
+                activity.projectId(),
+                activity.tenant(),
+                activity.principal(),
+                activity.displayName(),
+                activity.status(),
+                Optional.empty(),
+                OptionalLong.empty(),
+                Optional.of(claimed.dispatchKey()),
+                activity.createdAt(),
+                updatedAt,
+                activity.revision() + 1);
+        followUps.put(claimed.followUpId(), claimed);
+        activities.put(sessionId, reserved);
+        return Optional.of(new CodingDispatchClaim(reserved, claimed));
+    }
+
+    @Override
+    public synchronized CodingFollowUp markDispatched(
+            String followUpId, long expectedRevision, AgentRunId runId, Instant updatedAt) {
+        CodingFollowUp current = requireFollowUp(followUpId);
+        if (current.status() == CodingFollowUpStatus.DISPATCHED
+                && current.dispatchedRunId().filter(runId::equals).isPresent()) {
+            return current;
+        }
+        if (current.status() != CodingFollowUpStatus.CLAIMED || current.revision() != expectedRevision) {
+            throw conflict("follow-up changed before dispatch completion");
+        }
+        CodingFollowUp dispatched = copyFollowUp(
+                current,
+                CodingFollowUpStatus.DISPATCHED,
+                current.sequence(),
+                Optional.of(runId),
+                updatedAt,
+                current.revision() + 1);
+        followUps.put(followUpId, dispatched);
+        return dispatched;
+    }
+
+    @Override
+    public synchronized CodingFollowUp restore(String followUpId, long expectedRevision, Instant updatedAt) {
+        CodingFollowUp current = requireFollowUp(followUpId);
+        if (current.status() == CodingFollowUpStatus.RESTORED) return current;
+        if ((current.status() != CodingFollowUpStatus.PENDING && current.status() != CodingFollowUpStatus.CLAIMED)
+                || current.revision() != expectedRevision) {
+            throw conflict("follow-up cannot be restored from its current state");
+        }
+        CodingSessionActivity activity = requireActivity(current.sessionId());
+        if (activity.activeDispatchKey().filter(current.dispatchKey()::equals).isPresent()) {
+            throw conflict("follow-up is already reserved for dispatch");
+        }
+        CodingFollowUp restored = copyFollowUp(
+                current,
+                CodingFollowUpStatus.RESTORED,
+                current.sequence(),
+                Optional.empty(),
+                updatedAt,
+                current.revision() + 1);
+        followUps.put(followUpId, restored);
+        return restored;
+    }
+
+    @Override
+    public synchronized int queuedCount(AgentSessionId sessionId) {
+        return Math.toIntExact(followUps.values().stream()
+                .filter(value -> value.sessionId().equals(sessionId)
+                        && (value.status() == CodingFollowUpStatus.PENDING
+                                || value.status() == CodingFollowUpStatus.CLAIMED))
+                .count());
+    }
+
+    @Override
+    public synchronized Optional<RunEventCursor> findEventCursor(AgentSessionId sessionId) {
+        return Optional.ofNullable(eventCursors.get(sessionId));
+    }
+
+    @Override
+    public synchronized RunEventCursor saveEventCursor(
+            AgentSessionId sessionId, RunEventCursor cursor, Instant updatedAt) {
+        requireActivity(sessionId);
+        if (cursor.exclusiveSequence().isEmpty()) {
+            throw new IllegalArgumentException("acknowledged event cursor must contain a sequence");
+        }
+        RunEventCursor current = eventCursors.get(sessionId);
+        if (current != null
+                && current.runId().equals(cursor.runId())
+                && current.feedVersion().equals(cursor.feedVersion())
+                && current.exclusiveSequence().orElseThrow()
+                        >= cursor.exclusiveSequence().orElseThrow()) {
+            return current;
+        }
+        eventCursors.put(sessionId, cursor);
+        return cursor;
+    }
+
+    @Override
+    public synchronized CodingModelPreference createModelPreference(CodingModelPreference preference) {
+        Objects.requireNonNull(preference, "preference must not be null");
+        CodingModelPreference existing = modelPreferences.putIfAbsent(preference.sessionId(), preference);
+        if (existing != null && !existing.modelId().equals(preference.modelId())) {
+            throw conflict("coding session model preference already exists");
+        }
+        return existing == null ? preference : existing;
+    }
+
+    @Override
+    public synchronized Optional<CodingModelPreference> findModelPreference(AgentSessionId sessionId) {
+        return Optional.ofNullable(
+                modelPreferences.get(Objects.requireNonNull(sessionId, "sessionId must not be null")));
+    }
+
+    @Override
+    public synchronized CodingModelPreference changeModel(
+            AgentSessionId sessionId,
+            long expectedRevision,
+            String modelId,
+            String idempotencyKeyDigest,
+            String requestDigest,
+            Instant updatedAt) {
+        CodingModelPreference current = modelPreferences.get(Objects.requireNonNull(sessionId));
+        if (current == null) throw conflict("coding session model preference is unavailable");
+        if (current.idempotencyKeyDigest().filter(idempotencyKeyDigest::equals).isPresent()) {
+            if (current.requestDigest().filter(requestDigest::equals).isEmpty()) {
+                throw conflict("model selection idempotency key is bound to another request");
+            }
+            return current;
+        }
+        if (current.revision() != expectedRevision) throw conflict("coding model preference revision is stale");
+        CodingModelPreference updated = new CodingModelPreference(
+                sessionId,
+                modelId,
+                current.revision() + 1,
+                Optional.of(idempotencyKeyDigest),
+                Optional.of(requestDigest),
+                updatedAt);
+        modelPreferences.put(sessionId, updated);
+        return updated;
+    }
+
+    private CodingSessionActivity requireActivity(AgentSessionId sessionId) {
+        CodingSessionActivity value = activities.get(sessionId);
+        if (value == null) throw conflict("coding session activity is unavailable");
+        return value;
+    }
+
+    private CodingFollowUp requireFollowUp(String followUpId) {
+        CodingFollowUp value = followUps.get(followUpId);
+        if (value == null) throw conflict("follow-up is unavailable");
+        return value;
+    }
+
+    private static CodingSessionActivity copyActivity(
+            CodingSessionActivity value,
+            String displayName,
+            AgentSessionStatus status,
+            Optional<AgentRunId> activeRunId,
+            OptionalLong activeRunVersion,
+            Optional<String> activeDispatchKey,
+            Instant updatedAt) {
+        return new CodingSessionActivity(
+                value.sessionId(),
+                value.projectId(),
+                value.tenant(),
+                value.principal(),
+                displayName,
+                status,
+                activeRunId,
+                activeRunVersion,
+                activeDispatchKey,
+                value.createdAt(),
+                updatedAt,
+                value.revision() + 1);
+    }
+
+    private static void requireRevision(CodingSessionActivity value, long expectedRevision) {
+        if (value.revision() != expectedRevision) throw conflict("coding session revision is stale");
+    }
+
+    private static boolean after(CodingSessionActivity value, CodingSessionCursor cursor) {
+        return value.lastActivityAt().isBefore(cursor.lastActivityAt())
+                || (value.lastActivityAt().equals(cursor.lastActivityAt())
+                        && value.sessionId()
+                                        .value()
+                                        .compareTo(cursor.sessionId().value())
+                                < 0);
+    }
+
+    private static String commandKey(CodingCommandBinding value) {
+        return value.callerScopeDigest() + "|" + value.operation() + "|" + value.idempotencyKeyDigest();
+    }
+
+    private static boolean sameRequest(CodingCommandBinding first, CodingCommandBinding second) {
+        return first.requestDigest().equals(second.requestDigest())
+                && first.projectId().equals(second.projectId());
+    }
+
+    private static CodingFollowUp copyFollowUp(
+            CodingFollowUp value,
+            CodingFollowUpStatus status,
+            long sequence,
+            Optional<AgentRunId> runId,
+            Instant updatedAt,
+            long revision) {
+        return new CodingFollowUp(
+                value.followUpId(),
+                value.sessionId(),
+                value.boundRunId(),
+                value.message(),
+                value.attachments(),
+                value.idempotencyKeyDigest(),
+                value.requestDigest(),
+                value.dispatchKey(),
+                status,
+                sequence,
+                runId,
+                value.createdAt(),
+                updatedAt,
+                revision);
+    }
+
+    private static IllegalStateException conflict(String message) {
+        return new IllegalStateException(message);
+    }
+}

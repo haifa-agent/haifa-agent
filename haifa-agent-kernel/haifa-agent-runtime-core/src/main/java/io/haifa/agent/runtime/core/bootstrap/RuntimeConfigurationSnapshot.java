@@ -6,11 +6,17 @@ import io.haifa.agent.core.reference.RunConfigurationSnapshotRef;
 import io.haifa.agent.core.run.AgentRunBudget;
 import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.core.run.AgentRunType;
+import io.haifa.agent.core.run.StructuredOutputRequirement;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.runtime.api.RuntimeOverrides;
+import io.haifa.agent.skill.api.FrozenSkillBinding;
+import io.haifa.agent.skill.api.SkillContentDigest;
+import io.haifa.agent.skill.api.SkillTrustSnapshot;
 import io.haifa.agent.tool.api.FrozenToolBinding;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 /** Immutable materialized configuration whose content hash is referenced by the Core run aggregate. */
@@ -24,11 +30,143 @@ public record RuntimeConfigurationSnapshot(
         AgentRunBudget budget,
         AgentRunLimits limits,
         List<FrozenToolBinding> toolBindings,
+        List<FrozenSkillBinding> skillBindings,
+        SkillContentDigest skillCatalogDigest,
+        String skillResolutionPolicyRef,
+        SkillTrustSnapshot skillTrust,
         Set<AgentDefinitionId> allowedChildAgents,
         String agentInstruction,
         RuntimeOverrides overrides,
         List<EffectiveCapability> capabilities,
-        ResolvedModelSnapshot model) {
+        ResolvedModelSnapshot model,
+        Map<String, Object> modelRequestOptions,
+        Optional<StructuredOutputRequirement> structuredOutput) {
+    public RuntimeConfigurationSnapshot(
+            RunConfigurationSnapshotRef reference,
+            AgentDefinitionId definitionId,
+            AgentDefinitionVersion definitionVersion,
+            String profileId,
+            String profileVersion,
+            AgentRunType runType,
+            AgentRunBudget budget,
+            AgentRunLimits limits,
+            List<FrozenToolBinding> toolBindings,
+            List<FrozenSkillBinding> skillBindings,
+            SkillContentDigest skillCatalogDigest,
+            String skillResolutionPolicyRef,
+            Set<AgentDefinitionId> allowedChildAgents,
+            String agentInstruction,
+            RuntimeOverrides overrides,
+            List<EffectiveCapability> capabilities,
+            ResolvedModelSnapshot model) {
+        this(
+                reference,
+                definitionId,
+                definitionVersion,
+                profileId,
+                profileVersion,
+                runType,
+                budget,
+                limits,
+                toolBindings,
+                skillBindings,
+                skillCatalogDigest,
+                skillResolutionPolicyRef,
+                SkillTrustSnapshot.empty(),
+                allowedChildAgents,
+                agentInstruction,
+                overrides,
+                capabilities,
+                model,
+                Map.of(),
+                Optional.empty());
+    }
+
+    public RuntimeConfigurationSnapshot(
+            RunConfigurationSnapshotRef reference,
+            AgentDefinitionId definitionId,
+            AgentDefinitionVersion definitionVersion,
+            String profileId,
+            String profileVersion,
+            AgentRunType runType,
+            AgentRunBudget budget,
+            AgentRunLimits limits,
+            List<FrozenToolBinding> toolBindings,
+            List<FrozenSkillBinding> skillBindings,
+            SkillContentDigest skillCatalogDigest,
+            String skillResolutionPolicyRef,
+            SkillTrustSnapshot skillTrust,
+            Set<AgentDefinitionId> allowedChildAgents,
+            String agentInstruction,
+            RuntimeOverrides overrides,
+            List<EffectiveCapability> capabilities,
+            ResolvedModelSnapshot model) {
+        this(
+                reference,
+                definitionId,
+                definitionVersion,
+                profileId,
+                profileVersion,
+                runType,
+                budget,
+                limits,
+                toolBindings,
+                skillBindings,
+                skillCatalogDigest,
+                skillResolutionPolicyRef,
+                skillTrust,
+                allowedChildAgents,
+                agentInstruction,
+                overrides,
+                capabilities,
+                model,
+                Map.of(),
+                Optional.empty());
+    }
+
+    public RuntimeConfigurationSnapshot(
+            RunConfigurationSnapshotRef reference,
+            AgentDefinitionId definitionId,
+            AgentDefinitionVersion definitionVersion,
+            String profileId,
+            String profileVersion,
+            AgentRunType runType,
+            AgentRunBudget budget,
+            AgentRunLimits limits,
+            List<FrozenToolBinding> toolBindings,
+            List<FrozenSkillBinding> skillBindings,
+            SkillContentDigest skillCatalogDigest,
+            String skillResolutionPolicyRef,
+            SkillTrustSnapshot skillTrust,
+            Set<AgentDefinitionId> allowedChildAgents,
+            String agentInstruction,
+            RuntimeOverrides overrides,
+            List<EffectiveCapability> capabilities,
+            ResolvedModelSnapshot model,
+            Map<String, Object> modelRequestOptions) {
+        this(
+                reference,
+                definitionId,
+                definitionVersion,
+                profileId,
+                profileVersion,
+                runType,
+                budget,
+                limits,
+                toolBindings,
+                skillBindings,
+                skillCatalogDigest,
+                skillResolutionPolicyRef,
+                skillTrust,
+                allowedChildAgents,
+                agentInstruction,
+                overrides,
+                capabilities,
+                model,
+                modelRequestOptions,
+                Optional.empty());
+    }
+
     public RuntimeConfigurationSnapshot {
         reference = Objects.requireNonNull(reference, "reference must not be null");
         definitionId = Objects.requireNonNull(definitionId, "definitionId must not be null");
@@ -44,18 +182,61 @@ public record RuntimeConfigurationSnapshot(
         if (distinctAliases != toolBindings.size()) {
             throw new IllegalArgumentException("frozen tool aliases must be unique");
         }
+        skillBindings = List.copyOf(Objects.requireNonNull(skillBindings, "skillBindings must not be null"));
+        long distinctSkillAliases =
+                skillBindings.stream().map(FrozenSkillBinding::alias).distinct().count();
+        if (distinctSkillAliases != skillBindings.size()) {
+            throw new IllegalArgumentException("frozen skill aliases must be unique");
+        }
+        skillCatalogDigest = Objects.requireNonNull(skillCatalogDigest, "skillCatalogDigest must not be null");
+        skillResolutionPolicyRef = requireText(skillResolutionPolicyRef, "skillResolutionPolicyRef");
+        skillTrust = Objects.requireNonNullElseGet(skillTrust, SkillTrustSnapshot::empty);
         allowedChildAgents =
                 Set.copyOf(Objects.requireNonNull(allowedChildAgents, "allowedChildAgents must not be null"));
         agentInstruction = requireText(agentInstruction, "agentInstruction");
         overrides = Objects.requireNonNull(overrides, "overrides must not be null");
         capabilities = List.copyOf(Objects.requireNonNull(capabilities, "capabilities must not be null"));
         model = Objects.requireNonNull(model, "model must not be null");
+        modelRequestOptions = ModelRequestOptions.freeze(Objects.requireNonNullElse(modelRequestOptions, Map.of()));
+        RuntimeControlOptions.validate(modelRequestOptions, budget);
+        structuredOutput = Objects.requireNonNullElse(structuredOutput, Optional.empty());
     }
 
     public Set<String> allowedTools() {
         return toolBindings.stream()
                 .map(binding -> binding.alias().value())
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
+    }
+
+    public Set<String> allowedSkills() {
+        return skillBindings.stream()
+                .map(binding -> binding.alias().value())
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+    }
+
+    public RuntimeConfigurationSnapshot withModel(ResolvedModelSnapshot newModel) {
+        Objects.requireNonNull(newModel, "newModel must not be null");
+        return new RuntimeConfigurationSnapshot(
+                reference,
+                definitionId,
+                definitionVersion,
+                profileId,
+                profileVersion,
+                runType,
+                budget,
+                limits,
+                toolBindings,
+                skillBindings,
+                skillCatalogDigest,
+                skillResolutionPolicyRef,
+                skillTrust,
+                allowedChildAgents,
+                agentInstruction,
+                overrides,
+                capabilities,
+                newModel,
+                modelRequestOptions,
+                structuredOutput);
     }
 
     private static String requireText(String value, String field) {

@@ -1,0 +1,604 @@
+package io.haifa.agent.execution.core.tool;
+
+import io.haifa.agent.common.id.IdentifierGenerator;
+import io.haifa.agent.common.time.TimeProvider;
+import io.haifa.agent.core.tool.ToolResult;
+import io.haifa.agent.execution.api.ExecutionBroker;
+import io.haifa.agent.execution.api.ExecutionCommand;
+import io.haifa.agent.execution.api.ExecutionId;
+import io.haifa.agent.execution.api.ExecutionInput;
+import io.haifa.agent.execution.api.ExecutionLimits;
+import io.haifa.agent.execution.api.ExecutionOutputObserver;
+import io.haifa.agent.execution.api.ExecutionPreflightException;
+import io.haifa.agent.execution.api.ExecutionRequest;
+import io.haifa.agent.execution.api.ExecutionResult;
+import io.haifa.agent.execution.api.ExecutionStatus;
+import io.haifa.agent.execution.api.ProcessOutputChunk;
+import io.haifa.agent.execution.api.TrustedExecutionContext;
+import io.haifa.agent.execution.core.ExecutionRejectedException;
+import io.haifa.agent.execution.core.command.CredentialEgressGuard;
+import io.haifa.agent.execution.core.manifest.ManifestBudgetException;
+import io.haifa.agent.policy.api.PolicyDigest;
+import io.haifa.agent.project.path.ProjectPath;
+import io.haifa.agent.project.path.WorkspacePath;
+import io.haifa.agent.sandbox.api.SandboxPreflightException;
+import io.haifa.agent.tool.api.ToolCancellation;
+import io.haifa.agent.tool.api.ToolDispatchEvidence;
+import io.haifa.agent.tool.api.ToolDispatchState;
+import io.haifa.agent.tool.api.ToolFailureKind;
+import io.haifa.agent.tool.api.ToolInvocationException;
+import io.haifa.agent.tool.api.ToolInvocationObserver;
+import io.haifa.agent.tool.api.ToolInvocationRequest;
+import io.haifa.agent.tool.api.ToolProvider;
+import io.haifa.agent.tool.api.ToolProviderId;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+/** Shared Tool provider that is the only command/script adapter above ExecutionBroker. */
+public final class ExecutionToolProvider implements ToolProvider {
+    public static final ToolProviderId PROVIDER_ID = new ToolProviderId("haifa-execution");
+    private static final int BROKER_OUTPUT_BYTES_PER_CHANNEL = 16 * 1024 * 1024;
+
+    private final ExecutionBroker broker;
+    private final IdentifierGenerator identifiers;
+    private final TimeProvider time;
+    private final ExecutionInvocationScopeResolver scopes;
+    private final ExecutionToolConfiguration configuration;
+    private final TrustedWorkspacePathValidator trustedWorkspacePaths;
+
+    public ExecutionToolProvider(
+            ExecutionBroker broker,
+            IdentifierGenerator identifiers,
+            TimeProvider time,
+            ExecutionInvocationScopeResolver scopes,
+            ExecutionToolConfiguration configuration) {
+        this(broker, identifiers, time, scopes, configuration, TrustedWorkspacePathValidator.rejectWorkspaceInputs());
+    }
+
+    public ExecutionToolProvider(
+            ExecutionBroker broker,
+            IdentifierGenerator identifiers,
+            TimeProvider time,
+            ExecutionInvocationScopeResolver scopes,
+            ExecutionToolConfiguration configuration,
+            TrustedWorkspacePathValidator trustedWorkspacePaths) {
+        this.broker = Objects.requireNonNull(broker, "broker must not be null");
+        this.identifiers = Objects.requireNonNull(identifiers, "identifiers must not be null");
+        this.time = Objects.requireNonNull(time, "time must not be null");
+        this.scopes = Objects.requireNonNull(scopes, "scopes must not be null");
+        this.configuration = Objects.requireNonNull(configuration, "configuration must not be null");
+        this.trustedWorkspacePaths =
+                Objects.requireNonNull(trustedWorkspacePaths, "trustedWorkspacePaths must not be null");
+    }
+
+    @Override
+    public ToolProviderId id() {
+        return PROVIDER_ID;
+    }
+
+    public java.util.Set<String> scriptLanguages() {
+        return configuration.runtimes().languages();
+    }
+
+    public String configurationIdentity() {
+        return configuration.identityDigest();
+    }
+
+    public String scratchSpecDigest() {
+        return configuration.scratchSpace().canonicalDigest();
+    }
+
+    public String sandboxProfileIdentity() {
+        return configuration.sandboxProfileRef().value() + "@"
+                + configuration.sandboxProfileRef().version();
+    }
+
+    @Override
+    public ToolResult invoke(ToolInvocationRequest invocation) {
+        Objects.requireNonNull(invocation, "invocation must not be null");
+        if (!"execution_run".equals(invocation.binding().definition().name().value())) {
+            throw new IllegalArgumentException("unsupported execution tool");
+        }
+        var scope = scopes.resolve(invocation);
+        if (!scope.capabilities().contains("execution_run")) {
+            throw new SecurityException("execution_run is not authorized by the invocation scope");
+        }
+        ParsedInvocation parsed = parse(configuration, invocation.arguments().values());
+        return invokeParsed(invocation, scope, parsed);
+    }
+
+    /**
+     * Executes content selected by a fixed trusted Skill Tool. The script content and runtime are
+     * supplied by the product-owned immutable descriptor, never by model arguments.
+     */
+    public ToolResult invokeTrustedScript(
+            ToolInvocationRequest invocation,
+            String language,
+            String content,
+            List<String> arguments,
+            String purpose,
+            String workdir,
+            Duration requestedTimeout,
+            java.util.Set<String> requiredCapabilities) {
+        return invokeTrustedScript(
+                invocation,
+                language,
+                content,
+                arguments,
+                purpose,
+                workdir,
+                requestedTimeout,
+                requiredCapabilities,
+                List.of());
+    }
+
+    public ToolResult invokeTrustedScript(
+            ToolInvocationRequest invocation,
+            String language,
+            String content,
+            List<String> arguments,
+            String purpose,
+            String workdir,
+            Duration requestedTimeout,
+            java.util.Set<String> requiredCapabilities,
+            List<ProjectPath> workspaceInputPaths) {
+        Objects.requireNonNull(invocation, "invocation must not be null");
+        Objects.requireNonNull(requiredCapabilities, "requiredCapabilities must not be null");
+        var scope = scopes.resolve(invocation);
+        if (!scope.capabilities().containsAll(requiredCapabilities)) {
+            throw new SecurityException("trusted script capabilities are not authorized by the invocation scope");
+        }
+        trustedWorkspacePaths.validate(
+                scope.workspaceId(),
+                List.copyOf(Objects.requireNonNull(workspaceInputPaths, "workspaceInputPaths must not be null")));
+        String runtime = Objects.requireNonNull(language, "language must not be null")
+                .trim()
+                .toLowerCase(Locale.ROOT);
+        if (runtime.isEmpty()) throw new IllegalArgumentException("language must not be blank");
+        String source = Objects.requireNonNull(content, "content must not be null");
+        if (source.isBlank() || source.length() > 524_288 || source.indexOf('\0') >= 0) {
+            throw new IllegalArgumentException("trusted script content is invalid");
+        }
+        List<String> safeArguments =
+                arguments(List.copyOf(Objects.requireNonNull(arguments, "arguments must not be null")));
+        String safePurpose =
+                Objects.requireNonNull(purpose, "purpose must not be null").trim();
+        if (safePurpose.isEmpty() || safePurpose.length() > 256) {
+            throw new IllegalArgumentException("purpose is invalid");
+        }
+        String safeWorkdir =
+                Objects.requireNonNull(workdir, "workdir must not be null").trim();
+        if (safeWorkdir.isEmpty() || safeWorkdir.length() > 4096) {
+            throw new IllegalArgumentException("workdir is invalid");
+        }
+        Duration timeout = Objects.requireNonNull(requestedTimeout, "requestedTimeout must not be null");
+        if (timeout.isZero() || timeout.isNegative() || timeout.compareTo(configuration.maximumTimeout()) > 0) {
+            throw new IllegalArgumentException("trusted script timeout is out of range");
+        }
+        ScriptRuntimeAdapter.PreparedScript prepared =
+                configuration.runtimes().resolve(runtime).prepare(source, safeArguments);
+        return invokeParsed(
+                invocation,
+                scope,
+                new ParsedInvocation(
+                        "SCRIPT",
+                        runtime,
+                        source,
+                        safePurpose,
+                        safeWorkdir,
+                        timeout,
+                        prepared.command(),
+                        prepared.input()));
+    }
+
+    private ToolResult invokeParsed(
+            ToolInvocationRequest invocation,
+            ExecutionInvocationScopeResolver.ExecutionInvocationScope scope,
+            ParsedInvocation parsed) {
+        Duration remaining = Duration.between(time.now(), invocation.deadline());
+        if (remaining.isZero() || remaining.isNegative()) {
+            throw new IllegalStateException("tool invocation deadline has expired");
+        }
+        Duration timeout = parsed.timeout.compareTo(remaining) <= 0 ? parsed.timeout : remaining;
+        WorkspacePath workingDirectory = new WorkspacePath(
+                scope.workspaceId(), parsed.workdir.equals(".") ? ProjectPath.root() : ProjectPath.of(parsed.workdir));
+        ExecutionRequest request = new ExecutionRequest(
+                new ExecutionId(identifiers.nextValue()),
+                invocation
+                        .idempotencyKey()
+                        .orElseGet(() -> invocation.runId().value() + ":"
+                                + invocation.toolCallId().value()),
+                new TrustedExecutionContext(
+                        invocation.tenant(),
+                        invocation.runId().value(),
+                        invocation.principal(),
+                        scope.capabilities(),
+                        io.haifa.agent.execution.api.ExecutionOrigin.RUNTIME_TOOL,
+                        Optional.of(invocation.toolCallId())),
+                scope.workspaceId(),
+                workingDirectory,
+                parsed.command,
+                configuration.environmentRef(),
+                new ExecutionLimits(
+                        timeout,
+                        BROKER_OUTPUT_BYTES_PER_CHANNEL,
+                        BROKER_OUTPUT_BYTES_PER_CHANNEL,
+                        configuration.maximumProcesses()),
+                configuration.sandboxProfileRef(),
+                parsed.input,
+                ExecutionRequest.digestWithScratch(
+                        io.haifa.agent.tool.api.ToolArgumentsDigest.sha256(invocation.arguments()),
+                        configuration.scratchSpace()),
+                configuration.scratchSpace());
+        ToolResult result = execute(request, invocation.cancellation(), invocation.observer(), parsed);
+        invocation.observer().acknowledged();
+        return result;
+    }
+
+    /** Reconstructs this provider's frozen execution intent without dispatching or persisting anything. */
+    public static void validateFrozenInvocation(
+            ExecutionToolConfiguration configuration,
+            io.haifa.agent.core.tool.ToolArguments arguments,
+            ExecutionRequest request) {
+        Objects.requireNonNull(configuration, "configuration must not be null");
+        Objects.requireNonNull(arguments, "arguments must not be null");
+        Objects.requireNonNull(request, "request must not be null");
+        ParsedInvocation parsed = parse(configuration, arguments.values());
+        String workdir = parsed.workdir.equals(".") ? "." : parsed.workdir;
+        String expectedDigest = ExecutionRequest.digestWithScratch(
+                io.haifa.agent.tool.api.ToolArgumentsDigest.sha256(arguments), configuration.scratchSpace());
+        if (!request.command().equals(parsed.command)
+                || !request.input().equals(parsed.input)
+                || !request.workingDirectory().projectPath().toString().equals(workdir)
+                || !request.environmentRef().equals(configuration.environmentRef())
+                || !request.sandboxProfileRef().equals(configuration.sandboxProfileRef())
+                || !request.scratchSpace().equals(configuration.scratchSpace())
+                || !request.invocationDigest().equals(expectedDigest)
+                || request.limits().timeout().compareTo(parsed.timeout) > 0
+                || request.limits().timeout().compareTo(configuration.maximumTimeout()) > 0
+                || request.limits().maxStdoutBytes() != BROKER_OUTPUT_BYTES_PER_CHANNEL
+                || request.limits().maxStderrBytes() != BROKER_OUTPUT_BYTES_PER_CHANNEL
+                || !Objects.equals(request.limits().maxProcesses(), configuration.maximumProcesses())
+                || request.limits().outputOverflowPolicy()
+                        != io.haifa.agent.execution.api.ExecutionOutputOverflowPolicy.RETAIN_HEAD_TAIL) {
+            throw new SecurityException("execution request drifted from the frozen Tool invocation");
+        }
+    }
+
+    private static ParsedInvocation parse(ExecutionToolConfiguration configuration, Map<String, Object> values) {
+        String mode = text(values, "mode", 16).toUpperCase(Locale.ROOT);
+        String content = text(values, "content", 16_384);
+        String purpose = text(values, "purpose", 256);
+        List<String> arguments = arguments(values.get("args"));
+        long timeoutMillis = number(
+                values.get("timeoutMillis"),
+                configuration.defaultTimeout().toMillis(),
+                1000,
+                configuration.maximumTimeout().toMillis());
+        String workdir = ".";
+        if (values.containsKey("workdir")) {
+            if (!configuration.workingDirectoryAllowed()) {
+                throw new IllegalArgumentException("workdir is unavailable for this product");
+            }
+            workdir = text(values, "workdir", 4096);
+        }
+        return switch (mode) {
+            case "COMMAND" -> {
+                if (values.containsKey("language")) {
+                    throw new IllegalArgumentException("language is only valid for SCRIPT mode");
+                }
+                if (!arguments.isEmpty()) throw new IllegalArgumentException("args are only valid for SCRIPT mode");
+                CredentialEgressGuard.rejectionCode(content).ifPresent(code -> {
+                    throw new SecurityException(code);
+                });
+                yield new ParsedInvocation(
+                        mode,
+                        "",
+                        content,
+                        purpose,
+                        workdir,
+                        Duration.ofMillis(timeoutMillis),
+                        ExecutionCommand.shell(content),
+                        ExecutionInput.none());
+            }
+            case "SCRIPT" -> {
+                String language = text(values, "language", 32).toLowerCase(Locale.ROOT);
+                ScriptRuntimeAdapter.PreparedScript prepared =
+                        configuration.runtimes().resolve(language).prepare(content, arguments);
+                yield new ParsedInvocation(
+                        mode,
+                        language,
+                        content,
+                        purpose,
+                        workdir,
+                        Duration.ofMillis(timeoutMillis),
+                        prepared.command(),
+                        prepared.input());
+            }
+            default -> throw new IllegalArgumentException("mode must be COMMAND or SCRIPT");
+        };
+    }
+
+    private ToolResult execute(
+            ExecutionRequest request,
+            ToolCancellation cancellation,
+            ToolInvocationObserver invocationObserver,
+            ParsedInvocation parsed) {
+        MergedTailObserver merged = new MergedTailObserver(
+                configuration.outputObserver(),
+                invocationObserver,
+                configuration.maximumOutputBytes(),
+                configuration.maximumOutputLines(),
+                request.id().value(),
+                workingDirectoryDigest(request));
+        AtomicBoolean complete = new AtomicBoolean();
+        Thread watcher = Thread.ofVirtual()
+                .name("haifa-execution-tool-cancellation")
+                .start(() -> {
+                    while (!complete.get()) {
+                        if (cancellation.isCancellationRequested() && broker.cancel(request.id())) return;
+                        try {
+                            Thread.sleep(25);
+                        } catch (InterruptedException ignored) {
+                            return;
+                        }
+                    }
+                });
+        try {
+            return toToolResult(broker.execute(request, merged), merged, parsed);
+        } catch (ToolInvocationException exception) {
+            throw exception;
+        } catch (RuntimeException exception) {
+            throw invocationFailure(exception, merged.started());
+        } finally {
+            complete.set(true);
+            watcher.interrupt();
+        }
+    }
+
+    private static RuntimeException invocationFailure(RuntimeException exception, boolean dispatched) {
+        String code;
+        String message;
+        if (exception instanceof ExecutionRejectedException rejected) {
+            code = rejected.code();
+            message = rejected.getMessage();
+        } else if (exception instanceof SandboxPreflightException preflight) {
+            code = preflight.code();
+            message = preflight.getMessage();
+        } else if (exception instanceof ManifestBudgetException) {
+            code = "MANIFEST_BUDGET_EXCEEDED";
+            message = "workspace manifest exceeded the configured execution budget";
+        } else if (exception instanceof ExecutionPreflightException preflight) {
+            code = preflight.code();
+            message = preflight.getMessage();
+        } else {
+            return exception;
+        }
+        return dispatched
+                ? new ToolInvocationException(
+                        code, ToolDispatchState.OUTCOME_UNKNOWN, ToolFailureKind.EXECUTION, message, exception)
+                : ToolInvocationException.preflight(code, message, exception);
+    }
+
+    private ToolResult toToolResult(ExecutionResult result, MergedTailObserver merged, ParsedInvocation parsed) {
+        String stdout = sanitizeSummary(result.stdout().summary());
+        String stderr = sanitizeSummary(result.stderr().summary());
+        String observed = merged.text();
+        if (stdout.isBlank() && stderr.isBlank() && !observed.isBlank()) {
+            stdout = sanitizeSummary(observed);
+        }
+        boolean truncated = merged.truncated()
+                || result.stdout().truncated()
+                || result.stderr().truncated();
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("processState", result.status().name());
+        data.put("mode", parsed.mode);
+        if (!parsed.language.isEmpty()) data.put("language", parsed.language);
+        result.optionalExitCode().ifPresent(value -> data.put("exitCode", value));
+        data.put("timedOut", result.status() == ExecutionStatus.TIMED_OUT);
+        data.put("cancelled", result.status() == ExecutionStatus.CANCELLED);
+        data.put("stdoutSummary", stdout);
+        data.put("stderrSummary", stderr);
+        data.put("truncated", truncated);
+        data.put("durationMillis", result.resourceUsage().wallTime().toMillis());
+        data.put("scratchSpecDigest", configuration.scratchSpace().canonicalDigest());
+        data.put("scratchProvisioned", result.scratchProvisioned());
+        data.put("scratchCleanupFailed", result.scratchCleanupFailed());
+        String headline =
+                switch (result.status()) {
+                    case EXITED -> parsed.mode.equals("SCRIPT") ? "Script exited" : "Command exited";
+                    case FAILED -> parsed.mode.equals("SCRIPT") ? "Script failed" : "Command failed";
+                    case OUTPUT_LIMIT_EXCEEDED -> "Execution stopped after reaching its output budget";
+                    case PROCESS_LIMIT_EXCEEDED -> "Execution stopped after reaching its process-count budget";
+                    case TIMED_OUT -> "Execution timed out";
+                    case CANCELLED -> "Execution was cancelled";
+                    case UNKNOWN -> "Execution outcome is unknown";
+                };
+        if (result.exitCode() != null) headline += " (exit " + result.exitCode() + ")";
+        String output = stdout.isBlank() ? stderr : stdout;
+        String summary = output.isBlank() ? headline : headline + "\n" + output;
+        // For Execution, successful means that a normal process result was reliably delivered. It
+        // deliberately does not interpret the business meaning of the raw exit code.
+        boolean successful = result.status() == ExecutionStatus.EXITED;
+        return new ToolResult(successful, summary, Map.copyOf(data), List.of(), List.of(), truncated);
+    }
+
+    private String sanitizeSummary(String value) {
+        String bounded =
+                MergedTailObserver.bound(value, configuration.maximumOutputBytes(), configuration.maximumOutputLines());
+        return Objects.requireNonNull(
+                configuration.outputSanitizer().apply(bounded), "outputSanitizer must not return null");
+    }
+
+    private static String text(Map<String, Object> values, String key, int maximumLength) {
+        Object value = values.get(key);
+        if (!(value instanceof String text) || text.isBlank()) {
+            throw new IllegalArgumentException(key + " must be non-empty text");
+        }
+        if (text.length() > maximumLength) throw new IllegalArgumentException(key + " exceeds maximum length");
+        if (text.indexOf('\0') >= 0) throw new IllegalArgumentException(key + " contains NUL");
+        return text;
+    }
+
+    private static List<String> arguments(Object value) {
+        if (value == null) return List.of();
+        if (!(value instanceof List<?> list) || list.size() > 16) {
+            throw new IllegalArgumentException("args must be an array with at most 16 items");
+        }
+        List<String> result = new ArrayList<>();
+        for (Object item : list) {
+            if (!(item instanceof String text) || text.length() > 1024 || text.indexOf('\0') >= 0) {
+                throw new IllegalArgumentException("args contains an invalid item");
+            }
+            result.add(text);
+        }
+        return List.copyOf(result);
+    }
+
+    private static String workingDirectoryDigest(ExecutionRequest request) {
+        return PolicyDigest.sha256Fields(List.of(
+                "execution-working-directory-v1",
+                request.workspaceId().value(),
+                request.workingDirectory().projectPath().toString()));
+    }
+
+    private static long number(Object value, long fallback, long minimum, long maximum) {
+        if (value == null) return fallback;
+        if (!(value instanceof Number number)) throw new IllegalArgumentException("timeoutMillis must be a number");
+        long result = number.longValue();
+        if (result < minimum || result > maximum) {
+            throw new IllegalArgumentException("timeoutMillis is out of range");
+        }
+        return result;
+    }
+
+    private record ParsedInvocation(
+            String mode,
+            String language,
+            String content,
+            String purpose,
+            String workdir,
+            Duration timeout,
+            ExecutionCommand command,
+            ExecutionInput input) {}
+
+    private static final class MergedTailObserver implements ExecutionOutputObserver {
+        private final ExecutionOutputObserver delegate;
+        private final ToolInvocationObserver invocationObserver;
+        private final AtomicBoolean started = new AtomicBoolean();
+        private final io.haifa.agent.execution.api.BoundedOutputBuffer output;
+        private final int maximumLines;
+        private final String executionId;
+        private final String workingDirectoryDigest;
+        private boolean upstreamTruncated;
+
+        private MergedTailObserver(
+                ExecutionOutputObserver delegate,
+                ToolInvocationObserver invocationObserver,
+                int maximumBytes,
+                int maximumLines,
+                String executionId,
+                String workingDirectoryDigest) {
+            this.delegate = delegate;
+            this.invocationObserver = invocationObserver;
+            output = new io.haifa.agent.execution.api.BoundedOutputBuffer(maximumBytes);
+            this.maximumLines = maximumLines;
+            this.executionId = executionId;
+            this.workingDirectoryDigest = workingDirectoryDigest;
+        }
+
+        @Override
+        public void onStarted() {
+            if (started.compareAndSet(false, true)) {
+                invocationObserver.dispatched(
+                        new ToolDispatchEvidence(executionId, java.util.OptionalLong.empty(), workingDirectoryDigest));
+            }
+            try {
+                delegate.onStarted();
+            } catch (RuntimeException ignored) {
+                // Rendering failures cannot change the authoritative dispatch boundary.
+            }
+        }
+
+        @Override
+        public void onStarted(io.haifa.agent.execution.api.ExecutionProcessIdentity identity) {
+            if (started.compareAndSet(false, true)) {
+                invocationObserver.dispatched(new ToolDispatchEvidence(
+                        executionId, java.util.OptionalLong.of(identity.processId()), workingDirectoryDigest));
+            }
+            try {
+                delegate.onStarted(identity);
+            } catch (RuntimeException ignored) {
+                // Rendering errors cannot change the authoritative dispatch boundary.
+            }
+        }
+
+        @Override
+        public synchronized void onOutput(ProcessOutputChunk chunk) {
+            upstreamTruncated |= chunk.truncated();
+            try {
+                delegate.onOutput(chunk);
+            } catch (RuntimeException ignored) {
+                // Rendering or transport observers do not own the authoritative Tool result.
+            }
+            output.write(chunk.bytes());
+        }
+
+        private synchronized String text() {
+            return keepHeadAndTailLines(sanitize(new String(output.bytes(), StandardCharsets.UTF_8)), maximumLines);
+        }
+
+        private synchronized boolean truncated() {
+            String retained = sanitize(new String(output.bytes(), StandardCharsets.UTF_8));
+            return upstreamTruncated || output.truncated() || lineCount(retained) > maximumLines;
+        }
+
+        private boolean started() {
+            return started.get();
+        }
+
+        private static String keepHeadAndTailLines(String value, int maximumLines) {
+            String[] lines = value.split("(?<=\\n)");
+            if (lines.length <= maximumLines) return value;
+            int head = (maximumLines + 1) / 2;
+            int tail = maximumLines - head;
+            StringBuilder bounded = new StringBuilder(value.length());
+            for (int index = 0; index < head; index++) bounded.append(lines[index]);
+            bounded.append("... ").append(lines.length - maximumLines).append(" lines omitted ...\n");
+            for (int index = lines.length - tail; index < lines.length; index++) bounded.append(lines[index]);
+            return bounded.toString();
+        }
+
+        private static String bound(String value, int maximumBytes, int maximumLines) {
+            byte[] bytes = Objects.requireNonNullElse(value, "").getBytes(StandardCharsets.UTF_8);
+            var output = new io.haifa.agent.execution.api.BoundedOutputBuffer(maximumBytes);
+            output.write(bytes);
+            return keepHeadAndTailLines(sanitize(new String(output.bytes(), StandardCharsets.UTF_8)), maximumLines);
+        }
+
+        private static long lineCount(String value) {
+            if (value.isEmpty()) return 0;
+            long breaks = value.chars().filter(character -> character == '\n').count();
+            return breaks + (value.endsWith("\n") ? 0 : 1);
+        }
+
+        private static String sanitize(String value) {
+            String withoutAnsi = value.replaceAll("\\u001B\\[[;?0-9]*[ -/]*[@-~]", "");
+            StringBuilder safe = new StringBuilder(withoutAnsi.length());
+            withoutAnsi.codePoints().forEach(codePoint -> {
+                if (codePoint == '\n' || codePoint == '\r' || codePoint == '\t' || !Character.isISOControl(codePoint)) {
+                    safe.appendCodePoint(codePoint);
+                }
+            });
+            return safe.toString();
+        }
+    }
+}

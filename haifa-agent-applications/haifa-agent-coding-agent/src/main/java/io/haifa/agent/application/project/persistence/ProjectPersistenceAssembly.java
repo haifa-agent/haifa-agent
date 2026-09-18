@@ -1,0 +1,395 @@
+package io.haifa.agent.application.project.persistence;
+
+import io.haifa.agent.application.project.product.InMemoryProjectProductSessionStore;
+import io.haifa.agent.application.project.product.ProjectProductSession;
+import io.haifa.agent.application.project.product.ProjectProductSessionStore;
+import io.haifa.agent.application.project.product.ProjectSessionProvisioner;
+import io.haifa.agent.application.project.product.coding.CodingCompactionResult;
+import io.haifa.agent.application.project.product.coding.CodingSessionActivity;
+import io.haifa.agent.application.project.product.coding.CodingSessionCompactor;
+import io.haifa.agent.application.project.product.coding.CodingSessionLifecycle;
+import io.haifa.agent.application.project.product.coding.CodingSessionStore;
+import io.haifa.agent.application.project.product.coding.InMemoryCodingSessionStore;
+import io.haifa.agent.common.id.IdentifierGenerator;
+import io.haifa.agent.common.time.TimeProvider;
+import io.haifa.agent.context.compression.CompressionPolicy;
+import io.haifa.agent.context.compression.DeterministicContextCompressor;
+import io.haifa.agent.core.reference.PrincipalRef;
+import io.haifa.agent.core.reference.ProjectRef;
+import io.haifa.agent.core.reference.TenantRef;
+import io.haifa.agent.core.session.AgentSession;
+import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.core.session.AgentSessionStatus;
+import io.haifa.agent.core.session.SessionScope;
+import io.haifa.agent.project.hostworkspace.directory.AuthorizedDirectoryStore;
+import io.haifa.agent.project.hostworkspace.directory.InMemoryAuthorizedDirectoryStore;
+import io.haifa.agent.runtime.api.AgentRuntime;
+import io.haifa.agent.runtime.core.RuntimeCoreBuilder;
+import io.haifa.agent.runtime.core.interaction.InMemoryInteractionPort;
+import io.haifa.agent.runtime.core.loop.SessionMessageSource;
+import io.haifa.agent.runtime.core.model.continuation.ModelContinuationProtector;
+import io.haifa.agent.runtime.core.model.continuation.PlaintextModelContinuationProtector;
+import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
+import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
+import io.haifa.agent.runtime.core.tool.InMemoryToolExecutionJournal;
+import io.haifa.agent.store.jsonl.JsonlTranscriptProjector;
+import io.haifa.agent.store.jsonl.JsonlTranscriptWriter;
+import io.haifa.agent.store.jsonl.SafeTranscriptMapperRegistry;
+import io.haifa.agent.store.jsonl.TranscriptRedactor;
+import io.haifa.agent.store.sqlite.SqliteStoreConfiguration;
+import io.haifa.agent.store.sqlite.SqliteStoreFoundation;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.Path;
+import java.time.Clock;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+/** Product-layer assembly of Runtime persistence adapters and optional JSONL projection. */
+public final class ProjectPersistenceAssembly implements AutoCloseable {
+    public static final int CODING_AGENT_ACTIVE_HISTORY_BUDGET_PERCENT = 50;
+    public static final long CODING_AGENT_MIN_ACTIVE_HISTORY_BUDGET_TOKENS = 64_000L;
+    public static final long CODING_AGENT_MAX_ACTIVE_HISTORY_BUDGET_TOKENS = Long.MAX_VALUE;
+    public static final int CODING_AGENT_TARGET_TAIL_TOKEN_PERCENT = 30;
+    public static final int CODING_AGENT_MIN_TAIL_TOKENS = 24_000;
+    public static final int CODING_AGENT_MAX_TAIL_TOKENS = Integer.MAX_VALUE;
+
+    public static CompressionPolicy defaultCompressionPolicy() {
+        return CompressionPolicy.defaults()
+                .withDynamicActiveBudget(
+                        CODING_AGENT_ACTIVE_HISTORY_BUDGET_PERCENT,
+                        CODING_AGENT_MIN_ACTIVE_HISTORY_BUDGET_TOKENS,
+                        CODING_AGENT_MAX_ACTIVE_HISTORY_BUDGET_TOKENS)
+                .withTailTokenBounds(CODING_AGENT_MIN_TAIL_TOKENS, CODING_AGENT_MAX_TAIL_TOKENS)
+                .withTargetTailTokenPercent(CODING_AGENT_TARGET_TAIL_TOKEN_PERCENT);
+    }
+
+    private final ProjectPersistenceMode mode;
+    private final RuntimePersistencePorts ports;
+    private final ProjectProductSessionStore productSessions;
+    private final CodingSessionStore codingSessions;
+    private final String workerId;
+    private final SqliteStoreFoundation sqlite;
+    private final JsonlTranscriptProjector projector;
+    private final AuthorizedDirectoryStore authorizedDirectories;
+    private final AtomicBoolean closing = new AtomicBoolean();
+
+    private ProjectPersistenceAssembly(
+            ProjectPersistenceMode mode,
+            RuntimePersistencePorts ports,
+            ProjectProductSessionStore productSessions,
+            CodingSessionStore codingSessions,
+            String workerId,
+            SqliteStoreFoundation sqlite,
+            JsonlTranscriptProjector projector,
+            AuthorizedDirectoryStore authorizedDirectories) {
+        this.mode = mode;
+        this.ports = ports;
+        this.productSessions = productSessions;
+        this.codingSessions = Objects.requireNonNull(codingSessions, "codingSessions must not be null");
+        this.workerId = workerId;
+        this.sqlite = sqlite;
+        this.projector = projector;
+        this.authorizedDirectories =
+                Objects.requireNonNull(authorizedDirectories, "authorizedDirectories must not be null");
+    }
+
+    public static ProjectPersistenceAssembly open(
+            ProjectPersistenceConfiguration configuration,
+            Clock clock,
+            IdentifierGenerator identifiers,
+            ModelContinuationProtector protector) {
+        Objects.requireNonNull(configuration, "configuration must not be null");
+        Objects.requireNonNull(clock, "clock must not be null");
+        Objects.requireNonNull(identifiers, "identifiers must not be null");
+        String workerId = "project-runtime-" + identifiers.nextValue();
+        if (configuration.mode() == ProjectPersistenceMode.MEMORY) {
+            InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+            RuntimePersistencePorts ports = RuntimePersistencePorts.inMemory(
+                    store, new InMemoryToolExecutionJournal(), new InMemoryInteractionPort());
+            return new ProjectPersistenceAssembly(
+                    configuration.mode(),
+                    ports,
+                    new InMemoryProjectProductSessionStore(),
+                    new InMemoryCodingSessionStore(),
+                    workerId,
+                    null,
+                    null,
+                    new InMemoryAuthorizedDirectoryStore());
+        }
+        ModelContinuationProtector effectiveProtector = protector;
+        if (configuration.protection() == ProjectPersistenceProtection.NONE && effectiveProtector == null) {
+            effectiveProtector = new PlaintextModelContinuationProtector();
+        }
+        if (effectiveProtector == null || !effectiveProtector.supportsPersistentStorage()) {
+            throw new IllegalArgumentException("SQLite persistence requires a durable continuation protector");
+        }
+        boolean confidentialityRequired = configuration.protection() == ProjectPersistenceProtection.AES_GCM;
+        if (effectiveProtector.providesConfidentiality() != confidentialityRequired) {
+            throw new IllegalArgumentException("SQLite persistence protector does not match configured protection");
+        }
+        Path database = configuration.databasePath().orElseThrow();
+        SqliteStoreConfiguration sqliteConfiguration = new SqliteStoreConfiguration(
+                database, configuration.busyTimeoutMillis(), configuration.maximumPayloadBytes());
+        SqliteStoreFoundation foundation = null;
+        try {
+            foundation = SqliteStoreFoundation.initializeWithAdditionalMappers(
+                    sqliteConfiguration, clock, ProjectApplicationMappers.all());
+            RuntimePersistencePorts ports = foundation.persistencePorts(effectiveProtector);
+            ProjectProductSessionStore productSessions =
+                    new SqliteProjectProductSessionStore(foundation.unitOfWork(), ports.sessions());
+            CodingSessionStore codingSessions = new SqliteCodingSessionStore(
+                    foundation.unitOfWork(), effectiveProtector, configuration.maximumPayloadBytes());
+            JsonlTranscriptProjector projector = null;
+            if (configuration.mode() == ProjectPersistenceMode.SQLITE_WITH_JSONL) {
+                Path root = requireTranscriptRoot(configuration.transcriptRoot().orElseThrow());
+                projector = new JsonlTranscriptProjector(
+                        ports.outbox(),
+                        ports.unitOfWork(),
+                        SafeTranscriptMapperRegistry.defaults(),
+                        new TranscriptRedactor(),
+                        new JsonlTranscriptWriter(root));
+            }
+            return new ProjectPersistenceAssembly(
+                    configuration.mode(),
+                    ports,
+                    productSessions,
+                    codingSessions,
+                    workerId,
+                    foundation,
+                    projector,
+                    new SqliteAuthorizedDirectoryStore(foundation.unitOfWork(), effectiveProtector, clock));
+        } catch (RuntimeException | Error exception) {
+            if (foundation != null) {
+                try {
+                    foundation.close();
+                } catch (RuntimeException closeFailure) {
+                    exception.addSuppressed(closeFailure);
+                }
+            }
+            throw exception;
+        }
+    }
+
+    public ProjectPersistenceMode mode() {
+        return mode;
+    }
+
+    public RuntimePersistencePorts ports() {
+        return ports;
+    }
+
+    public ProjectProductSessionStore productSessions() {
+        return productSessions;
+    }
+
+    public CodingSessionStore codingSessions() {
+        return codingSessions;
+    }
+
+    public CodingSessionLifecycle codingSessionLifecycle() {
+        return new CodingSessionLifecycle() {
+            @Override
+            public CodingSessionActivity archive(
+                    AgentSessionId sessionId, long expectedActivityRevision, java.time.Instant at) {
+                return changeCodingSessionStatus(sessionId, expectedActivityRevision, AgentSessionStatus.ARCHIVED, at);
+            }
+
+            @Override
+            public CodingSessionActivity delete(
+                    AgentSessionId sessionId, long expectedActivityRevision, java.time.Instant at) {
+                return changeCodingSessionStatus(sessionId, expectedActivityRevision, AgentSessionStatus.DELETED, at);
+            }
+        };
+    }
+
+    public CodingSessionCompactor codingSessionCompactor(IdentifierGenerator identifiers, TimeProvider time) {
+        Objects.requireNonNull(identifiers, "identifiers must not be null");
+        Objects.requireNonNull(time, "time must not be null");
+        var source = new SessionMessageSource(
+                ports.state(),
+                ports.conversationSummaries(),
+                new DeterministicContextCompressor(),
+                defaultCompressionPolicy(),
+                identifiers,
+                time);
+        return sessionId -> ports.unitOfWork().execute(() -> {
+            var selection = source.compact(sessionId);
+            return selection
+                    .summary()
+                    .map(summary -> new CodingCompactionResult(
+                            Optional.of(summary.id().value()),
+                            summary.version().value(),
+                            summary.sourceMessageIds().size(),
+                            summary.estimatedTokens(),
+                            selection.through()))
+                    .orElseGet(() -> new CodingCompactionResult(Optional.empty(), 0, 0, 0, selection.through()));
+        });
+    }
+
+    public String workerId() {
+        return workerId;
+    }
+
+    public AuthorizedDirectoryStore authorizedDirectories() {
+        return authorizedDirectories;
+    }
+
+    public RuntimeCoreBuilder configure(RuntimeCoreBuilder builder) {
+        Objects.requireNonNull(builder, "builder must not be null");
+        builder.persistence(ports).workerId(workerId);
+        CompressionPolicy currentPolicy = builder.compressionPolicy();
+        CompressionPolicy base = currentPolicy != null ? currentPolicy : CompressionPolicy.defaults();
+        if (base.activeHistoryBudgetTokens().isEmpty() && base.activeHistoryBudgetPercent() == 0) {
+            base = base.withDynamicActiveBudget(
+                            CODING_AGENT_ACTIVE_HISTORY_BUDGET_PERCENT,
+                            CODING_AGENT_MIN_ACTIVE_HISTORY_BUDGET_TOKENS,
+                            CODING_AGENT_MAX_ACTIVE_HISTORY_BUDGET_TOKENS)
+                    .withTailTokenBounds(CODING_AGENT_MIN_TAIL_TOKENS, CODING_AGENT_MAX_TAIL_TOKENS)
+                    .withTargetTailTokenPercent(CODING_AGENT_TARGET_TAIL_TOKEN_PERCENT);
+        }
+        builder.compressionPolicy(base);
+        return builder;
+    }
+
+    public void attachProjection(AgentRuntime runtime) {
+        Objects.requireNonNull(runtime, "runtime must not be null");
+        if (projector != null) runtime.addListener(ignored -> projectCommittedEvents());
+    }
+
+    public ProjectSessionProvisioner projectSessionProvisioner(Clock clock) {
+        Objects.requireNonNull(clock, "clock must not be null");
+        return (session, metadata) -> provisionProjectSession(session, metadata, clock);
+    }
+
+    public void provisionUserSession(AgentSessionId sessionId, TenantRef tenant, PrincipalRef principal, Clock clock) {
+        provisionUserSession(sessionId, tenant, principal, Map.of(), clock);
+    }
+
+    public void provisionUserSession(
+            AgentSessionId sessionId,
+            TenantRef tenant,
+            PrincipalRef principal,
+            Map<String, Object> metadata,
+            Clock clock) {
+        Objects.requireNonNull(clock, "clock must not be null");
+        Map<String, Object> frozenMetadata = Map.copyOf(Objects.requireNonNull(metadata, "metadata must not be null"));
+        ports.unitOfWork().execute(() -> {
+            if (ports.sessions().find(sessionId).isEmpty()) {
+                ports.sessions()
+                        .insert(AgentSession.open(
+                                sessionId,
+                                tenant,
+                                principal,
+                                null,
+                                SessionScope.USER,
+                                java.time.Instant.ofEpochMilli(clock.millis()),
+                                frozenMetadata));
+            }
+            return null;
+        });
+    }
+
+    public int projectCommittedEvents() {
+        if (projector == null || closing.get()) return 0;
+        return projector.projectPending();
+    }
+
+    @Override
+    public void close() {
+        if (!closing.compareAndSet(false, true)) return;
+        RuntimeException failure = null;
+        if (projector != null) {
+            try {
+                projector.projectPending();
+            } catch (RuntimeException exception) {
+                failure = exception;
+            }
+        }
+        if (sqlite != null) {
+            try {
+                sqlite.close();
+            } catch (RuntimeException exception) {
+                if (failure == null) failure = exception;
+                else failure.addSuppressed(exception);
+            }
+        }
+        if (failure != null) throw failure;
+    }
+
+    private void provisionProjectSession(ProjectProductSession session, Map<String, Object> metadata, Clock clock) {
+        Objects.requireNonNull(session, "session must not be null");
+        Map<String, Object> frozenMetadata = Map.copyOf(Objects.requireNonNull(metadata, "metadata must not be null"));
+        ports.unitOfWork().execute(() -> {
+            Optional<AgentSession> existing = ports.sessions().find(session.sessionId());
+            if (existing.isPresent()) {
+                validateCoreSession(existing.orElseThrow(), session);
+            } else {
+                ports.sessions()
+                        .insert(AgentSession.open(
+                                session.sessionId(),
+                                session.tenant(),
+                                session.principal(),
+                                new ProjectRef(session.projectId().value()),
+                                SessionScope.PROJECT,
+                                java.time.Instant.ofEpochMilli(clock.millis()),
+                                frozenMetadata));
+            }
+            return null;
+        });
+    }
+
+    private CodingSessionActivity changeCodingSessionStatus(
+            AgentSessionId sessionId, long expectedActivityRevision, AgentSessionStatus target, java.time.Instant at) {
+        Objects.requireNonNull(sessionId, "sessionId must not be null");
+        Objects.requireNonNull(at, "at must not be null");
+        return ports.unitOfWork().execute(() -> {
+            CodingSessionActivity activity = codingSessions
+                    .findActivity(sessionId)
+                    .orElseThrow(() -> new IllegalStateException("coding session activity is unavailable"));
+            if (activity.revision() != expectedActivityRevision) {
+                throw new IllegalStateException("coding session revision is stale");
+            }
+            if (activity.activeRunId().isPresent()
+                    || activity.activeDispatchKey().isPresent()) {
+                throw new IllegalStateException("active coding session cannot change lifecycle status");
+            }
+            AgentSession core = ports.sessions()
+                    .find(sessionId)
+                    .orElseThrow(() -> new IllegalStateException("Core Session is unavailable"));
+            long expectedCoreVersion = core.version();
+            if (target == AgentSessionStatus.ARCHIVED) {
+                core.archive(at);
+            } else if (target == AgentSessionStatus.DELETED) {
+                core.delete(at);
+            } else {
+                throw new IllegalArgumentException("unsupported coding session lifecycle target");
+            }
+            ports.sessions().save(core, expectedCoreVersion);
+            return codingSessions.updateStatus(sessionId, expectedActivityRevision, core.status(), at);
+        });
+    }
+
+    private static void validateCoreSession(AgentSession core, ProjectProductSession product) {
+        if (!core.tenant().equals(product.tenant())
+                || !core.owner().equals(product.principal())
+                || core.project()
+                        .map(ProjectRef::projectId)
+                        .filter(product.projectId().value()::equals)
+                        .isEmpty()) {
+            throw new IllegalStateException("Core Session and Project Product Session are inconsistent");
+        }
+    }
+
+    private static Path requireTranscriptRoot(Path root) {
+        if (!root.isAbsolute()
+                || !Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS)
+                || Files.isSymbolicLink(root)
+                || !Files.isWritable(root)) {
+            throw new IllegalArgumentException("transcript root must be an existing writable controlled directory");
+        }
+        return root.normalize();
+    }
+}

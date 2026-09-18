@@ -38,8 +38,9 @@ public final class InMemoryExecutionOutputStore implements ExecutionOutputStore 
         if (binary) summary = "<binary output: " + copy.length + " bytes>";
         else {
             int length = Math.min(copy.length, inlineSummaryBytes);
-            summary = new String(copy, 0, length, StandardCharsets.UTF_8);
-            if (length < copy.length || truncated) summary += "\n<output truncated>";
+            int offset = copy.length - length;
+            summary = new String(copy, offset, length, StandardCharsets.UTF_8);
+            if (offset > 0 || truncated) summary = "<output truncated; showing tail>\n" + summary;
         }
         return new ExecutionOutput(summary, reference, copy.length, digest, truncated, binary);
     }

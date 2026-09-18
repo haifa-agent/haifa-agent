@@ -6,6 +6,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Objects;
 
 public final class ArtifactService {
@@ -45,6 +46,17 @@ public final class ArtifactService {
             payloads.delete(payload);
             throw exception;
         }
+    }
+
+    public List<Artifact> findByProject(String projectId) {
+        return artifacts.findByProject(Objects.requireNonNull(projectId, "projectId must not be null"));
+    }
+
+    public byte[] load(Artifact artifact) {
+        Artifact value = Objects.requireNonNull(artifact, "artifact must not be null");
+        return payloads.load(value.payload())
+                .map(bytes -> Arrays.copyOf(bytes, bytes.length))
+                .orElseThrow(() -> new IllegalStateException("artifact payload is unavailable"));
     }
 
     private static String hash(byte[] bytes) {

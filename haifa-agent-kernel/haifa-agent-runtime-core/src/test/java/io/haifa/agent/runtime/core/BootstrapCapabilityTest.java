@@ -19,12 +19,35 @@ import io.haifa.agent.runtime.core.bootstrap.CapabilityResolutionErrorCode;
 import io.haifa.agent.runtime.core.bootstrap.CapabilityResolutionException;
 import io.haifa.agent.runtime.core.bootstrap.ContentAddressedSnapshotFactory;
 import io.haifa.agent.runtime.core.bootstrap.DefaultCapabilityResolver;
+import io.haifa.agent.runtime.core.bootstrap.EffectiveCapability;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedCapability;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedDefinition;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
 import io.haifa.agent.runtime.core.bootstrap.RunBootstrapper;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext;
+import io.haifa.agent.runtime.core.skill.DefaultSkillActivationService;
+import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
+import io.haifa.agent.skill.api.SkillActivationRequest;
+import io.haifa.agent.skill.api.SkillAlias;
+import io.haifa.agent.skill.api.SkillAvailability;
+import io.haifa.agent.skill.api.SkillDiscoveryContext;
+import io.haifa.agent.skill.api.SkillOrigin;
+import io.haifa.agent.skill.api.SkillParserMode;
+import io.haifa.agent.skill.api.SkillResolutionPolicy;
+import io.haifa.agent.skill.api.SkillScope;
+import io.haifa.agent.skill.api.SkillScopeRef;
+import io.haifa.agent.skill.api.SkillSourceDescriptor;
+import io.haifa.agent.skill.api.SkillSourceRef;
+import io.haifa.agent.skill.api.SkillVisibilityContext;
+import io.haifa.agent.skill.base.BaseSkills;
+import io.haifa.agent.skill.core.CompositeSkillContentLoader;
+import io.haifa.agent.skill.core.InMemorySkillSource;
+import io.haifa.agent.skill.core.SkillCatalogBuilder;
+import io.haifa.agent.skill.core.SkillPackageLimits;
+import io.haifa.agent.skill.core.SkillPackageParser;
+import io.haifa.agent.tool.api.ToolCatalog;
 import io.haifa.agent.tool.api.ToolCatalogSnapshot;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -73,6 +96,34 @@ class BootstrapCapabilityTest {
             assertThat(value.bindingRef()).isEqualTo("workspace-binding-1");
         });
         assertThat(first.configuration().reference()).isNotEqualTo(secondSnapshot.reference());
+    }
+
+    @Test
+    void modelRequestOptionsAreFrozenAndChangeTheConfigurationDigest() {
+        var definition = definition(List.of());
+        var capabilities = List.<EffectiveCapability>of();
+        var base = profile(Map.of());
+        var responseFormat = new java.util.LinkedHashMap<String, Object>();
+        responseFormat.put("type", "json_object");
+        var structured = new ResolvedProfile(
+                base.id(),
+                base.version(),
+                base.runType(),
+                base.budget(),
+                base.limits(),
+                base.model(),
+                base.capabilities(),
+                Map.of("response_format", responseFormat));
+        responseFormat.put("type", "mutated");
+
+        var plainSnapshot =
+                new ContentAddressedSnapshotFactory().create(request(false), definition, base, CALLER, capabilities);
+        var structuredSnapshot = new ContentAddressedSnapshotFactory()
+                .create(request(false), definition, structured, CALLER, capabilities);
+
+        assertThat(structuredSnapshot.modelRequestOptions())
+                .containsEntry("response_format", Map.of("type", "json_object"));
+        assertThat(structuredSnapshot.reference()).isNotEqualTo(plainSnapshot.reference());
     }
 
     @Test
@@ -148,6 +199,200 @@ class BootstrapCapabilityTest {
                 .isNotEqualTo(changed.toolBindings().getFirst().coordinate().definitionHash());
         assertThat(first.reference()).isNotEqualTo(changed.reference());
         assertThat(first.toolBindings()).containsExactly(firstBinding);
+    }
+
+    @Test
+    void runProfileToolAllowlistNarrowsTheFrozenAgentTools() {
+        var readBinding = TestToolPlatform.binding("read", "1.0.0", "read.input", false);
+        var writeBinding = TestToolPlatform.binding("write", "1.0.0", "write.input", true);
+        var definition = new ResolvedDefinition(
+                new AgentDefinitionId("agent"),
+                new AgentDefinitionVersion(1, 0, 0),
+                Set.of("read", "write"),
+                Set.of(),
+                "Complete the objective.");
+        var base = profile(Map.of());
+        var readOnly = new ResolvedProfile(
+                base.id(),
+                base.version(),
+                base.runType(),
+                base.budget(),
+                base.limits(),
+                base.model(),
+                base.capabilities(),
+                base.modelRequestOptions(),
+                Optional.of(Set.of("read")));
+        var factory = new ContentAddressedSnapshotFactory(
+                new ToolCatalogSnapshot(readBinding.catalogDigest(), List.of(readBinding, writeBinding)));
+
+        var snapshot = factory.create(request(false), definition, readOnly, CALLER, List.of());
+
+        assertThat(snapshot.toolBindings()).containsExactly(readBinding);
+        var invalid = new ResolvedProfile(
+                base.id(),
+                base.version(),
+                base.runType(),
+                base.budget(),
+                base.limits(),
+                base.model(),
+                base.capabilities(),
+                base.modelRequestOptions(),
+                Optional.of(Set.of("outside-agent")));
+        assertThatThrownBy(() -> factory.create(request(false), definition, invalid, CALLER, List.of()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("subset");
+    }
+
+    @Test
+    void skillBindingIsFrozenActivatedIdempotentlyAndUnavailableAliasesAreDenied() {
+        var source = BaseSkills.source();
+        var visibility = new SkillVisibilityContext(
+                CALLER.tenant(), CALLER.principal(), Optional.empty(), false, Set.of(SkillScope.SDK));
+        var catalog = new SkillCatalogBuilder(
+                        List.of(source), new SkillResolutionPolicy("runtime-test@1", List.of(SkillScope.SDK), true))
+                .build(new SkillDiscoveryContext(visibility));
+        var loader = new CompositeSkillContentLoader(List.of(source));
+        var definition = new ResolvedDefinition(
+                new AgentDefinitionId("agent"),
+                new AgentDefinitionVersion(1, 0, 0),
+                Set.of(),
+                Set.of("task-planning"),
+                Set.of(),
+                "Complete the objective.",
+                List.of());
+        var bootstrapper = new RunBootstrapper(
+                (id, version) -> definition,
+                (id, overrides) -> profile(Map.of()),
+                (caller, session, project) -> {},
+                new ContentAddressedSnapshotFactory(ToolCatalog.empty().snapshot(), catalog.snapshot()),
+                () -> "skill-run",
+                () -> Instant.parse("2026-07-21T00:00:00Z"));
+        var bootstrap = bootstrapper.bootstrap(request(false), CALLER);
+        var store = new InMemoryRuntimeStore();
+        store.insert(bootstrap.run());
+        store.saveConfiguration(bootstrap.configuration());
+        var service =
+                new DefaultSkillActivationService(store, store, loader, () -> Instant.parse("2026-07-21T00:00:01Z"));
+        var activationRequest = new SkillActivationRequest(
+                bootstrap.run().id(),
+                CALLER.tenant(),
+                CALLER.principal(),
+                new SkillAlias("task-planning"),
+                "the task has dependent stages",
+                "test");
+
+        var first = service.activate(activationRequest);
+        var second = service.activate(activationRequest);
+
+        assertThat(bootstrap.configuration().skillBindings()).hasSize(1);
+        assertThat(bootstrap.configuration().skillCatalogDigest())
+                .isEqualTo(catalog.snapshot().digest());
+        assertThat(first).isEqualTo(second);
+        assertThat(service.content(activationRequest).instructions()).contains("# Task planning");
+        assertThat(store.skillActivations(bootstrap.run().id())).containsExactly(first);
+        assertThatThrownBy(() -> service.activate(new SkillActivationRequest(
+                        bootstrap.run().id(),
+                        CALLER.tenant(),
+                        CALLER.principal(),
+                        new SkillAlias("result-verification"),
+                        "not frozen",
+                        "test")))
+                .isInstanceOf(SecurityException.class);
+    }
+
+    @Test
+    void skillResourcesRequireActivationIndexAuthorizationAndRunBudget() {
+        String chunk = "x".repeat(400 * 1024);
+        var descriptor = new SkillSourceDescriptor(
+                new SkillSourceRef("resource-fixture", "1"),
+                SkillScopeRef.sdk(),
+                SkillOrigin.BUNDLED,
+                0,
+                SkillParserMode.STRICT,
+                true,
+                false);
+        var source = new InMemorySkillSource(
+                descriptor,
+                new SkillPackageParser(SkillPackageLimits.defaults()),
+                SkillAvailability.ENABLED,
+                Map.of(
+                        "resource-skill",
+                        Map.of(
+                                "SKILL.md",
+                                """
+                                ---
+                                name: resource-skill
+                                description: Reads indexed resources under a bounded run budget.
+                                ---
+                                Load only the resource needed for the current step.
+                                """
+                                        .getBytes(StandardCharsets.UTF_8),
+                                "references/a.txt",
+                                chunk.getBytes(StandardCharsets.UTF_8),
+                                "references/b.txt",
+                                chunk.getBytes(StandardCharsets.UTF_8),
+                                "references/c.txt",
+                                chunk.getBytes(StandardCharsets.UTF_8))));
+        var visibility = new SkillVisibilityContext(
+                CALLER.tenant(), CALLER.principal(), Optional.empty(), false, Set.of(SkillScope.SDK));
+        var catalog = new SkillCatalogBuilder(
+                        List.of(source), new SkillResolutionPolicy("resource-test@1", List.of(SkillScope.SDK), true))
+                .build(new SkillDiscoveryContext(visibility));
+        var loader = new CompositeSkillContentLoader(List.of(source));
+        var definition = new ResolvedDefinition(
+                new AgentDefinitionId("agent"),
+                new AgentDefinitionVersion(1, 0, 0),
+                Set.of(),
+                Set.of("resource-skill"),
+                Set.of(),
+                "Complete the objective.",
+                List.of());
+        var bootstrap = new RunBootstrapper(
+                        (id, version) -> definition,
+                        (id, overrides) -> profile(Map.of()),
+                        (caller, session, project) -> {},
+                        new ContentAddressedSnapshotFactory(ToolCatalog.empty().snapshot(), catalog.snapshot()),
+                        () -> "resource-run",
+                        () -> Instant.parse("2026-07-21T00:00:00Z"))
+                .bootstrap(request(false), CALLER);
+        var store = new InMemoryRuntimeStore();
+        store.insert(bootstrap.run());
+        store.saveConfiguration(bootstrap.configuration());
+        var service =
+                new DefaultSkillActivationService(store, store, loader, () -> Instant.parse("2026-07-21T00:00:01Z"));
+        var activationRequest = new SkillActivationRequest(
+                bootstrap.run().id(),
+                CALLER.tenant(),
+                CALLER.principal(),
+                new SkillAlias("resource-skill"),
+                "read a supporting reference",
+                "test");
+
+        assertThatThrownBy(() -> service.readResource(activationRequest, "references/a.txt"))
+                .isInstanceOf(SecurityException.class)
+                .hasMessageContaining("activated");
+        service.activate(activationRequest);
+        assertThatThrownBy(() -> service.readResource(activationRequest, "references/missing.txt"))
+                .isInstanceOf(SecurityException.class)
+                .hasMessageContaining("frozen index");
+        assertThatThrownBy(() -> service.readResource(activationRequest, "SKILL.md"))
+                .isInstanceOf(SecurityException.class)
+                .hasMessageContaining("auxiliary readable text resource");
+        for (String path : List.of(
+                "references/a.txt", "references/b.txt", "references/c.txt", "references/a.txt", "references/b.txt")) {
+            assertThat(service.readResource(activationRequest, path).content()).hasSize(400 * 1024);
+        }
+        assertThatThrownBy(() -> service.readResource(activationRequest, "references/c.txt"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("budget");
+        assertThatThrownBy(() -> service.activate(new SkillActivationRequest(
+                        bootstrap.run().id(),
+                        new TenantRef("other-tenant"),
+                        CALLER.principal(),
+                        new SkillAlias("resource-skill"),
+                        "cross tenant",
+                        "test")))
+                .isInstanceOf(SecurityException.class);
     }
 
     private static void assertCode(

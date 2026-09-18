@@ -1,0 +1,574 @@
+package io.haifa.agent.application.project;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import io.haifa.agent.application.project.product.InMemoryProjectProductSessionStore;
+import io.haifa.agent.application.project.product.ProjectProductService;
+import io.haifa.agent.application.project.product.TrustedProductCaller;
+import io.haifa.agent.application.project.skill.ProjectSkillPlatform;
+import io.haifa.agent.application.project.tool.ProjectToolCatalog;
+import io.haifa.agent.application.project.tool.ProjectToolExecutor;
+import io.haifa.agent.core.agent.AgentDefinitionId;
+import io.haifa.agent.core.reference.PrincipalRef;
+import io.haifa.agent.core.reference.TenantRef;
+import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.core.run.AgentRunStatus;
+import io.haifa.agent.core.tool.ToolArguments;
+import io.haifa.agent.core.tool.ToolCallId;
+import io.haifa.agent.core.tool.ToolResult;
+import io.haifa.agent.execution.api.SandboxProfileRef;
+import io.haifa.agent.project.configuration.ProjectConfiguration;
+import io.haifa.agent.project.configuration.ProjectConfigurationId;
+import io.haifa.agent.project.configuration.ProjectConfigurationVersion;
+import io.haifa.agent.project.core.configuration.InMemoryProjectConfigurationStore;
+import io.haifa.agent.project.core.configuration.ProjectConfigurationService;
+import io.haifa.agent.project.core.store.InMemoryProjectStore;
+import io.haifa.agent.project.core.store.InMemoryWorkspaceStore;
+import io.haifa.agent.project.domain.Project;
+import io.haifa.agent.project.domain.ProjectConfigurationRef;
+import io.haifa.agent.project.domain.ProjectId;
+import io.haifa.agent.project.workspace.Workspace;
+import io.haifa.agent.project.workspace.WorkspaceId;
+import io.haifa.agent.project.workspace.WorkspaceRevision;
+import io.haifa.agent.runtime.api.AgentRunHandle;
+import io.haifa.agent.runtime.api.AgentRunListener;
+import io.haifa.agent.runtime.api.AgentRunOutputEvent;
+import io.haifa.agent.runtime.api.AgentRunOutputListener;
+import io.haifa.agent.runtime.api.AgentRunRequest;
+import io.haifa.agent.runtime.api.AgentRunSnapshot;
+import io.haifa.agent.runtime.api.AgentRuntime;
+import io.haifa.agent.runtime.api.InteractionResponse;
+import io.haifa.agent.runtime.api.ResumeAgentRunRequest;
+import io.haifa.agent.runtime.api.RunOutputCursor;
+import io.haifa.agent.runtime.api.RuntimeCommand;
+import io.haifa.agent.runtime.api.RuntimeCommandResult;
+import io.haifa.agent.runtime.core.skill.SkillActivationService;
+import io.haifa.agent.runtime.core.skill.SkillResourceRead;
+import io.haifa.agent.runtime.core.skill.SkillToolProvider;
+import io.haifa.agent.sandbox.api.SandboxConfigurationDigest;
+import io.haifa.agent.sandbox.api.SandboxProfile;
+import io.haifa.agent.skill.api.SkillActivation;
+import io.haifa.agent.skill.api.SkillActivationRequest;
+import io.haifa.agent.skill.api.SkillAlias;
+import io.haifa.agent.skill.api.SkillContent;
+import io.haifa.agent.skill.api.SkillOrigin;
+import io.haifa.agent.skill.api.SkillParserMode;
+import io.haifa.agent.skill.api.SkillScope;
+import io.haifa.agent.skill.api.SkillVisibilityContext;
+import io.haifa.agent.tool.api.ToolInvocationRequest;
+import io.haifa.agent.tool.api.ToolProvider;
+import io.haifa.agent.tool.api.ToolProviderId;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+class ProjectApplicationTest {
+    private static final Instant NOW = Instant.parse("2026-07-21T00:00:00Z");
+
+    @Test
+    void freezesToolDisclosureAndKeepsOrdinaryChatEmpty() {
+        var catalog = new ProjectToolCatalog();
+        ToolProvider provider = new ToolProvider() {
+            @Override
+            public ToolProviderId id() {
+                return ProjectToolExecutor.PROVIDER_ID;
+            }
+
+            @Override
+            public io.haifa.agent.core.tool.ToolResult invoke(ToolInvocationRequest request) {
+                throw new UnsupportedOperationException();
+            }
+        };
+        assertThat(catalog.freeze(Set.of("file_read", "execution_run"), Set.of(), true, provider)
+                        .snapshot()
+                        .bindings())
+                .isEmpty();
+        var disclosed = catalog.freeze(
+                Set.of("file_read", "file_write", "execution_run"),
+                Set.of("file_read", "execution_run"),
+                true,
+                provider,
+                executionProfile("host-guarded", "one"));
+        assertThat(disclosed.snapshot().bindings())
+                .extracting(binding -> binding.alias().value())
+                .containsExactly("execution_run", "file_read");
+        var execution = disclosed.snapshot().bindings().getFirst();
+        var fileRead = disclosed.snapshot().bindings().get(1);
+        assertThat(execution.definition().version().value()).isEqualTo("4.0.0");
+        assertThat(fileRead.definition().version().value()).isEqualTo("2.0.0");
+        @SuppressWarnings("unchecked")
+        var properties = (java.util.Map<String, Object>)
+                execution.definition().inputSchema().document().get("properties");
+        assertThat(properties)
+                .containsOnlyKeys(
+                        "command",
+                        "workspaceRef",
+                        "relativeWorkdir",
+                        "timeoutMillis",
+                        "description",
+                        "operationFamily");
+        assertThat(execution.definition().inputSchema().document())
+                .containsEntry("required", List.of("command", "workspaceRef", "relativeWorkdir"))
+                .containsEntry("additionalProperties", false);
+        assertThat(execution.definition().outputSchema().document()).containsEntry("additionalProperties", false);
+        @SuppressWarnings("unchecked")
+        var outputProperties = (java.util.Map<String, Object>)
+                execution.definition().outputSchema().document().get("properties");
+        assertThat(outputProperties).containsKey("processState");
+        assertThat(outputProperties.keySet())
+                .noneMatch(key -> key.startsWith("semantic")
+                        || key.startsWith("expectedExit")
+                        || key.startsWith("commandOutcome")
+                        || key.startsWith("delivery")
+                        || key.startsWith("changeReview"));
+        assertThat(execution.definition().resources().executionProfiles())
+                .singleElement()
+                .asString()
+                .contains("cli-host-guarded@1");
+        assertThat(execution.definition().sideEffects())
+                .containsExactlyInAnyOrder(
+                        io.haifa.agent.tool.api.ToolSideEffect.PROCESS_EXECUTION,
+                        io.haifa.agent.tool.api.ToolSideEffect.NETWORK_ACCESS);
+        assertThat(execution.definition().effectClass())
+                .isEqualTo(io.haifa.agent.tool.api.ToolEffectClass.SIDE_EFFECTING);
+        assertThat(fileRead.definition().effectClass()).isEqualTo(io.haifa.agent.tool.api.ToolEffectClass.PURE_READ);
+        assertThat(execution.definition().provenance()).isEqualTo("haifa-coding-agent");
+        assertThat(execution.definition().description())
+                .contains(
+                        "general OS CLI path",
+                        "repository discovery",
+                        "content search",
+                        "available CLI",
+                        "command-specific wrappers",
+                        "operationFamily",
+                        "optional declared hint",
+                        "output budgeting",
+                        "never grants authorization",
+                        "same generic execution path",
+                        "authentication material");
+        @SuppressWarnings("unchecked")
+        var commandSchema = (java.util.Map<String, Object>) properties.get("command");
+        assertThat(commandSchema.get("description").toString())
+                .contains("Complete non-interactive command text", "Select available CLI programs");
+        @SuppressWarnings("unchecked")
+        var fileProperties = (java.util.Map<String, Object>)
+                fileRead.definition().inputSchema().document().get("properties");
+        @SuppressWarnings("unchecked")
+        var pathSchema = (java.util.Map<String, Object>) fileProperties.get("path");
+        assertThat(pathSchema.get("description"))
+                .isEqualTo(
+                        "Host absolute path within an authorized directory. Relative paths and root aliases are not allowed.");
+        assertThat(disclosed.snapshot().digest()).matches("[0-9a-f]{64}");
+        assertThat(catalog.freeze(Set.of("file_read"), Set.of("file_read"), false, provider)
+                        .snapshot()
+                        .bindings())
+                .isEmpty();
+        assertThat(catalog.freeze(Set.of("file_read"), Set.of("file_read"), true, provider, List.of())
+                        .snapshot()
+                        .bindings())
+                .extracting(binding -> binding.alias().value())
+                .containsExactly("file_read");
+    }
+
+    @Test
+    void versionsEveryAbsolutePathReadToolAsTwoPointZero() {
+        var bindings = new ProjectToolCatalog()
+                .freeze(
+                        Set.of("file_list", "file_search", "file_diff"),
+                        Set.of("file_read"),
+                        true,
+                        providerThatMustNotRun())
+                .snapshot()
+                .bindings();
+
+        assertThat(bindings)
+                .extracting(binding -> binding.definition().name().value())
+                .containsExactlyInAnyOrder("file_list", "file_search", "file_diff");
+        assertThat(bindings)
+                .allSatisfy(binding ->
+                        assertThat(binding.definition().version().value()).isEqualTo("2.0.0"));
+    }
+
+    @Test
+    void skillEnabledProfileDiscoversBaseSkillsAndExplicitlyAddsProgressiveDisclosureTools() {
+        TenantRef tenant = new TenantRef("tenant");
+        PrincipalRef principal = new PrincipalRef("principal", "user");
+        var skills = ProjectSkillPlatform.baseSkills(tenant, principal, Optional.empty(), false);
+        assertThat(skills.catalog().snapshot().bindings())
+                .extracting(binding -> binding.alias().value())
+                .containsExactly("result-verification", "task-planning")
+                .doesNotContain("git", "github");
+
+        SkillActivationService unusedService = new SkillActivationService() {
+            @Override
+            public SkillActivation activate(SkillActivationRequest request) {
+                throw new AssertionError("catalog assembly must not activate a Skill");
+            }
+
+            @Override
+            public SkillContent content(SkillActivationRequest request) {
+                throw new AssertionError("catalog assembly must not load Skill content");
+            }
+
+            @Override
+            public SkillResourceRead readResource(SkillActivationRequest request, String relativePath) {
+                throw new AssertionError("catalog assembly must not read Skill resources");
+            }
+        };
+        var skillTools = new SkillToolProvider(unusedService).contributions();
+        var catalog = new ProjectToolCatalog();
+
+        assertThat(catalog.freeze(Set.of(), Set.of(), true, providerThatMustNotRun())
+                        .snapshot()
+                        .bindings())
+                .isEmpty();
+        assertThat(catalog.freeze(Set.of(), Set.of(), true, providerThatMustNotRun(), List.of(), List.of(), skillTools)
+                        .snapshot()
+                        .bindings())
+                .extracting(binding -> binding.alias().value())
+                .containsExactly("skill_load", "skill_resource_read");
+    }
+
+    @Test
+    void userDirectoryMayDefineGitAndGithubAsOrdinarySkills(@TempDir Path sourceRoot) throws Exception {
+        for (String name : List.of("git", "github")) {
+            Path skillRoot = Files.createDirectory(sourceRoot.resolve(name));
+            Files.writeString(
+                    skillRoot.resolve("SKILL.md"),
+                    """
+                    ---
+                    name: %s
+                    description: User-owned repository conventions.
+                    ---
+                    # User-owned %s conventions
+                    """
+                            .formatted(name, name));
+        }
+        TenantRef tenant = new TenantRef("tenant");
+        PrincipalRef principal = new PrincipalRef("principal", "user");
+        var platform = ProjectSkillPlatform.baseAndUserDirectorySkills(
+                tenant,
+                principal,
+                Optional.empty(),
+                false,
+                List.of(new ProjectSkillPlatform.UserDirectorySource(
+                        "user-skills", sourceRoot, 100, SkillParserMode.STRICT, SkillOrigin.CREATED)));
+
+        assertThat(platform.catalog().snapshot().bindings())
+                .extracting(binding -> binding.alias().value())
+                .contains("git", "github", "result-verification", "task-planning");
+        var visibility = new SkillVisibilityContext(
+                tenant,
+                principal,
+                Optional.empty(),
+                false,
+                Set.of(SkillScope.USER, SkillScope.PROJECT, SkillScope.TENANT, SkillScope.PRODUCT, SkillScope.SDK));
+        for (String name : List.of("git", "github")) {
+            var binding = platform.catalog().findByAlias(new SkillAlias(name)).orElseThrow();
+            assertThat(platform.contentLoader().load(binding, visibility).instructions())
+                    .contains("User-owned " + name + " conventions");
+        }
+    }
+
+    @Test
+    void doesNotPublishAPermissionRequestTool() {
+        var catalog = new ProjectToolCatalog();
+        var frozen = catalog.freeze(
+                catalog.names(),
+                Set.of("file_read", "file_write", "execution_run"),
+                true,
+                providerThatMustNotRun(),
+                executionProfile("host-guarded", "two"));
+
+        assertThat(frozen.snapshot().bindings())
+                .hasSize(12)
+                .extracting(binding -> binding.alias().value())
+                .containsExactly(
+                        "execution_run",
+                        "file_create",
+                        "file_delete",
+                        "file_diff",
+                        "file_list",
+                        "file_move",
+                        "file_patch",
+                        "file_read",
+                        "file_search",
+                        "file_stat",
+                        "file_write",
+                        "workspace_attach");
+        assertThat(frozen.snapshot().bindings()).allSatisfy(binding -> {
+            assertThat(binding.alias().value())
+                    .isEqualTo(binding.definition().name().value());
+            assertThat(binding.definition().inputSchema().document()).containsKey("$schema");
+            assertThat(binding.definition().outputSchema().document()).containsKey("$schema");
+            assertThat(binding.definition().sideEffects()).isNotEmpty();
+            assertThat(binding.definition().resources().filesystemCapabilities())
+                    .isNotEmpty();
+            assertThat(binding.coordinate().definitionHash().value()).matches("[0-9a-f]{64}");
+        });
+        assertThat(frozen.snapshot().bindings())
+                .extracting(binding -> binding.alias().value())
+                .doesNotContain("request_permissions");
+        assertThat(frozen.snapshot().bindings())
+                .filteredOn(binding -> binding.alias().value().equals("workspace_attach"))
+                .singleElement()
+                .satisfies(binding -> {
+                    assertThat(binding.definition().approvalRequirement())
+                            .isEqualTo(io.haifa.agent.tool.api.ToolApprovalRequirement.ALWAYS);
+                    assertThat(binding.definition().risk()).isEqualTo(io.haifa.agent.tool.api.ToolRisk.HIGH);
+                    assertThat(binding.definition().sideEffects())
+                            .contains(io.haifa.agent.tool.api.ToolSideEffect.PERMISSION_ELEVATION);
+                    assertThat(binding.definition().inputSchema().document().toString())
+                            .contains("path", "mode", "read", "develop")
+                            .doesNotContain("permission", "read-only", "read-write");
+                });
+        assertThat(frozen.snapshot().bindings())
+                .filteredOn(binding -> binding.alias().value().equals("file_write"))
+                .singleElement()
+                .satisfies(binding -> {
+                    assertThat(binding.definition().version().value()).isEqualTo("2.0.0");
+                    assertThat(binding.definition().description()).contains("creates the file atomically");
+                });
+        assertThat(frozen.snapshot().bindings())
+                .filteredOn(binding -> binding.alias().value().equals("file_patch"))
+                .singleElement()
+                .satisfies(binding -> {
+                    assertThat(binding.definition().version().value()).isEqualTo("2.1.0");
+                    assertThat(binding.definition().description())
+                            .contains("optional navigation hint", "unique exact match", "ambiguous");
+                    assertThat(binding.definition().inputSchema().document().toString())
+                            .contains("@@ <text>", "optional navigation hint", "unique exact match");
+                });
+    }
+
+    @Test
+    void executionProfileChangeFrozenToolIdentity() {
+        var catalog = new ProjectToolCatalog();
+        var first = catalog.freeze(
+                        Set.of("execution_run"),
+                        Set.of("execution_run"),
+                        true,
+                        providerThatMustNotRun(),
+                        executionProfile("host-guarded", "3-first", "first"))
+                .snapshot()
+                .bindings()
+                .getFirst();
+        var second = catalog.freeze(
+                        Set.of("execution_run"),
+                        Set.of("execution_run"),
+                        true,
+                        providerThatMustNotRun(),
+                        executionProfile("host-guarded", "3-second", "second"))
+                .snapshot()
+                .bindings()
+                .getFirst();
+
+        assertThat(first.coordinate().definitionHash())
+                .isNotEqualTo(second.coordinate().definitionHash());
+        assertThat(first.definition().sideEffects())
+                .containsExactlyInAnyOrder(
+                        io.haifa.agent.tool.api.ToolSideEffect.PROCESS_EXECUTION,
+                        io.haifa.agent.tool.api.ToolSideEffect.NETWORK_ACCESS);
+        assertThat(first.definition().resources().networkHosts()).containsExactly("unrestricted-network");
+        assertThat(second.definition().resources().networkHosts()).containsExactly("unrestricted-network");
+    }
+
+    @Test
+    void projectProviderPreservesRunWorkspaceAndCapabilityBoundary() {
+        var binding = new ProjectToolCatalog()
+                .freeze(Set.of("file_read"), Set.of("file_read"), true, providerThatMustNotRun())
+                .snapshot()
+                .bindings()
+                .getFirst();
+        WorkspaceId workspaceId = new WorkspaceId("workspace-tool");
+        PrincipalRef principal = new PrincipalRef("operator", "user");
+        AtomicReference<String> observed = new AtomicReference<>();
+        ProjectToolExecutor executor = new ProjectToolExecutor(
+                (runId, actor) -> new io.haifa.agent.application.project.tool.RunWorkspaceAccess(
+                        workspaceId, Set.of("file_read")),
+                (toolName, workspace, actor, runRef, arguments) -> {
+                    observed.set(toolName + "|" + workspace.value() + "|" + actor.principalId() + "|" + runRef);
+                    return new ToolResult(true, "read", java.util.Map.of(), List.of(), List.of(), false);
+                });
+        var request = new ToolInvocationRequest(
+                binding,
+                new ToolCallId("tool-call"),
+                new AgentRunId("run-tool"),
+                new TenantRef("tenant"),
+                principal,
+                new ToolArguments("haifa.file.read.input", "1.1.0", java.util.Map.of("path", "README.md")),
+                NOW.plusSeconds(30),
+                Optional.of("key"),
+                () -> false,
+                java.util.Map.of(),
+                io.haifa.agent.tool.api.ToolInvocationObserver.noop());
+
+        assertThat(executor.invoke(request).successful()).isTrue();
+        assertThat(observed).hasValue("file_read|workspace-tool|operator|run-tool");
+
+        ProjectToolExecutor denied = new ProjectToolExecutor(
+                (runId, actor) -> new io.haifa.agent.application.project.tool.RunWorkspaceAccess(workspaceId, Set.of()),
+                (toolName, workspace, actor, runRef, arguments) -> {
+                    throw new AssertionError("unauthorized operation must not execute");
+                });
+        assertThatThrownBy(() -> denied.invoke(request)).isInstanceOf(SecurityException.class);
+    }
+
+    @Test
+    void projectOnlyFacadeResolvesDefaultWorkspaceAndSupportsMultipleSessions() {
+        TenantRef tenant = new TenantRef("tenant-1");
+        PrincipalRef principal = new PrincipalRef("principal-1", "user");
+        ProjectId projectId = new ProjectId("project-1");
+        WorkspaceId workspaceId = new WorkspaceId("workspace-1");
+        var projects = new InMemoryProjectStore();
+        Project project = Project.create(
+                        projectId,
+                        tenant,
+                        principal,
+                        "Demo",
+                        "",
+                        new ProjectConfigurationRef("config-1", "1"),
+                        NOW,
+                        java.util.Map.of())
+                .assignDefaultWorkspace(workspaceId, NOW);
+        projects.create(project);
+        var workspaces = new InMemoryWorkspaceStore();
+        workspaces.create(Workspace.provision(workspaceId, projectId, WorkspaceRevision.initial("root"), NOW)
+                .activate(NOW));
+        var configurationStore = new InMemoryProjectConfigurationStore();
+        var configuration = ProjectConfiguration.create(
+                new ProjectConfigurationId("config-1"),
+                new ProjectConfigurationVersion("1"),
+                workspaceId,
+                "coding",
+                "1",
+                Set.of("file_read"),
+                Set.of("file_read"),
+                "policy-1");
+        configurationStore.publish(configuration);
+        var runtime = new CapturingRuntime();
+        AtomicInteger sequence = new AtomicInteger();
+        List<io.haifa.agent.application.project.product.ProjectProductSession> provisioned = new ArrayList<>();
+        var service = new ProjectProductService(
+                projects,
+                workspaces,
+                new ProjectConfigurationService(configurationStore),
+                new InMemoryProjectProductSessionStore(),
+                (session, metadata) -> provisioned.add(session),
+                () -> new TrustedProductCaller(tenant, principal),
+                runtime,
+                () -> "id-" + sequence.incrementAndGet(),
+                new AgentDefinitionId("coding-agent"));
+
+        var first = service.start(projectId, "first task", List.of());
+        var second = service.start(projectId, "second task", List.of());
+        var continued = service.continueSession(first.sessionId(), "continue", List.of());
+
+        assertThat(first.sessionId()).isNotEqualTo(second.sessionId());
+        assertThat(continued.sessionId()).isEqualTo(first.sessionId());
+        assertThat(first.configurationDigest()).isEqualTo(configuration.digest());
+        assertThat(provisioned).hasSize(2).allSatisfy(session -> {
+            assertThat(session.workspaceId()).isEqualTo(workspaceId);
+            assertThat(session.configurationDigest()).isEqualTo(configuration.digest());
+        });
+        assertThat(runtime.requests).hasSize(3).allSatisfy(request -> {
+            assertThat(request.project()).contains(project.reference());
+            assertThat(request.productProfileId()).isEqualTo("coding@1");
+            assertThat(request.inputs())
+                    .as("text objective must not be duplicated as an input")
+                    .isEmpty();
+        });
+        assertThat(runtime.requests.get(2).sessionId()).isEqualTo(first.sessionId());
+    }
+
+    private static final class CapturingRuntime implements AgentRuntime {
+        private final List<AgentRunRequest> requests = new ArrayList<>();
+
+        @Override
+        public AgentRunSnapshot start(AgentRunRequest request) {
+            requests.add(request);
+            return new AgentRunSnapshot(
+                    new AgentRunId("run-" + requests.size()),
+                    AgentRunStatus.PENDING,
+                    0,
+                    NOW,
+                    Optional.empty(),
+                    Optional.empty(),
+                    Optional.empty());
+        }
+
+        @Override
+        public AgentRunSnapshot resume(ResumeAgentRunRequest request) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public AgentRunSnapshot respond(InteractionResponse response) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public RuntimeCommandResult command(RuntimeCommand command) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Optional<AgentRunSnapshot> find(AgentRunId runId) {
+            return Optional.empty();
+        }
+
+        @Override
+        public AgentRunHandle handle(AgentRunId runId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void addListener(AgentRunListener listener) {}
+
+        @Override
+        public List<AgentRunOutputEvent> outputEvents(AgentRunId runId, RunOutputCursor after, int limit) {
+            return List.of();
+        }
+
+        @Override
+        public void addOutputListener(AgentRunOutputListener listener) {}
+    }
+
+    private static ToolProvider providerThatMustNotRun() {
+        return new ToolProvider() {
+            @Override
+            public ToolProviderId id() {
+                return ProjectToolExecutor.PROVIDER_ID;
+            }
+
+            @Override
+            public ToolResult invoke(ToolInvocationRequest request) {
+                throw new AssertionError("catalog test provider must not run");
+            }
+        };
+    }
+
+    private static SandboxProfile executionProfile(String provider, String configurationSeed) {
+        return executionProfile(provider, "1", configurationSeed);
+    }
+
+    /** The CLI encodes the frozen configuration digest into the profile ref version. */
+    private static SandboxProfile executionProfile(String provider, String version, String configurationSeed) {
+        return new SandboxProfile(
+                new SandboxProfileRef("cli-" + provider, version),
+                provider,
+                SandboxConfigurationDigest.sha256Fields(List.of(configurationSeed)),
+                Set.of(),
+                Set.of(),
+                true);
+    }
+}

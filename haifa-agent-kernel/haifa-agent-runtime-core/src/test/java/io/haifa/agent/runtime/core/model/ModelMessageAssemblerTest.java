@@ -7,7 +7,6 @@ import io.haifa.agent.context.api.AgentContext;
 import io.haifa.agent.context.api.ContextBuildException;
 import io.haifa.agent.context.api.ContextBuildFailure;
 import io.haifa.agent.context.budget.ContextWindowBudget;
-import io.haifa.agent.context.item.AssetDerivedTextContent;
 import io.haifa.agent.context.item.ContextItem;
 import io.haifa.agent.context.item.ContextItemId;
 import io.haifa.agent.context.item.ContextItemType;
@@ -16,14 +15,21 @@ import io.haifa.agent.context.item.ContextProvenance;
 import io.haifa.agent.context.item.ContextRetention;
 import io.haifa.agent.context.item.ContextRole;
 import io.haifa.agent.context.item.ContextSecurity;
-import io.haifa.agent.context.item.DerivedTextKind;
-import io.haifa.agent.context.item.MessageContextContent;
+import io.haifa.agent.context.item.MessageGroupContextContent;
 import io.haifa.agent.context.item.TextContextContent;
 import io.haifa.agent.context.prompt.PromptComponent;
 import io.haifa.agent.context.prompt.PromptComponentId;
 import io.haifa.agent.context.prompt.PromptLayer;
 import io.haifa.agent.context.prompt.PromptRole;
 import io.haifa.agent.core.content.AssetRefPart;
+import io.haifa.agent.core.content.ImageUrlContentPart;
+import io.haifa.agent.core.content.StoredAudioContentPart;
+import io.haifa.agent.core.content.StoredImageContentPart;
+import io.haifa.agent.core.content.TextPart;
+import io.haifa.agent.core.content.ToolCallPart;
+import io.haifa.agent.core.content.ToolResultPart;
+import io.haifa.agent.core.error.AgentError;
+import io.haifa.agent.core.error.AgentErrorCode;
 import io.haifa.agent.core.message.AgentMessage;
 import io.haifa.agent.core.message.AgentMessageId;
 import io.haifa.agent.core.message.MessageRole;
@@ -32,9 +38,31 @@ import io.haifa.agent.core.message.MessageVisibility;
 import io.haifa.agent.core.reference.AssetRef;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.core.step.AgentStepId;
+import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
+import io.haifa.agent.core.tool.RuntimeIdempotencyKey;
+import io.haifa.agent.core.tool.ToolArguments;
+import io.haifa.agent.core.tool.ToolCall;
+import io.haifa.agent.core.tool.ToolCallId;
+import io.haifa.agent.core.tool.ToolExecutionError;
+import io.haifa.agent.model.api.CredentialRef;
+import io.haifa.agent.model.api.ModelApiStyles;
+import io.haifa.agent.model.api.ModelCapability;
+import io.haifa.agent.model.api.ModelDefinitionId;
+import io.haifa.agent.model.api.ModelMessage;
 import io.haifa.agent.model.api.ModelMessageRole;
+import io.haifa.agent.model.api.ModelProviderId;
+import io.haifa.agent.model.api.ModelToolCall;
+import io.haifa.agent.model.api.ResolvedModelSnapshot;
+import io.haifa.agent.model.api.SensitiveModelReasoning;
+import io.haifa.agent.runtime.core.bootstrap.DefaultResolvedModelSnapshots;
+import io.haifa.agent.runtime.core.model.continuation.ModelContinuationDraft;
+import io.haifa.agent.runtime.core.model.continuation.ModelContinuationRef;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
+import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
+import java.net.URI;
 import java.time.Instant;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -45,7 +73,7 @@ class ModelMessageAssemblerTest {
     private static final AgentRunId RUN_ID = new AgentRunId("run-1");
 
     @Test
-    void preservesPromptAndContextOrderAndMapsDerivedAssetText() {
+    void preservesPromptAndContextOrder() {
         AgentContext context = new AgentContext(
                 List.of(prompt()),
                 List.of(
@@ -54,12 +82,9 @@ class ModelMessageAssemblerTest {
                                 ContextItemType.RUNTIME_STATE,
                                 new TextContextContent(ContextRole.USER, "question")),
                         item(
-                                "asset-ocr",
-                                ContextItemType.ASSET_DERIVED_TEXT,
-                                new AssetDerivedTextContent(
-                                        new AssetRef("asset-1", "image/png", "scan.png"),
-                                        DerivedTextKind.OCR,
-                                        "invoice total 42"))),
+                                "runtime-control",
+                                ContextItemType.RUNTIME_STATE,
+                                new TextContextContent(ContextRole.SYSTEM, "continue"))),
                 List.of(),
                 budget(),
                 30);
@@ -68,10 +93,37 @@ class ModelMessageAssemblerTest {
 
         assertThat(messages)
                 .extracting(message -> message.role())
-                .containsExactly(ModelMessageRole.SYSTEM, ModelMessageRole.USER, ModelMessageRole.USER);
-        assertThat(messages.get(0).content()).isEqualTo("[SYSTEM_SAFETY/SYSTEM] follow safety policy");
+                .containsExactly(ModelMessageRole.SYSTEM, ModelMessageRole.USER, ModelMessageRole.SYSTEM);
+        assertThat(messages.get(0).content()).isEqualTo("follow safety policy");
         assertThat(messages.get(1).content()).isEqualTo("question");
-        assertThat(messages.get(2).content()).isEqualTo("[derived OCR asset=asset-1]\ninvoice total 42");
+        assertThat(messages.get(2).content()).isEqualTo("continue");
+    }
+
+    @Test
+    void mapsRuntimeNotificationsToAUserTurn() {
+        AgentMessage notification = message(
+                "runtime-notification",
+                new AgentSessionId("session-1"),
+                RUN_ID,
+                MessageRole.RUNTIME,
+                1,
+                List.of(new TextPart("collect the missing evidence", "plain")));
+        AgentContext context = new AgentContext(
+                List.of(prompt()),
+                List.of(item(
+                        "runtime-notification",
+                        ContextItemType.MESSAGE,
+                        new MessageGroupContextContent(List.of(notification)))),
+                List.of(),
+                budget(),
+                20);
+
+        var messages = new ModelMessageAssembler(new InMemoryRuntimeStore()).assemble(RUN_ID, context);
+
+        assertThat(messages)
+                .extracting(message -> message.role())
+                .containsExactly(ModelMessageRole.SYSTEM, ModelMessageRole.USER);
+        assertThat(messages.getLast().content()).isEqualTo("collect the missing evidence");
     }
 
     @Test
@@ -90,7 +142,7 @@ class ModelMessageAssemblerTest {
                 Instant.parse("2026-07-21T00:00:00Z"));
         AgentContext context = new AgentContext(
                 List.of(prompt()),
-                List.of(item("raw-asset", ContextItemType.MESSAGE, new MessageContextContent(message))),
+                List.of(item("raw-asset", ContextItemType.MESSAGE, new MessageGroupContextContent(List.of(message)))),
                 List.of(),
                 budget(),
                 20);
@@ -99,6 +151,915 @@ class ModelMessageAssemblerTest {
                 .isInstanceOf(ContextBuildException.class)
                 .extracting(error -> ((ContextBuildException) error).failure())
                 .isEqualTo(ContextBuildFailure.UNSUPPORTED_CONTEXT_CONTENT);
+    }
+
+    @Test
+    void mapsRemoteAndStoredImagesWithoutPersistingBinaryData() {
+        StoredImageContentPart stored = new StoredImageContentPart(
+                "personal-local", "img-1", "image/png", 4, "sha256:" + "a".repeat(64), "cat.png");
+        AgentMessage message = message(
+                "image-message",
+                new AgentSessionId("session-1"),
+                RUN_ID,
+                MessageRole.USER,
+                1,
+                List.of(
+                        new TextPart("describe", "plain"),
+                        new ImageUrlContentPart(URI.create("https://images.example.test/cat.png")),
+                        stored));
+        AgentContext context = new AgentContext(
+                List.of(prompt()),
+                List.of(item(
+                        "image-message", ContextItemType.MESSAGE, new MessageGroupContextContent(List.of(message)))),
+                List.of(),
+                budget(),
+                20);
+
+        var messages = new ModelMessageAssembler(
+                        new InMemoryRuntimeStore(),
+                        image -> new io.haifa.agent.model.api.ImageDataPart("image/png", new byte[] {1, 2, 3, 4}))
+                .assemble(RUN_ID, context);
+
+        assertThat(messages.getLast().content()).isEqualTo("describe");
+        assertThat(messages.getLast().images())
+                .hasSize(2)
+                .anyMatch(io.haifa.agent.model.api.ImageUrlPart.class::isInstance)
+                .anyMatch(io.haifa.agent.model.api.ImageDataPart.class::isInstance);
+    }
+
+    @Test
+    void mapsStoredAudioOnlyAtTheModelBoundary() {
+        StoredAudioContentPart stored = new StoredAudioContentPart(
+                "personal-local", "audio-1", "audio/wav", 4, "sha256:" + "b".repeat(64), "sample.wav");
+        AgentMessage message = message(
+                "audio-message",
+                new AgentSessionId("session-1"),
+                RUN_ID,
+                MessageRole.USER,
+                1,
+                List.of(new TextPart("transcribe", "plain"), stored));
+        AgentContext context = new AgentContext(
+                List.of(prompt()),
+                List.of(item(
+                        "audio-message", ContextItemType.MESSAGE, new MessageGroupContextContent(List.of(message)))),
+                List.of(),
+                budget(),
+                20);
+
+        var messages = new ModelMessageAssembler(
+                        new InMemoryRuntimeStore(),
+                        ModelImageResolver.unsupported(),
+                        audio -> new io.haifa.agent.model.api.AudioDataPart("audio/wav", new byte[] {1, 2, 3, 4}))
+                .assemble(RUN_ID, context);
+
+        assertThat(messages.getLast().content()).isEqualTo("transcribe");
+        assertThat(messages.getLast().audios())
+                .singleElement()
+                .isInstanceOf(io.haifa.agent.model.api.AudioDataPart.class);
+    }
+
+    @Test
+    void resolvesToolProtocolHistoryFromTheRunThatCreatedEachMessage() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentRunId previousRunId = new AgentRunId("run-previous");
+        AgentSessionId sessionId = new AgentSessionId("session-1");
+        ToolCallId toolCallId = new ToolCallId("tool-call-1");
+        ProviderToolCallCorrelationId correlationId = new ProviderToolCallCorrelationId("provider-tool-call-1");
+        ToolCall call = new ToolCall(
+                toolCallId,
+                previousRunId,
+                new AgentStepId("step-1"),
+                correlationId,
+                new RuntimeIdempotencyKey("idempotency-1"),
+                "execution_run",
+                "1.0.0",
+                new ToolArguments("execution.input", "1.0.0", Map.of("command", "ls")),
+                Instant.parse("2026-07-21T00:00:00Z"));
+        call.beginValidation();
+        call.beginPolicyCheck();
+        call.waitForApproval();
+        call.deny(Instant.parse("2026-07-21T00:00:01Z"));
+        store.appendToolCall(call);
+
+        AgentMessage toolCall = message(
+                "assistant-tool-call",
+                sessionId,
+                previousRunId,
+                MessageRole.ASSISTANT,
+                1,
+                List.of(new ToolCallPart(toolCallId, correlationId, "execution_run", "1.0.0")));
+        AgentMessage toolResult = message(
+                "rejected-tool-result",
+                sessionId,
+                previousRunId,
+                MessageRole.TOOL,
+                2,
+                List.of(new ToolResultPart(toolCallId, correlationId, "Tool execution was rejected by the operator.")));
+        AgentMessage nextUserMessage = message(
+                "next-user", sessionId, RUN_ID, MessageRole.USER, 3, List.of(new TextPart("continue", "plain")));
+        AgentContext context = new AgentContext(
+                List.of(prompt()),
+                List.of(
+                        item(
+                                "assistant-tool-call",
+                                ContextItemType.MESSAGE,
+                                new MessageGroupContextContent(List.of(toolCall))),
+                        item(
+                                "rejected-tool-result",
+                                ContextItemType.MESSAGE,
+                                new MessageGroupContextContent(List.of(toolResult))),
+                        item(
+                                "next-user",
+                                ContextItemType.MESSAGE,
+                                new MessageGroupContextContent(List.of(nextUserMessage)))),
+                List.of(),
+                budget(),
+                30);
+
+        var messages = new ModelMessageAssembler(store).assemble(RUN_ID, context);
+
+        assertThat(messages)
+                .extracting(message -> message.role())
+                .containsExactly(
+                        ModelMessageRole.SYSTEM,
+                        ModelMessageRole.ASSISTANT,
+                        ModelMessageRole.TOOL,
+                        ModelMessageRole.USER);
+        assertThat(messages.get(1).toolCalls().getFirst().providerCorrelationId())
+                .isEqualTo(correlationId);
+        assertThat(messages.get(2).providerCorrelationId()).contains(correlationId);
+        assertThat(messages.get(2).content()).isEqualTo("Tool execution was rejected by the operator.");
+    }
+
+    @Test
+    void passesCanonicalBoundedExecutionFailureFactsIntoTheModelToolMessage() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentSessionId sessionId = new AgentSessionId("session-1");
+        ToolCallId toolCallId = new ToolCallId("tool-call-failed");
+        ProviderToolCallCorrelationId correlationId = new ProviderToolCallCorrelationId("provider-call-failed");
+        ToolCall call = new ToolCall(
+                toolCallId,
+                RUN_ID,
+                new AgentStepId("step-failed"),
+                correlationId,
+                new RuntimeIdempotencyKey("idempotency-failed"),
+                "execution_run",
+                "3.0.0",
+                new ToolArguments("haifa.execution.run.input", "3.0.0", Map.of("command", "mvn test")),
+                Instant.parse("2026-07-21T00:00:00Z"));
+        call.beginValidation();
+        call.beginPolicyCheck();
+        call.start(Instant.parse("2026-07-21T00:00:01Z"));
+        var canonicalResult = new io.haifa.agent.core.tool.ToolResult(
+                false,
+                "Process could not start\nbounded stderr tail",
+                Map.ofEntries(
+                        Map.entry("processState", "FAILED"),
+                        Map.entry("durationMillis", 1240L),
+                        Map.entry("truncated", true),
+                        Map.entry("output", "bounded stderr tail"),
+                        Map.entry("failureCategory", "INFRASTRUCTURE"),
+                        Map.entry("stableFailureCode", "PROCESS_START_FAILED"),
+                        Map.entry("failureActionCode", "CONTINUE_WITH_DIAGNOSTIC")),
+                List.of(),
+                List.of(),
+                true);
+        call.fail(
+                new ToolExecutionError(new AgentError(
+                        AgentErrorCode.TOOL_BUSINESS_FAILURE,
+                        Map.of("failureCategory", "INFRASTRUCTURE", "stableFailureCode", "PROCESS_START_FAILED"),
+                        "diagnostic-failed",
+                        Instant.parse("2026-07-21T00:00:02Z"))),
+                canonicalResult,
+                Instant.parse("2026-07-21T00:00:02Z"));
+        store.appendToolCall(call);
+
+        AgentMessage toolResult = message(
+                "tool-result-failed",
+                sessionId,
+                RUN_ID,
+                MessageRole.TOOL,
+                1,
+                List.of(new ToolResultPart(toolCallId, correlationId, canonicalResult.summary())));
+        AgentContext context = new AgentContext(
+                List.of(prompt()),
+                List.of(item(
+                        "tool-result-failed",
+                        ContextItemType.MESSAGE,
+                        new MessageGroupContextContent(List.of(toolResult)))),
+                List.of(),
+                budget(),
+                30);
+
+        ModelMessage modelMessage =
+                new ModelMessageAssembler(store).assemble(RUN_ID, context).getLast();
+
+        assertThat(modelMessage.content()).contains("bounded stderr tail");
+        assertThat(modelMessage.toolResultData()).containsAllEntriesOf(canonicalResult.structuredData());
+        assertThat(modelMessage.toolResultTruncated()).isTrue();
+    }
+
+    @Test
+    void omitsProviderContinuationWhenConversationSwitchesModelConfiguration() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentRunId previousRunId = new AgentRunId("run-previous");
+        AgentSessionId sessionId = new AgentSessionId("session-1");
+        ToolCallId toolCallId = new ToolCallId("tool-call-1");
+        ProviderToolCallCorrelationId correlationId = new ProviderToolCallCorrelationId("provider-tool-call-1");
+        ToolCall call = new ToolCall(
+                toolCallId,
+                previousRunId,
+                new AgentStepId("step-1"),
+                correlationId,
+                new RuntimeIdempotencyKey("idempotency-1"),
+                "utility_search",
+                "1.0.0",
+                new ToolArguments("search.input", "1.0.0", Map.of("query", "haifa")),
+                Instant.parse("2026-07-21T00:00:00Z"));
+        call.beginValidation();
+        call.beginPolicyCheck();
+        call.waitForApproval();
+        call.deny(Instant.parse("2026-07-21T00:00:01Z"));
+        store.appendToolCall(call);
+
+        ResolvedModelSnapshot previousModel = DefaultResolvedModelSnapshots.deepSeekV4Pro();
+        SensitiveModelReasoning reasoning = SensitiveModelReasoning.of("provider-private-continuation");
+        AgentMessage assistant = store.appendSessionMessageWithContinuation(
+                new SessionMessageDraft(
+                        new AgentMessageId("assistant-tool-call"),
+                        sessionId,
+                        Optional.of(previousRunId),
+                        Optional.empty(),
+                        MessageRole.ASSISTANT,
+                        MessageStatus.COMPLETED,
+                        MessageVisibility.AGENT_VISIBLE,
+                        List.of(new ToolCallPart(toolCallId, correlationId, "utility_search", "1.0.0")),
+                        Map.of(),
+                        Instant.parse("2026-07-21T00:00:02Z")),
+                new ModelContinuationDraft(
+                        new ModelContinuationRef("continuation-1", "1.0", reasoning.digest(), reasoning.byteLength()),
+                        previousRunId,
+                        sessionId,
+                        "model-call-1",
+                        previousModel.providerId().value(),
+                        previousModel.providerModelId(),
+                        previousModel.configurationDigest(),
+                        Set.of(correlationId.value()),
+                        reasoning,
+                        Instant.parse("2026-07-21T00:00:02Z")));
+        AgentMessage toolResult = message(
+                "tool-result",
+                sessionId,
+                previousRunId,
+                MessageRole.TOOL,
+                2,
+                List.of(new ToolResultPart(toolCallId, correlationId, "Tool execution was rejected by the operator.")));
+        AgentMessage user = message(
+                "next-user", sessionId, RUN_ID, MessageRole.USER, 3, List.of(new TextPart("continue", "plain")));
+        AgentContext context = new AgentContext(
+                List.of(prompt()),
+                List.of(
+                        item("assistant", ContextItemType.MESSAGE, new MessageGroupContextContent(List.of(assistant))),
+                        item(
+                                "tool-result",
+                                ContextItemType.MESSAGE,
+                                new MessageGroupContextContent(List.of(toolResult))),
+                        item("user", ContextItemType.MESSAGE, new MessageGroupContextContent(List.of(user)))),
+                List.of(),
+                budget(),
+                40);
+
+        ResolvedModelSnapshot anthropicModel = ResolvedModelSnapshot.create(
+                previousModel.providerId(),
+                previousModel.providerVersion(),
+                new ModelDefinitionId("deepseek-anthropic-flash"),
+                previousModel.modelVersion(),
+                previousModel.providerModelId(),
+                ModelApiStyles.ANTHROPIC_MESSAGES_ADAPTER,
+                previousModel.adapterVersion(),
+                ModelApiStyles.ANTHROPIC_MESSAGES,
+                "deepseek-anthropic-messages",
+                URI.create("https://api.deepseek.com/anthropic"),
+                previousModel.credentialRef(),
+                previousModel.nativeStreaming(),
+                previousModel.capabilities(),
+                previousModel.contextWindow(),
+                previousModel.maxOutputTokens(),
+                previousModel.providerOptions(),
+                previousModel.invocationOptions());
+
+        var sameModelMessages = new ModelMessageAssembler(store).assemble(RUN_ID, context, previousModel);
+        assertThat(sameModelMessages.get(1).reasoning()).contains(reasoning);
+        assertThat(sameModelMessages.get(1).toolCalls().getFirst().providerCorrelationId())
+                .isEqualTo(correlationId);
+
+        var messages = new ModelMessageAssembler(store).assemble(RUN_ID, context, anthropicModel);
+
+        ModelMessage switchedAssistant = messages.stream()
+                .filter(message -> message.role() == ModelMessageRole.ASSISTANT)
+                .findFirst()
+                .orElseThrow();
+        assertThat(switchedAssistant.reasoning()).isEmpty();
+        ProviderToolCallCorrelationId switchedCorrelation =
+                switchedAssistant.toolCalls().getFirst().providerCorrelationId();
+        assertThat(switchedCorrelation).isNotEqualTo(correlationId);
+        assertThat(switchedCorrelation.value()).matches("haifa_handoff_[0-9a-f]{40}");
+        assertThat(messages)
+                .filteredOn(message -> message.role() == ModelMessageRole.TOOL)
+                .singleElement()
+                .satisfies(
+                        message -> assertThat(message.providerCorrelationId()).contains(switchedCorrelation));
+        assertThat(new ModelMessageAssembler(store)
+                        .assemble(RUN_ID, context, anthropicModel)
+                        .get(1)
+                        .toolCalls()
+                        .getFirst()
+                        .providerCorrelationId())
+                .isEqualTo(switchedCorrelation);
+        assertThat(store.toolCalls(previousRunId).getFirst().providerCorrelationId())
+                .isEqualTo(correlationId);
+    }
+
+    @Test
+    void preservesCompletedPriorModelToolGroupStructurallyWhenSwitchingProvider() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentRunId previousRunId = new AgentRunId("run-previous");
+        AgentSessionId sessionId = new AgentSessionId("session-1");
+        ToolCallId toolCallId = new ToolCallId("tool-call-1");
+        ProviderToolCallCorrelationId correlationId = new ProviderToolCallCorrelationId("provider-tool-call-1");
+        ToolCall call = new ToolCall(
+                toolCallId,
+                previousRunId,
+                new AgentStepId("step-1"),
+                correlationId,
+                new RuntimeIdempotencyKey("idempotency-1"),
+                "utility_search",
+                "1.0.0",
+                new ToolArguments("search.input", "1.0.0", Map.of("query", "haifa agent")),
+                Instant.parse("2026-07-21T00:00:00Z"));
+        call.beginValidation();
+        call.beginPolicyCheck();
+        call.start(Instant.parse("2026-07-21T00:00:01Z"));
+        var canonicalResult = new io.haifa.agent.core.tool.ToolResult(
+                true, "found 3 results for haifa agent", Map.of("count", 3), List.of(), List.of(), false);
+        call.complete(canonicalResult, Instant.parse("2026-07-21T00:00:02Z"));
+        store.appendToolCall(call);
+
+        ResolvedModelSnapshot deepSeekModel = DefaultResolvedModelSnapshots.deepSeekV4Pro();
+        AgentMessage assistant = store.appendSessionMessage(new SessionMessageDraft(
+                new AgentMessageId("assistant-tool-call"),
+                sessionId,
+                Optional.of(previousRunId),
+                Optional.empty(),
+                MessageRole.ASSISTANT,
+                MessageStatus.COMPLETED,
+                MessageVisibility.AGENT_VISIBLE,
+                List.of(
+                        new TextPart("Let me search for that.", "plain"),
+                        new ToolCallPart(toolCallId, correlationId, "utility_search", "1.0.0")),
+                Map.of("providerId", deepSeekModel.providerId().value()),
+                Instant.parse("2026-07-21T00:00:02Z")));
+        AgentMessage toolResult = message(
+                "tool-result",
+                sessionId,
+                previousRunId,
+                MessageRole.TOOL,
+                2,
+                List.of(new ToolResultPart(toolCallId, correlationId, canonicalResult.summary())));
+        AgentMessage user = message(
+                "next-user", sessionId, RUN_ID, MessageRole.USER, 3, List.of(new TextPart("summarize", "plain")));
+        AgentContext context = new AgentContext(
+                List.of(prompt()),
+                List.of(
+                        item("assistant", ContextItemType.MESSAGE, new MessageGroupContextContent(List.of(assistant))),
+                        item(
+                                "tool-result",
+                                ContextItemType.MESSAGE,
+                                new MessageGroupContextContent(List.of(toolResult))),
+                        item("user", ContextItemType.MESSAGE, new MessageGroupContextContent(List.of(user)))),
+                List.of(),
+                budget(),
+                40);
+
+        ResolvedModelSnapshot openAiModel = ResolvedModelSnapshot.create(
+                new ModelProviderId("openai"),
+                "2026-07-21",
+                new ModelDefinitionId("gpt-4o"),
+                "2026-07-21",
+                "gpt-4o",
+                ModelApiStyles.OPENAI_RESPONSES_ADAPTER,
+                "1.0.0",
+                ModelApiStyles.OPENAI_RESPONSES,
+                "standard",
+                URI.create("https://api.openai.com"),
+                new CredentialRef("env://OPENAI_API_KEY"),
+                true,
+                EnumSet.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
+                128_000,
+                4_096,
+                Map.of(),
+                Map.of());
+
+        var messages = new ModelMessageAssembler(store).assemble(RUN_ID, context, openAiModel);
+
+        assertThat(messages)
+                .extracting(ModelMessage::role)
+                .containsExactly(
+                        ModelMessageRole.SYSTEM,
+                        ModelMessageRole.ASSISTANT,
+                        ModelMessageRole.TOOL,
+                        ModelMessageRole.USER);
+        ModelMessage assistantMessage = messages.get(1);
+        assertThat(assistantMessage.content()).isEqualTo("Let me search for that.");
+        assertThat(assistantMessage.toolCalls()).singleElement().satisfies(projectedCall -> {
+            assertThat(projectedCall.name()).isEqualTo("utility_search");
+            assertThat(projectedCall.arguments()).containsEntry("query", "haifa agent");
+            assertThat(projectedCall.providerCorrelationId()).isNotEqualTo(correlationId);
+            assertThat(projectedCall.providerCorrelationId().value()).matches("haifa_handoff_[0-9a-f]{40}");
+        });
+        ProviderToolCallCorrelationId handoffCorrelation =
+                assistantMessage.toolCalls().getFirst().providerCorrelationId();
+        assertThat(messages.get(2).providerCorrelationId()).contains(handoffCorrelation);
+        assertThat(messages.get(2).content()).isEqualTo("found 3 results for haifa agent");
+        assertThat(messages.get(2).toolResultData()).containsEntry("count", 3);
+        assertThat(messages.get(2).toolResultTruncated()).isFalse();
+        assertThat(store.toolCalls(previousRunId).getFirst().providerCorrelationId())
+                .isEqualTo(correlationId);
+
+        ResolvedModelSnapshot geminiModel = ResolvedModelSnapshot.create(
+                new ModelProviderId("google-antigravity"),
+                "2026-07-21",
+                new ModelDefinitionId("gemini-3-flash"),
+                "2026-07-21",
+                "gemini-3-flash",
+                ModelApiStyles.GOOGLE_GEMINI_ADAPTER,
+                "1.0.0",
+                ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT,
+                "antigravity-direct",
+                URI.create("https://generativelanguage.googleapis.com"),
+                new CredentialRef("env://GEMINI_API_KEY"),
+                true,
+                EnumSet.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
+                128_000,
+                4_096,
+                Map.of(),
+                Map.of());
+
+        var geminiMessages = new ModelMessageAssembler(store).assemble(RUN_ID, context, geminiModel);
+
+        assertThat(geminiMessages).noneMatch(m -> m.role() == ModelMessageRole.TOOL);
+        List<ModelMessage> assistantMessages = geminiMessages.stream()
+                .filter(m -> m.role() == ModelMessageRole.ASSISTANT)
+                .toList();
+        assertThat(assistantMessages).singleElement().satisfies(msg -> {
+            assertThat(msg.toolCalls()).isEmpty();
+            assertThat(msg.content()).contains("Let me search for that.");
+            assertThat(msg.content()).contains("[tool-call: utility_search arguments: {\"query\": \"haifa agent\"}]");
+            assertThat(msg.content()).contains("[tool-result: utility_search]");
+            assertThat(msg.content()).contains("found 3 results for haifa agent");
+        });
+    }
+
+    @Test
+    void closesUnfinishedPriorModelToolGroupStructurallyWhenSwitchingProvider() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentRunId previousRunId = new AgentRunId("run-previous");
+        AgentSessionId sessionId = new AgentSessionId("session-1");
+        ToolCallId toolCallId = new ToolCallId("tool-call-unclosed");
+        ProviderToolCallCorrelationId correlationId = new ProviderToolCallCorrelationId("provider-tool-call-unclosed");
+        ToolCall call = new ToolCall(
+                toolCallId,
+                previousRunId,
+                new AgentStepId("step-unclosed"),
+                correlationId,
+                new RuntimeIdempotencyKey("idempotency-unclosed"),
+                "utility_search",
+                "1.0.0",
+                new ToolArguments("search.input", "1.0.0", Map.of("query", "haifa unclosed")),
+                Instant.parse("2026-07-21T00:00:00Z"));
+        call.beginValidation();
+        store.appendToolCall(call);
+
+        ResolvedModelSnapshot deepSeekModel = DefaultResolvedModelSnapshots.deepSeekV4Pro();
+        AgentMessage assistant = store.appendSessionMessage(new SessionMessageDraft(
+                new AgentMessageId("assistant-tool-call-unclosed"),
+                sessionId,
+                Optional.of(previousRunId),
+                Optional.empty(),
+                MessageRole.ASSISTANT,
+                MessageStatus.COMPLETED,
+                MessageVisibility.AGENT_VISIBLE,
+                List.of(new ToolCallPart(toolCallId, correlationId, "utility_search", "1.0.0")),
+                Map.of(
+                        "providerId", deepSeekModel.providerId().value(),
+                        "modelId", deepSeekModel.providerModelId(),
+                        "configurationDigest", deepSeekModel.configurationDigest()),
+                Instant.parse("2026-07-21T00:00:02Z")));
+        AgentMessage user = message(
+                "next-user", sessionId, RUN_ID, MessageRole.USER, 2, List.of(new TextPart("continue", "plain")));
+        AgentContext context = new AgentContext(
+                List.of(prompt()),
+                List.of(
+                        item("assistant", ContextItemType.MESSAGE, new MessageGroupContextContent(List.of(assistant))),
+                        item("user", ContextItemType.MESSAGE, new MessageGroupContextContent(List.of(user)))),
+                List.of(),
+                budget(),
+                40);
+
+        ResolvedModelSnapshot openAiModel = ResolvedModelSnapshot.create(
+                new ModelProviderId("openai"),
+                "2026-07-21",
+                new ModelDefinitionId("gpt-4o"),
+                "2026-07-21",
+                "gpt-4o",
+                ModelApiStyles.OPENAI_RESPONSES_ADAPTER,
+                "1.0.0",
+                ModelApiStyles.OPENAI_RESPONSES,
+                "standard",
+                URI.create("https://api.openai.com"),
+                new CredentialRef("env://OPENAI_API_KEY"),
+                true,
+                EnumSet.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
+                128_000,
+                4_096,
+                Map.of(),
+                Map.of());
+
+        var messages = new ModelMessageAssembler(store).assemble(RUN_ID, context, openAiModel);
+
+        assertThat(messages)
+                .extracting(ModelMessage::role)
+                .containsExactly(
+                        ModelMessageRole.SYSTEM,
+                        ModelMessageRole.ASSISTANT,
+                        ModelMessageRole.TOOL,
+                        ModelMessageRole.USER);
+        ProviderToolCallCorrelationId handoffCorrelation =
+                messages.get(1).toolCalls().getFirst().providerCorrelationId();
+        assertThat(handoffCorrelation.value()).matches("haifa_handoff_[0-9a-f]{40}");
+        assertThat(messages.get(2).providerCorrelationId()).contains(handoffCorrelation);
+        assertThat(messages.get(2).content()).isEqualTo("Historical tool result was not recorded.");
+        assertThat(messages.get(2).toolResultData())
+                .containsEntry("status", "UNKNOWN")
+                .containsEntry("reasonCode", "HISTORICAL_TOOL_RESULT_MISSING");
+        assertThat(messages.get(3).content()).isEqualTo("continue");
+        assertThat(store.toolCalls(previousRunId).getFirst().providerCorrelationId())
+                .isEqualTo(correlationId);
+    }
+
+    @Test
+    void movesRuntimeControlMessagesBehindTheCompleteToolCallGroup() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentSessionId sessionId = new AgentSessionId("session-1");
+        ToolCallId toolCallId = new ToolCallId("tool-call-1");
+        ProviderToolCallCorrelationId correlationId = new ProviderToolCallCorrelationId("provider-tool-call-1");
+        ToolCall call = new ToolCall(
+                toolCallId,
+                RUN_ID,
+                new AgentStepId("step-1"),
+                correlationId,
+                new RuntimeIdempotencyKey("idempotency-1"),
+                "execution_run",
+                "1.0.0",
+                new ToolArguments("execution.input", "1.0.0", Map.of("command", "rg --files")),
+                Instant.parse("2026-07-21T00:00:00Z"));
+        call.beginValidation();
+        call.beginPolicyCheck();
+        call.waitForApproval();
+        call.deny(Instant.parse("2026-07-21T00:00:01Z"));
+        store.appendToolCall(call);
+
+        AgentMessage assistant = message(
+                "assistant-tool-call",
+                sessionId,
+                RUN_ID,
+                MessageRole.ASSISTANT,
+                1,
+                List.of(new ToolCallPart(toolCallId, correlationId, "execution_run", "1.0.0")));
+        AgentMessage runtime = message(
+                "runtime-control",
+                sessionId,
+                RUN_ID,
+                MessageRole.RUNTIME,
+                2,
+                List.of(new TextPart("[RUNTIME_CONTROL_UPDATE] retry safely", "plain")));
+        AgentMessage result = message(
+                "tool-result",
+                sessionId,
+                RUN_ID,
+                MessageRole.TOOL,
+                3,
+                List.of(new ToolResultPart(toolCallId, correlationId, "Tool execution was rejected by the operator.")));
+        AgentMessage user = message(
+                "next-user", sessionId, RUN_ID, MessageRole.USER, 4, List.of(new TextPart("continue", "plain")));
+        AgentContext context = new AgentContext(
+                List.of(prompt()),
+                List.of(
+                        item("assistant", ContextItemType.MESSAGE, new MessageGroupContextContent(List.of(assistant))),
+                        item("runtime", ContextItemType.MESSAGE, new MessageGroupContextContent(List.of(runtime))),
+                        item("result", ContextItemType.MESSAGE, new MessageGroupContextContent(List.of(result))),
+                        item("user", ContextItemType.MESSAGE, new MessageGroupContextContent(List.of(user)))),
+                List.of(),
+                budget(),
+                40);
+
+        var messages = new ModelMessageAssembler(store).assemble(RUN_ID, context);
+
+        assertThat(messages)
+                .extracting(ModelMessage::role)
+                .containsExactly(
+                        ModelMessageRole.SYSTEM,
+                        ModelMessageRole.ASSISTANT,
+                        ModelMessageRole.TOOL,
+                        ModelMessageRole.USER,
+                        ModelMessageRole.USER);
+        assertThat(messages.get(2).providerCorrelationId()).contains(correlationId);
+        assertThat(messages.get(3).content()).contains("RUNTIME_CONTROL_UPDATE");
+    }
+
+    @Test
+    void mapsSummaryWithUserAnchoredMultiStepToolTurn() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentSessionId sessionId = new AgentSessionId("session-1");
+        ToolCallId toolCall1 = new ToolCallId("tool-call-1");
+        ProviderToolCallCorrelationId corr1 = new ProviderToolCallCorrelationId("provider-call-1");
+        ToolCallId toolCall2 = new ToolCallId("tool-call-2");
+        ProviderToolCallCorrelationId corr2 = new ProviderToolCallCorrelationId("provider-call-2");
+
+        ToolCall call1 = new ToolCall(
+                toolCall1,
+                RUN_ID,
+                new AgentStepId("step-1"),
+                corr1,
+                new RuntimeIdempotencyKey("idempotency-1"),
+                "echo",
+                "1.0.0",
+                new ToolArguments("echo.input", "1.0.0", Map.of("text", "first")),
+                Instant.parse("2026-07-21T00:00:00Z"));
+        call1.beginValidation();
+        call1.beginPolicyCheck();
+        call1.start(Instant.parse("2026-07-21T00:00:01Z"));
+        call1.complete(
+                new io.haifa.agent.core.tool.ToolResult(
+                        true, "first result", Map.of("text", "first"), List.of(), List.of(), false),
+                Instant.parse("2026-07-21T00:00:02Z"));
+        store.appendToolCall(call1);
+
+        ToolCall call2 = new ToolCall(
+                toolCall2,
+                RUN_ID,
+                new AgentStepId("step-2"),
+                corr2,
+                new RuntimeIdempotencyKey("idempotency-2"),
+                "echo",
+                "1.0.0",
+                new ToolArguments("echo.input", "1.0.0", Map.of("text", "second")),
+                Instant.parse("2026-07-21T00:00:03Z"));
+        call2.beginValidation();
+        call2.beginPolicyCheck();
+        call2.start(Instant.parse("2026-07-21T00:00:04Z"));
+        call2.complete(
+                new io.haifa.agent.core.tool.ToolResult(
+                        true, "second result", Map.of("text", "second"), List.of(), List.of(), false),
+                Instant.parse("2026-07-21T00:00:05Z"));
+        store.appendToolCall(call2);
+
+        var summaryContent = new io.haifa.agent.context.item.ConversationSummaryContent(
+                "sum-1", 1, List.of("fact: turn 0 completed"), List.of(), List.of(), List.of());
+        AgentMessage user = message(
+                "user-msg", sessionId, RUN_ID, MessageRole.USER, 1, List.of(new TextPart("run multi-step", "plain")));
+        AgentMessage assistant1 = message(
+                "asst-1",
+                sessionId,
+                RUN_ID,
+                MessageRole.ASSISTANT,
+                2,
+                List.of(new ToolCallPart(toolCall1, corr1, "echo", "1.0.0")));
+        AgentMessage tool1 = message(
+                "tool-1",
+                sessionId,
+                RUN_ID,
+                MessageRole.TOOL,
+                3,
+                List.of(new ToolResultPart(toolCall1, corr1, "first result")));
+        AgentMessage assistant2 = message(
+                "asst-2",
+                sessionId,
+                RUN_ID,
+                MessageRole.ASSISTANT,
+                4,
+                List.of(new ToolCallPart(toolCall2, corr2, "echo", "1.0.0")));
+        AgentMessage tool2 = message(
+                "tool-2",
+                sessionId,
+                RUN_ID,
+                MessageRole.TOOL,
+                5,
+                List.of(new ToolResultPart(toolCall2, corr2, "second result")));
+
+        AgentContext context = new AgentContext(
+                List.of(prompt()),
+                List.of(
+                        item("summary", ContextItemType.CONVERSATION_SUMMARY, summaryContent),
+                        item("user", ContextItemType.MESSAGE, new MessageGroupContextContent(List.of(user))),
+                        item("asst-1", ContextItemType.MESSAGE, new MessageGroupContextContent(List.of(assistant1))),
+                        item("tool-1", ContextItemType.MESSAGE, new MessageGroupContextContent(List.of(tool1))),
+                        item("asst-2", ContextItemType.MESSAGE, new MessageGroupContextContent(List.of(assistant2))),
+                        item("tool-2", ContextItemType.MESSAGE, new MessageGroupContextContent(List.of(tool2)))),
+                List.of(),
+                budget(),
+                50);
+
+        var messages = new ModelMessageAssembler(store).assemble(RUN_ID, context);
+
+        assertThat(messages)
+                .extracting(ModelMessage::role)
+                .containsExactly(
+                        ModelMessageRole.SYSTEM, // prompt
+                        ModelMessageRole.SYSTEM, // summary
+                        ModelMessageRole.USER, // turn anchor
+                        ModelMessageRole.ASSISTANT, // call 1
+                        ModelMessageRole.TOOL, // result 1
+                        ModelMessageRole.ASSISTANT, // call 2
+                        ModelMessageRole.TOOL); // result 2
+        assertThat(messages.get(1).content()).contains("conversation-summary");
+        assertThat(messages.get(2).content()).isEqualTo("run multi-step");
+    }
+
+    @Test
+    void prunesHistoricalPureReadPayloadsOnTheWire() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentSessionId sessionId = new AgentSessionId("session-pruning");
+        List<AgentMessage> messages = new java.util.ArrayList<>();
+
+        for (int i = 1; i <= 4; i++) {
+            ToolCallId callId = new ToolCallId("call-" + i);
+            ProviderToolCallCorrelationId corrId = new ProviderToolCallCorrelationId("corr-" + i);
+            String toolName = (i == 2) ? "grep_search" : "file_read";
+            ToolCall call = new ToolCall(
+                    callId,
+                    RUN_ID,
+                    new AgentStepId("step-" + i),
+                    corrId,
+                    new RuntimeIdempotencyKey("idemp-" + i),
+                    toolName,
+                    "1.0.0",
+                    new ToolArguments("input.schema", "1.0.0", Map.of("path", "file" + i + ".txt")),
+                    Instant.parse("2026-07-21T00:00:00Z").plusSeconds(i * 10));
+            call.beginValidation();
+            call.beginPolicyCheck();
+            call.start(Instant.parse("2026-07-21T00:00:01Z").plusSeconds(i * 10));
+            call.complete(
+                    new io.haifa.agent.core.tool.ToolResult(
+                            true,
+                            "Summary for turn " + i,
+                            Map.of("rawPayload", "large payload content " + i),
+                            List.of(),
+                            List.of(),
+                            false),
+                    Instant.parse("2026-07-21T00:00:02Z").plusSeconds(i * 10));
+            store.appendToolCall(call);
+
+            AgentMessage assistantMsg = message(
+                    "msg-assistant-" + i,
+                    sessionId,
+                    RUN_ID,
+                    MessageRole.ASSISTANT,
+                    i * 2 - 1,
+                    List.of(new ToolCallPart(callId, corrId, toolName, "1.0.0")));
+            AgentMessage toolMsg = message(
+                    "msg-tool-" + i,
+                    sessionId,
+                    RUN_ID,
+                    MessageRole.TOOL,
+                    i * 2,
+                    List.of(new ToolResultPart(callId, corrId, "Summary for turn " + i)));
+            messages.add(assistantMsg);
+            messages.add(toolMsg);
+        }
+
+        AgentContext context = new AgentContext(
+                List.of(prompt()),
+                List.of(item("all-messages", ContextItemType.MESSAGE, new MessageGroupContextContent(messages))),
+                List.of(),
+                new ContextWindowBudget(100_000, 10_000, 1_000, 80_000),
+                100);
+
+        List<ModelMessage> assembled = new ModelMessageAssembler(store).assemble(RUN_ID, context);
+
+        List<ModelMessage> toolMessages = assembled.stream()
+                .filter(m -> m.role() == ModelMessageRole.TOOL)
+                .toList();
+        assertThat(toolMessages).hasSize(4);
+
+        assertThat(toolMessages.get(0).toolResultData()).isEmpty();
+        assertThat(toolMessages.get(0).content()).contains("Summary for turn 1");
+        assertThat(toolMessages.get(0).content()).endsWith(ModelMessageProjectionPlanner.PRUNED_PAYLOAD_NOTICE);
+
+        assertThat(toolMessages.get(1).toolResultData()).isEmpty();
+        assertThat(toolMessages.get(1).content()).contains("Summary for turn 2");
+        assertThat(toolMessages.get(1).content()).endsWith(ModelMessageProjectionPlanner.PRUNED_PAYLOAD_NOTICE);
+
+        assertThat(toolMessages.get(2).toolResultData()).containsEntry("rawPayload", "large payload content 3");
+        assertThat(toolMessages.get(2).content()).isEqualTo("Summary for turn 3");
+
+        assertThat(toolMessages.get(3).toolResultData()).containsEntry("rawPayload", "large payload content 4");
+        assertThat(toolMessages.get(3).content()).isEqualTo("Summary for turn 4");
+    }
+
+    @Test
+    void truncatesOversizedToolCallArgumentsOnTheWire() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentSessionId sessionId = new AgentSessionId("session-truncation");
+        List<AgentMessage> messages = new java.util.ArrayList<>();
+
+        String massiveCode = "public class Big {\n" + "    // code line\n".repeat(100) + "}";
+        assertThat(massiveCode.length()).isGreaterThan(1024);
+
+        for (int i = 1; i <= 4; i++) {
+            ToolCallId callId = new ToolCallId("trunc-call-" + i);
+            ProviderToolCallCorrelationId corrId = new ProviderToolCallCorrelationId("trunc-corr-" + i);
+            Map<String, Object> args = (i == 1)
+                    ? Map.of("codeContent", massiveCode, "targetFile", "src/Big.java")
+                    : Map.of("path", "file" + i + ".txt");
+            ToolCall call = new ToolCall(
+                    callId,
+                    RUN_ID,
+                    new AgentStepId("step-" + i),
+                    corrId,
+                    new RuntimeIdempotencyKey("trunc-idemp-" + i),
+                    "write_to_file",
+                    "1.0.0",
+                    new ToolArguments("input.schema", "1.0.0", args),
+                    Instant.parse("2026-07-21T00:00:00Z").plusSeconds(i * 10));
+            call.beginValidation();
+            call.beginPolicyCheck();
+            call.start(Instant.parse("2026-07-21T00:00:01Z").plusSeconds(i * 10));
+            call.complete(
+                    new io.haifa.agent.core.tool.ToolResult(true, "Done " + i, Map.of(), List.of(), List.of(), false),
+                    Instant.parse("2026-07-21T00:00:02Z").plusSeconds(i * 10));
+            store.appendToolCall(call);
+
+            AgentMessage assistantMsg = message(
+                    "trunc-assistant-" + i,
+                    sessionId,
+                    RUN_ID,
+                    MessageRole.ASSISTANT,
+                    i * 2 - 1,
+                    List.of(new ToolCallPart(callId, corrId, "write_to_file", "1.0.0")));
+            AgentMessage toolMsg = message(
+                    "trunc-tool-" + i,
+                    sessionId,
+                    RUN_ID,
+                    MessageRole.TOOL,
+                    i * 2,
+                    List.of(new ToolResultPart(callId, corrId, "Done " + i)));
+            messages.add(assistantMsg);
+            messages.add(toolMsg);
+        }
+
+        AgentContext context = new AgentContext(
+                List.of(prompt()),
+                List.of(item("all-messages", ContextItemType.MESSAGE, new MessageGroupContextContent(messages))),
+                List.of(),
+                new ContextWindowBudget(100_000, 10_000, 1_000, 80_000),
+                100);
+
+        List<ModelMessage> assembled = new ModelMessageAssembler(store).assemble(RUN_ID, context);
+
+        ModelMessage turn1Assistant = assembled.get(1);
+        assertThat(turn1Assistant.toolCalls()).hasSize(1);
+        ModelToolCall turn1Call = turn1Assistant.toolCalls().getFirst();
+        assertThat(turn1Call.arguments().get("codeContent"))
+                .isEqualTo(
+                        "[Code content truncated (" + massiveCode.length() + " chars); file written to src/Big.java]");
+
+        ToolCall persistedCall = store.toolCalls(RUN_ID).stream()
+                .filter(c -> c.id().value().equals("trunc-call-1"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(persistedCall.arguments().values().get("codeContent")).isEqualTo(massiveCode);
+    }
+
+    private static AgentMessage message(
+            String id,
+            AgentSessionId sessionId,
+            AgentRunId runId,
+            MessageRole role,
+            long sequence,
+            List<io.haifa.agent.core.content.ContentPart> contents) {
+        return new AgentMessage(
+                new AgentMessageId(id),
+                sessionId,
+                Optional.of(runId),
+                Optional.empty(),
+                role,
+                MessageStatus.COMPLETED,
+                role == MessageRole.USER ? MessageVisibility.USER_VISIBLE : MessageVisibility.AGENT_VISIBLE,
+                sequence,
+                contents,
+                Map.of(),
+                Instant.parse("2026-07-21T00:00:00Z").plusSeconds(sequence));
     }
 
     private static PromptComponent prompt() {
@@ -122,11 +1083,10 @@ class ModelMessageAssemblerTest {
                 ContextPriority.NORMAL,
                 ContextRetention.KEEP_IF_RELEVANT,
                 ContextSecurity.INTERNAL,
-                new ContextProvenance("test", id, "1", "hash-" + id),
-                Map.of());
+                new ContextProvenance("test", id, "1", "hash-" + id));
     }
 
     private static ContextWindowBudget budget() {
-        return new ContextWindowBudget(200, 50, 10, 140, 1_000, 1_000);
+        return new ContextWindowBudget(200, 50, 10, 140);
     }
 }

@@ -6,7 +6,7 @@
     <parent>
         <groupId>io.haifa</groupId>
         <artifactId>haifa-agent-parent</artifactId>
-        <version>0.1.0-SNAPSHOT</version>
+        <version>0.1.0</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
     <artifactId>haifa-agent-capabilities</artifactId>
@@ -16,9 +16,14 @@
         <module>haifa-agent-credential-core</module>
         <module>haifa-agent-tool-api</module>
         <module>haifa-agent-tool-core</module>
+        <module>haifa-agent-skill-api</module>
+        <module>haifa-agent-skill-core</module>
+        <module>haifa-agent-skill-base</module>
         <module>haifa-agent-model-api</module>
         <module>haifa-agent-model-core</module>
         <module>haifa-agent-memory-api</module>
         <module>haifa-agent-memory-core</module>
+        <module>haifa-agent-policy-api</module>
+        <module>haifa-agent-policy-core</module>
     </modules>
 </project>

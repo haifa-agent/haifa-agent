@@ -1,0 +1,163 @@
+package io.haifa.agent.testing.delivery;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.Objects;
+
+/** Reads only bounded, safe evidence fields from the authoritative per-repeat SQLite store. */
+final class AutonomousDeliveryRuntimeEvidenceReader {
+
+    private final ObjectMapper json;
+
+    AutonomousDeliveryRuntimeEvidenceReader(ObjectMapper json) {
+        this.json = Objects.requireNonNull(json, "json must not be null");
+    }
+
+    Evidence read(Path database) throws IOException {
+        Path file = database.toAbsolutePath().normalize();
+        if (!Files.isRegularFile(file)) {
+            throw new IOException("authoritative runtime database is unavailable");
+        }
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite:file:" + file + "?mode=ro&immutable=1")) {
+            RunFacts run = readRun(connection);
+            ToolFacts tools = readTools(connection);
+            EventFacts events = readEvents(connection);
+            return new Evidence(
+                    run.status(),
+                    run.inputTokens(),
+                    run.outputTokens(),
+                    run.modelCalls(),
+                    run.toolCalls(),
+                    run.costMinorUnits(),
+                    tools.toolFailures(),
+                    tools.executionCalls(),
+                    tools.scratchCleanupFailures(),
+                    events.terminalStateObserved() || terminal(run.status()));
+        } catch (SQLException exception) {
+            throw new IOException("authoritative runtime evidence could not be read", exception);
+        }
+    }
+
+    Evidence readOrUnavailable(Path database, boolean driverFailedBeforeEvidence) throws IOException {
+        try {
+            return read(database);
+        } catch (IOException exception) {
+            if (!driverFailedBeforeEvidence) {
+                throw exception;
+            }
+            return Evidence.unavailable();
+        }
+    }
+
+    private RunFacts readRun(Connection connection) throws SQLException, IOException {
+        try (PreparedStatement statement = connection.prepareStatement(
+                        """
+                        SELECT status,
+                               usage_input_tokens,
+                               usage_output_tokens,
+                               usage_model_calls,
+                               usage_tool_calls,
+                               usage_cost_minor_units
+                        FROM run
+                        """);
+                ResultSet rows = statement.executeQuery()) {
+            if (!rows.next()) throw new IOException("runtime database contains no Run");
+            RunFacts result = new RunFacts(
+                    rows.getString(1),
+                    rows.getLong(2),
+                    rows.getLong(3),
+                    rows.getLong(4),
+                    rows.getLong(5),
+                    rows.getLong(6));
+            if (rows.next()) throw new IOException("per-repeat runtime database contains multiple Runs");
+            return result;
+        }
+    }
+
+    private ToolFacts readTools(Connection connection) throws SQLException, IOException {
+        int failures = 0;
+        int executionCalls = 0;
+        int scratchCleanupFailures = 0;
+        try (PreparedStatement statement =
+                        connection.prepareStatement("SELECT tool_name, status, result_payload FROM tool_call");
+                ResultSet rows = statement.executeQuery()) {
+            while (rows.next()) {
+                String toolName = rows.getString(1);
+                String status = rows.getString(2);
+                if (!"COMPLETED".equals(status)) failures++;
+                if (!"execution_run".equals(toolName)) continue;
+                JsonNode result = decodeValues(rows.getBytes(3)).path("structuredData");
+                boolean enteredSandbox = result.path("status").isTextual()
+                        && (result.path("scratchProvisioned").asBoolean(false)
+                                || result.has("exitCode")
+                                || !result.path("executionId").asText().isBlank());
+                if (enteredSandbox) executionCalls++;
+                if (result.path("scratchCleanupFailed").asBoolean(false)) scratchCleanupFailures++;
+            }
+        }
+        return new ToolFacts(failures, executionCalls, scratchCleanupFailures);
+    }
+
+    private EventFacts readEvents(Connection connection) throws SQLException, IOException {
+        boolean terminal = false;
+        try (PreparedStatement statement =
+                        connection.prepareStatement("SELECT type FROM runtime_event ORDER BY sequence");
+                ResultSet rows = statement.executeQuery()) {
+            while (rows.next()) {
+                String type = rows.getString(1);
+                switch (type) {
+                    case "run.completed", "run.failed", "run.cancelled", "run.timed-out" -> terminal = true;
+                    default -> {
+                        // Other authoritative events are intentionally excluded from the safe Gate projection.
+                    }
+                }
+            }
+        }
+        return new EventFacts(terminal);
+    }
+
+    private JsonNode decodeValues(byte[] payload) throws IOException {
+        if (payload == null) return json.createObjectNode();
+        JsonNode decoded = json.readTree(payload);
+        JsonNode values = decoded.path("values");
+        return values.isObject() ? values : decoded;
+    }
+
+    private static boolean terminal(String status) {
+        return switch (status) {
+            case "COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT" -> true;
+            default -> false;
+        };
+    }
+
+    record Evidence(
+            String termination,
+            long inputTokens,
+            long outputTokens,
+            long modelCalls,
+            long toolCalls,
+            long costMinorUnits,
+            int toolFailures,
+            int executionCalls,
+            int scratchCleanupFailures,
+            boolean terminalStateObserved) {
+        static Evidence unavailable() {
+            return new Evidence("NOT_STARTED", 0, 0, 0, 0, 0, 0, 0, 0, false);
+        }
+    }
+
+    private record RunFacts(
+            String status, long inputTokens, long outputTokens, long modelCalls, long toolCalls, long costMinorUnits) {}
+
+    private record ToolFacts(int toolFailures, int executionCalls, int scratchCleanupFailures) {}
+
+    private record EventFacts(boolean terminalStateObserved) {}
+}

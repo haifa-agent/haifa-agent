@@ -1,0 +1,1154 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Haifa Personal Assistant API",
+    "version": "1.0.0",
+    "description": "Loopback-only Personal Assistant HTTP and WebFlux SSE contract."
+  },
+  "servers": [{"url": "http://127.0.0.1:20001"}],
+  "paths": {
+    "/api/v1/bootstrap": {
+      "get": {
+        "operationId": "bootstrap",
+        "responses": {"200": {"description": "Product bootstrap", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Bootstrap"}}}}}
+      }
+    },
+    "/api/v1/models": {
+      "get": {
+        "operationId": "listModels",
+        "responses": {"200": {"description": "Available models", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/Model"}}}}}}
+      }
+    },
+    "/api/v1/model-connections": {
+      "get": {
+        "operationId": "listModelConnections",
+        "responses": {"200": {"description": "Safe model credential readiness", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/ModelConnection"}}}}}}
+      }
+    },
+    "/api/v1/model-connections/api-key": {
+      "post": {
+        "operationId": "saveModelApiKey",
+        "parameters": [{"$ref": "#/components/parameters/IdempotencyKey"}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SaveModelApiKey"}}}},
+        "responses": {
+          "201": {"description": "Saved connection", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ModelConnection"}}}},
+          "400": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/v1/model-connections/{providerId}/network-proxy": {
+      "parameters": [{"name": "providerId", "in": "path", "required": true, "schema": {"type": "string", "maxLength": 64}}],
+      "put": {
+        "operationId": "saveModelNetworkProxy",
+        "parameters": [{"$ref": "#/components/parameters/IdempotencyKey"}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SaveModelProxy"}}}},
+        "responses": {"204": {"description": "Saved local provider proxy route"}, "400": {"$ref": "#/components/responses/Error"}, "404": {"$ref": "#/components/responses/Error"}}
+      },
+      "delete": {
+        "operationId": "resetModelNetworkProxy",
+        "parameters": [{"$ref": "#/components/parameters/IdempotencyKey"}],
+        "responses": {"204": {"description": "Restored the startup or system proxy route"}, "404": {"$ref": "#/components/responses/Error"}}
+      }
+    },
+    "/api/v1/model-connections/{methodId}/browser-attempts": {
+      "parameters": [{"name": "methodId", "in": "path", "required": true, "schema": {"type": "string", "enum": ["codex", "antigravity"]}}],
+      "post": {
+        "operationId": "startModelBrowserAttempt",
+        "parameters": [{"$ref": "#/components/parameters/IdempotencyKey"}],
+        "responses": {
+          "202": {"description": "OAuth attempt started", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ExternalLoginAttempt"}}}},
+          "409": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/v1/model-connections/{methodId}/browser-attempts/{attemptId}": {
+      "parameters": [
+        {"name": "methodId", "in": "path", "required": true, "schema": {"type": "string", "enum": ["codex", "antigravity"]}},
+        {"name": "attemptId", "in": "path", "required": true, "schema": {"type": "string"}}
+      ],
+      "get": {
+        "operationId": "getModelBrowserAttempt",
+        "responses": {"200": {"description": "Safe OAuth attempt state", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ExternalLoginAttempt"}}}}}
+      },
+      "delete": {
+        "operationId": "cancelModelBrowserAttempt",
+        "parameters": [{"$ref": "#/components/parameters/IdempotencyKey"}],
+        "responses": {"204": {"description": "OAuth attempt cancelled"}, "404": {"$ref": "#/components/responses/Error"}}
+      }
+    },
+    "/api/v1/model-connections/{connectionId}": {
+      "parameters": [{"name": "connectionId", "in": "path", "required": true, "schema": {"type": "string"}}],
+      "delete": {
+        "operationId": "deleteModelConnection",
+        "parameters": [{"$ref": "#/components/parameters/IdempotencyKey"}],
+        "responses": {"204": {"description": "Connection deleted"}, "404": {"$ref": "#/components/responses/Error"}}
+      }
+    },
+    "/api/v1/images": {
+      "post": {
+        "operationId": "uploadImage",
+        "parameters": [
+          {"$ref": "#/components/parameters/IdempotencyKey"},
+          {"name": "X-Image-Filename", "in": "header", "schema": {"type": "string", "maxLength": 255}}
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "image/png": {"schema": {"type": "string", "format": "binary"}},
+            "image/jpeg": {"schema": {"type": "string", "format": "binary"}},
+            "image/webp": {"schema": {"type": "string", "format": "binary"}},
+            "image/gif": {"schema": {"type": "string", "format": "binary"}},
+            "application/pdf": {"schema": {"type": "string", "format": "binary"}}
+          }
+        },
+        "responses": {
+          "201": {"description": "Uploaded image reference", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/UploadedImage"}}}},
+          "400": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/v1/images/{imageId}": {
+      "get": {
+        "operationId": "getUploadedImageContent",
+        "parameters": [
+          {"name": "imageId", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}
+        ],
+        "responses": {
+          "200": {
+            "description": "Verified uploaded image content",
+            "content": {
+              "image/png": {"schema": {"type": "string", "format": "binary"}},
+              "image/jpeg": {"schema": {"type": "string", "format": "binary"}},
+              "image/webp": {"schema": {"type": "string", "format": "binary"}},
+              "image/gif": {"schema": {"type": "string", "format": "binary"}},
+              "application/pdf": {"schema": {"type": "string", "format": "binary"}}
+            }
+          },
+          "400": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/v1/audios": {
+      "post": {
+        "operationId": "uploadAudio",
+        "parameters": [
+          {"$ref": "#/components/parameters/IdempotencyKey"},
+          {"name": "X-Audio-Filename", "in": "header", "schema": {"type": "string", "maxLength": 255}}
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "audio/wav": {"schema": {"type": "string", "format": "binary"}},
+            "audio/mpeg": {"schema": {"type": "string", "format": "binary"}},
+            "audio/mp3": {"schema": {"type": "string", "format": "binary"}},
+            "audio/aiff": {"schema": {"type": "string", "format": "binary"}},
+            "audio/aac": {"schema": {"type": "string", "format": "binary"}},
+            "audio/ogg": {"schema": {"type": "string", "format": "binary"}},
+            "audio/flac": {"schema": {"type": "string", "format": "binary"}}
+          }
+        },
+        "responses": {
+          "201": {"description": "Uploaded audio reference", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/UploadedAudio"}}}},
+          "400": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/v1/conversations": {
+      "get": {
+        "operationId": "listConversations",
+        "parameters": [
+          {"name": "q", "in": "query", "schema": {"type": "string"}},
+          {"name": "status", "in": "query", "schema": {"type": "array", "items": {"type": "string"}}},
+          {"$ref": "#/components/parameters/Limit"}
+        ],
+        "responses": {"200": {"description": "Conversations", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/Conversation"}}}}}}
+      },
+      "post": {
+        "operationId": "createConversation",
+        "parameters": [{"$ref": "#/components/parameters/IdempotencyKey"}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CreateConversation"}}}},
+        "responses": {
+          "201": {"description": "Created", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Conversation"}}}},
+          "400": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/v1/conversations/{conversationId}": {
+      "parameters": [{"$ref": "#/components/parameters/ConversationId"}],
+      "get": {
+        "operationId": "getConversation",
+        "responses": {
+          "200": {"description": "Conversation", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Conversation"}}}},
+          "404": {"$ref": "#/components/responses/Error"}
+        }
+      },
+      "patch": {
+        "operationId": "updateConversation",
+        "parameters": [{"$ref": "#/components/parameters/IfMatch"}, {"$ref": "#/components/parameters/IdempotencyKey"}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/UpdateConversation"}}}},
+        "responses": {
+          "200": {"description": "Updated", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Conversation"}}}},
+          "409": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/v1/conversations/{conversationId}/turns": {
+      "get": {
+        "operationId": "listTurns",
+        "parameters": [{"$ref": "#/components/parameters/ConversationId"}, {"$ref": "#/components/parameters/Limit"}],
+        "responses": {"200": {"description": "Turns", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/Turn"}}}}}}
+      }
+    },
+    "/api/v1/conversations/{conversationId}/model": {
+      "patch": {
+        "operationId": "selectConversationModel",
+        "parameters": [
+          {"$ref": "#/components/parameters/ConversationId"},
+          {"$ref": "#/components/parameters/IfMatch"},
+          {"$ref": "#/components/parameters/IdempotencyKey"}
+        ],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SelectModel"}}}},
+        "responses": {
+          "200": {"description": "Selected model", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ModelSelection"}}}},
+          "409": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/v1/conversations/{conversationId}/messages": {
+      "post": {
+        "operationId": "submitMessage",
+        "parameters": [
+          {"$ref": "#/components/parameters/ConversationId"},
+          {"$ref": "#/components/parameters/IfMatch"},
+          {"$ref": "#/components/parameters/IdempotencyKey"}
+        ],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SubmitMessage"}}}},
+        "responses": {
+          "202": {"description": "Run accepted", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Conversation"}}}},
+          "409": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/v1/conversations/{conversationId}/runs/{runId}/recommend-questions": {
+      "post": {
+        "operationId": "recommendQuestions",
+        "parameters": [
+          {"$ref": "#/components/parameters/ConversationId"},
+          {"$ref": "#/components/parameters/RunId"},
+          {"$ref": "#/components/parameters/IdempotencyKey"}
+        ],
+        "responses": {
+          "200": {"description": "Optional bounded questions for the completed answer", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/RecommendedQuestions"}}}},
+          "404": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/v1/runs/{runId}": {
+      "get": {
+        "operationId": "getRun",
+        "parameters": [{"$ref": "#/components/parameters/RunId"}],
+        "responses": {
+          "200": {"description": "Run and authoritative usage", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Run"}}}},
+          "404": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/v1/runs/{runId}/cancel": {
+      "post": {
+        "operationId": "cancelRun",
+        "parameters": [{"$ref": "#/components/parameters/RunId"}, {"$ref": "#/components/parameters/IdempotencyKey"}],
+        "responses": {"200": {"description": "Cancelled", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Run"}}}}}
+      }
+    },
+    "/api/v1/runs/{runId}/activities": {
+      "get": {
+        "operationId": "listSafeActivities",
+        "parameters": [{"$ref": "#/components/parameters/RunId"}, {"$ref": "#/components/parameters/Limit"}],
+        "responses": {"200": {"description": "Bounded Model, Tool, Skill, and MCP activity projection", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/Activity"}}}}}}
+      }
+    },
+    "/api/v1/runs/{runId}/interaction": {
+      "get": {
+        "operationId": "getPendingInteraction",
+        "parameters": [{"$ref": "#/components/parameters/RunId"}],
+        "responses": {
+          "200": {"description": "Pending interaction", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Interaction"}}}},
+          "204": {"description": "No pending interaction"}
+        }
+      }
+    },
+    "/api/v1/runs/{runId}/interactions/{interactionId}/response": {
+      "post": {
+        "operationId": "respondToInteraction",
+        "parameters": [
+          {"$ref": "#/components/parameters/RunId"},
+          {"name": "interactionId", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"$ref": "#/components/parameters/IfMatch"},
+          {"$ref": "#/components/parameters/IdempotencyKey"}
+        ],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/InteractionResponse"}}}},
+        "responses": {
+          "200": {"description": "Response receipt", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/InteractionReceipt"}}}},
+          "409": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/v1/runs/{runId}/stream": {
+      "get": {
+        "operationId": "streamRun",
+        "parameters": [{"$ref": "#/components/parameters/RunId"}],
+        "responses": {"200": {"description": "WebFlux Server-Sent Events", "content": {"text/event-stream": {"schema": {"$ref": "#/components/schemas/StreamEvent"}}}}}
+      }
+    },
+    "/api/v1/memory/candidates": {
+      "get": {
+        "operationId": "listMemoryCandidates",
+        "parameters": [{"$ref": "#/components/parameters/Limit"}],
+        "responses": {"200": {"description": "Pending candidates", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/MemoryCandidate"}}}}}}
+      }
+    },
+    "/api/v1/memory/candidates/{candidateId}/approve": {
+      "post": {
+        "operationId": "approveMemoryCandidate",
+        "parameters": [
+          {"name": "candidateId", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"$ref": "#/components/parameters/IfMatch"},
+          {"$ref": "#/components/parameters/IdempotencyKey"}
+        ],
+        "responses": {"200": {"description": "Approved memory", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Memory"}}}}}
+      }
+    },
+    "/api/v1/memory/candidates/{candidateId}/reject": {
+      "post": {
+        "operationId": "rejectMemoryCandidate",
+        "parameters": [
+          {"name": "candidateId", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"$ref": "#/components/parameters/IfMatch"},
+          {"$ref": "#/components/parameters/IdempotencyKey"}
+        ],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/RejectMemory"}}}},
+        "responses": {"200": {"description": "Rejected candidate", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MemoryCandidate"}}}}}
+      }
+    },
+    "/api/v1/memory": {
+      "get": {
+        "operationId": "listMemories",
+        "parameters": [{"$ref": "#/components/parameters/Limit"}],
+        "responses": {"200": {"description": "Memories", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/Memory"}}}}}}
+      }
+    },
+    "/api/v1/memory/{memoryId}/versions/{version}/invalidate": {
+      "post": {
+        "operationId": "invalidateMemory",
+        "parameters": [
+          {"name": "memoryId", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"name": "version", "in": "path", "required": true, "schema": {"type": "integer", "minimum": 1}},
+          {"$ref": "#/components/parameters/IdempotencyKey"}
+        ],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/InvalidateMemory"}}}},
+        "responses": {"200": {"description": "Invalidated memory", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Memory"}}}}}
+      }
+    },
+    "/api/v1/missions": {
+      "get": {
+        "operationId": "listMissions",
+        "parameters": [
+          {"name": "conversationId", "in": "query", "schema": {"type": "string"}},
+          {"name": "cursor", "in": "query", "schema": {"type": "string"}},
+          {"name": "size", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 50, "default": 20}}
+        ],
+        "responses": {"200": {"description": "Owner-scoped Missions", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MissionPage"}}}}}
+      },
+      "post": {
+        "operationId": "createMission",
+        "parameters": [{"$ref": "#/components/parameters/IdempotencyKey"}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CreateMission"}}}},
+        "responses": {
+          "202": {"description": "Mission planned", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MissionSnapshot"}}}},
+          "400": {"$ref": "#/components/responses/Error"},
+          "409": {"$ref": "#/components/responses/Error"},
+          "422": {"$ref": "#/components/responses/Error"},
+          "429": {"$ref": "#/components/responses/Error"},
+          "503": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/v1/missions/{missionId}": {
+      "parameters": [{"$ref": "#/components/parameters/MissionId"}],
+      "get": {
+        "operationId": "getMission",
+        "responses": {
+          "200": {"description": "Mission snapshot", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MissionSnapshot"}}}},
+          "404": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/v1/missions/{missionId}/snapshot": {
+      "parameters": [{"$ref": "#/components/parameters/MissionId"}],
+      "get": {
+        "operationId": "getMissionSnapshot",
+        "responses": {
+          "200": {"description": "Authoritative Mission snapshot", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MissionSnapshot"}}}},
+          "404": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/v1/missions/{missionId}/artifacts/{artifactId}": {
+      "parameters": [
+        {"$ref": "#/components/parameters/MissionId"},
+        {"name": "artifactId", "in": "path", "required": true, "schema": {"type": "string"}}
+      ],
+      "get": {
+        "operationId": "downloadMissionArtifact",
+        "responses": {
+          "200": {"description": "Owner-scoped immutable Mission Artifact", "content": {"application/json": {}, "text/markdown": {}}},
+          "404": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/v1/missions/{missionId}/plan": {
+      "parameters": [{"$ref": "#/components/parameters/MissionId"}],
+      "put": {
+        "operationId": "replaceMissionPlan",
+        "parameters": [{"$ref": "#/components/parameters/IfMatch"}, {"$ref": "#/components/parameters/IdempotencyKey"}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ReplaceMissionPlan"}}}},
+        "responses": {
+          "200": {"description": "Replaced Mission plan", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MissionSnapshot"}}}},
+          "409": {"$ref": "#/components/responses/Error"},
+          "412": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/v1/missions/{missionId}/confirm": {
+      "parameters": [{"$ref": "#/components/parameters/MissionId"}],
+      "post": {
+        "operationId": "confirmMission",
+        "parameters": [{"$ref": "#/components/parameters/IfMatch"}, {"$ref": "#/components/parameters/IdempotencyKey"}],
+        "responses": {
+          "200": {"description": "Confirmed Mission", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MissionSnapshot"}}}},
+          "409": {"$ref": "#/components/responses/Error"},
+          "412": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/v1/missions/{missionId}/cancel": {
+      "parameters": [{"$ref": "#/components/parameters/MissionId"}],
+      "post": {
+        "operationId": "cancelMission",
+        "parameters": [{"$ref": "#/components/parameters/IfMatch"}, {"$ref": "#/components/parameters/IdempotencyKey"}],
+        "requestBody": {"required": false, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CancelMission"}}}},
+        "responses": {
+          "200": {"description": "Cancelled Mission", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MissionSnapshot"}}}},
+          "409": {"$ref": "#/components/responses/Error"},
+          "412": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/v1/missions/{missionId}/tasks/{taskId}/retry": {
+      "parameters": [
+        {"$ref": "#/components/parameters/MissionId"},
+        {"name": "taskId", "in": "path", "required": true, "schema": {"type": "string"}}
+      ],
+      "post": {
+        "operationId": "retryMissionTask",
+        "parameters": [{"$ref": "#/components/parameters/IfMatch"}, {"$ref": "#/components/parameters/IdempotencyKey"}],
+        "responses": {
+          "200": {"description": "Mission Task scheduled for retry", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MissionSnapshot"}}}},
+          "409": {"$ref": "#/components/responses/Error"},
+          "412": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "ConversationId": {"name": "conversationId", "in": "path", "required": true, "schema": {"type": "string"}},
+      "MissionId": {"name": "missionId", "in": "path", "required": true, "schema": {"type": "string"}},
+      "RunId": {"name": "runId", "in": "path", "required": true, "schema": {"type": "string"}},
+      "Limit": {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 500}},
+      "IdempotencyKey": {"name": "Idempotency-Key", "in": "header", "required": true, "schema": {"type": "string", "maxLength": 128}},
+      "IfMatch": {"name": "If-Match", "in": "header", "required": true, "schema": {"type": "string"}}
+    },
+    "responses": {
+      "Error": {
+        "description": "Stable safe error",
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ApiError"}}}
+      }
+    },
+    "schemas": {
+      "Bootstrap": {
+        "type": "object",
+        "required": ["product", "apiVersion", "connection", "caller", "capabilities", "assemblyDigest", "defaultModelId", "models"],
+        "properties": {
+          "product": {"type": "string"},
+          "apiVersion": {"type": "string"},
+          "connection": {"type": "string"},
+          "caller": {"type": "string"},
+          "capabilities": {"type": "array", "items": {"type": "string"}},
+          "assemblyDigest": {"type": "string"},
+          "defaultModelId": {"type": "string"},
+          "models": {"type": "array", "items": {"$ref": "#/components/schemas/Model"}}
+        }
+      },
+      "CreateConversation": {
+        "type": "object",
+        "required": ["displayName", "message"],
+        "properties": {
+          "displayName": {"type": "string"},
+          "message": {"type": "string"},
+          "modelId": {"type": "string"},
+          "modelSelection": {"$ref": "#/components/schemas/SelectModel"},
+          "images": {"type": "array", "maxItems": 4, "items": {"$ref": "#/components/schemas/ImageInput"}},
+          "audios": {"type": "array", "maxItems": 4, "items": {"$ref": "#/components/schemas/AudioInput"}}
+        }
+      },
+      "SubmitMessage": {
+        "type": "object",
+        "required": ["message"],
+        "properties": {
+          "message": {"type": "string"},
+          "images": {"type": "array", "maxItems": 4, "items": {"$ref": "#/components/schemas/ImageInput"}},
+          "audios": {"type": "array", "maxItems": 4, "items": {"$ref": "#/components/schemas/AudioInput"}}
+        }
+      },
+      "ImageInput": {
+        "type": "object",
+        "required": ["kind"],
+        "properties": {
+          "kind": {"type": "string", "enum": ["url", "upload"]},
+          "url": {"type": "string", "format": "uri"},
+          "imageId": {"type": "string"}
+        }
+      },
+      "UploadedImage": {
+        "type": "object",
+        "required": ["imageId", "mediaType", "sizeBytes", "originalFilename", "sha256"],
+        "properties": {
+          "imageId": {"type": "string"},
+          "mediaType": {"type": "string"},
+          "sizeBytes": {"type": "integer", "format": "int64"},
+          "originalFilename": {"type": "string"},
+          "sha256": {"type": "string"}
+        }
+      },
+      "AudioInput": {
+        "type": "object",
+        "required": ["kind", "audioId"],
+        "properties": {
+          "kind": {"type": "string", "enum": ["upload"]},
+          "audioId": {"type": "string"}
+        }
+      },
+      "UploadedAudio": {
+        "type": "object",
+        "required": ["audioId", "mediaType", "sizeBytes", "originalFilename", "sha256"],
+        "properties": {
+          "audioId": {"type": "string"},
+          "mediaType": {"type": "string"},
+          "sizeBytes": {"type": "integer", "format": "int64"},
+          "originalFilename": {"type": "string"},
+          "sha256": {"type": "string"}
+        }
+      },
+      "RecommendedQuestions": {
+        "type": "object",
+        "required": ["questions"],
+        "properties": {
+          "questions": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 3,
+            "items": {"type": "string", "maxLength": 80}
+          }
+        }
+      },
+      "UpdateConversation": {
+        "type": "object",
+        "properties": {"displayName": {"type": "string"}, "status": {"type": "string"}}
+      },
+      "Model": {
+        "type": "object",
+        "required": ["id", "modelGroupId", "modelDisplayName", "displayName", "providerId", "providerDisplayName", "apiStyle", "apiStyleDisplayName", "availability", "unavailableReason", "capabilities", "contextWindow", "maxOutputTokens", "preferenceSchemaVersion", "controls", "recommendedPreferences"],
+        "properties": {
+          "id": {"type": "string"},
+          "modelGroupId": {"type": "string"},
+          "modelDisplayName": {"type": "string"},
+          "displayName": {"type": "string"},
+          "providerId": {"type": "string"},
+          "providerDisplayName": {"type": "string"},
+          "apiStyle": {"type": "string"},
+          "apiStyleDisplayName": {"type": "string"},
+          "availability": {"type": "string", "enum": ["AVAILABLE", "UNAVAILABLE"]},
+          "unavailableReason": {"type": "string"},
+          "capabilities": {"type": "array", "items": {"type": "string"}},
+          "contextWindow": {"type": "integer"},
+          "maxOutputTokens": {"type": "integer"},
+          "preferenceSchemaVersion": {"type": "string"},
+          "controls": {"$ref": "#/components/schemas/ModelControls"},
+          "recommendedPreferences": {"$ref": "#/components/schemas/ModelPreferences"},
+          "imageInput": {"oneOf": [{"$ref": "#/components/schemas/ImageInputView"}, {"type": "null"}]}
+        }
+      },
+      "ImageInputView": {
+        "type": "object",
+        "required": ["allowedSources", "supportedMediaTypes", "maxImagesPerRequest", "maxBytesPerItem", "maxTotalBytes", "maxUrlCharacters", "detailSupported", "allowedDetails"],
+        "properties": {
+          "allowedSources": {"type": "array", "items": {"type": "string", "enum": ["UPLOAD", "URL"]}},
+          "supportedMediaTypes": {"type": "array", "items": {"type": "string"}},
+          "maxImagesPerRequest": {"type": "integer"},
+          "maxBytesPerItem": {"type": "integer", "format": "int64"},
+          "maxTotalBytes": {"type": "integer", "format": "int64"},
+          "maxUrlCharacters": {"type": "integer"},
+          "detailSupported": {"type": "boolean"},
+          "allowedDetails": {"type": "array", "items": {"type": "string", "enum": ["AUTO", "LOW", "HIGH"]}}
+        }
+      },
+      "ModelConnection": {
+        "type": "object",
+        "required": ["connectionId", "providerId", "method", "status", "accountLabel", "apiKeySupported", "externalLoginSupported", "logoutSupported", "unofficialLocalCompatibility", "networkProxyMode"],
+        "properties": {
+          "connectionId": {"type": "string"},
+          "providerId": {"type": "string"},
+          "method": {"type": "string", "enum": ["API_KEY", "EXTERNAL_LOGIN"]},
+          "status": {"type": "string", "enum": ["AUTHENTICATED", "REAUTH_REQUIRED", "RATE_LIMITED"]},
+          "accountLabel": {"type": "string"},
+          "expiresAtEpochMillis": {"type": ["integer", "null"], "format": "int64"},
+          "reasonCode": {"type": ["string", "null"]},
+          "apiKeySupported": {"type": "boolean"},
+          "externalLoginSupported": {"type": "boolean"},
+          "logoutSupported": {"type": "boolean"},
+          "unofficialLocalCompatibility": {"type": "boolean"},
+          "networkProxyMode": {"type": "string", "enum": ["SYSTEM", "STARTUP", "CUSTOM"]}
+        }
+      },
+      "SaveModelApiKey": {
+        "type": "object",
+        "required": ["providerId", "apiKey"],
+        "properties": {
+          "providerId": {"type": "string", "maxLength": 64},
+          "apiKey": {"type": "string", "format": "password", "minLength": 1, "maxLength": 65536, "writeOnly": true}
+        }
+      },
+      "SaveModelProxy": {
+        "type": "object",
+        "required": ["proxyUrl"],
+        "properties": {
+          "proxyUrl": {"type": "string", "format": "uri", "minLength": 1, "maxLength": 2048, "writeOnly": true}
+        }
+      },
+      "ExternalLoginAttempt": {
+        "type": "object",
+        "required": ["attemptId", "methodId", "mode", "state", "expiresAtEpochMillis"],
+        "properties": {
+          "attemptId": {"type": "string"},
+          "methodId": {"type": "string"},
+          "mode": {"type": "string", "enum": ["BROWSER", "DEVICE_CODE"]},
+          "state": {"type": "string", "enum": ["CREATED", "AUTHORIZING", "WAITING_USER", "EXCHANGING", "SUCCEEDED", "FAILED", "CANCELLED", "EXPIRED"]},
+          "verificationUri": {"type": ["string", "null"], "format": "uri"},
+          "userCode": {"type": ["string", "null"]},
+          "expiresAtEpochMillis": {"type": "integer", "format": "int64"},
+          "reasonCode": {"type": ["string", "null"]}
+        }
+      },
+      "ModelControls": {
+        "type": "object",
+        "required": ["responseMode", "reasoningEffort", "responseLength", "apiStyle"],
+        "properties": {
+          "responseMode": {"$ref": "#/components/schemas/ResponseModeControl"},
+          "reasoningEffort": {"$ref": "#/components/schemas/ReasoningEffortControl"},
+          "responseLength": {"$ref": "#/components/schemas/ResponseLengthControl"},
+          "apiStyle": {"$ref": "#/components/schemas/ApiStyleControl"}
+        }
+      },
+      "ResponseModeControl": {
+        "type": "object",
+        "required": ["kind", "visible", "readOnly", "allowedValues", "recommendedValue", "effectiveSummary", "helpText"],
+        "properties": {
+          "kind": {"type": "string", "enum": ["responseMode"]},
+          "visible": {"type": "boolean"}, "readOnly": {"type": "boolean"},
+          "allowedValues": {"type": "array", "items": {"type": "string", "enum": ["RECOMMENDED", "FAST", "DEEP"]}},
+          "recommendedValue": {"type": "string", "enum": ["RECOMMENDED", "FAST", "DEEP"]},
+          "effectiveSummary": {"type": "string"}, "helpText": {"type": "string"}
+        }
+      },
+      "ReasoningEffortControl": {
+        "type": "object",
+        "required": ["kind", "visible", "readOnly", "allowedValues", "effectiveSummary", "helpText"],
+        "properties": {
+          "kind": {"type": "string", "enum": ["reasoningEffort"]},
+          "visible": {"type": "boolean"}, "readOnly": {"type": "boolean"},
+          "allowedValues": {"type": "array", "items": {"type": "string", "enum": ["LOW", "MEDIUM", "HIGH", "MAX"]}},
+          "recommendedValue": {"type": ["string", "null"], "enum": ["LOW", "MEDIUM", "HIGH", "MAX", null]},
+          "effectiveSummary": {"type": "string"}, "helpText": {"type": "string"}
+        }
+      },
+      "ResponseLengthControl": {
+        "type": "object",
+        "required": ["kind", "visible", "readOnly", "allowedValues", "recommendedValue", "effectiveSummary", "helpText"],
+        "properties": {
+          "kind": {"type": "string", "enum": ["responseLength"]},
+          "visible": {"type": "boolean"}, "readOnly": {"type": "boolean"},
+          "allowedValues": {"type": "array", "items": {"type": "string", "enum": ["RECOMMENDED", "SHORT", "STANDARD", "LONG"]}},
+          "recommendedValue": {"type": "string", "enum": ["RECOMMENDED", "SHORT", "STANDARD", "LONG"]},
+          "effectiveSummary": {"type": "string"}, "helpText": {"type": "string"}
+        }
+      },
+      "ApiStyleControl": {
+        "type": "object",
+        "required": ["kind", "visible", "readOnly", "allowedValues", "recommendedValue", "effectiveSummary", "helpText"],
+        "properties": {
+          "kind": {"type": "string", "enum": ["apiStyle"]},
+          "visible": {"type": "boolean"}, "readOnly": {"type": "boolean"},
+          "allowedValues": {"type": "array", "items": {"type": "string"}},
+          "recommendedValue": {"type": "string"},
+          "effectiveSummary": {"type": "string"}, "helpText": {"type": "string"}
+        }
+      },
+      "ModelPreferences": {
+        "type": "object",
+        "required": ["responseMode", "responseLength"],
+        "properties": {
+          "responseMode": {"type": "string", "enum": ["RECOMMENDED", "FAST", "DEEP"]},
+          "effort": {"type": ["string", "null"], "enum": ["LOW", "MEDIUM", "HIGH", "MAX", null]},
+          "responseLength": {"type": "string", "enum": ["RECOMMENDED", "SHORT", "STANDARD", "LONG"]}
+        }
+      },
+      "ModelSelection": {
+        "type": "object",
+        "required": ["model", "preferences", "revision", "available", "selectionCompatibility"],
+        "properties": {
+          "model": {"$ref": "#/components/schemas/Model"},
+          "preferences": {"$ref": "#/components/schemas/ModelPreferences"},
+          "revision": {"type": "integer", "format": "int64"},
+          "available": {"type": "boolean"},
+          "selectionCompatibility": {"type": "string", "enum": ["CURRENT", "RESELECTION_REQUIRED", "UNAVAILABLE"]}
+        }
+      },
+      "SelectModel": {
+        "type": "object",
+        "required": ["modelBindingId", "preferenceSchemaVersion", "preferences"],
+        "properties": {
+          "modelBindingId": {"type": "string"},
+          "preferenceSchemaVersion": {"type": "string"},
+          "preferences": {"$ref": "#/components/schemas/ModelPreferences"}
+        }
+      },
+      "Conversation": {
+        "type": "object",
+        "required": ["id", "displayName", "status", "createdAt", "lastActivityAt", "revision", "model"],
+        "properties": {
+          "id": {"type": "string"},
+          "displayName": {"type": "string"},
+          "status": {"type": "string"},
+          "activeRunId": {"type": ["string", "null"]},
+          "createdAt": {"type": "string", "format": "date-time"},
+          "lastActivityAt": {"type": "string", "format": "date-time"},
+          "revision": {"type": "integer", "format": "int64"},
+          "model": {"$ref": "#/components/schemas/ModelSelection"}
+        }
+      },
+      "Turn": {
+        "type": "object",
+        "required": ["id", "role", "sequence", "text", "images", "audios", "createdAt"],
+        "properties": {
+          "id": {"type": "string"},
+          "role": {"type": "string"},
+          "runId": {"type": ["string", "null"]},
+          "sequence": {"type": "integer", "format": "int64"},
+          "text": {"type": "string"},
+          "images": {"type": "array", "items": {"$ref": "#/components/schemas/TurnImage"}},
+          "audios": {"type": "array", "items": {"$ref": "#/components/schemas/TurnAudio"}},
+          "createdAt": {"type": "string", "format": "date-time"}
+        }
+      },
+      "TurnImage": {
+        "type": "object",
+        "required": ["kind", "sizeBytes", "originalFilename"],
+        "properties": {
+          "kind": {"type": "string"},
+          "url": {"type": ["string", "null"]},
+          "imageId": {"type": ["string", "null"]},
+          "mediaType": {"type": ["string", "null"]},
+          "sizeBytes": {"type": "integer", "format": "int64"},
+          "originalFilename": {"type": "string"}
+        }
+      },
+      "TurnAudio": {
+        "type": "object",
+        "required": ["audioId", "mediaType", "sizeBytes", "originalFilename"],
+        "properties": {
+          "audioId": {"type": "string"},
+          "mediaType": {"type": "string"},
+          "sizeBytes": {"type": "integer", "format": "int64"},
+          "originalFilename": {"type": "string"}
+        }
+      },
+      "Usage": {
+        "type": "object",
+        "required": ["inputTokens", "outputTokens", "totalTokens", "cachedInputTokens", "modelCalls", "toolCalls"],
+        "properties": {
+          "inputTokens": {"type": "integer", "format": "int64"},
+          "outputTokens": {"type": "integer", "format": "int64"},
+          "totalTokens": {"type": "integer", "format": "int64"},
+          "cachedInputTokens": {"type": "integer", "format": "int64"},
+          "modelCalls": {"type": "integer", "format": "int64"},
+          "toolCalls": {"type": "integer", "format": "int64"}
+        }
+      },
+      "ExecutionError": {
+        "type": "object",
+        "required": ["code", "message", "category", "retryability", "details", "occurredAt"],
+        "properties": {
+          "code": {"type": "string"},
+          "message": {"type": "string"},
+          "category": {"type": "string"},
+          "retryability": {"type": "string"},
+          "details": {"type": "object", "additionalProperties": true},
+          "diagnosticId": {"type": ["string", "null"]},
+          "occurredAt": {"type": "string", "format": "date-time"}
+        }
+      },
+      "Run": {
+        "type": "object",
+        "required": ["id", "conversationId", "status", "version", "updatedAt", "usage"],
+        "properties": {
+          "id": {"type": "string"},
+          "conversationId": {"type": "string"},
+          "status": {"type": "string"},
+          "version": {"type": "integer", "format": "int64"},
+          "updatedAt": {"type": "string", "format": "date-time"},
+          "output": {"type": ["string", "null"]},
+          "resultSummary": {"type": ["string", "null"]},
+          "errorCode": {"type": ["string", "null"]},
+          "error": {
+            "oneOf": [
+              {"$ref": "#/components/schemas/ExecutionError"},
+              {"type": "null"}
+            ]
+          },
+          "plan": {
+            "oneOf": [
+              {"$ref": "#/components/schemas/Plan"},
+              {"type": "null"}
+            ]
+          },
+          "usage": {"$ref": "#/components/schemas/Usage"}
+        }
+      },
+      "Plan": {
+        "type": "object",
+        "required": ["id", "objective", "items", "revision", "updatedAt"],
+        "properties": {
+          "id": {"type": "string"},
+          "objective": {"type": "string"},
+          "items": {"type": "array", "items": {"$ref": "#/components/schemas/Todo"}},
+          "revision": {"type": "integer", "format": "int64"},
+          "updatedAt": {"type": "string", "format": "date-time"}
+        }
+      },
+      "Todo": {
+        "type": "object",
+        "required": ["id", "title", "priority", "status"],
+        "properties": {
+          "id": {"type": "string"},
+          "title": {"type": "string"},
+          "priority": {"type": "string"},
+          "status": {"type": "string", "enum": ["PENDING", "IN_PROGRESS", "BLOCKED", "COMPLETED", "CANCELLED", "SKIPPED"]},
+          "startedAt": {"type": ["string", "null"], "format": "date-time"},
+          "completedAt": {"type": ["string", "null"], "format": "date-time"}
+        }
+      },
+      "Activity": {
+        "type": "object",
+        "required": ["activityId", "eventId", "runId", "kind", "displayName", "safeTargetSummary", "status", "occurredAt", "safeResultSummary", "version"],
+        "properties": {
+          "activityId": {"type": "string"},
+          "eventId": {"type": "string"},
+          "parentActivityId": {"type": ["string", "null"]},
+          "runId": {"type": "string"},
+          "kind": {"type": "string", "enum": ["MODEL", "TOOL", "SKILL", "MCP"]},
+          "displayName": {"type": "string"},
+          "safeTargetSummary": {"type": "string"},
+          "status": {"type": "string"},
+          "requestedAt": {"type": ["string", "null"], "format": "date-time"},
+          "startedAt": {"type": ["string", "null"], "format": "date-time"},
+          "completedAt": {"type": ["string", "null"], "format": "date-time"},
+          "occurredAt": {"type": "string", "format": "date-time"},
+          "safeResultSummary": {"type": "string"},
+          "interactionRef": {"type": ["string", "null"]},
+          "version": {"type": "integer", "format": "int64"}
+        }
+      },
+      "Interaction": {
+        "type": "object",
+        "required": ["id", "runId", "conversationId", "revision", "kind", "state", "title", "safePrompt", "allowedActions", "inputType", "maximumCharacters", "createdAt"],
+        "properties": {
+          "id": {"type": "string"},
+          "runId": {"type": "string"},
+          "conversationId": {"type": "string"},
+          "revision": {"type": "integer", "format": "int64"},
+          "kind": {"type": "string"},
+          "state": {"type": "string"},
+          "title": {"type": "string"},
+          "safePrompt": {"type": "string"},
+          "allowedActions": {"type": "array", "items": {"type": "string"}},
+          "inputType": {"type": "string"},
+          "maximumCharacters": {"type": "integer"},
+          "createdAt": {"type": "string", "format": "date-time"},
+          "expiresAt": {"type": ["string", "null"], "format": "date-time"}
+        }
+      },
+      "InteractionResponse": {
+        "type": "object",
+        "required": ["action", "text"],
+        "properties": {"action": {"type": "string"}, "text": {"type": "string"}}
+      },
+      "InteractionReceipt": {
+        "type": "object",
+        "required": ["responseId", "interactionId", "runId", "status", "interactionState", "revision", "runVersion"],
+        "properties": {
+          "responseId": {"type": "string"},
+          "interactionId": {"type": "string"},
+          "runId": {"type": "string"},
+          "status": {"type": "string"},
+          "interactionState": {"type": "string"},
+          "revision": {"type": "integer", "format": "int64"},
+          "runVersion": {"type": "integer", "format": "int64"}
+        }
+      },
+      "MemoryCandidate": {
+        "type": "object",
+        "required": ["id", "kind", "subjectKey", "content", "status", "updatedAt", "revision"],
+        "properties": {
+          "id": {"type": "string"},
+          "kind": {"type": "string"},
+          "subjectKey": {"type": "string"},
+          "content": {"type": "string"},
+          "status": {"type": "string"},
+          "updatedAt": {"type": "string", "format": "date-time"},
+          "revision": {"type": "integer", "format": "int64"}
+        }
+      },
+      "Memory": {
+        "type": "object",
+        "required": ["id", "version", "kind", "subjectKey", "content", "status", "createdAt", "updatedAt"],
+        "properties": {
+          "id": {"type": "string"},
+          "version": {"type": "integer", "format": "int64"},
+          "kind": {"type": "string"},
+          "subjectKey": {"type": "string"},
+          "content": {"type": "string"},
+          "status": {"type": "string"},
+          "createdAt": {"type": "string", "format": "date-time"},
+          "updatedAt": {"type": "string", "format": "date-time"}
+        }
+      },
+      "RejectMemory": {
+        "type": "object",
+        "required": ["reason"],
+        "properties": {"reason": {"type": "string"}}
+      },
+      "InvalidateMemory": {
+        "type": "object",
+        "required": ["reason"],
+        "properties": {"reason": {"type": "string"}}
+      },
+      "CreateMission": {
+        "type": "object",
+        "required": ["conversationId", "objective", "acceptanceCriteria"],
+        "properties": {
+          "conversationId": {"type": "string"},
+          "objective": {"type": "string", "maxLength": 8000},
+          "acceptanceCriteria": {"type": "array", "maxItems": 20, "items": {"type": "string", "maxLength": 1000}},
+          "constraints": {"$ref": "#/components/schemas/MissionConstraints"},
+          "mode": {"type": "string", "enum": ["STANDARD", "DEEP_RESEARCH"], "default": "STANDARD"},
+          "selectedSkillId": {"type": "string"},
+          "researchBrief": {"$ref": "#/components/schemas/ResearchBrief"},
+          "previousMissionId": {"type": "string", "maxLength": 64}
+        }
+      },
+      "ResearchBrief": {
+        "type": "object",
+        "required": ["question", "sourcePreferences", "exclusions"],
+        "properties": {
+          "question": {"type": "string", "maxLength": 8000},
+          "scope": {"type": "string", "maxLength": 2000},
+          "timeRange": {"type": "string", "maxLength": 256},
+          "region": {"type": "string", "maxLength": 256},
+          "audience": {"type": "string", "maxLength": 256},
+          "sourcePreferences": {"type": "array", "maxItems": 20, "items": {"type": "string", "maxLength": 256}},
+          "exclusions": {"type": "array", "maxItems": 20, "items": {"type": "string", "maxLength": 256}},
+          "deliveryFormat": {"type": "string", "maxLength": 256},
+          "priorContext": {"$ref": "#/components/schemas/PriorResearchContext"}
+        }
+      },
+      "PriorResearchContext": {
+        "type": "object",
+        "required": ["previousMissionId"],
+        "properties": {
+          "previousMissionId": {"type": "string", "maxLength": 256},
+          "directAnswer": {"type": "string", "maxLength": 8000},
+          "unresolvedQuestions": {"type": "array", "maxItems": 50, "items": {"type": "string", "maxLength": 1000}},
+          "unverifiedClaims": {"type": "array", "maxItems": 50, "items": {"type": "string", "maxLength": 1000}}
+        }
+      },
+      "MissionConstraints": {
+        "type": "object",
+        "properties": {
+          "maxTasks": {"type": "integer", "minimum": 1, "maximum": 16},
+          "maxDependencyDepth": {"type": "integer", "minimum": 1, "maximum": 8},
+          "deadlineAt": {"type": "string", "format": "date-time"}
+        }
+      },
+      "ReplaceMissionPlan": {
+        "type": "object",
+        "properties": {
+          "plan": {"$ref": "#/components/schemas/MissionPlan"},
+          "regenerate": {"type": "boolean"}
+        }
+      },
+      "MissionPlan": {
+        "type": "object",
+        "required": ["tasks"],
+        "properties": {
+          "tasks": {"type": "array", "maxItems": 16, "items": {"$ref": "#/components/schemas/MissionTask"}}
+        }
+      },
+      "MissionTask": {
+        "type": "object",
+        "required": ["taskId", "ordinal", "title", "objective", "acceptanceCriteria", "dependsOn", "taskType", "requiredSkillIds", "resultSchemaId", "resultSchemaVersion", "state"],
+        "properties": {
+          "taskId": {"type": "string"},
+          "ordinal": {"type": "integer", "minimum": 1},
+          "title": {"type": "string", "maxLength": 200},
+          "objective": {"type": "string", "maxLength": 4000},
+          "acceptanceCriteria": {"type": "array", "maxItems": 20, "items": {"type": "string", "maxLength": 1000}},
+          "dependsOn": {"type": "array", "items": {"type": "string"}},
+          "taskType": {"type": "string", "enum": ["GENERAL", "RESEARCH"]},
+          "requiredSkillIds": {"type": "array", "items": {"type": "string"}},
+          "resultSchemaId": {"type": "string"},
+          "resultSchemaVersion": {"type": "string"},
+          "state": {"type": "string", "enum": ["PLANNED", "WAITING_DEPENDENCY", "READY", "COMPLETED", "BLOCKED", "CANCELLED"]}
+        }
+      },
+      "MissionPlanRevision": {
+        "type": "object",
+        "required": ["revision", "schemaId", "schemaVersion", "tasks", "plannerSessionId", "plannerRunId", "createdAt"],
+        "properties": {
+          "revision": {"type": "integer", "minimum": 1},
+          "schemaId": {"type": "string", "const": "pa.mission-plan"},
+          "schemaVersion": {"type": "string", "const": "v1"},
+          "tasks": {"type": "array", "items": {"$ref": "#/components/schemas/MissionTask"}},
+          "plannerSessionId": {"oneOf": [{"type": "string"}, {"type": "null"}]},
+          "plannerRunId": {"oneOf": [{"type": "string"}, {"type": "null"}]},
+          "createdAt": {"type": "string", "format": "date-time"}
+        }
+      },
+      "MissionSnapshot": {
+        "type": "object",
+        "required": ["schemaVersion", "missionId", "conversationId", "modelBinding", "objective", "acceptanceCriteria", "constraints", "mode", "researchBrief", "selectedSkillId", "selectedSkillBinding", "state", "plan", "tasks", "blocker", "artifacts", "sources", "finalResult", "version", "createdAt", "updatedAt", "confirmedAt", "finishedAt", "pollAfterMs", "execution"],
+        "properties": {
+          "schemaVersion": {"type": "string", "const": "pa.mission-snapshot/v2"},
+          "missionId": {"type": "string"},
+          "conversationId": {"type": "string"},
+          "modelBinding": {"$ref": "#/components/schemas/MissionModelBinding"},
+          "objective": {"type": "string"},
+          "acceptanceCriteria": {"type": "array", "items": {"type": "string"}},
+          "constraints": {"$ref": "#/components/schemas/MissionConstraints"},
+          "mode": {"type": "string", "enum": ["STANDARD", "DEEP_RESEARCH"]},
+          "researchBrief": {"oneOf": [{"$ref": "#/components/schemas/ResearchBrief"}, {"type": "null"}]},
+          "selectedSkillId": {"oneOf": [{"type": "string"}, {"type": "null"}]},
+          "selectedSkillBinding": {"oneOf": [{"type": "string"}, {"type": "null"}]},
+          "state": {"type": "string", "enum": ["PLANNING", "WAITING_CONFIRMATION", "RUNNING", "WAITING_USER", "SYNTHESIZING", "COMPLETED", "PARTIALLY_COMPLETED", "FAILED", "CANCELLED"]},
+          "plan": {"oneOf": [{"$ref": "#/components/schemas/MissionPlanRevision"}, {"type": "null"}]},
+          "tasks": {"type": "array", "items": {"$ref": "#/components/schemas/MissionTask"}},
+          "blocker": {"oneOf": [{"type": "string"}, {"type": "null"}]},
+          "artifacts": {"type": "array", "items": {"type": "string"}},
+          "sources": {"type": "array", "items": {"type": "string"}},
+          "finalResult": {"description": "Encoded completion envelope. Standard Missions use pa.mission-final-result/v1; Deep Research deliveries use pa.research-delivery/v2 with a separate Markdown report Artifact.", "oneOf": [{"type": "string"}, {"type": "null"}]},
+          "version": {"type": "integer", "format": "int64"},
+          "createdAt": {"type": "string", "format": "date-time"},
+          "updatedAt": {"type": "string", "format": "date-time"},
+          "confirmedAt": {"oneOf": [{"type": "string", "format": "date-time"}, {"type": "null"}]},
+          "finishedAt": {"oneOf": [{"type": "string", "format": "date-time"}, {"type": "null"}]},
+          "pollAfterMs": {"type": "integer", "format": "int64", "minimum": 0},
+          "execution": {"$ref": "#/components/schemas/MissionExecution"}
+        }
+      },
+      "MissionModelBinding": {
+        "type": "object",
+        "required": ["modelId", "modelDisplayName", "providerId", "providerDisplayName", "configurationDigest"],
+        "properties": {
+          "modelId": {"type": "string"},
+          "modelDisplayName": {"type": "string"},
+          "providerId": {"type": "string"},
+          "providerDisplayName": {"type": "string"},
+          "configurationDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+        }
+      },
+      "MissionExecution": {
+        "type": "object",
+        "required": ["dispatcherStatus", "recovering", "allTasksSettled", "completedTasks", "blockedTasks", "currentTaskId", "latestAttempt"],
+        "properties": {
+          "dispatcherStatus": {"type": "string", "enum": ["READY", "NOT_READY", "NOT_CONFIGURED"]},
+          "recovering": {"type": "boolean"},
+          "allTasksSettled": {"type": "boolean"},
+          "completedTasks": {"type": "integer", "minimum": 0},
+          "blockedTasks": {"type": "integer", "minimum": 0},
+          "currentTaskId": {"oneOf": [{"type": "string"}, {"type": "null"}]},
+          "latestAttempt": {"oneOf": [{"$ref": "#/components/schemas/MissionAttempt"}, {"type": "null"}]}
+        }
+      },
+      "MissionAttempt": {
+        "type": "object",
+        "required": ["taskId", "attemptNo", "state", "sessionId", "runId", "failureCode", "updatedAt"],
+        "properties": {
+          "taskId": {"type": "string"},
+          "attemptNo": {"type": "integer", "minimum": 1},
+          "state": {"type": "string", "enum": ["DISPATCH_PENDING", "BOUND", "SETTLED", "FAILED", "CANCELLED", "OUTCOME_UNKNOWN"]},
+          "sessionId": {"oneOf": [{"type": "string"}, {"type": "null"}]},
+          "runId": {"oneOf": [{"type": "string"}, {"type": "null"}]},
+          "failureCode": {"oneOf": [{"type": "string"}, {"type": "null"}]},
+          "updatedAt": {"type": "string", "format": "date-time"}
+        }
+      },
+      "MissionPage": {
+        "type": "object",
+        "required": ["items", "nextCursor"],
+        "properties": {
+          "items": {"type": "array", "maxItems": 50, "items": {"$ref": "#/components/schemas/MissionSnapshot"}},
+          "nextCursor": {"oneOf": [{"type": "string"}, {"type": "null"}]}
+        }
+      },
+      "CancelMission": {
+        "type": "object",
+        "properties": {"reason": {"type": "string", "maxLength": 1000}}
+      },
+      "StreamEvent": {
+        "type": "object",
+        "required": ["eventId", "type", "runId", "occurredAt", "value", "source", "sequence"],
+        "properties": {
+          "eventId": {"type": "string"},
+          "type": {"type": "string"},
+          "runId": {"type": "string"},
+          "occurredAt": {"type": "string", "format": "date-time"},
+          "value": {"type": "string"},
+          "activity": {"oneOf": [{"$ref": "#/components/schemas/Activity"}, {"type": "null"}]},
+          "source": {"type": "string", "enum": ["durable", "transient", "snapshot"]},
+          "sequence": {"type": "integer", "format": "int64"}
+        }
+      },
+      "ApiError": {
+        "type": "object",
+        "required": ["code", "message", "correlationId", "diagnosticId", "actions"],
+        "properties": {
+          "code": {"type": "string"},
+          "message": {"type": "string"},
+          "correlationId": {"type": "string"},
+          "diagnosticId": {"type": "string"},
+          "actions": {"type": "array", "maxItems": 4, "items": {"type": "string"}}
+        }
+      }
+    }
+  }
+}

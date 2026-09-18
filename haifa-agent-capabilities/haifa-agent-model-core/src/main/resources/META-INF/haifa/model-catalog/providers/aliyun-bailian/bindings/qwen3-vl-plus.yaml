@@ -1,0 +1,36 @@
+schemaVersion: haifa.model-catalog-binding/v1
+bindingId: qwen3-vl-plus
+version: "2026-09-m2"
+providerModelId: qwen3-vl-plus
+displayName: Qwen3 VL Plus
+status: ACTIVE
+apiStyle: openai-chat-completions
+dialect: aliyun-bailian-openai-chat
+capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, IMAGE_UPLOAD_INPUT, IMAGE_URL_INPUT]
+profile:
+  version: "2.0"
+  reasoningBehavior: NONE
+  allowedReasoningModes: [DISABLED]
+  allowedReasoningEfforts: []
+  maximumReasoningTokens: null
+  minimumOutputTokens: 1
+  maximumOutputTokens: 8192
+  contextWindowTokens: 131072
+  toolReasoningContinuationRequired: false
+  nativeStreaming: true
+  usageStreaming: true
+  reasoningStreaming: false
+  partialOutputFailureBehavior: NON_RETRYABLE
+  inputModalities: [TEXT, IMAGE]
+  outputModalities: [TEXT]
+  imageInput:
+    allowedSources: [UPLOAD, URL]
+    supportedMediaTypes: [image/png, image/jpeg, image/webp, image/gif]
+    maxImagesPerRequest: 4
+    maxBytesPerItem: 10485760
+    maxTotalBytes: 20971520
+    maxUrlCharacters: 2048
+    detailSupported: true
+    allowedDetails: [AUTO, HIGH, LOW]
+  status: VERIFIED
+  lastVerifiedOn: "2026-09-03"

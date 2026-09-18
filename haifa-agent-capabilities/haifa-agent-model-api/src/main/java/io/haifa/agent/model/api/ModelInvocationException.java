@@ -1,6 +1,9 @@
 package io.haifa.agent.model.api;
 
+import java.time.Duration;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.OptionalLong;
 
 /** Safe normalized provider failure. The message must never include credentials or raw payloads. */
 public final class ModelInvocationException extends RuntimeException {
@@ -9,6 +12,9 @@ public final class ModelInvocationException extends RuntimeException {
     private final int httpStatus;
     private final String providerCode;
     private final ModelCallId callId;
+    private final Duration retryAfter;
+    private final boolean outputObserved;
+    private final String providerRequestId;
 
     public ModelInvocationException(
             ModelErrorCategory category,
@@ -18,6 +24,43 @@ public final class ModelInvocationException extends RuntimeException {
             ModelCallId callId,
             String safeMessage,
             Throwable cause) {
+        this(category, retryable, httpStatus, providerCode, callId, safeMessage, cause, null, false, null);
+    }
+
+    public ModelInvocationException(
+            ModelErrorCategory category,
+            boolean retryable,
+            int httpStatus,
+            String providerCode,
+            ModelCallId callId,
+            String safeMessage,
+            Throwable cause,
+            Duration retryAfter,
+            boolean outputObserved) {
+        this(
+                category,
+                retryable,
+                httpStatus,
+                providerCode,
+                callId,
+                safeMessage,
+                cause,
+                retryAfter,
+                outputObserved,
+                null);
+    }
+
+    public ModelInvocationException(
+            ModelErrorCategory category,
+            boolean retryable,
+            int httpStatus,
+            String providerCode,
+            ModelCallId callId,
+            String safeMessage,
+            Throwable cause,
+            Duration retryAfter,
+            boolean outputObserved,
+            String providerRequestId) {
         super(ModelValues.text(safeMessage, "safeMessage"), cause);
         this.category = Objects.requireNonNull(category, "category must not be null");
         this.retryable = retryable;
@@ -25,6 +68,13 @@ public final class ModelInvocationException extends RuntimeException {
         this.providerCode = Objects.requireNonNull(providerCode, "providerCode must not be null")
                 .trim();
         this.callId = Objects.requireNonNull(callId, "callId must not be null");
+        if (retryAfter != null && retryAfter.isNegative()) {
+            throw new IllegalArgumentException("retryAfter must not be negative");
+        }
+        this.retryAfter = retryAfter;
+        this.outputObserved = outputObserved;
+        this.providerRequestId =
+                providerRequestId != null && !providerRequestId.isBlank() ? providerRequestId.trim() : null;
     }
 
     public ModelErrorCategory category() {
@@ -45,5 +95,61 @@ public final class ModelInvocationException extends RuntimeException {
 
     public ModelCallId callId() {
         return callId;
+    }
+
+    public Optional<Duration> retryAfter() {
+        return Optional.ofNullable(retryAfter);
+    }
+
+    public Optional<String> providerRequestId() {
+        return Optional.ofNullable(providerRequestId);
+    }
+
+    public String retryDecision() {
+        return retryable && !outputObserved ? "RETRYABLE" : "TERMINAL";
+    }
+
+    /** Safe diagnostic projection that saturates instead of overflowing on an untrusted duration. */
+    public OptionalLong retryAfterMillis() {
+        if (retryAfter == null) return OptionalLong.empty();
+        try {
+            return OptionalLong.of(retryAfter.toMillis());
+        } catch (ArithmeticException ignored) {
+            return OptionalLong.of(Long.MAX_VALUE);
+        }
+    }
+
+    public boolean outputObserved() {
+        return outputObserved;
+    }
+
+    public ModelInvocationException withOutputObserved() {
+        if (outputObserved) return this;
+        return new ModelInvocationException(
+                category,
+                retryable,
+                httpStatus,
+                providerCode,
+                callId,
+                getMessage(),
+                this,
+                retryAfter,
+                true,
+                providerRequestId);
+    }
+
+    public ModelInvocationException asPartialResponse() {
+        if (category == ModelErrorCategory.PARTIAL_RESPONSE && outputObserved) return this;
+        return new ModelInvocationException(
+                ModelErrorCategory.PARTIAL_RESPONSE,
+                false,
+                httpStatus,
+                providerCode,
+                callId,
+                getMessage(),
+                this,
+                retryAfter,
+                true,
+                providerRequestId);
     }
 }

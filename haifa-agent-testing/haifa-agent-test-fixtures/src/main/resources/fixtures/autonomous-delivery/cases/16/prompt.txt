@@ -1,0 +1,1 @@
+修复 CONTRACT.md 中非幂等支付 Tool 的 outcome-unknown 处理。未知结果不得自动重放；明确失败可按策略重试。完成实现、测试与 Diff 检查，不要修改测试。

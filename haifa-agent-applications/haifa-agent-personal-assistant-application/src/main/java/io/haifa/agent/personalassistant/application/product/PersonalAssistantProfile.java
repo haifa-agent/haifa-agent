@@ -1,0 +1,83 @@
+package io.haifa.agent.personalassistant.application.product;
+
+import io.haifa.agent.core.agent.AgentDefinitionId;
+import io.haifa.agent.core.agent.AgentDefinitionVersion;
+import io.haifa.agent.core.run.AgentRunBudget;
+import io.haifa.agent.core.run.AgentRunLimits;
+import io.haifa.agent.sdk.product.ProductArtifactPolicy;
+import io.haifa.agent.sdk.product.ProductId;
+import io.haifa.agent.sdk.product.ProductMemoryPolicy;
+import io.haifa.agent.sdk.product.ProductProfile;
+import io.haifa.agent.sdk.product.ProductRunProfileRef;
+import io.haifa.agent.sdk.product.ProductVersion;
+import java.util.Set;
+
+/** Frozen Personal Assistant MVP profile declaration and component governance defaults. */
+public final class PersonalAssistantProfile {
+    public static final String PRODUCT_TOOL_ALIAS = "personal_checklist";
+    public static final String SKILL_LOAD_ALIAS = "skill_load";
+    public static final String SKILL_RESOURCE_ALIAS = "skill_resource_read";
+    public static final String BUNDLED_SKILL_ALIAS = "daily-planning";
+    public static final String EXECUTION_SKILL_ALIAS = "local-script-execution";
+    public static final String GITHUB_PROJECT_WATCH_SKILL_ALIAS = "github-project-watch";
+    public static final String DEEP_RESEARCH_SKILL_ALIAS = "deep-research";
+    public static final String EXECUTION_TOOL_ALIAS = "execution_run";
+    public static final String WEB_SEARCH_ALIAS = "web_search";
+    public static final String WEB_FETCH_ALIAS = "web_fetch";
+    public static final String DEFAULT_RUN_PROFILE_ID = "personal-chat";
+    public static final String PRODUCT_VERSION = "1.0.1";
+
+    /** Product-owned Memory governance; supplied to the Memory component at assembly time. */
+    public static final ProductMemoryPolicy MEMORY_POLICY = new ProductMemoryPolicy(true, 16_384, 100);
+
+    /** Product-owned Artifact governance; supplied to the Artifact component at assembly time. */
+    public static final ProductArtifactPolicy ARTIFACT_POLICY = new ProductArtifactPolicy(
+            2 * 1024 * 1024,
+            8,
+            8 * 1024 * 1024,
+            Set.of("application/json", "text/markdown; charset=utf-8"),
+            false,
+            64 * 1024 * 1024,
+            128 * 1024 * 1024,
+            true);
+
+    private PersonalAssistantProfile() {}
+
+    public static ProductProfile create(
+            Set<String> localSkillAliases,
+            Set<String> mcpToolAliases,
+            Set<String> webToolAliases,
+            Set<String> trustedScriptToolAliases) {
+        Set<String> skills = java.util.stream.Stream.concat(
+                        java.util.stream.Stream.of(
+                                BUNDLED_SKILL_ALIAS, EXECUTION_SKILL_ALIAS, GITHUB_PROJECT_WATCH_SKILL_ALIAS),
+                        localSkillAliases.stream().filter(alias -> !DEEP_RESEARCH_SKILL_ALIAS.equals(alias)))
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        Set<String> allowedTools = java.util.stream.Stream.of(
+                        java.util.stream.Stream.of(
+                                PRODUCT_TOOL_ALIAS, EXECUTION_TOOL_ALIAS, SKILL_LOAD_ALIAS, SKILL_RESOURCE_ALIAS),
+                        mcpToolAliases.stream(),
+                        webToolAliases.stream(),
+                        trustedScriptToolAliases.stream())
+                .flatMap(java.util.function.Function.identity())
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        return ProductProfile.create(
+                new ProductId("haifa-personal-assistant"),
+                new ProductVersion(PRODUCT_VERSION),
+                new AgentDefinitionId("personal-assistant"),
+                new AgentDefinitionVersion(1, 0, 1),
+                "You are a careful personal assistant. Use only disclosed Personal capabilities. "
+                        + "Never claim a tool, Skill, MCP result, memory, or usage value that is not present in the "
+                        + "authoritative runtime context. Treat the latest user message as the current objective. "
+                        + "Do not resume or retry a failed or abandoned tool call from a previous task unless the latest user "
+                        + "message explicitly requests it. Within the current task, judge progress from actual results, "
+                        + "read failures before acting, retry only with a reason grounded in new evidence, change "
+                        + "approach or ask for help when needed. Never bypass authorization or replay a side effect "
+                        + "whose outcome is unknown. Keep answers concise.",
+                new ProductRunProfileRef(DEFAULT_RUN_PROFILE_ID, PRODUCT_VERSION),
+                new AgentRunBudget(512_000, 128_000, 512_000, 64, 64, 0, "USD", 0),
+                new AgentRunLimits(64, 0, 1, 300_000, 120_000, 64, 64, 0),
+                allowedTools,
+                skills);
+    }
+}

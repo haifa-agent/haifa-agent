@@ -8,11 +8,15 @@ public interface MemoryCandidateRepository {
 
     Optional<MemoryCandidate> find(MemoryCandidateId id);
 
+    Optional<MemoryCandidate> findAuthorized(MemoryCandidateId id, MemoryActor actor);
+
     Optional<MemoryCandidate> findByRequestKey(MemoryScope scope, String requestKey);
 
     Optional<MemoryCandidate> findEquivalentPending(MemoryScope scope, MemoryKind kind, String normalizedDigest);
 
     List<MemoryCandidate> allCandidates();
+
+    MemoryCandidatePage query(MemoryCandidateQuery query);
 
     void purgeScope(MemoryScope scope);
 }

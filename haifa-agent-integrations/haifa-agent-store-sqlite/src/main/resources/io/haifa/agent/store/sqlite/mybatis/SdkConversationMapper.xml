@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.haifa.agent.store.sqlite.mybatis.SdkConversationMapper">
+
+    <resultMap id="conversationRow" type="io.haifa.agent.store.sqlite.mybatis.SdkConversationRow">
+        <constructor>
+            <arg column="session_id" javaType="java.lang.String"/>
+            <arg column="tenant_id" javaType="java.lang.String"/>
+            <arg column="principal_id" javaType="java.lang.String"/>
+            <arg column="principal_type" javaType="java.lang.String"/>
+            <arg column="display_name" javaType="java.lang.String"/>
+            <arg column="created_at" javaType="java.time.Instant"
+                 typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
+            <arg column="last_activity_at" javaType="java.time.Instant"
+                 typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
+            <arg column="revision" javaType="_long"/>
+        </constructor>
+    </resultMap>
+
+    <insert id="insertConversation">
+        INSERT INTO sdk_conversation (
+            session_id, tenant_id, principal_id, principal_type, display_name,
+            created_at, last_activity_at, revision
+        ) VALUES (
+            #{row.sessionId}, #{row.tenantId}, #{row.principalId}, #{row.principalType},
+            #{row.displayName}, #{row.createdAt}, #{row.lastActivityAt}, #{row.revision}
+        )
+    </insert>
+
+    <select id="findConversation" resultMap="conversationRow">
+        SELECT session_id, tenant_id, principal_id, principal_type, display_name,
+               created_at, last_activity_at, revision
+        FROM sdk_conversation WHERE session_id = #{sessionId}
+    </select>
+
+    <select id="listConversations" resultMap="conversationRow">
+        SELECT session_id, tenant_id, principal_id, principal_type, display_name,
+               created_at, last_activity_at, revision
+        FROM sdk_conversation
+        WHERE tenant_id = #{tenantId}
+          AND principal_id = #{principalId}
+          AND principal_type = #{principalType}
+        <if test="text != null">
+          AND lower(display_name) LIKE '%' || lower(#{text}) || '%' ESCAPE '\'
+        </if>
+        <if test="afterAt != null">
+          AND (last_activity_at &lt; #{afterAt}
+               OR (last_activity_at = #{afterAt} AND session_id &lt; #{afterSessionId}))
+        </if>
+        ORDER BY last_activity_at DESC, session_id DESC
+        LIMIT #{limit}
+    </select>
+
+    <update id="touchLastActivity">
+        UPDATE sdk_conversation
+        SET last_activity_at = #{at},
+            revision = revision + 1
+        WHERE session_id = #{sessionId}
+    </update>
+
+    <update id="rename">
+        UPDATE sdk_conversation
+        SET display_name = #{displayName},
+            last_activity_at = #{at},
+            revision = revision + 1
+        WHERE session_id = #{sessionId}
+          AND revision = #{expectedRevision}
+    </update>
+
+    <update id="changeStatus">
+        UPDATE sdk_conversation
+        SET last_activity_at = #{at},
+            revision = revision + 1
+        WHERE session_id = #{sessionId}
+          AND revision = #{expectedRevision}
+    </update>
+</mapper>

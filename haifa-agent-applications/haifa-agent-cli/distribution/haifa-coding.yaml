@@ -1,0 +1,82 @@
+# Portable, secret-free defaults for the Haifa Coding Agent distribution.
+# Catalog owns provider/model metadata, dialects, capabilities and limits. This file owns only deployment.
+models:
+  default: deepseek-responses-flash
+  providers:
+    - id: deepseek
+      endpoint: https://api.deepseek.com
+      credentialRef: model-auth://deepseek/default
+      nativeStreaming: true
+      allowedBindings: [deepseek-chat-pro, deepseek-chat-flash, deepseek-responses-flash, deepseek-responses-pro, deepseek-v4-flash-vision-exp, deepseek-responses-v4-flash-vision-exp]
+    - id: openai-codex
+      endpoint: https://chatgpt.com/backend-api/codex
+      credentialRef: model-auth://openai-codex/default
+      nativeStreaming: true
+      originator: ${HAIFA_CODEX_ORIGINATOR:haifa}
+      userAgent: ${HAIFA_CODEX_USER_AGENT:haifa-agent/1}
+      allowedBindings: [gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, gpt-5.3-codex-spark]
+    - id: aliyun-bailian
+      endpoint: https://default-workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+      credentialRef: ${HAIFA_BAILIAN_CREDENTIAL_REF:model-auth://aliyun-bailian/default}
+      nativeStreaming: true
+      workspaceId: ${HAIFA_BAILIAN_WORKSPACE_ID:default-workspace}
+      region: ${HAIFA_BAILIAN_REGION:cn-beijing}
+      allowedBindings: [qwen3.8-max-0902, qwen3.8-max, qwen3.8-flash, qwen3.7-plus, qwen3-vl-plus]
+      reasoningMode: ENABLED
+    - id: siliconflow
+      endpoint: https://api.siliconflow.cn/v1
+      credentialRef: env://SILICONFLOW_API_KEY
+      nativeStreaming: true
+      allowedBindings: [siliconflow-deepseek-v4-pro, siliconflow-deepseek-v4-flash, siliconflow-qwen3-vl-32b, siliconflow-qwen3-32b, siliconflow-kimi-k3, siliconflow-kimi-k2-6, siliconflow-glm-5-2, siliconflow-glm-5-1]
+      reasoningMode: ENABLED
+    - id: kimi
+      endpoint: https://api.moonshot.cn/v1
+      credentialRef: env://KIMI_API_KEY
+      nativeStreaming: true
+      allowedBindings: [kimi-k3, kimi-k2.7-code, kimi-k2.6]
+      reasoningMode: ENABLED
+    - id: zhipu
+      endpoint: https://open.bigmodel.cn/api/paas/v4
+      credentialRef: env://BIGMODEL_API_KEY
+      nativeStreaming: true
+      allowedBindings: [glm-5.3, glm-5.3-flash, glm-5.2, glm-5.1, glm-5, glm-5-turbo]
+      reasoningMode: ENABLED
+    - id: tokenrhythm
+      endpoint: https://tokenrhythm.studio/v1
+      credentialRef: env://TK_API_KEY
+      nativeStreaming: true
+      allowedBindings: [tokenrhythm-glm-5, tokenrhythm-glm-5-1, tokenrhythm-minimax-m2-7, tokenrhythm-kimi-k2-5, tokenrhythm-kimi-k2-6, tokenrhythm-minimax-m2-5, tokenrhythm-mimo-v2-5-pro, tokenrhythm-qwen3-7-max, tokenrhythm-kimi-k2-7-code, tokenrhythm-glm-5-2, tokenrhythm-qwen3-8-max, tokenrhythm-deepseek-v4-flash-0731, tokenrhythm-seed-2-1-pro, tokenrhythm-seed-2-1-turbo, tokenrhythm-deepseek-v4-pro-0813, tokenrhythm-glm-5-3, tokenrhythm-qwen3-7-flash, tokenrhythm-qwen3-8-27b, tokenrhythm-longcat-2-0, tokenrhythm-glm-5-3-flash]
+      reasoningMode: ENABLED
+    - id: google-antigravity
+      endpoint: ${HAIFA_ANTIGRAVITY_MODEL_ENDPOINT:https://daily-cloudcode-pa.googleapis.com/v1internal}
+      credentialRef: model-auth://google-antigravity/default
+      nativeStreaming: true
+      allowedBindings: [antigravity-gemini, antigravity-gemini-3-8-flash, antigravity-gemini-3-7-flash, antigravity-gemini-3-1-pro-preview]
+tools:
+  enabled: [file_list, file_stat, file_read, file_create, file_write, file_patch, file_delete, file_move,  workspace_attach,execution_run]
+skills:
+  allowed: [task-planning, result-verification]
+approval:
+  mode: ask
+  threshold: low
+execution:
+  provider: host-guarded
+  network: allow
+  shell: auto
+  maxTimeoutMillis: 1800000
+  maxOutputLines: 2000
+  maxOutputBytes: 51200
+  inheritEnvironment: ["*"]
+  extraPathPolicies: []
+runtime:
+  maxIterations: 256
+  maxModelCalls: 256
+  maxToolCalls: 256
+  maxWallTimeMillis: 3600000
+persistence:
+  mode: SQLITE_WITH_JSONL
+  databasePath: __HAIFA_SQLITE_DATABASE_PATH__
+  transcriptRoot: __HAIFA_TRANSCRIPT_ROOT__
+  protection: NONE
+  busyTimeoutMillis: 5000
+  maximumPayloadBytes: 1048576

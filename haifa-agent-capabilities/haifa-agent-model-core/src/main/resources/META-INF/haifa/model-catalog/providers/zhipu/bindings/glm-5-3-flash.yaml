@@ -1,0 +1,36 @@
+schemaVersion: haifa.model-catalog-binding/v1
+bindingId: glm-5.3-flash
+version: "2026-09-m3"
+providerModelId: glm-5.3-flash
+displayName: GLM-5.3 Flash
+status: ACTIVE
+apiStyle: openai-chat-completions
+dialect: zhipu-openai-chat
+capabilities: [TEXT_CHAT, IMAGE_UPLOAD_INPUT, IMAGE_URL_INPUT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+profile:
+  version: "2.0"
+  reasoningBehavior: ALWAYS
+  allowedReasoningModes: [ENABLED]
+  allowedReasoningEfforts: [LOW, HIGH, MAX]
+  maximumReasoningTokens: null
+  minimumOutputTokens: 1
+  maximumOutputTokens: 131072
+  contextWindowTokens: 1048576
+  toolReasoningContinuationRequired: true
+  nativeStreaming: true
+  usageStreaming: true
+  reasoningStreaming: true
+  partialOutputFailureBehavior: NON_RETRYABLE
+  inputModalities: [TEXT, IMAGE]
+  outputModalities: [TEXT]
+  imageInput:
+    allowedSources: [UPLOAD, URL]
+    supportedMediaTypes: [image/png, image/jpeg, image/webp, image/gif]
+    maxImagesPerRequest: 4
+    maxBytesPerItem: 10485760
+    maxTotalBytes: 20971520
+    maxUrlCharacters: 2048
+    detailSupported: true
+    allowedDetails: [AUTO, HIGH, LOW]
+  status: VERIFIED
+  lastVerifiedOn: "2026-09-08"

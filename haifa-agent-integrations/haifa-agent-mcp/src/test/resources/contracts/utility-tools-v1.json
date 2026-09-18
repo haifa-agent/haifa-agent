@@ -1,0 +1,21 @@
+{
+  "air_quality": ["forecastHours", "latitude", "longitude", "timezone"],
+  "calculate": ["expression"],
+  "currency_convert": ["amount", "baseCurrency", "date", "quoteCurrency", "roundingMode", "scale"],
+  "currency_rate": ["baseCurrency", "date", "quoteCurrency"],
+  "holiday_list": ["countryCode", "year"],
+  "holiday_next": ["countryCode", "fromDate", "limit", "lookaheadYears"],
+  "location_search": ["language", "limit", "query"],
+  "microsoft_code_sample_search": ["language", "query"],
+  "microsoft_docs_fetch": ["url"],
+  "microsoft_docs_search": ["query"],
+  "time_convert": ["dateTime", "fromTimezone", "overlapPolicy", "toTimezone"],
+  "time_now": ["timezone"],
+  "unit_convert": ["fromUnit", "roundingMode", "scale", "toUnit", "value"],
+  "weather_current": ["latitude", "longitude", "timezone", "unitSystem"],
+  "weather_forecast": ["days", "latitude", "longitude", "timezone", "unitSystem"],
+  "wikipedia_search": ["language", "limit", "query"],
+  "wikipedia_summary": ["language", "title"],
+  "workday_add": ["businessDays", "countryCode", "inclusionPolicy", "startDate"],
+  "workday_is_workday": ["countryCode", "date"]
+}

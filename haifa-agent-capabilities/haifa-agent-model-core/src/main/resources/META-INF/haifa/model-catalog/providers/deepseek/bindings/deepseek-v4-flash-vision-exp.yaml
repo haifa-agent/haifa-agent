@@ -1,0 +1,36 @@
+schemaVersion: haifa.model-catalog-binding/v1
+bindingId: deepseek-v4-flash-vision-exp
+version: "2026-09-m2"
+providerModelId: deepseek-v4-flash-vision-exp
+displayName: DeepSeek V4 Flash Vision Exp
+status: ACTIVE
+apiStyle: openai-chat-completions
+dialect: deepseek-openai-chat
+capabilities: [TEXT_CHAT, IMAGE_UPLOAD_INPUT, IMAGE_URL_INPUT, TOOL_CALLING]
+profile:
+  version: "2.0"
+  reasoningBehavior: NONE
+  allowedReasoningModes: [DISABLED]
+  allowedReasoningEfforts: []
+  maximumReasoningTokens: null
+  minimumOutputTokens: 1
+  maximumOutputTokens: 393216
+  contextWindowTokens: 1048576
+  toolReasoningContinuationRequired: false
+  nativeStreaming: true
+  usageStreaming: true
+  reasoningStreaming: false
+  partialOutputFailureBehavior: NON_RETRYABLE
+  inputModalities: [TEXT, IMAGE]
+  outputModalities: [TEXT]
+  imageInput:
+    allowedSources: [UPLOAD, URL]
+    supportedMediaTypes: [image/jpeg, image/png, image/gif, image/webp]
+    maxImagesPerRequest: 600
+    maxBytesPerItem: 33554432
+    maxTotalBytes: 67108864
+    maxUrlCharacters: 8192
+    detailSupported: true
+    allowedDetails: [AUTO, HIGH, LOW]
+  status: VERIFIED
+  lastVerifiedOn: "2026-09-04"

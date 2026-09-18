@@ -16,9 +16,7 @@ public final class DefaultCompletionGuard implements CompletionGuard {
     private final ToolPipeline tools;
     private final InteractionPort interactions;
     private final DelegationPort delegations;
-    private final TodoReconciliationService todos;
     private final OutputContractValidator outputContract;
-    private final RequiredArtifactChecker artifacts;
     private final CompletionPolicy policy;
 
     public DefaultCompletionGuard(
@@ -26,34 +24,48 @@ public final class DefaultCompletionGuard implements CompletionGuard {
             ToolPipeline tools,
             InteractionPort interactions,
             DelegationPort delegations,
-            TodoReconciliationService todos,
             OutputContractValidator outputContract,
-            RequiredArtifactChecker artifacts,
             CompletionPolicy policy) {
         this.state = Objects.requireNonNull(state);
         this.tools = Objects.requireNonNull(tools);
         this.interactions = Objects.requireNonNull(interactions);
         this.delegations = Objects.requireNonNull(delegations);
-        this.todos = Objects.requireNonNull(todos);
         this.outputContract = Objects.requireNonNull(outputContract);
-        this.artifacts = Objects.requireNonNull(artifacts);
         this.policy = Objects.requireNonNull(policy);
     }
 
     @Override
     public CompletionReadiness evaluate(AgentRun run, FinalAnswerDecision decision) {
-        List<String> blockers = new ArrayList<>();
-        if (!outputContract.isValid(run, decision)) blockers.add("invalid output contract");
-        if (!artifacts.isSatisfied(run, decision)) blockers.add("required artifact missing");
-        if (!policy.allows(run, decision)) blockers.add("completion policy denied");
-        if (run.budget().isExceededBy(run.usage())) blockers.add("budget exceeded");
-        if (tools.hasUncertainExecution(run)) blockers.add("uncertain tool execution");
+        List<CompletionBlocker> blockers = new ArrayList<>();
+        if (!outputContract.isValid(run, decision)) {
+            boolean structured = state.configuration(run.configurationSnapshot())
+                    .flatMap(configuration -> configuration.structuredOutput())
+                    .isPresent();
+            blockers.add(CompletionBlocker.recoverable(
+                    structured ? "STRUCTURED_OUTPUT_INVALID" : "OUTPUT_CONTRACT_INVALID",
+                    structured
+                            ? "Structured final output does not satisfy the frozen schema."
+                            : "Output contract is incomplete.",
+                    "VALID_OUTPUT"));
+        }
+        CompletionPolicyResult policyResult = policy.evaluate(run, decision);
+        blockers.addAll(policyResult.blockers());
+        if (run.quotaPolicy().mode() == io.haifa.agent.core.run.QuotaMode.HARD_STOP
+                && run.quotaPolicy().isExceededBy(run.usage()))
+            blockers.add(CompletionBlocker.terminal("BUDGET_EXCEEDED", "Run budget is exhausted.", "BUDGET"));
+        if (tools.hasUncertainExecution(run))
+            blockers.add(CompletionBlocker.recoverable(
+                    "UNCERTAIN_TOOL_EXECUTION", "A tool execution has an uncertain outcome.", "TOOL_RECONCILIATION"));
         if (state.toolCalls(run.id()).stream().anyMatch(call -> !isTerminal(call.status())))
-            blockers.add("pending tool call");
-        todos.blocker(run).ifPresent(blockers::add);
-        if (interactions.pending(run.id()).isPresent()) blockers.add("pending interaction");
-        if (delegations.hasPendingChildren(run)) blockers.add("pending child run");
-        return new CompletionReadiness(blockers.isEmpty(), blockers);
+            blockers.add(CompletionBlocker.recoverable(
+                    "PENDING_TOOL_CALL", "A tool call is still pending.", "TERMINAL_TOOL_CALL"));
+        if (interactions.pending(run.id()).isPresent())
+            blockers.add(CompletionBlocker.recoverable(
+                    "PENDING_INTERACTION", "A user interaction is pending.", "INTERACTION_RESPONSE"));
+        if (delegations.hasPendingChildren(run))
+            blockers.add(CompletionBlocker.recoverable(
+                    "PENDING_CHILD_RUN", "A delegated child run is pending.", "TERMINAL_CHILD_RUN"));
+        return new CompletionReadiness(blockers.isEmpty(), blockers, policyResult.evidenceCodes());
     }
 
     private static boolean isTerminal(ToolCallStatus status) {
