@@ -266,7 +266,7 @@ Credential、Tool allowlist、审计或其他 fail-closed 门禁。可用
 
 ```powershell
 .\mvnw.cmd -pl :haifa-agent-cli -am package
-$jar = ".\haifa-agent-applications\haifa-agent-cli\target\haifa-agent-cli-0.1.0-SNAPSHOT.jar"
+$jar = ".\haifa-agent-applications\haifa-agent-cli\target\haifa-agent-cli-0.1.0.jar"
 
 # 帮助：不会初始化模型、Runtime、SQLite 或 tui4j Terminal
 java -jar $jar --help
@@ -443,7 +443,7 @@ CLI 可实时订阅现有 `RuntimeTraceEvent`，不需要启用 `--verbose`：
 类型和有界 Stack Frame，不保存异常消息、Prompt、Tool arguments、Provider 原文或完整宿主路径。
 
 ```powershell
-$jar = ".\haifa-agent-applications\haifa-agent-cli\target\haifa-agent-cli-0.1.0-SNAPSHOT.jar"
+$jar = ".\haifa-agent-applications\haifa-agent-cli\target\haifa-agent-cli-0.1.0.jar"
 
 # 只显示关键模型、Tool、MCP 与 Skill 生命周期
 java -jar $jar --config D:\haifa-agent-config\haifa-skill-live.yaml `
