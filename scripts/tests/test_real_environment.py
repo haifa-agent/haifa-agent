@@ -499,6 +499,32 @@ class RealEnvironmentTest(unittest.TestCase):
             )
             self.assertFalse(any(target.parent.glob("*.tmp-*")))
 
+    def test_frontend_dependencies_installed_requires_serve_and_lucide_declarations(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = real_environment.Paths(
+                repository=root,
+                server=root / "server",
+                web=root / "web",
+                runtime=root / "runtime",
+                data=root / "runtime/data",
+                logs=root / "runtime/logs",
+                state=root / "runtime/last-start.json",
+                stop_state=root / "runtime/last-stop.json",
+                maven_wrapper=root / "mvnw",
+            )
+            self.assertFalse(real_environment.frontend_dependencies_installed(paths))
+
+            serve_marker = paths.web / "node_modules/serve/build/main.js"
+            serve_marker.parent.mkdir(parents=True, exist_ok=True)
+            serve_marker.write_text("console.log('serve');\n", encoding="utf-8")
+            self.assertFalse(real_environment.frontend_dependencies_installed(paths))
+
+            lucide_marker = paths.web / "node_modules/lucide-react/dist/lucide-react.d.ts"
+            lucide_marker.parent.mkdir(parents=True, exist_ok=True)
+            lucide_marker.write_text("export {};\n", encoding="utf-8")
+            self.assertTrue(real_environment.frontend_dependencies_installed(paths))
+
 
 if __name__ == "__main__":
     unittest.main()

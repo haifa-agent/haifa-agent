@@ -7,6 +7,7 @@ import static io.haifa.agent.application.project.tool.ProjectExecutionTestSuppor
 import static io.haifa.agent.application.project.tool.ProjectExecutionTestSupport.operationsWithSanitizer;
 import static io.haifa.agent.application.project.tool.ProjectExecutionTestSupport.result;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
@@ -197,5 +198,29 @@ class ProjectExecutionPolicyTest {
         assertThat(request).isNotNull();
         assertThat(request.scratchSpace().isEmpty()).isTrue();
         assertThat(request.limits().maxProcesses()).isEmpty();
+    }
+
+    @Test
+    void acceptsTheTwoHourExecutionMaximumAcrossCatalogAndOperations() {
+        Duration twoHours = Duration.ofHours(2);
+
+        var catalog = new ProjectToolCatalog(twoHours)
+                .freeze(
+                        java.util.Set.of("execution_run"),
+                        java.util.Set.of("execution_run"),
+                        true,
+                        ProjectExecutionTestSupport.provider(),
+                        ProjectExecutionTestSupport.executionProfile());
+        var toolDefinition = catalog.findByAlias(new io.haifa.agent.tool.api.ToolAlias("execution_run"))
+                .orElseThrow()
+                .definition();
+        assertThat(toolDefinition.timeout()).isEqualTo(twoHours);
+
+        ExecutionBroker broker = new ProjectExecutionTestSupport.StubBroker() {};
+        assertThat(operations(broker, 4096, 2000, twoHours)).isNotNull();
+
+        assertThatThrownBy(() -> new ProjectToolCatalog(twoHours.plusMillis(1)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("maximumExecutionTimeout is out of range");
     }
 }

@@ -2,6 +2,7 @@ package io.haifa.agent.cli;
 
 import io.haifa.agent.application.project.persistence.ProjectPersistenceConfiguration;
 import io.haifa.agent.application.project.policy.CodingApprovalThreshold;
+import io.haifa.agent.execution.api.ExecutionLimits;
 import io.haifa.agent.model.api.ApiStyleId;
 import io.haifa.agent.model.api.CredentialRef;
 import io.haifa.agent.model.api.ModelCapability;
@@ -592,7 +593,7 @@ record CliConfiguration(
                 }
             }
             positive(maximumTimeout, "execution.maximumTimeout");
-            if (maximumTimeout.compareTo(Duration.ofMinutes(30)) > 0) {
+            if (maximumTimeout.compareTo(ExecutionLimits.MAXIMUM_ALLOWED_TIMEOUT) > 0) {
                 throw new IllegalArgumentException("execution timeout configuration is out of range");
             }
             if (maxOutputBytes < 1024 || maxOutputBytes > 1024 * 1024) {

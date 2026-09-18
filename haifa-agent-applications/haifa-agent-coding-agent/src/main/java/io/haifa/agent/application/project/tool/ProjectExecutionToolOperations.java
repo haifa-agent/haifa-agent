@@ -202,7 +202,7 @@ public final class ProjectExecutionToolOperations {
         this.environmentRef = Objects.requireNonNull(environmentRef, "environmentRef must not be null");
         this.sandboxProfileRef = Objects.requireNonNull(sandboxProfileRef, "sandboxProfileRef must not be null");
         this.maximumTimeout = positive(maximumTimeout, "maximumTimeout");
-        if (maximumTimeout.compareTo(Duration.ofMinutes(30)) > 0) {
+        if (maximumTimeout.compareTo(ExecutionLimits.MAXIMUM_ALLOWED_TIMEOUT) > 0) {
             throw new IllegalArgumentException("maximumTimeout exceeds the execution API limit");
         }
         if (maximumModelOutputBytes < 1024 || maximumModelOutputBytes > 1024 * 1024) {
