@@ -10,19 +10,12 @@ import org.junit.jupiter.api.Test;
 
 class PersonalAssistantMcpConfigurationTest {
     @Test
-    void acceptsExplicitLoopbackExternalUtilityAllowlist() {
-        var mcp = new PersonalAssistantProperties.Mcp(
-                "external",
-                "127.0.0.1",
-                20002,
-                URI.create("http://127.0.0.1:20002/mcp"),
-                Set.of("calculate", "time_now"),
-                "personal_mcp",
-                "haifa-utility",
-                "Haifa Utility MCP");
+    void acceptsExplicitLoopbackExternalAllowlist() {
+        var mcp = external(Set.of("calculate", "time_now"), false);
 
         assertThat(mcp.mode()).isEqualTo("external");
         assertThat(mcp.allowedTools()).containsExactlyInAnyOrder("calculate", "time_now");
+        assertThat(mcp.required()).isFalse();
     }
 
     @Test
@@ -48,46 +41,81 @@ class PersonalAssistantMcpConfigurationTest {
                 "microsoft_docs_fetch",
                 "microsoft_code_sample_search");
 
-        var mcp = new PersonalAssistantProperties.Mcp(
-                "external",
-                "127.0.0.1",
-                20002,
-                URI.create("http://127.0.0.1:20002/mcp"),
-                tools,
-                "personal_mcp",
-                "haifa-utility",
-                "Haifa Utility MCP");
+        var mcp = external(tools, true);
 
         assertThat(mcp.allowedTools()).containsExactlyInAnyOrderElementsOf(tools);
+        assertThat(mcp.required()).isTrue();
     }
 
     @Test
     void rejectsNonLoopbackExternalEndpoint() {
         assertThatThrownBy(() -> new PersonalAssistantProperties.Mcp(
                         "external",
-                        "127.0.0.1",
-                        20002,
                         URI.create("https://example.com/mcp"),
                         Set.of("calculate"),
                         "personal_mcp",
                         "haifa-utility",
-                        "Haifa Utility MCP"))
+                        "Haifa Utility MCP",
+                        false))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("loopback HTTP");
     }
 
     @Test
-    void embeddedModeCannotExpandBeyondEcho() {
+    void rejectsExternalModeWithoutEndpoint() {
         assertThatThrownBy(() -> new PersonalAssistantProperties.Mcp(
-                        "embedded-echo",
-                        "127.0.0.1",
-                        20002,
-                        URI.create("http://127.0.0.1:20002/mcp"),
+                        "external",
+                        null,
                         Set.of("calculate"),
                         "personal_mcp",
-                        "personal-local",
-                        "Personal local utility"))
+                        "haifa-utility",
+                        "Haifa Utility MCP",
+                        false))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("only allows the echo Tool");
+                .hasMessageContaining("mcp.endpoint must be absolute");
+    }
+
+    @Test
+    void rejectsExternalModeWithoutReviewedTools() {
+        assertThatThrownBy(() -> new PersonalAssistantProperties.Mcp(
+                        "external",
+                        URI.create("http://127.0.0.1:20002/mcp"),
+                        Set.of(),
+                        "personal_mcp",
+                        "haifa-utility",
+                        "Haifa Utility MCP",
+                        false))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("mcp.allowedTools must contain 1 to 32 entries");
+    }
+
+    @Test
+    void disabledModeCarriesNoEndpointToolsOrRequirement() {
+        var mcp = new PersonalAssistantProperties.Mcp(
+                "disabled", null, null, "personal_mcp", "personal-local", "Personal MCP", true);
+
+        assertThat(mcp.mode()).isEqualTo("disabled");
+        assertThat(mcp.endpoint()).isNull();
+        assertThat(mcp.allowedTools()).isEmpty();
+        assertThat(mcp.required()).isFalse();
+    }
+
+    @Test
+    void rejectsUnknownMode() {
+        assertThatThrownBy(() -> new PersonalAssistantProperties.Mcp(
+                        "embedded-echo", null, null, "personal_mcp", "personal-local", "Personal MCP", false))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("mcp.mode must be disabled or external");
+    }
+
+    private static PersonalAssistantProperties.Mcp external(Set<String> tools, boolean required) {
+        return new PersonalAssistantProperties.Mcp(
+                "external",
+                URI.create("http://127.0.0.1:20002/mcp"),
+                tools,
+                "personal_mcp",
+                "haifa-utility",
+                "Haifa Utility MCP",
+                required);
     }
 }

@@ -91,7 +91,7 @@ final class Tui4jTerminalView {
             Textarea editor,
             boolean followTranscript,
             boolean newOutputPending) {
-        return render(state, transcript, editor, followTranscript, newOutputPending, Duration.ZERO, 0);
+        return render(state, transcript, editor, followTranscript, newOutputPending, Duration.ZERO, 0, false, false);
     }
 
     String render(
@@ -101,7 +101,7 @@ final class Tui4jTerminalView {
             boolean followTranscript,
             boolean newOutputPending,
             Duration activityElapsed) {
-        return render(state, transcript, editor, followTranscript, newOutputPending, activityElapsed, 0);
+        return render(state, transcript, editor, followTranscript, newOutputPending, activityElapsed, 0, false, false);
     }
 
     String render(
@@ -112,6 +112,52 @@ final class Tui4jTerminalView {
             boolean newOutputPending,
             Duration activityElapsed,
             int requestedScrollRows) {
+        return render(
+                state,
+                transcript,
+                editor,
+                followTranscript,
+                newOutputPending,
+                activityElapsed,
+                requestedScrollRows,
+                false,
+                false);
+    }
+
+    String render(
+            TerminalUiState state,
+            Viewport transcript,
+            Textarea editor,
+            boolean followTranscript,
+            boolean newOutputPending,
+            Duration activityElapsed,
+            int requestedScrollRows,
+            boolean secureInput,
+            boolean isUpdate) {
+        return render(
+                state,
+                transcript,
+                editor,
+                followTranscript,
+                newOutputPending,
+                activityElapsed,
+                requestedScrollRows,
+                secureInput,
+                isUpdate,
+                null);
+    }
+
+    String render(
+            TerminalUiState state,
+            Viewport transcript,
+            Textarea editor,
+            boolean followTranscript,
+            boolean newOutputPending,
+            Duration activityElapsed,
+            int requestedScrollRows,
+            boolean secureInput,
+            boolean isUpdate,
+            String secureInputHint) {
         if (state.columns() < MIN_COLUMNS || state.rows() < MIN_ROWS) {
             return String.join(
                     "\n",
@@ -124,8 +170,15 @@ final class Tui4jTerminalView {
 
         boolean compact = state.rows() < 24;
         List<String> before = header(state, compact);
-        List<String> after =
-                lowerRegions(state, editor, newOutputPending && !followTranscript, compact, activityElapsed);
+        List<String> after = lowerRegions(
+                state,
+                editor,
+                newOutputPending && !followTranscript,
+                compact,
+                activityElapsed,
+                secureInput,
+                isUpdate,
+                secureInputHint);
         int viewportRows = Math.max(1, state.rows() - visualRows(before) - visualRows(after));
         transcript.setWidth(state.columns());
         transcript.setHeight(viewportRows);
@@ -200,7 +253,10 @@ final class Tui4jTerminalView {
             Textarea editor,
             boolean newOutputPending,
             boolean compact,
-            Duration activityElapsed) {
+            Duration activityElapsed,
+            boolean secureInput,
+            boolean isUpdate,
+            String secureInputHint) {
         List<String> lines = new ArrayList<>();
         if (!state.pending().isEmpty()) {
             lines.add(theme.queued("Pending · " + state.pending().size()));
@@ -222,7 +278,7 @@ final class Tui4jTerminalView {
         state.selector()
                 .ifPresentOrElse(
                         selector -> lines.addAll(selector(selector, compact ? 1 : 4)), () -> lines.add(editor.view()));
-        lines.add(theme.focus(editorHint(state)));
+        lines.add(theme.focus(editorHint(state, secureInput, isUpdate, secureInputHint)));
         var footer = state.footer();
         List<String> workspace = new ArrayList<>();
         if (!footer.model().isBlank()) addMeaningful(workspace, "model: " + footer.model());
@@ -408,7 +464,13 @@ final class Tui4jTerminalView {
         return state.currentRunId().isPresent() ? "enter steer" : "enter send";
     }
 
-    private String editorHint(TerminalUiState state) {
+    private String editorHint(TerminalUiState state, boolean secureInput, boolean isUpdate, String secureInputHint) {
+        if (secureInput) {
+            if (secureInputHint != null && !secureInputHint.isBlank()) {
+                return secureInputHint;
+            }
+            return isUpdate ? "enter update · escape cancel" : "enter submit · escape cancel";
+        }
         if (state.selector().isPresent()) return "enter select · escape close";
         if (state.currentRunId().isPresent()) {
             return "enter steer · "

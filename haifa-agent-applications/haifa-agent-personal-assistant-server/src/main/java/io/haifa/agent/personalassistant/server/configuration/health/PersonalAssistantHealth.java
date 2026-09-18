@@ -22,7 +22,8 @@ public final class PersonalAssistantHealth implements HealthIndicator {
                 .withDetail("product", "haifa-personal-assistant")
                 .withDetail("assembly", application.productDigest())
                 .withDetail("mcpMode", mcp.mode())
-                .withDetail("mcp", mcp.endpoint().getHost())
+                .withDetail(
+                        "mcp", mcp.endpoint() == null ? "none" : mcp.endpoint().getHost())
                 .build();
     }
 }

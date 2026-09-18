@@ -171,6 +171,19 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient,
     }
 
     @Override
+    public CodingAuthenticationView saveApiKey(
+            String providerId, char[] apiKey, java.util.Map<String, String> attributes) {
+        return mapper.view(authentication.saveApiKey(providerId, apiKey, attributes));
+    }
+
+    @Override
+    public Optional<java.util.Map<String, String>> providerAttributes(String providerId) {
+        return authentication
+                .findApiKeyCredential(providerId)
+                .map(io.haifa.agent.auth.localmodel.StoredApiKeyCredential::attributes);
+    }
+
+    @Override
     public boolean logout(String connectionId) {
         return authentication.logout(connectionId);
     }

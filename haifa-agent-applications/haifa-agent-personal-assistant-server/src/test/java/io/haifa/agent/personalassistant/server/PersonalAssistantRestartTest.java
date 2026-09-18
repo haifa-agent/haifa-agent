@@ -14,6 +14,7 @@ import io.haifa.agent.personalassistant.application.mission.MissionSnapshot;
 import io.haifa.agent.personalassistant.application.mission.MissionState;
 import io.haifa.agent.personalassistant.application.mission.ResearchBrief;
 import io.haifa.agent.personalassistant.server.admin.PersonalAdminQueryService;
+import io.haifa.agent.personalassistant.server.mcp.PersonalMcpTestServer;
 import io.haifa.agent.store.sqlite.SqliteStoreConfiguration;
 import io.haifa.agent.store.sqlite.SqliteStoreFoundation;
 import java.io.IOException;
@@ -29,6 +30,7 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.SpringApplication;
@@ -37,6 +39,12 @@ import org.springframework.context.ConfigurableApplicationContext;
 @Tag("slow")
 class PersonalAssistantRestartTest {
     private static final ObjectMapper JSON = new ObjectMapper();
+    private static final PersonalMcpTestServer MCP = PersonalMcpTestServer.start();
+
+    @AfterAll
+    static void stopMcp() {
+        MCP.close();
+    }
 
     @Test
     void deepResearchMissionPublishesStableArtifactsAndFinalConversationMessageAcrossRestart() throws Exception {
@@ -44,7 +52,7 @@ class PersonalAssistantRestartTest {
         String conversationId;
         String missionId;
         MissionSnapshot completed;
-        try (ConfigurableApplicationContext first = start(data, freePort(23001))) {
+        try (ConfigurableApplicationContext first = start(data)) {
             PersonalAssistantApplication application = first.getBean(PersonalAssistantApplication.class);
             var conversation = application.start("research-conversation", "Research", "Prepare a research workspace");
             conversationId = conversation.id();
@@ -96,7 +104,7 @@ class PersonalAssistantRestartTest {
         try (var artifactFiles = Files.list(data.resolve("artifacts"))) {
             assertThat(artifactFiles.filter(Files::isRegularFile)).hasSize(5);
         }
-        try (ConfigurableApplicationContext second = start(data, freePort(23101))) {
+        try (ConfigurableApplicationContext second = start(data)) {
             PersonalAssistantApplication application = second.getBean(PersonalAssistantApplication.class);
             MissionSnapshot recovered = second.getBean(MissionApplicationService.class)
                     .find(missionId, "local/public-user")
@@ -201,7 +209,7 @@ class PersonalAssistantRestartTest {
     void confirmedMissionResumesAcrossServerRestartAndSettlesThreeDependentTasks() throws Exception {
         Path data = Files.createTempDirectory("haifa-personal-mission-restart-");
         String missionId;
-        try (ConfigurableApplicationContext first = start(data, freePort(22801))) {
+        try (ConfigurableApplicationContext first = start(data)) {
             MissionApplicationService missions = first.getBean(MissionApplicationService.class);
             MissionSnapshot created = missions.create(new MissionApplicationService.CreateMission(
                     "mission-restart-create",
@@ -215,7 +223,7 @@ class PersonalAssistantRestartTest {
                     "mission-restart-confirm", "local/public-user", missionId, created.version()));
         }
 
-        try (ConfigurableApplicationContext second = start(data, freePort(22901))) {
+        try (ConfigurableApplicationContext second = start(data)) {
             MissionApplicationService missions = second.getBean(MissionApplicationService.class);
             MissionSnapshot completed = awaitMissionSettled(missions, missionId);
             assertThat(completed.execution().allTasksSettled()).isTrue();
@@ -233,7 +241,7 @@ class PersonalAssistantRestartTest {
         Path data = Files.createTempDirectory("haifa-personal-restart-");
         String conversationId;
         String runId;
-        try (ConfigurableApplicationContext first = start(data, freePort(22201))) {
+        try (ConfigurableApplicationContext first = start(data)) {
             PersonalAssistantApplication application = first.getBean(PersonalAssistantApplication.class);
             var conversation = application.start("restart-1", "Restart", "[mcp] persist this run");
             conversationId = conversation.id();
@@ -242,7 +250,7 @@ class PersonalAssistantRestartTest {
             assertThat(run.status()).isEqualTo("COMPLETED");
             assertThat(run.usage().toolCalls()).isEqualTo(1);
         }
-        try (ConfigurableApplicationContext second = start(data, freePort(22301))) {
+        try (ConfigurableApplicationContext second = start(data)) {
             PersonalAssistantApplication application = second.getBean(PersonalAssistantApplication.class);
             assertThat(application.conversation(conversationId)).isPresent();
             var recovered = application.run(runId).orElseThrow();
@@ -272,7 +280,7 @@ class PersonalAssistantRestartTest {
         Path data = Files.createTempDirectory("haifa-personal-admin-legacy-");
         String conversationId;
         String runId;
-        try (ConfigurableApplicationContext context = start(data, freePort(22601))) {
+        try (ConfigurableApplicationContext context = start(data)) {
             PersonalAssistantApplication application = context.getBean(PersonalAssistantApplication.class);
             var conversation = application.start("admin-legacy-1", "Admin legacy", "complete once");
             conversationId = conversation.id();
@@ -309,7 +317,7 @@ class PersonalAssistantRestartTest {
                             java.time.Instant.now());
         }
 
-        try (ConfigurableApplicationContext context = start(data, freePort(22701))) {
+        try (ConfigurableApplicationContext context = start(data)) {
             PersonalAdminQueryService admin = context.getBean(PersonalAdminQueryService.class);
             var trace = admin.trace(conversationId, runId).orElseThrow();
 
@@ -334,10 +342,9 @@ class PersonalAssistantRestartTest {
     void configuredHttpPortConflictFailsClosedWithoutChoosingAnotherPort() throws Exception {
         Path data = Files.createTempDirectory("haifa-personal-port-conflict-");
         int occupiedPort = freePort(22401);
-        int mcpPort = freePort(22501);
         try (ServerSocket occupied = new ServerSocket(occupiedPort, 1, InetAddress.getByName("127.0.0.1"))) {
             SpringApplication application = configured();
-            String[] arguments = arguments(data, mcpPort, occupiedPort);
+            String[] arguments = arguments(data, occupiedPort);
             assertThatThrownBy(() -> application.run(arguments)).isInstanceOf(RuntimeException.class);
         }
         String defaults = new String(
@@ -345,18 +352,18 @@ class PersonalAssistantRestartTest {
                         .getResourceAsStream("/application.yml")
                         .readAllBytes(),
                 java.nio.charset.StandardCharsets.UTF_8);
-        assertThat(defaults).contains("address: 127.0.0.1", "port: 20001", "MCP_PORT:20002");
+        assertThat(defaults).contains("address: 127.0.0.1", "port: 20001", "mcp: {mode: disabled");
     }
 
-    private static ConfigurableApplicationContext start(Path data, int mcpPort) {
-        return configured().run(arguments(data, mcpPort, 0));
+    private static ConfigurableApplicationContext start(Path data) {
+        return configured().run(arguments(data, 0));
     }
 
     private static SpringApplication configured() {
         return new SpringApplication(PersonalAssistantServerApplication.class);
     }
 
-    private static String[] arguments(Path data, int mcpPort, int serverPort) {
+    private static String[] arguments(Path data, int serverPort) {
         return new String[] {
             "--server.address=127.0.0.1",
             "--server.port=" + serverPort,
@@ -364,7 +371,10 @@ class PersonalAssistantRestartTest {
             "--haifa.personal.data-directory=" + data,
             "--haifa.personal.continuation-key-base64=" + Base64.getEncoder().encodeToString(new byte[32]),
             "--haifa.personal.execution.trusted-host-enabled=true",
-            "--haifa.personal.mcp.port=" + mcpPort
+            "--haifa.personal.mcp.mode=external",
+            "--haifa.personal.mcp.endpoint=" + MCP.endpoint(),
+            "--haifa.personal.mcp.allowed-tools=echo",
+            "--haifa.personal.mcp.required=true"
         };
     }
 

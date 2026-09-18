@@ -336,6 +336,55 @@ class CodingTerminalInteractionTest {
     }
 
     @Test
+    void providerModelListReturnsToProviderListOnNavigateBackAndPreservesProviderSelection() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        client.models = List.of(
+                model("deepseek-fast", "DeepSeek Fast", "deepseek", "DeepSeek"),
+                model("codex-model", "Codex", "openai-codex", "ChatGPT Codex"));
+        var controller = controller(client);
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "/model"));
+
+        assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("model-provider");
+        assertThat(controller.state().selector().orElseThrow().selected()).isZero();
+
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+
+        assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("model");
+        assertThat(controller.state().selector().orElseThrow().title()).isEqualTo("Models from ChatGPT Codex");
+
+        controller.accept(input(TerminalInput.Kind.NAVIGATE_BACK, ""));
+
+        assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("model-provider");
+        assertThat(controller.state().selector().orElseThrow().selected()).isEqualTo(1);
+    }
+
+    @Test
+    void modelDetailReturnsToModelListOnNavigateBack() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        client.models = List.of(
+                model("deepseek-fast", "DeepSeek Fast", "deepseek", "DeepSeek"),
+                model("deepseek-deep", "DeepSeek Deep", "deepseek", "DeepSeek"),
+                model("codex-model", "Codex", "openai-codex", "ChatGPT Codex"));
+        var controller = controller(client);
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "/model"));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+
+        assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("model-detail");
+
+        controller.accept(input(TerminalInput.Kind.NAVIGATE_BACK, ""));
+        assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("model");
+        assertThat(controller.state().selector().orElseThrow().selected()).isZero();
+
+        controller.accept(input(TerminalInput.Kind.NAVIGATE_BACK, ""));
+        assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("model-provider");
+        assertThat(controller.state().selector().orElseThrow().selected()).isZero();
+    }
+
+    @Test
     void emptyAndUnavailableModelCatalogsRemainExplicit() {
         FakeClient emptyClient = new FakeClient(view(Optional.empty()));
         var emptyController = controller(emptyClient);

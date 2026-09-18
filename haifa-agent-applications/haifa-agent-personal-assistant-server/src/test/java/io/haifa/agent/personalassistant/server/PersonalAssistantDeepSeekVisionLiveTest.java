@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
-import java.net.ServerSocket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
@@ -37,7 +36,6 @@ class PersonalAssistantVisionLiveTest {
     private static final String FIXTURE = "fixtures/personal-assistant/deepseek-vision-live-v1/indoor-door-people.webp";
     private static final String FIXTURE_SHA256 = "b02eb0f560b43ffd898a094db0aa36d54959513f807fed35d032cafe946ffbf5";
     private static final Path DATA = temporaryDirectory();
-    private static final int MCP_PORT = freeMcpPort();
     private static final Duration TERMINAL_TIMEOUT = Duration.ofMinutes(2);
 
     @Autowired
@@ -50,7 +48,6 @@ class PersonalAssistantVisionLiveTest {
     static void properties(DynamicPropertyRegistry registry) {
         registry.add("haifa.personal.data-directory", () -> DATA.toString());
         registry.add("haifa.personal.default-model-id", () -> MODEL_ID);
-        registry.add("haifa.personal.mcp.port", () -> MCP_PORT);
     }
 
     @Test
@@ -174,14 +171,6 @@ class PersonalAssistantVisionLiveTest {
             }
             return Files.createTempDirectory(Path.of(runRoot).toAbsolutePath().normalize(), "deepseek-vision-")
                     .toAbsolutePath();
-        } catch (IOException exception) {
-            throw new ExceptionInInitializerError(exception);
-        }
-    }
-
-    private static int freeMcpPort() {
-        try (ServerSocket socket = new ServerSocket(0)) {
-            return socket.getLocalPort();
         } catch (IOException exception) {
             throw new ExceptionInInitializerError(exception);
         }

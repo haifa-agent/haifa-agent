@@ -6,9 +6,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.execution.core.tool.ExecutionOperatingSystem;
 import io.haifa.agent.execution.host.tool.HostScriptRuntimeResolver;
+import io.haifa.agent.personalassistant.server.mcp.PersonalMcpTestServer;
 import java.io.IOException;
-import java.net.InetAddress;
-import java.net.ServerSocket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.DriverManager;
@@ -18,6 +17,7 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -43,8 +43,13 @@ class PersonalAssistantWebFluxTest {
     private static final Duration RUN_STATUS_TIMEOUT = Duration.ofSeconds(30);
     private static final Duration RUN_STATUS_POLL_INTERVAL = Duration.ofMillis(100);
     private static final Path DATA = temporaryDirectory();
-    private static final int MCP_PORT = freeMcpPort();
+    private static final PersonalMcpTestServer MCP = PersonalMcpTestServer.start();
     private static final AtomicInteger IDS = new AtomicInteger();
+
+    @AfterAll
+    static void stopMcp() {
+        MCP.close();
+    }
 
     @Autowired
     WebTestClient web;
@@ -203,7 +208,10 @@ class PersonalAssistantWebFluxTest {
         registry.add("haifa.personal.data-directory", DATA::toString);
         registry.add("haifa.personal.continuation-key-base64", () -> Base64.getEncoder()
                 .encodeToString(new byte[32]));
-        registry.add("haifa.personal.mcp.port", () -> MCP_PORT);
+        registry.add("haifa.personal.mcp.mode", () -> "external");
+        registry.add("haifa.personal.mcp.endpoint", () -> MCP.endpoint().toString());
+        registry.add("haifa.personal.mcp.allowed-tools", () -> "echo");
+        registry.add("haifa.personal.mcp.required", () -> "true");
         registry.add("haifa.personal.execution.trusted-host-enabled", () -> "true");
     }
 
@@ -1078,17 +1086,6 @@ class PersonalAssistantWebFluxTest {
         } catch (IOException exception) {
             throw new ExceptionInInitializerError(exception);
         }
-    }
-
-    private static int freeMcpPort() {
-        for (int port = 22001; port < 22100; port++) {
-            try (ServerSocket socket = new ServerSocket(port, 1, InetAddress.getLoopbackAddress())) {
-                return socket.getLocalPort();
-            } catch (IOException ignored) {
-                // Try the next explicit port above the production MCP default.
-            }
-        }
-        throw new IllegalStateException("no free Personal MCP test port");
     }
 
     private record Vertical(String prompt, String kind) {}

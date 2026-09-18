@@ -26,35 +26,12 @@ from typing import Iterable, Mapping, Sequence
 
 FRONTEND_PORT = 20000
 BACKEND_PORT = 20001
-MCP_PORT = 20002
+CONTINUATION_KEY_ENVIRONMENT = "HAIFA_PERSONAL_CONTINUATION_KEY"
 EXPECTED_SERVER_START_CLASS = (
     "io.haifa.agent.personalassistant.server.PersonalAssistantServerApplication"
 )
 BACKEND_LAUNCH_MODES = ("jar", "classpath")
 DEVELOPMENT_CLASSPATH_ENVIRONMENT = "HAIFA_PERSONAL_DEV_CLASSPATH"
-ALLOWED_MCP_TOOLS = ",".join(
-    (
-        "location_search",
-        "weather_current",
-        "weather_forecast",
-        "air_quality",
-        "time_now",
-        "time_convert",
-        "currency_rate",
-        "currency_convert",
-        "holiday_list",
-        "holiday_next",
-        "workday_is_workday",
-        "workday_add",
-        "calculate",
-        "unit_convert",
-        "wikipedia_search",
-        "wikipedia_summary",
-        "microsoft_docs_search",
-        "microsoft_docs_fetch",
-        "microsoft_code_sample_search",
-    )
-)
 
 
 @dataclass(frozen=True)
@@ -113,7 +90,7 @@ def fail(message: str) -> "NoReturn":
 
 def rebuild_port_conflict_message() -> str:
     return (
-        "Rebuild requires ports 20000, 20001, and 20002 to be free.\n"
+        "Rebuild requires ports 20000 and 20001 to be free.\n"
         "Stop the running environment first, then rebuild:\n"
         "  PowerShell: .\\scripts\\start-real-environment.ps1 --stop\n"
         "              .\\scripts\\start-real-environment.ps1 --rebuild\n"
@@ -123,60 +100,24 @@ def rebuild_port_conflict_message() -> str:
 
 
 def parser() -> argparse.ArgumentParser:
-    windows = os.name == "nt"
-    home = Path.home()
-    workspace = Path("D:/workspace") if windows else home / "workspace"
-    secret_files = workspace / "secrets"
-    agents = Path("D:/agents") if windows else home / "agents"
-    software = Path("D:/dev/software") if windows else home / "dev/software"
     result = argparse.ArgumentParser(
         description="Start, reuse, validate, or stop the real Personal Assistant environment."
     )
     result.add_argument(
-        "--deepseek-key-file",
-        default=os.getenv("HAIFA_DEEPSEEK_KEY_FILE", str(secret_files / "ss-deepseek.env")),
+        "--continuation-key-file",
+        default=os.getenv("HAIFA_PERSONAL_CONTINUATION_KEY_FILE", "").strip(),
+        help=(
+            "Optional KEY=VALUE file that persists HAIFA_PERSONAL_CONTINUATION_KEY. "
+            "Defaults to local-tmp/personal-assistant-real/continuation-key.env."
+        ),
     )
     result.add_argument(
         "--default-model-id",
         default=os.getenv("HAIFA_PERSONAL_DEFAULT_MODEL_ID", "").strip() or None,
     )
     result.add_argument(
-        "--bailian-key-file",
-        default=os.getenv("HAIFA_BAILIAN_KEY_FILE", str(secret_files / "ss-bailian.env")),
-    )
-    result.add_argument(
         "--bailian-region",
         default=os.getenv("ALIYUN_BAILIAN_REGION", "cn-beijing"),
-    )
-    result.add_argument(
-        "--kimi-key-file",
-        default=os.getenv("HAIFA_KIMI_KEY_FILE", str(secret_files / "ss-kimi.env")),
-    )
-    result.add_argument(
-        "--bigmodel-key-file",
-        default=os.getenv("HAIFA_BIGMODEL_KEY_FILE", str(secret_files / "ss-bigmodel.env")),
-    )
-    result.add_argument(
-        "--siliconflow-key-file",
-        default=os.getenv(
-            "HAIFA_SILICONFLOW_KEY_FILE", str(secret_files / "ss-siliconflow.env")
-        ),
-    )
-    result.add_argument(
-        "--aliyun-iqs-key-file",
-        default=os.getenv(
-            "HAIFA_ALIYUN_IQS_KEY_FILE", str(secret_files / "ss-aliyun-iqs.env")
-        ),
-    )
-    result.add_argument(
-        "--browserless-key-file",
-        default=os.getenv(
-            "HAIFA_BROWSERLESS_KEY_FILE", str(secret_files / "ss-browserless.env")
-        ),
-    )
-    result.add_argument(
-        "--tavily-key-file",
-        default=os.getenv("HAIFA_TAVILY_KEY_FILE", str(secret_files / "ss-tavily.env")),
     )
     result.add_argument(
         "--web-search-provider",
@@ -187,35 +128,6 @@ def parser() -> argparse.ArgumentParser:
         "--web-fetch-provider",
         choices=("aliyun", "browserless", "tavily"),
         default=os.getenv("HAIFA_PERSONAL_WEB_FETCH_PROVIDER", "tavily"),
-    )
-    result.add_argument(
-        "--continuation-key-file",
-        default=os.getenv(
-            "HAIFA_PERSONAL_CONTINUATION_KEY_FILE",
-            str(secret_files / "ss-haifa-personal-continuation.env"),
-        ),
-    )
-    result.add_argument(
-        "--utility-mcp-directory",
-        default=os.getenv(
-            "HAIFA_UTILITY_MCP_DIRECTORY",
-            str(workspace / "haifa/haifa-ai/haifa-ai-utility-mcp-server"),
-        ),
-    )
-    result.add_argument(
-        "--utility-mcp-proxy-url",
-        default=os.getenv("HAIFA_UTILITY_MCP_PROXY_URL", "http://127.0.0.1:2081"),
-    )
-    result.add_argument(
-        "--utility-mcp-proxy-providers",
-        default=os.getenv("HAIFA_UTILITY_MCP_PROXY_PROVIDERS", "wikimedia"),
-    )
-    result.add_argument(
-        "--personal-skill-root",
-        default=os.getenv(
-            "HAIFA_PERSONAL_SKILL_ROOT",
-            str(agents / "hermes-agent/optional-skills/finance"),
-        ),
     )
     result.add_argument(
         "--trusted-script-manifest",
@@ -392,7 +304,8 @@ def wait_for_http(
 ENVIRONMENT_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
-def read_env_file(path: Path, label: str, allowed_names: set[str]) -> dict[str, str]:
+def read_key_file(path: Path, environment_name: str, label: str) -> str:
+    """Read the single KEY=VALUE entry that a persisted key file must contain."""
     values: dict[str, str] = {}
     for line_number, raw_line in enumerate(path.read_text(encoding="utf-8-sig").splitlines(), 1):
         line = raw_line.strip()
@@ -403,7 +316,7 @@ def read_env_file(path: Path, label: str, allowed_names: set[str]) -> dict[str, 
         if "=" not in line:
             fail(f"{label} key file line {line_number} must use KEY=VALUE format.")
         name, raw_value = (part.strip() for part in line.split("=", 1))
-        if not ENVIRONMENT_NAME_PATTERN.fullmatch(name) or name not in allowed_names:
+        if not ENVIRONMENT_NAME_PATTERN.fullmatch(name) or name != environment_name:
             fail(f"{label} key file line {line_number} contains an unexpected variable name.")
         if name in values:
             fail(f"{label} key file contains duplicate {name}.")
@@ -414,28 +327,21 @@ def read_env_file(path: Path, label: str, allowed_names: set[str]) -> dict[str, 
         if not raw_value:
             fail(f"{label} key file variable {name} is empty.")
         values[name] = raw_value
-    return values
-
-
-def read_secret_file(value: str, label: str, environment_name: str) -> str:
-    path = Path(value).expanduser()
-    if not path.is_file():
-        fail(f"{label} key file was not found: {path}")
-    values = read_env_file(path, label, {environment_name})
-    secret = values.get(environment_name, "")
-    if not secret:
+    value = values.get(environment_name, "")
+    if not value:
         fail(f"{label} key file does not define {environment_name}: {path}")
-    return secret
+    return value
 
 
-def optional_secret_file(value: str, label: str, environment_name: str) -> str | None:
-    configured = environment_value(environment_name)
-    if configured:
-        return configured
-    path = Path(value).expanduser()
-    if not path.exists():
-        return None
-    return read_secret_file(value, label, environment_name)
+def required_environment_value(name: str) -> str:
+    value = environment_value(name)
+    if not value:
+        fail(f"Required environment variable {name} is not set.")
+    return value
+
+
+def optional_environment_value(name: str) -> str | None:
+    return environment_value(name) or None
 
 
 def environment_value(name: str) -> str:
@@ -488,7 +394,6 @@ def antigravity_configuration(
 
 
 def optional_bailian_configuration(
-    key_file: str,
     default_region: str = "cn-beijing",
     environment: Mapping[str, str] | None = None,
 ) -> tuple[str, str, str] | None:
@@ -496,28 +401,9 @@ def optional_bailian_configuration(
         name: (environment_value(name) if environment is None else environment.get(name, "").strip())
         for name in ("DASHSCOPE_API_KEY", "ALIYUN_BAILIAN_WORKSPACE_ID", "ALIYUN_BAILIAN_REGION")
     }
-    path = Path(key_file).expanduser()
-    file_values: dict[str, str] = {}
-    if path.is_file():
-        file_values = read_env_file(
-            path,
-            "Bailian",
-            {"DASHSCOPE_API_KEY", "ALIYUN_BAILIAN_WORKSPACE_ID", "ALIYUN_BAILIAN_REGION"},
-        )
-    source["DASHSCOPE_API_KEY"] = (
-        source["DASHSCOPE_API_KEY"] or file_values.get("DASHSCOPE_API_KEY", "")
-    )
-    source["ALIYUN_BAILIAN_WORKSPACE_ID"] = (
-        source["ALIYUN_BAILIAN_WORKSPACE_ID"]
-        or file_values.get("ALIYUN_BAILIAN_WORKSPACE_ID", "")
-    )
     if not source["DASHSCOPE_API_KEY"] and not source["ALIYUN_BAILIAN_WORKSPACE_ID"]:
         return None
-    source["ALIYUN_BAILIAN_REGION"] = (
-        source["ALIYUN_BAILIAN_REGION"]
-        or file_values.get("ALIYUN_BAILIAN_REGION", "")
-        or default_region.strip()
-    )
+    source["ALIYUN_BAILIAN_REGION"] = source["ALIYUN_BAILIAN_REGION"] or default_region.strip()
     configured = [name for name, value in source.items() if value]
     if not configured:
         return None
@@ -557,22 +443,34 @@ def restrict_secret_file(path: Path) -> None:
         warn(f"Continuation key was created, but permissions could not be restricted: {exception}")
 
 
-def continuation_key(value: str) -> str:
-    path = Path(value).expanduser()
+def continuation_key_path(value: Paths) -> Path:
+    return value.runtime / "continuation-key.env"
+
+
+def validate_continuation_key(value: str, label: str) -> str:
+    try:
+        decoded = base64.b64decode(value, validate=True)
+    except ValueError as exception:
+        raise RuntimeError(f"{label} must be Base64-encoded 32 bytes.") from exception
+    if len(decoded) != 32:
+        fail(f"{label} must decode to exactly 32 bytes.")
+    return value
+
+
+def continuation_key(configured_file: str, default_path: Path) -> str:
+    injected = environment_value(CONTINUATION_KEY_ENVIRONMENT)
+    if injected:
+        return validate_continuation_key(injected, CONTINUATION_KEY_ENVIRONMENT)
+    path = Path(configured_file).expanduser() if configured_file.strip() else default_path
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
         encoded = base64.b64encode(secrets.token_bytes(32)).decode("ascii")
-        path.write_text(f"HAIFA_PERSONAL_CONTINUATION_KEY={encoded}\n", encoding="ascii")
+        path.write_text(f"{CONTINUATION_KEY_ENVIRONMENT}={encoded}\n", encoding="ascii")
         restrict_secret_file(path)
         print(f"Created a persistent continuation key file: {path}")
-    result = read_secret_file(value, "Continuation", "HAIFA_PERSONAL_CONTINUATION_KEY")
-    try:
-        decoded = base64.b64decode(result, validate=True)
-    except ValueError as exception:
-        raise RuntimeError(f"Continuation key file does not contain valid Base64: {path}") from exception
-    if len(decoded) != 32:
-        fail(f"Continuation key must decode to exactly 32 bytes: {path}")
-    return result
+    return validate_continuation_key(
+        read_key_file(path, CONTINUATION_KEY_ENVIRONMENT, "Continuation"), str(path)
+    )
 
 
 def atomic_json(path: Path, value: object) -> None:
@@ -669,12 +567,6 @@ def definitions(value: Paths) -> tuple[ServiceDefinition, ...]:
             BACKEND_PORT,
             "java.exe" if os.name == "nt" else "java",
             (str(value.runtime / "backend"), str(value.server), EXPECTED_SERVER_START_CLASS),
-        ),
-        ServiceDefinition(
-            "utility-mcp",
-            MCP_PORT,
-            "java.exe" if os.name == "nt" else "java",
-            ("org.wrj.haifa.ai.utilitymcp.UtilityMcpServerApplication",),
         ),
     )
 
@@ -860,7 +752,6 @@ def backend_environment(
     aliyun_key: str,
     continuation: str,
     value: Paths,
-    skill_root: Path,
     trusted_manifest: Path | None,
     bailian: tuple[str, str, str] | None = None,
     kimi_key: str | None = None,
@@ -875,18 +766,11 @@ def backend_environment(
     """Build runtime-only inputs; provider/model facts stay in packaged Catalog and deployment YAML."""
     environment = {
         "DEEPSEEK_API_KEY": deepseek_key,
-        "HAIFA_PERSONAL_CONTINUATION_KEY": continuation,
+        CONTINUATION_KEY_ENVIRONMENT: continuation,
         "HAIFA_PERSONAL_DATA_DIR": str(value.data),
         "HAIFA_PERSONAL_DEFAULT_MODEL_ID": default_model_id,
         "HAIFA_PERSONAL_ALLOW_INSECURE_LOOPBACK_MODEL": "true",
-        "HAIFA_PERSONAL_SKILL_ROOT": str(skill_root),
         "HAIFA_PERSONAL_TRUSTED_SCRIPT_MANIFEST": str(trusted_manifest or ""),
-        "HAIFA_PERSONAL_MCP_MODE": "external",
-        "HAIFA_PERSONAL_MCP_ENDPOINT": f"http://127.0.0.1:{MCP_PORT}/mcp",
-        "HAIFA_PERSONAL_MCP_ALLOWED_TOOLS": ALLOWED_MCP_TOOLS,
-        "HAIFA_PERSONAL_MCP_ALIAS_NAMESPACE": "utility",
-        "HAIFA_PERSONAL_MCP_SERVER_ID": "haifa-utility",
-        "HAIFA_PERSONAL_MCP_DISPLAY_NAME": "Haifa Utility MCP",
         "HAIFA_PERSONAL_EXECUTION_TRUSTED_HOST_ENABLED": "true",
         "HAIFA_PERSONAL_WEB_SEARCH_ENABLED": "true",
         "HAIFA_PERSONAL_WEB_SEARCH_PROVIDER_ID": web_search_provider,
@@ -1034,52 +918,43 @@ def frontend_dependencies_installed(value: Paths) -> bool:
 
 
 def start_environment(args: argparse.Namespace, value: Paths) -> None:
-    if args.rebuild and any(port_open(port) for port in (FRONTEND_PORT, BACKEND_PORT, MCP_PORT)):
+    if args.rebuild and any(port_open(port) for port in (FRONTEND_PORT, BACKEND_PORT)):
         fail(rebuild_port_conflict_message())
 
     java = required_command("java")
     node = required_command("node")
     npm = required_command("npm")
-    maven = required_command("mvn")
     if not value.maven_wrapper.is_file():
         fail(f"Maven wrapper was not found: {value.maven_wrapper}")
 
-    utility = Path(args.utility_mcp_directory).expanduser().resolve(strict=True)
-    skill_root = Path(args.personal_skill_root).expanduser().resolve(strict=True)
-    if not (utility / "pom.xml").is_file():
-        fail(f"Utility MCP pom.xml was not found under: {utility}")
-    if not any((candidate / "SKILL.md").is_file() for candidate in skill_root.iterdir() if candidate.is_dir()):
-        fail(f"Personal Skill root contains no immediate child with SKILL.md: {skill_root}")
     trusted_manifest = None
     if args.trusted_script_manifest:
         trusted_manifest = Path(args.trusted_script_manifest).expanduser().resolve(strict=True)
         if not trusted_manifest.is_file():
             fail(f"Trusted script manifest is not a file: {trusted_manifest}")
 
-    deepseek_key = read_secret_file(args.deepseek_key_file, "DeepSeek", "DEEPSEEK_API_KEY")
+    deepseek_key = required_environment_value("DEEPSEEK_API_KEY")
     selected_web_providers = {args.web_search_provider, args.web_fetch_provider}
     aliyun_key = (
-        read_secret_file(args.aliyun_iqs_key_file, "Aliyun IQS", "ALIYUN_IQS_API_KEY")
+        required_environment_value("ALIYUN_IQS_API_KEY")
         if "aliyun" in selected_web_providers
         else ""
     )
     browserless_token = (
-        read_secret_file(args.browserless_key_file, "Browserless", "BROWSERLESS_TOKEN")
+        required_environment_value("BROWSERLESS_TOKEN")
         if "browserless" in selected_web_providers
         else None
     )
     tavily_key = (
-        read_secret_file(args.tavily_key_file, "Tavily", "TAVILY_API_KEY")
+        required_environment_value("TAVILY_API_KEY")
         if "tavily" in selected_web_providers
         else None
     )
     openai = optional_openai_environment()
-    bailian = optional_bailian_configuration(args.bailian_key_file, args.bailian_region)
-    kimi_key = optional_secret_file(args.kimi_key_file, "Kimi", "KIMI_API_KEY")
-    bigmodel_key = optional_secret_file(args.bigmodel_key_file, "BigModel", "BIGMODEL_API_KEY")
-    siliconflow_key = optional_secret_file(
-        args.siliconflow_key_file, "SiliconFlow", "SILICONFLOW_API_KEY"
-    )
+    bailian = optional_bailian_configuration(args.bailian_region)
+    kimi_key = optional_environment_value("KIMI_API_KEY")
+    bigmodel_key = optional_environment_value("BIGMODEL_API_KEY")
+    siliconflow_key = optional_environment_value("SILICONFLOW_API_KEY")
     antigravity = antigravity_configuration()
     default_model_id = resolve_default_model_id(
         args.default_model_id,
@@ -1089,7 +964,7 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
         siliconflow_key,
         antigravity,
     )
-    continuation = continuation_key(args.continuation_key_file)
+    continuation = continuation_key(args.continuation_key_file, continuation_key_path(value))
     for directory in (value.runtime, value.data, value.logs):
         directory.mkdir(parents=True, exist_ok=True)
         directory.chmod(stat.S_IRWXU)
@@ -1131,22 +1006,6 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
         run_checked(npm, "run", "build", cwd=value.web, environment=frontend_environment)
 
     records: list[ServiceRecord] = []
-    ensure_service(
-        records,
-        "utility-mcp",
-        MCP_PORT,
-        f"http://127.0.0.1:{MCP_PORT}/actuator/health",
-        utility,
-        maven,
-        ("spring-boot:run",),
-        {
-            "UTILITY_MCP_PORT": str(MCP_PORT),
-            "UTILITY_MCP_PROXY_URL": args.utility_mcp_proxy_url,
-            "UTILITY_MCP_PROXY_PROVIDERS": args.utility_mcp_proxy_providers,
-        },
-        args.startup_timeout_seconds,
-        value,
-    )
     personal_backend_environment = backend_environment(
         deepseek_key,
         default_model_id,
@@ -1154,7 +1013,6 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
         aliyun_key,
         continuation,
         value,
-        skill_root,
         trusted_manifest,
         bailian,
         kimi_key,
@@ -1208,9 +1066,6 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
     print(f"  Personal Web:     {value.web}")
     print(f"  Personal Server:  {value.server}")
     print(f"  Backend runtime:  {value.runtime / 'backend'}")
-    print(f"  Utility MCP:      {utility}")
-    print(f"  Utility Proxy:    {args.utility_mcp_proxy_url} ({args.utility_mcp_proxy_providers})")
-    print(f"  Personal Skills:  {skill_root}")
     if trusted_manifest:
         print(f"  Trust Manifest:   {trusted_manifest}")
     print(f"  Runtime data:     {value.data}")
@@ -1220,15 +1075,13 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
     print(f"  Personal API:     http://127.0.0.1:{BACKEND_PORT}/api/v1")
     print(f"  Backend health:   http://127.0.0.1:{BACKEND_PORT}/actuator/health")
     print(f"  Backend OpenAPI:  http://127.0.0.1:{BACKEND_PORT}/api/v1/openapi.json")
-    print(f"  Utility MCP:      http://127.0.0.1:{MCP_PORT}/mcp")
-    print(f"  MCP health:       http://127.0.0.1:{MCP_PORT}/actuator/health")
     print(
         "  Web Tools:        "
         f"web_search ({args.web_search_provider}), web_fetch ({args.web_fetch_provider})"
     )
     print(f"\nState: {value.state}")
     print(f"Logs:  {value.logs}")
-    print("Secrets were loaded into child process environments only and were not printed.")
+    print("Credentials were read from the process environment and were never printed.")
 
 
 def main(arguments: Iterable[str] | None = None) -> int:

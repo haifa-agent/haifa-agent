@@ -532,6 +532,7 @@ public final class PersonalAssistantAssembler {
             ArtifactPlatformContribution artifact,
             PersonalExecutionPlatform execution,
             PersonalWebPlatform web,
+            /** Configured MCP server, or {@code null} when MCP is disabled. */
             PersonalMcpConfiguration mcp,
             Optional<Path> localSkillRoot,
             Optional<Path> trustedScriptManifest,
@@ -630,7 +631,6 @@ public final class PersonalAssistantAssembler {
             Objects.requireNonNull(artifact);
             Objects.requireNonNull(execution);
             Objects.requireNonNull(web);
-            Objects.requireNonNull(mcp);
             localSkillRoot = Objects.requireNonNull(localSkillRoot);
             trustedScriptManifest = Objects.requireNonNull(trustedScriptManifest);
             protectedPaths = List.copyOf(protectedPaths);

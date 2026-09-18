@@ -233,8 +233,8 @@ Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、s
   目录以 `/` 结尾，不列出任意路径层级中点号开头的隐藏文件/目录、敏感路径、版本库元数据和常见生成目录；
 - pending Approval 在同一 tui4j Program input owner 中 approve/reject；
 - `/model` 打开安全 Selector，也支持 `/model <internal-id>`；当模型来自多个 Provider 时先按 Provider
-  分组展示（`Provider · N models`），再展示所选 Provider 的模型；返回模型列表时保持刚检查的模型位置。
-  无 Session 或执行 `/new` 后的选择会冻结到下一次 Session 创建，创建失败时保留以便重试；已有 Session
+  分组展示（`Provider · N models`），再展示所选 Provider 的模型；在二级模型列表或详情页按向左键可返回上一级列表并保持当前选中项位置。
+  返回模型列表时保持刚检查的模型位置。无 Session 或执行 `/new` 后的选择会冻结到下一次 Session 创建，创建失败时保留以便重试；已有 Session
   的选择在活动 Run 期间拒绝切换，成功后只影响下一新 Run；
 - `/login`、`/account` 和 `/logout` 通过 Coding 产品的安全认证客户端实现；首次启动且所选模型凭据缺失时
   打开同一连接选择器。显式启用本地兼容测试时，选择器同时展示 Antigravity subscription 并启动独立的
@@ -242,7 +242,7 @@ Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、s
   Transcript 指引展示；Browser Callback 尝试自动打开浏览器，同时始终展示可复制授权 URL 并继续等待本机
   回调，避免系统报告已启动但窗口不可见。认证成功完成（或 API Key 保存成功）后自动触发会话
   reconcile，实时刷新页脚模型连接状态；API Key 输入使用
-  独立掩码缓冲区，不进入 Reducer、Session、Transcript、History 或 Completion；
+  独立单行掩码缓冲区（自适应首次录入与更新覆盖），不进入 Reducer、Session、Transcript、History 或 Completion，凭据安全持久化至原生系统凭据管理器（Windows Credential Manager）；针对百炼（Aliyun Bailian）等带端点元数据的 Provider，提供 3 步向导式交互配置（API Key、Workspace ID、Region）与 `/login api aliyun-bailian <workspaceId> [region]` 命令行快捷路径，回车支持继承既有配置或默认 cn-beijing；
 - `/trust` 通过标准产品客户端异步展示脱敏的持久 Workspace 授权；
   `/trust revoke <workspaceRef>` 可撤销非初始根，不暴露宿主路径且不阻塞 UI；
 - `/settings`、`/tree`、`/fork`、`/clone` 在没有真实 API 时返回
