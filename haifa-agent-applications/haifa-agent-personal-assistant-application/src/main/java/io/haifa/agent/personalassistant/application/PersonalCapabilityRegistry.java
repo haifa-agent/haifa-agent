@@ -43,7 +43,9 @@ public record PersonalCapabilityRegistry(
         var skillSnapshot = platform.skill().catalog().snapshot();
         List<CapabilityRegistration> registrations = new ArrayList<>();
         toolSnapshot.bindings().stream().map(PersonalCapabilityRegistry::tool).forEach(registrations::add);
-        registrations.add(mcp(mcp));
+        if (mcp.available()) {
+            registrations.add(mcp(mcp));
+        }
         skillSnapshot.bindings().stream()
                 .map(binding -> skill(binding, skillSnapshot.diagnostics()))
                 .forEach(registrations::add);

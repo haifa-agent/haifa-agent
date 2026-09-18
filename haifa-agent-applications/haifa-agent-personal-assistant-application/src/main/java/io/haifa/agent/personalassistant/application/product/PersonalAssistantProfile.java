@@ -17,7 +17,6 @@ public final class PersonalAssistantProfile {
     public static final String PRODUCT_TOOL_ALIAS = "personal_checklist";
     public static final String SKILL_LOAD_ALIAS = "skill_load";
     public static final String SKILL_RESOURCE_ALIAS = "skill_resource_read";
-    public static final String MCP_TOOL_ALIAS = "personal_mcp_echo";
     public static final String BUNDLED_SKILL_ALIAS = "daily-planning";
     public static final String EXECUTION_SKILL_ALIAS = "local-script-execution";
     public static final String GITHUB_PROJECT_WATCH_SKILL_ALIAS = "github-project-watch";

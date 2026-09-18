@@ -459,44 +459,42 @@ public record PersonalAssistantProperties(
 
     public record Mcp(
             String mode,
-            String address,
-            int port,
             URI endpoint,
             Set<String> allowedTools,
             String aliasNamespace,
             String serverId,
-            String displayName) {
+            String displayName,
+            boolean required) {
         public Mcp {
             mode = text(mode, "mcp.mode").toLowerCase(java.util.Locale.ROOT);
-            if (!mode.equals("embedded-echo") && !mode.equals("external")) {
-                throw new IllegalArgumentException("mcp.mode must be embedded-echo or external");
+            if (!mode.equals("disabled") && !mode.equals("external")) {
+                throw new IllegalArgumentException("mcp.mode must be disabled or external");
             }
-            address = text(address, "mcp.address");
-            if (!address.equals("127.0.0.1") && !address.equals("localhost")) {
-                throw new IllegalArgumentException("MCP stub must bind to loopback");
-            }
-            if (port < 20002 || port > 65535) {
-                throw new IllegalArgumentException("MCP port must be between 20002 and 65535");
-            }
-            if (endpoint == null || !endpoint.isAbsolute()) {
-                throw new IllegalArgumentException("mcp.endpoint must be absolute");
-            }
-            String host = endpoint.getHost();
-            if (!"http".equalsIgnoreCase(endpoint.getScheme())
-                    || host == null
-                    || !Set.of("127.0.0.1", "localhost", "::1", "0:0:0:0:0:0:0:1")
-                            .contains(host.toLowerCase(java.util.Locale.ROOT))) {
-                throw new IllegalArgumentException("mcp.endpoint must be loopback HTTP");
-            }
-            if (endpoint.getPort() < 20002) {
-                throw new IllegalArgumentException("mcp.endpoint port must be 20002 or higher");
-            }
-            allowedTools = Set.copyOf(allowedTools == null ? Set.of() : allowedTools);
-            if (allowedTools.isEmpty() || allowedTools.size() > 32) {
-                throw new IllegalArgumentException("mcp.allowedTools must contain 1 to 32 entries");
-            }
-            if (mode.equals("embedded-echo") && !allowedTools.equals(Set.of("echo"))) {
-                throw new IllegalArgumentException("embedded-echo mode only allows the echo Tool");
+            if (mode.equals("disabled")) {
+                endpoint = null;
+                allowedTools = Set.of();
+                required = false;
+            } else {
+                if (endpoint == null || !endpoint.isAbsolute()) {
+                    throw new IllegalArgumentException("mcp.endpoint must be absolute when mcp.mode is external");
+                }
+                String host = endpoint.getHost();
+                if (!"http".equalsIgnoreCase(endpoint.getScheme())
+                        || host == null
+                        || !Set.of("127.0.0.1", "localhost", "::1", "0:0:0:0:0:0:0:1")
+                                .contains(host.toLowerCase(java.util.Locale.ROOT))) {
+                    throw new IllegalArgumentException("mcp.endpoint must be loopback HTTP");
+                }
+                if (endpoint.getPort() < 20002) {
+                    throw new IllegalArgumentException("mcp.endpoint port must be 20002 or higher");
+                }
+                allowedTools = Set.copyOf(allowedTools == null ? Set.of() : allowedTools);
+                if (allowedTools.isEmpty() || allowedTools.size() > 32) {
+                    throw new IllegalArgumentException("mcp.allowedTools must contain 1 to 32 entries");
+                }
+                if (allowedTools.stream().anyMatch(tool -> !tool.matches("[a-z][a-z0-9_]{0,63}"))) {
+                    throw new IllegalArgumentException("mcp.allowedTools contains an invalid MCP Tool name");
+                }
             }
             aliasNamespace = text(aliasNamespace, "mcp.aliasNamespace");
             if (!aliasNamespace.matches("[a-z][a-z0-9_]{0,31}")) {
