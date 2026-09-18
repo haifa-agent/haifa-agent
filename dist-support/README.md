@@ -10,7 +10,7 @@
 1. **`haifa-coding-agent-windows-x64-v<version>.zip`**
    - 专为 Windows 终端交互打造的 Coding Agent 绿色便携包；
    - 内置裁剪版 Java 21 运行时（~45MB JRE），用户电脑完全无需配置 Java；
-   - 包含 `bin/haifa.bat`、`bin/haifa.ps1` 以及一键将 `bin/` 加入用户 PATH 的 `bin/install.ps1`；
+   - 包含 `bin/haifa.bat` 以及双击即可将 `bin/` 加入用户 PATH 的 `bin/install.bat`；
    - 内置无密钥默认配置 `haifa-coding.yaml`，启动脚本将其作为 `--config` 加载，并将持久化数据与日志
      统一落到 `%USERPROFILE%\.haifa-agent\coding\data` 与 `%USERPROFILE%\.haifa-agent\coding\logs`。
 
@@ -76,7 +76,7 @@ dist-support/
 ├── README.md                      # 本文档
 ├── .gitignore                     # 忽略 output/ 与 dist-work/ 临时目录
 ├── templates/                     # Windows 启动脚本与说明模板
-│   ├── ca/                        # Coding Agent 模板 (haifa.bat, haifa.ps1, install.ps1, README.txt)
+│   ├── ca/                        # Coding Agent 模板 (haifa.bat, install.bat, README.txt)
 │   ├── pa/                        # Personal Assistant 模板 (start.bat, stop.bat, README.txt)
 │   └── sdk/                       # SDK 依赖说明模板 (README.txt)
 ├── scripts/
