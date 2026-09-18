@@ -4,9 +4,18 @@ import java.net.URI;
 import java.util.Objects;
 import java.util.Set;
 
-/** Pure-Java, explicit configuration for one trusted loopback MCP server. */
+/**
+ * Pure-Java, explicit configuration for one trusted loopback MCP server.
+ *
+ * <p>{@code required} declares whether an unavailable server must fail product startup or only degrade it.
+ */
 public record PersonalMcpConfiguration(
-        URI endpoint, String serverId, String displayName, Set<String> allowedTools, String aliasNamespace) {
+        URI endpoint,
+        String serverId,
+        String displayName,
+        Set<String> allowedTools,
+        String aliasNamespace,
+        boolean required) {
     public PersonalMcpConfiguration {
         Objects.requireNonNull(endpoint, "endpoint");
         serverId = text(serverId, "serverId");

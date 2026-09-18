@@ -72,14 +72,11 @@ haifa:
       max-source-content-bytes: 262144
       max-total-content-bytes: 2097152
     mcp:
-      mode: embedded-echo
-      address: 127.0.0.1
-      port: 20002
-      endpoint: http://127.0.0.1:20002/mcp
-      allowed-tools: [echo]
+      mode: disabled
       alias-namespace: personal_mcp
       server-id: personal-local
-      display-name: Personal local utility
+      display-name: Personal MCP
+      required: false
     execution:
       default-timeout-millis: 15000
       maximum-timeout-millis: 30000

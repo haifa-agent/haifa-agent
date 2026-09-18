@@ -33,6 +33,24 @@ class LocalModelAuthenticationServiceTest {
     }
 
     @Test
+    void savesApiKeyWithAttributesAndFindsCredential() {
+        InMemoryStore store = new InMemoryStore();
+        var service = service(store, Map.of());
+        char[] secret = "test-secret-dashscope".toCharArray();
+
+        LocalModelConnectionView saved = service.saveApiKey(
+                "aliyun-bailian", secret, Map.of("workspace_id", "ws-prod-01", "region", "cn-beijing"));
+
+        assertThat(secret).containsOnly('\0');
+        assertThat(saved.connectionId().value()).isEqualTo("model-auth://aliyun-bailian/default");
+        var found = service.findApiKeyCredential("aliyun-bailian");
+        assertThat(found).isPresent();
+        assertThat(found.get().apiKey()).isEqualTo("test-secret-dashscope");
+        assertThat(found.get().workspaceId()).contains("ws-prod-01");
+        assertThat(found.get().region()).contains("cn-beijing");
+    }
+
+    @Test
     void rejectsInvalidSecretAndAlwaysClearsIt() {
         InMemoryStore store = new InMemoryStore();
         var service = service(store, Map.of());
@@ -114,6 +132,38 @@ class LocalModelAuthenticationServiceTest {
                 .isEmpty();
         assertThat(service.findExternalCredential(new CredentialRef(ref.value())))
                 .contains(cred);
+    }
+
+    @Test
+    void updatesAttributesWhileRetainingExistingApiKeyOnEmptySecret() {
+        InMemoryStore store = new InMemoryStore();
+        var service = service(store, Map.of());
+        service.saveApiKey(
+                "aliyun-bailian",
+                "sk-original-key".toCharArray(),
+                Map.of("workspace_id", "ws-old", "region", "cn-beijing"));
+
+        var updated = service.saveApiKey(
+                "aliyun-bailian", new char[0], Map.of("workspace_id", "ws-new", "region", "cn-hangzhou"));
+        assertThat(updated.providerId()).isEqualTo("aliyun-bailian");
+
+        var cred = service.findApiKeyCredential("aliyun-bailian").orElseThrow();
+        assertThat(cred.apiKey()).isEqualTo("sk-original-key");
+        assertThat(cred.workspaceId()).contains("ws-new");
+        assertThat(cred.region()).contains("cn-hangzhou");
+    }
+
+    @Test
+    void rejectsEmptySecretWithoutAttributesEvenWhenKeyIsStored() {
+        InMemoryStore store = new InMemoryStore();
+        var service = service(store, Map.of());
+        service.saveApiKey("deepseek", "sk-original-key".toCharArray());
+
+        assertThatThrownBy(() -> service.saveApiKey("deepseek", new char[0]))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("AUTH_SECRET_INVALID");
+        assertThat(service.findApiKeyCredential("deepseek").orElseThrow().apiKey())
+                .isEqualTo("sk-original-key");
     }
 
     private static LocalModelAuthenticationService service(InMemoryStore store, Map<String, String> environment) {

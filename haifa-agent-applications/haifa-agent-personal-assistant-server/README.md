@@ -367,8 +367,9 @@ Personal 产品使用固定的 `personal-execution` Server 私有 Workspace，�
 Observer，也不扫描或记录 HOME、AppData、XDG 和包安装目录，不把 Server 凭据注入子进程。每次调用仍必须经过 Runtime Interaction exact
 approval；开关只确认 Provider 部署风险，不构成某次调用授权。
 
-默认 MCP 模式为 `embedded-echo`，用于离线测试。连接已经单独启动的 loopback MCP 服务时，必须显式
-切换为 `external` 并给出最小 Tool allowlist；Server 不会代替外部进程启动或扫描全局 MCP：
+MCP 默认关闭（`mcp.mode=disabled`），产品不内置任何演示 Server，也不代替外部进程启动或扫描全局
+MCP。连接已经单独启动的 loopback MCP 服务时，必须显式切换为 `external`、给出最小 Tool allowlist，
+并声明该能力是 `OPTIONAL` 还是 `REQUIRED`：
 
 ```powershell
 $env:HAIFA_PERSONAL_MCP_MODE='external'
@@ -376,10 +377,12 @@ $env:HAIFA_PERSONAL_MCP_ENDPOINT='http://127.0.0.1:20002/mcp'
 $env:HAIFA_PERSONAL_MCP_ALLOWED_TOOLS='calculate,time_now,unit_convert,weather_current'
 $env:HAIFA_PERSONAL_MCP_SERVER_ID='haifa-utility'
 $env:HAIFA_PERSONAL_MCP_DISPLAY_NAME='Haifa Utility MCP'
+$env:HAIFA_PERSONAL_MCP_REQUIRED='false'
 ```
 
-外部 endpoint 只接受 `http` loopback 地址和 `20002+` 端口。发现失败、Tool 缺失或本地审查失败都会
-使 Server 启动失败；不会回退到 embedded echo。
+外部 endpoint 只接受 `http` loopback 地址和 `20002+` 端口。`OPTIONAL`（默认）时连接、发现或本地
+审查失败只输出一条不含凭据的 WARN，PA 仍以“无 MCP Tool”正常启动；`REQUIRED` 时任一失败都会 fail
+closed。两种模式都不会回退到任何内置 stub。
 
 Web Search 与 Fetch 默认关闭并独立配置。两项默认 Provider 均为 Tavily；
 启用后分别装配 `web_search -> web_search` 和 `web_fetch -> web_fetch`：
@@ -425,7 +428,7 @@ http://127.0.0.1:20001/actuator/health
 Maven 只构建后端 executable JAR，不需要 Node.js/npm，也不读取相邻 Web 目录。前端构建和部署
 命令见 `../haifa-agent-personal-assistant-web/README.md`。
 
-真实 DeepSeek、外部 Utility MCP 和独立 Web 的可重复环境搭建方法见
+真实 DeepSeek、可选外部 MCP 和独立 Web 的可重复环境搭建方法见
 [`REAL_ENVIRONMENT.md`](REAL_ENVIRONMENT.md)。PowerShell 与 POSIX Shell 入口都要求 Python 3；两者只负责
 参数兼容和解释器发现，启动、健康检查、状态文件与安全停止逻辑统一由根目录
 [`scripts/real_environment.py`](../../scripts/real_environment.py) 实现。
@@ -447,8 +450,8 @@ macOS 可直接使用与 Windows PowerShell 版本行为对齐的启动脚本：
 ./scripts/start-real-environment.sh --rebuild
 ```
 
-Key、Utility MCP、Skill 和 Continuation Key 路径均可通过参数或专用环境变量覆盖；脚本不会把凭据
-写入参数、状态文件或日志。
+Provider 凭据只从进程环境读取，脚本不再接受任何 Key 文件参数；只有 Provider 选择、Continuation Key
+文件、仓库路径和超时可通过参数或专用环境变量覆盖。脚本不会把凭据写入参数、状态文件或日志。
 
 默认受信目录包含 DeepSeek、ChatGPT Codex、阿里云百炼、SiliconFlow、Kimi 和智谱；默认模型仍为
 DeepSeek，选择其他 Provider 前必须先完成其对应认证。PowerShell 与 Bash 启动脚本共用同一个配置生成器。

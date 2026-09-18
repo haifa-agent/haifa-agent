@@ -54,10 +54,8 @@ public final class HaifaAgentStarterBuilder {
             "deepseek-chat-flash",
             "deepseek-chat-pro",
             VISION_MODEL_ID,
-            "deepseek-responses-v4-flash-vision-exp",
-            "deepseek-anthropic-v4-flash-vision-exp");
-    static final Set<String> DEEPSEEK_VISION_MODELS =
-            Set.of(VISION_MODEL_ID, "deepseek-responses-v4-flash-vision-exp", "deepseek-anthropic-v4-flash-vision-exp");
+            "deepseek-responses-v4-flash-vision-exp");
+    static final Set<String> DEEPSEEK_VISION_MODELS = Set.of(VISION_MODEL_ID, "deepseek-responses-v4-flash-vision-exp");
     static final URI ENDPOINT = URI.create("https://api.deepseek.com");
 
     private static final String VERSION = "1.0.0";

@@ -37,10 +37,8 @@ class PackageLocalCodingAgentTest(unittest.TestCase):
         MODULE.validate_model_configuration(rendered)
         self.assertIn("allowedBindings:", rendered)
         self.assertIn("deepseek-responses-flash", rendered)
-        self.assertIn("deepseek-anthropic-flash", rendered)
-        self.assertIn("bindingEndpointOverrides:", rendered)
+        self.assertIn("deepseek-chat-pro", rendered)
         self.assertIn("endpoint: https://api.deepseek.com", rendered)
-        self.assertIn("https://api.deepseek.com/anthropic", rendered)
         self.assertIn("credentialRef: model-auth://deepseek/default", rendered)
         self.assertNotIn("apiBindings:", rendered)
         self.assertNotIn("CHATGPT2API_", rendered)
@@ -56,9 +54,7 @@ class PackageLocalCodingAgentTest(unittest.TestCase):
             MODULE.validate_model_configuration(
                 "allowedBindings:\n"
                 "  - deepseek-responses-flash\n"
-                "  - deepseek-anthropic-flash\n"
-                "bindingEndpointOverrides:\n"
-                "  deepseek-anthropic-flash: https://api.deepseek.com/anthropic\n"
+                "  - deepseek-chat-pro\n"
                 "endpoint: https://api.deepseek.com\n"
                 "credentialRef: model-auth://deepseek/default\n"
                 "dialectVersion: '1.0'\n"
@@ -67,9 +63,7 @@ class PackageLocalCodingAgentTest(unittest.TestCase):
             MODULE.validate_model_configuration(
                 "allowedBindings:\n"
                 "  - deepseek-responses-flash\n"
-                "  - deepseek-anthropic-flash\n"
-                "bindingEndpointOverrides:\n"
-                "  deepseek-anthropic-flash: https://api.deepseek.com/anthropic\n"
+                "  - deepseek-chat-pro\n"
                 "endpoint: https://api.deepseek.com\n"
                 "credentialRef: model-auth://deepseek/default\n"
                 "apiBindings:\n"

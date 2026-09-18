@@ -254,6 +254,18 @@ class Tui4jTerminalViewTest {
     }
 
     @Test
+    void adaptsEditorHintForSecureInputFirstTimeAndKeyUpdate() {
+        TerminalUiState state = TerminalUiState.initial(80, 24);
+        Viewport transcript = transcript(state);
+
+        String firstTime = view.render(state, transcript, editor(80), true, false, Duration.ZERO, 0, true, false);
+        assertThat(firstTime).contains("enter submit · escape cancel").doesNotContain("enter send", "enter update");
+
+        String update = view.render(state, transcript, editor(80), true, false, Duration.ZERO, 0, true, true);
+        assertThat(update).contains("enter update · escape cancel").doesNotContain("enter send", "enter submit");
+    }
+
+    @Test
     void timesThinkingFromOneSecondAndSwitchesToMinutesAfterSixtySeconds() {
         TerminalUiState initial = TerminalUiState.initial(80, 24);
         TerminalUiState running = new TerminalUiState(

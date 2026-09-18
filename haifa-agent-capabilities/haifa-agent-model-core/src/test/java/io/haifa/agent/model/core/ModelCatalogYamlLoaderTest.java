@@ -120,11 +120,6 @@ class ModelCatalogYamlLoaderTest {
                 .containsExactlyInAnyOrder(
                         io.haifa.agent.model.api.ModelReasoningEffort.HIGH,
                         io.haifa.agent.model.api.ModelReasoningEffort.MAX);
-        assertThat(catalog.binding("deepseek-anthropic-pro")
-                        .orElseThrow()
-                        .profile()
-                        .toolReasoningContinuationRequired())
-                .isTrue();
         assertThat(catalog.binding("antigravity-gemini").orElseThrow().profile().imageInput())
                 .isPresent();
         assertThat(catalog.binding("qwen3-vl-plus").orElseThrow().profile().imageInput())
