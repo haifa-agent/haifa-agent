@@ -33,7 +33,7 @@ import org.springframework.stereotype.Component;
 @Component
 public final class MissionBackupService {
     private static final String MANIFEST_SCHEMA = "pa.mission-backup/v1";
-    private static final String APPLICATION_VERSION = "0.1.0-SNAPSHOT";
+    private static final String APPLICATION_VERSION = "0.1.0";
     private static final int RUNTIME_SCHEMA_VERSION = HaifaAgentStoreMigrations.CURRENT_SCHEMA_VERSION;
     private static final int MISSION_SCHEMA_VERSION = 8;
 

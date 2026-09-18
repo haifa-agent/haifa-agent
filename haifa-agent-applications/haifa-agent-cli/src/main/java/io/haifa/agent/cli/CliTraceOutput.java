@@ -586,7 +586,7 @@ final class CliTraceOutput implements Consumer<RuntimeTraceEvent>, AutoCloseable
 
     private static String producerVersion() {
         String version = CliTraceOutput.class.getPackage().getImplementationVersion();
-        return version == null || version.isBlank() ? "0.1.0-SNAPSHOT" : version;
+        return version == null || version.isBlank() ? "0.1.0" : version;
     }
 
     private record ToolIdentity(String name, String providerId) {}
