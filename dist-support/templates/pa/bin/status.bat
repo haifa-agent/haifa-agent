@@ -12,7 +12,7 @@ for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":20001" ^| findstr "LISTENIN
 )
 
 if defined FOUND_PID (
-    echo [RUNNING] Personal Assistant is active on port 20001 (PID: !FOUND_PID!).
+    echo [RUNNING] Personal Assistant is active on port 20001 - PID !FOUND_PID!.
     echo           Web URL: http://127.0.0.1:20001/index.html
 ) else (
     echo [STOPPED] Personal Assistant is currently not running.
