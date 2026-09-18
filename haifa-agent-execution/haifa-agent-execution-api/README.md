@@ -16,8 +16,9 @@ Provider-neutral 的执行契约，定义有界请求、可信调用上下文、
 (`TMPDIR/TMP/TEMP`) 或自定义绑定（如 `GOTMPDIR`、`GOCACHE` 等），物理路径始终由 Sandbox Provider 决定。
 环境名经过 allowlist/secret-name 校验，相对目录拒绝绝对路径、`.`、`..` 和越界；非空 Scratch canonical digest
 进入 Invocation Digest，防止幂等请求混淆。
-`ExecutionLimits` 的 `maxProcesses` 为可选 `Optional<Integer>`；默认空表示进程数量上限 unbounded，仅在
-显式配置时校验 `1..64` 范围。
+`ExecutionLimits` 的单次 `timeout` 必须为正且不超过公共上界 `ExecutionLimits.MAXIMUM_ALLOWED_TIMEOUT`
+（2 小时）；产品可在此之下配置更小的上限。`ExecutionLimits` 的 `maxProcesses` 为可选
+`Optional<Integer>`；默认空表示进程数量上限 unbounded，仅在显式配置时校验 `1..64` 范围。
 
 `ExecutionResult` 只暴露 `scratchProvisioned` 与 `scratchCleanupFailed` 状态，不返回物理目录。
 required Scratch 无法安全创建时必须 fail closed；清理失败使结果保持可审计，不能伪装成功。
