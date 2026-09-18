@@ -34,6 +34,7 @@ import io.haifa.agent.runtime.api.RunOutputCursor;
 import io.haifa.agent.runtime.api.RunOutputSubscription;
 import java.util.ArrayDeque;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -96,7 +97,25 @@ public final class CodingTerminalController implements AutoCloseable {
     private List<CodingAuthenticationView> authenticationOptions = List.of();
     private CompletionContext completionContext;
     private CodingShellPlan pendingShellPlan;
+
+    public enum BailianConfigStep {
+        NONE,
+        API_KEY,
+        WORKSPACE_ID,
+        REGION
+    }
+
+    private static final java.util.regex.Pattern DNS_LABEL_PATTERN =
+            java.util.regex.Pattern.compile("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$");
+
     private String pendingApiKeyProvider;
+    private boolean pendingApiKeyIsUpdate;
+    private BailianConfigStep bailianStep = BailianConfigStep.NONE;
+    private char[] pendingBailianApiKey;
+    private String pendingBailianWorkspaceId;
+    private String pendingBailianRegion;
+    private String existingBailianWorkspaceId;
+    private String existingBailianRegion;
     private String pendingNewSessionModelId;
     private RunEventCursor pendingAcknowledgement;
     private boolean acknowledgementInFlight;
@@ -668,7 +687,9 @@ public final class CodingTerminalController implements AutoCloseable {
             openRestoreSelector();
             return;
         }
-        if (input.kind() == TerminalInput.Kind.SELECT_PREVIOUS || input.kind() == TerminalInput.Kind.SELECT_NEXT) {
+        if (input.kind() == TerminalInput.Kind.SELECT_PREVIOUS
+                || input.kind() == TerminalInput.Kind.SELECT_NEXT
+                || input.kind() == TerminalInput.Kind.NAVIGATE_BACK) {
             return;
         }
         if (input.kind() == TerminalInput.Kind.TOGGLE_EXPANSION) {
@@ -1286,40 +1307,186 @@ public final class CodingTerminalController implements AutoCloseable {
                 code -> pump.offer(new TerminalUiAction.AuthenticationFailed(code)));
     }
 
-    private void beginApiKeyInput(String providerId) {
-        String normalized = Objects.requireNonNull(providerId, "providerId must not be null")
-                .strip()
-                .toLowerCase(java.util.Locale.ROOT);
-        if (normalized.isEmpty() || !normalized.matches("[a-z0-9][a-z0-9._-]{0,63}")) {
+    private void beginApiKeyInput(String input) {
+        if (input == null || input.isBlank()) {
+            input = authentication.apiKeyProviderId();
+        }
+        String[] parts = input.strip().split("\\s+");
+        String providerId = parts[0].toLowerCase(java.util.Locale.ROOT);
+        if (providerId.isEmpty() || !providerId.matches("[a-z0-9][a-z0-9._-]{0,63}")) {
             apply(new TerminalUiAction.RecoverableFailure("AUTH_PROVIDER_INVALID"));
             return;
         }
-        pendingApiKeyProvider = normalized;
-        apply(new TerminalUiAction.StatusChanged(
-                "Enter API key for " + normalized + " (stored as plaintext on this personal computer)"));
+        if (isUnsupportedApiKeyProvider(providerId)) {
+            apply(new TerminalUiAction.RecoverableFailure("AUTH_METHOD_UNSUPPORTED"));
+            return;
+        }
+        boolean hasExistingKey = authentication.connections().stream()
+                .anyMatch(c -> c.providerId().equalsIgnoreCase(providerId)
+                        && c.method() == CodingAuthenticationView.Method.API_KEY);
+        pendingApiKeyProvider = providerId;
+        pendingApiKeyIsUpdate = hasExistingKey;
+
+        if ("aliyun-bailian".equalsIgnoreCase(providerId)) {
+            var attrs = authentication.providerAttributes(providerId).orElse(Map.of());
+            existingBailianWorkspaceId = attrs.get("workspace_id");
+            existingBailianRegion = attrs.get("region");
+            if (parts.length > 1) {
+                String ws = parts[1].strip();
+                if (!DNS_LABEL_PATTERN.matcher(ws).matches()) {
+                    resetBailianState();
+                    pendingApiKeyProvider = null;
+                    pendingApiKeyIsUpdate = false;
+                    apply(new TerminalUiAction.RecoverableFailure("AUTH_WORKSPACE_ID_INVALID"));
+                    return;
+                }
+                pendingBailianWorkspaceId = ws;
+                if (parts.length > 2) {
+                    String reg = parts[2].strip();
+                    if (!DNS_LABEL_PATTERN.matcher(reg).matches()) {
+                        resetBailianState();
+                        pendingApiKeyProvider = null;
+                        pendingApiKeyIsUpdate = false;
+                        apply(new TerminalUiAction.RecoverableFailure("AUTH_REGION_INVALID"));
+                        return;
+                    }
+                    pendingBailianRegion = reg;
+                } else {
+                    pendingBailianRegion = existingBailianRegion != null ? existingBailianRegion : "cn-beijing";
+                }
+                bailianStep = BailianConfigStep.API_KEY;
+            } else {
+                bailianStep = BailianConfigStep.API_KEY;
+            }
+            if (hasExistingKey) {
+                apply(
+                        new TerminalUiAction.StatusChanged(
+                                "Update API key for aliyun-bailian (existing key found · will overwrite in system credential store) [1/3]"));
+            } else {
+                apply(
+                        new TerminalUiAction.StatusChanged(
+                                "Enter DashScope API key for aliyun-bailian (first-time setup · saved to system credential store) [1/3]"));
+            }
+            return;
+        }
+
+        resetBailianState();
+        if (hasExistingKey) {
+            apply(new TerminalUiAction.StatusChanged("Update API key for " + providerId
+                    + " (existing key found · will overwrite in system credential store)"));
+        } else {
+            apply(new TerminalUiAction.StatusChanged(
+                    "Enter API key for " + providerId + " (first-time setup · saved to system credential store)"));
+        }
+    }
+
+    private boolean isUnsupportedApiKeyProvider(String providerId) {
+        if ("openai-codex".equalsIgnoreCase(providerId) || "google-antigravity".equalsIgnoreCase(providerId)) {
+            return true;
+        }
+        return authentication.apiKeyProviderId().equalsIgnoreCase(providerId)
+                && !authentication.apiKeyConnectionSupported();
     }
 
     public boolean secureInputRequested() {
         return pendingApiKeyProvider != null;
     }
 
+    public boolean secureInputIsUpdate() {
+        return pendingApiKeyProvider != null && pendingApiKeyIsUpdate;
+    }
+
+    public boolean secureInputIsMasked() {
+        if ("aliyun-bailian".equalsIgnoreCase(pendingApiKeyProvider)) {
+            return bailianStep == BailianConfigStep.API_KEY;
+        }
+        return true;
+    }
+
+    public String secureInputPrompt() {
+        if ("aliyun-bailian".equalsIgnoreCase(pendingApiKeyProvider)) {
+            return switch (bailianStep) {
+                case API_KEY -> secureInputIsUpdate() ? "New key ┃ " : "API key ┃ ";
+                case WORKSPACE_ID -> "Workspace ID ┃ ";
+                case REGION -> "Region ┃ ";
+                case NONE -> "┃ ";
+            };
+        }
+        return secureInputIsUpdate() ? "New key ┃ " : "API key ┃ ";
+    }
+
+    public String secureInputPlaceholder() {
+        if ("aliyun-bailian".equalsIgnoreCase(pendingApiKeyProvider)) {
+            return switch (bailianStep) {
+                case API_KEY ->
+                    secureInputIsUpdate()
+                            ? "Paste or enter new API key (Esc to keep existing)"
+                            : "Paste or enter API key";
+                case WORKSPACE_ID ->
+                    existingBailianWorkspaceId != null
+                            ? existingBailianWorkspaceId + " (press Enter to keep existing)"
+                            : "e.g. ws-xxxx";
+                case REGION ->
+                    existingBailianRegion != null
+                            ? existingBailianRegion + " (press Enter to keep existing)"
+                            : "cn-beijing (press Enter to accept default)";
+                case NONE -> "";
+            };
+        }
+        return secureInputIsUpdate() ? "Paste or enter new API key (Esc to keep existing)" : "Paste or enter API key";
+    }
+
+    public String secureInputHint() {
+        if ("aliyun-bailian".equalsIgnoreCase(pendingApiKeyProvider)) {
+            return switch (bailianStep) {
+                case API_KEY, WORKSPACE_ID -> "enter next · escape cancel";
+                case REGION -> "enter submit · escape cancel";
+                case NONE -> "enter submit · escape cancel";
+            };
+        }
+        return secureInputIsUpdate() ? "enter update · escape cancel" : "enter submit · escape cancel";
+    }
+
+    public BailianConfigStep bailianConfigStep() {
+        return bailianStep;
+    }
+
     public void cancelSecureInput() {
         if (pendingApiKeyProvider == null) {
             return;
         }
+        resetBailianState();
         pendingApiKeyProvider = null;
+        pendingApiKeyIsUpdate = false;
         apply(new TerminalUiAction.StatusChanged("API key entry cancelled"));
+    }
+
+    private void resetBailianState() {
+        bailianStep = BailianConfigStep.NONE;
+        if (pendingBailianApiKey != null) {
+            java.util.Arrays.fill(pendingBailianApiKey, '\0');
+            pendingBailianApiKey = null;
+        }
+        pendingBailianWorkspaceId = null;
+        pendingBailianRegion = null;
+        existingBailianWorkspaceId = null;
+        existingBailianRegion = null;
     }
 
     public void submitApiKey(char[] apiKey) {
         Objects.requireNonNull(apiKey, "apiKey must not be null");
         String providerId = pendingApiKeyProvider;
-        pendingApiKeyProvider = null;
         if (providerId == null) {
             java.util.Arrays.fill(apiKey, '\0');
             apply(new TerminalUiAction.RecoverableFailure("AUTH_SECURE_INPUT_NOT_REQUESTED"));
             return;
         }
+        if ("aliyun-bailian".equalsIgnoreCase(providerId)) {
+            handleBailianInput(apiKey);
+            return;
+        }
+        pendingApiKeyProvider = null;
+        pendingApiKeyIsUpdate = false;
         char[] owned = java.util.Arrays.copyOf(apiKey, apiKey.length);
         java.util.Arrays.fill(apiKey, '\0');
         apply(new TerminalUiAction.StatusChanged("Saving API key for " + providerId));
@@ -1349,6 +1516,127 @@ public final class CodingTerminalController implements AutoCloseable {
             });
         } catch (RejectedExecutionException exception) {
             java.util.Arrays.fill(owned, '\0');
+            apply(new TerminalUiAction.RecoverableFailure("TERMINAL_BACKGROUND_UNAVAILABLE"));
+        }
+        drainEffectCompletions();
+    }
+
+    private void handleBailianInput(char[] input) {
+        switch (bailianStep) {
+            case API_KEY -> {
+                if (input.length == 0 && !pendingApiKeyIsUpdate) {
+                    java.util.Arrays.fill(input, '\0');
+                    apply(new TerminalUiAction.StatusChanged(
+                            "API key must not be empty · enter DashScope API key for aliyun-bailian [1/3]"));
+                    return;
+                }
+                pendingBailianApiKey = java.util.Arrays.copyOf(input, input.length);
+                java.util.Arrays.fill(input, '\0');
+
+                if (pendingBailianWorkspaceId != null) {
+                    saveBailianCredentials();
+                    return;
+                }
+
+                bailianStep = BailianConfigStep.WORKSPACE_ID;
+                if (existingBailianWorkspaceId != null) {
+                    apply(new TerminalUiAction.StatusChanged(
+                            "Enter Workspace ID (press Enter to keep '" + existingBailianWorkspaceId + "') [2/3]"));
+                } else {
+                    apply(new TerminalUiAction.StatusChanged(
+                            "Enter Aliyun Bailian Workspace ID (e.g. ws-xxxx · required DNS label) [2/3]"));
+                }
+            }
+            case WORKSPACE_ID -> {
+                String text = new String(input).strip();
+                java.util.Arrays.fill(input, '\0');
+                if (text.isEmpty()) {
+                    if (existingBailianWorkspaceId != null) {
+                        pendingBailianWorkspaceId = existingBailianWorkspaceId;
+                    } else {
+                        apply(new TerminalUiAction.StatusChanged(
+                                "Invalid workspace ID: must be lowercase DNS label ([a-z0-9-], 1-63 chars)"));
+                        return;
+                    }
+                } else if (!DNS_LABEL_PATTERN.matcher(text).matches()) {
+                    apply(new TerminalUiAction.StatusChanged(
+                            "Invalid workspace ID: must be lowercase DNS label ([a-z0-9-], 1-63 chars)"));
+                    return;
+                } else {
+                    pendingBailianWorkspaceId = text;
+                }
+
+                bailianStep = BailianConfigStep.REGION;
+                if (existingBailianRegion != null) {
+                    apply(new TerminalUiAction.StatusChanged(
+                            "Enter Region (press Enter to keep '" + existingBailianRegion + "') [3/3]"));
+                } else {
+                    apply(new TerminalUiAction.StatusChanged(
+                            "Enter Aliyun Bailian Region (default: cn-beijing · press Enter to use default) [3/3]"));
+                }
+            }
+            case REGION -> {
+                String text = new String(input).strip();
+                java.util.Arrays.fill(input, '\0');
+                if (text.isEmpty()) {
+                    pendingBailianRegion = existingBailianRegion != null ? existingBailianRegion : "cn-beijing";
+                } else if (!DNS_LABEL_PATTERN.matcher(text).matches()) {
+                    apply(new TerminalUiAction.StatusChanged(
+                            "Invalid region: must be lowercase DNS label ([a-z0-9-], 1-63 chars)"));
+                    return;
+                } else {
+                    pendingBailianRegion = text;
+                }
+                saveBailianCredentials();
+            }
+            case NONE -> {
+                java.util.Arrays.fill(input, '\0');
+                apply(new TerminalUiAction.RecoverableFailure("AUTH_SECURE_INPUT_NOT_REQUESTED"));
+            }
+        }
+    }
+
+    private void saveBailianCredentials() {
+        String providerId = pendingApiKeyProvider;
+        char[] key = pendingBailianApiKey != null
+                ? java.util.Arrays.copyOf(pendingBailianApiKey, pendingBailianApiKey.length)
+                : new char[0];
+        String workspaceId = pendingBailianWorkspaceId != null ? pendingBailianWorkspaceId : "default";
+        String region = pendingBailianRegion != null ? pendingBailianRegion : "cn-beijing";
+        Map<String, String> attributes = Map.of("workspace_id", workspaceId, "region", region);
+
+        resetBailianState();
+        pendingApiKeyProvider = null;
+        pendingApiKeyIsUpdate = false;
+
+        apply(new TerminalUiAction.StatusChanged("Saving credentials for " + providerId));
+        try {
+            effects.execute(() -> {
+                Runnable completion;
+                try {
+                    CodingAuthenticationView connected = authentication.saveApiKey(providerId, key, attributes);
+                    completion = () -> {
+                        apply(new TerminalUiAction.StatusChanged("API key and endpoint connected for " + providerId
+                                + " (workspace: " + workspaceId + ", region: " + region + ")"));
+                        scheduleReconcile();
+                    };
+                } catch (ProjectProductException exception) {
+                    completion = () -> apply(new TerminalUiAction.RecoverableFailure(exception.code()));
+                } catch (IllegalArgumentException
+                        | IllegalStateException
+                        | SecurityException
+                        | UnsupportedOperationException exception) {
+                    String code = safeFailureCode(exception);
+                    completion = () -> apply(new TerminalUiAction.RecoverableFailure(code));
+                } catch (RuntimeException exception) {
+                    completion = () -> apply(new TerminalUiAction.RecoverableFailure("OPERATION_REJECTED"));
+                } finally {
+                    java.util.Arrays.fill(key, '\0');
+                }
+                enqueueCompletion(effectCompletions, completion);
+            });
+        } catch (RejectedExecutionException exception) {
+            java.util.Arrays.fill(key, '\0');
             apply(new TerminalUiAction.RecoverableFailure("TERMINAL_BACKGROUND_UNAVAILABLE"));
         }
         drainEffectCompletions();
@@ -1452,6 +1740,10 @@ public final class CodingTerminalController implements AutoCloseable {
         }
         if (input.kind() == TerminalInput.Kind.SELECT_NEXT) {
             apply(new TerminalUiAction.SelectorMoved(1));
+            return;
+        }
+        if (input.kind() == TerminalInput.Kind.NAVIGATE_BACK) {
+            navigateSelectorParent();
             return;
         }
         if (input.kind() == TerminalInput.Kind.EOF) {
@@ -1847,6 +2139,27 @@ public final class CodingTerminalController implements AutoCloseable {
         openModelOptions(modelOptions, selectedModel.id(), modelListTitle());
     }
 
+    private void navigateSelectorParent() {
+        TerminalSelector selector = state.selector().orElse(null);
+        if (selector == null) {
+            return;
+        }
+        switch (selector.kind()) {
+            case "model" -> {
+                if (modelProviderGroups(modelOptions).size() > 1) {
+                    int selected = selector.selected();
+                    String selectedProviderId = (selected >= 0 && selected < modelSelectionOptions.size())
+                            ? modelSelectionOptions.get(selected).providerId()
+                            : (inspectedModel != null ? inspectedModel.providerId() : null);
+                    openModelProviderChooser(selectedProviderId);
+                }
+            }
+            case "model-detail" -> openModelList();
+            case "model-settings" -> openModelDetails(requireInspectedModel());
+            default -> {}
+        }
+    }
+
     private void openModelChooser(String selectedModelId) {
         if (modelOptions.isEmpty()) {
             apply(new TerminalUiAction.RecoverableFailure("MODEL_LIST_EMPTY"));
@@ -1859,24 +2172,29 @@ public final class CodingTerminalController implements AutoCloseable {
                     .map(CodingModelOption::providerId)
                     .findFirst()
                     .orElse(null);
-            int selectedProvider = java.util.stream.IntStream.range(0, modelProviderGroups.size())
-                    .filter(index -> modelProviderGroups.get(index).providerId().equals(selectedProviderId))
-                    .findFirst()
-                    .orElse(0);
-            apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
-                    "model-provider",
-                    "Choose model provider",
-                    modelProviderGroups.stream()
-                            .map(group -> group.providerDisplayName()
-                                    + " · "
-                                    + group.modelCount()
-                                    + " model"
-                                    + (group.modelCount() == 1 ? "" : "s"))
-                            .toList(),
-                    selectedProvider)));
+            openModelProviderChooser(selectedProviderId);
             return;
         }
         openModelOptions(modelOptions, selectedModelId, modelListTitle());
+    }
+
+    private void openModelProviderChooser(String selectedProviderId) {
+        modelProviderGroups = modelProviderGroups(modelOptions);
+        int selectedProvider = java.util.stream.IntStream.range(0, modelProviderGroups.size())
+                .filter(index -> modelProviderGroups.get(index).providerId().equals(selectedProviderId))
+                .findFirst()
+                .orElse(0);
+        apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
+                "model-provider",
+                "Choose model provider",
+                modelProviderGroups.stream()
+                        .map(group -> group.providerDisplayName()
+                                + " · "
+                                + group.modelCount()
+                                + " model"
+                                + (group.modelCount() == 1 ? "" : "s"))
+                        .toList(),
+                selectedProvider)));
     }
 
     private void openProviderModelList(String providerId) {

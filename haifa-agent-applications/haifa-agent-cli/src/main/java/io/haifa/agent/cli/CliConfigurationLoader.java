@@ -264,8 +264,8 @@ final class CliConfigurationLoader {
                     new ModelProviderId(id),
                     java.net.URI.create(expandEnvironment(
                             requiredText(provider, "endpoint", "configuration models.providers[].endpoint"))),
-                    new CredentialRef(
-                            requiredText(provider, "credentialRef", "configuration models.providers[].credentialRef")),
+                    new CredentialRef(expandEnvironment(
+                            requiredText(provider, "credentialRef", "configuration models.providers[].credentialRef"))),
                     requiredBoolean(provider, "nativeStreaming", "configuration models.providers[].nativeStreaming"),
                     !provider.containsKey("enabled")
                             || requiredBoolean(provider, "enabled", "configuration models.providers[].enabled"),
