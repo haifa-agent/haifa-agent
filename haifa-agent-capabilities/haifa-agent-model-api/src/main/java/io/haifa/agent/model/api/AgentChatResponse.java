@@ -13,7 +13,9 @@ public record AgentChatResponse(
         ModelFinishReason finishReason,
         ModelUsage usage,
         String systemFingerprint,
-        Map<String, Object> metadata) {
+        Map<String, Object> metadata,
+        java.util.Optional<SensitiveModelReasoning> reasoning,
+        java.util.Optional<Map<String, Object>> structuredOutput) {
     public AgentChatResponse {
         responseId = ModelValues.text(responseId, "responseId");
         actualModelId = ModelValues.text(actualModelId, "actualModelId");
@@ -24,8 +26,56 @@ public record AgentChatResponse(
         systemFingerprint = Objects.requireNonNull(systemFingerprint, "systemFingerprint must not be null")
                 .trim();
         metadata = ModelValues.map(metadata, "metadata");
-        if (content.isBlank() && toolCalls.isEmpty()) {
-            throw new IllegalArgumentException("response must contain content or tool calls");
-        }
+        reasoning = Objects.requireNonNull(reasoning, "reasoning must not be null");
+        structuredOutput = structuredOutput == null
+                ? java.util.Optional.empty()
+                : structuredOutput.map(value -> ModelValues.map(value, "structuredOutput"));
+        // A provider may successfully terminate without usable output. Preserve that transport fact so the
+        // Runtime can classify and retry it under the frozen model binding instead of losing retry semantics here.
+    }
+
+    public AgentChatResponse(
+            String responseId,
+            String actualModelId,
+            String content,
+            List<ModelToolCall> toolCalls,
+            ModelFinishReason finishReason,
+            ModelUsage usage,
+            String systemFingerprint,
+            Map<String, Object> metadata) {
+        this(
+                responseId,
+                actualModelId,
+                content,
+                toolCalls,
+                finishReason,
+                usage,
+                systemFingerprint,
+                metadata,
+                java.util.Optional.empty(),
+                java.util.Optional.empty());
+    }
+
+    public AgentChatResponse(
+            String responseId,
+            String actualModelId,
+            String content,
+            List<ModelToolCall> toolCalls,
+            ModelFinishReason finishReason,
+            ModelUsage usage,
+            String systemFingerprint,
+            Map<String, Object> metadata,
+            java.util.Optional<SensitiveModelReasoning> reasoning) {
+        this(
+                responseId,
+                actualModelId,
+                content,
+                toolCalls,
+                finishReason,
+                usage,
+                systemFingerprint,
+                metadata,
+                reasoning,
+                java.util.Optional.empty());
     }
 }

@@ -31,6 +31,18 @@ public final class AgentChatResponseMapper {
 
     public AgentDecision map(
             AgentChatRequest request, AgentChatResponse response, List<ModelToolSpecification> disclosedTools) {
+        if (response.content().isBlank()
+                && response.toolCalls().isEmpty()
+                && response.structuredOutput().isEmpty()) {
+            throw new ModelInvocationException(
+                    ModelErrorCategory.EMPTY_RESPONSE,
+                    true,
+                    200,
+                    "empty_response",
+                    request.callId(),
+                    "model returned no usable output",
+                    null);
+        }
         if (!response.toolCalls().isEmpty()) {
             Map<String, ModelToolSpecification> byName = new LinkedHashMap<>();
             disclosedTools.forEach(tool -> byName.put(tool.name(), tool));
@@ -59,6 +71,26 @@ public final class AgentChatResponseMapper {
                     "model returned an unknown finish reason",
                     null);
         }
+        if (request.structuredOutput().isPresent()) {
+            var requirement = request.structuredOutput().orElseThrow();
+            Map<String, Object> output = response.structuredOutput()
+                    .orElseThrow(() -> new ModelInvocationException(
+                            ModelErrorCategory.MALFORMED_RESPONSE,
+                            false,
+                            200,
+                            "structured_output_invalid",
+                            request.callId(),
+                            "model did not return a structured final output",
+                            null));
+            return new FinalAnswerDecision(
+                    AgentRunOutcome.SUCCESS,
+                    response.content(),
+                    requirement.schemaId(),
+                    requirement.schemaVersion(),
+                    output,
+                    List.of(),
+                    List.of());
+        }
         return new FinalAnswerDecision(
                 AgentRunOutcome.SUCCESS,
                 response.content(),
@@ -74,7 +106,7 @@ public final class AgentChatResponseMapper {
         if (specification == null) {
             throw new ModelInvocationException(
                     ModelErrorCategory.MALFORMED_RESPONSE,
-                    false,
+                    true,
                     200,
                     "undisclosed_tool",
                     request.callId(),

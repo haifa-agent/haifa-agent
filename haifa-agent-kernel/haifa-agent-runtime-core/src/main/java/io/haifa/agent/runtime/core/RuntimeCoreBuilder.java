@@ -3,13 +3,10 @@ package io.haifa.agent.runtime.core;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.id.UuidV7IdentifierGenerator;
 import io.haifa.agent.common.time.SystemTimeProvider;
+import io.haifa.agent.common.time.TimePrecision;
 import io.haifa.agent.common.time.TimeProvider;
-import io.haifa.agent.context.budget.HeuristicTokenEstimator;
 import io.haifa.agent.context.compression.CompressionPolicy;
 import io.haifa.agent.context.compression.DeterministicContextCompressor;
-import io.haifa.agent.context.core.DefaultAgentContextBuilder;
-import io.haifa.agent.context.selection.ContextSelectionPolicy;
-import io.haifa.agent.context.source.ContextSource;
 import io.haifa.agent.core.agent.AgentDefinitionVersion;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
@@ -20,7 +17,6 @@ import io.haifa.agent.core.run.AgentRunResult;
 import io.haifa.agent.core.run.AgentRunType;
 import io.haifa.agent.credential.api.CredentialBroker;
 import io.haifa.agent.memory.api.MemoryActor;
-import io.haifa.agent.memory.api.MemoryAuditSink;
 import io.haifa.agent.memory.api.MemoryRetriever;
 import io.haifa.agent.memory.api.MemoryService;
 import io.haifa.agent.memory.api.MemorySourceRef;
@@ -29,7 +25,11 @@ import io.haifa.agent.memory.core.DefaultMemoryPolicy;
 import io.haifa.agent.memory.core.DefaultMemoryRetriever;
 import io.haifa.agent.memory.core.InMemoryMemoryStore;
 import io.haifa.agent.model.api.AgentChatModel;
-import io.haifa.agent.runtime.api.checkpoint.CapabilityCheckpointParticipant;
+import io.haifa.agent.policy.api.ApprovalMode;
+import io.haifa.agent.policy.api.ApprovalVerification;
+import io.haifa.agent.policy.api.ApprovalVerificationService;
+import io.haifa.agent.policy.api.PolicyDecisionService;
+import io.haifa.agent.policy.api.PolicyRuleSet;
 import io.haifa.agent.runtime.core.bootstrap.CallerContextProvider;
 import io.haifa.agent.runtime.core.bootstrap.ConfigurationSnapshotFactory;
 import io.haifa.agent.runtime.core.bootstrap.ContentAddressedSnapshotFactory;
@@ -40,26 +40,28 @@ import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
 import io.haifa.agent.runtime.core.bootstrap.RunAccessValidator;
 import io.haifa.agent.runtime.core.bootstrap.RunBootstrapper;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext;
-import io.haifa.agent.runtime.core.checkpoint.CapabilityCheckpointRegistry;
 import io.haifa.agent.runtime.core.checkpoint.CheckpointManager;
-import io.haifa.agent.runtime.core.checkpoint.CheckpointPolicy;
 import io.haifa.agent.runtime.core.checkpoint.CheckpointSnapshotBuilder;
-import io.haifa.agent.runtime.core.checkpoint.MemoryCheckpointValidator;
-import io.haifa.agent.runtime.core.checkpoint.ResumeCheckpointSelector;
 import io.haifa.agent.runtime.core.checkpoint.ResumeCoordinator;
+import io.haifa.agent.runtime.core.compaction.CompactionTriggerEvaluator;
+import io.haifa.agent.runtime.core.compaction.SemanticCompactionCoordinator;
+import io.haifa.agent.runtime.core.compaction.SummaryModelInvoker;
 import io.haifa.agent.runtime.core.completion.CompletionPolicy;
+import io.haifa.agent.runtime.core.completion.CompletionPolicyResult;
 import io.haifa.agent.runtime.core.completion.DefaultCompletionGuard;
-import io.haifa.agent.runtime.core.completion.DefaultRunFinalizer;
+import io.haifa.agent.runtime.core.completion.FrozenStructuredOutputValidator;
 import io.haifa.agent.runtime.core.completion.OutputContractValidator;
-import io.haifa.agent.runtime.core.completion.RequiredArtifactChecker;
-import io.haifa.agent.runtime.core.completion.TodoConvergenceChecker;
-import io.haifa.agent.runtime.core.completion.TodoReconciliationService;
 import io.haifa.agent.runtime.core.control.DefaultRunControlService;
 import io.haifa.agent.runtime.core.control.RunControlRegistry;
 import io.haifa.agent.runtime.core.control.RunControlService;
 import io.haifa.agent.runtime.core.decision.DecisionExecutor;
 import io.haifa.agent.runtime.core.decision.DefaultDecisionValidator;
 import io.haifa.agent.runtime.core.delegation.DelegationPort;
+import io.haifa.agent.runtime.core.event.NotifyingRuntimeEventAppender;
+import io.haifa.agent.runtime.core.event.RuntimeClientEventProjector;
+import io.haifa.agent.runtime.core.event.RuntimeEventFeed;
+import io.haifa.agent.runtime.core.event.RuntimeEventSubscriptions;
+import io.haifa.agent.runtime.core.event.RuntimeEventWakeupRegistry;
 import io.haifa.agent.runtime.core.execution.AttemptExecutor;
 import io.haifa.agent.runtime.core.execution.ExecutionOwnershipPort;
 import io.haifa.agent.runtime.core.execution.ExecutionScheduler;
@@ -68,9 +70,10 @@ import io.haifa.agent.runtime.core.guard.BudgetGuard;
 import io.haifa.agent.runtime.core.guard.ChildRunGuard;
 import io.haifa.agent.runtime.core.guard.DuplicateToolCallGuard;
 import io.haifa.agent.runtime.core.guard.IterationGuard;
-import io.haifa.agent.runtime.core.guard.LoopDetectionGuard;
-import io.haifa.agent.runtime.core.interaction.InMemoryInteractionPort;
+import io.haifa.agent.runtime.core.input.RunInputApplier;
+import io.haifa.agent.runtime.core.input.RunInputPort;
 import io.haifa.agent.runtime.core.interaction.InteractionPort;
+import io.haifa.agent.runtime.core.interaction.ToolApprovalPromptFormatter;
 import io.haifa.agent.runtime.core.lifecycle.RunAwaiter;
 import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.loop.AgentLoop;
@@ -88,24 +91,34 @@ import io.haifa.agent.runtime.core.middleware.ToolDisclosureMiddleware;
 import io.haifa.agent.runtime.core.middleware.TraceMiddleware;
 import io.haifa.agent.runtime.core.model.FrozenModelInvoker;
 import io.haifa.agent.runtime.core.model.ModelAdapterKey;
+import io.haifa.agent.runtime.core.model.ModelAudioResolver;
+import io.haifa.agent.runtime.core.model.ModelImageResolver;
+import io.haifa.agent.runtime.core.model.RuntimeModelOutputPublisher;
+import io.haifa.agent.runtime.core.retry.CompletionRepairPolicy;
 import io.haifa.agent.runtime.core.retry.ModelRetryPolicy;
-import io.haifa.agent.runtime.core.retry.PersistenceRetryPolicy;
-import io.haifa.agent.runtime.core.retry.RepairRetryPolicy;
 import io.haifa.agent.runtime.core.retry.RetryExecutor;
 import io.haifa.agent.runtime.core.retry.RetryPolicy;
 import io.haifa.agent.runtime.core.retry.Sleeper;
 import io.haifa.agent.runtime.core.retry.ToolRetryPolicy;
-import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
+import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
 import io.haifa.agent.runtime.core.tool.BoundedToolResultNormalizer;
 import io.haifa.agent.runtime.core.tool.CapabilityAuthorizer;
-import io.haifa.agent.runtime.core.tool.DefaultToolPolicy;
-import io.haifa.agent.runtime.core.tool.InMemoryToolExecutionJournal;
+import io.haifa.agent.runtime.core.tool.DefaultPublicToolPolicy;
+import io.haifa.agent.runtime.core.tool.DefaultToolPolicyRequestAdapter;
 import io.haifa.agent.runtime.core.tool.LargeToolResultPolicy;
+import io.haifa.agent.runtime.core.tool.PublicToolPolicy;
 import io.haifa.agent.runtime.core.tool.ToolExecutionEnvironment;
 import io.haifa.agent.runtime.core.tool.ToolPipeline;
-import io.haifa.agent.runtime.core.tool.ToolPolicy;
+import io.haifa.agent.runtime.core.tool.ToolPolicyRequestAdapter;
+import io.haifa.agent.runtime.core.tool.ToolRequestCanonicalizer;
 import io.haifa.agent.runtime.core.tool.ToolResultNormalizer;
+import io.haifa.agent.runtime.core.trace.FailureDiagnosticSink;
+import io.haifa.agent.runtime.core.trace.PromptDiagnosticsSink;
+import io.haifa.agent.runtime.core.trace.TraceIdentifierGenerator;
 import io.haifa.agent.runtime.core.trace.TracePort;
+import io.haifa.agent.skill.api.SkillCatalog;
+import io.haifa.agent.skill.api.SkillContentLoader;
+import io.haifa.agent.skill.api.SkillTrustSnapshot;
 import io.haifa.agent.tool.api.ToolCatalog;
 import io.haifa.agent.tool.api.ToolInvoker;
 import io.haifa.agent.tool.api.ToolSchemaValidationResult;
@@ -123,14 +136,13 @@ public final class RuntimeCoreBuilder {
     private TimeProvider time = new SystemTimeProvider();
     private ExecutionScheduler scheduler = new LocalExecutionScheduler();
     private RunControlRegistry controls = new RunControlRegistry();
-    private InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+    private RuntimePersistencePorts persistence = RuntimePersistencePorts.inMemory();
     private CallerContextProvider callers =
             () -> new RuntimeCallerContext(new TenantRef("local"), new PrincipalRef("local-user", "user"));
     private RunAccessValidator access = RunAccessValidator.allowLocalReferences();
     private DefinitionResolver definitions;
     private ProfileResolver profiles;
     private ConfigurationSnapshotFactory snapshots;
-    private InteractionPort interactions = new InMemoryInteractionPort();
     private DelegationPort delegations = (parent, decision) -> new AgentRunResult(
             AgentRunOutcome.INSUFFICIENT_INFORMATION,
             "No delegation adapter configured",
@@ -141,32 +153,54 @@ public final class RuntimeCoreBuilder {
             List.of("delegation adapter unavailable"));
     private final Map<ModelAdapterKey, AgentChatModel> chatModels = new LinkedHashMap<>();
     private ToolCatalog toolCatalog = ToolCatalog.empty();
+    private SkillCatalog skillCatalog = SkillCatalog.empty();
+    private SkillContentLoader skillContentLoader = SkillContentLoader.empty();
+    private SkillTrustSnapshot skillTrust = SkillTrustSnapshot.empty();
+    private String policyProductId = "runtime-compatibility";
     private ToolInvoker toolInvoker = request -> {
         throw new IllegalStateException("no tool invoker configured for "
                 + request.binding().coordinate().externalForm());
     };
     private ToolSchemaValidator toolSchemaValidator = (schema, instance) -> new ToolSchemaValidationResult(List.of());
+    private ToolSchemaValidator structuredOutputSchemaValidator = (schema, instance) ->
+            new ToolSchemaValidationResult(List.of(new io.haifa.agent.tool.api.ToolSchemaValidationError(
+                    "$", "validator", "structured output schema validator is unavailable")));
     private boolean toolPlatformConfigured;
-    private ToolPolicy toolPolicy = new DefaultToolPolicy();
+    private PublicToolPolicy publicToolPolicy;
+    private java.util.function.UnaryOperator<PublicToolPolicy> publicToolPolicyDecorator =
+            java.util.function.UnaryOperator.identity();
+    private PolicyDecisionService policyEvaluator;
+    private PolicyRuleSet policyRules;
+    private ApprovalVerificationService approvalVerification = (requester, target, responder) -> {
+        boolean samePrincipal = requester.tenant().equals(responder.tenant())
+                && requester.principal().equals(responder.principal());
+        return new ApprovalVerification(
+                samePrincipal, samePrincipal ? "LOCAL_PRINCIPAL_MATCH" : "LOCAL_PRINCIPAL_MISMATCH");
+    };
+    private ToolApprovalPromptFormatter toolApprovalPrompts = ToolApprovalPromptFormatter.defaultFormatter();
     private CredentialBroker credentialBroker;
-    private ModelRetryPolicy modelRetry = ModelRetryPolicy.none();
+    private ModelRetryPolicy modelRetry = ModelRetryPolicy.defaults();
     private ToolRetryPolicy toolRetry = ToolRetryPolicy.none();
-    private RepairRetryPolicy repairRetry = new RepairRetryPolicy(3);
+    private CompletionRepairPolicy completionRepair = new CompletionRepairPolicy(3);
     private TracePort trace = TracePort.noop();
+    private final TraceIdentifierGenerator traceIds = new TraceIdentifierGenerator();
+    private PromptDiagnosticsSink promptDiagnostics = PromptDiagnosticsSink.noop();
+    private FailureDiagnosticSink failureDiagnostics = FailureDiagnosticSink.noop();
+    private RunInputPort runInputs;
+    private CompressionPolicy compressionPolicy = CompressionPolicy.defaults();
     private ToolResultNormalizer toolResultNormalizer = new BoundedToolResultNormalizer(4_000, 100);
+    private ToolRequestCanonicalizer toolRequestCanonicalizer = ToolRequestCanonicalizer.identity();
     private OutputContractValidator outputContract =
             (run, decision) -> !decision.outputSchemaId().isBlank()
                     && !decision.outputSchemaVersion().isBlank();
-    private RequiredArtifactChecker requiredArtifacts = (run, decision) -> true;
-    private CompletionPolicy completionPolicy = (run, decision) -> true;
+    private CompletionPolicy completionPolicy = (run, decision) -> CompletionPolicyResult.accepted();
     private final List<AgentRuntimeMiddleware> additionalMiddleware = new ArrayList<>();
-    private final List<ContextSource> additionalContextSources = new ArrayList<>();
-    private final List<CapabilityCheckpointParticipant> capabilityCheckpointParticipants = new ArrayList<>();
-    private String workerId = "local-runtime";
-    private ExecutionOwnershipPort ownership = ExecutionOwnershipPort.local();
+    private String workerId = "local-runtime-" + ids.nextValue();
+    private ExecutionOwnershipPort ownership;
     private MemoryRetriever memoryRetriever;
-    private MemoryAuditSink memoryAudit;
     private MemoryService memoryService;
+    private ModelImageResolver modelImageResolver = ModelImageResolver.unsupported();
+    private ModelAudioResolver modelAudioResolver = ModelAudioResolver.unsupported();
 
     public RuntimeCoreBuilder registerChatModel(String adapterType, String adapterVersion, AgentChatModel value) {
         ModelAdapterKey key = new ModelAdapterKey(adapterType, adapterVersion);
@@ -177,23 +211,13 @@ public final class RuntimeCoreBuilder {
         return this;
     }
 
-    public RuntimeCoreBuilder registerContextSource(ContextSource source) {
-        Objects.requireNonNull(source, "source must not be null");
-        if (additionalContextSources.stream().anyMatch(existing -> existing.id().equals(source.id()))) {
-            throw new IllegalArgumentException("duplicate context source: " + source.id());
-        }
-        additionalContextSources.add(source);
+    public RuntimeCoreBuilder modelImageResolver(ModelImageResolver value) {
+        modelImageResolver = Objects.requireNonNull(value, "value must not be null");
         return this;
     }
 
-    public RuntimeCoreBuilder registerCapabilityCheckpointParticipant(CapabilityCheckpointParticipant participant) {
-        Objects.requireNonNull(participant, "participant must not be null");
-        if (capabilityCheckpointParticipants.stream()
-                .anyMatch(existing -> existing.id().equals(participant.id()))) {
-            throw new IllegalArgumentException("duplicate capability checkpoint participant: "
-                    + participant.id().value());
-        }
-        capabilityCheckpointParticipants.add(participant);
+    public RuntimeCoreBuilder modelAudioResolver(ModelAudioResolver value) {
+        modelAudioResolver = Objects.requireNonNull(value, "value must not be null");
         return this;
     }
 
@@ -203,7 +227,8 @@ public final class RuntimeCoreBuilder {
     }
 
     public RuntimeCoreBuilder timeProvider(TimeProvider value) {
-        time = value;
+        TimeProvider source = Objects.requireNonNull(value, "time provider must not be null");
+        time = () -> TimePrecision.toMilliseconds(source.now());
         return this;
     }
 
@@ -217,9 +242,29 @@ public final class RuntimeCoreBuilder {
         return this;
     }
 
-    public RuntimeCoreBuilder store(InMemoryRuntimeStore value) {
-        store = value;
+    public RuntimeCoreBuilder persistence(RuntimePersistencePorts value) {
+        persistence = Objects.requireNonNull(value, "persistence must not be null");
         return this;
+    }
+
+    /**
+     * Configures the durable Run Input boundary.
+     *
+     * <p>The default comes from {@link RuntimePersistencePorts}; this method is an explicit
+     * application override.
+     */
+    public RuntimeCoreBuilder runInputs(RunInputPort value) {
+        runInputs = Objects.requireNonNull(value, "runInputs must not be null");
+        return this;
+    }
+
+    public RuntimeCoreBuilder compressionPolicy(CompressionPolicy value) {
+        this.compressionPolicy = Objects.requireNonNull(value, "compressionPolicy must not be null");
+        return this;
+    }
+
+    public CompressionPolicy compressionPolicy() {
+        return compressionPolicy;
     }
 
     public RuntimeCoreBuilder callers(CallerContextProvider value) {
@@ -247,11 +292,6 @@ public final class RuntimeCoreBuilder {
         return this;
     }
 
-    public RuntimeCoreBuilder interactions(InteractionPort value) {
-        interactions = value;
-        return this;
-    }
-
     public RuntimeCoreBuilder delegations(DelegationPort value) {
         delegations = value;
         return this;
@@ -266,8 +306,53 @@ public final class RuntimeCoreBuilder {
         return this;
     }
 
-    public RuntimeCoreBuilder toolPolicy(ToolPolicy value) {
-        toolPolicy = value;
+    public RuntimeCoreBuilder toolRequestCanonicalizer(ToolRequestCanonicalizer value) {
+        toolRequestCanonicalizer = Objects.requireNonNull(value, "value must not be null");
+        return this;
+    }
+
+    public RuntimeCoreBuilder skillPlatform(SkillCatalog catalog, SkillContentLoader contentLoader) {
+        return skillPlatform(catalog, contentLoader, SkillTrustSnapshot.empty());
+    }
+
+    public RuntimeCoreBuilder skillPlatform(
+            SkillCatalog catalog, SkillContentLoader contentLoader, SkillTrustSnapshot trust) {
+        skillCatalog = Objects.requireNonNull(catalog, "catalog");
+        skillContentLoader = Objects.requireNonNull(contentLoader, "contentLoader");
+        skillTrust = Objects.requireNonNull(trust, "trust");
+        return this;
+    }
+
+    public RuntimeCoreBuilder policyProductId(String value) {
+        String normalized = Objects.requireNonNull(value, "value").trim();
+        if (normalized.isEmpty()) throw new IllegalArgumentException("policy product id must not be blank");
+        policyProductId = normalized;
+        return this;
+    }
+
+    public RuntimeCoreBuilder publicToolPolicy(PublicToolPolicy value) {
+        publicToolPolicy = Objects.requireNonNull(value, "value");
+        return this;
+    }
+
+    public RuntimeCoreBuilder publicToolPolicyDecorator(java.util.function.UnaryOperator<PublicToolPolicy> value) {
+        publicToolPolicyDecorator = Objects.requireNonNull(value, "value");
+        return this;
+    }
+
+    public RuntimeCoreBuilder policy(PolicyRuleSet rules, PolicyDecisionService evaluator) {
+        policyRules = Objects.requireNonNull(rules, "rules");
+        policyEvaluator = Objects.requireNonNull(evaluator, "evaluator");
+        return this;
+    }
+
+    public RuntimeCoreBuilder approvalVerification(ApprovalVerificationService value) {
+        approvalVerification = Objects.requireNonNull(value, "value");
+        return this;
+    }
+
+    public RuntimeCoreBuilder toolApprovalPrompts(ToolApprovalPromptFormatter value) {
+        toolApprovalPrompts = Objects.requireNonNull(value, "value");
         return this;
     }
 
@@ -281,18 +366,34 @@ public final class RuntimeCoreBuilder {
         return this;
     }
 
+    public RuntimeCoreBuilder modelRetry(ModelRetryPolicy value) {
+        modelRetry = Objects.requireNonNull(value, "value");
+        return this;
+    }
+
     public RuntimeCoreBuilder toolRetry(RetryPolicy value) {
         toolRetry = new ToolRetryPolicy(value);
         return this;
     }
 
-    public RuntimeCoreBuilder repairRetry(RepairRetryPolicy value) {
-        repairRetry = Objects.requireNonNull(value);
+    public RuntimeCoreBuilder completionRepair(CompletionRepairPolicy value) {
+        completionRepair = Objects.requireNonNull(value);
         return this;
     }
 
     public RuntimeCoreBuilder trace(TracePort value) {
-        trace = value;
+        trace = Objects.requireNonNull(value);
+        return this;
+    }
+
+    /** Registers a best-effort process-local consumer of redacted Context trace facts. */
+    public RuntimeCoreBuilder promptDiagnostics(PromptDiagnosticsSink value) {
+        promptDiagnostics = Objects.requireNonNull(value);
+        return this;
+    }
+
+    public RuntimeCoreBuilder failureDiagnostics(FailureDiagnosticSink value) {
+        failureDiagnostics = Objects.requireNonNull(value);
         return this;
     }
 
@@ -306,8 +407,9 @@ public final class RuntimeCoreBuilder {
         return this;
     }
 
-    public RuntimeCoreBuilder requiredArtifactChecker(RequiredArtifactChecker value) {
-        requiredArtifacts = Objects.requireNonNull(value);
+    /** Configures the bounded JSON Schema validator used by the frozen terminal output contract. */
+    public RuntimeCoreBuilder structuredOutputSchemaValidator(ToolSchemaValidator value) {
+        structuredOutputSchemaValidator = Objects.requireNonNull(value);
         return this;
     }
 
@@ -332,15 +434,14 @@ public final class RuntimeCoreBuilder {
         return this;
     }
 
-    public RuntimeCoreBuilder memory(MemoryRetriever retriever, MemoryAuditSink audit) {
-        memoryRetriever = Objects.requireNonNull(retriever);
-        memoryAudit = Objects.requireNonNull(audit);
+    public RuntimeCoreBuilder memory(MemoryRetriever retriever) {
+        memoryRetriever = Objects.requireNonNull(retriever, "memoryRetriever must not be null");
         return this;
     }
 
-    public RuntimeCoreBuilder memory(MemoryService service, MemoryRetriever retriever, MemoryAuditSink audit) {
+    public RuntimeCoreBuilder memory(MemoryService service, MemoryRetriever retriever) {
         memoryService = Objects.requireNonNull(service);
-        return memory(retriever, audit);
+        return memory(retriever);
     }
 
     public DefaultAgentRuntime build() {
@@ -348,16 +449,36 @@ public final class RuntimeCoreBuilder {
         if (!toolCatalog.snapshot().bindings().isEmpty() && !toolPlatformConfigured) {
             throw new IllegalStateException("non-empty tool catalog requires an invoker and schema validator");
         }
-        FrozenModelInvoker models = new FrozenModelInvoker(store, chatModels, ids);
-        InMemoryMemoryStore defaultMemoryStore = new InMemoryMemoryStore();
-        var defaultMemoryPolicy = new DefaultMemoryPolicy();
-        MemoryRetriever configuredMemoryRetriever = memoryRetriever != null
-                ? memoryRetriever
-                : new DefaultMemoryRetriever(defaultMemoryStore, defaultMemoryPolicy);
-        MemoryAuditSink configuredMemoryAudit = memoryAudit != null ? memoryAudit : defaultMemoryStore;
+        var runs = persistence.runs();
+        var attempts = persistence.attempts();
+        var checkpointsRepository = persistence.checkpoints();
+        var state = persistence.state();
+        RuntimeEventWakeupRegistry eventWakeups = new RuntimeEventWakeupRegistry();
+        var events = new NotifyingRuntimeEventAppender(persistence.events(), persistence.unitOfWork(), eventWakeups);
+        var outbox = persistence.outbox();
+        var idempotency = persistence.idempotency();
+        var unitOfWork = persistence.unitOfWork();
+        var toolJournal = persistence.toolJournal();
+        InteractionPort interactions = persistence.interactions();
+        RunInputPort configuredRunInputs = runInputs != null ? runInputs : persistence.runInputs();
+        var summaries = persistence.conversationSummaries();
+        var toolResultAssets = persistence.toolResultAssets();
+        var messageRedactions = persistence.messageRedactions();
+        RuntimeEventFeed eventFeed = new RuntimeEventFeed(events, new RuntimeClientEventProjector(runs));
+        RuntimeEventSubscriptions eventSubscriptions = new RuntimeEventSubscriptions(eventFeed, eventWakeups);
+        ExecutionOwnershipPort configuredOwnership =
+                ownership != null ? ownership : ExecutionOwnershipPort.local(workerId);
+        RuntimeModelOutputPublisher modelOutput = new RuntimeModelOutputPublisher(time);
+        FrozenModelInvoker models = new FrozenModelInvoker(
+                state, chatModels, ids, modelOutput, controls, events, time, modelImageResolver, modelAudioResolver);
+        MemoryRetriever configuredMemoryRetriever = memoryRetriever;
+        if (configuredMemoryRetriever == null) {
+            InMemoryMemoryStore defaultMemoryStore = new InMemoryMemoryStore();
+            configuredMemoryRetriever = new DefaultMemoryRetriever(defaultMemoryStore, new DefaultMemoryPolicy());
+        }
         if (memoryService != null) {
-            store.addMessageRedactionListener(message -> message.runId()
-                    .flatMap(store::find)
+            messageRedactions.register(message -> message.runId()
+                    .flatMap(runs::find)
                     .ifPresent(run -> memoryService.invalidateSource(
                             new MemorySourceRef(
                                     MemorySourceType.MESSAGE, message.id().value(), java.util.Optional.empty()),
@@ -377,40 +498,52 @@ public final class RuntimeCoreBuilder {
                         "Complete the objective using disclosed capabilities.");
         ProfileResolver profileResolver = profiles != null ? profiles : RuntimeCoreBuilder::defaultProfile;
         RunAwaiter awaiter = new RunAwaiter();
-        RunTransitionCoordinator transitions = new RunTransitionCoordinator(
-                store,
-                store,
-                store,
-                store,
-                ids,
-                time,
-                awaiter,
-                store,
-                new RetryExecutor(Sleeper.threadSleep()),
-                PersistenceRetryPolicy.none());
-        RunControlService controlService = new DefaultRunControlService(controls, transitions);
+        RunTransitionCoordinator transitions =
+                new RunTransitionCoordinator(runs, state, events, outbox, ids, time, awaiter, unitOfWork);
+        transitions.addListener(snapshot -> {
+            if (snapshot.status().isTerminal()) modelOutput.markRunTerminal(snapshot.runId());
+        });
+        RunControlService controlService = new DefaultRunControlService(controls);
         CapabilityAuthorizer authorizer =
                 (run, binding) -> toolNames.contains(binding.alias().value());
+        PublicToolPolicy configuredToolPolicy;
+        ToolPolicyRequestAdapter policyRequests =
+                new DefaultToolPolicyRequestAdapter(policyProductId, ApprovalMode.ASK);
+        if (publicToolPolicy != null) {
+            configuredToolPolicy = publicToolPolicy;
+        } else if (policyEvaluator != null && policyRules != null) {
+            configuredToolPolicy = new DefaultPublicToolPolicy(policyRequests, policyEvaluator, policyRules);
+        } else if (toolNames.isEmpty()) {
+            configuredToolPolicy = (run, binding, request) -> {
+                throw new IllegalStateException("tool policy is unavailable");
+            };
+        } else {
+            throw new IllegalStateException("non-empty tool catalog requires an explicit product policy");
+        }
+        configuredToolPolicy = Objects.requireNonNull(
+                publicToolPolicyDecorator.apply(configuredToolPolicy), "public tool policy decorator returned null");
         ToolPipeline pipeline = new ToolPipeline(
                 toolInvoker,
                 toolSchemaValidator,
                 authorizer,
-                toolPolicy,
+                configuredToolPolicy,
                 credentialBroker,
-                new InMemoryToolExecutionJournal(),
-                store,
+                toolJournal,
+                state,
                 ids,
                 time,
-                store,
+                events,
                 controls,
                 ToolExecutionEnvironment.local(),
                 toolResultNormalizer,
                 new RetryExecutor(Sleeper.threadSleep()),
                 toolRetry,
                 trace,
+                traceIds,
                 transitions,
-                store,
-                LargeToolResultPolicy.defaults());
+                toolResultAssets,
+                LargeToolResultPolicy.defaults(),
+                toolRequestCanonicalizer);
         List<AgentRuntimeMiddleware> configuredMiddleware = new ArrayList<>(List.of(
                 new RunMetadataMiddleware(),
                 new SafetyInstructionMiddleware(),
@@ -419,98 +552,110 @@ public final class RuntimeCoreBuilder {
                 new TraceMiddleware()));
         configuredMiddleware.addAll(additionalMiddleware);
         AgentRuntimeMiddlewareChain middleware = new AgentRuntimeMiddlewareChain(configuredMiddleware);
-        TodoReconciliationService todoReconciliation =
-                new TodoReconciliationService(store, new TodoConvergenceChecker());
+        OutputContractValidator configuredOutputContract =
+                new FrozenStructuredOutputValidator(state, structuredOutputSchemaValidator);
+        OutputContractValidator productOutputContract = outputContract;
+        OutputContractValidator combinedOutputContract = (run, decision) ->
+                configuredOutputContract.isValid(run, decision) && productOutputContract.isValid(run, decision);
         DefaultCompletionGuard completion = new DefaultCompletionGuard(
-                store,
-                pipeline,
-                interactions,
-                delegations,
-                todoReconciliation,
-                outputContract,
-                requiredArtifacts,
-                completionPolicy);
-        ResumeCheckpointSelector checkpointSelections = new ResumeCheckpointSelector();
-        CapabilityCheckpointRegistry capabilityCheckpointRegistry =
-                new CapabilityCheckpointRegistry(capabilityCheckpointParticipants);
-        CheckpointManager checkpoints = new CheckpointManager(
-                store,
-                CheckpointPolicy.everyIteration(),
-                new CheckpointSnapshotBuilder(ids, time, store, store, interactions, capabilityCheckpointRegistry),
-                checkpointSelections,
-                store,
-                store,
-                new MemoryCheckpointValidator(configuredMemoryRetriever, configuredMemoryAudit, time),
-                capabilityCheckpointRegistry,
-                time);
+                state, pipeline, interactions, delegations, combinedOutputContract, completionPolicy);
+        CheckpointManager checkpoints =
+                new CheckpointManager(checkpointsRepository, new CheckpointSnapshotBuilder(ids, time), time, events);
         DecisionExecutor decisionExecutor = new DecisionExecutor(
                 pipeline,
                 completion,
-                new DefaultRunFinalizer(),
                 interactions,
                 delegations,
-                store,
+                state,
                 transitions,
                 ids,
                 time,
                 checkpoints,
                 controls,
-                repairRetry);
+                completionRepair,
+                toolApprovalPrompts,
+                unitOfWork,
+                events,
+                outbox);
         ResumeCoordinator resumeCoordinator = new ResumeCoordinator(
-                interactions, store, checkpointSelections, transitions, store, access, checkpoints, toolInvoker);
+                interactions, checkpointsRepository, transitions, state, access, toolInvoker, skillContentLoader);
         var compressor = new DeterministicContextCompressor();
-        var compressionPolicy = CompressionPolicy.defaults();
-        var sessionMessageSource = new SessionMessageSource(store, store, compressor, compressionPolicy, ids, time);
-        var memoryContextSource = new MemoryContextSource(configuredMemoryRetriever, store, time);
+        var effectiveCompressionPolicy = compressionPolicy != null ? compressionPolicy : CompressionPolicy.defaults();
+        var sessionMessageSource =
+                new SessionMessageSource(state, summaries, compressor, effectiveCompressionPolicy, ids, time);
+        var memoryContextSource = new MemoryContextSource(configuredMemoryRetriever, state, time);
+        RunInputApplier runInputApplier =
+                new RunInputApplier(configuredRunInputs, state, events, outbox, unitOfWork, ids, time);
+        var compactionTriggerEvaluator = new CompactionTriggerEvaluator(effectiveCompressionPolicy);
+        var summaryModelInvoker = new SummaryModelInvoker(transitions, controls, ids, time, effectiveCompressionPolicy);
+        var compactionCoordinator = new SemanticCompactionCoordinator(
+                state,
+                summaries,
+                summaryModelInvoker,
+                compactionTriggerEvaluator,
+                effectiveCompressionPolicy,
+                compressor,
+                ids,
+                time,
+                events);
+        var toolRecovery = new io.haifa.agent.runtime.core.loop.ToolRecoveryCoordinator(state, pipeline, ids, time);
         AgentLoop loop = new DefaultAgentLoop(
                 controls,
-                List.of(new BudgetGuard(), new IterationGuard(), new LoopDetectionGuard(3)),
+                List.of(new BudgetGuard(), new IterationGuard()),
                 new DefaultRuntimeContextBuilder(
-                        store,
-                        middleware,
-                        new DefaultAgentContextBuilder(
-                                new HeuristicTokenEstimator(), new ContextSelectionPolicy(), additionalContextSources),
-                        sessionMessageSource,
-                        memoryContextSource),
+                        state, middleware, sessionMessageSource, memoryContextSource, skillContentLoader),
                 models,
-                new DefaultDecisionValidator(new DuplicateToolCallGuard(store), new ChildRunGuard(store)),
+                new DefaultDecisionValidator(new DuplicateToolCallGuard(), new ChildRunGuard(state)),
                 decisionExecutor,
                 checkpoints,
                 transitions,
-                store,
-                store,
+                state,
+                events,
                 new RetryExecutor(Sleeper.threadSleep()),
                 modelRetry,
                 ids,
                 time,
                 trace,
-                new RuntimeStateReconciler(store, store, interactions, pipeline, time, ownership),
-                middleware);
-        AttemptExecutor attemptExecutor = new AttemptExecutor(store, loop, transitions, time, workerId);
-        ConfigurationSnapshotFactory configuredSnapshots =
-                snapshots != null ? snapshots : new ContentAddressedSnapshotFactory(toolCatalog.snapshot());
+                promptDiagnostics,
+                new RuntimeStateReconciler(
+                        state, attempts, interactions, pipeline, time, configuredOwnership, toolRecovery),
+                middleware,
+                runInputApplier,
+                compactionCoordinator);
+        AttemptExecutor attemptExecutor = new AttemptExecutor(
+                attempts, loop, transitions, time, workerId, trace, traceIds, ids, failureDiagnostics);
+        ConfigurationSnapshotFactory configuredSnapshots = snapshots != null
+                ? snapshots
+                : new ContentAddressedSnapshotFactory(toolCatalog.snapshot(), skillCatalog.snapshot(), skillTrust);
         RunBootstrapper bootstrapper =
                 new RunBootstrapper(definitionResolver, profileResolver, access, configuredSnapshots, ids, time);
         return new DefaultAgentRuntime(
                 callers,
                 bootstrapper,
-                store,
-                store,
-                store,
-                store,
-                store,
-                store,
-                store,
+                runs,
+                attempts,
+                state,
+                events,
+                outbox,
+                idempotency,
+                unitOfWork,
                 transitions,
                 controlService,
                 interactions,
                 delegations,
                 attemptExecutor,
+                toolRecovery,
                 scheduler,
                 ids,
                 time,
                 awaiter,
-                resumeCoordinator);
+                resumeCoordinator,
+                modelOutput,
+                configuredOwnership,
+                approvalVerification,
+                configuredRunInputs,
+                eventFeed,
+                eventSubscriptions);
     }
 
     private static ResolvedProfile defaultProfile(String id, io.haifa.agent.runtime.api.RuntimeOverrides overrides) {
@@ -523,7 +668,7 @@ public final class RuntimeCoreBuilder {
                 "1.0.0",
                 AgentRunType.CHAT,
                 new AgentRunBudget(1_000_000, 1_000_000, 1_000_000, maxToolCalls, maxModelCalls, 8, "USD", 1_000_000),
-                new AgentRunLimits(maxIterations, 4, 1, maxWallTime, 60_000));
+                new AgentRunLimits(maxIterations, 4, 1, maxWallTime, 60_000, maxModelCalls, maxToolCalls, 8));
     }
 
     private static long number(io.haifa.agent.runtime.api.RuntimeOverrides overrides, String key, long fallback) {

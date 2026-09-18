@@ -1,0 +1,335 @@
+package io.haifa.agent.application.project.policy;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import io.haifa.agent.core.reference.PrincipalRef;
+import io.haifa.agent.core.reference.TenantRef;
+import io.haifa.agent.core.tool.ToolCallId;
+import io.haifa.agent.execution.api.ExecutionCommand;
+import io.haifa.agent.execution.api.ExecutionEnvironmentRef;
+import io.haifa.agent.execution.api.ExecutionId;
+import io.haifa.agent.execution.api.ExecutionLimits;
+import io.haifa.agent.execution.api.ExecutionOrigin;
+import io.haifa.agent.execution.api.ExecutionRequest;
+import io.haifa.agent.execution.api.ExecutionScratchSpaceSpec;
+import io.haifa.agent.execution.api.SandboxProfileRef;
+import io.haifa.agent.execution.api.TrustedExecutionContext;
+import io.haifa.agent.execution.core.ExecutionPolicyEntryPoint;
+import io.haifa.agent.execution.core.ExecutionRejectedException;
+import io.haifa.agent.policy.api.PolicyDecision;
+import io.haifa.agent.policy.api.PolicyEffect;
+import io.haifa.agent.project.core.store.InMemoryProjectStore;
+import io.haifa.agent.project.core.store.InMemoryWorkspaceStore;
+import io.haifa.agent.project.core.workspace.WorkspaceService;
+import io.haifa.agent.project.domain.Project;
+import io.haifa.agent.project.domain.ProjectConfigurationRef;
+import io.haifa.agent.project.domain.ProjectId;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
+import io.haifa.agent.project.hostworkspace.directory.InMemoryAuthorizedDirectoryStore;
+import io.haifa.agent.project.hostworkspace.scope.AuthorizedHostDirectory;
+import io.haifa.agent.project.hostworkspace.scope.AuthorizedWorkspaceProvisioning;
+import io.haifa.agent.project.hostworkspace.scope.HostWorkspaceScope;
+import io.haifa.agent.project.path.WorkspacePath;
+import io.haifa.agent.project.workspace.Workspace;
+import io.haifa.agent.project.workspace.WorkspaceAccessMode;
+import io.haifa.agent.project.workspace.WorkspaceId;
+import io.haifa.agent.project.workspace.WorkspaceRevision;
+import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
+import io.haifa.agent.runtime.core.tool.RuntimeToolExecutionVerifier;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+class CodingAgentExecutionPolicyTest {
+    private static final Instant NOW = Instant.parse("2026-09-08T00:00:00Z");
+    private static final TenantRef TENANT = new TenantRef("tenant");
+    private static final PrincipalRef PRINCIPAL = new PrincipalRef("actor", "user");
+    private static final WorkspaceId INITIAL_WORKSPACE = new WorkspaceId("workspace");
+    private static final ProjectId PROJECT = new ProjectId("project");
+    private static final SandboxProfileRef PROFILE = new SandboxProfileRef("test", "1");
+
+    @TempDir
+    Path root;
+
+    @Test
+    void readAccessAllowsOnlyTheExactInternalGitReadProtocol() throws Exception {
+        Fixture fixture = fixture(WorkspaceAccessMode.READ);
+
+        assertThatCode(() -> fixture.policy()
+                        .authorize(
+                                internal(
+                                        List.of("status", "--porcelain=v1", "--untracked-files=normal"),
+                                        fixture.workspaceId()),
+                                ExecutionPolicyEntryPoint.FIRST_EXECUTION))
+                .doesNotThrowAnyException();
+        assertThatThrownBy(() -> fixture.policy()
+                        .authorize(
+                                internal(List.of("push", "origin", "main"), fixture.workspaceId()),
+                                ExecutionPolicyEntryPoint.FIRST_EXECUTION))
+                .isInstanceOf(ExecutionRejectedException.class)
+                .hasMessageContaining("allowlist");
+        assertThatThrownBy(() -> fixture.policy()
+                        .authorize(
+                                userCommand("git status", fixture.workspaceId()),
+                                ExecutionPolicyEntryPoint.FIRST_EXECUTION))
+                .isInstanceOf(SecurityException.class)
+                .hasMessageContaining("MODE_DENIED");
+    }
+
+    @Test
+    void readAccessAllowsEveryExactInternalGitProbe() throws Exception {
+        Fixture fixture = fixture(WorkspaceAccessMode.READ);
+
+        for (List<String> suffix : allowedInternalGitSuffixes()) {
+            assertThatCode(() -> fixture.policy()
+                            .authorize(
+                                    internal(suffix, fixture.workspaceId()), ExecutionPolicyEntryPoint.FIRST_EXECUTION))
+                    .as(suffix.toString())
+                    .doesNotThrowAnyException();
+        }
+    }
+
+    @Test
+    void readAccessRejectsInternalGitArgumentExpansionAndWrites() throws Exception {
+        Fixture fixture = fixture(WorkspaceAccessMode.READ);
+
+        for (List<String> suffix : forbiddenInternalGitSuffixes()) {
+            assertThatThrownBy(() -> fixture.policy()
+                            .authorize(
+                                    internal(suffix, fixture.workspaceId()), ExecutionPolicyEntryPoint.FIRST_EXECUTION))
+                    .as(suffix.toString())
+                    .isInstanceOf(ExecutionRejectedException.class)
+                    .hasMessageContaining("allowlist");
+        }
+    }
+
+    @Test
+    void readAccessRejectsInternalGitWithProcessLimit() throws Exception {
+        Fixture fixture = fixture(WorkspaceAccessMode.READ);
+        WorkspaceId workspace = fixture.workspaceId();
+        var argv = new java.util.ArrayList<>(List.of("git", "-c", "credential.interactive=never", "rev-parse", "HEAD"));
+        var requestWithLimits = new ExecutionRequest(
+                new ExecutionId("internal"),
+                "internal-key",
+                context(ExecutionOrigin.PRODUCT_INTERNAL, Set.of("execution_run", "git.read"), Optional.empty()),
+                workspace,
+                WorkspacePath.root(workspace),
+                ExecutionCommand.direct(argv),
+                ExecutionEnvironmentRef.empty(),
+                new ExecutionLimits(Duration.ofSeconds(15), 4096, 64 * 1024, 4),
+                PROFILE);
+
+        assertThatThrownBy(
+                        () -> fixture.policy().authorize(requestWithLimits, ExecutionPolicyEntryPoint.FIRST_EXECUTION))
+                .isInstanceOfSatisfying(ExecutionRejectedException.class, ex -> {
+                    assertThat(ex.code()).isEqualTo("CODING_INTERNAL_GIT_LIMIT_DENIED");
+                    assertThat(ex.getMessage()).contains("Internal Git fixed limits changed");
+                });
+    }
+
+    @Test
+    void developAllowsTheFixedCliRequestButManagedAndForgedRuntimeFailClosed() throws Exception {
+        Fixture fixture = fixture(WorkspaceAccessMode.DEVELOP);
+
+        assertThatCode(() -> fixture.policy()
+                        .authorize(
+                                userCommand("git status", fixture.workspaceId()),
+                                ExecutionPolicyEntryPoint.FIRST_EXECUTION))
+                .doesNotThrowAnyException();
+        assertThatThrownBy(() -> fixture.policy()
+                        .authorize(
+                                userCommand("git status", fixture.workspaceId()),
+                                ExecutionPolicyEntryPoint.MANAGED_SESSION))
+                .isInstanceOf(ExecutionRejectedException.class)
+                .hasMessageContaining("managed");
+        assertThatThrownBy(() -> fixture.policy()
+                        .authorize(
+                                runtimeRequest(new ToolCallId("forged"), fixture.workspaceId()),
+                                ExecutionPolicyEntryPoint.FIRST_EXECUTION))
+                .isInstanceOf(ExecutionRejectedException.class)
+                .hasMessageContaining("unavailable");
+    }
+
+    @Test
+    void userCommandAllowsOrdinaryGitButRejectsConfirmedCredentialEgressAtTheBrokerBoundary() throws Exception {
+        Fixture fixture = fixture(WorkspaceAccessMode.DEVELOP);
+
+        assertThatCode(() -> fixture.policy()
+                        .authorize(
+                                userCommand("git -C ../other status", fixture.workspaceId()),
+                                ExecutionPolicyEntryPoint.FIRST_EXECUTION))
+                .doesNotThrowAnyException();
+        assertThatThrownBy(() -> fixture.policy()
+                        .authorize(
+                                userCommand("gh auth token", fixture.workspaceId()),
+                                ExecutionPolicyEntryPoint.FIRST_EXECUTION))
+                .isInstanceOf(ExecutionRejectedException.class)
+                .hasMessageContaining("credential boundary");
+    }
+
+    @Test
+    void replayRereadsCurrentWorkspaceAccessAndFailsClosedAfterRevoke() throws Exception {
+        Fixture fixture = fixture(WorkspaceAccessMode.DEVELOP);
+        ExecutionRequest request = userCommand("git status", fixture.workspaceId());
+
+        assertThatCode(() -> fixture.policy().authorize(request, ExecutionPolicyEntryPoint.FIRST_EXECUTION))
+                .doesNotThrowAnyException();
+        fixture.provisioning().revoke(fixture.workspaceId());
+
+        assertThatThrownBy(() -> fixture.policy().authorize(request, ExecutionPolicyEntryPoint.IDEMPOTENT_REPLAY))
+                .isInstanceOf(SecurityException.class)
+                .hasMessageContaining("ACCESS_UNAVAILABLE");
+    }
+
+    private Fixture fixture(WorkspaceAccessMode mode) throws Exception {
+        Path realRoot = Files.createDirectories(root.toRealPath().resolve("initial"));
+        var projects = new InMemoryProjectStore();
+        projects.create(Project.create(
+                        PROJECT,
+                        TENANT,
+                        PRINCIPAL,
+                        "policy-test",
+                        "",
+                        new ProjectConfigurationRef("config-1", "1"),
+                        NOW,
+                        Map.of())
+                .assignDefaultWorkspace(INITIAL_WORKSPACE, NOW));
+        var workspaces = new InMemoryWorkspaceStore();
+        var locations = new HostWorkspaceLocationStore();
+        locations.register(INITIAL_WORKSPACE, realRoot);
+        workspaces.create(Workspace.provision(INITIAL_WORKSPACE, PROJECT, WorkspaceRevision.initial("revision"), NOW)
+                .activate(NOW));
+        var registry = new InMemoryAuthorizedDirectoryStore();
+        var provisioning = new AuthorizedWorkspaceProvisioning(
+                PROJECT,
+                workspaces,
+                locations,
+                new WorkspaceService(projects, workspaces, () -> NOW),
+                TENANT,
+                PRINCIPAL,
+                () -> NOW,
+                HostWorkspaceScope.initial(AuthorizedHostDirectory.of(INITIAL_WORKSPACE, realRoot)),
+                registry,
+                "workspace");
+        Path targetRoot = Files.createDirectories(root.toRealPath().resolve("target"));
+        WorkspaceId workspaceId = provisioning
+                .authorizeApprovedAttach(targetRoot, mode)
+                .directory()
+                .workspaceId();
+        RuntimePersistencePorts ports = RuntimePersistencePorts.inMemory();
+        var runtime = new RuntimeToolExecutionVerifier(
+                ports.runs(),
+                ports.state(),
+                ports.interactions(),
+                io.haifa.agent.runtime.core.tool.ToolRequestCanonicalizer.identity(),
+                (run, binding, request) ->
+                        new PolicyDecision(PolicyEffect.ALLOW, Optional.empty(), "ALLOW", "Allowed", "requirement"));
+        return new Fixture(
+                new CodingAgentExecutionPolicy(
+                        runtime,
+                        provisioning,
+                        TENANT,
+                        PRINCIPAL,
+                        ExecutionEnvironmentRef.empty(),
+                        PROFILE,
+                        ExecutionScratchSpaceSpec.none(),
+                        Duration.ofSeconds(30),
+                        4096,
+                        Optional.empty()),
+                provisioning,
+                workspaceId);
+    }
+
+    private static ExecutionRequest internal(List<String> suffix, WorkspaceId workspace) {
+        var argv = new java.util.ArrayList<>(List.of("git", "-c", "credential.interactive=never"));
+        argv.addAll(suffix);
+        return new ExecutionRequest(
+                new ExecutionId("internal"),
+                "internal-key",
+                context(ExecutionOrigin.PRODUCT_INTERNAL, Set.of("execution_run", "git.read"), Optional.empty()),
+                workspace,
+                WorkspacePath.root(workspace),
+                ExecutionCommand.direct(argv),
+                ExecutionEnvironmentRef.empty(),
+                new ExecutionLimits(Duration.ofSeconds(15), internalGitOutputBudget(suffix), 64 * 1024),
+                PROFILE);
+    }
+
+    private static int internalGitOutputBudget(List<String> suffix) {
+        return suffix.equals(List.of("status", "--porcelain=v1", "--untracked-files=normal"))
+                        || suffix.equals(List.of("diff", "--numstat", "HEAD", "--"))
+                ? 256 * 1024
+                : 4096;
+    }
+
+    private static List<List<String>> allowedInternalGitSuffixes() {
+        return List.of(
+                List.of("rev-parse", "--show-toplevel"),
+                List.of("rev-parse", "--is-inside-work-tree"),
+                List.of("rev-parse", "HEAD"),
+                List.of("rev-parse", "--verify", "HEAD"),
+                List.of("symbolic-ref", "--short", "-q", "HEAD"),
+                List.of("submodule", "status"),
+                List.of("status", "--porcelain=v1", "--untracked-files=normal"),
+                List.of("diff", "--numstat", "HEAD", "--"));
+    }
+
+    private static List<List<String>> forbiddenInternalGitSuffixes() {
+        return List.of(
+                List.of("status"),
+                List.of("status", "--porcelain=v1", "--untracked-files=all"),
+                List.of("-c", "core.pager=cat", "status", "--porcelain=v1", "--untracked-files=normal"),
+                List.of("fetch", "origin"),
+                List.of("push", "origin", "main"),
+                List.of("config", "user.email", "attacker@example.test"));
+    }
+
+    private static ExecutionRequest userCommand(String command, WorkspaceId workspace) {
+        String digest = ExecutionRequest.digestWithScratch(
+                io.haifa.agent.policy.api.PolicyDigest.sha256Fields(List.of(command, ".")),
+                ExecutionScratchSpaceSpec.none());
+        return new ExecutionRequest(
+                new ExecutionId("user"),
+                "user-key",
+                context(ExecutionOrigin.PRODUCT_USER_COMMAND, Set.of("execution_run"), Optional.empty()),
+                workspace,
+                WorkspacePath.root(workspace),
+                ExecutionCommand.shell(command),
+                ExecutionEnvironmentRef.empty(),
+                new ExecutionLimits(Duration.ofSeconds(10), 16 * 1024 * 1024, 16 * 1024 * 1024),
+                PROFILE,
+                io.haifa.agent.execution.api.ExecutionInput.none(),
+                digest,
+                ExecutionScratchSpaceSpec.none());
+    }
+
+    private static ExecutionRequest runtimeRequest(ToolCallId source, WorkspaceId workspace) {
+        return new ExecutionRequest(
+                new ExecutionId("runtime"),
+                "runtime-key",
+                context(ExecutionOrigin.RUNTIME_TOOL, Set.of("execution_run"), Optional.of(source)),
+                workspace,
+                WorkspacePath.root(workspace),
+                ExecutionCommand.shell("git status"),
+                ExecutionEnvironmentRef.empty(),
+                new ExecutionLimits(Duration.ofSeconds(10), 4096, 4096, 4),
+                PROFILE);
+    }
+
+    private static TrustedExecutionContext context(
+            ExecutionOrigin origin, Set<String> capabilities, Optional<ToolCallId> source) {
+        return new TrustedExecutionContext(TENANT, "run", PRINCIPAL, capabilities, origin, source);
+    }
+
+    private record Fixture(
+            CodingAgentExecutionPolicy policy, AuthorizedWorkspaceProvisioning provisioning, WorkspaceId workspaceId) {}
+}

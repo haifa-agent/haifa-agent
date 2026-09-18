@@ -55,7 +55,7 @@ class JsonSchema202012ValidatorTest {
 
         assertThatThrownBy(() -> new ToolCatalogBuilder()
                         .register(
-                                new io.haifa.agent.tool.api.ToolAlias("remote"),
+                                new io.haifa.agent.tool.api.ToolAlias("file_read"),
                                 invalid,
                                 "binding",
                                 ToolFixtures.provider()))
@@ -84,7 +84,7 @@ class JsonSchema202012ValidatorTest {
 
         assertThat(new ToolCatalogBuilder()
                         .register(
-                                new io.haifa.agent.tool.api.ToolAlias("local"),
+                                new io.haifa.agent.tool.api.ToolAlias("file_read"),
                                 withInputSchema(valid),
                                 "binding",
                                 ToolFixtures.provider())
@@ -94,7 +94,7 @@ class JsonSchema202012ValidatorTest {
                 .hasSize(1);
         assertThatThrownBy(() -> new ToolCatalogBuilder()
                         .register(
-                                new io.haifa.agent.tool.api.ToolAlias("unresolved"),
+                                new io.haifa.agent.tool.api.ToolAlias("file_read"),
                                 withInputSchema(unresolved),
                                 "binding",
                                 ToolFixtures.provider()))
@@ -146,7 +146,7 @@ class JsonSchema202012ValidatorTest {
 
         assertThatThrownBy(() -> new ToolCatalogBuilder()
                         .register(
-                                new io.haifa.agent.tool.api.ToolAlias("pattern"),
+                                new io.haifa.agent.tool.api.ToolAlias("file_read"),
                                 invalid,
                                 "binding",
                                 ToolFixtures.provider()))

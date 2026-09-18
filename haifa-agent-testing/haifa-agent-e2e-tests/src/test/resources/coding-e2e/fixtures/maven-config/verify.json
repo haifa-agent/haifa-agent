@@ -1,0 +1,10 @@
+{
+  "sources": [
+    "src/main/java/sample/App.java"
+  ],
+  "requiredText": {
+    "pom.xml": [
+      "<sourceDirectory>src/main/java</sourceDirectory>"
+    ]
+  }
+}

@@ -1,7 +1,9 @@
 package io.haifa.agent.sandbox.api;
 
 import io.haifa.agent.execution.api.ExecutionCommand;
+import io.haifa.agent.execution.api.ExecutionInput;
 import io.haifa.agent.execution.api.ExecutionLimits;
+import io.haifa.agent.execution.api.ExecutionScratchSpaceSpec;
 import io.haifa.agent.project.path.WorkspacePath;
 import java.util.Map;
 import java.util.Objects;
@@ -10,11 +12,32 @@ public record SandboxExecution(
         ExecutionCommand command,
         WorkspacePath workingDirectory,
         Map<String, String> environment,
-        ExecutionLimits limits) {
+        ExecutionLimits limits,
+        ExecutionInput input,
+        ExecutionScratchSpaceSpec scratchSpace) {
+    public SandboxExecution(
+            ExecutionCommand command,
+            WorkspacePath workingDirectory,
+            Map<String, String> environment,
+            ExecutionLimits limits,
+            ExecutionInput input) {
+        this(command, workingDirectory, environment, limits, input, ExecutionScratchSpaceSpec.none());
+    }
+
+    public SandboxExecution(
+            ExecutionCommand command,
+            WorkspacePath workingDirectory,
+            Map<String, String> environment,
+            ExecutionLimits limits) {
+        this(command, workingDirectory, environment, limits, ExecutionInput.none(), ExecutionScratchSpaceSpec.none());
+    }
+
     public SandboxExecution {
         command = Objects.requireNonNull(command, "command must not be null");
         workingDirectory = Objects.requireNonNull(workingDirectory, "workingDirectory must not be null");
         environment = Map.copyOf(Objects.requireNonNull(environment, "environment must not be null"));
         limits = Objects.requireNonNull(limits, "limits must not be null");
+        input = Objects.requireNonNull(input, "input must not be null");
+        scratchSpace = Objects.requireNonNull(scratchSpace, "scratchSpace must not be null");
     }
 }

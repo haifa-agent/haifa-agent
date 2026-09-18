@@ -1,0 +1,98 @@
+package io.haifa.agent.model.openai;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.model.api.AgentChatRequest;
+import io.haifa.agent.model.api.CredentialRef;
+import io.haifa.agent.model.api.ModelApiStyles;
+import io.haifa.agent.model.api.ModelCallId;
+import io.haifa.agent.model.api.ModelCapability;
+import io.haifa.agent.model.api.ModelDefinitionId;
+import io.haifa.agent.model.api.ModelMessage;
+import io.haifa.agent.model.api.ModelMessageRole;
+import io.haifa.agent.model.api.ResolvedCredential;
+import io.haifa.agent.model.api.ResolvedModelSnapshot;
+import java.net.http.HttpClient;
+import java.time.Duration;
+import java.util.EnumSet;
+import java.util.List;
+import java.util.Map;
+import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.Test;
+
+class AliyunBailianLiveIT {
+    @Test
+    void invokesBailianWhenExplicitlyEnabled() {
+        boolean enabled = "true".equalsIgnoreCase(System.getenv("HAIFA_BAILIAN_LIVE_TEST"));
+        String apiKey = System.getenv("DASHSCOPE_API_KEY");
+        String workspaceId = System.getenv("HAIFA_BAILIAN_WORKSPACE_ID");
+        String modelId = System.getenv("HAIFA_BAILIAN_MODEL_ID");
+        Assumptions.assumeTrue(enabled
+                && apiKey != null
+                && !apiKey.isBlank()
+                && workspaceId != null
+                && !workspaceId.isBlank()
+                && modelId != null
+                && !modelId.isBlank());
+        var provider = AliyunBailianProviderFactory.provider(
+                new AliyunBailianProviderFactory.ProviderConfiguration(
+                        "live-v1",
+                        workspaceId,
+                        System.getenv().getOrDefault("HAIFA_BAILIAN_REGION", "cn-beijing"),
+                        new CredentialRef("env://DASHSCOPE_API_KEY")),
+                List.of(new AliyunBailianProviderFactory.ModelProfile(
+                        new ModelDefinitionId("bailian-live"),
+                        "live-v1",
+                        modelId,
+                        "Bailian Live Model",
+                        EnumSet.of(ModelCapability.TEXT_CHAT),
+                        131_072,
+                        8_192,
+                        Map.of("thinking_profile", "none", "thinking_enabled", false))));
+        var definition = provider.models().getFirst();
+        var adapter = new OpenAiCompatibleChatModel(
+                provider,
+                HttpClient.newBuilder()
+                        .followRedirects(HttpClient.Redirect.NEVER)
+                        .build(),
+                new ObjectMapper(),
+                ignored -> new ResolvedCredential(apiKey));
+        var snapshot = ResolvedModelSnapshot.create(
+                provider.id(),
+                provider.version(),
+                definition.id(),
+                definition.version(),
+                definition.providerModelId(),
+                ModelApiStyles.adapterType(definition.style()),
+                "1.0.0",
+                definition.style(),
+                provider.binding(definition.style()).dialect(),
+                provider.endpoint(),
+                provider.credentialRef(),
+                provider.nativeStreaming(),
+                definition.capabilities(),
+                definition.contextWindow(),
+                definition.maxOutputTokens(),
+                provider.options(),
+                definition.options());
+
+        var result = adapter.invoke(new AgentChatRequest(
+                new ModelCallId("bailian-live-call"),
+                new AgentRunId("bailian-live-run"),
+                1,
+                1,
+                snapshot,
+                List.of(
+                        ModelMessage.text(
+                                ModelMessageRole.USER,
+                                "Analyze whether 17 multiplied by 19 is greater than 300, then reply with exactly BAILIAN_OK.")),
+                List.of(),
+                2_048,
+                Duration.ofSeconds(60),
+                Map.of()));
+
+        assertThat(result.content()).contains("BAILIAN_OK");
+    }
+}

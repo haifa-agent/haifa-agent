@@ -4,4 +4,8 @@ package io.haifa.agent.model.api;
 @FunctionalInterface
 public interface CredentialResolver {
     ResolvedCredential resolve(CredentialRef reference);
+
+    default ResolvedCredential refresh(CredentialRef reference) {
+        return resolve(reference);
+    }
 }

@@ -1,0 +1,28 @@
+schemaVersion: haifa.model-catalog-binding/v1
+bindingId: tokenrhythm-seed-2-1-pro
+version: "2026-09-m3"
+providerModelId: seed-2.1-pro
+displayName: Seed 2.1 Pro via TokenRhythm
+status: ACTIVE
+apiStyle: openai-chat-completions
+dialect: tokenrhythm-openai-chat
+capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
+profile:
+  version: "2.0"
+  reasoningBehavior: OPTIONAL
+  allowedReasoningModes: [DISABLED, ENABLED]
+  allowedReasoningEfforts: [HIGH]
+  maximumReasoningTokens: null
+  minimumOutputTokens: 1
+  maximumOutputTokens: 131072
+  contextWindowTokens: 262144
+  toolReasoningContinuationRequired: false
+  nativeStreaming: true
+  usageStreaming: true
+  reasoningStreaming: true
+  partialOutputFailureBehavior: NON_RETRYABLE
+  inputModalities: [TEXT]
+  outputModalities: [TEXT]
+  imageInput: null
+  status: VERIFIED
+  lastVerifiedOn: "2026-09-05"

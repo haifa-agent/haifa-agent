@@ -6,4 +6,8 @@ public interface ToolProvider {
     ToolProviderId id();
 
     ToolResult invoke(ToolInvocationRequest request);
+
+    default ToolReconciliation reconcile(ToolReconciliationRequest request) {
+        return ToolReconciliation.unsupported();
+    }
 }

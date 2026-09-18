@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.haifa.agent.application.project.persistence.ProjectProductSessionMapper">
+
+    <resultMap id="productSessionRow"
+               type="io.haifa.agent.application.project.persistence.ProjectProductSessionRow">
+        <constructor>
+            <arg column="session_id" javaType="java.lang.String"/>
+            <arg column="schema_version" javaType="java.lang.String"/>
+            <arg column="project_id" javaType="java.lang.String"/>
+            <arg column="workspace_id" javaType="java.lang.String"/>
+            <arg column="tenant_id" javaType="java.lang.String"/>
+            <arg column="principal_id" javaType="java.lang.String"/>
+            <arg column="principal_type" javaType="java.lang.String"/>
+            <arg column="configuration_id" javaType="java.lang.String"/>
+            <arg column="configuration_version" javaType="java.lang.String"/>
+            <arg column="configuration_digest" javaType="java.lang.String"/>
+            <arg column="product_profile_ref" javaType="java.lang.String"/>
+        </constructor>
+    </resultMap>
+
+    <select id="find" resultMap="productSessionRow">
+        SELECT session_id, schema_version, project_id, workspace_id, tenant_id,
+               principal_id, principal_type, configuration_id, configuration_version,
+               configuration_digest, product_profile_ref
+        FROM project_product_session
+        WHERE session_id = #{sessionId}
+    </select>
+
+    <insert id="insert">
+        INSERT OR IGNORE INTO project_product_session(
+            session_id, schema_version, project_id, workspace_id, tenant_id,
+            principal_id, principal_type, configuration_id, configuration_version,
+            configuration_digest, product_profile_ref
+        ) VALUES (
+            #{row.sessionId}, #{row.schemaVersion}, #{row.projectId}, #{row.workspaceId},
+            #{row.tenantId}, #{row.principalId}, #{row.principalType}, #{row.configurationId},
+            #{row.configurationVersion}, #{row.configurationDigest}, #{row.productProfileRef}
+        )
+    </insert>
+</mapper>

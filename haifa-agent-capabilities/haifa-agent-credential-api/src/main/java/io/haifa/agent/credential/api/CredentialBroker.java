@@ -1,7 +1,18 @@
 package io.haifa.agent.credential.api;
 
-public interface CredentialBroker {
-    CredentialLease issue(CredentialRequest request);
+import java.util.Objects;
+import java.util.Optional;
 
-    SecretRedactor redactor();
+public interface CredentialBroker {
+    Optional<String> getSecret(String credentialId);
+
+    default String requireSecret(String credentialId) {
+        Objects.requireNonNull(credentialId, "credentialId");
+        return getSecret(credentialId)
+                .orElseThrow(() -> new CredentialException("credential unavailable: " + credentialId));
+    }
+
+    default SecretRedactor redactor() {
+        return SecretRedactor.noop();
+    }
 }

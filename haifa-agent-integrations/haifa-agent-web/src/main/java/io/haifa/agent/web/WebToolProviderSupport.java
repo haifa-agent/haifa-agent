@@ -1,0 +1,215 @@
+package io.haifa.agent.web;
+
+import io.haifa.agent.core.tool.ToolResult;
+import io.haifa.agent.tool.api.ToolDispatchState;
+import io.haifa.agent.tool.api.ToolInvocationException;
+import io.haifa.agent.tool.api.ToolInvocationRequest;
+import java.net.URI;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+
+final class WebToolProviderSupport {
+    private WebToolProviderSupport() {}
+
+    static WebProviderInvocationContext context(ToolInvocationRequest request) {
+        return new WebProviderInvocationContext(
+                request.deadline(),
+                request.cancellation()::isCancellationRequested,
+                request.credentials(),
+                new io.haifa.agent.web.WebInvocationObserver() {
+                    @Override
+                    public void dispatched() {
+                        request.observer().dispatched();
+                    }
+
+                    @Override
+                    public void acknowledged() {
+                        request.observer().acknowledged();
+                    }
+                });
+    }
+
+    static WebSearchRequest searchRequest(Map<String, Object> values) {
+        try {
+            return new WebSearchRequest(
+                    text(values, "query"),
+                    integer(values, "maxResults", 5),
+                    optionalText(values, "language"),
+                    optionalText(values, "country"),
+                    optionalEnum(values, "freshness", io.haifa.agent.web.WebFreshness.class),
+                    strings(values, "includeDomains"),
+                    strings(values, "excludeDomains"),
+                    optionalEnum(values, "safeSearch", io.haifa.agent.web.WebSafeSearch.class));
+        } catch (IllegalArgumentException exception) {
+            throw invalid("web search arguments are invalid");
+        }
+    }
+
+    static void requireSupported(WebSearchRequest request, Set<WebSearchOption> supported) {
+        requireOption(request.language().isPresent(), WebSearchOption.LANGUAGE, supported);
+        requireOption(request.country().isPresent(), WebSearchOption.COUNTRY, supported);
+        requireOption(request.freshness().isPresent(), WebSearchOption.FRESHNESS, supported);
+        requireOption(!request.includeDomains().isEmpty(), WebSearchOption.INCLUDE_DOMAINS, supported);
+        requireOption(!request.excludeDomains().isEmpty(), WebSearchOption.EXCLUDE_DOMAINS, supported);
+        requireOption(request.safeSearch().isPresent(), WebSearchOption.SAFE_SEARCH, supported);
+    }
+
+    static URI uri(Map<String, Object> values, String key) {
+        try {
+            return URI.create(text(values, key));
+        } catch (IllegalArgumentException exception) {
+            throw new ToolInvocationException(
+                    WebFailureCode.WEB_INVALID_REQUEST.name(), ToolDispatchState.NOT_DISPATCHED, "web URL is invalid");
+        }
+    }
+
+    static <T extends Enum<T>> T enumValue(Map<String, Object> values, String key, Class<T> type, T fallback) {
+        Object value = values.get(key);
+        if (value == null) return fallback;
+        try {
+            return Enum.valueOf(type, String.valueOf(value).trim().toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException exception) {
+            throw invalid("web argument " + key + " is invalid");
+        }
+    }
+
+    static ToolInvocationException map(WebProviderException exception) {
+        return new ToolInvocationException(
+                exception.failureCode().name(), dispatch(exception.dispatchState()), exception.getMessage(), exception);
+    }
+
+    static ToolInvocationException invalid(String message) {
+        return new ToolInvocationException(
+                WebFailureCode.WEB_INVALID_REQUEST.name(), ToolDispatchState.NOT_DISPATCHED, message);
+    }
+
+    static boolean isRecoverableFetchFailure(WebFailureCode code, WebDispatchState state) {
+        return switch (code) {
+            case WEB_INVALID_REQUEST,
+                    WEB_UNSUPPORTED_OPTION,
+                    WEB_URL_DENIED,
+                    WEB_DNS_DENIED,
+                    WEB_AUTH_FAILED,
+                    WEB_RESPONSE_TOO_LARGE,
+                    WEB_UNSUPPORTED_MEDIA_TYPE,
+                    WEB_PROVIDER_RESPONSE_INVALID,
+                    WEB_TIMEOUT,
+                    WEB_PROVIDER_FAILED -> true;
+            default -> false;
+        };
+    }
+
+    static boolean isRecoverableFetchFailure(ToolInvocationException failure) {
+        try {
+            WebFailureCode code = WebFailureCode.valueOf(failure.failureCode());
+            return switch (code) {
+                case WEB_INVALID_REQUEST, WEB_UNSUPPORTED_OPTION, WEB_URL_DENIED, WEB_DNS_DENIED, WEB_AUTH_FAILED ->
+                    true;
+                default -> false;
+            };
+        } catch (IllegalArgumentException ignored) {
+            return false;
+        }
+    }
+
+    static boolean isRecoverableSearchFailure(WebFailureCode code, WebDispatchState state) {
+        return switch (code) {
+            case WEB_INVALID_REQUEST, WEB_PROVIDER_RESPONSE_INVALID, WEB_TIMEOUT, WEB_PROVIDER_FAILED -> true;
+            default -> false;
+        };
+    }
+
+    static ToolResult unavailableSource(String requestedUrl, String failureCode) {
+        return new ToolResult(
+                true,
+                "This web source could not be fetched (" + failureCode + "). Try another citable source.",
+                Map.ofEntries(
+                        Map.entry("requestedUrl", requestedUrl),
+                        Map.entry("finalUrl", requestedUrl),
+                        Map.entry("content", ""),
+                        Map.entry("format", "text"),
+                        Map.entry("mediaType", "text/plain"),
+                        Map.entry("contentSha256", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
+                        Map.entry("truncated", false),
+                        Map.entry("untrustedExternalContent", true),
+                        Map.entry("failureCode", failureCode),
+                        Map.entry("sourceAvailable", false),
+                        Map.entry("retryWithAnotherSource", true)),
+                List.of(),
+                List.of(),
+                false);
+    }
+
+    static ToolResult unavailableSearch(String query, String failureCode) {
+        return new ToolResult(
+                true,
+                "This web search returned no usable results (" + failureCode + "). Refine the query and retry.",
+                Map.of(
+                        "query", query,
+                        "results", List.of(),
+                        "truncated", false,
+                        "untrustedExternalContent", true,
+                        "failureCode", failureCode,
+                        "searchResultsAvailable", false,
+                        "retryWithRefinedQuery", true),
+                List.of(),
+                List.of(),
+                false);
+    }
+
+    private static void requireOption(boolean requested, WebSearchOption option, Set<WebSearchOption> supported) {
+        if (requested && !supported.contains(option)) {
+            throw new ToolInvocationException(
+                    WebFailureCode.WEB_UNSUPPORTED_OPTION.name(),
+                    ToolDispatchState.NOT_DISPATCHED,
+                    "configured web search provider does not support option "
+                            + option.name().toLowerCase(Locale.ROOT));
+        }
+    }
+
+    private static ToolDispatchState dispatch(WebDispatchState state) {
+        return ToolDispatchState.valueOf(state.name());
+    }
+
+    private static String text(Map<String, Object> values, String key) {
+        Object value = values.get(key);
+        if (!(value instanceof String text) || text.isBlank()) throw invalid("web argument " + key + " is required");
+        return text.trim();
+    }
+
+    private static Optional<String> optionalText(Map<String, Object> values, String key) {
+        Object value = values.get(key);
+        if (value == null) return Optional.empty();
+        if (!(value instanceof String text) || text.isBlank()) throw invalid("web argument " + key + " is invalid");
+        return Optional.of(text.trim());
+    }
+
+    private static int integer(Map<String, Object> values, String key, int fallback) {
+        Object value = values.get(key);
+        if (value == null) return fallback;
+        if (!(value instanceof Number number)) throw invalid("web argument " + key + " is invalid");
+        return number.intValue();
+    }
+
+    private static List<String> strings(Map<String, Object> values, String key) {
+        Object value = values.get(key);
+        if (value == null) return List.of();
+        if (!(value instanceof List<?> list) || list.stream().anyMatch(item -> !(item instanceof String))) {
+            throw invalid("web argument " + key + " is invalid");
+        }
+        return list.stream().map(String.class::cast).toList();
+    }
+
+    private static <T extends Enum<T>> Optional<T> optionalEnum(Map<String, Object> values, String key, Class<T> type) {
+        Object value = values.get(key);
+        if (value == null) return Optional.empty();
+        try {
+            return Optional.of(Enum.valueOf(type, String.valueOf(value).trim().toUpperCase(Locale.ROOT)));
+        } catch (IllegalArgumentException exception) {
+            throw invalid("web argument " + key + " is invalid");
+        }
+    }
+}

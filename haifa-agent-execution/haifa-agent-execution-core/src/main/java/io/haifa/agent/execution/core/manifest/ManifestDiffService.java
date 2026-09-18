@@ -29,11 +29,17 @@ public final class ManifestDiffService {
                 changes.add(new FileChange(FileChangeType.REPLACE, path, null, version(oldValue), version(newValue)));
             }
         }
+        Map<ContentIdentity, List<io.haifa.agent.project.path.ProjectPath>> addedByContent = new HashMap<>();
+        added.stream()
+                .filter(path -> newEntries.get(path).type() == io.haifa.agent.project.filesystem.FileType.FILE)
+                .forEach(path -> addedByContent
+                        .computeIfAbsent(identity(newEntries.get(path)), ignored -> new ArrayList<>())
+                        .add(path));
         for (var oldPath : new ArrayList<>(removed)) {
             WorkspaceManifestEntry oldValue = oldEntries.get(oldPath);
-            var candidates = added.stream()
-                    .filter(path -> sameContent(oldValue, newEntries.get(path)))
-                    .toList();
+            var candidates = oldValue.type() == io.haifa.agent.project.filesystem.FileType.FILE
+                    ? addedByContent.getOrDefault(identity(oldValue), List.of())
+                    : List.<io.haifa.agent.project.path.ProjectPath>of();
             if (candidates.size() == 1) {
                 var destination = candidates.get(0);
                 changes.add(new FileChange(
@@ -44,6 +50,7 @@ public final class ManifestDiffService {
                         version(newEntries.get(destination))));
                 removed.remove(oldPath);
                 added.remove(destination);
+                addedByContent.remove(identity(oldValue));
             }
         }
         removed.forEach(path ->
@@ -62,13 +69,13 @@ public final class ManifestDiffService {
         return values;
     }
 
-    private static boolean sameContent(WorkspaceManifestEntry first, WorkspaceManifestEntry second) {
-        return first.type() == second.type()
-                && first.size() == second.size()
-                && first.contentHash().equals(second.contentHash());
+    private static ContentIdentity identity(WorkspaceManifestEntry value) {
+        return new ContentIdentity(value.type(), value.size(), value.contentHash());
     }
 
     private static FileVersion version(WorkspaceManifestEntry value) {
         return new FileVersion(value.type(), value.size(), value.contentHash());
     }
+
+    private record ContentIdentity(io.haifa.agent.project.filesystem.FileType type, long size, String hash) {}
 }

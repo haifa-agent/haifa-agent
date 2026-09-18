@@ -8,9 +8,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.core.run.StructuredOutputRequirement;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.CredentialRef;
+import io.haifa.agent.model.api.ImageDataPart;
+import io.haifa.agent.model.api.ImageUrlPart;
+import io.haifa.agent.model.api.ModelApiBindingDefinition;
+import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelCallId;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelDefinition;
@@ -23,6 +28,8 @@ import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelProviderDefinition;
 import io.haifa.agent.model.api.ModelProviderId;
 import io.haifa.agent.model.api.ModelStatus;
+import io.haifa.agent.model.api.ModelStreamControl;
+import io.haifa.agent.model.api.ModelStreamEvent;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.model.api.ProviderStatus;
@@ -38,6 +45,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
@@ -58,6 +66,7 @@ class OpenAiCompatibleChatModelTest {
     void startServer() throws IOException {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/chat/completions", this::handle);
+        server.createContext("/v1/chat/completions", this::handle);
         server.createContext("/models", this::handle);
         server.start();
         provider = provider(URI.create("http://127.0.0.1:" + server.getAddress().getPort()));
@@ -97,6 +106,469 @@ class OpenAiCompatibleChatModelTest {
     }
 
     @Test
+    void sendsStandardOpenAiChatCompletionsRequestWithoutVendorExtensions() throws Exception {
+        provider = openAiProvider(
+                URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/v1"));
+        response.set(
+                Response.json(
+                        200,
+                        """
+                {"id":"resp-openai","model":"gpt-5.6-luna",
+                 "choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"ready"}}],
+                 "usage":{"prompt_tokens":4,"completion_tokens":2,"total_tokens":6}}
+                """));
+
+        var actual = model().invoke(openAiRequest());
+
+        assertThat(actual.content()).isEqualTo("ready");
+        JsonNode sent = json.readTree(requestBody.get());
+        assertThat(sent.path("model").asText()).isEqualTo("gpt-5.6-luna");
+        assertThat(sent.has("thinking")).isFalse();
+        assertThat(sent.has("reasoning_effort")).isFalse();
+        assertThat(authorization.get()).isEqualTo("Bearer test-secret");
+    }
+
+    @Test
+    void appliesTypedSamplingOptionFrozenInTheModelSnapshot() throws Exception {
+        provider = openAiProvider(
+                URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/v1"));
+        response.set(
+                Response.json(
+                        200,
+                        """
+                {"id":"resp-temperature","model":"gpt-5.6-luna",
+                 "choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"ready"}}],
+                 "usage":{"prompt_tokens":4,"completion_tokens":2,"total_tokens":6}}
+                """));
+        AgentChatRequest request = new AgentChatRequest(
+                new ModelCallId("call-temperature"),
+                new AgentRunId("run-temperature"),
+                1,
+                1,
+                openAiSnapshot(Map.of("temperature", 0.25d)),
+                List.of(ModelMessage.text(ModelMessageRole.USER, "hello")),
+                List.of(),
+                1024,
+                Duration.ofSeconds(5),
+                Map.of());
+
+        model().invoke(request);
+
+        assertThat(json.readTree(requestBody.get()).path("temperature").asDouble())
+                .isEqualTo(0.25d);
+    }
+
+    @Test
+    void mapsFrozenRecordRequirementToJsonSchemaAndParsesTheStructuredFinalObject() throws Exception {
+        provider = openAiProvider(
+                URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/v1"));
+        response.set(Response.json(
+                200,
+                """
+                {"id":"resp-structured","model":"gpt-5.6-luna",
+                 "choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":%s}}],
+                 "usage":{"prompt_tokens":4,"completion_tokens":2,"total_tokens":6}}
+                """
+                        .formatted(json.writeValueAsString("{\"city\":\"Shanghai\",\"days\":2}"))));
+        var requirement = requirement();
+        AgentChatRequest request = new AgentChatRequest(
+                new ModelCallId("call-structured"),
+                new AgentRunId("run-structured"),
+                1,
+                1,
+                openAiSnapshot(),
+                List.of(ModelMessage.text(ModelMessageRole.USER, "plan")),
+                List.of(),
+                1024,
+                Duration.ofSeconds(5),
+                Map.of(),
+                java.util.Optional.of(requirement));
+
+        var actual = model().invoke(request);
+
+        assertThat(actual.structuredOutput()).contains(Map.of("city", "Shanghai", "days", 2));
+        JsonNode format = json.readTree(requestBody.get()).path("response_format");
+        assertThat(format.path("type").asText()).isEqualTo("json_schema");
+        assertThat(format.path("json_schema").path("name").asText()).isEqualTo("TripPlan");
+        assertThat(format.path("json_schema").path("strict").asBoolean()).isTrue();
+        assertThat(format.path("json_schema")
+                        .path("schema")
+                        .path("required")
+                        .get(1)
+                        .asText())
+                .isEqualTo("days");
+    }
+
+    @Test
+    void keepsDeepSeekToolTurnsAvailableWhileUsingJsonObjectModeForTheFinalSchema() throws Exception {
+        response.set(Response.json(
+                200,
+                """
+                {"id":"resp-tool","model":"deepseek-v4-pro",
+                 "choices":[{"index":0,"finish_reason":"tool_calls","message":{"role":"assistant","content":null,
+                   "tool_calls":[{"id":"call-weather","type":"function","function":{"name":"weather","arguments":%s}}]}}],
+                 "usage":{"prompt_tokens":4,"completion_tokens":2,"total_tokens":6}}
+                """
+                        .formatted(json.writeValueAsString("{\"city\":\"Shanghai\"}"))));
+        var tool = new ModelToolSpecification(
+                "weather", "1", "Weather", "weather-input", "1", Map.of("type", "object"), false);
+        AgentChatRequest request = new AgentChatRequest(
+                new ModelCallId("call-structured-tool"),
+                new AgentRunId("run-structured-tool"),
+                1,
+                1,
+                snapshot(),
+                List.of(ModelMessage.text(ModelMessageRole.USER, "plan")),
+                List.of(tool),
+                1024,
+                Duration.ofSeconds(5),
+                Map.of(),
+                java.util.Optional.of(requirement()));
+
+        var actual = model().invoke(request);
+
+        assertThat(actual.toolCalls()).hasSize(1);
+        assertThat(actual.structuredOutput()).isEmpty();
+        JsonNode sent = json.readTree(requestBody.get());
+        assertThat(sent.path("response_format").path("type").asText()).isEqualTo("json_object");
+        assertThat(sent.path("messages").get(1).path("role").asText()).isEqualTo("system");
+        assertThat(sent.path("messages").get(1).path("content").asText()).contains("additionalProperties");
+    }
+
+    @Test
+    void mapsRemoteAndUploadedImagesToStandardChatCompletionsContentParts() throws Exception {
+        provider = openAiProvider(
+                URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/v1"));
+        response.set(
+                Response.json(
+                        200,
+                        """
+                {"id":"resp-image","model":"gpt-5.6-luna",
+                 "choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"two images"}}],
+                 "usage":{"prompt_tokens":8,"completion_tokens":2,"total_tokens":10}}
+                """));
+        ModelMessage message = ModelMessage.user(
+                "describe both images",
+                List.of(
+                        new ImageUrlPart(URI.create("https://images.example.com/cat.png")),
+                        new ImageDataPart("image/png", new byte[] {(byte) 0x89, 0x50, 0x4e, 0x47})));
+
+        var actual = model().invoke(new AgentChatRequest(
+                new ModelCallId("call-image"),
+                new AgentRunId("run-image"),
+                1,
+                1,
+                openAiSnapshot(),
+                List.of(message),
+                List.of(),
+                1024,
+                Duration.ofSeconds(5),
+                Map.of()));
+
+        assertThat(actual.content()).isEqualTo("two images");
+        JsonNode content =
+                json.readTree(requestBody.get()).path("messages").get(0).path("content");
+        assertThat(content.isArray()).isTrue();
+        assertThat(content.get(0).path("type").asText()).isEqualTo("text");
+        assertThat(content.get(0).path("text").asText()).isEqualTo("describe both images");
+        assertThat(content.get(1).path("type").asText()).isEqualTo("image_url");
+        assertThat(content.get(1).path("image_url").path("url").asText())
+                .isEqualTo("https://images.example.com/cat.png");
+        assertThat(content.get(2).path("image_url").path("url").asText()).isEqualTo("data:image/png;base64,iVBORw==");
+    }
+
+    @Test
+    void bridgesStandardOpenAiSynchronousTransportIntoModelStreamEvents() throws Exception {
+        provider = openAiProvider(
+                URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/v1"), false, Map.of());
+        response.set(
+                Response.json(
+                        200,
+                        """
+                {"id":"resp-openai-sync","model":"gpt-5.6-luna",
+                 "choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"ready"}}],
+                 "usage":{"prompt_tokens":4,"completion_tokens":2,"total_tokens":6}}
+                """));
+        List<ModelStreamEvent> events = new ArrayList<>();
+
+        var actual = model().invokeStreaming(openAiRequest(), event -> {
+            events.add(event);
+            return ModelStreamControl.CONTINUE;
+        });
+
+        assertThat(actual.content()).isEqualTo("ready");
+        assertThat(events)
+                .extracting(event -> event.getClass().getSimpleName())
+                .containsExactly("Started", "ContentDelta", "UsageReported");
+        JsonNode sent = json.readTree(requestBody.get());
+        assertThat(sent.path("stream").asBoolean()).isFalse();
+        assertThat(sent.has("stream_options")).isFalse();
+    }
+
+    @Test
+    void refusesInsecureNonLoopbackOpenAiEndpointEvenWhenLocalHttpIsEnabled() {
+        provider = openAiProvider(URI.create("http://example.com/v1"));
+
+        assertThatThrownBy(this::model)
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("loopback host");
+    }
+
+    @Test
+    void acceptsTrustedThirdPartyHttpsHostForStandardChatCompletions() {
+        provider = openAiProvider(
+                URI.create("https://gateway.example.com/v1"), true, Map.of("endpoint_host", "gateway.example.com"));
+
+        model();
+    }
+
+    @Test
+    void rejectsThirdPartyHttpsHostThatDoesNotMatchFrozenTrustedHost() {
+        provider = openAiProvider(
+                URI.create("https://gateway.example.com/v1"), true, Map.of("endpoint_host", "other.example.com"));
+
+        assertThatThrownBy(this::model)
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("provider endpoint host is not allowed");
+    }
+
+    @Test
+    void streamsReasoningContentAndUsageWithoutReturningRawReasoning() throws Exception {
+        response.set(
+                Response.sse(
+                        """
+                data: {"id":"stream-1","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"reasoning_content":"secret thought"},"finish_reason":null}]}
+
+                data: {"id":"stream-1","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"content":"hel"},"finish_reason":null}]}
+
+                data: {"id":"stream-1","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"content":"lo"},"finish_reason":"stop"}]}
+
+                data: {"id":"stream-1","model":"deepseek-v4-pro","choices":[],"usage":{"prompt_tokens":2,"completion_tokens":3}}
+
+                data: [DONE]
+
+                """));
+        List<ModelStreamEvent> events = new ArrayList<>();
+
+        var result = model().invokeStreaming(simpleRequest(), event -> {
+            events.add(event);
+            return ModelStreamControl.CONTINUE;
+        });
+
+        assertThat(result.content()).isEqualTo("hello");
+        assertThat(result.metadata()).containsEntry("reasoningCharacters", 14);
+        assertThat(result.toString()).doesNotContain("secret thought");
+        assertThat(events)
+                .extracting(event -> event.getClass().getSimpleName())
+                .containsExactly("Started", "ReasoningDelta", "ContentDelta", "ContentDelta", "UsageReported");
+        assertThat(events.get(1).toString()).doesNotContain("secret thought");
+        JsonNode sent = json.readTree(requestBody.get());
+        assertThat(sent.path("stream").asBoolean()).isTrue();
+        assertThat(sent.path("stream_options").path("include_usage").asBoolean())
+                .isTrue();
+    }
+
+    @Test
+    void limitsStreamByDecodedSemanticUtf8BytesRatherThanSseEnvelopeBytes() {
+        response.set(
+                Response.sse(
+                        """
+                data: {"id":"stream-semantic","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"reasoning_content":"secret thought"},"finish_reason":null}]}
+
+                data: {"id":"stream-semantic","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":"stop"}]}
+
+                data: {"id":"stream-semantic","model":"deepseek-v4-pro","choices":[],"usage":{"prompt_tokens":2,"completion_tokens":1}}
+
+                data: [DONE]
+
+                """));
+
+        var result = model(19).invokeStreaming(simpleRequest(), ignored -> ModelStreamControl.CONTINUE);
+
+        assertThat(result.content()).isEqualTo("hello");
+        assertThat(result.metadata()).containsEntry("reasoningCharacters", 14);
+    }
+
+    @Test
+    void reportsExactUtf8SemanticLimitAfterPreviouslyObservedOutput() {
+        response.set(
+                Response.sse(
+                        """
+                data: {"id":"stream-utf8","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"content":"a"},"finish_reason":null}]}
+
+                data: {"id":"stream-utf8","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"content":"你"},"finish_reason":"stop"}]}
+
+                data: [DONE]
+
+                """));
+
+        assertThatThrownBy(() -> model(3).invokeStreaming(simpleRequest(), ignored -> ModelStreamControl.CONTINUE))
+                .isInstanceOf(ModelInvocationException.class)
+                .satisfies(error -> {
+                    ModelInvocationException failure = (ModelInvocationException) error;
+                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.OUTPUT_LIMIT_EXCEEDED);
+                    assertThat(failure.providerCode()).isEqualTo("semantic_response_limit_exceeded");
+                    assertThat(failure.outputObserved()).isTrue();
+                    assertThat(failure.retryable()).isFalse();
+                });
+    }
+
+    @Test
+    void assemblesStreamedToolCallFragmentsByStableIndex() {
+        response.set(
+                Response.sse(
+                        """
+                data: {"id":"stream-tool","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"provider-call-1","type":"function","function":{"name":"weather","arguments":"{\\\"city\\\":"}}]},"finish_reason":null}]}
+
+                data: {"id":"stream-tool","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\\"Paris\\\"}"}}]},"finish_reason":"tool_calls"}]}
+
+                data: {"id":"stream-tool","model":"deepseek-v4-pro","choices":[],"usage":{"prompt_tokens":4,"completion_tokens":2}}
+
+                data: [DONE]
+
+                """));
+        List<ModelStreamEvent> events = new ArrayList<>();
+
+        var result = model().invokeStreaming(simpleRequest(), event -> {
+            events.add(event);
+            return ModelStreamControl.CONTINUE;
+        });
+
+        assertThat(result.finishReason()).isEqualTo(ModelFinishReason.TOOL_CALLS);
+        assertThat(result.toolCalls()).singleElement().satisfies(tool -> {
+            assertThat(tool.providerCorrelationId().value()).isEqualTo("provider-call-1");
+            assertThat(tool.name()).isEqualTo("weather");
+            assertThat(tool.arguments()).containsEntry("city", "Paris");
+        });
+        assertThat(events)
+                .filteredOn(ModelStreamEvent.ToolCallDelta.class::isInstance)
+                .hasSize(2);
+    }
+
+    @Test
+    void standardDialectStillRejectsDifferentStreamUsageSnapshots() {
+        provider = openAiProvider(
+                URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/v1"));
+        response.set(
+                Response.sse(
+                        """
+                data: {"id":"strict-stream","model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"answer"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}
+
+                data: {"id":"strict-stream","model":"gpt-5.6-luna","choices":[],"usage":{"prompt_tokens":2,"completion_tokens":1}}
+
+                data: [DONE]
+
+                """));
+
+        assertThatThrownBy(() -> model().invokeStreaming(openAiRequest(), ignored -> ModelStreamControl.CONTINUE))
+                .isInstanceOf(ModelInvocationException.class)
+                .satisfies(error -> assertThat(((ModelInvocationException) error).providerCode())
+                        .isEqualTo("conflicting_stream_usage"));
+    }
+
+    @Test
+    void closesStreamWhenConsumerCancels() {
+        response.set(
+                Response.sse(
+                        """
+                data: {"id":"stream-cancel","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"content":"first"},"finish_reason":null}]}
+
+                data: {"id":"stream-cancel","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"content":"second"},"finish_reason":"stop"}]}
+
+                data: [DONE]
+
+                """));
+
+        assertThatThrownBy(() -> model().invokeStreaming(
+                                simpleRequest(),
+                                event -> event instanceof ModelStreamEvent.ContentDelta
+                                        ? ModelStreamControl.CANCEL
+                                        : ModelStreamControl.CONTINUE))
+                .isInstanceOf(ModelInvocationException.class)
+                .satisfies(error -> assertThat(((ModelInvocationException) error).category())
+                        .isEqualTo(ModelErrorCategory.CANCELLED));
+    }
+
+    @Test
+    void rejectsStreamThatEndsWithoutDoneSentinel() {
+        response.set(
+                Response.sse(
+                        """
+                data: {"id":"stream-cut","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"content":"partial"},"finish_reason":"stop"}]}
+
+                """));
+
+        assertThatThrownBy(() -> model().invokeStreaming(simpleRequest(), ignored -> ModelStreamControl.CONTINUE))
+                .isInstanceOf(ModelInvocationException.class)
+                .satisfies(error -> {
+                    ModelInvocationException failure = (ModelInvocationException) error;
+                    assertThat(failure.providerCode()).isEqualTo("stream_ended_without_done");
+                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.PARTIAL_RESPONSE);
+                    assertThat(failure.outputObserved()).isTrue();
+                    assertThat(failure.retryable()).isFalse();
+                });
+    }
+
+    @Test
+    void streamEndingBeforeConsumableOutputRemainsRetryableTransportFailure() {
+        response.set(
+                Response.sse(
+                        """
+                data: {"id":"stream-cut","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+                """));
+
+        assertThatThrownBy(() -> model().invokeStreaming(simpleRequest(), ignored -> ModelStreamControl.CONTINUE))
+                .isInstanceOf(ModelInvocationException.class)
+                .satisfies(error -> {
+                    ModelInvocationException failure = (ModelInvocationException) error;
+                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.TRANSPORT_ERROR);
+                    assertThat(failure.outputObserved()).isFalse();
+                    assertThat(failure.retryable()).isTrue();
+                });
+    }
+
+    @Test
+    void streamEndingAfterOnlyPrivateReasoningRemainsRetryableTransportFailure() {
+        response.set(
+                Response.sse(
+                        """
+                data: {"id":"reasoning-cut","model":"glm-test","choices":[{"index":0,"delta":{"reasoning_content":"private reasoning"},"finish_reason":null}]}
+
+                """));
+
+        assertThatThrownBy(() -> model().invokeStreaming(simpleRequest(), ignored -> ModelStreamControl.CONTINUE))
+                .isInstanceOf(ModelInvocationException.class)
+                .satisfies(error -> {
+                    ModelInvocationException failure = (ModelInvocationException) error;
+                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.TRANSPORT_ERROR);
+                    assertThat(failure.outputObserved()).isFalse();
+                    assertThat(failure.retryable()).isTrue();
+                });
+    }
+
+    @Test
+    void reasoningSemanticLimitRemainsObservedAndNonRetryable() {
+        response.set(
+                Response.sse(
+                        """
+                data: {"id":"reasoning-limit","model":"glm-test","choices":[{"index":0,"delta":{"reasoning_content":"a"},"finish_reason":null}]}
+
+                data: {"id":"reasoning-limit","model":"glm-test","choices":[{"index":0,"delta":{"reasoning_content":"你你"},"finish_reason":null}]}
+
+                """));
+
+        assertThatThrownBy(() -> model(5).invokeStreaming(simpleRequest(), ignored -> ModelStreamControl.CONTINUE))
+                .isInstanceOf(ModelInvocationException.class)
+                .satisfies(error -> {
+                    ModelInvocationException failure = (ModelInvocationException) error;
+                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.OUTPUT_LIMIT_EXCEEDED);
+                    assertThat(failure.outputObserved()).isTrue();
+                    assertThat(failure.retryable()).isFalse();
+                });
+    }
+
+    @Test
     void preservesAssistantToolCallsAndToolResultCorrelation() throws Exception {
         response.set(
                 Response.json(
@@ -112,7 +584,8 @@ class OpenAiCompatibleChatModelTest {
         List<ModelMessage> messages = List.of(
                 ModelMessage.text(ModelMessageRole.USER, "weather"),
                 ModelMessage.assistant("", List.of(previous)),
-                ModelMessage.tool(new ProviderToolCallCorrelationId("call-1"), "sunny"));
+                ModelMessage.tool(
+                        new ProviderToolCallCorrelationId("call-1"), "sunny", Map.of("temperatureCelsius", 24), true));
         ModelToolSpecification tool = new ModelToolSpecification(
                 "weather",
                 "1.0",
@@ -141,6 +614,12 @@ class OpenAiCompatibleChatModelTest {
                         .asText())
                 .isEqualTo("call-1");
         assertThat(sent.path("messages").get(2).path("tool_call_id").asText()).isEqualTo("call-1");
+        JsonNode toolResult =
+                json.readTree(sent.path("messages").get(2).path("content").asText());
+        assertThat(toolResult.path("summary").asText()).isEqualTo("sunny");
+        assertThat(toolResult.path("structuredData").path("temperatureCelsius").asInt())
+                .isEqualTo(24);
+        assertThat(toolResult.path("truncated").asBoolean()).isTrue();
         assertThat(sent.path("tools")
                         .get(0)
                         .path("function")
@@ -159,8 +638,8 @@ class OpenAiCompatibleChatModelTest {
                 404, ModelErrorCategory.MODEL_NOT_FOUND,
                 408, ModelErrorCategory.TIMEOUT,
                 429, ModelErrorCategory.RATE_LIMITED,
-                500, ModelErrorCategory.PROVIDER_UNAVAILABLE,
-                503, ModelErrorCategory.PROVIDER_UNAVAILABLE);
+                500, ModelErrorCategory.SERVER_ERROR,
+                503, ModelErrorCategory.SERVER_ERROR);
         expected.forEach((status, category) -> {
             response.set(Response.json(
                     status, "{\"error\":{\"code\":\"failure-test-secret\",\"message\":\"safe test-secret detail\"}}"));
@@ -179,11 +658,27 @@ class OpenAiCompatibleChatModelTest {
     }
 
     @Test
+    void preservesTrustedRetryAfterAsTypedMetadata() {
+        response.set(Response.json(429, "{\"error\":{\"code\":\"rate_limited\"}}", Map.of("Retry-After", "5")));
+
+        assertThatThrownBy(() -> model().invoke(simpleRequest()))
+                .isInstanceOf(ModelInvocationException.class)
+                .satisfies(error -> assertThat(((ModelInvocationException) error).retryAfter())
+                        .contains(Duration.ofSeconds(5)));
+    }
+
+    @Test
     void rejectsInvalidJsonChoicesArgumentsContentTypeAndOversizedBodies() {
         response.set(Response.json(200, "not-json"));
         assertMalformed();
         response.set(Response.json(200, "{\"id\":\"x\",\"model\":\"deepseek-v4-pro\",\"choices\":[],\"usage\":{}}"));
-        assertMalformed();
+        assertThatThrownBy(() -> model().invoke(simpleRequest()))
+                .isInstanceOf(ModelInvocationException.class)
+                .satisfies(error -> {
+                    ModelInvocationException invocation = (ModelInvocationException) error;
+                    assertThat(invocation.category()).isEqualTo(ModelErrorCategory.EMPTY_RESPONSE);
+                    assertThat(invocation.retryable()).isTrue();
+                });
         response.set(
                 Response.json(
                         200,
@@ -209,7 +704,7 @@ class OpenAiCompatibleChatModelTest {
         assertThatThrownBy(() -> model(128).invoke(simpleRequest()))
                 .isInstanceOf(ModelInvocationException.class)
                 .satisfies(error -> assertThat(((ModelInvocationException) error).providerCode())
-                        .isEqualTo("response_too_large"));
+                        .isEqualTo("transport_response_limit_exceeded"));
     }
 
     @Test
@@ -253,6 +748,7 @@ class OpenAiCompatibleChatModelTest {
         response.set(Response.json(400, "{\"error\":{\"code\":\"context_length_exceeded\",\"message\":\"too long\"}}"));
         assertThatThrownBy(() -> model().invoke(simpleRequest()))
                 .isInstanceOf(ModelInvocationException.class)
+                .hasMessageContaining("too long")
                 .satisfies(error -> assertThat(((ModelInvocationException) error).category())
                         .isEqualTo(ModelErrorCategory.CONTEXT_TOO_LONG));
 
@@ -266,7 +762,7 @@ class OpenAiCompatibleChatModelTest {
                 List.of(),
                 16,
                 Duration.ofSeconds(1),
-                Map.of("temperature", 0));
+                Map.of("unsupported_option", 0));
         assertThatThrownBy(() -> model().invoke(unsupported))
                 .isInstanceOf(ModelInvocationException.class)
                 .satisfies(error -> assertThat(((ModelInvocationException) error).category())
@@ -281,7 +777,7 @@ class OpenAiCompatibleChatModelTest {
                 .isInstanceOf(ModelInvocationException.class)
                 .satisfies(error -> {
                     ModelInvocationException invocation = (ModelInvocationException) error;
-                    assertThat(invocation.category()).isEqualTo(ModelErrorCategory.PROVIDER_UNAVAILABLE);
+                    assertThat(invocation.category()).isEqualTo(ModelErrorCategory.TRANSPORT_ERROR);
                     assertThat(invocation.retryable()).isTrue();
                 });
 
@@ -304,27 +800,42 @@ class OpenAiCompatibleChatModelTest {
     }
 
     @Test
-    void rejectsThinkingEnabledProviderAndResolvesOnlyEnvironmentReferences() {
+    void acceptsThinkingEnabledProviderAndRejectsUnsupportedEffort() {
         ModelProviderDefinition enabled = new ModelProviderDefinition(
                 provider.id(),
                 provider.version(),
                 provider.displayName(),
-                provider.adapterType(),
                 provider.endpoint(),
                 provider.credentialRef(),
+                provider.nativeStreaming(),
                 provider.status(),
+                provider.apiBindings(),
                 provider.models(),
-                Map.of("thinking", "enabled"),
+                Map.of("thinking", "enabled", "reasoning_effort", "high"),
+                Map.of());
+        new OpenAiCompatibleChatModel(
+                enabled, HttpClient.newHttpClient(), json, ignored -> new ResolvedCredential("secret"), true, 1024);
+        ModelProviderDefinition invalid = new ModelProviderDefinition(
+                enabled.id(),
+                enabled.version(),
+                enabled.displayName(),
+                enabled.endpoint(),
+                enabled.credentialRef(),
+                enabled.nativeStreaming(),
+                enabled.status(),
+                enabled.apiBindings(),
+                enabled.models(),
+                Map.of("thinking", "enabled", "reasoning_effort", "medium"),
                 Map.of());
         assertThatThrownBy(() -> new OpenAiCompatibleChatModel(
-                        enabled,
+                        invalid,
                         HttpClient.newHttpClient(),
                         json,
                         ignored -> new ResolvedCredential("secret"),
                         true,
                         1024))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("thinking=disabled");
+                .hasMessageContaining("high or max");
 
         EnvironmentCredentialResolver resolver =
                 new EnvironmentCredentialResolver(name -> name.equals("DEEPSEEK_API_KEY") ? "resolved-secret" : null);
@@ -333,6 +844,41 @@ class OpenAiCompatibleChatModelTest {
         assertThatThrownBy(() -> resolver.resolve(new CredentialRef("file://secret")))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("scheme");
+    }
+
+    @Test
+    void sendsEnabledHighThinkingAndProtectsSynchronousReasoning() throws Exception {
+        response.set(
+                Response.json(
+                        200,
+                        """
+                {"id":"thinking-1","model":"deepseek-v4-pro","choices":[{"finish_reason":"stop",
+                 "message":{"content":"answer","reasoning_content":"private chain"}}],
+                 "usage":{"prompt_tokens":3,"completion_tokens":4,
+                          "completion_tokens_details":{"reasoning_tokens":2}}}
+                """));
+        AgentChatRequest request = new AgentChatRequest(
+                new ModelCallId("thinking-call"),
+                new AgentRunId("thinking-run"),
+                1,
+                1,
+                reasoningSnapshot(),
+                List.of(ModelMessage.text(ModelMessageRole.USER, "hello")),
+                List.of(),
+                1024,
+                Duration.ofSeconds(5),
+                Map.of());
+
+        var result = model().invoke(request);
+
+        JsonNode sent = json.readTree(requestBody.get());
+        assertThat(sent.path("thinking").path("type").asText()).isEqualTo("enabled");
+        assertThat(sent.path("reasoning_effort").asText()).isEqualTo("high");
+        assertThat(result.reasoning()).isPresent();
+        assertThat(result.reasoning().orElseThrow().use(java.util.function.Function.identity()))
+                .isEqualTo("private chain");
+        assertThat(result.toString()).doesNotContain("private chain");
+        assertThat(result.usage().reasoningTokens()).isEqualTo(2);
     }
 
     @Test
@@ -353,6 +899,91 @@ class OpenAiCompatibleChatModelTest {
         assertThat(healthy.status()).isEqualTo(io.haifa.agent.model.api.ProviderHealthStatus.HEALTHY);
         assertThat(limited.status()).isEqualTo(io.haifa.agent.model.api.ProviderHealthStatus.RATE_LIMITED);
         assertThat(provider.status()).isEqualTo(ProviderStatus.ACTIVE);
+    }
+
+    @Test
+    void classifiesOversized402ResponseAsPaymentRequired() {
+        String huge402Body = "<html><body>" + "A".repeat(5000) + "</body></html>";
+        response.set(new Response(402, "text/html", huge402Body));
+
+        assertThatThrownBy(() -> model(100).invoke(simpleRequest()))
+                .isInstanceOf(ModelInvocationException.class)
+                .satisfies(error -> {
+                    ModelInvocationException invocation = (ModelInvocationException) error;
+                    assertThat(invocation.category()).isEqualTo(ModelErrorCategory.PAYMENT_REQUIRED);
+                    assertThat(invocation.httpStatus()).isEqualTo(402);
+                    assertThat(invocation.retryable()).isFalse();
+                    assertThat(invocation.getMessage()).isEqualTo("请检查 Provider 账户余额、套餐、模型授权或账单状态后重试");
+                });
+    }
+
+    @Test
+    void emitsPrunedToolResultAsPlainTextNoticeWithoutStructuredData() throws Exception {
+        response.set(
+                Response.json(
+                        200,
+                        """
+                {"id":"resp-pruned","model":"deepseek-v4-pro",
+                 "choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"understood"}}],
+                 "usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12}}
+                """));
+
+        ProviderToolCallCorrelationId corrId = new ProviderToolCallCorrelationId("call-read-1");
+        String prunedNotice =
+                "File content [Historical large pure-read payload pruned; rerun to inspect current state.]";
+        ModelMessage toolMessage = ModelMessage.tool(corrId, prunedNotice, Map.of(), false);
+
+        AgentChatRequest req = request(
+                List.of(
+                        ModelMessage.text(ModelMessageRole.USER, "read file"),
+                        ModelMessage.assistant(
+                                "", List.of(new ModelToolCall(corrId, "file_read", Map.of("path", "file.txt")))),
+                        toolMessage),
+                List.of());
+
+        model().invoke(req);
+
+        JsonNode sent = json.readTree(requestBody.get());
+        JsonNode messagesNode = sent.path("messages");
+        assertThat(messagesNode).hasSize(3);
+
+        JsonNode toolNode = messagesNode.get(2);
+        assertThat(toolNode.path("role").asText()).isEqualTo("tool");
+        assertThat(toolNode.path("tool_call_id").asText()).isEqualTo("call-read-1");
+        assertThat(toolNode.path("content").asText()).isEqualTo(prunedNotice);
+        assertThat(toolNode.path("content").asText()).doesNotContain("structuredData");
+    }
+
+    @Test
+    void emitsTruncatedToolCallArgumentsOnTheWire() throws Exception {
+        response.set(
+                Response.json(
+                        200,
+                        """
+                {"id":"resp-truncated","model":"deepseek-v4-pro",
+                 "choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"done"}}],
+                 "usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12}}
+                """));
+
+        ProviderToolCallCorrelationId corrId = new ProviderToolCallCorrelationId("call-write-1");
+        String placeholder = "[Code content truncated (5000 chars); file written to src/Foo.java]";
+        ModelToolCall toolCall = new ModelToolCall(
+                corrId, "write_to_file", Map.of("targetFile", "src/Foo.java", "codeContent", placeholder));
+
+        AgentChatRequest req = request(
+                List.of(
+                        ModelMessage.text(ModelMessageRole.USER, "write file"),
+                        ModelMessage.assistant("", List.of(toolCall))),
+                List.of());
+
+        model().invoke(req);
+
+        JsonNode sent = json.readTree(requestBody.get());
+        JsonNode toolCallNode = sent.path("messages").get(1).path("tool_calls").get(0);
+        String argumentsStr = toolCallNode.path("function").path("arguments").asText();
+        JsonNode parsedArgs = json.readTree(argumentsStr);
+        assertThat(parsedArgs.path("codeContent").asText()).isEqualTo(placeholder);
+        assertThat(parsedArgs.path("targetFile").asText()).isEqualTo("src/Foo.java");
     }
 
     private void assertMalformed() {
@@ -380,6 +1011,20 @@ class OpenAiCompatibleChatModelTest {
 
     private AgentChatRequest simpleRequest() {
         return request(List.of(ModelMessage.text(ModelMessageRole.USER, "hello")), List.of());
+    }
+
+    private AgentChatRequest openAiRequest() {
+        return new AgentChatRequest(
+                new ModelCallId("call-openai"),
+                new AgentRunId("run-openai"),
+                1,
+                1,
+                openAiSnapshot(),
+                List.of(ModelMessage.text(ModelMessageRole.USER, "hello")),
+                List.of(),
+                1024,
+                Duration.ofSeconds(5),
+                Map.of());
     }
 
     private AgentChatRequest request(List<ModelMessage> messages, List<ModelToolSpecification> tools) {
@@ -425,13 +1070,85 @@ class OpenAiCompatibleChatModelTest {
                 "deepseek-v4-pro",
                 "openai-compatible",
                 "1.0.0",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                OpenAiCompatibleDialects.DEEPSEEK,
                 provider.endpoint(),
                 provider.credentialRef(),
+                provider.nativeStreaming(),
                 EnumSet.allOf(ModelCapability.class),
                 1_048_576,
                 393_216,
                 provider.options(),
                 Map.of("thinking", "disabled"));
+    }
+
+    private ResolvedModelSnapshot reasoningSnapshot() {
+        return ResolvedModelSnapshot.create(
+                provider.id(),
+                provider.version(),
+                new ModelDefinitionId("deepseek-v4-pro"),
+                "model-v1",
+                "deepseek-v4-pro",
+                "openai-compatible",
+                "1.0.0",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                OpenAiCompatibleDialects.DEEPSEEK,
+                provider.endpoint(),
+                provider.credentialRef(),
+                provider.nativeStreaming(),
+                EnumSet.allOf(ModelCapability.class),
+                1_048_576,
+                393_216,
+                Map.of("thinking", "enabled", "reasoning_effort", "high"),
+                Map.of("thinking", "enabled", "reasoning_effort", "high"));
+    }
+
+    private ResolvedModelSnapshot openAiSnapshot() {
+        return openAiSnapshot(Map.of());
+    }
+
+    private ResolvedModelSnapshot openAiSnapshot(Map<String, Object> invocationOptions) {
+        return ResolvedModelSnapshot.create(
+                provider.id(),
+                provider.version(),
+                new ModelDefinitionId("openai-gpt-5.6-luna"),
+                "model-v1",
+                "gpt-5.6-luna",
+                "openai-compatible",
+                "1.0.0",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                ModelApiBindingDefinition.STANDARD_DIALECT,
+                provider.endpoint(),
+                provider.credentialRef(),
+                provider.nativeStreaming(),
+                EnumSet.of(
+                        ModelCapability.TEXT_CHAT,
+                        ModelCapability.IMAGE_UPLOAD_INPUT,
+                        ModelCapability.IMAGE_URL_INPUT,
+                        ModelCapability.TOOL_CALLING,
+                        ModelCapability.STRUCTURED_OUTPUT),
+                128_000,
+                8_192,
+                provider.options(),
+                invocationOptions);
+    }
+
+    private static StructuredOutputRequirement requirement() {
+        return new StructuredOutputRequirement(
+                "java-record:TripPlan",
+                "sha256:test",
+                "TripPlan",
+                Map.of(
+                        "type",
+                        "object",
+                        "additionalProperties",
+                        false,
+                        "properties",
+                        Map.of(
+                                "city", Map.of("type", "string"),
+                                "days", Map.of("type", "integer")),
+                        "required",
+                        List.of("city", "days")));
     }
 
     private ModelProviderDefinition provider(URI endpoint) {
@@ -447,17 +1164,54 @@ class OpenAiCompatibleChatModelTest {
                 1_048_576,
                 393_216,
                 Map.of("thinking", "disabled"),
-                Map.of());
+                Map.of(),
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS);
         return new ModelProviderDefinition(
                 providerId,
                 "provider-v1",
                 "DeepSeek",
-                "openai-compatible",
                 endpoint,
                 new CredentialRef("env://DEEPSEEK_API_KEY"),
+                true,
                 ProviderStatus.ACTIVE,
+                List.of(new ModelApiBindingDefinition(
+                        ModelApiStyles.OPENAI_CHAT_COMPLETIONS, OpenAiCompatibleDialects.DEEPSEEK)),
                 List.of(model),
                 Map.of("thinking", "disabled"),
+                Map.of());
+    }
+
+    private ModelProviderDefinition openAiProvider(URI endpoint) {
+        return openAiProvider(endpoint, true, Map.of());
+    }
+
+    private ModelProviderDefinition openAiProvider(
+            URI endpoint, boolean nativeStreaming, Map<String, Object> providerOptions) {
+        ModelProviderId providerId = new ModelProviderId("openai");
+        ModelDefinition model = new ModelDefinition(
+                new ModelDefinitionId("openai-gpt-5.6-luna"),
+                "model-v1",
+                providerId,
+                "gpt-5.6-luna",
+                "GPT-5.6 Luna",
+                ModelStatus.ACTIVE,
+                EnumSet.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
+                128_000,
+                8_192,
+                Map.of(),
+                Map.of(),
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS);
+        return new ModelProviderDefinition(
+                providerId,
+                "provider-v1",
+                "OpenAI",
+                endpoint,
+                new CredentialRef("env://OPENAI_API_KEY"),
+                nativeStreaming,
+                ProviderStatus.ACTIVE,
+                List.of(new ModelApiBindingDefinition(ModelApiStyles.OPENAI_CHAT_COMPLETIONS)),
+                List.of(model),
+                providerOptions,
                 Map.of());
     }
 
@@ -476,22 +1230,37 @@ class OpenAiCompatibleChatModelTest {
         }
         byte[] bytes = selected.body().getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().set("Content-Type", selected.contentType());
+        selected.headers()
+                .forEach((name, value) -> exchange.getResponseHeaders().set(name, value));
         exchange.sendResponseHeaders(selected.status(), bytes.length);
         exchange.getResponseBody().write(bytes);
         exchange.close();
     }
 
-    private record Response(int status, String contentType, String body, long delayMillis) {
+    private record Response(
+            int status, String contentType, String body, long delayMillis, Map<String, String> headers) {
         Response(int status, String contentType, String body) {
-            this(status, contentType, body, 0);
+            this(status, contentType, body, 0, Map.of());
+        }
+
+        Response(int status, String contentType, String body, long delayMillis) {
+            this(status, contentType, body, delayMillis, Map.of());
         }
 
         static Response json(int status, String body) {
             return new Response(status, "application/json; charset=utf-8", body);
         }
 
+        static Response json(int status, String body, Map<String, String> headers) {
+            return new Response(status, "application/json; charset=utf-8", body, 0, Map.copyOf(headers));
+        }
+
         static Response delayedJson(int status, String body, long delayMillis) {
             return new Response(status, "application/json; charset=utf-8", body, delayMillis);
+        }
+
+        static Response sse(String body) {
+            return new Response(200, "text/event-stream; charset=utf-8", body);
         }
     }
 }

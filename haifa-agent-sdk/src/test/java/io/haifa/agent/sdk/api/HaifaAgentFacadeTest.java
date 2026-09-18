@@ -1,0 +1,322 @@
+package io.haifa.agent.sdk.api;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import io.haifa.agent.common.id.IdentifierGenerator;
+import io.haifa.agent.core.error.AgentErrorCode;
+import io.haifa.agent.core.reference.PrincipalRef;
+import io.haifa.agent.core.reference.TenantRef;
+import io.haifa.agent.core.run.AgentRunStatus;
+import io.haifa.agent.model.api.AgentChatModel;
+import io.haifa.agent.model.api.ApiStyleId;
+import io.haifa.agent.model.api.CredentialRef;
+import io.haifa.agent.model.api.ModelAdapterCoordinate;
+import io.haifa.agent.model.api.ModelCapability;
+import io.haifa.agent.model.api.ModelDefinitionId;
+import io.haifa.agent.model.api.ModelErrorCategory;
+import io.haifa.agent.model.api.ModelInvocationException;
+import io.haifa.agent.model.api.ModelProviderId;
+import io.haifa.agent.model.api.ResolvedModelSnapshot;
+import io.haifa.agent.policy.api.PolicyPresets;
+import io.haifa.agent.policy.core.DefaultPolicyDecisionService;
+import io.haifa.agent.sdk.SdkTestFixtures;
+import io.haifa.agent.sdk.contribution.ModelContribution;
+import io.haifa.agent.sdk.contribution.PolicyPlatformContribution;
+import io.haifa.agent.sdk.conversation.ChangeConversationStatusCommand;
+import io.haifa.agent.sdk.conversation.ConversationException;
+import io.haifa.agent.sdk.conversation.ConversationQuery;
+import io.haifa.agent.sdk.conversation.ConversationStatus;
+import io.haifa.agent.sdk.conversation.RenameConversationCommand;
+import io.haifa.agent.sdk.conversation.StartConversationCommand;
+import io.haifa.agent.sdk.conversation.SubmitConversationTurnCommand;
+import io.haifa.agent.sdk.product.ProductProfile;
+import io.haifa.agent.sdk.tool.JavaTool;
+import io.haifa.agent.sdk.tool.JavaToolContext;
+import io.haifa.agent.sdk.tool.JavaToolSpec;
+import java.net.URI;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
+
+public class HaifaAgentFacadeTest {
+    @Test
+    void exposesBoundedTypedModelRetryConfiguration() {
+        HaifaAgentBuilder builder = HaifaAgents.builder();
+
+        assertThat(builder.modelRetry(3, Duration.ofMillis(100), Duration.ofSeconds(2), 2.0d, 0.2d))
+                .isSameAs(builder);
+        assertThatThrownBy(() -> builder.modelRetry(3, Duration.ofMillis(100), Duration.ofSeconds(2), 2.0d, 1.1d))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("jitterRatio");
+    }
+
+    @Test
+    void registersOneTypedJavaToolWithoutManualPlatformAssembly() {
+        try (HaifaAgent agent =
+                SdkTestFixtures.builder("java-tool").tool(new WeatherTool()).build()) {
+            assertThat(agent.profile().allowedTools()).isEmpty();
+            assertThat(agent.diagnostics()).isEmpty();
+        }
+    }
+
+    @Test
+    void registeringToolsDoesNotMutateTheProductProfile() {
+        ProductProfile profile = SdkTestFixtures.profile("java-tool-list");
+
+        try (HaifaAgent withTools = HaifaAgents.builder(profile)
+                        .model(SdkTestFixtures.modelContribution())
+                        .persistence(SdkTestFixtures.persistenceContribution())
+                        .conversation(SdkTestFixtures.conversationContribution())
+                        .tools(List.of(new WeatherTool(), new GeocodeTool()))
+                        .policy(new PolicyPlatformContribution(
+                                PolicyPresets.standardApproval(), new DefaultPolicyDecisionService()))
+                        .build();
+                HaifaAgent withoutTools = HaifaAgents.builder(profile)
+                        .model(SdkTestFixtures.modelContribution())
+                        .persistence(SdkTestFixtures.persistenceContribution())
+                        .conversation(SdkTestFixtures.conversationContribution())
+                        .build()) {
+            assertThat(withTools.profile().allowedTools()).isEmpty();
+            assertThat(withoutTools.profile().allowedTools()).isEmpty();
+            assertThat(profile.allowedTools()).isEmpty();
+        }
+    }
+
+    @Test
+    void buildingWithToolsWithoutPolicyFailsClosed() {
+        ProductProfile profile = SdkTestFixtures.profile("no-policy");
+
+        assertThatThrownBy(() -> HaifaAgents.builder(profile)
+                        .model(SdkTestFixtures.modelContribution())
+                        .persistence(SdkTestFixtures.persistenceContribution())
+                        .conversation(SdkTestFixtures.conversationContribution())
+                        .tool(new WeatherTool())
+                        .build())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("explicit product policy");
+    }
+
+    @Test
+    void appliesProductPublicToolPolicyDecoratorDuringRuntimeAssembly() {
+        AtomicBoolean decorated = new AtomicBoolean();
+
+        try (HaifaAgent ignored = SdkTestFixtures.builder("personal")
+                .publicToolPolicyDecorator(delegate -> {
+                    decorated.set(true);
+                    return delegate;
+                })
+                .build()) {
+            assertThat(decorated).isTrue();
+        }
+    }
+
+    @Test
+    void completesMultiRunConversationAndLifecycleCommands() throws Exception {
+        AtomicInteger ids = new AtomicInteger();
+        IdentifierGenerator identifiers = () -> "sdk-test-" + ids.incrementAndGet();
+        try (HaifaAgent agent = SdkTestFixtures.builder("personal")
+                .identifierGenerator(identifiers)
+                .timeProvider(() -> Instant.parse("2026-07-28T00:00:00Z"))
+                .build()) {
+            var started = agent.conversations().start(new StartConversationCommand("start-1", "First chat", "hello"));
+            var duplicate = agent.conversations().start(new StartConversationCommand("start-1", "First chat", "hello"));
+
+            assertThat(duplicate.record().sessionId())
+                    .isEqualTo(started.record().sessionId());
+            agent.runs().await(started.runId());
+            var idle = agent.conversations().find(started.record().sessionId()).orElseThrow();
+            assertThat(idle.status()).isEqualTo(ConversationStatus.ACTIVE);
+
+            var submitted = agent.conversations()
+                    .submit(new SubmitConversationTurnCommand(idle.sessionId(), idle.revision(), "turn-2", "continue"));
+            agent.runs().await(submitted.runId());
+            var afterSecondRun =
+                    agent.conversations().find(started.record().sessionId()).orElseThrow();
+            assertThat(agent.conversations().turns(started.record().sessionId()))
+                    .extracting("text")
+                    .containsExactly("hello", "answer-1", "continue", "answer-2");
+
+            var renamed = agent.conversations()
+                    .rename(new RenameConversationCommand(
+                            started.record().sessionId(), afterSecondRun.revision(), "rename-1", "Renamed"));
+            var renameRetry = agent.conversations()
+                    .rename(new RenameConversationCommand(
+                            started.record().sessionId(), afterSecondRun.revision(), "rename-1", "Renamed"));
+            assertThat(renameRetry.displayName()).isEqualTo(renamed.displayName());
+
+            var archived = agent.conversations()
+                    .archive(new ChangeConversationStatusCommand(
+                            started.record().sessionId(), renamed.revision(), "archive-1"));
+            var archiveRetry = agent.conversations()
+                    .archive(new ChangeConversationStatusCommand(
+                            started.record().sessionId(), renamed.revision(), "archive-1"));
+            assertThat(archiveRetry.status()).isEqualTo(ConversationStatus.ARCHIVED);
+            var restored = agent.conversations()
+                    .unarchive(new ChangeConversationStatusCommand(
+                            started.record().sessionId(), archived.revision(), "unarchive-1"));
+
+            assertThat(restored.status()).isEqualTo(ConversationStatus.ACTIVE);
+            assertThat(agent.conversations().list(ConversationQuery.active(10)).items())
+                    .extracting("sessionId")
+                    .containsExactly(started.record().sessionId());
+            assertThat(agent.profile().productId().value()).isEqualTo("personal");
+        }
+    }
+
+    @Test
+    void callerScopeDoesNotRevealAnotherPrincipalsConversation() throws Exception {
+        AtomicInteger ids = new AtomicInteger();
+        AtomicReference<SdkCaller> caller =
+                new AtomicReference<>(new SdkCaller(new TenantRef("tenant"), new PrincipalRef("alice", "user")));
+        try (HaifaAgent agent = SdkTestFixtures.builder("personal")
+                .callerProvider(caller::get)
+                .identifierGenerator(() -> "scope-test-" + ids.incrementAndGet())
+                .timeProvider(() -> Instant.parse("2026-07-28T00:00:00Z"))
+                .build()) {
+            var conversation =
+                    agent.conversations().start(new StartConversationCommand("start", "Private", "secret text"));
+            var runId = conversation.runId();
+            agent.runs().await(runId);
+            caller.set(new SdkCaller(new TenantRef("tenant"), new PrincipalRef("bob", "user")));
+
+            assertThat(agent.conversations().find(conversation.record().sessionId()))
+                    .isEmpty();
+            assertThat(agent.conversations().list(ConversationQuery.active(10)).items())
+                    .isEmpty();
+            assertThatThrownBy(() ->
+                            agent.conversations().turns(conversation.record().sessionId()))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage("CONVERSATION_UNAVAILABLE");
+            assertThat(agent.runs().promptDiagnostics(runId).available()).isFalse();
+            assertThat(agent.runs().promptDiagnostics(runId).statusCode()).isEqualTo("PROMPT_DIAGNOSTICS_UNAVAILABLE");
+        }
+    }
+
+    @Test
+    void lightweightChatFailsWithStableClosedError() {
+        HaifaAgent agent = SdkTestFixtures.builder("personal").build();
+        agent.close();
+
+        assertThatThrownBy(() -> agent.chat("hello"))
+                .isInstanceOf(HaifaAgentException.class)
+                .hasMessage("AGENT_CLOSED");
+    }
+
+    @Test
+    void cachedConversationServiceFailsWithStableSafeErrorAfterClose() {
+        HaifaAgent agent = SdkTestFixtures.builder("personal").build();
+        var conversations = agent.conversations();
+
+        agent.close();
+
+        assertThatThrownBy(() -> conversations.list(ConversationQuery.active(10)))
+                .isInstanceOf(ConversationException.class)
+                .satisfies(failure -> {
+                    ConversationException error = (ConversationException) failure;
+                    assertThat(error.code()).isEqualTo("AGENT_CLOSED");
+                    assertThat(error.operation()).isEqualTo("conversation.list");
+                    assertThat(error.correlation()).matches("[0-9a-f]{16}");
+                    assertThat(error.getMessage()).isEqualTo("AGENT_CLOSED");
+                    assertThat(error.getCause()).isNull();
+                });
+    }
+
+    @Test
+    void paymentRequiredModelFailureTerminatesRunWithModelPaymentRequired() throws Exception {
+        ResolvedModelSnapshot snapshot = ResolvedModelSnapshot.create(
+                new ModelProviderId("test"),
+                "1.0",
+                new ModelDefinitionId("test-chat"),
+                "1.0",
+                "test-chat",
+                "test-adapter",
+                "1.0",
+                new ApiStyleId("test-style"),
+                "standard",
+                URI.create("https://model.invalid/v1"),
+                new CredentialRef("credential:test"),
+                true,
+                Set.of(ModelCapability.TEXT_CHAT),
+                8_192,
+                1_024,
+                Map.of(),
+                Map.of());
+        AgentChatModel failingModel = request -> {
+            throw new ModelInvocationException(
+                    ModelErrorCategory.PAYMENT_REQUIRED,
+                    false,
+                    402,
+                    "payment_required",
+                    request.callId(),
+                    "请检查 Provider 账户余额、套餐、模型授权或账单状态后重试",
+                    null,
+                    null,
+                    false,
+                    "req-402-test");
+        };
+        ModelContribution failingContribution = new ModelContribution(
+                Map.of(ModelAdapterCoordinate.from(snapshot), failingModel),
+                snapshot,
+                Map.of(snapshot.modelId().value(), snapshot));
+
+        try (HaifaAgent agent = HaifaAgents.builder(SdkTestFixtures.profile("personal"))
+                .model(failingContribution)
+                .persistence(SdkTestFixtures.persistenceContribution())
+                .conversation(SdkTestFixtures.conversationContribution())
+                .build()) {
+            var started = agent.conversations()
+                    .start(new StartConversationCommand("start-payment-fail", "Payment test", "hello"));
+            var runId = started.runId();
+            var finalSnapshot = agent.runs().await(runId);
+            assertThat(finalSnapshot.status()).isEqualTo(AgentRunStatus.FAILED);
+            assertThat(finalSnapshot.error()).isPresent();
+            var agentError = finalSnapshot.error().get();
+            assertThat(agentError.code()).isEqualTo(AgentErrorCode.MODEL_PAYMENT_REQUIRED);
+            assertThat(agentError.details())
+                    .containsEntry("httpStatus", 402)
+                    .containsEntry("modelCategory", "PAYMENT_REQUIRED")
+                    .containsEntry("providerRequestId", "req-402-test")
+                    .containsEntry("retryDecision", "TERMINAL");
+        }
+    }
+
+    public record WeatherRequest(String city) {}
+
+    public record WeatherResponse(String forecast) {}
+
+    private static final class WeatherTool implements JavaTool<WeatherRequest, WeatherResponse> {
+        @Override
+        public JavaToolSpec<WeatherRequest, WeatherResponse> spec() {
+            return JavaToolSpec.builder("weather_get", WeatherRequest.class, WeatherResponse.class)
+                    .description("Gets the weather for a city")
+                    .pure()
+                    .build();
+        }
+
+        @Override
+        public WeatherResponse invoke(WeatherRequest input, JavaToolContext context) {
+            return new WeatherResponse("Sunny in " + input.city());
+        }
+    }
+
+    private static final class GeocodeTool implements JavaTool<WeatherRequest, WeatherResponse> {
+        @Override
+        public JavaToolSpec<WeatherRequest, WeatherResponse> spec() {
+            return JavaToolSpec.builder("geocode", WeatherRequest.class, WeatherResponse.class)
+                    .pure()
+                    .build();
+        }
+
+        @Override
+        public WeatherResponse invoke(WeatherRequest input, JavaToolContext context) {
+            return new WeatherResponse(input.city());
+        }
+    }
+}

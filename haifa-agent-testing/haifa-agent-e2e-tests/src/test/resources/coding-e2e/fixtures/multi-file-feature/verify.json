@@ -1,0 +1,9 @@
+{
+  "sources": [
+    "src/main/java/sample/DiscountPolicy.java",
+    "src/main/java/sample/OrderTotal.java",
+    "src/main/java/sample/ThresholdDiscountPolicy.java",
+    "src/test/java/sample/OrderTotalTest.java"
+  ],
+  "mainClass": "sample.OrderTotalTest"
+}

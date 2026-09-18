@@ -1,14 +1,11 @@
 package io.haifa.agent.sandbox.host;
 
-public final class HostSandboxException extends RuntimeException {
-    private final String code;
-
+public final class HostSandboxException extends io.haifa.agent.sandbox.api.SandboxException {
     public HostSandboxException(String code, String safeMessage) {
-        super(safeMessage);
-        this.code = code;
+        super(code, safeMessage);
     }
 
-    public String code() {
-        return code;
+    public HostSandboxException(String code, String safeMessage, Throwable cause) {
+        super(code, safeMessage, cause);
     }
 }

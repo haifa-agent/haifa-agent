@@ -1,0 +1,7 @@
+{
+  "sources": [
+    "src/main/java/sample/UsernameValidator.java",
+    "src/test/java/sample/UsernameValidatorTest.java"
+  ],
+  "mainClass": "sample.UsernameValidatorTest"
+}

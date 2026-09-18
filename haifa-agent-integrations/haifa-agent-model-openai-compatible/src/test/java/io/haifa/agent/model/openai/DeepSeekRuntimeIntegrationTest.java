@@ -15,15 +15,26 @@ import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.run.AgentRunType;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.tool.ToolResult;
+import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelProviderDefinition;
 import io.haifa.agent.model.api.ResolvedCredential;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
+import io.haifa.agent.policy.api.ApprovalMode;
+import io.haifa.agent.policy.api.PolicyDecision;
+import io.haifa.agent.policy.api.PolicyEffect;
+import io.haifa.agent.policy.api.PolicyRequirementDigest;
+import io.haifa.agent.policy.api.PolicyRule;
+import io.haifa.agent.policy.api.PolicyRuleMatcher;
+import io.haifa.agent.policy.api.PolicyRuleRef;
+import io.haifa.agent.policy.api.PolicyRuleSet;
+import io.haifa.agent.policy.api.PolicyRuleSource;
 import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.RuntimeOverrides;
 import io.haifa.agent.runtime.core.RuntimeCoreBuilder;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
 import io.haifa.agent.runtime.core.execution.ManualExecutionScheduler;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
+import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
 import io.haifa.agent.tool.api.SemanticVersion;
 import io.haifa.agent.tool.api.ToolAlias;
 import io.haifa.agent.tool.api.ToolApprovalRequirement;
@@ -69,10 +80,11 @@ class DeepSeekRuntimeIntegrationTest {
                     defaults.id(),
                     defaults.version(),
                     defaults.displayName(),
-                    defaults.adapterType(),
                     endpoint,
                     defaults.credentialRef(),
+                    defaults.nativeStreaming(),
                     defaults.status(),
+                    defaults.apiBindings(),
                     defaults.models(),
                     defaults.options(),
                     defaults.metadata());
@@ -97,10 +109,13 @@ class DeepSeekRuntimeIntegrationTest {
                     modelDefinition.id(),
                     modelDefinition.version(),
                     modelDefinition.providerModelId(),
-                    provider.adapterType(),
+                    ModelApiStyles.adapterType(modelDefinition.style()),
                     "1.0.0",
+                    modelDefinition.style(),
+                    provider.binding(modelDefinition.style()).dialect(),
                     endpoint,
                     provider.credentialRef(),
+                    provider.nativeStreaming(),
                     modelDefinition.capabilities(),
                     modelDefinition.contextWindow(),
                     modelDefinition.maxOutputTokens(),
@@ -171,8 +186,16 @@ class DeepSeekRuntimeIntegrationTest {
                             new AgentRunLimits(50, 4, 1, 300_000, 60_000),
                             frozenModel))
                     .toolPlatform(toolCatalog, new DefaultToolInvoker(toolCatalog), new JsonSchema202012Validator())
+                    .policy(
+                            testPolicy(),
+                            (policyRequest, rules) -> new PolicyDecision(
+                                    PolicyEffect.ALLOW,
+                                    Optional.empty(),
+                                    "LOCAL_STUB_TOOL_ALLOWED",
+                                    "The local integration-test tool is allowed",
+                                    PolicyRequirementDigest.compute(policyRequest, rules)))
                     .scheduler(scheduler)
-                    .store(store)
+                    .persistence(RuntimePersistencePorts.inMemory(store))
                     .identifierGenerator(ids)
                     .timeProvider(time)
                     .build();
@@ -185,12 +208,22 @@ class DeepSeekRuntimeIntegrationTest {
             assertThat(calls).hasValue(2);
             assertThat(requests).hasSize(2).allSatisfy(request -> {
                 assertThat(request.path("model").asText()).isEqualTo("deepseek-v4-pro");
-                assertThat(request.path("stream").asBoolean()).isFalse();
-                assertThat(request.path("thinking").path("type").asText()).isEqualTo("disabled");
+                assertThat(request.path("stream").asBoolean()).isTrue();
+                assertThat(request.path("thinking").path("type").asText()).isEqualTo("enabled");
+                assertThat(request.path("reasoning_effort").asText()).isEqualTo("high");
             });
             JsonNode second = requests.get(1);
             assertThat(second.path("messages").toString()).contains("provider-tool-1");
             assertThat(second.path("messages").toString()).contains("echoed: hello");
+            assertThat(second.path("messages").toString()).contains("private runtime reasoning");
+            JsonNode toolMessage = java.util.stream.StreamSupport.stream(
+                            second.path("messages").spliterator(), false)
+                    .filter(message -> message.path("role").asText().equals("tool"))
+                    .findFirst()
+                    .orElseThrow();
+            JsonNode toolResult = json.readTree(toolMessage.path("content").asText());
+            assertThat(toolResult.path("structuredData").path("text").asText()).isEqualTo("hello");
+            assertThat(toolResult.path("truncated").asBoolean()).isFalse();
         } finally {
             server.stop(0);
         }
@@ -209,24 +242,44 @@ class DeepSeekRuntimeIntegrationTest {
                 RuntimeOverrides.NONE);
     }
 
+    private static PolicyRuleSet testPolicy() {
+        PolicyRule allowLocalEcho = new PolicyRule(
+                new PolicyRuleRef("deepseek-local-echo", "1"),
+                PolicyRuleSource.SYSTEM,
+                100,
+                PolicyRuleMatcher.any(),
+                PolicyEffect.ALLOW,
+                Optional.empty(),
+                "LOCAL_STUB_TOOL_ALLOWED",
+                "The local integration-test tool is allowed");
+        return PolicyRuleSet.of(List.of(allowLocalEcho), Optional.empty(), ApprovalMode.DENY);
+    }
+
     private static void handle(HttpExchange exchange, ObjectMapper json, AtomicInteger calls, List<JsonNode> requests)
             throws IOException {
         requests.add(json.readTree(exchange.getRequestBody()));
         int call = calls.incrementAndGet();
         String body = call == 1
                 ? """
-                  {"id":"stub-1","model":"deepseek-v4-pro","choices":[{"index":0,"finish_reason":"tool_calls",
-                   "message":{"role":"assistant","content":null,"tool_calls":[{"id":"provider-tool-1","type":"function",
-                   "function":{"name":"echo","arguments":"{\\"text\\":\\"hello\\"}"}}]}}],
-                   "usage":{"prompt_tokens":10,"completion_tokens":3,"total_tokens":13}}
+                  data: {"id":"stub-1","model":"deepseek-v4-pro","choices":[{"index":0,"finish_reason":null,"delta":{"reasoning_content":"private runtime reasoning"}}]}
+
+                  data: {"id":"stub-1","model":"deepseek-v4-pro","choices":[{"index":0,"finish_reason":"tool_calls","delta":{"tool_calls":[{"index":0,"id":"provider-tool-1","type":"function","function":{"name":"echo","arguments":"{\\"text\\":\\"hello\\"}"}}]}}]}
+
+                  data: {"id":"stub-1","model":"deepseek-v4-pro","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":3,"completion_tokens_details":{"reasoning_tokens":2}}}
+
+                  data: [DONE]
+
                   """
                 : """
-                  {"id":"stub-2","model":"deepseek-v4-pro","choices":[{"index":0,"finish_reason":"stop",
-                   "message":{"role":"assistant","content":"adapter done"}}],
-                   "usage":{"prompt_tokens":15,"completion_tokens":4,"total_tokens":19}}
+                  data: {"id":"stub-2","model":"deepseek-v4-pro","choices":[{"index":0,"finish_reason":"stop","delta":{"content":"adapter done"}}]}
+
+                  data: {"id":"stub-2","model":"deepseek-v4-pro","choices":[],"usage":{"prompt_tokens":15,"completion_tokens":4}}
+
+                  data: [DONE]
+
                   """;
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-        exchange.getResponseHeaders().set("Content-Type", "application/json");
+        exchange.getResponseHeaders().set("Content-Type", "text/event-stream; charset=utf-8");
         exchange.sendResponseHeaders(200, bytes.length);
         exchange.getResponseBody().write(bytes);
         exchange.close();

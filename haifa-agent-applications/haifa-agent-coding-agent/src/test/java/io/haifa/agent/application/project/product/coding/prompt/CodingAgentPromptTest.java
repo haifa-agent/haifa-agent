@@ -1,0 +1,101 @@
+package io.haifa.agent.application.project.product.coding.prompt;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import org.junit.jupiter.api.Test;
+
+class CodingAgentPromptTest {
+    @Test
+    void loadsStableVersionedPromptWithoutCaseSpecificTutorials() {
+        CodingAgentPrompt.Snapshot first = CodingAgentPrompt.current();
+        CodingAgentPrompt.Snapshot second = CodingAgentPrompt.current();
+
+        assertThat(second).isEqualTo(first);
+        assertThat(first.version()).isEqualTo("1.8.4");
+        assertThat(first.digest()).matches("sha256:[0-9a-f]{64}");
+        assertThat(first.identity()).startsWith("coding-agent-prompt@1.8.4#sha256:");
+        assertThat(first.text())
+                .contains(
+                        "You are Haifa Coding Agent",
+                        "complete task contract as the source of truth",
+                        "Correct core logic alone is insufficient",
+                        "compact, risk-proportionate checklist",
+                        "original request and authoritative sources",
+                        "track source, implementation/verification",
+                        "inferred, missing, conflicting, or blocked",
+                        "required observable behavior as correctness",
+                        "semantic equivalence is insufficient",
+                        "required dynamic values verbatim",
+                        "Read applicable repository instructions",
+                        "smallest complete change",
+                        "successful file mutation as invalidating earlier snippets",
+                        "re-read the failed path without reusing a stale cursor",
+                        "smallest failed file or hunk with unique exact context",
+                        "confirm the observed outcome",
+                        "report a confirmed blocker",
+                        "inspect the current changes",
+                        "public API/types",
+                        "input/output grammar, encoding, boundaries, shape, serialization, and framing",
+                        "invalid/error contracts",
+                        "state, side effects, ordering, mutation scope, compatibility",
+                        "explicit non-functional constraints",
+                        "authoritative evidence provides expected and actual behavior",
+                        "contract-conformance",
+                        "failed build or test does not expose actionable evidence",
+                        "do not repeat the same noisy command unchanged",
+                        "stdout and stderr redirected to a temporary log",
+                        "bounded exact-match context",
+                        "preserve the test exit code",
+                        "clean up the log",
+                        "selected test count",
+                        "later runtime control updates",
+                        "report it as blocked or not run",
+                        "do not infer that the code is correct or claim the check passed",
+                        "re-read the original request and authoritative contracts",
+                        "every item against final implementation/evidence",
+                        "unresolved items are not complete",
+                        "result-verification skill",
+                        "same stable failure code and retryable=false",
+                        "switching to similar Skill resource paths",
+                        "checks, skipped checks, and remaining risks")
+                .doesNotContain(
+                        "deterministic change-review evidence",
+                        "derives deterministic review evidence on demand",
+                        "authoritative tool results show a workspace change",
+                        "any required validation attempt",
+                        "manufacture completion evidence",
+                        "workspace_attach",
+                        "Use host absolute paths for every file operation",
+                        "aider/polyglot_",
+                        "deduplication",
+                        "rejected-record",
+                        "accepted-record",
+                        "performance contract",
+                        "execution.output.read",
+                        "execution_output_read",
+                        "capturedOutputRef",
+                        "Case 14",
+                        "/Users/");
+    }
+
+    @Test
+    void rendersWorkspaceAttachmentGuidanceAccordingToFrozenBuiltInAvailability() {
+        CodingAgentPrompt.Snapshot withoutAttachment = CodingAgentPrompt.forWorkspaceAttachment(false);
+        CodingAgentPrompt.Snapshot withAttachment = CodingAgentPrompt.forWorkspaceAttachment(true);
+
+        assertThat(withoutAttachment.text())
+                .contains(
+                        "does not expose a workspace attachment tool",
+                        "Use host absolute paths for file tools; relative paths and root aliases are invalid.",
+                        "Use the matching workspaceRef with a normalized relativeWorkdir (use \".\" for the workspace root) for execution_run.")
+                .doesNotContain("request workspace_attach");
+        assertThat(withAttachment.text())
+                .contains(
+                        "request workspace_attach",
+                        "least access mode needed",
+                        "Use host absolute paths for file tools; relative paths and root aliases are invalid.",
+                        "Use the matching workspaceRef with a normalized relativeWorkdir (use \".\" for the workspace root) for execution_run.")
+                .doesNotContain("does not expose a workspace attachment tool");
+        assertThat(withAttachment.identity()).isNotEqualTo(withoutAttachment.identity());
+    }
+}

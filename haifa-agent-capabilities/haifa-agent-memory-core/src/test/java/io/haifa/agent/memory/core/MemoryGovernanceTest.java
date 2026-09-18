@@ -12,9 +12,9 @@ import io.haifa.agent.memory.api.Memory;
 import io.haifa.agent.memory.api.MemoryActor;
 import io.haifa.agent.memory.api.MemoryCandidateDraft;
 import io.haifa.agent.memory.api.MemoryCandidateStatus;
-import io.haifa.agent.memory.api.MemoryConflictResolution;
 import io.haifa.agent.memory.api.MemoryEvidenceRef;
 import io.haifa.agent.memory.api.MemoryKind;
+import io.haifa.agent.memory.api.MemoryOperationException;
 import io.haifa.agent.memory.api.MemoryQuery;
 import io.haifa.agent.memory.api.MemoryRef;
 import io.haifa.agent.memory.api.MemoryRetentionPolicy;
@@ -59,7 +59,8 @@ class MemoryGovernanceTest {
                                 new TenantRef("tenant-b"),
                                 new PrincipalRef("user-b", "user"),
                                 Set.of("memory:review"))))
-                .isInstanceOf(SecurityException.class);
+                .isInstanceOf(MemoryOperationException.class)
+                .hasMessage("MEMORY_UNAVAILABLE");
 
         var candidate = fixture.service.propose(draft, REVIEWER);
 
@@ -72,19 +73,6 @@ class MemoryGovernanceTest {
                                 new io.haifa.agent.memory.api.MemoryId("other"),
                                 new io.haifa.agent.memory.api.MemoryVersion(1))))
                 .isInstanceOf(IllegalStateException.class);
-
-        var expiring = draft(
-                "pending-expiry",
-                scope(MemoryScopeType.RUN, "run-expiry"),
-                "temporary",
-                "temporary fact",
-                source(MemorySourceType.MESSAGE, "message-expiry"),
-                new MemoryRetentionPolicy("candidate-short", Optional.of(NOW), false),
-                false);
-        fixture.verify(expiring);
-        var pending = fixture.service.propose(expiring, REVIEWER);
-        fixture.service.evaluateExpiry(NOW);
-        assertThat(fixture.store.find(pending.id()).orElseThrow().status()).isEqualTo(MemoryCandidateStatus.EXPIRED);
     }
 
     @Test
@@ -102,7 +90,7 @@ class MemoryGovernanceTest {
         fixture.verify(firstDraft);
         var firstCandidate = fixture.service.propose(firstDraft, REVIEWER);
         Memory first = fixture.service.approve(firstCandidate.id(), REVIEWER, "approve-1");
-        assertThat(fixture.service.approve(firstCandidate.id(), REVIEWER, "approve-again"))
+        assertThat(fixture.service.approve(firstCandidate.id(), REVIEWER, "approve-1"))
                 .isEqualTo(first);
 
         var equivalent = draft(
@@ -114,8 +102,7 @@ class MemoryGovernanceTest {
                 MemoryRetentionPolicy.RETAIN,
                 false);
         fixture.verify(equivalent);
-        assertThat(fixture.service.propose(equivalent, REVIEWER).approvedMemory())
-                .contains(new MemoryRef(first.id(), first.version()));
+        assertThat(fixture.service.propose(equivalent, REVIEWER).status()).isEqualTo(MemoryCandidateStatus.PENDING);
 
         var changed = draft(
                 "request-3",
@@ -128,20 +115,30 @@ class MemoryGovernanceTest {
         fixture.verify(changed);
         var conflicting = fixture.service.propose(changed, REVIEWER);
         assertThatThrownBy(() -> fixture.service.approve(conflicting.id(), REVIEWER, "approve-conflict"))
-                .isInstanceOf(IllegalStateException.class);
-        var conflict = fixture.store.conflictFor(conflicting.id()).orElseThrow();
-
-        Memory replacement = fixture.service.resolveConflict(
-                conflict.id(), MemoryConflictResolution.REPLACE_WITH_CANDIDATE, REVIEWER, "resolve-1");
+                .isInstanceOf(MemoryOperationException.class)
+                .hasMessage("MEMORY_SUBJECT_CONFLICT");
+        var replacementDraft = new MemoryCandidateDraft(
+                "request-4",
+                scope,
+                MemoryKind.FACT,
+                "preferred-language",
+                new TextMemoryContent("Kotlin"),
+                changed.sources(),
+                changed.evidence(),
+                MemoryRetentionPolicy.RETAIN,
+                false,
+                Optional.of(new MemoryRef(first.id(), first.version())));
+        var replacementCandidate = fixture.service.propose(replacementDraft, REVIEWER);
+        Memory replacement = fixture.service.approve(
+                replacementCandidate.id(), replacementCandidate.revision(), REVIEWER, "replace-1");
 
         assertThat(replacement.id()).isEqualTo(first.id());
         assertThat(replacement.version().value()).isEqualTo(2);
         assertThat(replacement.previousVersion()).contains(new MemoryRef(first.id(), first.version()));
         assertThat(fixture.store.find(first.id(), first.version()).orElseThrow().status())
-                .isEqualTo(MemoryStatus.SUPERSEDED);
-        assertThat(fixture.service.resolveConflict(
-                        conflict.id(), MemoryConflictResolution.REPLACE_WITH_CANDIDATE, REVIEWER, "resolve-1"))
-                .isEqualTo(replacement);
+                .isEqualTo(MemoryStatus.INVALIDATED);
+        assertThat(fixture.store.find(first.id(), first.version()).orElseThrow().replacedByMemoryRef())
+                .contains(new MemoryRef(replacement.id(), replacement.version()));
     }
 
     @Test
@@ -286,6 +283,48 @@ class MemoryGovernanceTest {
         assertThat(derived.derivedAsset().assetId()).isEqualTo("asset-derived");
         assertThatThrownBy(() -> new TextMemoryContent("data:image/png;base64," + "A".repeat(300)))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void reviseAndRejectRequireTheCurrentCandidateRevisionAndRemainIdempotent() {
+        Fixture fixture = fixture(new DefaultMemoryPolicy());
+        MemoryScope scope = scope(MemoryScopeType.USER, OWNER.principalId());
+        MemoryCandidateDraft original = draft(
+                "revise-request",
+                scope,
+                "preferred-language",
+                "Java",
+                source(MemorySourceType.MESSAGE, "message-revise"),
+                MemoryRetentionPolicy.RETAIN,
+                false);
+        fixture.verify(original);
+        var candidate = fixture.service.propose(original, REVIEWER);
+        MemoryCandidateDraft revisedDraft = new MemoryCandidateDraft(
+                original.requestKey(),
+                scope,
+                MemoryKind.FACT,
+                "preferred-language",
+                new TextMemoryContent("Kotlin"),
+                original.sources(),
+                original.evidence(),
+                original.retention(),
+                false);
+
+        var revised = fixture.service.revise(candidate.id(), revisedDraft, candidate.revision(), REVIEWER, "revise-1");
+        assertThat(revised.revision()).isEqualTo(candidate.revision() + 1);
+        assertThat(revised.content().boundedText()).isEqualTo("Kotlin");
+        assertThat(fixture.service.revise(candidate.id(), revisedDraft, candidate.revision(), REVIEWER, "revise-1"))
+                .isEqualTo(revised);
+        assertThatThrownBy(() ->
+                        fixture.service.reject(candidate.id(), candidate.revision(), REVIEWER, "stale", "reject-stale"))
+                .isInstanceOf(MemoryOperationException.class)
+                .hasMessage("MEMORY_CANDIDATE_REVISION_STALE");
+
+        var rejected = fixture.service.reject(candidate.id(), revised.revision(), REVIEWER, "not useful", "reject-1");
+        assertThat(rejected.status()).isEqualTo(MemoryCandidateStatus.REJECTED);
+        assertThat(rejected.revision()).isEqualTo(revised.revision() + 1);
+        assertThat(fixture.service.reject(candidate.id(), revised.revision(), REVIEWER, "not useful", "reject-1"))
+                .isEqualTo(rejected);
     }
 
     private static Fixture fixture(DefaultMemoryPolicy policy) {

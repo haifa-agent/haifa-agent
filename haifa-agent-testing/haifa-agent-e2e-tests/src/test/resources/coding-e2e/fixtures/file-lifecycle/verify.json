@@ -1,0 +1,14 @@
+{
+  "sources": [
+    "src/main/java/sample/ArticleService.java",
+    "src/main/java/sample/Slugger.java",
+    "src/test/java/sample/ArticleServiceTest.java"
+  ],
+  "mainClass": "sample.ArticleServiceTest",
+  "requiredPaths": [
+    "src/main/java/sample/Slugger.java"
+  ],
+  "forbiddenPaths": [
+    "src/main/java/sample/LegacySlugger.java"
+  ]
+}

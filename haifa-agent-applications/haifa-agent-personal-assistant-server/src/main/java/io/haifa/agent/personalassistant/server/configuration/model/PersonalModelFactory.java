@@ -1,0 +1,1131 @@
+package io.haifa.agent.personalassistant.server.configuration.model;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.haifa.agent.core.reference.PrincipalRef;
+import io.haifa.agent.core.reference.TenantRef;
+import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
+import io.haifa.agent.model.anthropic.AnthropicMessagesDialects;
+import io.haifa.agent.model.anthropic.AnthropicMessagesModel;
+import io.haifa.agent.model.anthropic.AnthropicModelProfileFactory;
+import io.haifa.agent.model.api.AgentChatModel;
+import io.haifa.agent.model.api.AgentChatResponse;
+import io.haifa.agent.model.api.ApiStyleId;
+import io.haifa.agent.model.api.CredentialRef;
+import io.haifa.agent.model.api.CredentialResolver;
+import io.haifa.agent.model.api.ModelAdapterCoordinate;
+import io.haifa.agent.model.api.ModelApiBindingDefinition;
+import io.haifa.agent.model.api.ModelApiStyles;
+import io.haifa.agent.model.api.ModelBindingConsistencyValidator;
+import io.haifa.agent.model.api.ModelBindingProfile;
+import io.haifa.agent.model.api.ModelCapability;
+import io.haifa.agent.model.api.ModelDefinition;
+import io.haifa.agent.model.api.ModelDefinitionId;
+import io.haifa.agent.model.api.ModelFinishReason;
+import io.haifa.agent.model.api.ModelMessageRole;
+import io.haifa.agent.model.api.ModelProviderDefinition;
+import io.haifa.agent.model.api.ModelProviderId;
+import io.haifa.agent.model.api.ModelStatus;
+import io.haifa.agent.model.api.ModelToolCall;
+import io.haifa.agent.model.api.ModelUsage;
+import io.haifa.agent.model.api.ProviderStatus;
+import io.haifa.agent.model.api.ResolvedModelSnapshot;
+import io.haifa.agent.model.core.ImmutableModelCatalog;
+import io.haifa.agent.model.core.InMemoryProviderHealthRegistry;
+import io.haifa.agent.model.core.ModelAccessPolicy;
+import io.haifa.agent.model.core.ModelAvailabilityRequest;
+import io.haifa.agent.model.core.ModelCatalogDeployment;
+import io.haifa.agent.model.core.ModelCatalogManifest;
+import io.haifa.agent.model.core.ModelSelectionRequest;
+import io.haifa.agent.model.core.PackagedModelCatalog;
+import io.haifa.agent.model.core.StaticModelPlatform;
+import io.haifa.agent.model.gemini.AntigravityCloudCodeProjectResolver;
+import io.haifa.agent.model.gemini.GeminiGenerateContentModel;
+import io.haifa.agent.model.gemini.GeminiModelProfileFactory;
+import io.haifa.agent.model.openai.EnvironmentCredentialResolver;
+import io.haifa.agent.model.openai.OpenAiCompatibleChatModel;
+import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
+import io.haifa.agent.model.openai.OpenAiCompatibleModelProfileFactory;
+import io.haifa.agent.model.openai.responses.CodexAccountIdentityResolver;
+import io.haifa.agent.model.openai.responses.OpenAiResponsesModel;
+import io.haifa.agent.personalassistant.application.PersonalModelCatalog;
+import io.haifa.agent.personalassistant.application.PersonalModelOption;
+import io.haifa.agent.personalassistant.application.PersonalModelPreferences;
+import io.haifa.agent.personalassistant.application.PersonalModelProductDefaults;
+import io.haifa.agent.personalassistant.application.PersonalModelSelectionRequest;
+import io.haifa.agent.personalassistant.application.PersonalResolvedModelSelection;
+import io.haifa.agent.personalassistant.application.execution.PersonalShellRuntime;
+import io.haifa.agent.personalassistant.application.mission.MissionModelBinding;
+import io.haifa.agent.personalassistant.application.product.PersonalAssistantProfile;
+import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
+import io.haifa.agent.personalassistant.server.observability.LoggingAgentChatModel;
+import io.haifa.agent.sdk.contribution.ModelContribution;
+import java.net.ProxySelector;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.time.Duration;
+import java.time.LocalDate;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
+
+/** Creates either the production remote adapter or an explicitly enabled deterministic acceptance model. */
+public final class PersonalModelFactory {
+    private static final ModelCatalogManifest PACKAGED_CATALOG =
+            PackagedModelCatalog.load(PersonalModelFactory.class.getClassLoader());
+
+    private PersonalModelFactory() {}
+
+    public static Platform createPlatform(
+            List<PersonalAssistantProperties.ModelProvider> configured,
+            String defaultModelId,
+            ObjectMapper mapper,
+            PersonalShellRuntime shell) {
+        return createPlatform(configured, defaultModelId, false, mapper, shell);
+    }
+
+    public static Platform createPlatform(
+            List<PersonalAssistantProperties.ModelProvider> configured,
+            String defaultModelId,
+            boolean allowInsecureLoopbackModel,
+            ObjectMapper mapper,
+            PersonalShellRuntime shell) {
+        return createPlatform(
+                configured,
+                defaultModelId,
+                allowInsecureLoopbackModel,
+                mapper,
+                shell,
+                new EnvironmentCredentialResolver());
+    }
+
+    public static Platform createPlatform(
+            List<PersonalAssistantProperties.ModelProvider> configured,
+            String defaultModelId,
+            boolean allowInsecureLoopbackModel,
+            ObjectMapper mapper,
+            PersonalShellRuntime shell,
+            CredentialResolver credentials) {
+        return createPlatform(
+                configured,
+                defaultModelId,
+                allowInsecureLoopbackModel,
+                mapper,
+                shell,
+                credentials,
+                ignored -> Optional.empty());
+    }
+
+    public static Platform createPlatform(
+            List<PersonalAssistantProperties.ModelProvider> configured,
+            String defaultModelId,
+            boolean allowInsecureLoopbackModel,
+            ObjectMapper mapper,
+            PersonalShellRuntime shell,
+            CredentialResolver credentials,
+            AntigravityCloudCodeProjectResolver trustedProjectResolver) {
+        return createPlatform(
+                configured,
+                defaultModelId,
+                allowInsecureLoopbackModel,
+                mapper,
+                shell,
+                credentials,
+                trustedProjectResolver,
+                ignored -> Optional.empty());
+    }
+
+    public static Platform createPlatform(
+            List<PersonalAssistantProperties.ModelProvider> configured,
+            String defaultModelId,
+            boolean allowInsecureLoopbackModel,
+            ObjectMapper mapper,
+            PersonalShellRuntime shell,
+            CredentialResolver credentials,
+            AntigravityCloudCodeProjectResolver trustedProjectResolver,
+            CodexAccountIdentityResolver codexAccountResolver) {
+        return createPlatform(
+                configured,
+                defaultModelId,
+                allowInsecureLoopbackModel,
+                mapper,
+                shell,
+                credentials,
+                trustedProjectResolver,
+                codexAccountResolver,
+                PersonalModelProxySelector.from(configured));
+    }
+
+    public static Platform createPlatform(
+            List<PersonalAssistantProperties.ModelProvider> configured,
+            String defaultModelId,
+            boolean allowInsecureLoopbackModel,
+            ObjectMapper mapper,
+            PersonalShellRuntime shell,
+            CredentialResolver credentials,
+            AntigravityCloudCodeProjectResolver trustedProjectResolver,
+            CodexAccountIdentityResolver codexAccountResolver,
+            ProxySelector proxySelector) {
+        List<PersonalAssistantProperties.ModelProvider> configuredProviders = List.copyOf(configured);
+        boolean catalogDeployment = isCatalogDeployment(configuredProviders);
+        List<PersonalAssistantProperties.ModelProvider> providers = catalogized(configuredProviders);
+        java.util.Objects.requireNonNull(credentials, "credentials must not be null");
+        java.util.Objects.requireNonNull(proxySelector, "proxySelector must not be null");
+        if (providers.isEmpty()) throw new IllegalArgumentException("at least one Personal model provider is required");
+        validateEndpoints(providers, allowInsecureLoopbackModel);
+        boolean deterministic = providers.stream().anyMatch(value -> "deterministic".equals(value.mode()));
+        if (deterministic
+                && (providers.size() != 1
+                        || providers.getFirst().models().size() != 1
+                        || !"deterministic".equals(providers.getFirst().mode()))) {
+            throw new IllegalArgumentException("deterministic acceptance model cannot enter the production model list");
+        }
+        List<ConfiguredModel> models = providers.stream()
+                .flatMap(provider -> provider.models().stream().map(model -> new ConfiguredModel(provider, model)))
+                .toList();
+        ConfiguredModel selected = models.stream()
+                .filter(value -> value.model().id().equals(defaultModelId))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("default Personal model is unavailable"));
+        Map<String, ResolvedModelSnapshot> snapshots = models.stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        value -> value.model().id(),
+                        value -> snapshot(value.provider(), value.model()),
+                        (left, right) -> {
+                            throw new IllegalArgumentException("duplicate Personal model id");
+                        },
+                        java.util.LinkedHashMap::new));
+        ResolvedModelSnapshot snapshot = snapshots.get(selected.model().id());
+        Map<ModelAdapterCoordinate, AgentChatModel> adapters = adapters(
+                providers,
+                snapshots,
+                selected,
+                deterministic,
+                mapper,
+                shell,
+                allowInsecureLoopbackModel,
+                credentials,
+                trustedProjectResolver,
+                codexAccountResolver,
+                proxySelector);
+        ModelContribution contribution = new ModelContribution(adapters, snapshot, snapshots);
+        TenantRef tenant = new TenantRef("personal-product");
+        PrincipalRef principal = new PrincipalRef("personal-user", "user");
+        PersonalModelProductDefaults productDefaults = new PersonalModelProductDefaults();
+        Map<String, ModelBindingProfile> profiles = snapshots.values().stream()
+                .collect(java.util.stream.Collectors.toUnmodifiableMap(
+                        value -> value.modelId().value(), value -> profile(value, catalogDeployment)));
+        StaticModelPlatform modelPlatform = modelPlatform(providers, adapters, profiles);
+        if (!profiles.get(selected.model().id()).selectable()) {
+            throw new IllegalArgumentException("default Personal model profile is not verified");
+        }
+        Map<String, ConfiguredModel> configuredModels = models.stream()
+                .collect(
+                        java.util.stream.Collectors.toMap(value -> value.model().id(), value -> value));
+        PersonalModelCatalog catalog = new PersonalModelCatalog() {
+            @Override
+            public String defaultModelId() {
+                return selected.model().id();
+            }
+
+            @Override
+            public List<PersonalModelOption> available() {
+                return modelPlatform
+                        .listAvailable(new ModelAvailabilityRequest(
+                                tenant, principal, Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING)))
+                        .stream()
+                        .flatMap(provider -> provider.models().stream()
+                                .map(value -> option(
+                                        value.id().value(),
+                                        value.displayName(),
+                                        provider.id().value(),
+                                        provider.displayName())))
+                        .toList();
+            }
+
+            private PersonalModelOption option(
+                    String bindingId, String displayName, String providerId, String providerDisplayName) {
+                ConfiguredModel configured = configuredModels.get(bindingId);
+                ResolvedModelSnapshot frozen = snapshots.get(bindingId);
+                ModelBindingProfile profile = profiles.get(bindingId);
+                String groupId = providerId + ":" + configured.model().providerModelId();
+                List<String> styleBindings = configuredModels.values().stream()
+                        .filter(candidate -> candidate
+                                        .provider()
+                                        .id()
+                                        .equals(configured.provider().id())
+                                && candidate
+                                        .model()
+                                        .providerModelId()
+                                        .equals(configured.model().providerModelId())
+                                && profiles.get(candidate.model().id()).selectable())
+                        .map(candidate -> candidate.model().id())
+                        .sorted(java.util.Comparator.<String>comparingInt(candidate -> apiStylePriority(
+                                        snapshots.get(candidate).apiStyle()))
+                                .thenComparing(java.util.function.Function.identity()))
+                        .toList();
+                if (styleBindings.isEmpty()) styleBindings = List.of(bindingId);
+                String recommendedBindingId = styleBindings.getFirst();
+                return new PersonalModelOption(
+                        bindingId,
+                        groupId,
+                        configured.model().modelDisplayName(),
+                        displayName,
+                        providerId,
+                        providerDisplayName,
+                        frozen.apiStyle().value(),
+                        apiStyleDisplayName(frozen.apiStyle()),
+                        profile.selectable() ? "AVAILABLE" : "UNAVAILABLE",
+                        profile.selectable() ? "" : "Binding profile has not passed contract verification",
+                        profile.capabilities().stream().map(Enum::name).collect(java.util.stream.Collectors.toSet()),
+                        profile.contextWindowTokens(),
+                        profile.executionLimits().maximumOutputTokens(),
+                        PersonalModelProductDefaults.PREFERENCE_SCHEMA_VERSION,
+                        profile.version(),
+                        profile.digest(),
+                        profile.status(),
+                        profile.lastVerifiedOn(),
+                        productDefaults.controls(profile, styleBindings, recommendedBindingId),
+                        PersonalModelPreferences.recommended(),
+                        profile.imageInput());
+            }
+
+            @Override
+            public java.util.Optional<PersonalModelOption> find(String modelId) {
+                java.util.Optional<PersonalModelOption> value = available().stream()
+                        .filter(model -> model.id().equals(modelId) && "AVAILABLE".equals(model.availability()))
+                        .findFirst();
+                value.ifPresent(ignored -> modelPlatform.select(new ModelSelectionRequest(
+                        tenant,
+                        principal,
+                        new ModelDefinitionId(modelId),
+                        Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING))));
+                return value;
+            }
+
+            @Override
+            public java.util.Optional<MissionModelBinding> binding(String modelId) {
+                return find(modelId).map(value -> {
+                    ResolvedModelSnapshot frozen = snapshots.get(value.id());
+                    return new MissionModelBinding(
+                            value.id(),
+                            value.displayName(),
+                            value.providerId(),
+                            value.providerDisplayName(),
+                            frozen.configurationDigest());
+                });
+            }
+
+            @Override
+            public java.util.Optional<ModelBindingProfile> profile(String modelBindingId) {
+                return java.util.Optional.ofNullable(profiles.get(modelBindingId));
+            }
+
+            @Override
+            public PersonalResolvedModelSelection resolve(PersonalModelSelectionRequest request) {
+                PersonalModelOption option = find(request.modelBindingId())
+                        .orElseThrow(() -> new IllegalArgumentException("MODEL_PROFILE_UNAVAILABLE"));
+                if (!option.preferenceSchemaVersion().equals(request.preferenceSchemaVersion())) {
+                    throw new IllegalArgumentException("MODEL_PARAMETER_RESELECTION_REQUIRED");
+                }
+                if (!option.profileVersion().equals(request.profileVersion())
+                        || !option.profileDigest().equals(request.profileDigest())) {
+                    throw new IllegalArgumentException("MODEL_PROFILE_STALE");
+                }
+                if (option.controls().responseMode().readOnly()
+                        && request.preferences().responseMode()
+                                != option.controls().responseMode().recommendedValue()) {
+                    throw new IllegalArgumentException("MODEL_PARAMETER_READ_ONLY");
+                }
+                if (!option.controls().reasoningEffort().visible()
+                        && request.preferences().effort().isPresent()) {
+                    throw new IllegalArgumentException("MODEL_PARAMETER_NOT_VISIBLE");
+                }
+                if (!option.controls()
+                                .responseMode()
+                                .allowedValues()
+                                .contains(request.preferences().responseMode())
+                        || !option.controls()
+                                .responseLength()
+                                .allowedValues()
+                                .contains(request.preferences().responseLength())
+                        || request.preferences()
+                                .effort()
+                                .filter(value -> !option.controls()
+                                        .reasoningEffort()
+                                        .allowedValues()
+                                        .contains(value))
+                                .isPresent()) {
+                    throw new IllegalArgumentException("MODEL_PARAMETER_UNSUPPORTED");
+                }
+                if (option.controls().reasoningEffort().readOnly()
+                        && request.preferences().effort().isPresent()
+                        && !request.preferences()
+                                .effort()
+                                .equals(java.util.Optional.ofNullable(
+                                        option.controls().reasoningEffort().recommendedValue()))) {
+                    throw new IllegalArgumentException("MODEL_PARAMETER_READ_ONLY");
+                }
+                if (option.controls().responseLength().readOnly()
+                        && request.preferences().responseLength()
+                                != option.controls().responseLength().recommendedValue()) {
+                    throw new IllegalArgumentException("MODEL_PARAMETER_READ_ONLY");
+                }
+                var effective = productDefaults.resolve(profiles.get(option.id()), request.preferences());
+                return new PersonalResolvedModelSelection(
+                        option,
+                        request.preferences(),
+                        effective,
+                        conversationProfileId(option.id(), request.preferences()));
+            }
+
+            @Override
+            public List<PersonalResolvedModelSelection> runProfiles() {
+                return available().stream()
+                        .filter(option -> "AVAILABLE".equals(option.availability()))
+                        .flatMap(option -> preferenceVariants(option).stream()
+                                .map(preferences -> resolve(new PersonalModelSelectionRequest(
+                                        option.id(),
+                                        option.preferenceSchemaVersion(),
+                                        option.profileVersion(),
+                                        option.profileDigest(),
+                                        preferences))))
+                        .toList();
+            }
+        };
+        return new Platform(contribution, catalog);
+    }
+
+    private static List<PersonalModelPreferences> preferenceVariants(PersonalModelOption option) {
+        java.util.List<PersonalModelPreferences> result = new java.util.ArrayList<>();
+        for (var mode : option.controls().responseMode().allowedValues()) {
+            for (var length : option.controls().responseLength().allowedValues()) {
+                if (mode != io.haifa.agent.personalassistant.application.PersonalResponseMode.DEEP) {
+                    result.add(new PersonalModelPreferences(mode, java.util.Optional.empty(), length));
+                    continue;
+                }
+                result.add(new PersonalModelPreferences(mode, java.util.Optional.empty(), length));
+                if (option.controls().reasoningEffort().visible()) {
+                    option.controls()
+                            .reasoningEffort()
+                            .allowedValues()
+                            .forEach(effort -> result.add(
+                                    new PersonalModelPreferences(mode, java.util.Optional.of(effort), length)));
+                }
+            }
+        }
+        return List.copyOf(result);
+    }
+
+    /** Replaces YAML model facts with the packaged Catalog while retaining product-owned connection settings. */
+    private static List<PersonalAssistantProperties.ModelProvider> catalogized(
+            List<PersonalAssistantProperties.ModelProvider> configured) {
+        if (!isCatalogDeployment(configured)) {
+            return configured;
+        }
+        var deployment = new ModelCatalogDeployment(configured.stream()
+                .map(provider -> new ModelCatalogDeployment.Provider(
+                        new ModelProviderId(provider.id()),
+                        provider.endpoint(),
+                        new CredentialRef(provider.credentialReference()),
+                        provider.nativeStreaming(),
+                        true,
+                        provider.bindingIds().stream()
+                                .map(ModelDefinitionId::new)
+                                .collect(java.util.stream.Collectors.toUnmodifiableSet()),
+                        provider.models().isEmpty()
+                                ? provider.bindingEndpointOverrides().entrySet().stream()
+                                        .collect(java.util.stream.Collectors.toUnmodifiableMap(
+                                                entry -> new ModelDefinitionId(entry.getKey()), Map.Entry::getValue))
+                                : provider.apiBindings().stream()
+                                        .filter(binding -> binding.endpoint() != null)
+                                        .collect(java.util.stream.Collectors.toUnmodifiableMap(
+                                                binding -> provider.models().stream()
+                                                        .filter(model ->
+                                                                model.style().equals(binding.style()))
+                                                        .map(model -> new ModelDefinitionId(model.id()))
+                                                        .findFirst()
+                                                        .orElseThrow(),
+                                                PersonalAssistantProperties.ApiBinding::endpoint))))
+                .toList());
+        var projection = PackagedModelCatalog.load(PersonalModelFactory.class.getClassLoader())
+                .project(deployment);
+        Map<String, PersonalAssistantProperties.ModelProvider> source = configured.stream()
+                .collect(java.util.stream.Collectors.toUnmodifiableMap(
+                        PersonalAssistantProperties.ModelProvider::id, value -> value));
+        Map<String, io.haifa.agent.model.api.ModelProviderDefinition> providers = projection.providers().stream()
+                .collect(java.util.stream.Collectors.toUnmodifiableMap(
+                        value -> value.id().value(), value -> value));
+        return projection.providers().stream()
+                .map(provider -> {
+                    var original = source.get(provider.id().value());
+                    List<PersonalAssistantProperties.ApiBinding> bindings = provider.apiBindings().stream()
+                            .map(binding -> new PersonalAssistantProperties.ApiBinding(
+                                    binding.style().value(),
+                                    binding.dialect(),
+                                    binding.endpoint().orElse(null)))
+                            .toList();
+                    List<PersonalAssistantProperties.ProviderModel> models = projection.bindings().stream()
+                            .filter(binding -> binding.definition().providerId().equals(provider.id()))
+                            .map(binding -> {
+                                var definition = binding.definition();
+                                var existing = original.models().stream()
+                                        .filter(model -> model.id()
+                                                .equals(definition.id().value()))
+                                        .findFirst();
+                                return new PersonalAssistantProperties.ProviderModel(
+                                        definition.id().value(),
+                                        definition.displayName(),
+                                        definition.displayName(),
+                                        definition.providerModelId(),
+                                        definition.style().value(),
+                                        definition.capabilities(),
+                                        existing.map(PersonalAssistantProperties.ProviderModel::reasoningMode)
+                                                .orElse(
+                                                        definition
+                                                                        .capabilities()
+                                                                        .contains(ModelCapability.REASONING)
+                                                                ? original.defaultReasoningMode()
+                                                                : io.haifa.agent.model.api.ModelReasoningMode.DISABLED),
+                                        definition.contextWindow(),
+                                        definition.maxOutputTokens());
+                            })
+                            .toList();
+                    return new PersonalAssistantProperties.ModelProvider(
+                            provider.id().value(),
+                            provider.displayName(),
+                            original.mode(),
+                            original.allowDeterministic(),
+                            provider.nativeStreaming(),
+                            provider.endpoint(),
+                            provider.credentialRef().value(),
+                            bindings,
+                            models,
+                            original.proxy(),
+                            original.defaultReasoningMode(),
+                            List.of(),
+                            Map.of());
+                })
+                .toList();
+    }
+
+    private static boolean isCatalogDeployment(List<PersonalAssistantProperties.ModelProvider> configured) {
+        return configured.stream().noneMatch(provider -> "deterministic".equals(provider.mode()))
+                && configured.stream().anyMatch(provider -> provider.models().isEmpty());
+    }
+
+    private static String apiStyleDisplayName(ApiStyleId style) {
+        if (ModelApiStyles.OPENAI_CHAT_COMPLETIONS.equals(style)) return "Chat Completions";
+        if (ModelApiStyles.OPENAI_RESPONSES.equals(style)) return "Responses";
+        if (ModelApiStyles.ANTHROPIC_MESSAGES.equals(style)) return "Anthropic Messages";
+        return "Deterministic";
+    }
+
+    private static int apiStylePriority(ApiStyleId style) {
+        if (ModelApiStyles.OPENAI_CHAT_COMPLETIONS.equals(style)) return 0;
+        if (ModelApiStyles.ANTHROPIC_MESSAGES.equals(style)) return 1;
+        if (ModelApiStyles.OPENAI_RESPONSES.equals(style)) return 2;
+        return 3;
+    }
+
+    private static String conversationProfileId(String bindingId, PersonalModelPreferences preferences) {
+        String value = bindingId + "|" + preferences.digest();
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return "pa-conversation-" + java.util.HexFormat.of().formatHex(digest, 0, 10);
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 is required", impossible);
+        }
+    }
+
+    private static ResolvedModelSnapshot snapshot(
+            PersonalAssistantProperties.ModelProvider provider, PersonalAssistantProperties.ProviderModel model) {
+        PersonalAssistantProperties.ApiBinding binding = binding(provider, model.style());
+        ApiStyleId style = new ApiStyleId(model.style());
+        URI endpoint = binding.endpoint() == null ? provider.endpoint() : binding.endpoint();
+        Map<String, Object> providerOptions = providerOptions(binding, endpoint);
+        Map<String, Object> invocationOptions = invocationOptions(binding, model.reasoningMode());
+        return ResolvedModelSnapshot.create(
+                new ModelProviderId(provider.id()),
+                "1.0.0",
+                new ModelDefinitionId(model.id()),
+                "1.0.0",
+                model.providerModelId(),
+                ModelApiStyles.adapterType(style),
+                "1.0.0",
+                style,
+                binding.dialect(),
+                endpoint,
+                new CredentialRef(provider.credentialReference()),
+                provider.nativeStreaming(),
+                model.capabilities(),
+                model.contextWindow(),
+                model.maxOutputTokens(),
+                providerOptions,
+                invocationOptions);
+    }
+
+    private static ModelBindingProfile profile(ResolvedModelSnapshot snapshot, boolean catalogDeployment) {
+        if (catalogDeployment) return PACKAGED_CATALOG.profileFor(snapshot).orElseThrow();
+        return ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT.equals(snapshot.apiStyle())
+                ? GeminiModelProfileFactory.fromSnapshot(snapshot, LocalDate.of(2026, 8, 24))
+                : ModelApiStyles.ANTHROPIC_MESSAGES.equals(snapshot.apiStyle())
+                        ? AnthropicModelProfileFactory.fromSnapshot(snapshot, LocalDate.of(2026, 8, 30))
+                        : OpenAiCompatibleModelProfileFactory.fromSnapshot(snapshot, LocalDate.of(2026, 8, 13));
+    }
+
+    private static StaticModelPlatform modelPlatform(
+            List<PersonalAssistantProperties.ModelProvider> configured,
+            Map<ModelAdapterCoordinate, AgentChatModel> adapters,
+            Map<String, ModelBindingProfile> profiles) {
+        List<ModelProviderDefinition> providers = configured.stream()
+                .map(provider -> {
+                    ModelProviderId providerId = new ModelProviderId(provider.id());
+                    List<ModelDefinition> models = provider.models().stream()
+                            .map(model -> new ModelDefinition(
+                                    new ModelDefinitionId(model.id()),
+                                    "1.0.0",
+                                    providerId,
+                                    model.providerModelId(),
+                                    model.displayName(),
+                                    ModelStatus.ACTIVE,
+                                    model.capabilities(),
+                                    model.contextWindow(),
+                                    model.maxOutputTokens(),
+                                    invocationOptions(binding(provider, model.style()), model.reasoningMode()),
+                                    Map.of(),
+                                    new ApiStyleId(model.style())))
+                            .toList();
+                    return new ModelProviderDefinition(
+                            providerId,
+                            "1.0.0",
+                            provider.displayName(),
+                            provider.endpoint(),
+                            new CredentialRef(provider.credentialReference()),
+                            provider.nativeStreaming(),
+                            ProviderStatus.ACTIVE,
+                            provider.apiBindings().stream()
+                                    .map(binding -> new ModelApiBindingDefinition(
+                                            new ApiStyleId(binding.style()), binding.dialect(), binding.endpoint()))
+                                    .toList(),
+                            models,
+                            Map.of(),
+                            Map.of());
+                })
+                .toList();
+        for (ModelProviderDefinition provider : providers) {
+            ModelBindingConsistencyValidator.validateAll(provider, profiles);
+        }
+        return new StaticModelPlatform(
+                new ImmutableModelCatalog(providers),
+                ModelAccessPolicy.allowAll(),
+                adapters.keySet().stream()
+                        .collect(java.util.stream.Collectors.toUnmodifiableMap(
+                                ModelAdapterCoordinate::type, ModelAdapterCoordinate::version)),
+                new InMemoryProviderHealthRegistry());
+    }
+
+    private static Map<String, Object> providerOptions(PersonalAssistantProperties.ApiBinding binding, URI endpoint) {
+        if (ModelApiStyles.DETERMINISTIC_CHAT.value().equals(binding.style())) return Map.of();
+        Map<String, Object> options = new LinkedHashMap<>();
+        if (ModelApiStyles.OPENAI_CHAT_COMPLETIONS.value().equals(binding.style())) {
+            options.putAll(OpenAiCompatibleDialects.configuredOptions(binding.dialect(), endpoint));
+        }
+        if (io.haifa.agent.model.openai.responses.OpenAiResponsesDialects.OPENAI_CODEX.equals(binding.dialect())) {
+            options.put("codex_originator", requiredEnvironment("HAIFA_CODEX_ORIGINATOR"));
+            options.put(
+                    "codex_user_agent",
+                    java.util.Optional.ofNullable(System.getenv("HAIFA_CODEX_USER_AGENT"))
+                            .map(String::trim)
+                            .filter(value -> !value.isEmpty())
+                            .orElse("haifa-agent-local-compat/1"));
+        }
+        if (OpenAiCompatibleDialects.DEEPSEEK.equals(binding.dialect())
+                || AnthropicMessagesDialects.DEEPSEEK.equals(binding.dialect())) {
+            options.put("thinking", "disabled");
+        }
+        return Map.copyOf(options);
+    }
+
+    private static String requiredEnvironment(String name) {
+        String value = System.getenv(name);
+        if (value == null || value.isBlank()) throw new IllegalArgumentException(name + " is required");
+        return value.trim();
+    }
+
+    private static Map<String, Object> invocationOptions(
+            PersonalAssistantProperties.ApiBinding binding, io.haifa.agent.model.api.ModelReasoningMode reasoningMode) {
+        if (OpenAiCompatibleDialects.ALIYUN_BAILIAN.equals(binding.dialect())) {
+            return OpenAiCompatibleDialects.configuredInvocationOptions(binding.dialect(), reasoningMode);
+        }
+        if (io.haifa.agent.model.openai.responses.OpenAiResponsesDialects.ALIYUN_BAILIAN.equals(binding.dialect())) {
+            return Map.of(
+                    "reasoning_effort",
+                    reasoningMode == io.haifa.agent.model.api.ModelReasoningMode.DISABLED ? "none" : "high");
+        }
+        if (OpenAiCompatibleDialects.KIMI.equals(binding.dialect())) {
+            return Map.of(
+                    "thinking",
+                    reasoningMode.name().toLowerCase(java.util.Locale.ROOT),
+                    "requires_reasoning_continuation",
+                    reasoningMode != io.haifa.agent.model.api.ModelReasoningMode.DISABLED);
+        }
+        if (OpenAiCompatibleDialects.ZHIPU.equals(binding.dialect())) {
+            return Map.of(
+                    "thinking",
+                    reasoningMode.name().toLowerCase(java.util.Locale.ROOT),
+                    "do_sample",
+                    false,
+                    "clear_thinking",
+                    false,
+                    "requires_reasoning_continuation",
+                    reasoningMode != io.haifa.agent.model.api.ModelReasoningMode.DISABLED);
+        }
+        return OpenAiCompatibleDialects.DEEPSEEK.equals(binding.dialect())
+                        || AnthropicMessagesDialects.DEEPSEEK.equals(binding.dialect())
+                        || AnthropicMessagesDialects.ZHIPU.equals(binding.dialect())
+                ? Map.of("thinking", reasoningMode.name().toLowerCase(java.util.Locale.ROOT))
+                : Map.of();
+    }
+
+    private static PersonalAssistantProperties.ApiBinding binding(
+            PersonalAssistantProperties.ModelProvider provider, String style) {
+        return provider.apiBindings().stream()
+                .filter(candidate -> candidate.style().equals(style))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("model references an unbound API style"));
+    }
+
+    private static Map<ModelAdapterCoordinate, AgentChatModel> adapters(
+            List<PersonalAssistantProperties.ModelProvider> providers,
+            Map<String, ResolvedModelSnapshot> snapshots,
+            ConfiguredModel selected,
+            boolean deterministic,
+            ObjectMapper mapper,
+            PersonalShellRuntime shell,
+            boolean allowInsecureLoopbackModel,
+            CredentialResolver credentials,
+            AntigravityCloudCodeProjectResolver trustedProjectResolver,
+            CodexAccountIdentityResolver codexAccountResolver,
+            ProxySelector proxySelector) {
+        if (deterministic) {
+            AgentChatModel model = new LoggingAgentChatModel(
+                    new DeterministicAcceptanceModel(selected.model().providerModelId(), shell));
+            return Map.of(
+                    ModelAdapterCoordinate.from(snapshots.get(selected.model().id())), model);
+        }
+        HttpClient http = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(10))
+                .proxy(proxySelector)
+                .build();
+        Map<ModelAdapterCoordinate, AgentChatModel> result = new LinkedHashMap<>();
+        snapshots.values().stream().map(ModelAdapterCoordinate::from).distinct().forEach(coordinate -> {
+            AgentChatModel adapter =
+                    switch (coordinate.type()) {
+                        case ModelApiStyles.OPENAI_CHAT_ADAPTER ->
+                            new OpenAiCompatibleChatModel(
+                                    coordinate.type(),
+                                    coordinate.version(),
+                                    http,
+                                    mapper,
+                                    credentials,
+                                    allowInsecureLoopbackModel,
+                                    4 * 1024 * 1024);
+                        case ModelApiStyles.OPENAI_RESPONSES_ADAPTER ->
+                            new OpenAiResponsesModel(
+                                    http,
+                                    mapper,
+                                    credentials,
+                                    allowInsecureLoopbackModel,
+                                    4 * 1024 * 1024,
+                                    codexAccountResolver);
+                        case ModelApiStyles.ANTHROPIC_MESSAGES_ADAPTER ->
+                            new AnthropicMessagesModel(
+                                    http, mapper, credentials, allowInsecureLoopbackModel, 4 * 1024 * 1024);
+                        case ModelApiStyles.GOOGLE_GEMINI_ADAPTER ->
+                            new GeminiGenerateContentModel(
+                                    http,
+                                    mapper,
+                                    credentials,
+                                    allowInsecureLoopbackModel,
+                                    4 * 1024 * 1024,
+                                    false,
+                                    trustedProjectResolver);
+                        default ->
+                            throw new IllegalArgumentException(
+                                    "unsupported Personal model adapter: " + coordinate.type());
+                    };
+            result.put(coordinate, new LoggingAgentChatModel(adapter));
+        });
+        return Map.copyOf(result);
+    }
+
+    private static void validateEndpoints(
+            List<PersonalAssistantProperties.ModelProvider> providers, boolean allowInsecureLoopbackModel) {
+        for (PersonalAssistantProperties.ModelProvider provider : providers) {
+            List<URI> endpoints = new java.util.ArrayList<>();
+            endpoints.add(provider.endpoint());
+            provider.apiBindings().stream()
+                    .map(PersonalAssistantProperties.ApiBinding::endpoint)
+                    .filter(java.util.Objects::nonNull)
+                    .forEach(endpoints::add);
+            for (URI endpoint : endpoints) {
+                if ("https".equalsIgnoreCase(endpoint.getScheme())) continue;
+                String host = endpoint.getHost();
+                boolean loopback = host != null
+                        && Set.of("localhost", "127.0.0.1", "::1", "0:0:0:0:0:0:0:1")
+                                .contains(host.toLowerCase(java.util.Locale.ROOT));
+                if (!allowInsecureLoopbackModel || !"http".equalsIgnoreCase(endpoint.getScheme()) || !loopback) {
+                    throw new IllegalArgumentException(
+                            "Personal model HTTP endpoint requires explicit loopback-only opt-in");
+                }
+            }
+        }
+    }
+
+    private record ConfiguredModel(
+            PersonalAssistantProperties.ModelProvider provider, PersonalAssistantProperties.ProviderModel model) {}
+
+    public record Platform(ModelContribution contribution, PersonalModelCatalog catalog) {}
+
+    /**
+     * Test-only-by-configuration model. Markers select one public tool alias, and a following TOOL message
+     * always terminates. It never becomes the default production mode.
+     */
+    private static final class DeterministicAcceptanceModel implements AgentChatModel {
+        private final String modelId;
+        private final String operatingSystem;
+        private final String scriptLanguage;
+        private final AtomicLong sequence = new AtomicLong();
+
+        /**
+         * Alias produced by the reviewed MCP namespace ({@code personal_mcp}) and Tool ({@code echo}) that the
+         * deterministic acceptance tests point at an external loopback MCP server.
+         */
+        private static final String MCP_TOOL_ALIAS = "personal_mcp_echo";
+
+        private DeterministicAcceptanceModel(String modelId, PersonalShellRuntime shell) {
+            this.modelId = modelId;
+            this.operatingSystem = shell.operatingSystem();
+            this.scriptLanguage = "WINDOWS".equals(operatingSystem) ? "powershell" : "bash";
+            if (!shell.scriptLanguages().contains(scriptLanguage)) {
+                throw new IllegalArgumentException(
+                        "deterministic acceptance model requires configured script language " + scriptLanguage);
+            }
+        }
+
+        @Override
+        public AgentChatResponse invoke(io.haifa.agent.model.api.AgentChatRequest request) {
+            long current = sequence.incrementAndGet();
+            String prompt = request.messages().stream()
+                    .filter(message -> message.role() == ModelMessageRole.USER)
+                    .map(io.haifa.agent.model.api.ModelMessage::content)
+                    .reduce((left, right) -> right)
+                    .orElse("");
+            String visibleContext = request.messages().stream()
+                    .map(io.haifa.agent.model.api.ModelMessage::content)
+                    .collect(java.util.stream.Collectors.joining("\n"));
+            if (prompt.contains("[mission-research-synthesis]")) {
+                java.util.regex.Matcher ids = java.util.regex.Pattern.compile(
+                                "Real completed Task IDs in result order: \\[([^]]*)]")
+                        .matcher(prompt);
+                java.util.List<String> taskIds = ids.find()
+                        ? java.util.Arrays.stream(ids.group(1).split(","))
+                                .map(String::trim)
+                                .filter(value -> !value.isBlank())
+                                .toList()
+                        : java.util.List.of("task-1");
+                java.util.regex.Matcher sourceIds = java.util.regex.Pattern.compile(
+                                "\\\"sourceId\\\":\\\"([^\\\"]+)\\\"")
+                        .matcher(prompt);
+                java.util.List<String> settledSourceIds = new java.util.ArrayList<>();
+                while (sourceIds.find()) {
+                    if (!settledSourceIds.contains(sourceIds.group(1))) settledSourceIds.add(sourceIds.group(1));
+                }
+                String primarySource = settledSourceIds.isEmpty() ? "source-1" : settledSourceIds.getFirst();
+                String secondarySource = settledSourceIds.size() < 2 ? primarySource : settledSourceIds.get(1);
+                String findings = taskIds.stream()
+                        .map(taskId -> "<!-- haifa-task: " + taskId + " -->\n### " + taskId
+                                + "\nThe settled fixture evidence supports this bounded finding [["
+                                + primarySource + "]] and an independent cross-check [[" + secondarySource
+                                + "]].")
+                        .collect(java.util.stream.Collectors.joining("\n\n"));
+                String report =
+                        """
+                        # Deterministic research report
+                        <!-- haifa-section: executive-summary -->
+                        ## Executive summary
+                        The researched finding is supported by two independently fetched fixtures, subject to bounded offline limitations.
+                        <!-- haifa-section: scope-method -->
+                        ## Scope, assumptions, and method
+                        The acceptance report uses only settled Mission evidence and distinguishes fetched facts from remaining uncertainty.
+                        <!-- haifa-section: task-findings -->
+                        ## Task findings
+                        %s
+                        <!-- haifa-section: synthesis -->
+                        ## Integrated analysis
+                        The independent fixture sources agree on the material result while external freshness remains outside this offline run.
+                        <!-- haifa-section: conclusions -->
+                        ## Conclusions and recommendations
+                        The bounded acceptance conclusion is supported; refresh external evidence before relying on it in production.
+                        <!-- haifa-section: risks-unknowns -->
+                        ## Risks, unknowns, and open questions
+                        External freshness, provider variance, and live network behavior were intentionally not evaluated by this fixture.
+                        <!-- haifa-section: sources -->
+                        ## Sources
+                        - [[%s]] Primary deterministic fixture evidence.
+                        - [[%s]] Independent deterministic fixture evidence.
+                        """
+                                .formatted(findings, primarySource, secondarySource);
+                return response(current, report, List.of(), ModelFinishReason.STOP);
+            }
+            if (prompt.contains("[mission-synthesis]")) {
+                boolean partial = !prompt.contains("Failed or cancelled Task items: []");
+                String result = "{\"schemaVersion\":\"pa.mission-final-result/v1\","
+                        + "\"directAnswer\":\"All Mission tasks completed successfully.\","
+                        + "\"completedItems\":[\"Settled Mission tasks\"],\"failedItems\":"
+                        + (partial ? "[\"One or more Mission tasks\"]" : "[]") + ","
+                        + "\"artifactRefs\":[],\"sourceRefs\":[],\"unverifiedClaims\":[],"
+                        + "\"unresolvedQuestions\":[],\"residualRisks\":[],"
+                        + "\"completionKind\":\"" + (partial ? "PARTIAL" : "COMPLETE") + "\"}";
+                return response(current, result, List.of(), ModelFinishReason.STOP);
+            }
+            if (prompt.contains("Task type: RESEARCH") || visibleContext.contains("Task type: RESEARCH")) {
+                boolean reusesDependencies = visibleContext.contains("\"dependencies\":[{");
+                long toolResults = reusesDependencies
+                        ? 3
+                        : request.messages().stream()
+                                .filter(message -> message.role() == ModelMessageRole.TOOL)
+                                .count();
+                if (toolResults == 0) {
+                    return tool(
+                            current,
+                            PersonalAssistantProfile.WEB_SEARCH_ALIAS,
+                            Map.of("query", "deterministic deep research evidence", "maxResults", 2));
+                }
+                if (toolResults == 1) {
+                    return tool(
+                            current,
+                            PersonalAssistantProfile.WEB_FETCH_ALIAS,
+                            Map.of("url", "https://research.stub/source-1", "maxCharacters", 4000));
+                }
+                if (toolResults == 2) {
+                    return tool(
+                            current,
+                            PersonalAssistantProfile.WEB_FETCH_ALIAS,
+                            Map.of("url", "https://research.stub/source-2", "maxCharacters", 4000));
+                }
+                return response(
+                        current,
+                        """
+                        {"schemaVersion":"pa.research-task-result/v2",
+                        "taskSummary":"Bounded deterministic research task",
+                        "queries":[{"query":"deterministic deep research evidence","phase":"DISCOVER"},
+                        {"query":"independent deterministic research corroboration","phase":"CROSS_CHECK"}],
+                        "sources":[
+                        {"sourceId":"source-1","locator":"https://research.stub/source-1",
+                        "normalizedLocator":"https://research.stub/source-1",
+                        "locatorDigest":"sha256:1d0076d5314fa605319d168505842186fb1f6d3f534ee25bc2a9fc79a8b97980",
+                        "title":"Primary research fixture","safetyType":"DEVELOPMENT_STUB",
+                        "fetchedAt":"2026-08-08T00:00:00Z","publishedAt":"2026-01-15T00:00:00Z",
+                        "status":"FETCHED","excerpt":"Primary evidence supports the fixture finding.",
+                        "contentDigest":"sha256:9f00cea97901fba126e5aecc2f4a33adb3763cbdef57aa21ebf816f94198437b"},
+                        {"sourceId":"source-2","locator":"https://research.stub/source-2",
+                        "normalizedLocator":"https://research.stub/source-2",
+                        "locatorDigest":"sha256:abe06c90ad15ca62760beee68928ade4e5ff04b28d3077a63dccbe599e2d7da5",
+                        "title":"Independent research fixture","safetyType":"DEVELOPMENT_STUB",
+                        "fetchedAt":"2026-08-08T00:00:00Z","publishedAt":"2026-02-01T00:00:00Z",
+                        "status":"FETCHED","excerpt":"Independent evidence corroborates the primary finding.",
+                        "contentDigest":"sha256:2badb1b783b31c475f4112dba70fd85edbd4721e5c0b326ab83cb292a36be30a"}],
+                        "findings":[{
+                        "findingId":"finding-1","title":"Primary finding",
+                        "mechanism":"The primary finding is independently corroborated.",
+                        "keyParameters":["corroborated: true"],
+                        "evidenceSummary":"Primary and independent evidence agree.",
+                        "implications":"Deterministic fixture implication.",
+                        "limitations":"Offline fixtures do not establish external freshness.",
+                        "supportingSourceIds":["source-1","source-2"],"opposingSourceIds":[],
+                        "evidenceAssessment":"SUPPORTED","unverified":false}],
+                        "unresolvedQuestions":["The offline fixture cannot establish external freshness."],
+                        "stopReason":"SUFFICIENT_EVIDENCE",
+                        "limitsUsed":{"searchCalls":%d,"fetchCalls":%d,"sources":2,"contentBytes":%d}}
+                        """
+                                .formatted(
+                                        reusesDependencies ? 0 : 1,
+                                        reusesDependencies ? 0 : 2,
+                                        reusesDependencies ? 0 : 164),
+                        List.of(),
+                        ModelFinishReason.STOP);
+            }
+            if (request.messages().getLast().role() == ModelMessageRole.TOOL) {
+                return response(current, "The requested capability completed.", List.of(), ModelFinishReason.STOP);
+            }
+            String alias;
+            Map<String, Object> arguments;
+            if (prompt.contains("CPU使用率") || prompt.contains("[execution-cpu]")) {
+                alias = PersonalAssistantProfile.EXECUTION_TOOL_ALIAS;
+                arguments = Map.of(
+                        "mode",
+                        "SCRIPT",
+                        "language",
+                        scriptLanguage,
+                        "content",
+                        cpuObservationScript(),
+                        "purpose",
+                        "读取当前系统 CPU 使用率与逻辑处理器数量",
+                        "timeoutMillis",
+                        10_000);
+            } else if (prompt.contains("[execution-disk]")) {
+                alias = PersonalAssistantProfile.EXECUTION_TOOL_ALIAS;
+                arguments = Map.of(
+                        "mode",
+                        "COMMAND",
+                        "content",
+                        "Get-PSDrive -PSProvider FileSystem | Select-Object Name, "
+                                + "@{N='Used(GB)';E={[math]::Round($_.Used/1GB,2)}}, "
+                                + "@{N='Free(GB)';E={[math]::Round($_.Free/1GB,2)}}, "
+                                + "@{N='Total(GB)';E={[math]::Round(($_.Used+$_.Free)/1GB,2)}} "
+                                + "| Format-Table -AutoSize",
+                        "purpose",
+                        "Inspect filesystem drive usage",
+                        "timeoutMillis",
+                        5_000);
+            } else if (prompt.contains("[execution-command]")) {
+                alias = PersonalAssistantProfile.EXECUTION_TOOL_ALIAS;
+                arguments = Map.of(
+                        "mode",
+                        "COMMAND",
+                        "content",
+                        "$PSVersionTable.PSVersion.ToString()",
+                        "purpose",
+                        "读取当前 PowerShell 版本",
+                        "timeoutMillis",
+                        5_000);
+            } else if (prompt.contains("[execution-script]")) {
+                alias = PersonalAssistantProfile.EXECUTION_TOOL_ALIAS;
+                arguments = Map.of(
+                        "mode",
+                        "SCRIPT",
+                        "language",
+                        scriptLanguage,
+                        "content",
+                        argumentEchoScript(),
+                        "args",
+                        List.of("first argument", "second'argument"),
+                        "purpose",
+                        argumentEchoPurpose(),
+                        "timeoutMillis",
+                        5_000);
+            } else if (prompt.contains("[execution-timeout]")) {
+                alias = PersonalAssistantProfile.EXECUTION_TOOL_ALIAS;
+                arguments = Map.of(
+                        "mode",
+                        "SCRIPT",
+                        "language",
+                        scriptLanguage,
+                        "content",
+                        timeoutScript(),
+                        "purpose",
+                        "验证执行超时与进程终止",
+                        "timeoutMillis",
+                        1_000);
+            } else if (prompt.contains("[skill]")) {
+                alias = PersonalAssistantProfile.SKILL_LOAD_ALIAS;
+                arguments = Map.of("skill", PersonalAssistantProfile.BUNDLED_SKILL_ALIAS);
+            } else if (prompt.contains("[mcp]")) {
+                alias = MCP_TOOL_ALIAS;
+                arguments = Map.of("text", "offline MCP verification");
+            } else if (prompt.contains("[tool]")) {
+                alias = PersonalAssistantProfile.PRODUCT_TOOL_ALIAS;
+                arguments = Map.of("items", List.of("review the plan", "confirm completion"));
+            } else {
+                return response(current, "Personal Assistant is ready.", List.of(), ModelFinishReason.STOP);
+            }
+            return response(
+                    current,
+                    "",
+                    List.of(new ModelToolCall(
+                            new ProviderToolCallCorrelationId("personal-call-" + current), alias, arguments)),
+                    ModelFinishReason.TOOL_CALLS);
+        }
+
+        private AgentChatResponse tool(long current, String alias, Map<String, Object> arguments) {
+            return response(
+                    current,
+                    "",
+                    List.of(new ModelToolCall(
+                            new ProviderToolCallCorrelationId("personal-call-" + current), alias, arguments)),
+                    ModelFinishReason.TOOL_CALLS);
+        }
+
+        private AgentChatResponse response(
+                long id, String content, List<ModelToolCall> calls, ModelFinishReason reason) {
+            return new AgentChatResponse(
+                    "personal-response-" + id,
+                    modelId,
+                    content,
+                    calls,
+                    reason,
+                    ModelUsage.unpriced(12, Math.max(1, content.length() / 4)),
+                    "",
+                    Map.of("deterministic", true));
+        }
+
+        private String cpuObservationScript() {
+            return switch (operatingSystem) {
+                case "WINDOWS" ->
+                    """
+                        $sample = Get-CimInstance Win32_Processor |
+                          Measure-Object -Property LoadPercentage -Average
+                        [pscustomobject]@{
+                          CpuUsagePercent = [math]::Round($sample.Average, 1)
+                          LogicalProcessors = [Environment]::ProcessorCount
+                        } | ConvertTo-Json -Compress
+                        """;
+                case "MACOS" ->
+                    """
+                        cpu_usage=$(top -l 2 -n 0 | awk '/CPU usage/ { idle=$7 } END {
+                          gsub("%", "", idle)
+                          printf "%.1f", 100 - idle
+                        }')
+                        logical_processors=$(sysctl -n hw.logicalcpu)
+                        printf '{"cpuUsagePercent":%s,"logicalProcessors":%s}\n' \
+                          "$cpu_usage" "$logical_processors"
+                        """;
+                default ->
+                    """
+                        read -r _ user nice system idle iowait irq softirq steal _ < /proc/stat
+                        total_before=$((user + nice + system + idle + iowait + irq + softirq + steal))
+                        idle_before=$((idle + iowait))
+                        sleep 1
+                        read -r _ user nice system idle iowait irq softirq steal _ < /proc/stat
+                        total_after=$((user + nice + system + idle + iowait + irq + softirq + steal))
+                        idle_after=$((idle + iowait))
+                        total_delta=$((total_after - total_before))
+                        idle_delta=$((idle_after - idle_before))
+                        cpu_usage=$((100 * (total_delta - idle_delta) / total_delta))
+                        logical_processors=$(grep -c '^processor' /proc/cpuinfo)
+                        printf '{"cpuUsagePercent":%s,"logicalProcessors":%s}\n' \
+                          "$cpu_usage" "$logical_processors"
+                        """;
+            };
+        }
+
+        private String argumentEchoScript() {
+            return "WINDOWS".equals(operatingSystem) ? "$args -join '|'" : "printf '%s|%s' \"$1\" \"$2\"";
+        }
+
+        private String argumentEchoPurpose() {
+            return "验证 " + ("WINDOWS".equals(operatingSystem) ? "PowerShell" : "Bash") + " 脚本参数通过 stdin 安全传递";
+        }
+
+        private String timeoutScript() {
+            return "WINDOWS".equals(operatingSystem)
+                    ? "Start-Sleep -Seconds 5; 'unexpected completion'"
+                    : "sleep 5; printf 'unexpected completion'";
+        }
+    }
+}

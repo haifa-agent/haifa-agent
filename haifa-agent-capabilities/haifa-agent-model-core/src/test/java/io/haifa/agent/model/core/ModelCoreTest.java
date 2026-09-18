@@ -6,6 +6,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.model.api.CredentialRef;
+import io.haifa.agent.model.api.ModelApiBindingDefinition;
+import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelDefinition;
 import io.haifa.agent.model.api.ModelDefinitionId;
@@ -15,6 +17,7 @@ import io.haifa.agent.model.api.ModelStatus;
 import io.haifa.agent.model.api.ProviderHealth;
 import io.haifa.agent.model.api.ProviderHealthStatus;
 import io.haifa.agent.model.api.ProviderStatus;
+import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import java.net.URI;
 import java.time.Instant;
 import java.util.EnumSet;
@@ -76,10 +79,11 @@ class ModelCoreTest {
                 otherId,
                 "provider-v1",
                 "Other",
-                "other-adapter",
                 URI.create("https://other.example.com"),
                 new CredentialRef("env://OTHER_KEY"),
+                true,
                 ProviderStatus.ACTIVE,
+                List.of(new ModelApiBindingDefinition(ModelApiStyles.OPENAI_CHAT_COMPLETIONS)),
                 List.of(duplicate),
                 Map.of(),
                 Map.of());
@@ -116,6 +120,55 @@ class ModelCoreTest {
         assertThat(health.health(provider.id()).status()).isEqualTo(ProviderHealthStatus.UNAVAILABLE);
     }
 
+    @Test
+    void freezesBindingEndpointOverrideAndStandardDialectWithoutProviderSpecificCode() {
+        ModelProviderId providerId = new ModelProviderId("configuration-only");
+        ModelDefinition model = new ModelDefinition(
+                new ModelDefinitionId("responses-model"),
+                "model-v1",
+                providerId,
+                "vendor-model",
+                "Responses Model",
+                ModelStatus.ACTIVE,
+                Set.of(ModelCapability.TEXT_CHAT),
+                32_768,
+                4_096,
+                Map.of(),
+                Map.of(),
+                ModelApiStyles.OPENAI_RESPONSES);
+        ModelProviderDefinition provider = new ModelProviderDefinition(
+                providerId,
+                "provider-v1",
+                "Configuration Only",
+                URI.create("https://provider.example.com/v1"),
+                new CredentialRef("env://CONFIGURATION_ONLY_KEY"),
+                false,
+                ProviderStatus.ACTIVE,
+                List.of(new ModelApiBindingDefinition(
+                        ModelApiStyles.OPENAI_RESPONSES,
+                        ModelApiBindingDefinition.STANDARD_DIALECT,
+                        URI.create("https://responses.example.com/v1"))),
+                List.of(model),
+                Map.of(),
+                Map.of());
+        DeterministicModelSelector selector = new DeterministicModelSelector(
+                new ImmutableModelCatalog(List.of(provider)),
+                ModelAccessPolicy.allowAll(),
+                Map.of(ModelApiStyles.OPENAI_RESPONSES_ADAPTER, "1.0.0"));
+
+        ResolvedModelSnapshot snapshot = selector.select(new ModelSelectionRequest(
+                new TenantRef("tenant"),
+                new PrincipalRef("principal", "user"),
+                model.id(),
+                Set.of(ModelCapability.TEXT_CHAT)));
+
+        assertThat(snapshot.adapterType()).isEqualTo(ModelApiStyles.OPENAI_RESPONSES_ADAPTER);
+        assertThat(snapshot.apiStyle()).isEqualTo(ModelApiStyles.OPENAI_RESPONSES);
+        assertThat(snapshot.dialect()).isEqualTo(ModelApiBindingDefinition.STANDARD_DIALECT);
+        assertThat(snapshot.endpoint()).isEqualTo(URI.create("https://responses.example.com/v1"));
+        assertThat(snapshot.nativeStreaming()).isFalse();
+    }
+
     private static ModelSelectionRequest request(Set<ModelCapability> capabilities) {
         return new ModelSelectionRequest(
                 new TenantRef("tenant"),
@@ -130,10 +183,11 @@ class ModelCoreTest {
                 providerId,
                 "provider-v1",
                 "DeepSeek",
-                "openai-compatible",
                 URI.create("https://api.deepseek.com"),
                 new CredentialRef("env://DEEPSEEK_API_KEY"),
+                true,
                 providerStatus,
+                List.of(new ModelApiBindingDefinition(ModelApiStyles.OPENAI_CHAT_COMPLETIONS, "deepseek-openai-chat")),
                 List.of(model(providerId, modelStatus)),
                 Map.of("timeout", 60),
                 Map.of());
@@ -151,6 +205,7 @@ class ModelCoreTest {
                 1_048_576,
                 393_216,
                 Map.of("thinking", "disabled"),
-                Map.of());
+                Map.of(),
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS);
     }
 }

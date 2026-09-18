@@ -6,9 +6,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.haifa.agent.context.api.ContextBuildException;
 import io.haifa.agent.context.api.ContextBuildFailure;
 import io.haifa.agent.context.api.ContextBuildRequest;
+import io.haifa.agent.context.budget.HeuristicTokenEstimator;
 import io.haifa.agent.context.budget.TokenEstimator;
+import io.haifa.agent.context.compression.CompressionPolicy;
 import io.haifa.agent.context.core.DefaultAgentContextBuilder;
-import io.haifa.agent.context.item.AssetDerivedTextContent;
 import io.haifa.agent.context.item.ContextItem;
 import io.haifa.agent.context.item.ContextItemId;
 import io.haifa.agent.context.item.ContextItemType;
@@ -17,20 +18,15 @@ import io.haifa.agent.context.item.ContextProvenance;
 import io.haifa.agent.context.item.ContextRetention;
 import io.haifa.agent.context.item.ContextRole;
 import io.haifa.agent.context.item.ContextSecurity;
-import io.haifa.agent.context.item.DerivedTextKind;
 import io.haifa.agent.context.item.TextContextContent;
 import io.haifa.agent.context.prompt.PromptComponent;
 import io.haifa.agent.context.prompt.PromptComponentId;
 import io.haifa.agent.context.prompt.PromptLayer;
 import io.haifa.agent.context.prompt.PromptRole;
 import io.haifa.agent.context.selection.ContextSelectionPolicy;
-import io.haifa.agent.context.trace.ContextSelectionDecision;
-import io.haifa.agent.core.reference.AssetRef;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
-import io.haifa.agent.core.run.AgentRunBudget;
 import io.haifa.agent.core.run.AgentRunId;
-import io.haifa.agent.core.run.AgentRunUsage;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.model.api.CredentialRef;
 import io.haifa.agent.model.api.ModelCapability;
@@ -45,93 +41,89 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class ContextCoreTest {
-    private static final String SECRET_BODY = "secret-body-must-not-enter-trace";
-
     @Test
-    void deterministicallySelectsDerivedTextAndTracesDropsWithoutBodies() {
-        ContextItem required =
-                item("required", "required-hash", 25, ContextPriority.CRITICAL, ContextRetention.MUST_KEEP, true);
-        ContextItem duplicate =
-                item("duplicate", "required-hash", 25, ContextPriority.HIGH, ContextRetention.KEEP_IF_RELEVANT, true);
-        ContextItem blocked = new ContextItem(
-                new ContextItemId("blocked"),
-                ContextItemType.RUNTIME_STATE,
-                new TextContextContent(ContextRole.SYSTEM, SECRET_BODY),
-                5,
-                ContextPriority.HIGH,
-                ContextRetention.KEEP_IF_RELEVANT,
-                new ContextSecurity(Set.of("secret"), false),
-                new ContextProvenance("runtime", "blocked", "1", "blocked-hash"),
-                Map.of());
-        ContextItem asset = new ContextItem(
-                new ContextItemId("asset-ocr"),
-                ContextItemType.ASSET_DERIVED_TEXT,
-                new AssetDerivedTextContent(
-                        new AssetRef("asset-1", "image/png", "scan.png"), DerivedTextKind.OCR, "invoice total 42"),
-                15,
-                ContextPriority.NORMAL,
-                ContextRetention.KEEP_IF_RELEVANT,
-                ContextSecurity.INTERNAL,
-                new ContextProvenance("asset", "asset-1", "ocr-v1", "asset-hash"),
-                Map.of("derivation", "ocr-v1"));
-        ContextItem overflow =
-                item("overflow", "overflow-hash", 40, ContextPriority.LOW, ContextRetention.DROP_FIRST, true);
+    void heuristicEstimatorAccountsForWireWrappersStructuredValuesAndMixedScripts() {
+        HeuristicTokenEstimator estimator = new HeuristicTokenEstimator();
 
-        var result = builder().build(request(List.of(required, duplicate, blocked, asset, overflow), 20, 10));
-
-        assertThat(result.context().items())
-                .extracting(value -> value.id().value())
-                .containsExactly("required", "asset-ocr");
-        assertThat(result.context().items().get(1).content()).isInstanceOf(AssetDerivedTextContent.class);
-        assertThat(result.context().budget().modelContextWindow()).isEqualTo(100);
-        assertThat(result.context().budget().outputReserve()).isEqualTo(20);
-        assertThat(result.context().budget().availableInputTokens()).isEqualTo(70);
-        assertThat(result.context().estimatedInputTokens()).isEqualTo(50);
-        assertThat(result.trace().items())
-                .extracting(value -> value.decision())
-                .containsExactly(
-                        ContextSelectionDecision.SELECTED,
-                        ContextSelectionDecision.DROPPED_SECURITY,
-                        ContextSelectionDecision.DROPPED_DUPLICATE,
-                        ContextSelectionDecision.SELECTED,
-                        ContextSelectionDecision.DROPPED_BUDGET);
-        assertThat(result.trace().toString()).doesNotContain(SECRET_BODY).doesNotContain("invoice total 42");
+        assertThat(estimator.estimate(prompt())).isGreaterThan(HeuristicTokenEstimator.tokens(prompt().text()));
+        assertThat(HeuristicTokenEstimator.tokens(Map.of("content", "x".repeat(900))))
+                .isGreaterThan(300);
+        assertThat(HeuristicTokenEstimator.tokens("测试估算")).isEqualTo(4);
+        assertThat(estimator.version()).isEqualTo("heuristic-structured-v2");
     }
 
     @Test
-    void requiredOverflowAndExhaustedRunBudgetsFailWithTypedReasons() {
+    void defaultCompressionPolicyUsesTokenTailBudgetsAndVersionedWindowSemantics() {
+        CompressionPolicy policy = CompressionPolicy.defaults();
+
+        assertThat(policy.retainedTailTokenPercent()).isEqualTo(50);
+        assertThat(policy.forcedRetainedTailTokenPercent()).isEqualTo(25);
+        assertThat(policy.version()).isEqualTo("session-window-v3");
+        assertThat(policy.semanticCompactionEnabled()).isTrue();
+        assertThat(policy.activeHistoryBudgetTokens()).isEmpty();
+        assertThat(policy.withActiveHistoryBudgetTokens(32_000L).activeHistoryBudgetTokens())
+                .hasValue(32_000L);
+        assertThatThrownBy(() -> policy.withActiveHistoryBudgetTokens(0L)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> policy.withActiveHistoryBudgetTokens(-10L))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(CompressionPolicy.defaults()
+                        .withSemanticCompactionEnabled(false)
+                        .semanticCompactionEnabled())
+                .isFalse();
+        assertThatThrownBy(() -> new CompressionPolicy(12, 32, 4, 50, 51)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void deterministicallySelectsContextAndTracesDropsWithoutBodies() {
+        ContextItem required =
+                item("required", "required-hash", 25, ContextPriority.CRITICAL, ContextRetention.MUST_KEEP);
+        ContextItem duplicate =
+                item("duplicate", "required-hash", 25, ContextPriority.HIGH, ContextRetention.KEEP_IF_RELEVANT);
+
+        var result = builder().build(request(List.of(required, duplicate), 20, 10));
+
+        assertThat(result.context().items())
+                .extracting(value -> value.id().value())
+                .containsExactly("required");
+        assertThat(result.context().budget().modelContextWindow()).isEqualTo(100);
+        assertThat(result.context().budget().outputReserve()).isEqualTo(20);
+        assertThat(result.context().budget().availableInputTokens()).isEqualTo(70);
+        assertThat(result.context().estimatedInputTokens()).isEqualTo(35);
+        assertThat(result.report().components()).hasSize(2);
+        assertThat(result.report().components().getFirst()).satisfies(component -> {
+            assertThat(component.id()).isEqualTo("safety");
+            assertThat(component.contentHash()).startsWith("sha256:");
+            assertThat(component.securityLabels()).containsExactly("internal");
+        });
+        assertThat(result.report().toString()).doesNotContain("required content");
+    }
+
+    @Test
+    void requiredOverflowAndModelWindowTooSmallFailWithTypedReasons() {
         ContextItem tooLarge =
-                item("too-large", "large-hash", 61, ContextPriority.CRITICAL, ContextRetention.MUST_KEEP, true);
+                item("too-large", "large-hash", 61, ContextPriority.CRITICAL, ContextRetention.MUST_KEEP);
         assertThatThrownBy(() -> builder().build(request(List.of(tooLarge), 20, 10)))
                 .isInstanceOf(ContextBuildException.class)
                 .extracting(error -> ((ContextBuildException) error).failure())
                 .isEqualTo(ContextBuildFailure.REQUIRED_CONTEXT_TOO_LARGE);
 
-        ContextBuildRequest exhausted = new ContextBuildRequest(
-                new AgentRunId("run"),
-                new AgentSessionId("session"),
-                new TenantRef("tenant"),
-                new PrincipalRef("principal", "user"),
-                1,
-                snapshot(),
-                new AgentRunBudget(10, 100, 0, 10, 10, 1, "USD", 100),
-                new AgentRunUsage(10, 0, 0, 0, 0, 0, 0, 0),
-                List.of(prompt()),
-                List.of(),
-                List.of(),
-                20,
-                10,
-                "none-v1",
-                "none-v1",
-                0);
-        assertThatThrownBy(() -> builder().build(exhausted))
+        assertThatThrownBy(() -> io.haifa.agent.context.budget.ContextWindowBudget.calculate(snapshot(), 40, 70))
                 .isInstanceOf(ContextBuildException.class)
                 .extracting(error -> ((ContextBuildException) error).failure())
-                .isEqualTo(ContextBuildFailure.RUN_INPUT_BUDGET_EXHAUSTED);
+                .isEqualTo(ContextBuildFailure.MODEL_WINDOW_TOO_SMALL);
+    }
+
+    @Test
+    void contextWindowBudgetCalculationIsIndependentOfCumulativeUsage() {
+        var budget = io.haifa.agent.context.budget.ContextWindowBudget.calculate(snapshot(), 20, 10);
+        assertThat(budget.modelContextWindow()).isEqualTo(100);
+        assertThat(budget.outputReserve()).isEqualTo(20);
+        assertThat(budget.safetyMargin()).isEqualTo(10);
+        assertThat(budget.availableInputTokens()).isEqualTo(70);
     }
 
     private static DefaultAgentContextBuilder builder() {
-        return new DefaultAgentContextBuilder(new FixedEstimator(), new ContextSelectionPolicy(), List.of());
+        return new DefaultAgentContextBuilder(new FixedEstimator(), new ContextSelectionPolicy());
     }
 
     private static ContextBuildRequest request(List<ContextItem> items, int output, int safety) {
@@ -142,8 +134,6 @@ class ContextCoreTest {
                 new PrincipalRef("principal", "user"),
                 1,
                 snapshot(),
-                new AgentRunBudget(1_000, 1_000, 0, 10, 10, 1, "USD", 100),
-                AgentRunUsage.ZERO,
                 List.of(prompt()),
                 items,
                 List.of(),
@@ -166,12 +156,7 @@ class ContextCoreTest {
     }
 
     private static ContextItem item(
-            String id,
-            String hash,
-            int tokens,
-            ContextPriority priority,
-            ContextRetention retention,
-            boolean providerAllowed) {
+            String id, String hash, int tokens, ContextPriority priority, ContextRetention retention) {
         return new ContextItem(
                 new ContextItemId(id),
                 ContextItemType.RUNTIME_STATE,
@@ -179,9 +164,8 @@ class ContextCoreTest {
                 tokens,
                 priority,
                 retention,
-                new ContextSecurity(Set.of("internal"), providerAllowed),
-                new ContextProvenance("runtime", id, "1", hash),
-                Map.of());
+                new ContextSecurity(Set.of("internal")),
+                new ContextProvenance("runtime", id, "1", hash));
     }
 
     private static ResolvedModelSnapshot snapshot() {
@@ -191,10 +175,13 @@ class ContextCoreTest {
                 new ModelDefinitionId("model"),
                 "model-v1",
                 "model",
-                "adapter",
+                "openai-compatible",
                 "adapter-v1",
+                io.haifa.agent.model.api.ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                "standard",
                 URI.create("https://provider.example.com"),
                 new CredentialRef("env://MODEL_KEY"),
+                true,
                 Set.of(ModelCapability.TEXT_CHAT),
                 100,
                 40,

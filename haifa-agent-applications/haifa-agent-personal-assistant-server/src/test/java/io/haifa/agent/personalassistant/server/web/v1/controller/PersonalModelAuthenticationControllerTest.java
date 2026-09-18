@@ -1,0 +1,404 @@
+package io.haifa.agent.personalassistant.server.web.v1.controller;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.haifa.agent.auth.localmodel.ExternalLoginMethodDescriptor;
+import io.haifa.agent.auth.localmodel.ExternalLoginMode;
+import io.haifa.agent.auth.localmodel.InMemoryWindowsCredentialManagerClient;
+import io.haifa.agent.auth.localmodel.LocalModelAuthenticationService;
+import io.haifa.agent.auth.localmodel.WindowsLocalModelAuthStore;
+import io.haifa.agent.auth.localmodel.antigravity.AntigravityExternalLoginMethod;
+import io.haifa.agent.auth.localmodel.codex.CodexExternalLoginMethod;
+import io.haifa.agent.model.api.ModelCapability;
+import io.haifa.agent.model.api.ModelReasoningMode;
+import io.haifa.agent.personalassistant.server.configuration.model.PersonalModelProxySettings;
+import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
+import io.haifa.agent.personalassistant.server.web.v1.error.PersonalApiExceptionHandler;
+import io.haifa.agent.personalassistant.server.web.v1.mapper.PersonalApiMapper;
+import java.net.URI;
+import java.nio.file.Path;
+import java.util.Optional;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.reactive.server.WebTestClient;
+
+class PersonalModelAuthenticationControllerTest {
+    @TempDir
+    Path temp;
+
+    @Test
+    void projectsEnabledAntigravityLoginEvenBeforeAConnectionIsStored() {
+        LocalModelAuthenticationService service = mock(LocalModelAuthenticationService.class);
+        when(service.connections()).thenReturn(java.util.List.of());
+        when(service.connectionRequired(any())).thenReturn(true);
+        when(service.externalLoginMethods())
+                .thenReturn(java.util.List.of(new ExternalLoginMethodDescriptor(
+                        AntigravityExternalLoginMethod.METHOD_ID,
+                        "Google sign-in (Antigravity)",
+                        java.util.Set.of(ExternalLoginMode.BROWSER),
+                        true,
+                        Optional.empty())));
+
+        WebTestClient.bindToController(new PersonalModelAuthenticationController(
+                        service, new PersonalApiMapper(), () -> java.util.List.of(antigravityProvider())))
+                .build()
+                .get()
+                .uri("/api/v1/model-connections")
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectBody()
+                .jsonPath("$[0].providerId")
+                .isEqualTo("google-antigravity")
+                .jsonPath("$[0].status")
+                .isEqualTo("REAUTH_REQUIRED")
+                .jsonPath("$[0].externalLoginSupported")
+                .isEqualTo(true)
+                .jsonPath("$[0].unofficialLocalCompatibility")
+                .isEqualTo(true);
+    }
+
+    @Test
+    void projectsARegisteredLoginMethodForConnectionOnboarding() {
+        LocalModelAuthenticationService service = mock(LocalModelAuthenticationService.class);
+        when(service.connections()).thenReturn(java.util.List.of());
+        when(service.externalLoginMethods())
+                .thenReturn(java.util.List.of(new ExternalLoginMethodDescriptor(
+                        CodexExternalLoginMethod.METHOD_ID,
+                        "ChatGPT subscription",
+                        java.util.Set.of(ExternalLoginMode.BROWSER),
+                        false,
+                        Optional.empty())));
+
+        WebTestClient.bindToController(new PersonalModelAuthenticationController(
+                        service, new PersonalApiMapper(), () -> java.util.List.of(antigravityProvider())))
+                .build()
+                .get()
+                .uri("/api/v1/model-connections")
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectBody()
+                .jsonPath("$.length()")
+                .isEqualTo(2)
+                .jsonPath("$[0].providerId")
+                .isEqualTo("google-antigravity")
+                .jsonPath("$[1].providerId")
+                .isEqualTo("openai-codex")
+                .jsonPath("$[1].externalLoginSupported")
+                .isEqualTo(true);
+    }
+
+    @Test
+    void projectsConfiguredEnvironmentReadinessWithoutExposingTheVariableNameOrLogout() {
+        var store = new WindowsLocalModelAuthStore(new InMemoryWindowsCredentialManagerClient(), new ObjectMapper());
+        var provider = new PersonalAssistantProperties.ModelProvider(
+                "deepseek",
+                "DeepSeek",
+                "remote",
+                false,
+                false,
+                URI.create("https://api.deepseek.com"),
+                "env://DEEPSEEK_API_KEY",
+                java.util.List.of(new PersonalAssistantProperties.ApiBinding(
+                        "openai-chat-completions", "deepseek-openai-chat", null)),
+                java.util.List.of(new PersonalAssistantProperties.ProviderModel(
+                        "deepseek-v4-flash",
+                        "DeepSeek V4 Flash",
+                        "DeepSeek V4 Flash",
+                        "deepseek-v4-flash",
+                        "openai-chat-completions",
+                        java.util.Set.of(ModelCapability.TEXT_CHAT),
+                        ModelReasoningMode.DISABLED,
+                        131_072,
+                        8_192)),
+                null);
+        try (var service = new LocalModelAuthenticationService(
+                store,
+                Optional.empty(),
+                reference -> {
+                    throw new AssertionError("credential resolution is not expected");
+                },
+                name -> "DEEPSEEK_API_KEY".equals(name) ? "present" : null)) {
+            WebTestClient.bindToController(new PersonalModelAuthenticationController(
+                            service, new PersonalApiMapper(), () -> java.util.List.of(provider)))
+                    .build()
+                    .get()
+                    .uri("/api/v1/model-connections")
+                    .exchange()
+                    .expectStatus()
+                    .isOk()
+                    .expectBody()
+                    .jsonPath("$[0].providerId")
+                    .isEqualTo("deepseek")
+                    .jsonPath("$[0].status")
+                    .isEqualTo("AUTHENTICATED")
+                    .jsonPath("$[0].connectionId")
+                    .isEqualTo("configured://deepseek/default")
+                    .jsonPath("$[0].logoutSupported")
+                    .isEqualTo(false)
+                    .jsonPath("$[0].connectionId")
+                    .value(value -> assertThat(value.toString()).doesNotContain("DEEPSEEK_API_KEY"));
+        }
+    }
+
+    @Test
+    void rejectsApiKeyForExternalLoginProvidersAndClearsTheRequestBuffers() {
+        var store = new WindowsLocalModelAuthStore(new InMemoryWindowsCredentialManagerClient(), new ObjectMapper());
+        try (var service = new LocalModelAuthenticationService(
+                store,
+                Optional.empty(),
+                reference -> {
+                    throw new AssertionError("credential resolution is not expected");
+                },
+                ignored -> null)) {
+            var controller = new PersonalModelAuthenticationController(service, new PersonalApiMapper());
+            char[] codexSecret = "codex-secret-canary".toCharArray();
+            char[] antigravitySecret = "antigravity-secret-canary".toCharArray();
+
+            assertThatThrownBy(() -> controller
+                            .saveApiKey(
+                                    "codex-key-1",
+                                    new io.haifa.agent.personalassistant.server.web.v1.dto.PersonalApiDtos
+                                            .SaveModelApiKey("openai-codex", codexSecret))
+                            .block())
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage("AUTH_API_KEY_UNAVAILABLE");
+            assertThatThrownBy(() -> controller
+                            .saveApiKey(
+                                    "antigravity-key-1",
+                                    new io.haifa.agent.personalassistant.server.web.v1.dto.PersonalApiDtos
+                                            .SaveModelApiKey("google-antigravity", antigravitySecret))
+                            .block())
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage("AUTH_API_KEY_UNAVAILABLE");
+            assertThat(codexSecret).containsOnly('\0');
+            assertThat(antigravitySecret).containsOnly('\0');
+        }
+    }
+
+    @Test
+    void savesListsAndDeletesWithoutReturningApiKey() {
+        var store = new WindowsLocalModelAuthStore(new InMemoryWindowsCredentialManagerClient(), new ObjectMapper());
+        try (var service = new LocalModelAuthenticationService(
+                store,
+                Optional.empty(),
+                reference -> {
+                    throw new AssertionError("credential resolution is not expected");
+                },
+                ignored -> null)) {
+            var controller = new PersonalModelAuthenticationController(service, new PersonalApiMapper());
+            WebTestClient web = WebTestClient.bindToController(controller)
+                    .controllerAdvice(new PersonalApiExceptionHandler())
+                    .build();
+
+            byte[] body = web.post()
+                    .uri("/api/v1/model-connections/api-key")
+                    .header("Idempotency-Key", "save-key-1")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue("{\"providerId\":\"deepseek\",\"apiKey\":\"secret-canary\"}")
+                    .exchange()
+                    .expectStatus()
+                    .isCreated()
+                    .expectBody()
+                    .jsonPath("$.connectionId")
+                    .isEqualTo("model-auth://deepseek/default")
+                    .jsonPath("$.apiKey")
+                    .doesNotExist()
+                    .returnResult()
+                    .getResponseBody();
+            assertThat(new String(body, java.nio.charset.StandardCharsets.UTF_8))
+                    .doesNotContain("secret-canary");
+
+            web.get()
+                    .uri("/api/v1/model-connections")
+                    .exchange()
+                    .expectStatus()
+                    .isOk()
+                    .expectBody()
+                    .jsonPath("$[0].providerId")
+                    .isEqualTo("deepseek");
+
+            controller.logout("model-auth://deepseek/default", "logout-key-1").block();
+            web.get()
+                    .uri("/api/v1/model-connections")
+                    .exchange()
+                    .expectStatus()
+                    .isOk()
+                    .expectBody()
+                    .json("[]");
+        }
+    }
+
+    @Test
+    void externalLoginFailsClosedWithoutApprovedRegistration() {
+        var store = new WindowsLocalModelAuthStore(new InMemoryWindowsCredentialManagerClient(), new ObjectMapper());
+        try (var service = new LocalModelAuthenticationService(
+                store,
+                Optional.empty(),
+                reference -> {
+                    throw new AssertionError("credential resolution is not expected");
+                },
+                ignored -> null)) {
+            WebTestClient.bindToController(new PersonalModelAuthenticationController(service, new PersonalApiMapper()))
+                    .controllerAdvice(new PersonalApiExceptionHandler())
+                    .build()
+                    .post()
+                    .uri("/api/v1/model-connections/codex/browser-attempts")
+                    .header("Idempotency-Key", "login-1")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue("{}")
+                    .exchange()
+                    .expectStatus()
+                    .isEqualTo(409)
+                    .expectBody()
+                    .jsonPath("$.code")
+                    .isEqualTo("AUTH_EXTERNAL_APPROVAL_REQUIRED")
+                    .jsonPath("$.message")
+                    .isEqualTo("The operation cannot be completed.");
+
+            WebTestClient.bindToController(new PersonalModelAuthenticationController(service, new PersonalApiMapper()))
+                    .controllerAdvice(new PersonalApiExceptionHandler())
+                    .build()
+                    .post()
+                    .uri("/api/v1/model-connections/antigravity/browser-attempts")
+                    .header("Idempotency-Key", "antigravity-login-1")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue("{}")
+                    .exchange()
+                    .expectStatus()
+                    .isEqualTo(409)
+                    .expectBody()
+                    .jsonPath("$.code")
+                    .isEqualTo("AUTH_EXTERNAL_APPROVAL_REQUIRED");
+        }
+    }
+
+    @Test
+    void savesAndResetsProviderNetworkProxyWithoutReturningTheProxyAddress() {
+        LocalModelAuthenticationService service = mock(LocalModelAuthenticationService.class);
+        when(service.connections()).thenReturn(java.util.List.of());
+        when(service.connectionRequired(any())).thenReturn(false);
+        var provider = antigravityProvider();
+        var settings = new PersonalModelProxySettings(java.util.List.of(provider), temp, new ObjectMapper());
+        WebTestClient web = WebTestClient.bindToController(new PersonalModelAuthenticationController(
+                        service, new PersonalApiMapper(), () -> java.util.List.of(provider), settings))
+                .controllerAdvice(new PersonalApiExceptionHandler())
+                .build();
+
+        web.put()
+                .uri("/api/v1/model-connections/google-antigravity/network-proxy")
+                .header("Idempotency-Key", "proxy-save-1")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"proxyUrl\":\"http://127.0.0.1:2081\"}")
+                .exchange()
+                .expectStatus()
+                .isNoContent();
+
+        web.get()
+                .uri("/api/v1/model-connections")
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectBody()
+                .jsonPath("$[0].networkProxyMode")
+                .isEqualTo("CUSTOM")
+                .jsonPath("$[0].proxyUrl")
+                .doesNotExist();
+
+        web.delete()
+                .uri("/api/v1/model-connections/google-antigravity/network-proxy")
+                .header("Idempotency-Key", "proxy-reset-1")
+                .exchange()
+                .expectStatus()
+                .isNoContent();
+
+        web.get()
+                .uri("/api/v1/model-connections")
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectBody()
+                .jsonPath("$[0].networkProxyMode")
+                .isEqualTo("SYSTEM");
+    }
+
+    @Test
+    void projectsOsCredentialReferenceAsExternallyManaged() {
+        LocalModelAuthenticationService service = mock(LocalModelAuthenticationService.class);
+        when(service.connections()).thenReturn(java.util.List.of());
+        when(service.connectionRequired(new io.haifa.agent.model.api.CredentialRef("os://custom-key")))
+                .thenReturn(false);
+
+        var osProvider = new PersonalAssistantProperties.ModelProvider(
+                "custom-provider",
+                "Custom Provider",
+                "remote",
+                false,
+                true,
+                URI.create("https://api.example.com"),
+                "os://custom-key",
+                java.util.List.of(new PersonalAssistantProperties.ApiBinding("openai-chat-completions", null, null)),
+                java.util.List.of(new PersonalAssistantProperties.ProviderModel(
+                        "custom-model",
+                        "Custom Model",
+                        "Custom Model",
+                        "custom-model",
+                        "openai-chat-completions",
+                        java.util.Set.of(ModelCapability.TEXT_CHAT),
+                        ModelReasoningMode.DISABLED,
+                        8192,
+                        1024)),
+                null);
+
+        WebTestClient.bindToController(new PersonalModelAuthenticationController(
+                        service, new PersonalApiMapper(), () -> java.util.List.of(osProvider)))
+                .build()
+                .get()
+                .uri("/api/v1/model-connections")
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectBody()
+                .jsonPath("$[0].providerId")
+                .isEqualTo("custom-provider")
+                .jsonPath("$[0].status")
+                .isEqualTo("AUTHENTICATED")
+                .jsonPath("$[0].accountLabel")
+                .isEqualTo("OS credential")
+                .jsonPath("$[0].apiKeySupported")
+                .isEqualTo(false)
+                .jsonPath("$[0].externalLoginSupported")
+                .isEqualTo(false);
+    }
+
+    private static PersonalAssistantProperties.ModelProvider antigravityProvider() {
+        return new PersonalAssistantProperties.ModelProvider(
+                "google-antigravity",
+                "Antigravity",
+                "remote",
+                false,
+                true,
+                URI.create("https://generativelanguage.googleapis.com"),
+                "model-auth://google-antigravity/default",
+                java.util.List.of(new PersonalAssistantProperties.ApiBinding(
+                        "google-gemini-generate-content", "antigravity-direct", null)),
+                java.util.List.of(new PersonalAssistantProperties.ProviderModel(
+                        "google-antigravity-gemini-2-5-pro",
+                        "Gemini 2.5 Pro",
+                        "Gemini 2.5 Pro",
+                        "gemini-2.5-pro",
+                        "google-gemini-generate-content",
+                        java.util.Set.of(ModelCapability.TEXT_CHAT),
+                        ModelReasoningMode.DISABLED,
+                        1_048_576,
+                        65_536)),
+                null);
+    }
+}

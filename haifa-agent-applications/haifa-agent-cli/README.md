@@ -1,15 +1,477 @@
 # Haifa Agent CLI
 
-`haifa-agent-cli` 是用于验证 Haifa Agent 现有 Runtime、OpenAI-compatible 模型和受控本地文件工具的最小 Coding Agent 命令行入口。
+## Policy / Approval
+
+CLI 保留 `ask / auto / deny` 兼容入口，并以 `LOW / MEDIUM / HIGH / NEVER` 风险阈值表达实际审批策略。产品提供 immutable `PolicyRuleSet`，Decision 是瞬时结果；需要等待的审批只由 Runtime Interaction 持久化和恢复，不创建 Policy Snapshot、Decision、Evidence 或 Grant。CLI 不提供企业审批路由、待办或业务单据提交能力。
+
+## Unified approval policy
+
+`ask/auto/deny` 由产品 immutable `PolicyRuleSet` 表达，默认 `ask` 映射为 `LOW`，`auto` 映射为 `NEVER`，
+`deny` 在 Catalog freeze 前移除 `execution_run`。也可只配置
+`approval.threshold` 为 `low`、`medium`、`high` 或 `never`；同时配置 mode 和 threshold 时必须使用兼容组合。
+达到阈值的普通执行风险创建一次 Interaction 审批，批准后 Runtime 重验并继续同一 ToolCall，不产生第二个
+控制台审批。`NEVER` 会自动执行包括 HIGH 在内的普通命令，但不覆盖可信分类器的硬拒绝、
+Broker/Workspace/Sandbox 边界或 Credential 重认证。当 preflight 证明调用未分派（`NOT_DISPATCHED`）时，Runtime 将该 ToolCall 标记为终态 FAILED 并回传失败事实（`failureCode` 与 `NOT_DISPATCHED`）继续循环，不再创建专用 `execution-recovery` Interaction；模型没有权限申请 Tool，也不能绕过标准策略。
+
+`haifa-agent-cli` 是 Coding Agent 的最高层生产装配与唯一可执行发行入口。它把同一个 Runtime、
+Project、Workspace、Policy、Tool、Execution、Persistence 与 `CodingSessionService` 交给 tui4j
+Terminal，同时保留兼容的 `-m` one-shot 模式。`haifa-agent-coding-terminal` 只负责 UI，不是第二个
+可执行胖 JAR。
+
+非 CLI 宿主和产品语义测试使用公开装配入口 `StandaloneCodingAgents.factory()`，按公共
+`CodingAgentClientFactory` 契约创建标准客户端；
+返回的 `StandaloneCodingAgent` 暴露 `CodingSessionClient`、`ProjectId` 和安全的装配元数据，并通过
+`close()` 统一释放资源。需要为每次隔离运行注入不同 SQLite/Transcript 路径时，可使用接收显式环境
+Map 的重载；调用方不得把 Secret 或完整 YAML 序列化进测试 Case。
+
+## Workspace Path Contract and Dynamic Prompt Projection
+
+CLI 宿主保持严格且清晰的路径职责分离，避免模型混淆宿主物理路径与逻辑工作区引用：
+
+1. **动态 `<workspace_paths>` 注入与 Prompt Cache 友好**：
+   CLI 在所有稳定/静态提示词（产品基座 Prompt、执行环境说明、工作区说明及项目指令）的最尾部，动态注入当前活跃授权工作区的 `<workspace_paths>` 块。
+   该块仅包含当前 undrifted、授权活跃的真实目录投影，每条记录包含 `workspaceRef`、规范化宿主绝对路径 `rootPath`、当前 `READ` / `DEVELOP` Access mode，以及主工作区 `current="true"` 标记。由于置于系统提示词末尾，工作区动态变更（如授权、撤销）不会破坏此前较长静态前缀的 Prompt Cache 命中率。
+2. **`file_*` 工具契约**：
+   文件读写等工具严格要求宿主绝对路径（host absolute path），不支持相对路径（如 `.`）或 root alias。当模型误传相对路径时，系统返回清晰明确的引导错误，提示模型使用 `<workspace_paths>` 或工具成功结果中的 `rootPath`。
+3. **`execution_run` 工具契约**：
+   命令执行工具要求传入受控的 `workspaceRef` 以及规范化的 `relativeWorkdir`（根目录固定使用 `.`），在受控宿主进程或直接工作区执行。
+4. **工具结果回传规范**：
+   `workspace_attach` 成功时，结果中包含规范化宿主绝对路径 `rootPath` 与脱敏 `workspaceRef`，使模型在授权后即可直接以绝对路径调用文件工具，消除路径盲猜。
+
+## IDE 单步调试入口
+
+`IdeCodingAgentMain`（`io.haifa.agent.cli.IdeCodingAgentMain`）是面向 Coding Agent 开发的 IDE 装配
+入口：直接在 IDE 中运行其 `main` 方法即可单步调试完整装配。与 `haifa-coding` 不同，它从不调用
+`System.exit`，非零结果不会强制终止调试会话。它是刻意的一次性入口：必须显式传入
+`-m/--message` 任务文本，拒绝 Terminal/resume 模式。
+
+配置按三层管理：
+
+1. **FROZEN（代码内固定）**：`CliConfiguration.defaults()` 的装配与安全默认——工具目录绑定、Skill
+   平台、host-guarded 执行沙箱、DeepSeek thinking 关闭、审批 `ask`、内存持久化、无 Secret 输出策略。
+2. **YAML（中频）**：自动发现时先读 `~/.haifa-agent/coding/ide-config.yaml`，再用
+   `<workspace>/.haifa-agent/coding/ide-config.yaml` 覆盖同级配置；显式 `--config <path>` 会替代自动发现，
+   而不是与用户/Workspace 配置合并。配置覆盖 `models.providers`、`tools.enabled`、`web`、`mcp`、
+   `skills`、`execution`、`approval`、`runtime`、`persistence`。
+3. **RUNTIME（每次运行传入）**：`--workspace`、`-m/--message`、`--model`（或 `HAIFA_MODEL_ID`）、
+   `--approval`、`--timeout`、`--trace`/`--trace-file`、`--verbose`、`--quiet`。
+
+示例：
+
+```text
+IdeCodingAgentMain --workspace D:\repos\my-project -m "Fix the failing module test" --approval auto
+```
+
+入口只负责 IDE 专属校验与脱敏摘要；解析后的同一份配置直接交给 `HaifaCliMain` 的内部执行路径，装配、
+退出码、流式输出、Trace 与审批处理都只有一个实现。
+
+## Model connection and Codex subscription login
+
+Interactive startup checks only the selected model's credential reference. If an `env://...` or `os://...` value is absent or a
+`model-auth://...` entry is missing, the Terminal opens a connection selector before the first prompt. `/login`,
+`/account`, and `/logout` manage the same product-private connection boundary. API keys use a masked, short-lived
+character buffer and are saved to the current OS user's secure system credential store (Windows Credential Manager);
+credentials never belong in plaintext files or YAML.
+
+The dedicated `openai-codex-responses` binding uses ChatGPT subscription authentication, not an OpenAI Platform API
+key and not a conversion of subscription quota into an API key. Browser callback and headless device-code login are
+implemented with bounded attempts, token rotation, and `model-auth://openai-codex/default`. Haifa does not compile a
+Pi/OpenCode Client ID. Until OpenAI provides a Haifa registration, personal compatibility testing requires both
+`HAIFA_CODEX_LOCAL_COMPAT_TEST=true` and an externally supplied `HAIFA_CODEX_OAUTH_CLIENT_ID`; it is always projected
+as `UNOFFICIAL_LOCAL_COMPAT` and is not a release configuration.
+
+The Terminal displays the device verification URL and user code as persistent transcript content while authorization
+is pending. Browser callback attempts the system browser and always displays a copyable authorization URL in case no
+window appears. That URL is an ephemeral in-memory UI value: query parameters are redacted from diagnostic strings,
+never enter the general attempt snapshot, and are removed from the one-time channel as soon as the CLI consumes them.
+Both login modes keep a persistent transcript card for `STARTING`, `WAITING_USER`, `EXCHANGING`, `STORING`, and the
+final result. A browser callback page only confirms that authorization reached Haifa; it does not claim that token
+exchange or system credential store persistence succeeded. Failures retain a stable reason code and a specific next
+action in the transcript, while safe application logs contain the Attempt ID, stage, HTTP status, and retryable flag.
+
+```yaml
+models:
+  default: gpt-5.6-sol
+  providers:
+    - id: openai-codex
+      displayName: ChatGPT Codex
+      nativeStreaming: true
+      endpoint: https://chatgpt.com/backend-api/codex
+      credentialRef: model-auth://openai-codex/default
+      originator: ${HAIFA_CODEX_ORIGINATOR:haifa}
+      userAgent: ${HAIFA_CODEX_USER_AGENT:haifa-agent/1}
+      apiBindings:
+        - style: openai-responses
+          dialect: openai-codex-responses
+      models:
+        - id: gpt-5.6-sol
+          displayName: GPT-5.6 Sol
+          providerModelId: gpt-5.6-sol
+          style: openai-responses
+          capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
+          contextWindow: 272000
+          maxOutputTokens: 128000
+```
+
+The packaged trusted catalog also contains `gpt-5.6-terra`, `gpt-5.6-luna`, and `gpt-5.3-codex-spark`. `/model` lists this safe static catalog;
+credential readiness remains a separate `/account` concern and does not remove models from the picker. The model IDs,
+originator, user agent, redirect registration, and Client ID remain deployment inputs governed by the OpenAI/Haifa
+contract; the example does not claim an approved production registration.
+
+## Google Antigravity Direct Gemini dialect
+
+The packaged catalog contains `antigravity-gemini` plus exact bindings for `gemini-3.8-flash`, `gemini-3.7-flash`,
+and `gemini-3.1-pro-preview`, but the loader hides all Antigravity bindings unless
+`HAIFA_ANTIGRAVITY_LOCAL_COMPAT_TEST=true`. Direct login additionally requires externally injected
+`HAIFA_ANTIGRAVITY_OAUTH_CLIENT_ID` and `HAIFA_ANTIGRAVITY_OAUTH_CLIENT_SECRET`; no registration is compiled into the
+distribution. With that registration enabled, the Terminal's `Connect a model` selector includes
+`Antigravity subscription` and starts the dedicated Google browser callback. `HAIFA_ANTIGRAVITY_ALLOW_ONBOARDING=true`
+is a separate opt-in used only when the account has no existing
+CloudCode Project. The discovered Project is associated with the fixed `model-auth://google-antigravity/default`
+credential and request-level Project overrides are rejected. Direct generation defaults to the governed Daily endpoint.
+Set `HAIFA_ANTIGRAVITY_MODEL_ENDPOINT=https://cloudcode-pa.googleapis.com/v1internal` to select Prod explicitly; only
+the exact Prod and Daily HTTPS endpoints are accepted, and a failed request never switches endpoint automatically.
+
+生产 Coding Agent 使用 Coding 产品模块中的版本化短 Prompt；CLI 不再维护逐 Case 累积的长方法论
+字符串。基础 Prompt 要求读取适用仓库指令和契约、做最小完整修改、按风险验证并检查最终 Diff。
+Tool 专属协议由冻结 Tool Definition 披露，复杂计划与结果复核方法通过基础 Skill 按需加载。
+
+长任务期间，Coding 产品从权威记录重建派生工作阶段并向模型注入有界脱敏投影；Terminal 只消费安全
+阶段事件。`execution_run` 对 INSPECT、DIFF、TEST/BUILD 和其他命令分别应用输出预算，超大 Diff 返回
+观察统计、截断标记和可选 Artifact Ref。模型返回空终态时，Runtime 只在同一冻结 Binding 上默认重试
+两次，不切换 Provider/Model，也不会从空响应调度 Tool。
 
 ## 构建与运行
 
+### 本地发行目录（macOS / Linux）
+
+`scripts/package-local-coding-agent.sh` 会构建唯一的 shaded CLI JAR，并把可搬运的本地制品放进
+同一个目录：
+
+```text
+haifa-coding-agent/
+  haifa-coding          # 可加入 PATH 的 POSIX 启动脚本
+  haifa-agent.jar       # 包含全部运行依赖的 shaded JAR
+  haifa-coding.yaml     # 无密钥的安全默认配置
+  data/
+    runtime.db          # 首次运行后创建；SQLite 权威存储
+    transcripts/        # JSONL 审计投影
+  logs/                 # 有界轮转的必要运行日志，不记录 Secret、Prompt 或模型正文
+```
+
+默认发布到用户目录 `~/.haifa-agent/coding/`：
+
+```bash
+./scripts/package-local-coding-agent.sh
+export PATH="$HOME/.haifa-agent/coding:$PATH"
+
+cd /path/to/any/project
+haifa-coding
+
+# 打开选择器、最近 Session 或指定 Session
+haifa-coding resume
+haifa-coding resume --last
+haifa-coding resume <SESSION_ID>
+haifa-coding resume <SESSION_ID> "继续修复测试"
+haifa-coding resume --last "继续前面的工作"
+```
+
+也可以将其他绝对路径作为第一个参数，覆盖默认发布目录。
+
+把 `PATH` 配置写入 `~/.zshrc` 或 `~/.bashrc` 后可长期使用。`haifa-coding` 不切换目录，且 Java
+入口未收到 `--workspace` 时默认使用进程当前目录，所以从哪个项目目录发起，该目录就是 Workspace。
+发行配置只使用 `model-auth://deepseek/default` 引用，不包含密钥；首次启动通过掩码输入保存 API Key，默认保持
+`approval=ask`、`host-guarded + network allow + shell auto`，并启用
+`SQLITE_WITH_JSONL + protection=NONE`。SQLite 是 Session、Run、Tool Journal、Interaction、授权目录
+等恢复状态的唯一事实源；Policy RuleSet 由产品配置提供，Decision 只瞬态求值，不作为
+SQLite 恢复事实。本地默认 payload 在磁盘上可读，不提供保密性，但仍执行格式、binding 和 digest 校验。
+JSONL 只用于审计投影，不参与恢复。启动器按自身目录设置绝对数据路径，因此发行目录整体移动后仍可
+使用；重新打包以原子替换部署经关键类检查的 shaded JAR，只覆盖 JAR、配置和启动器，不删除既有
+`data/` 或 `logs/`。启动时只要配置目录中任一模型已有可用凭据，就不会重复打开首次连接引导。可通过
+`haifa-coding --config /absolute/path/to/config.yaml` 使用自定义配置，也可显式传
+`--workspace /absolute/path/to/project`；调用方参数位于默认参数之后，因此优先级更高。
+
+`execution_run` 直接在宿主机上运行，因此 JDK、SDK 及其他 Workspace 外工具链目录无需额外配置即可读取；
+平台不再提供 bind-mount 式路径授权。不要把 API Key 写进 YAML。Java 21
+必须能从 `JAVA_HOME/bin/java` 或 `PATH` 找到。
+
+该发行入口用于日常本地项目。`haifa-agent-testing/scripts/run-haifa-coding-terminal.command` 继续保留，
+作为会创建隔离 Fixture、Trace、SQLite 和人工验收证据的 macOS 测试入口；两者用途不同。
+
+### 本地发行目录（Windows）
+
+Windows PowerShell 使用 `scripts/package-local-coding-agent.ps1`，生成 shaded JAR、安全默认配置和
+`haifa-coding.cmd`：
+
+```text
+coding\
+  haifa-coding.cmd
+  haifa-agent.jar
+  haifa-coding.yaml
+  data\
+    runtime.db
+    transcripts\
+  logs\
+    haifa-coding-0.log
+```
+
+默认输出到当前用户的 `%USERPROFILE%\.haifa-agent\coding`，也可以指定绝对路径或相对仓库根目录的
+路径：
+
+```powershell
+.\scripts\package-local-coding-agent.ps1
+.\scripts\package-local-coding-agent.ps1 D:\tools\haifa-coding-agent
+$env:Path = 'D:\tools\haifa-coding-agent;' + $env:Path
+
+Set-Location D:\path\to\any\project
+haifa-coding
+```
+
+启动器优先使用 `%JAVA_HOME%\bin\java.exe`，否则从 `PATH` 查找 `java.exe`；必须使用 Java 21。
+启动器不切换当前目录，调用方参数位于默认 `--config` 参数之后，因此仍可覆盖配置或显式指定
+Workspace。默认 `protection=NONE` 不需要 continuation key；如改为 `AES_GCM`，则必须通过
+`protectorRef: env://HAIFA_CONTINUATION_KEY` 注入跨重启稳定的 Base64 32 字节 AES key。启动器会创建
+`data/transcripts` 并按发行目录设置 SQLite/JSONL 绝对路径，同时允许 `HAIFA_SQLITE_DATABASE_PATH` 和
+`HAIFA_TRANSCRIPT_ROOT` 显式覆盖。打包入口使用项目统一的 `-DskipUnitTests=true`；它只生成发行制品，不替代
+模块测试或 CI 验证。macOS/Linux 与 Windows 入口复用同一个 Python 3 打包核心；可通过
+`HAIFA_PYTHON_EXECUTABLE` 固定解释器路径。
+
+### macOS 全工具人工测试入口
+
+测试基础设施下的 `haifa-agent-testing/scripts/run-haifa-coding-terminal.command` 是可版本控制的 macOS 人工测试启动器。
+它默认启用 CLI 当前全部可执行的内置文件/命令工具、两个基础 Skill 工具、命令网络和
+`approval=auto`。本地 Utility MCP 健康检查失败时，脚本会从
+`HAIFA_UTILITY_MCP_SERVICE_DIR` 指定的源码目录后台启动服务；服务可达后导入 Coding Agent
+已审核的 Utility 工具。检测到 `ALIYUN_IQS_API_KEY` 或 `HAIFA_ALIYUN_IQS_KEY_FILE` 后还会启用
+`web_search` 与 `web_fetch`。
+
+```bash
+./haifa-agent-testing/scripts/run-haifa-coding-terminal.command --check
+./haifa-agent-testing/scripts/run-haifa-coding-terminal.command --build
+./haifa-agent-testing/scripts/run-haifa-coding-terminal.command --approval=ask
+```
+
+启动器会禁用退出后离线验收命令的交互分页器；`/quit` 恢复 TUI 进入前的主屏后，验收摘要直接续写，
+不会进入空白的 `less (END)` 页面。用户级 Git pager 配置不会改变这一行为。
+
+`AUTO` 只减少普通 Workspace 写入、命令和网络读取的逐次确认，不绕过 Workspace、Sandbox、
+Credential、Tool allowlist、审计或其他 fail-closed 门禁。可用
+`HAIFA_AGENT_REPO_DIR`、`HAIFA_JAVA_HOME`、`HAIFA_DEEPSEEK_KEY_FILE`、
+`HAIFA_ALIYUN_IQS_KEY_FILE`、`HAIFA_CONTINUATION_KEY_FILE`、`HAIFA_TEST_RUNS_ROOT`、
+`HAIFA_UTILITY_MCP_URL` 和 `HAIFA_UTILITY_MCP_SERVICE_DIR` 覆盖本机路径与端点。
+
+启动器会先把 `JAVA_HOME` 解析为物理目录，再冻结为 Local Native 只读额外路径。SDKMAN 等版本管理器
+提供的 `current` 符号链接不会直接进入 Sandbox Profile；目标目录仍须存在、可执行并通过 Java 21
+检查。
+
 ```powershell
 .\mvnw.cmd -pl :haifa-agent-cli -am package
-java -jar .\haifa-agent-applications\haifa-agent-cli\target\haifa-agent-cli-0.1.0-SNAPSHOT.jar -m "分析当前项目并修复一个小问题"
+$jar = ".\haifa-agent-applications\haifa-agent-cli\target\haifa-agent-cli-0.1.0.jar"
+
+# 帮助：不会初始化模型、Runtime、SQLite 或 tui4j Terminal
+java -jar $jar --help
+
+# 无 -m 时默认进入 Terminal；显式 --terminal 完全等价
+java -jar $jar --terminal --workspace D:\haifa-agent-config\workspaces\terminal-manual `
+  --config D:\haifa-agent-config\haifa-coding-terminal.yaml
+
+# 兼容 one-shot
+java -jar $jar --workspace D:\haifa-agent-config\workspaces\terminal-manual `
+  --config D:\haifa-agent-config\haifa-coding-terminal.yaml `
+  -m "分析当前项目并修复一个小问题"
+
+# Session Resume；全局配置参数可以放在 resume 前面
+java -jar $jar --workspace D:\haifa-agent-config\workspaces\terminal-manual `
+  --config D:\haifa-agent-config\haifa-coding-terminal.yaml `
+  resume --last "继续前面的工作"
 ```
 
 构建后也可以将 `bin` 目录加入 `PATH`，使用 `haifa-cli.ps1` 启动。
+
+`--terminal` 与 `-m/--message` 不能同时使用。非交互、`dumb` 或不支持的终端会快速返回稳定的
+`TUI_UNAVAILABLE`。同一规范化且非符号链接的 Workspace 会生成带版本 namespace 的稳定
+Project/Workspace 身份；绝对路径不进入 Prompt、Client Event、JSONL 或普通错误输出。
+
+顶层 `resume` 仅恢复当前 Workspace 和调用方范围内的 Coding Session，不接管既有活动 Run。
+`resume` 打开现有选择器，`resume --last` 使用产品层稳定排序选择最近 Session，指定 ID 时重新执行
+产品授权。可选 Prompt 只在 Session 对账后为空闲状态时提交；若存在活动 Run，则保留 Prompt 草稿并
+显示 `RUN_TAKEOVER_NOT_SUPPORTED`。`--model` 与 `resume` 的组合在 P0 中拒绝，避免静默覆盖 Session
+下一 Run 的模型偏好。
+
+## 真实联网编程配置
+
+Terminal 不是离线演示壳：普通消息进入真实 `CodingSessionService` 与 AgentLoop，文件修改、Git、
+`execution_run`、MCP、`web_search`/`web_fetch` 都走现有 Tool Pipeline、Policy、Approval 和
+ExecutionBroker。下面是 Windows 上“明确可信测试 Workspace”的联网配置要点：
+
+CLI 的 Coding Execution 装配默认使用 `ExecutionScratchSpaceSpec.none()`，直接继承宿主
+`TEMP/TMP/TMPDIR` 环境，不为单次工具调用创建隔离 Scratch 目录；进程并发数默认不设硬性上限
+（`maxProcesses` 为空），由宿主操作系统自然调度。Timeout、用户取消、进程树终止和输出预算依然受控。
+仅在不可信、多租户或远程 Sandbox 场景下才显式配置隔离 Scratch 与进程数上限。
+
+```yaml
+models:
+  default: deepseek-responses-flash
+  providers:
+    - id: deepseek
+      displayName: DeepSeek
+      nativeStreaming: true
+      endpoint: https://api.deepseek.com
+      credentialRef: env://DEEPSEEK_API_KEY
+      apiBindings:
+        - style: openai-responses
+          dialect: deepseek-openai-responses
+        - style: anthropic-messages
+          dialect: deepseek-anthropic-messages
+          endpoint: https://api.deepseek.com/anthropic
+      models:
+        - id: deepseek-responses-flash
+          displayName: DeepSeek Responses Flash
+          providerModelId: deepseek-v4-flash
+          style: openai-responses
+          capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+          contextWindow: 131072
+          maxOutputTokens: 8192
+        - id: deepseek-anthropic-flash
+          displayName: DeepSeek Anthropic Messages Flash
+          providerModelId: deepseek-v4-flash
+          style: anthropic-messages
+          capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
+          contextWindow: 131072
+          maxOutputTokens: 8192
+tools:
+  enabled: [file_list, file_stat, file_read, file_create, file_write, execution_run, web_search, web_fetch]
+web:
+  search:
+    enabled: true
+    provider: aliyun
+    credentialRef: env://ALIYUN_IQS_API_KEY
+  fetch:
+    enabled: true
+    provider: aliyun
+    credentialRef: env://ALIYUN_IQS_API_KEY
+approval:
+  mode: ask
+  threshold: low
+execution:
+  provider: host-guarded
+  shell: powershell
+persistence:
+  mode: SQLITE
+  databasePath: D:\haifa-agent-config\data\coding-terminal.db
+  protectorRef: env://HAIFA_CONTINUATION_KEY
+```
+
+同一 Provider 可声明多个 Style Binding；Binding 省略 dialect 时使用 `standard`：
+
+```yaml
+models:
+  default: deepseek-responses-flash
+  providers:
+    - id: deepseek
+      displayName: DeepSeek
+      endpoint: https://api.deepseek.com
+      credentialRef: env://DEEPSEEK_API_KEY
+      nativeStreaming: true
+      apiBindings:
+        - style: openai-chat-completions
+          dialect: deepseek-openai-chat
+        - style: openai-responses
+          dialect: deepseek-openai-responses
+      models:
+        - id: deepseek-chat-pro
+          displayName: DeepSeek Chat Pro
+          providerModelId: deepseek-v4-pro
+          style: openai-chat-completions
+          capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+          contextWindow: 131072
+          maxOutputTokens: 8192
+        - id: deepseek-responses-flash
+          displayName: DeepSeek Responses Flash
+          providerModelId: deepseek-v4-flash
+          style: openai-responses
+          capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+          contextWindow: 131072
+          maxOutputTokens: 8192
+    - id: local-openai
+      displayName: Local OpenAI Responses Gateway
+      endpoint: ${OPENAI_BASE_URL:http://127.0.0.1:30000/v1}
+      credentialRef: env://OPENAI_API_KEY
+      nativeStreaming: true
+      apiBindings:
+        - style: openai-responses
+      models:
+        - id: local-openai-responses
+          displayName: Local OpenAI Responses
+          providerModelId: ${OPENAI_MODEL_ID:gpt-5.6-luna}
+          style: openai-responses
+          capabilities: [TEXT_CHAT]
+          contextWindow: 131072
+          maxOutputTokens: 8192
+```
+
+旧 `model`、`dialectId`、versioned Binding 配置不再接受。`--model`/`HAIFA_MODEL_ID` 只能选择已注册的内部 ID，不能临时
+注入 Endpoint 或 Credential；未知 ID 会 fail closed。
+
+Provider 是一级接入实例：Endpoint、Credential、百炼 Workspace/Region 只配置一次；其 `models`
+是该 Provider 可用的模型列表。模型 `id` 是产品内全局唯一选择 ID，`providerModelId` 是供应商实际
+模型或部署名称。Provider 持有共享 Endpoint、CredentialRef 与 `nativeStreaming`；Binding 只持有
+`style`、可选 dialect 和可选完整 Endpoint 覆盖。DeepSeek Anthropic Messages 因 Base URL 不同，在
+Binding 上覆盖 `https://api.deepseek.com/anthropic`。Coding Agent 不根据 Provider ID 推断协议；严格兼容
+现有 Style 的新 Provider 省略 dialect，只增加配置。
+
+`host-guarded + allow` 以当前 Windows 用户身份执行，允许普通宿主网络，也不能提供容器级文件隔离；
+只应对自己检查并信任的测试 Workspace 使用。模型与 Web Provider 调用可能计费。密钥只通过
+`env://...` 注入，不写入配置；`HAIFA_CONTINUATION_KEY` 必须是跨重启稳定的 Base64 32 字节 AES key。
+
+ConPTY 离线验收可在 CLI 子进程中显式设置 `HAIFA_ALLOW_INSECURE_LOOPBACK_MODEL=true`，此开关
+只允许 `http://localhost`、`http://127.0.0.1` 或 IPv6 loopback Endpoint，不能放宽外部 HTTP
+Provider。普通运行不应设置该变量。
+
+发行配置中的本地 Responses Provider 只读取 `OPENAI_BASE_URL`、`OPENAI_API_KEY`、`OPENAI_MODEL_ID`，
+并仅在显式设置 `HAIFA_ALLOW_INSECURE_LOOPBACK_MODEL=true` 时允许 HTTP loopback。其当前能力只有
+`TEXT_CHAT`，不会进入要求 `TOOL_CALLING` 的 Coding 模型列表；默认仍使用
+`deepseek-responses-flash`。
+
+## 安全 Trace
+
+CLI 可实时订阅现有 `RuntimeTraceEvent`，不需要启用 `--verbose`：
+
+最终失败输出使用 `[AgentErrorCode] 安全默认文案`，下一行显示可选 Diagnostic ID；非 Trace
+输出不包含 Java 异常、Provider 原文或 Stack Trace。启用 SQLite 的 CLI 会把该 ID 对应的有界结构化
+诊断写入数据库同级的 `diagnostics/<Diagnostic ID>.json`；文件仅包含错误码、Run/Attempt 标识、异常
+类型和有界 Stack Frame，不保存异常消息、Prompt、Tool arguments、Provider 原文或完整宿主路径。
+
+```powershell
+$jar = ".\haifa-agent-applications\haifa-agent-cli\target\haifa-agent-cli-0.1.0.jar"
+
+# 只显示关键模型、Tool、MCP 与 Skill 生命周期
+java -jar $jar --config D:\haifa-agent-config\haifa-skill-live.yaml `
+  --workspace D:\haifa-agent-config\workspaces\ascii-art `
+  -m "使用 ascii-art Skill 创作一只帆船" `
+  --trace summary
+
+# 将所有安全 Runtime 事件写成 JSON Lines
+java -jar $jar --config D:\haifa-agent-config\haifa-skill-live.yaml `
+  --workspace D:\haifa-agent-config\workspaces\ascii-art `
+  -m "使用 ascii-art Skill 创作一只帆船" `
+  --trace jsonl `
+  --trace-file D:\haifa-agent-config\ascii-art.trace.jsonl
+```
+
+- `--trace summary`：只输出模型完成/失败、Context 强制重建以及 Tool、MCP、Skill 开始/完成事件；
+- `--trace detail`：输出每个 Runtime Trace envelope 和全部安全属性；
+- `--trace jsonl`：输出最新版 `haifa-runtime-trace` V1；每行都携带完整的 schema、producer、streamId、sequence、scope 和 status，不依赖首行 Header；
+- `--trace-file <path>`：将所选格式写入文件，必须与 `--trace` 一起使用；父目录必须已存在，目标不能是目录或符号链接，已有普通文件会被覆盖；
+- one-shot 模式未指定 `--trace-file` 时 Trace 写入 stderr，模型的流式回答继续写入 stdout；
+- Terminal 模式禁止 Trace 直接写入全屏 UI；需要诊断时必须同时指定 `--trace-file`，Trace 只进入该文件。
+
+同一物理 Attempt 的事件共享一个 128-bit Base64URL `traceId`，恢复后的新 Attempt 使用新的 `traceId`，而
+`runId` 保持不变以关联恢复链。JSONL Writer 正常关闭时追加独立的 `stream.completed`，其中
+`writtenEvents/droppedEvents/cleanClose` 只描述输出流完整性，不代表 Run 成功。事件属性按 operation 白名单投影，
+未知 operation 仍保留事件 envelope，但不会透传未经治理的属性。
+
+三个模式都只消费 Runtime 的 `safeAttributes`，并在 CLI 边界再次移除敏感键、ANSI/控制字符，限制字符串、集合和嵌套深度。不会输出 Prompt、Tool 原始参数/完整结果、Credential、reasoning 原文或供应商原始响应。`summary` 根据冻结 Tool Provider 区分普通 Tool、`mcp.<serverId>` MCP Tool 和 `haifa-runtime-skill` Skill Tool；它不会建立第二套调用链。
 
 ## 配置
 
@@ -20,21 +482,343 @@ $env:DEEPSEEK_API_KEY = "<secret>"
 ```
 
 ```yaml
-model:
-  providerId: deepseek
-  modelId: deepseek-v4-pro
-  endpoint: https://api.deepseek.com
-  credentialRef: env://DEEPSEEK_API_KEY
+models:
+  default: deepseek-responses-flash
+  providers:
+    - id: deepseek
+      displayName: DeepSeek
+      nativeStreaming: true
+      endpoint: https://api.deepseek.com
+      credentialRef: env://DEEPSEEK_API_KEY
+      apiBindings:
+        - style: openai-responses
+          dialect: deepseek-openai-responses
+      models:
+        - id: deepseek-responses-flash
+          displayName: DeepSeek Responses Flash
+          providerModelId: deepseek-v4-flash
+          style: openai-responses
+          capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+          contextWindow: 131072
+          maxOutputTokens: 8192
 tools:
-  enabled: [file.list, file.stat, file.read, file.search, file.create, file.write, file.delete, file.move]
+  enabled: [file_list, file_stat, file_read, file_create, file_write, file_patch, file_delete, file_move, workspace_attach, execution_run]
+skills:
+  allowed: [task-planning, result-verification, my-test-skill]
+  localDirectories:
+    - id: personal
+      root: D:\haifa-agent-config\skills
+      priority: 100
+      parserMode: strict
+      origin: created
+web:
+  search:
+    enabled: false
+    provider: aliyun
+    credentialRef: env://ALIYUN_IQS_API_KEY
+  fetch:
+    enabled: false
+    provider: aliyun
+    credentialRef: env://ALIYUN_IQS_API_KEY
+mcp:
+  servers:
+    - id: utility
+      displayName: Haifa Utility MCP
+      endpoint: http://127.0.0.1:8091/mcp
+      allowLoopbackHttp: true
+      allowedTools: [time_now, calculate]
+      aliasNamespace: utility
+      policyProfile: utility
 approval:
   mode: ask
+  threshold: low
+execution:
+  provider: host-guarded
+  shell: auto
+  maxTimeoutMillis: 1800000
+  maxOutputLines: 2000
+  maxOutputBytes: 51200
+  # maxProcesses is optional (omitted by default so ordinary build tools like Maven/Surefire are not killed).
+  # maxProcesses: 8
+  # "*" inherits ordinary host variables after secret-like names are removed.
+  # An explicit list remains supported for stricter deployments.
+  inheritEnvironment: ["*"]
 runtime:
   maxIterations: 50
+  maxModelCalls: 64
   maxToolCalls: 32
   maxWallTimeMillis: 300000
+persistence:
+  mode: MEMORY
 ```
 
-写文件、删除文件和移动文件默认要求控制台确认。`--approval auto` 仅适用于受信任的本地工作区；`--approval deny` 会拒绝这些操作。
+`execution_run` 省略 `timeoutMillis` 时使用 `maxTimeoutMillis`；`maxTimeoutMillis` 的上界为
+`ExecutionLimits.MAXIMUM_ALLOWED_TIMEOUT`（2 小时），最终值还会被当前 Run 剩余 wall-time 收紧。
+显式的较短 `timeoutMillis` 继续生效。
+旧 `execution.defaultTimeoutMillis` 已删除，继续配置会在启动时明确失败，避免把固定缺省误认为仍有效。
 
-本期不包含 Terminal UI、Git/命令工具装配、跨进程会话恢复或持久化运行记录。
+`persistence.mode` 只允许 `MEMORY`、`SQLITE` 和 `SQLITE_WITH_JSONL`；CLI 内置配置默认
+`MEMORY`，由打包脚本生成的 Haifa Coding Agent 发行配置默认 `SQLITE_WITH_JSONL`。持久模式示例：
+
+```yaml
+persistence:
+  mode: SQLITE_WITH_JSONL
+  databasePath: D:\haifa-agent-data\runtime.db
+  transcriptRoot: D:\haifa-agent-data\transcripts
+  protection: NONE
+  busyTimeoutMillis: 5000
+  maximumPayloadBytes: 1048576
+```
+
+数据库与 transcript 路径必须是绝对路径，父目录/Transcript 目录必须预先受控创建。`SQLITE` 不会创建
+JSONL；JSONL 从不参与恢复。`protection` 支持 `NONE` 和 `AES_GCM`。`NONE` 将受控 payload 以带版本、
+binding digest 和内容 digest 的明文格式写入 SQLite，只适用于可信本地目录。`AES_GCM` 必须同时配置
+`protectorRef: env://HAIFA_CONTINUATION_KEY`；变量值必须是 Base64 编码的 32 字节 AES key，并在重启间
+保持稳定。旧配置若包含 `protectorRef` 但省略 `protection`，继续按 `AES_GCM` 读取。对应环境变量覆盖为
+`HAIFA_PERSISTENCE_MODE`、`HAIFA_PERSISTENCE_PROTECTION`、
+`HAIFA_SQLITE_DATABASE_PATH`、`HAIFA_TRANSCRIPT_ROOT` 和
+`HAIFA_CONTINUATION_PROTECTOR_REF`。
+
+`tools.enabled`、冻结 Tool Binding、模型披露、ToolCall 持久化和 Provider 执行统一使用
+`file_list`、`file_read`、`file_patch`、`workspace_attach`、`execution_run`
+等 Provider-safe 下划线名称，不执行名称转换。`execution_run` 接收完整命令文本、当前授权目录的 `workspaceRef`、该根下的 `relativeWorkdir` 和 timeout；任何本机已安装且可由配置 Shell 解析的非交互 CLI 都走同一生产路径，文档中的具体
+命令仅是非穷举示例。Coding Agent 默认使用该通用 OS CLI 路径完成仓库级文件发现、内容搜索、源码
+检查、构建和测试：文件发现优先 `rg --files`，内容搜索优先 `rg`，命令不存在时由模型按当前 Shell
+选择替代方案。产品代码不识别搜索意图，也不拼接 `rg`、`grep` 或其他命令的具体选项。
+
+Java `file_search` 仍是 Project Tool Catalog 支持的有界兼容能力，可在自定义 `tools.enabled` 中显式
+加入；发行配置和 `CliConfiguration.defaults()` 不再默认披露它，避免 Coding Agent 在大型仓库反复走
+逐文件 Java 扫描。通用 Shell 命令仍遵循配置的 Approval、ExecutionBroker、Workspace、Sandbox、输出
+预算和审计边界；不会因为 `operationFamily=INSPECT` 是模型声明就自动降低授权要求。
+
+`file_read` 2.0.0 默认只读取最多 64 KiB/400 行，并返回 `hasMore`、`nextCursor`、总字节数和文件版本。
+后续窗口通过 `SeekableByteChannel` 从游标字节位置读取，不按文件大小分配内存；游标绑定逻辑路径和版本，
+文件变化会返回 `FILE_CURSOR_STALE` 与 `RESTART_READ_FROM_CURRENT_VERSION`，只允许从当前版本无游标
+确定性重读一次；跨路径复用仍作为无效游标拒绝。敏感路径返回 `USER_ACTION_REQUIRED`，明确要求用户
+调整边界或授权，不建议模型通过随机改名、移动或复制绕过。`file_write` 会在目标不存在时原子创建文件；
+目标已存在时仍以版本和内容哈希保护整体替换。`file_create` 遇到已有目标返回
+`USE_FILE_WRITE_OR_PATCH`，不是原样重试信号。
+
+只有当 `tools.enabled` 显式包含 `workspace_attach` 时，用户要求读取或修改当前 Workspace 外的目录，模型才可
+请求 `workspace_attach`：必须给出主机绝对路径和最小 mode（`read` 或 `develop`）。默认 `ask` 模式会向用户
+展示这两项并等待明确批准；批准后目录成为 CA 的又一条 durable `AuthorizedDirectoryEntry`（owner + `WorkspaceId`
++ 规范宿主根 + mode + physical fingerprint）。SQLite 模式会保护物理路径并在进程重启时重新验证：只有当前
+tenant/owner 的 ACTIVE 记录、canonical path 未改变且通过 link/reparse point 与互斥根规则时才恢复。同一规范路径
+被物理替换时记录被禁用并要求显式重新授权；换路径或不可验证时 fail closed。MEMORY 模式仍只在当前进程有效。
+新 Run 的 `<workspace_paths>` 提示块按授权合同只披露当前已授权目录的 `workspaceRef`、规范宿主 `rootPath`、
+`READ / DEVELOP` mode 和 `current` 标记；成功的 `workspace_attach` 结果还包含 `safeDisplayName` 与 `status`。
+`physicalFingerprint` 始终不披露。未启用该工具的
+Run 不会向模型披露它；范围外路径应报告工作区范围不足，而不是要求用户批准
+一个不可调用的工具。Terminal 的 `/trust` 展示同一份脱敏授权清单，`/trust revoke <workspaceRef>` 可立即撤销
+非初始根；撤销不会删除用户文件或历史逻辑事实。主目录
+与附加目录的后续文件操作都直接使用主机绝对路径，并统一映射到各自的 `WorkspaceId + WorkspacePath` 后进入同一
+文件服务与 mutation 服务。
+相对路径和 root alias 不再接受；跨授权目录的 patch 与 move 仍明确拒绝。已被现有授权目录覆盖的重复授权
+复用原边界，不创建第二份目录身份；无法确认物理路径边界时拒绝操作。
+
+CLI 不为受管文件写入建立仓库基线或 Git/Plain Change Review，也不为交付证据执行隐藏的 Git 读取。
+本地文件适配器仍记录既有 Session mutation ledger，但 Runtime 与 Coding 产品都不再据此判定任务
+完成；文件变更事实来自实际 Tool 结果。Git 检查需要 Agent 通过已披露的 `execution_run`
+显式执行，且不会扩大文件授权范围。
+
+`file_patch` 接受一份 `*** Begin Patch` / `*** End Patch` 上下文补丁，最多包含同一目录根下 100 个文件的新增或更新。
+删除和移动仍分别调用 `file_delete`、`file_move`；跨目录根的 patch 和移动明确拒绝。所有文件会在第一次写盘前完成
+路径、Hunk 与内容版本的乐观预检；它不是事务，提交期的 IO 或权限异常可能留下已提交前缀。此时工具返回
+`appliedPaths`、`failedPath` 和 `reconciliationRequired: true`，Coding Agent 必须重新读取实际文件后生成新 patch。
+Update hunk 的 `@@ <text>` 是可选导航提示：旧正文/context 只有一个精确匹配时，即使提示失效也允许应用；
+正文重复时，提示必须把候选确定性缩小到一个，否则返回 `PATCH_AMBIGUOUS_MATCH` 且不写入任何预检文件。没有旧正文
+的纯新增 hunk 必须包含唯一提示、精确 context 或 `*** End of File`，不能默认选择第一个行间位置。
+`file_delete` 可删除普通文件或空目录；不支持递归删除非空目录（非空目录清理须经命令审计走 `execution_run`）。主目录与附加目录对不存在路径统一
+返回 `PATH_NOT_FOUND`，对非空目录、链接、reparse point 或特殊节点统一返回 `PATH_DENIED`。
+
+`execution.provider` 只接受 `host-guarded`；平台已放弃 OS namespace / 容器级强隔离，底层统一为
+受控宿主执行（见 `docs/34-sandbox-simplification-and-host-execution-design.md`）。macOS、Linux、
+Windows 缺省值统一为 `host-guarded + shell auto`，三端体验完全一致，面向用户已经检查并信任的
+本地 Workspace；命令输出保留进程产生的真实可用路径，并可在同一命令生命周期内启动、访问和清理
+临时 loopback Server。命令使用普通宿主网络，因此不能把它描述成任何形式的网络隔离。
+
+已移除的 `execution.network` 与 `execution.extraPathPolicies` 配置键不再生效：它们只服务于已删除的
+`local-native` bind-mount 与断网机制。旧配置文件中残留这两个键会被忽略，而 `provider: local-native`
+在启动期 fail closed，报 `execution.provider is unsupported`。
+
+已删除的专用 `workspace_worktree_create` Tool 不再注册，也不提供兼容别名或自动转发。升级动作：如果
+`tools.enabled`（或发行 `haifa-coding.yaml` 的自定义副本）仍列出 `workspace_worktree_create`，必须
+移除该项；CLI 会在启动期 fail closed，并提示改用通用 `execution_run` 执行 `git worktree` 命令。
+
+安全摘要显示 Provider、Adapter、宿主网络事实、当前 OS 用户，以及 Workspace 外文件、网络、
+CPU/内存/Kernel 均未隔离。Host Guarded 以当前 OS 用户身份运行，不能阻止 Workspace 外文件、
+普通网络或系统资源访问，Approval 也不等于隔离，因此不适合陌生仓库无人值守执行；面对完全不可信的
+第三方代码，必须把整个运行环境放进外部容器或虚拟机。长期 Server、后台任务和 PTY 当前均不作为
+产品入口支持。敏感目录、代理/Socket/Credential 环境、未知 Provider 和无法兑现的 Shell 配置都在
+进程启动前 fail closed。
+
+CLI Coding Profile 显式允许 `task-planning` 与 `result-verification` 两个 SDK 基础 Skill，并把
+`skill_load`、`skill_resource_read` 注册到同一个 Runtime Tool Pipeline。模型开始时只看到 Skill
+名称、描述和摘要；调用 `skill_load` 后，精确冻结版本的指令才进入后续上下文。资源必须再通过
+`skill_resource_read` 按需读取。基础 Skill 不含外部 Tool、网络、Credential 或脚本依赖，运行时也不执行
+Skill 包中的脚本。
+
+`skills.localDirectories` 是 CLI 可信控制面配置，不接受模型或 Run 参数提供目录。每个 `root` 必须是
+已存在、可读、非符号链接的绝对目录，也可以用完整的 `${ENV_NAME}` 占位符从进程环境注入该绝对路径。
+Source 会有界递归穿过分类目录，并把首个包含 `SKILL.md`
+的目录视为包根，不再进入该包的资源子目录；例如可发现
+`D:\haifa-agent-config\skills\creative\ascii-art\SKILL.md`。当前 CLI 把这些来源绑定为本地用户的
+`USER` Scope；`origin` 只允许 `created` 或 `imported`，`parserMode` 只允许 `strict` 或
+`compatible`。目录中被发现的 Skill 还必须显式列入 `skills.allowed`，否则不会进入 Run 冻结、
+模型摘要或激活范围。`USER` Scope 优先于 SDK Scope；同 Scope、同 priority 的同名冲突会使启动
+fail closed。Source root 不进入 Prompt、Tool 参数或 Runtime 配置快照，也不得与 CLI Workspace
+互相包含，否则普通文件 Tool 可能绕过 Skill 门禁，CLI 会在连接外部 MCP 或调用模型前拒绝启动。
+可使用 `D:\haifa-agent-config` 作为测试配置根，把 Skill 放在 `skills\`，实际 Workspace 放在
+同级的 `workspaces\<case>\`。
+
+Web Tool 默认关闭。启用 Search 时需同时把 `web_search` 加入 `tools.enabled` 并设置
+`web_search.enabled: true`；可选 Provider 为 `aliyun`、`brave`、`tavily`。启用 Fetch 时同理加入
+`web_fetch`，可选 Provider 为 `aliyun`、`browserless`、`tavily`。Browserless 默认使用
+`https://production-sfo.browserless.io/content` 与 `env://BROWSERLESS_TOKEN`；例如：
+
+```yaml
+tools:
+  enabled: [file_read, web_fetch]
+web:
+  fetch:
+    enabled: true
+    provider: browserless
+    credentialRef: env://BROWSERLESS_TOKEN
+```
+
+Browserless Token 只通过 Authorization 请求头发送，不要把 `?token=...` 写进 Endpoint。Provider 不读取环境变量；CLI 根据
+`env://` 引用在启动期把密钥写入进程内加密 Credential Store，Runtime 在实际 Tool 调用期签发短期
+`CredentialLease`。网络与凭据 Tool 默认仍按 `approval.mode` 进入审批策略，不会自动切换 Provider
+或在失败时返回示例内容。
+
+Tavily Search 与 Fetch 可分别选择，也可同时使用 `env://TAVILY_API_KEY`。Fetch 默认调用
+`https://api.tavily.com/extract` 并返回 Markdown 或纯文本；Provider 仍为两个 Tool 建立独立、精确的
+Credential Binding。
+
+CLI 根据冻结模型目录解析 reasoning：`NONE/OPTIONAL` 缺省关闭，`ALWAYS` 缺省开启，`ADAPTIVE` 优先使用
+adaptive（目录不允许时退为 enabled）；显式 mode/effort 必须通过目录校验后才进入请求。CLI 为每个模型调用
+冻结 `512 KiB / 最长 5 分钟` reasoning 预算（更短的 Run wall timeout 优先），任一超限即不可重试失败。
+Runtime output listener 只实时打印安全的
+answer delta；reasoning 原文不会进入终端，`--verbose` 只显示最终有效 mode/effort 和供应商报告的 token 数。
+
+百炼 Provider 配置必须提供 `workspaceId`，`region` 缺省为 `cn-beijing`。CLI 不接受任意百炼主机，
+而是固定推导 `https://{workspaceId}.{region}.maas.aliyuncs.com/compatible-mode/v1`。Provider、
+Credential 和模型列表必须通过 `models.providers` 显式配置；`--model` 或 `HAIFA_MODEL_ID` 只负责
+从已配置列表中选择模型。
+
+`mcp.servers` 在 CLI 启动时连接并发现远端工具。每个 Server 必须使用稳定的小写 `id`、显式 `allowedTools` 和唯一 `aliasNamespace`；示例工具向模型披露为 `utility_time_now`、`utility_calculate`。发现不到、Schema 不兼容或不在本地审核策略中的配置工具会使启动失败，不会静默降级。
+
+`policyProfile: conservative` 可用于任意显式 allowlist，但默认按高风险、未知幂等性和始终审批处理。`policyProfile: utility` 只接受 `CodingAgentMcpProfile` 已审核的 Utility 子集。生产 Server 必须使用 HTTPS；`allowLoopbackHttp: true` 只允许 `127.0.0.1` 或 `localhost` 开发端点。当前 CLI MCP 装配只支持无认证 Streamable HTTP，Credential 注入和 stdio 尚未开放为 CLI 配置。
+
+风险达到配置阈值的 Shell 命令要求控制台确认；默认 `ask/LOW` 因而审批所有普通执行。Shell 审批显示完整 command、`workspaceRef`、`relativeWorkdir`、timeout、Shell 类型及 Host 非强隔离提示。`relativeWorkdir` 只接受活动根下的规范相对目录；绝对目录、UNC/盘符、遍历和链接逃逸在执行前拒绝。`workspaceRef`/`relativeWorkdir` 只约束启动目标，Host 子进程仍可访问当前 OS 用户可达的路径，审批与文档不虚假承诺更强的隔离；合法 `git -C` 与其他命令参数一样交给通用执行路径，不再返回 `WORKSPACE_PROTOCOL_REQUIRED`。dispatch 前的确定性拒绝直接保存失败 ToolResult（不伪造 `NOT_DISPATCHED` 异常），失败事实回传给模型并在标准对话循环中继续；模型可向用户报告阻塞或在标准策略下发起全新的普通工具调用。`--approval auto` 映射为 `NEVER`，是用户对当前受信 Host 命令的显式广泛授权，会自动执行所有非硬拒绝的普通命令；它只适用于用户明确信任的本地工作区，并仍经过 Broker、Workspace capability、Profile、环境和审计。凭据防泄露硬拒绝与 Credential 重认证不会因 `auto` 自动批准。`--approval deny` 会在 Catalog freeze 前移除 `execution_run`，模型不可见，底层授权仍 fail closed。
+
+系统 Git/GH、Wrapper、客户脚本与普通命令走同一条通用执行路径，不提供命令专用 Wrapper，也不做业务语义
+分级。产品不再维护重复且不可见的 Coding Delivery Intent
+交付护栏，用户是否要求 Commit、Push 或 PR 继续由任务正文和 Prompt/Skill 行为约束表达；是否允许具体副作用，
+则由可见、统一的 Policy/Approval 和执行边界决定。generic Shell 只返回命令事实，完成策略不要求或生成 Stage、Commit、
+Push、PR 成功证据。
+
+`execution_run` 对每个正常终止的进程返回 `processState=EXITED`、原始 exit code 和 bounded 输出。
+Runtime 和 Coding 产品不判断退出码的业务含义，也不将非零退出归入平台失败或自动恢复；模型依据命令与
+输出决定下一步。Timeout、Cancel、资源限制和未知终止继续保持独立边界。凭据防泄露硬拒绝使用
+`AUTHENTICATION_OVERRIDE_DENIED`，引导移除受保护的认证环境变量赋值、`git credential*`、Git 凭据配置覆盖
+或 `gh auth` 披露/修改命令；已 dispatch 且结果未知的调用必须先读取权威状态，不得盲目重放。
+
+`execution.shell` 支持 `auto`、`bash` 和 `powershell`。自定义 Shell 必须通过本地配置中的绝对 `shellPath` 提供，不能来自 Tool 参数。环境配置只保存允许继承的名称；Host Guarded 统一由公共解析器提供真实 OS 用户 HOME 与三端最小命令环境，Local Native 输入不携带宿主 HOME/AppData/XDG/TMP。两种模式都拒绝 API Key、`*_TOKEN`、`*_SECRET`、云凭据、代理凭据，以及 `PYTHONHOME`、`PYTHONPATH`、`PYTHONUSERBASE`、`VIRTUAL_ENV`、`CONDA_PREFIX`、`NODE_PATH` 等解释器边界变量。命令输出实时脱敏展示，最终模型结果默认限制为首尾合计 2000 行且最多 50KB，中段带明确省略标记；较大分通道输出通过 Output Ref 访问。探索性 `INSPECT` 达到预算后会停止进程树并要求收窄查询，其他命令继续排空到进程结束。CLI wall timeout 发送 Runtime `TIMEOUT` 并以 `WALL_TIME_EXCEEDED`/退出码 124 结束；Ctrl+C 和关闭钩子仍发送 `CANCEL`。
+
+one-shot 模式将 answer delta 保持在 stdout，将活动提示保持在 stderr。TTY 从等待模型起立即显示单行
+`Waiting/Thinking` 状态；非 TTY 在 30 秒后首次提示并每 60 秒重复。reasoning 活动事件不带内容，第一段
+answer 输出前会清理 TTY 状态；`--quiet` 只关闭这些状态，不影响 answer、错误或 Trace。
+
+CLI 在冻结 Definition 时把可信配置解析后的 Shell 显示名加入模型指令，要求 `execution_run` 只生成该
+Shell 支持的命令语法，避免在 Windows PowerShell 中混入 POSIX 命令；Shell 的实际路径、审批、能力与
+Sandbox 约束仍由可信装配和 Broker 决定，模型不能覆盖。Terminal 和 one-shot CLI 在人工交互/审批期间
+暂停整体活动时间预算；等待没有自动截止时间，批准后从剩余预算继续。该环境指令同时说明 `PATH` 中任意非交互 CLI
+均可使用，并要求模型在命令缺失时探测和切换替代方案、收窄过宽查询、保持输出有界。
+
+CLI 启动时还会生成一个最多 8 KiB、路径脱敏的 `<workspace_environment>` 块，并在每个新 Run 的
+Definition instructions 中冻结使用。L0 只投影可信装配已经知道的 Host/Shell、执行开关、网络策略、
+Workspace 读写范围、超时和临时空间；L1 只静态检查根 `.git` 与根 `AGENTS.md` 状态；L2 只检查 Workspace
+根固定 allowlist 中的 manifest、Wrapper、lockfile 和测试目录，并复用同一次发现生成的验证候选。该块不运行
+Git、构建、测试或 `--version` 命令，不递归解析 Monorepo，不披露真实 Workspace/Scratch 路径，也不把
+静态标记表述为 executable 已安装。同一 Run 内不会重新扫描或改写；新进程重新生成的结果只影响未来 Run。
+
+CLI 还会从 Workspace 根的 `pom.xml`、Gradle 文件、`pyproject.toml`/`pytest.ini`、`package.json`、
+`Cargo.toml`、`go.mod`、`.sln`/`.csproj` 生成有界的最终门禁候选，并优先选择仓库 Wrapper。它只识别
+构建入口，不解析自然语言 README、猜测用户意图或建立语言插件注册表。候选在 Coding Session 创建时
+冻结到可信 Session metadata；重启后以冻结摘要和精确命令匹配恢复 scope。runner 输出不再用于推断
+discovered/selected/ignored 或完整覆盖，Attempt 不保存测试计数字段，正常退出也不等于验证通过。
+
+CLI 不再为 OS 执行建立 Workspace Change Observer，也不在产品内维护扫描算法或为每条 OS 命令执行前后各生成一次全量 Workspace Manifest。`execution_run` 的可信事实是授权、Sandbox、进程 dispatch、退出状态、有界输出、超时、取消和结果未知；它不自动扫描 Workspace 推导文件变更，也不因文件观察失败进入
+`WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE` / `WORKSPACE_CHANGE_OBSERVER_RESYNC_FAILED`（两个错误码已删除）。
+只有 OS 进程创建成功后才进入 DISPATCHED。文件级变更事实由 Coding 产品层从成功的 canonical Mutation
+ToolCall 重建；没有仓库基线或按需 Change Review 的隐藏旁路。
+
+Runtime 在撤销、超时、取消和异常恢复时只收敛 Run/Tool/Interaction 状态，不提供文件副本或自动回滚；CLI 不会在
+恢复时执行 Git reset/checkout 或覆盖用户文件。文件级可恢复性若确有需要，必须由受信 Host 另行装配并明确声明，
+不能把 `host-guarded` 描述成文件系统隔离。
+
+当前已包含 tui4j Terminal、顶层 `resume` 五种形式、最近 100 条安全可见历史、真实 `/resume` 搜索、
+Session 重命名/归档/逻辑删除、线性历史
+`/compact`、根 `AGENTS.md` 冻结与 `/reload`、受治理的 `!`/`!!`、安全 `/export`、Steer、持久
+Follow-up、Cancel、Approval selector 和 SQLite Session/Queue/Cursor 恢复。尚未包含 PTY、后台守护
+进程、Session Tree/Fork/Clone、模型登录或 Workflow Graph。模型切换只覆盖可信静态目录内的空闲
+Session，不包含动态发现或自动 fallback。Host Provider 不是容器或虚拟机，
+不能阻止当前 OS 用户本来可访问的 Workspace 外文件、网络或系统资源。
+
+## 真实模型 Coding E2E
+
+统一 E2E 测试模块包含 9 个真实 DeepSeek/百炼模型驱动的 CLI 编程 E2E，覆盖单文件修复、多文件功能、
+回归测试、Maven 配置、等价重构、文件迁移、脏工作区保护、失败恢复和审批拒绝。用例清单及初始工程位于
+`haifa-agent-testing/haifa-agent-e2e-tests/src/test/resources/coding-e2e/`，每次执行都复制到新的隔离
+Workspace；产品 CLI 模块不再承载跨产品 E2E Harness，也不会回放 Stub 或历史模型响应。
+
+普通 `test` 和 `ci-fast` 不会访问真实模型。Live 批次必须显式提供以下环境：
+
+```text
+HAIFA_CLI_LIVE_E2E_TEST=true
+HAIFA_FT_ENABLED=true
+HAIFA_FT_MODE=LIVE
+HAIFA_FT_RUN_ID=<unique-batch-id>
+HAIFA_FT_ROOT=<new-empty-absolute-directory>
+DEEPSEEK_API_KEY=<secret-manager-injected-value>
+```
+
+Live E2E 默认直接使用三端统一的 `host-guarded + allow + shell auto`，不再要求 Windows 专属覆盖。
+只有为兼容外部编排而显式重复声明可信 Host 时，才可同时设置：
+
+```text
+HAIFA_CLI_LIVE_E2E_EXECUTION_PROVIDER=host-guarded
+HAIFA_CLI_LIVE_E2E_EXECUTION_NETWORK=allow
+```
+
+两个变量必须成对出现且只能是上述值；缺少一项或声明其他组合都会 fail closed。Host Guarded 不能
+提供容器级文件、网络或系统资源隔离。macOS/Linux Local Native 严格验证由独立 Gate 负责，不与
+默认 Coding Live E2E 混算；Windows 没有 Local Native Adapter。
+
+百炼批次将最后一项替换为：
+
+```text
+HAIFA_CLI_LIVE_E2E_PROVIDER=aliyun-bailian
+HAIFA_BAILIAN_WORKSPACE_ID=<required-workspace-id>
+HAIFA_BAILIAN_REGION=cn-beijing
+HAIFA_BAILIAN_MODEL_ID=qwen-plus
+DASHSCOPE_API_KEY=<secret-manager-injected-value>
+```
+
+`HAIFA_FT_ROOT` 必须包含 `.haifa-cli-live-e2e-root`，内容与 `HAIFA_FT_RUN_ID` 完全相同，且除该
+sentinel 外初始为空。测试不会永久删除批次目录；执行者应将其作为 CI Artifact 隔离并按 TTL 清理。
+
+```bash
+./mvnw -pl :haifa-agent-e2e-tests -am -Pci-integration -DskipITs=false \
+  -Dfailsafe.failIfNoSpecifiedTests=false -Dit.test=CodingAgentLiveE2E clean verify
+```
+
+每个通过的用例会在 `target/coding-agent-live-e2e-evidence/` 生成脱敏 JSON，包含模型调用 ID、
+Provider/模型/Adapter 版本、Usage、Tool Call 统计、耗时、Fixture digest、修改逻辑路径和 Oracle 结果；
+不包含 API Key、任务全文、模型原始响应、reasoning 原文或真实 Workspace 路径。测试题不依赖 Web
+Search，除真实模型 Endpoint 外不需要外部信息服务。
+
+当前硬门禁是 Run 正常完成、独立 Oracle 通过、受保护文件和批次边界未变化、真实模型证据完整且无敏感
+信息泄漏。耗时、Token、模型调用数、工具调用数和失败工具结果作为二级趋势指标记录，用于后续比较模型与
+Prompt 效率；现阶段除“失败后恢复”专用用例外，不因单次效率波动判失败。

@@ -4,9 +4,7 @@ import io.haifa.agent.context.item.ContextItem;
 import io.haifa.agent.context.prompt.PromptComponent;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
-import io.haifa.agent.core.run.AgentRunBudget;
 import io.haifa.agent.core.run.AgentRunId;
-import io.haifa.agent.core.run.AgentRunUsage;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
@@ -21,8 +19,6 @@ public record ContextBuildRequest(
         PrincipalRef principal,
         int iteration,
         ResolvedModelSnapshot model,
-        AgentRunBudget runBudget,
-        AgentRunUsage runUsage,
         List<PromptComponent> prompts,
         List<ContextItem> items,
         List<ModelToolSpecification> tools,
@@ -38,8 +34,6 @@ public record ContextBuildRequest(
         principal = Objects.requireNonNull(principal, "principal must not be null");
         if (iteration < 1) throw new IllegalArgumentException("iteration must be positive");
         model = Objects.requireNonNull(model, "model must not be null");
-        runBudget = Objects.requireNonNull(runBudget, "runBudget must not be null");
-        runUsage = Objects.requireNonNull(runUsage, "runUsage must not be null");
         prompts = List.copyOf(Objects.requireNonNull(prompts, "prompts must not be null"));
         items = List.copyOf(Objects.requireNonNull(items, "items must not be null"));
         tools = List.copyOf(Objects.requireNonNull(tools, "tools must not be null"));

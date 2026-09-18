@@ -9,9 +9,10 @@ import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
 /** Transient health observations kept outside provider configuration. */
-public final class InMemoryProviderHealthRegistry {
+public final class InMemoryProviderHealthRegistry implements ProviderHealthRegistry {
     private final Map<ModelProviderId, ProviderHealth> health = new ConcurrentHashMap<>();
 
+    @Override
     public ProviderHealth health(ModelProviderId providerId) {
         Objects.requireNonNull(providerId, "providerId must not be null");
         return health.getOrDefault(

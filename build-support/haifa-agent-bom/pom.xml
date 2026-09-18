@@ -6,7 +6,7 @@
     <parent>
         <groupId>io.haifa</groupId>
         <artifactId>haifa-agent-parent</artifactId>
-        <version>0.1.0-SNAPSHOT</version>
+        <version>0.1.0</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
@@ -38,6 +38,21 @@
             </dependency>
             <dependency>
                 <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-skill-api</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-skill-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-skill-base</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
                 <artifactId>haifa-agent-common</artifactId>
                 <version>${project.version}</version>
             </dependency>
@@ -63,7 +78,17 @@
             </dependency>
             <dependency>
                 <groupId>io.haifa</groupId>
-                <artifactId>haifa-agent-project</artifactId>
+                <artifactId>haifa-agent-project-api</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-project-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-project-host</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
@@ -83,6 +108,11 @@
             </dependency>
             <dependency>
                 <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-execution-host</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
                 <artifactId>haifa-agent-sandbox-api</artifactId>
                 <version>${project.version}</version>
             </dependency>
@@ -98,8 +128,38 @@
             </dependency>
             <dependency>
                 <groupId>io.haifa</groupId>
-                <artifactId>haifa-agent-project-application</artifactId>
+                <artifactId>haifa-agent-web</artifactId>
                 <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-coding-agent</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-coding-terminal</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-personal-assistant-application</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-personal-assistant-server</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.jline</groupId>
+                <artifactId>jline-terminal-jni</artifactId>
+                <version>${tui4j.jline-backend.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.williamcallahan</groupId>
+                <artifactId>tui4j</artifactId>
+                <version>${tui4j.version}</version>
             </dependency>
             <dependency>
                 <groupId>io.haifa</groupId>
@@ -123,13 +183,88 @@
             </dependency>
             <dependency>
                 <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-sdk</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-sdk-starter</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-policy-api</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-policy-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
                 <artifactId>haifa-agent-model-openai-compatible</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-model-anthropic</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-google-gemini</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-local-model-auth</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-local-model-auth-codex-local-compat</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-local-model-auth-antigravity-local-compat</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-mcp</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
                 <groupId>io.haifa</groupId>
                 <artifactId>haifa-agent-contract</artifactId>
                 <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-store-sqlite</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-store-jsonl</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-transport-http</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.mybatis</groupId>
+                <artifactId>mybatis</artifactId>
+                <version>${mybatis.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.xerial</groupId>
+                <artifactId>sqlite-jdbc</artifactId>
+                <version>${sqlite.jdbc.version}</version>
             </dependency>
             <dependency>
                 <groupId>com.fasterxml.jackson</groupId>

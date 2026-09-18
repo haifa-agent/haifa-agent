@@ -1,6 +1,10 @@
 package io.haifa.agent.runtime.core;
 
 import io.haifa.agent.core.tool.ToolResult;
+import io.haifa.agent.credential.api.CredentialRequirement;
+import io.haifa.agent.policy.api.PolicyChallenge;
+import io.haifa.agent.policy.api.PolicyDecision;
+import io.haifa.agent.policy.api.PolicyEffect;
 import io.haifa.agent.tool.api.FrozenToolBinding;
 import io.haifa.agent.tool.api.SemanticVersion;
 import io.haifa.agent.tool.api.ToolAlias;
@@ -12,6 +16,8 @@ import io.haifa.agent.tool.api.ToolInvocationRequest;
 import io.haifa.agent.tool.api.ToolName;
 import io.haifa.agent.tool.api.ToolProvider;
 import io.haifa.agent.tool.api.ToolProviderId;
+import io.haifa.agent.tool.api.ToolReconciliation;
+import io.haifa.agent.tool.api.ToolReconciliationRequest;
 import io.haifa.agent.tool.api.ToolResourceRequirements;
 import io.haifa.agent.tool.api.ToolRisk;
 import io.haifa.agent.tool.api.ToolSchema;
@@ -22,6 +28,7 @@ import io.haifa.agent.tool.core.ToolCatalogBuilder;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 final class TestToolPlatform {
@@ -36,25 +43,42 @@ final class TestToolPlatform {
             String inputSchemaId,
             boolean sideEffecting,
             ToolHandler handler) {
-        return install(
-                builder,
-                name,
-                version,
-                inputSchemaId,
-                sideEffecting,
-                io.haifa.agent.runtime.core.tool.ToolPolicyDecision.ALLOW,
-                handler);
+        return install(builder, name, version, inputSchemaId, sideEffecting, allow(), handler);
     }
 
-    static RuntimeCoreBuilder install(
+    static RuntimeCoreBuilder installWithOutputSchema(
             RuntimeCoreBuilder builder,
             String name,
             String version,
             String inputSchemaId,
-            boolean sideEffecting,
-            io.haifa.agent.runtime.core.tool.ToolPolicyDecision decision,
+            Map<String, Object> outputSchema,
             ToolHandler handler) {
-        ToolDefinition definition = definition(name, version, inputSchemaId, sideEffecting);
+        ToolDefinition definition = definition(name, version, inputSchemaId, false, outputSchema);
+        return install(builder, definition, allow(), handler);
+    }
+
+    static RuntimeCoreBuilder installWithInputSchema(
+            RuntimeCoreBuilder builder,
+            String name,
+            String version,
+            String inputSchemaId,
+            Map<String, Object> inputSchema,
+            ToolHandler handler) {
+        ToolDefinition definition = definition(name, version, inputSchemaId, false, inputSchema, objectSchema());
+        return install(builder, definition, allow(), handler);
+    }
+
+    private static RuntimeCoreBuilder install(
+            RuntimeCoreBuilder builder, ToolDefinition definition, PolicyDecision decision, ToolHandler handler) {
+        return install(builder, definition, decision, handler, ignored -> ToolReconciliation.unsupported());
+    }
+
+    private static RuntimeCoreBuilder install(
+            RuntimeCoreBuilder builder,
+            ToolDefinition definition,
+            PolicyDecision decision,
+            ToolHandler handler,
+            ToolReconcileHandler reconciler) {
         ToolProvider provider = new ToolProvider() {
             @Override
             public ToolProviderId id() {
@@ -65,39 +89,54 @@ final class TestToolPlatform {
             public ToolResult invoke(ToolInvocationRequest request) {
                 return handler.invoke(request);
             }
+
+            @Override
+            public ToolReconciliation reconcile(ToolReconciliationRequest request) {
+                return reconciler.reconcile(request);
+            }
         };
         var catalog = new ToolCatalogBuilder()
-                .register(new ToolAlias(name), definition, "runtime-test", provider)
+                .register(alias(definition.name().value()), definition, "runtime-test", provider)
                 .freeze();
-        return builder.toolPolicy((run, binding, request) -> decision)
+        return builder.publicToolPolicy((run, binding, request) -> decision)
                 .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator());
     }
 
-    static FrozenToolBinding binding(String name, String version, String inputSchemaId, boolean sideEffecting) {
-        ToolProvider provider = new ToolProvider() {
-            @Override
-            public ToolProviderId id() {
-                return PROVIDER_ID;
-            }
-
-            @Override
-            public ToolResult invoke(ToolInvocationRequest request) {
-                throw new UnsupportedOperationException();
-            }
-        };
-        return new ToolCatalogBuilder()
-                .register(
-                        new ToolAlias(name), definition(name, version, inputSchemaId, sideEffecting), "test", provider)
-                .freeze()
-                .snapshot()
-                .bindings()
-                .getFirst();
+    static RuntimeCoreBuilder install(
+            RuntimeCoreBuilder builder,
+            String name,
+            String version,
+            String inputSchemaId,
+            boolean sideEffecting,
+            PolicyDecision decision,
+            ToolHandler handler) {
+        ToolDefinition definition = definition(name, version, inputSchemaId, sideEffecting);
+        return install(builder, definition, decision, handler);
     }
 
-    private static ToolDefinition definition(String name, String version, String inputSchemaId, boolean sideEffecting) {
+    static RuntimeCoreBuilder install(
+            RuntimeCoreBuilder builder,
+            String name,
+            String version,
+            String inputSchemaId,
+            boolean sideEffecting,
+            ToolHandler handler,
+            ToolReconcileHandler reconciler) {
+        ToolDefinition definition = definition(name, version, inputSchemaId, sideEffecting);
+        return install(builder, definition, allow(), handler, reconciler);
+    }
+
+    static RuntimeCoreBuilder installWithCredentials(
+            RuntimeCoreBuilder builder,
+            String name,
+            String version,
+            String inputSchemaId,
+            boolean sideEffecting,
+            List<CredentialRequirement> credentialRequirements,
+            ToolHandler handler) {
         Map<String, Object> objectSchema =
                 Map.of("$schema", ToolSchema.DRAFT_2020_12, "type", "object", "additionalProperties", true);
-        return new ToolDefinition(
+        ToolDefinition definition = new ToolDefinition(
                 new ToolName(name),
                 new SemanticVersion(version),
                 PROVIDER_ID,
@@ -113,6 +152,72 @@ final class TestToolPlatform {
                 sideEffecting ? ToolRisk.HIGH : ToolRisk.LOW,
                 sideEffecting ? Set.of(ToolSideEffect.FILE_WRITE) : Set.of(ToolSideEffect.FILE_READ),
                 ToolResourceRequirements.none(),
+                credentialRequirements,
+                ToolApprovalRequirement.NEVER,
+                "test",
+                false,
+                Set.of("test"));
+        return install(builder, definition, allow(), handler);
+    }
+
+    static FrozenToolBinding binding(String name, String version, String inputSchemaId, boolean sideEffecting) {
+        ToolProvider provider = new ToolProvider() {
+            @Override
+            public ToolProviderId id() {
+                return PROVIDER_ID;
+            }
+
+            @Override
+            public ToolResult invoke(ToolInvocationRequest request) {
+                throw new UnsupportedOperationException();
+            }
+        };
+        return new ToolCatalogBuilder()
+                .register(alias(name), definition(name, version, inputSchemaId, sideEffecting), "test", provider)
+                .freeze()
+                .snapshot()
+                .bindings()
+                .getFirst();
+    }
+
+    private static ToolDefinition definition(String name, String version, String inputSchemaId, boolean sideEffecting) {
+        Map<String, Object> objectSchema =
+                Map.of("$schema", ToolSchema.DRAFT_2020_12, "type", "object", "additionalProperties", true);
+        return definition(name, version, inputSchemaId, sideEffecting, objectSchema);
+    }
+
+    private static ToolDefinition definition(
+            String name,
+            String version,
+            String inputSchemaId,
+            boolean sideEffecting,
+            Map<String, Object> outputSchema) {
+        return definition(name, version, inputSchemaId, sideEffecting, objectSchema(), outputSchema);
+    }
+
+    private static ToolDefinition definition(
+            String name,
+            String version,
+            String inputSchemaId,
+            boolean sideEffecting,
+            Map<String, Object> inputSchema,
+            Map<String, Object> outputSchema) {
+        return new ToolDefinition(
+                new ToolName(name),
+                new SemanticVersion(version),
+                PROVIDER_ID,
+                name,
+                "Runtime test tool " + name,
+                new ToolSchema(inputSchemaId, "1.0", inputSchema),
+                new ToolSchema(name + ".output", "1.0", outputSchema),
+                ToolExecutionMode.IN_PROCESS,
+                true,
+                Duration.ofSeconds(10),
+                "test",
+                sideEffecting ? ToolIdempotency.NON_IDEMPOTENT : ToolIdempotency.IDEMPOTENT,
+                sideEffecting ? ToolRisk.HIGH : ToolRisk.LOW,
+                sideEffecting ? Set.of(ToolSideEffect.FILE_WRITE) : Set.of(ToolSideEffect.FILE_READ),
+                ToolResourceRequirements.none(),
                 List.of(),
                 ToolApprovalRequirement.NEVER,
                 "test",
@@ -120,8 +225,42 @@ final class TestToolPlatform {
                 Set.of("test"));
     }
 
+    private static Map<String, Object> objectSchema() {
+        return Map.of("$schema", ToolSchema.DRAFT_2020_12, "type", "object", "additionalProperties", true);
+    }
+
+    private static ToolAlias alias(String name) {
+        return new ToolAlias(name);
+    }
+
+    static PolicyDecision allow() {
+        return decision(PolicyEffect.ALLOW, Optional.empty(), "TEST_ALLOW", "Test policy allowed the tool");
+    }
+
+    static PolicyDecision approvalRequired() {
+        return decision(
+                PolicyEffect.ASK,
+                Optional.of(PolicyChallenge.APPROVAL),
+                "TEST_APPROVAL_REQUIRED",
+                "Test policy requires approval");
+    }
+
+    static PolicyDecision deny() {
+        return decision(PolicyEffect.DENY, Optional.empty(), "TEST_DENY", "Test policy denied the tool");
+    }
+
+    private static PolicyDecision decision(
+            PolicyEffect effect, Optional<PolicyChallenge> challenge, String reasonCode, String explanation) {
+        return new PolicyDecision(effect, challenge, reasonCode, explanation, "sha256:" + reasonCode.toLowerCase());
+    }
+
     @FunctionalInterface
     interface ToolHandler {
         ToolResult invoke(ToolInvocationRequest request);
+    }
+
+    @FunctionalInterface
+    interface ToolReconcileHandler {
+        ToolReconciliation reconcile(ToolReconciliationRequest request);
     }
 }

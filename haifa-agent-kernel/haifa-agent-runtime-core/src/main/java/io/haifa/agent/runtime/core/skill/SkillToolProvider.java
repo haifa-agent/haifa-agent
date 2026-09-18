@@ -1,0 +1,256 @@
+package io.haifa.agent.runtime.core.skill;
+
+import io.haifa.agent.core.tool.ToolResult;
+import io.haifa.agent.skill.api.SkillActivationRequest;
+import io.haifa.agent.skill.api.SkillAlias;
+import io.haifa.agent.skill.api.SkillResourceRef;
+import io.haifa.agent.tool.api.SemanticVersion;
+import io.haifa.agent.tool.api.ToolAlias;
+import io.haifa.agent.tool.api.ToolApprovalRequirement;
+import io.haifa.agent.tool.api.ToolDefinition;
+import io.haifa.agent.tool.api.ToolExecutionMode;
+import io.haifa.agent.tool.api.ToolIdempotency;
+import io.haifa.agent.tool.api.ToolInvocationRequest;
+import io.haifa.agent.tool.api.ToolName;
+import io.haifa.agent.tool.api.ToolProvider;
+import io.haifa.agent.tool.api.ToolProviderId;
+import io.haifa.agent.tool.api.ToolResourceRequirements;
+import io.haifa.agent.tool.api.ToolRisk;
+import io.haifa.agent.tool.api.ToolSchema;
+import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+
+public final class SkillToolProvider implements ToolProvider {
+    public static final ToolProviderId PROVIDER_ID = new ToolProviderId("haifa-runtime-skill");
+    public static final ToolAlias LOAD_ALIAS = new ToolAlias("skill_load");
+    public static final ToolAlias RESOURCE_READ_ALIAS = new ToolAlias("skill_resource_read");
+
+    private final SkillActivationService skills;
+
+    public SkillToolProvider(SkillActivationService skills) {
+        this.skills = Objects.requireNonNull(skills);
+    }
+
+    public List<SkillToolCatalogContribution> contributions() {
+        return List.of(
+                new SkillToolCatalogContribution(LOAD_ALIAS, loadDefinition(), "runtime-skill-load", this),
+                new SkillToolCatalogContribution(
+                        RESOURCE_READ_ALIAS, resourceReadDefinition(), "runtime-skill-resource-read", this));
+    }
+
+    @Override
+    public ToolProviderId id() {
+        return PROVIDER_ID;
+    }
+
+    @Override
+    public ToolResult invoke(ToolInvocationRequest request) {
+        String alias = requiredText(request, "skill");
+        String reason = optionalText(request, "reason", "model requested Skill activation");
+        SkillActivationRequest activationRequest = new SkillActivationRequest(
+                request.runId(),
+                request.tenant(),
+                request.principal(),
+                new SkillAlias(alias),
+                reason,
+                request.toolCallId().value());
+        request.observer().dispatched();
+        ToolResult result;
+        try {
+            switch (request.binding().definition().name().value()) {
+                case "skill_load" -> {
+                    var activation = skills.activate(activationRequest);
+                    List<String> readableResources = activation.binding().packageIndex().resources().stream()
+                            .filter(resource -> resource.readableText()
+                                    && !resource.relativePath().equals("SKILL.md"))
+                            .map(SkillResourceRef::relativePath)
+                            .sorted()
+                            .toList();
+                    Map<String, Object> data = new LinkedHashMap<>();
+                    data.put("skill", activation.binding().alias().value());
+                    data.put(
+                            "digest",
+                            activation.binding().coordinate().contentDigest().value());
+                    data.put("activated", true);
+                    data.put("instructionBytes", activation.instructionBytes());
+                    data.put("estimatedTokens", activation.estimatedTokens());
+                    data.put("readableResources", readableResources);
+                    String summary;
+                    if (readableResources.isEmpty()) {
+                        String guidance =
+                                "Entry SKILL.md instructions are fully injected; no auxiliary readable resources exist, do not call skill_resource_read to guess paths.";
+                        data.put("guidance", guidance);
+                        summary = "Activated Skill "
+                                + activation.binding().alias().value() + ": " + guidance;
+                    } else {
+                        summary = "Activated Skill "
+                                + activation.binding().alias().value() + " with readable auxiliary resources: "
+                                + String.join(", ", readableResources);
+                    }
+                    result = result(summary, Map.copyOf(data));
+                }
+                case "skill_resource_read" -> {
+                    String path = requiredText(request, "path");
+                    SkillResourceRead resource = skills.readResource(activationRequest, path);
+                    result = result(
+                            "Read activated Skill resource",
+                            Map.of(
+                                    "skill", alias,
+                                    "source",
+                                            resource.binding()
+                                                    .coordinate()
+                                                    .source()
+                                                    .externalForm(),
+                                    "path", resource.resource().relativePath(),
+                                    "digest", resource.resource().digest().value(),
+                                    "mediaType", resource.resource().mediaType(),
+                                    "securityLabel", "untrusted-skill-resource",
+                                    "content", resource.content()));
+                }
+                default -> throw new IllegalArgumentException("unsupported Skill tool");
+            }
+        } catch (SkillRequestRejectedException rejected) {
+            result = failure(rejected, alias);
+        }
+        request.observer().acknowledged();
+        return result;
+    }
+
+    private static ToolResult result(String summary, Map<String, Object> data) {
+        return new ToolResult(true, summary, data, List.of(), List.of(), false);
+    }
+
+    private static ToolResult failure(SkillRequestRejectedException rejected, String alias) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("failureCode", rejected.failureCode());
+        data.put("skill", alias);
+        String summary = rejected.getMessage();
+        if ("SKILL_RESOURCE_NOT_INDEXED".equals(rejected.failureCode())
+                || "SKILL_RESOURCE_NOT_TEXT".equals(rejected.failureCode())) {
+            data.put("retryable", false);
+            String guidance = "Continue with already injected Skill instructions; do not guess similar resource paths.";
+            data.put("guidance", guidance);
+            data.put("action", guidance);
+            summary = rejected.getMessage() + ". " + guidance;
+        }
+        return new ToolResult(false, summary, Map.copyOf(data), List.of(), List.of(), false);
+    }
+
+    private static String requiredText(ToolInvocationRequest request, String name) {
+        Object value = request.arguments().values().get(name);
+        if (!(value instanceof String text) || text.trim().isEmpty()) {
+            throw new IllegalArgumentException(name + " must be non-blank text");
+        }
+        return text.trim();
+    }
+
+    private static String optionalText(ToolInvocationRequest request, String name, String fallback) {
+        Object value = request.arguments().values().get(name);
+        if (value == null) return fallback;
+        if (!(value instanceof String text) || text.trim().isEmpty()) {
+            throw new IllegalArgumentException(name + " must be non-blank text");
+        }
+        return text.trim();
+    }
+
+    private static ToolDefinition loadDefinition() {
+        return definition(
+                "skill_load",
+                "Activate Skill",
+                "Activate one Skill allowed by the frozen run configuration for the next context build.",
+                schema(
+                        "haifa.skill.load.input",
+                        Map.of(
+                                "skill", Map.of("type", "string"),
+                                "reason", Map.of("type", "string", "maxLength", 512)),
+                        List.of("skill")),
+                schema(
+                        "haifa.skill.load.output",
+                        Map.of(
+                                "skill", Map.of("type", "string"),
+                                "digest", Map.of("type", "string"),
+                                "activated", Map.of("type", "boolean"),
+                                "instructionBytes", Map.of("type", "integer"),
+                                "estimatedTokens", Map.of("type", "integer"),
+                                "readableResources", Map.of("type", "array", "items", Map.of("type", "string")),
+                                "guidance", Map.of("type", "string")),
+                        List.of(
+                                "skill",
+                                "digest",
+                                "activated",
+                                "instructionBytes",
+                                "estimatedTokens",
+                                "readableResources")));
+    }
+
+    private static ToolDefinition resourceReadDefinition() {
+        return definition(
+                "skill_resource_read",
+                "Read Skill resource",
+                "Read an indexed text resource from a Skill that is already activated for this run.",
+                schema(
+                        "haifa.skill.resource.read.input",
+                        Map.of(
+                                "skill", Map.of("type", "string"),
+                                "path", Map.of("type", "string"),
+                                "reason", Map.of("type", "string", "maxLength", 512)),
+                        List.of("skill", "path")),
+                schema(
+                        "haifa.skill.resource.read.output",
+                        Map.of(
+                                "skill", Map.of("type", "string"),
+                                "source", Map.of("type", "string"),
+                                "path", Map.of("type", "string"),
+                                "digest", Map.of("type", "string"),
+                                "mediaType", Map.of("type", "string"),
+                                "securityLabel", Map.of("type", "string"),
+                                "content", Map.of("type", "string")),
+                        List.of("skill", "source", "path", "digest", "mediaType", "securityLabel", "content")));
+    }
+
+    private static ToolDefinition definition(
+            String name, String title, String description, ToolSchema input, ToolSchema output) {
+        return new ToolDefinition(
+                new ToolName(name),
+                new SemanticVersion("1.0.0"),
+                PROVIDER_ID,
+                title,
+                description,
+                input,
+                output,
+                ToolExecutionMode.IN_PROCESS,
+                true,
+                Duration.ofSeconds(10),
+                "per-run-skill",
+                ToolIdempotency.IDEMPOTENT,
+                ToolRisk.LOW,
+                Set.of(),
+                ToolResourceRequirements.none(),
+                List.of(),
+                ToolApprovalRequirement.NEVER,
+                "haifa-runtime-core",
+                false,
+                Set.of("skill", "progressive-disclosure"));
+    }
+
+    private static ToolSchema schema(String id, Map<String, Object> properties, List<String> required) {
+        return new ToolSchema(
+                id,
+                "1.0.0",
+                Map.of(
+                        "$schema",
+                        "https://json-schema.org/draft/2020-12/schema",
+                        "type",
+                        "object",
+                        "additionalProperties",
+                        false,
+                        "properties",
+                        properties,
+                        "required",
+                        required));
+    }
+}

@@ -7,10 +7,16 @@ import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.step.AgentStep;
 import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeConfigurationSnapshot;
+import io.haifa.agent.runtime.core.model.continuation.ModelContinuationRepository;
+import io.haifa.agent.runtime.core.skill.SkillActivationRepository;
 import java.util.List;
 import java.util.Optional;
 
-public interface RuntimeStateRepository extends SessionMessageRepository, RuntimeMemorySelectionRepository {
+public interface RuntimeStateRepository
+        extends SessionMessageRepository,
+                RuntimeMemorySelectionRepository,
+                ModelContinuationRepository,
+                SkillActivationRepository {
 
     void appendStep(AgentStep step);
 

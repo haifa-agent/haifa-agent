@@ -2,6 +2,8 @@ package io.haifa.agent.core.plan;
 
 import static io.haifa.agent.core.support.DomainValues.requireText;
 
+import io.haifa.agent.core.persistence.DomainReconstitution;
+import io.haifa.agent.core.persistence.DomainReconstitutionException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
@@ -34,6 +36,63 @@ public final class TodoItem {
         if (Set.copyOf(this.dependencies).size() != this.dependencies.size()) {
             throw new IllegalArgumentException("todo dependencies must be unique");
         }
+    }
+
+    public static TodoItem reconstitute(TodoItemPersistenceSnapshot snapshot) {
+        Objects.requireNonNull(snapshot, "snapshot must not be null");
+        DomainReconstitution.requireSupportedVersion(snapshot.schemaVersion(), "TodoItem");
+        TodoPriority restoredPriority =
+                DomainReconstitution.enumValue(TodoPriority.class, snapshot.priority(), "todo priority");
+        TodoStatus restoredStatus = DomainReconstitution.enumValue(TodoStatus.class, snapshot.status(), "todo status");
+        validatePersistedState(
+                restoredStatus, snapshot.completionSummary(), snapshot.startedAt(), snapshot.completedAt());
+        try {
+            TodoItem item = new TodoItem(
+                    snapshot.id(), snapshot.title(), snapshot.description(), restoredPriority, snapshot.dependencies());
+            item.status = restoredStatus;
+            item.completionSummary = snapshot.completionSummary();
+            item.startedAt = snapshot.startedAt();
+            item.completedAt = snapshot.completedAt();
+            return item;
+        } catch (DomainReconstitutionException exception) {
+            throw exception;
+        } catch (IllegalArgumentException | NullPointerException exception) {
+            throw DomainReconstitution.invalid("TodoItem", exception);
+        }
+    }
+
+    private static void validatePersistedState(
+            TodoStatus status, String summary, Instant startedAt, Instant completedAt) {
+        if (startedAt != null && completedAt != null && completedAt.isBefore(startedAt)) {
+            DomainReconstitution.invalid("todo completedAt must not precede startedAt");
+        }
+        switch (status) {
+            case PENDING -> requireTodoState(startedAt == null && completedAt == null && summary == null, status);
+            case IN_PROGRESS, BLOCKED ->
+                requireTodoState(startedAt != null && completedAt == null && summary == null, status);
+            case COMPLETED -> requireTodoState(startedAt != null && completedAt != null && summary != null, status);
+            case CANCELLED, SKIPPED -> requireTodoState(completedAt != null && summary == null, status);
+        }
+    }
+
+    private static void requireTodoState(boolean valid, TodoStatus status) {
+        if (!valid) {
+            DomainReconstitution.invalid("todo state is inconsistent for status " + status);
+        }
+    }
+
+    public TodoItemPersistenceSnapshot persistenceSnapshot() {
+        return new TodoItemPersistenceSnapshot(
+                DomainReconstitution.SCHEMA_VERSION,
+                id,
+                title,
+                description,
+                priority.name(),
+                dependencies,
+                status.name(),
+                completionSummary,
+                startedAt,
+                completedAt);
     }
 
     public void start(Set<TodoItemId> completedDependencies, Instant at) {

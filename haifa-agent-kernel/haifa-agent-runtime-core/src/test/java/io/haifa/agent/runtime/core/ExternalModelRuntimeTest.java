@@ -1,6 +1,7 @@
 package io.haifa.agent.runtime.core;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
@@ -21,10 +22,16 @@ import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.ModelDefinitionId;
 import io.haifa.agent.model.api.ModelFinishReason;
+import io.haifa.agent.model.api.ModelMessage;
 import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelUsage;
+import io.haifa.agent.model.api.SensitiveModelReasoning;
+import io.haifa.agent.runtime.api.AgentRunOutputEventType;
 import io.haifa.agent.runtime.api.AgentRunRequest;
+import io.haifa.agent.runtime.api.RunEventCursor;
+import io.haifa.agent.runtime.api.RunEventPayloads;
+import io.haifa.agent.runtime.api.RunOutputCursor;
 import io.haifa.agent.runtime.api.RuntimeOverrides;
 import io.haifa.agent.runtime.core.bootstrap.ContentAddressedSnapshotFactory;
 import io.haifa.agent.runtime.core.bootstrap.DefaultResolvedModelSnapshots;
@@ -32,12 +39,16 @@ import io.haifa.agent.runtime.core.bootstrap.ResolvedDefinition;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext;
 import io.haifa.agent.runtime.core.execution.ManualExecutionScheduler;
+import io.haifa.agent.runtime.core.model.continuation.ModelContinuationException;
+import io.haifa.agent.runtime.core.model.continuation.ModelContinuationFailure;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
+import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -51,9 +62,11 @@ class ExternalModelRuntimeTest {
         AtomicInteger ids = new AtomicInteger();
         AtomicInteger calls = new AtomicInteger();
         List<RuntimeTraceEvent> traces = new CopyOnWriteArrayList<>();
+        List<List<ModelMessage>> modelRequests = new CopyOnWriteArrayList<>();
         IdentifierGenerator identifierGenerator = () -> "external-id-" + ids.incrementAndGet();
         TimeProvider time = () -> Instant.parse("2026-07-21T00:00:00Z");
         var chatModel = (io.haifa.agent.model.api.AgentChatModel) request -> {
+            modelRequests.add(request.messages());
             int call = calls.incrementAndGet();
             assertThat(request.model().providerId().value()).isEqualTo("deepseek");
             assertThat(request.model().providerModelId()).isEqualTo("deepseek-v4-pro");
@@ -61,6 +74,7 @@ class ExternalModelRuntimeTest {
                 assertThat(request.tools()).singleElement().satisfies(tool -> {
                     assertThat(tool.name()).isEqualTo("echo");
                     assertThat(tool.inputJsonSchema()).containsEntry("type", "object");
+                    assertThat(tool.strict()).isFalse();
                 });
                 return new AgentChatResponse(
                         "response-1",
@@ -71,19 +85,26 @@ class ExternalModelRuntimeTest {
                         ModelFinishReason.TOOL_CALLS,
                         ModelUsage.unpriced(10, 3),
                         "fp-test",
-                        Map.of());
+                        Map.of(),
+                        Optional.of(SensitiveModelReasoning.of("private tool reasoning")));
             }
             assertThat(request.messages())
                     .anyMatch(message -> message.role() == ModelMessageRole.ASSISTANT
                             && message.toolCalls().stream().anyMatch(toolCall -> toolCall.providerCorrelationId()
                                     .value()
-                                    .equals("provider-call-1")))
+                                    .equals("provider-call-1"))
+                            && message.reasoning()
+                                    .orElseThrow()
+                                    .use(java.util.function.Function.identity())
+                                    .equals("private tool reasoning"))
                     .anyMatch(message -> message.role() == ModelMessageRole.TOOL
                             && message.providerCorrelationId()
                                     .orElseThrow()
                                     .value()
                                     .equals("provider-call-1")
-                            && message.content().equals("echoed: hello"));
+                            && message.content().equals("echoed: hello")
+                            && message.toolResultData().equals(Map.of("text", "hello"))
+                            && !message.toolResultTruncated());
             return new AgentChatResponse(
                     "response-2",
                     "deepseek-v4-pro",
@@ -110,13 +131,15 @@ class ExternalModelRuntimeTest {
                                 List.of(),
                                 false))
                 .scheduler(scheduler)
-                .store(store)
+                .persistence(RuntimePersistencePorts.inMemory(store))
                 .identifierGenerator(identifierGenerator)
                 .timeProvider(time)
                 .trace(traces::add)
                 .build();
-
         var accepted = runtime.start(request("external-run"));
+        List<io.haifa.agent.runtime.api.AgentRunOutputEvent> outputEvents = new CopyOnWriteArrayList<>();
+        var outputSubscription =
+                runtime.subscribeOutput(accepted.runId(), RunOutputCursor.BEFORE_FIRST, outputEvents::add);
         var frozen = store.configuration(
                         store.find(accepted.runId()).orElseThrow().configurationSnapshot())
                 .orElseThrow();
@@ -125,7 +148,45 @@ class ExternalModelRuntimeTest {
 
         assertThat(runtime.find(accepted.runId()).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
         assertThat(runtime.find(accepted.runId()).orElseThrow().output()).contains("done");
+        assertThat(outputEvents)
+                .extracting(event -> event.type())
+                .containsExactly(
+                        AgentRunOutputEventType.RUN_OUTPUT_STARTED,
+                        AgentRunOutputEventType.ASSISTANT_TEXT_COMMITTED,
+                        AgentRunOutputEventType.RUN_OUTPUT_STARTED,
+                        AgentRunOutputEventType.ASSISTANT_TEXT_DELTA,
+                        AgentRunOutputEventType.ASSISTANT_TEXT_COMMITTED);
+        assertThat(outputEvents)
+                .filteredOn(event -> event.type() == AgentRunOutputEventType.ASSISTANT_TEXT_DELTA)
+                .singleElement()
+                .satisfies(event -> assertThat(event.textDelta()).isEqualTo("done"));
         assertThat(calls).hasValue(2);
+        assertThat(runtime.events(accepted.runId(), RunEventCursor.beforeFirst(accepted.runId()), 100).items().stream()
+                        .filter(event -> event.payload() instanceof RunEventPayloads.ModelLifecycle)
+                        .map(event -> (RunEventPayloads.ModelLifecycle) event.payload()))
+                .extracting(
+                        RunEventPayloads.ModelLifecycle::status,
+                        RunEventPayloads.ModelLifecycle::inputTokens,
+                        RunEventPayloads.ModelLifecycle::outputTokens)
+                .containsExactly(
+                        org.assertj.core.groups.Tuple.tuple("STARTED", 0L, 0L),
+                        org.assertj.core.groups.Tuple.tuple("SUCCEEDED", 10L, 3L),
+                        org.assertj.core.groups.Tuple.tuple("STARTED", 0L, 0L),
+                        org.assertj.core.groups.Tuple.tuple("SUCCEEDED", 15L, 4L));
+        assertThat(store.modelContinuations(accepted.runId())).singleElement().satisfies(record -> {
+            assertThat(record.reference().digest()).startsWith("sha256:");
+            assertThat(record.toString()).doesNotContain("private tool reasoning");
+        });
+        var continuation = store.modelContinuations(accepted.runId()).getFirst();
+        assertThatThrownBy(() -> store.resolveContinuation(
+                        continuation.assistantMessageId(), frozen.model(), Set.of("wrong-correlation")))
+                .isInstanceOf(ModelContinuationException.class)
+                .satisfies(error -> assertThat(((ModelContinuationException) error).failure())
+                        .isEqualTo(ModelContinuationFailure.BINDING_MISMATCH));
+        assertThat(outputEvents.toString()).doesNotContain("private tool reasoning");
+        assertThat(outputSubscription.closed()).isTrue();
+        assertThat(runtime.outputEvents(accepted.runId(), RunOutputCursor.BEFORE_FIRST, 100))
+                .isEmpty();
         assertThat(store.find(accepted.runId()).orElseThrow().usage().inputTokens())
                 .isEqualTo(25);
         assertThat(store.find(accepted.runId()).orElseThrow().usage().outputTokens())
@@ -148,6 +209,23 @@ class ExternalModelRuntimeTest {
                 .allSatisfy(trace -> assertThat(trace.safeAttributes())
                         .containsEntry("providerId", "deepseek")
                         .containsKeys("modelCallId", "responseId", "finishReason"));
+        assertThat(traces)
+                .filteredOn(trace -> trace.operation().equals("tool.execute")
+                        || trace.operation().equals("tool.persisted"))
+                .extracting(RuntimeTraceEvent::iteration)
+                .containsExactly(OptionalInt.of(1), OptionalInt.of(1));
+        assertThat(modelRequests).hasSize(2);
+        List<ModelMessage> firstRequest = modelRequests.getFirst();
+        List<ModelMessage> secondRequest = modelRequests.getLast();
+        assertThat(firstRequest.getLast()).satisfies(message -> {
+            assertThat(message.role()).isEqualTo(ModelMessageRole.USER);
+        });
+        assertThat(secondRequest.getLast()).satisfies(message -> {
+            assertThat(message.role()).isEqualTo(ModelMessageRole.TOOL);
+        });
+        assertThat(secondRequest.subList(0, firstRequest.size())).containsExactlyElementsOf(firstRequest);
+        assertThat(secondRequest)
+                .noneSatisfy(message -> assertThat(message.content()).startsWith("Remaining resource budget:"));
         assertThat(store.configuration(
                                 store.find(accepted.runId()).orElseThrow().configurationSnapshot())
                         .orElseThrow()
@@ -179,13 +257,15 @@ class ExternalModelRuntimeTest {
                                 "",
                                 Map.of()))
                 .scheduler(scheduler)
-                .store(store)
+                .persistence(RuntimePersistencePorts.inMemory(store))
                 .identifierGenerator(() -> "unknown-tool-id-" + ids.incrementAndGet())
                 .timeProvider(() -> Instant.parse("2026-07-21T00:00:00Z"))
                 .trace(traces::add)
                 .build();
 
         var accepted = runtime.start(request("unknown-tool-run"));
+        List<io.haifa.agent.runtime.api.AgentRunOutputEvent> outputEvents = new CopyOnWriteArrayList<>();
+        runtime.subscribeOutput(accepted.runId(), RunOutputCursor.BEFORE_FIRST, outputEvents::add);
         scheduler.runAll();
 
         assertThat(runtime.find(accepted.runId()).orElseThrow().status()).isEqualTo(AgentRunStatus.FAILED);
@@ -200,6 +280,83 @@ class ExternalModelRuntimeTest {
                         .containsEntry("category", "MALFORMED_RESPONSE")
                         .containsEntry("providerCode", "undisclosed_tool")
                         .containsEntry("providerId", "deepseek"));
+        assertThat(traces)
+                .filteredOn(trace -> trace.operation().equals("runtime.error"))
+                .singleElement()
+                .satisfies(trace -> assertThat(trace.safeAttributes())
+                        .containsEntry("errorCode", "MODEL_RESPONSE_INVALID")
+                        .containsKeys("exceptionType", "rootExceptionType", "failureTypes"));
+        assertThat(outputEvents)
+                .extracting(event -> event.type())
+                .containsExactly(
+                        AgentRunOutputEventType.RUN_OUTPUT_STARTED,
+                        AgentRunOutputEventType.RUN_OUTPUT_FAILED,
+                        AgentRunOutputEventType.RUN_OUTPUT_SUPERSEDED,
+                        AgentRunOutputEventType.RUN_OUTPUT_STARTED,
+                        AgentRunOutputEventType.RUN_OUTPUT_FAILED);
+        assertThat(runtime.events(accepted.runId(), RunEventCursor.beforeFirst(accepted.runId()), 100).items().stream()
+                        .filter(event -> event.payload() instanceof RunEventPayloads.ModelLifecycle)
+                        .map(event -> (RunEventPayloads.ModelLifecycle) event.payload()))
+                .extracting(RunEventPayloads.ModelLifecycle::status, RunEventPayloads.ModelLifecycle::reasonCode)
+                .containsExactly(
+                        org.assertj.core.groups.Tuple.tuple("STARTED", "NONE"),
+                        org.assertj.core.groups.Tuple.tuple("FAILED", "MALFORMED_RESPONSE"),
+                        org.assertj.core.groups.Tuple.tuple("STARTED", "NONE"),
+                        org.assertj.core.groups.Tuple.tuple("FAILED", "MALFORMED_RESPONSE"));
+        assertThat(store.messages(accepted.runId()))
+                .noneMatch(message -> message.role() == io.haifa.agent.core.message.MessageRole.ASSISTANT);
+    }
+
+    @Test
+    void retriesTransientUndisclosedToolAndRecoversWhenDisclosedToolProvidedOnRetry() {
+        ManualExecutionScheduler scheduler = new ManualExecutionScheduler();
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AtomicInteger ids = new AtomicInteger();
+        AtomicInteger calls = new AtomicInteger();
+        List<RuntimeTraceEvent> traces = new CopyOnWriteArrayList<>();
+        var runtime = new RuntimeCoreBuilder()
+                .registerChatModel("openai-compatible", "1.0.0", request -> {
+                    int call = calls.incrementAndGet();
+                    if (call == 1) {
+                        return new AgentChatResponse(
+                                "response-unknown-tool",
+                                "deepseek-v4-pro",
+                                "",
+                                List.of(new ModelToolCall(
+                                        new ProviderToolCallCorrelationId("provider-call-transient"),
+                                        "hallucinated_tool",
+                                        Map.of())),
+                                ModelFinishReason.TOOL_CALLS,
+                                ModelUsage.unpriced(1, 1),
+                                "",
+                                Map.of());
+                    }
+                    return new AgentChatResponse(
+                            "response-recovered",
+                            "deepseek-v4-pro",
+                            "done after retry",
+                            List.of(),
+                            ModelFinishReason.STOP,
+                            ModelUsage.unpriced(5, 2),
+                            "",
+                            Map.of());
+                })
+                .scheduler(scheduler)
+                .persistence(RuntimePersistencePorts.inMemory(store))
+                .identifierGenerator(() -> "transient-tool-id-" + ids.incrementAndGet())
+                .timeProvider(() -> Instant.parse("2026-07-21T00:00:00Z"))
+                .trace(traces::add)
+                .build();
+
+        var accepted = runtime.start(request("transient-tool-run"));
+        scheduler.runAll();
+
+        assertThat(runtime.find(accepted.runId()).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(runtime.find(accepted.runId()).orElseThrow().output()).contains("done after retry");
+        assertThat(calls).hasValue(2);
+        assertThat(traces)
+                .filteredOn(trace -> trace.operation().equals("model.error"))
+                .isEmpty();
     }
 
     @Test
@@ -207,10 +364,17 @@ class ExternalModelRuntimeTest {
         assertThat(List.of(RuntimeCoreBuilder.class.getMethods()))
                 .noneMatch(method -> method.getName().equals("modelClient"))
                 .noneMatch(method -> method.getName().equals("modelSelector"))
+                .noneMatch(method -> method.getName().equals("store"))
+                .noneMatch(method -> method.getName().equals("interactions"))
                 .filteredOn(method -> method.getName().equals("registerChatModel"))
                 .singleElement()
                 .satisfies(method -> assertThat(method.getParameterTypes())
                         .containsExactly(String.class, String.class, io.haifa.agent.model.api.AgentChatModel.class));
+        assertThat(List.of(RuntimeCoreBuilder.class.getMethods()))
+                .filteredOn(method -> method.getName().equals("persistence"))
+                .singleElement()
+                .satisfies(method ->
+                        assertThat(method.getParameterTypes()).containsExactly(RuntimePersistencePorts.class));
     }
 
     @Test
@@ -224,8 +388,11 @@ class ExternalModelRuntimeTest {
                 defaults.providerModelId(),
                 defaults.adapterType(),
                 "9.9.9",
+                defaults.apiStyle(),
+                defaults.dialect(),
                 defaults.endpoint(),
                 defaults.credentialRef(),
+                defaults.nativeStreaming(),
                 defaults.capabilities(),
                 defaults.contextWindow(),
                 defaults.maxOutputTokens(),
@@ -274,8 +441,11 @@ class ExternalModelRuntimeTest {
                 "deepseek-v4-flash",
                 defaults.adapterType(),
                 defaults.adapterVersion(),
+                defaults.apiStyle(),
+                defaults.dialect(),
                 defaults.endpoint(),
                 defaults.credentialRef(),
+                defaults.nativeStreaming(),
                 defaults.capabilities(),
                 defaults.contextWindow(),
                 defaults.maxOutputTokens(),

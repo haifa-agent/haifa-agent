@@ -1,0 +1,1 @@
+修复 MIGRATION.md 描述的 SQLite Migration。必须兼容旧数据、失败原子、重复执行幂等；运行现有测试、失败恢复验证和 `git diff --check`。不要修改测试。

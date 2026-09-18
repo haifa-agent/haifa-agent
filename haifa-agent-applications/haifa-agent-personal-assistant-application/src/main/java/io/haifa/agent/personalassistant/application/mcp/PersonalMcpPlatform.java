@@ -1,0 +1,277 @@
+package io.haifa.agent.personalassistant.application.mcp;
+
+import io.haifa.agent.core.reference.PrincipalRef;
+import io.haifa.agent.core.reference.TenantRef;
+import io.haifa.agent.credential.api.CredentialBroker;
+import io.haifa.agent.credential.core.DefaultCredentialBroker;
+import io.haifa.agent.credential.core.DefaultSecretRedactor;
+import io.haifa.agent.mcp.client.McpConnectionManager;
+import io.haifa.agent.mcp.client.McpServerSnapshot;
+import io.haifa.agent.mcp.client.SdkMcpClientFactory;
+import io.haifa.agent.mcp.config.McpConnectionPolicy;
+import io.haifa.agent.mcp.config.McpProtocolProfile;
+import io.haifa.agent.mcp.config.McpServerDefinition;
+import io.haifa.agent.mcp.config.McpServerId;
+import io.haifa.agent.mcp.config.McpToolImportPolicy;
+import io.haifa.agent.mcp.config.StreamableHttpDefinition;
+import io.haifa.agent.mcp.tool.InMemoryMcpToolBindingStore;
+import io.haifa.agent.mcp.tool.McpContentMapper;
+import io.haifa.agent.mcp.tool.McpDiscoveryContext;
+import io.haifa.agent.mcp.tool.McpToolCatalogContribution;
+import io.haifa.agent.mcp.tool.McpToolDefinitionMapper;
+import io.haifa.agent.mcp.tool.McpToolDiscoveryService;
+import io.haifa.agent.mcp.tool.McpToolImportCandidate;
+import io.haifa.agent.mcp.tool.McpToolProvider;
+import io.haifa.agent.tool.api.ToolApprovalRequirement;
+import io.haifa.agent.tool.api.ToolIdempotency;
+import io.haifa.agent.tool.api.ToolRisk;
+import io.haifa.agent.tool.api.ToolSideEffect;
+import io.haifa.agent.tool.core.ToolDefinitionCanonicalizer;
+import java.net.URI;
+import java.time.Clock;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
+/**
+ * Explicit loopback MCP discovery and provider lifecycle for a reviewed Tool allowlist.
+ *
+ * <p>A configured server either becomes available, or degrades deterministically: a REQUIRED server fails closed,
+ * while an OPTIONAL server only contributes a warning and no MCP Tools.
+ */
+public final class PersonalMcpPlatform implements AutoCloseable {
+    /** Unavailable server state; the capability contributes no Tool and no connection. */
+    public static final String STATE_UNAVAILABLE = "unavailable";
+
+    /** Disabled server state; MCP is not configured at all. */
+    public static final String STATE_DISABLED = "disabled";
+
+    private static final String STATE_AVAILABLE = "available";
+    private static final System.Logger LOGGER = System.getLogger(PersonalMcpPlatform.class.getName());
+
+    private final McpConnectionManager connections;
+    private final McpServerDefinition server;
+    private final McpServerSnapshot serverSnapshot;
+    private final List<McpToolImportCandidate> candidates;
+    private final List<McpToolCatalogContribution> contributions;
+    private final String state;
+    private final String degradationReason;
+
+    private PersonalMcpPlatform(
+            McpConnectionManager connections,
+            McpServerDefinition server,
+            McpServerSnapshot serverSnapshot,
+            List<McpToolImportCandidate> candidates,
+            List<McpToolCatalogContribution> contributions,
+            String state,
+            String degradationReason) {
+        this.connections = connections;
+        this.server = server;
+        this.serverSnapshot = serverSnapshot;
+        this.candidates = List.copyOf(candidates);
+        this.contributions = List.copyOf(contributions);
+        this.state = state;
+        this.degradationReason = degradationReason;
+    }
+
+    /** No MCP server is configured; nothing is connected and nothing is reported. */
+    public static PersonalMcpPlatform disabled() {
+        return new PersonalMcpPlatform(null, null, null, List.of(), List.of(), STATE_DISABLED, null);
+    }
+
+    /**
+     * Connects to the configured loopback MCP server, or degrades without failing product startup.
+     *
+     * <p>A {@code null} configuration disables MCP. When the server or one of its configured Tools cannot be
+     * imported, a REQUIRED server fails closed, while an OPTIONAL server logs one warning that carries no server
+     * payload and contributes no MCP Tools.
+     */
+    public static PersonalMcpPlatform connect(
+            PersonalMcpConfiguration configuration, TenantRef tenant, PrincipalRef principal, Clock clock) {
+        if (configuration == null) {
+            return disabled();
+        }
+        requireLoopback(configuration.endpoint());
+        Set<String> allowedTools = configuration.allowedTools();
+        var policy = new McpToolImportPolicy(
+                allowedTools,
+                Set.of(),
+                configuration.aliasNamespace(),
+                values(allowedTools, ToolRisk.LOW),
+                values(allowedTools, ToolIdempotency.IDEMPOTENT),
+                values(allowedTools, Set.<ToolSideEffect>of()),
+                values(allowedTools, ToolApprovalRequirement.NEVER));
+        var server = McpServerDefinition.create(
+                new McpServerId(configuration.serverId()),
+                configuration.displayName(),
+                true,
+                McpProtocolProfile.FIXED_2025_11_25,
+                new StreamableHttpDefinition(
+                        configuration.endpoint(),
+                        true,
+                        Set.of(StreamableHttpDefinition.origin(configuration.endpoint())),
+                        Duration.ofSeconds(5),
+                        Duration.ofSeconds(10),
+                        Duration.ofSeconds(30),
+                        256 * 1024,
+                        16 * 1024),
+                policy,
+                new McpConnectionPolicy(
+                        Duration.ofSeconds(5),
+                        Duration.ofSeconds(10),
+                        Duration.ofSeconds(30),
+                        Duration.ofSeconds(1),
+                        1),
+                List.of(),
+                "1.0.0");
+        var connections = new McpConnectionManager(List.of(server), new SdkMcpClientFactory());
+        try {
+            var bindings = new InMemoryMcpToolBindingStore();
+            var redactor = new DefaultSecretRedactor();
+            var discovery = new McpToolDiscoveryService(
+                    connections,
+                    new McpToolDefinitionMapper(new ToolDefinitionCanonicalizer(), bindings),
+                    noCredentials(redactor),
+                    clock,
+                    4,
+                    64,
+                    256 * 1024,
+                    Duration.ofSeconds(15));
+            List<McpToolImportCandidate> candidates =
+                    discovery.discover(server.serverId(), new McpDiscoveryContext(tenant, principal, List.of()));
+            Map<String, McpToolImportCandidate> reviewed = candidates.stream()
+                    .filter(candidate -> allowedTools.contains(candidate.remoteName()))
+                    .collect(Collectors.toMap(McpToolImportCandidate::remoteName, Function.identity()));
+            List<String> skipped = new ArrayList<>();
+            for (String tool : allowedTools) {
+                McpToolImportCandidate candidate = reviewed.get(tool);
+                if (candidate == null) {
+                    if (configuration.required()) {
+                        throw new IllegalStateException("required MCP Tool was not discovered: " + tool);
+                    }
+                    skipped.add(tool + " was not discovered");
+                    continue;
+                }
+                if (!candidate.enabled()) {
+                    if (configuration.required()) {
+                        throw new IllegalStateException("required MCP Tool failed local review: " + tool);
+                    }
+                    skipped.add(tool + " failed local review");
+                    reviewed.remove(tool);
+                }
+            }
+            if (!skipped.isEmpty()) {
+                LOGGER.log(
+                        System.Logger.Level.WARNING,
+                        "Personal MCP server {0} does not expose every configured Tool; ignoring {1}",
+                        configuration.serverId(),
+                        String.join("; ", skipped));
+            }
+            if (reviewed.isEmpty()) {
+                throw new IllegalStateException("no reviewed MCP Tool is available");
+            }
+            var provider =
+                    new McpToolProvider(server.serverId(), bindings, connections, new McpContentMapper(redactor));
+            List<McpToolCatalogContribution> contributions = reviewed.values().stream()
+                    .sorted(Comparator.comparing(McpToolImportCandidate::remoteName))
+                    .map(candidate -> McpToolCatalogContribution.from(candidate, provider))
+                    .toList();
+            List<McpToolImportCandidate> importedCandidates = reviewed.values().stream()
+                    .sorted(Comparator.comparing(McpToolImportCandidate::remoteName))
+                    .toList();
+            McpServerSnapshot serverSnapshot = connections
+                    .acquire(server.serverId(), tenant, principal, Map.of())
+                    .serverSnapshot();
+            return new PersonalMcpPlatform(
+                    connections, server, serverSnapshot, importedCandidates, contributions, STATE_AVAILABLE, null);
+        } catch (RuntimeException exception) {
+            connections.close();
+            if (configuration.required()) {
+                throw exception;
+            }
+            LOGGER.log(
+                    System.Logger.Level.WARNING,
+                    "Personal MCP server {0} at {1} is unavailable; starting without MCP Tools ({2})",
+                    configuration.serverId(),
+                    configuration.endpoint(),
+                    exception.getClass().getSimpleName());
+            return new PersonalMcpPlatform(
+                    null,
+                    null,
+                    null,
+                    List.of(),
+                    List.of(),
+                    STATE_UNAVAILABLE,
+                    exception.getClass().getSimpleName());
+        }
+    }
+
+    /** Whether the configured server was connected and reviewed. */
+    public boolean available() {
+        return STATE_AVAILABLE.equals(state);
+    }
+
+    /** {@code available}, {@code unavailable}, or {@code disabled}. */
+    public String state() {
+        return state;
+    }
+
+    /** Safe degradation cause without any server payload, or {@code null} when the server is usable. */
+    public String degradationReason() {
+        return degradationReason;
+    }
+
+    /** Connected server definition; {@code null} unless {@link #available()}. */
+    public McpServerDefinition server() {
+        return server;
+    }
+
+    /** Connected server snapshot; {@code null} unless {@link #available()}. */
+    public McpServerSnapshot serverSnapshot() {
+        return serverSnapshot;
+    }
+
+    public List<McpToolImportCandidate> candidates() {
+        return candidates;
+    }
+
+    public List<McpToolCatalogContribution> contributions() {
+        return contributions;
+    }
+
+    public Set<String> aliases() {
+        return contributions.stream()
+                .map(contribution -> contribution.alias().value())
+                .collect(Collectors.toUnmodifiableSet());
+    }
+
+    @Override
+    public void close() {
+        if (connections != null) {
+            connections.close();
+        }
+    }
+
+    private static void requireLoopback(URI endpoint) {
+        String host = endpoint.getHost();
+        if (!"http".equalsIgnoreCase(endpoint.getScheme())
+                || host == null
+                || !Set.of("127.0.0.1", "localhost", "::1", "0:0:0:0:0:0:0:1")
+                        .contains(host.toLowerCase(java.util.Locale.ROOT))) {
+            throw new IllegalArgumentException("Personal MCP endpoint must be loopback HTTP");
+        }
+    }
+
+    private static <T> Map<String, T> values(Set<String> keys, T value) {
+        return keys.stream().collect(Collectors.toUnmodifiableMap(Function.identity(), ignored -> value));
+    }
+
+    private static CredentialBroker noCredentials(DefaultSecretRedactor redactor) {
+        return new DefaultCredentialBroker(Map.of(), redactor);
+    }
+}

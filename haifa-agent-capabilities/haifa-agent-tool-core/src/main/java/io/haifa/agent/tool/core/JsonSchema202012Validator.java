@@ -19,7 +19,7 @@ public final class JsonSchema202012Validator implements ToolSchemaValidator {
     private static final int MAX_STRING_CHARS = 1_000_000;
     private final int maxErrors;
     private final int maxInstanceNodes;
-    private final long maxValidationNanos;
+    private final long maxValidationMillis;
     private final ThreadLocal<ValidationBudget> activeBudget = new ThreadLocal<>();
 
     public JsonSchema202012Validator() {
@@ -43,7 +43,10 @@ public final class JsonSchema202012Validator implements ToolSchemaValidator {
         }
         this.maxErrors = maxErrors;
         this.maxInstanceNodes = maxInstanceNodes;
-        this.maxValidationNanos = maxValidationTime.toNanos();
+        this.maxValidationMillis = maxValidationTime.toMillis();
+        if (maxValidationMillis < 1) {
+            throw new IllegalArgumentException("maxValidationTime must be at least one millisecond");
+        }
     }
 
     @Override
@@ -51,7 +54,7 @@ public final class JsonSchema202012Validator implements ToolSchemaValidator {
         Objects.requireNonNull(schema, "schema");
         Objects.requireNonNull(instance, "instance");
         var errors = new ArrayList<ToolSchemaValidationError>();
-        activeBudget.set(new ValidationBudget(maxInstanceNodes, maxValidationNanos));
+        activeBudget.set(new ValidationBudget(maxInstanceNodes, maxValidationMillis));
         try {
             validateNode(schema.document(), instance, "$", schema.document(), errors, 0);
             budget().check();
@@ -337,10 +340,10 @@ public final class JsonSchema202012Validator implements ToolSchemaValidator {
         private final long deadline;
         private int remainingNodes;
 
-        private ValidationBudget(int maxNodes, long maxNanos) {
+        private ValidationBudget(int maxNodes, long maxMillis) {
             remainingNodes = maxNodes;
-            long now = System.nanoTime();
-            deadline = maxNanos > Long.MAX_VALUE - now ? Long.MAX_VALUE : now + maxNanos;
+            long nowMillis = System.currentTimeMillis();
+            deadline = maxMillis > Long.MAX_VALUE - nowMillis ? Long.MAX_VALUE : nowMillis + maxMillis;
         }
 
         private void consume() {
@@ -349,7 +352,7 @@ public final class JsonSchema202012Validator implements ToolSchemaValidator {
         }
 
         private void check() {
-            if (System.nanoTime() > deadline) throw new ValidationLimitReached();
+            if (System.currentTimeMillis() > deadline) throw new ValidationLimitReached();
         }
     }
 

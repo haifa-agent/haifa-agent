@@ -13,14 +13,14 @@ concurrency:
     cancel-in-progress: false
 
 jobs:
-    deepseek-live-smoke:
-        name: DeepSeek live smoke
-        runs-on: ubuntu-latest
+    slow-unit-tests:
+        name: Slow unit tests (${{ matrix.os }})
+        strategy:
+            fail-fast: false
+            matrix:
+                os: [ubuntu-latest, windows-latest, macos-latest]
+        runs-on: ${{ matrix.os }}
         timeout-minutes: 20
-        environment: ai-live-test
-        env:
-            HAIFA_DEEPSEEK_LIVE_TEST: "true"
-            DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         steps:
             - uses: actions/checkout@v4
               with:
@@ -30,13 +30,14 @@ jobs:
                   distribution: temurin
                   java-version: "21"
                   cache: maven
-            - name: Require DeepSeek test key
-              run: test -n "$DEEPSEEK_API_KEY"
-            - name: Run DeepSeek LiveIT
-              run: >
-                  sh ./mvnw
-                  -pl :haifa-agent-model-openai-compatible
-                  -am
-                  -Pci-integration
-                  -DskipITs=false
-                  verify
+            - name: Run slow unit tests (Unix)
+              if: runner.os != 'Windows'
+              run: sh ./mvnw --batch-mode --no-transfer-progress -T 2 -Pslow-tests test
+            - name: Run slow unit tests (Windows)
+              if: runner.os == 'Windows'
+              run: .\mvnw.cmd --batch-mode --no-transfer-progress -T 2 -Pslow-tests test
+
+    # Suite governance plan and configured provider live smoke jobs are
+    # temporarily removed: the suite runner JAR was deleted by the testing
+    # architecture simplification. They will be reintroduced by the
+    # autonomous-delivery capability ladder work (issue #34, Slice 4).

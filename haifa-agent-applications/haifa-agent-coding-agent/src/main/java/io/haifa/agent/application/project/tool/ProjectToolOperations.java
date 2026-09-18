@@ -1,0 +1,49 @@
+package io.haifa.agent.application.project.tool;
+
+import io.haifa.agent.core.reference.PrincipalRef;
+import io.haifa.agent.core.tool.ToolArguments;
+import io.haifa.agent.core.tool.ToolResult;
+import io.haifa.agent.project.workspace.WorkspaceId;
+import io.haifa.agent.tool.api.ToolReconciliation;
+import java.util.Objects;
+
+/** Domain operation adapter; Runtime remains responsible for registry, schema, policy, approval, journal and retry. */
+@FunctionalInterface
+public interface ProjectToolOperations {
+    ToolResult execute(
+            String toolName, WorkspaceId workspaceId, PrincipalRef actor, String runRef, ToolArguments arguments);
+
+    default ToolResult execute(ProjectToolCallContext context, String toolName, ToolArguments arguments) {
+        Objects.requireNonNull(context, "context must not be null");
+        return execute(
+                toolName,
+                context.workspaceId(),
+                context.actor(),
+                context.runRef(),
+                context.toolCallRef(),
+                context.idempotencyKey(),
+                arguments);
+    }
+
+    default ToolResult execute(
+            String toolName,
+            WorkspaceId workspaceId,
+            PrincipalRef actor,
+            String runRef,
+            String toolCallRef,
+            String idempotencyKey,
+            ToolArguments arguments) {
+        return execute(toolName, workspaceId, actor, runRef, arguments);
+    }
+
+    default ToolReconciliation reconcile(
+            String toolName,
+            WorkspaceId workspaceId,
+            PrincipalRef actor,
+            String runRef,
+            String toolCallRef,
+            String idempotencyKey,
+            ToolArguments arguments) {
+        return ToolReconciliation.unsupported();
+    }
+}

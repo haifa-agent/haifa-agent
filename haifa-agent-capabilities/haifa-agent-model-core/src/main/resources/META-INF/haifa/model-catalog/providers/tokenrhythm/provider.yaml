@@ -1,0 +1,27 @@
+schemaVersion: haifa.model-catalog-provider/v1
+providerId: tokenrhythm
+version: "2026-09-m3"
+displayName: TokenRhythm
+status: ACTIVE
+authenticationMethods: [API_KEY]
+bindings:
+  - resource: bindings/tokenrhythm-glm-5.yaml
+  - resource: bindings/tokenrhythm-glm-5-1.yaml
+  - resource: bindings/tokenrhythm-minimax-m2-7.yaml
+  - resource: bindings/tokenrhythm-kimi-k2-5.yaml
+  - resource: bindings/tokenrhythm-kimi-k2-6.yaml
+  - resource: bindings/tokenrhythm-minimax-m2-5.yaml
+  - resource: bindings/tokenrhythm-mimo-v2-5-pro.yaml
+  - resource: bindings/tokenrhythm-qwen3-7-max.yaml
+  - resource: bindings/tokenrhythm-kimi-k2-7-code.yaml
+  - resource: bindings/tokenrhythm-glm-5-2.yaml
+  - resource: bindings/tokenrhythm-qwen3-8-max.yaml
+  - resource: bindings/tokenrhythm-deepseek-v4-flash-0731.yaml
+  - resource: bindings/tokenrhythm-seed-2-1-pro.yaml
+  - resource: bindings/tokenrhythm-seed-2-1-turbo.yaml
+  - resource: bindings/tokenrhythm-deepseek-v4-pro-0813.yaml
+  - resource: bindings/tokenrhythm-glm-5-3.yaml
+  - resource: bindings/tokenrhythm-qwen3-7-flash.yaml
+  - resource: bindings/tokenrhythm-qwen3-8-27b.yaml
+  - resource: bindings/tokenrhythm-longcat-2-0.yaml
+  - resource: bindings/tokenrhythm-glm-5-3-flash.yaml

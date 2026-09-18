@@ -12,15 +12,15 @@ import io.haifa.agent.core.run.AgentRunUsageDelta;
 import io.haifa.agent.core.run.RunTerminationReason;
 import io.haifa.agent.runtime.api.AgentRunListener;
 import io.haifa.agent.runtime.api.AgentRunSnapshot;
-import io.haifa.agent.runtime.core.retry.PersistenceRetryPolicy;
-import io.haifa.agent.runtime.core.retry.RetryExecutor;
 import io.haifa.agent.runtime.core.storage.OutboxMessage;
 import io.haifa.agent.runtime.core.storage.RunStateRepository;
+import io.haifa.agent.runtime.core.storage.RuntimeEvent;
 import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
 import io.haifa.agent.runtime.core.storage.RuntimeOutboxPublisher;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import io.haifa.agent.runtime.core.storage.RuntimeUnitOfWork;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -38,8 +38,6 @@ public final class RunTransitionCoordinator {
     private final TimeProvider time;
     private final RunAwaiter awaiter;
     private final RuntimeUnitOfWork unitOfWork;
-    private final RetryExecutor retries;
-    private final PersistenceRetryPolicy persistenceRetry;
     private final Map<AgentRunId, Object> locks = new ConcurrentHashMap<>();
     private final List<AgentRunListener> listeners = new CopyOnWriteArrayList<>();
 
@@ -51,9 +49,7 @@ public final class RunTransitionCoordinator {
             IdentifierGenerator ids,
             TimeProvider time,
             RunAwaiter awaiter,
-            RuntimeUnitOfWork unitOfWork,
-            RetryExecutor retries,
-            PersistenceRetryPolicy persistenceRetry) {
+            RuntimeUnitOfWork unitOfWork) {
         this.runs = Objects.requireNonNull(runs);
         this.state = Objects.requireNonNull(state);
         this.events = Objects.requireNonNull(events);
@@ -62,8 +58,6 @@ public final class RunTransitionCoordinator {
         this.time = Objects.requireNonNull(time);
         this.awaiter = Objects.requireNonNull(awaiter);
         this.unitOfWork = Objects.requireNonNull(unitOfWork);
-        this.retries = Objects.requireNonNull(retries);
-        this.persistenceRetry = Objects.requireNonNull(persistenceRetry);
     }
 
     public AgentRunSnapshot queued(AgentRun run) {
@@ -105,48 +99,70 @@ public final class RunTransitionCoordinator {
     public AgentRunSnapshot completedWithOutput(
             AgentRun run, AgentRunResult result, String output, SessionMessageDraft finalMessage) {
         synchronized (locks.computeIfAbsent(run.id(), ignored -> new Object())) {
-            AgentRunSnapshot snapshot = retries.execute(
-                    () -> unitOfWork.execute(() -> {
-                        long expectedVersion = run.version();
-                        AgentRunStatus previous = run.status();
-                        run.beginCompleting(time.now());
-                        state.saveFinalOutputAndMessage(run.id(), output, finalMessage);
-                        run.complete(result, time.now());
-                        runs.save(run, expectedVersion);
-                        events.append(
-                                run.id(),
-                                "run.completed",
-                                Map.of(
-                                        "previousStatus",
-                                        previous.name(),
-                                        "status",
-                                        run.status().name(),
-                                        "version",
-                                        run.version()),
-                                time.now());
-                        outbox.append(new OutboxMessage(
-                                ids.nextValue(),
-                                run.id(),
-                                "run.completed",
-                                Map.of("status", run.status().name(), "version", run.version()),
-                                time.now()));
-                        return AgentRunSnapshot.from(run, state.output(run.id()));
-                    }),
-                    persistenceRetry.policy());
-            awaiter.signal(run.id());
-            for (AgentRunListener listener : listeners) {
-                try {
-                    listener.onRunChanged(snapshot);
-                } catch (RuntimeException ignored) {
-                    // Listener delivery is observational and must not change committed state.
-                }
-            }
+            AgentRunSnapshot snapshot = unitOfWork.execute(() -> {
+                long expectedVersion = run.version();
+                AgentRunStatus previous = run.status();
+                run.beginCompleting(time.now());
+                state.saveFinalOutputAndMessage(run.id(), output, finalMessage);
+                run.complete(result, time.now());
+                runs.save(run, expectedVersion);
+                RuntimeEvent event = events.append(
+                        run.id(),
+                        "run.completed",
+                        Map.of(
+                                "previousStatus",
+                                previous.name(),
+                                "status",
+                                run.status().name(),
+                                "version",
+                                run.version()),
+                        time.now());
+                outbox.append(new OutboxMessage(
+                        event.eventId(),
+                        event.runId(),
+                        event.sequence(),
+                        event.type(),
+                        OutboxMessage.CURRENT_SCHEMA_VERSION,
+                        Map.of("status", run.status().name(), "version", run.version()),
+                        event.occurredAt()));
+                AgentRunSnapshot committed = AgentRunSnapshot.from(run, state.output(run.id()));
+                unitOfWork.afterCommit(() -> notifyCommitted(committed));
+                return committed;
+            });
             return snapshot;
         }
     }
 
     public AgentRunSnapshot failed(AgentRun run, AgentError error) {
         return mutate(run, "run.failed", value -> value.fail(error, time.now()));
+    }
+
+    /** Commits a partial assistant summary, public output and failed Run state in one Unit of Work. */
+    public AgentRunSnapshot failedWithOutput(
+            AgentRun run, AgentError error, String output, SessionMessageDraft finalMessage) {
+        synchronized (locks.computeIfAbsent(run.id(), ignored -> new Object())) {
+            AgentRunSnapshot snapshot = unitOfWork.execute(() -> {
+                long expectedVersion = run.version();
+                AgentRunStatus previous = run.status();
+                state.saveFinalOutputAndMessage(run.id(), output, finalMessage);
+                run.fail(error, time.now());
+                runs.save(run, expectedVersion);
+                Map<String, Object> eventData = terminalEventData(run, previous);
+                RuntimeEvent event = events.append(run.id(), "run.failed", eventData, time.now());
+                outbox.append(new OutboxMessage(
+                        event.eventId(),
+                        event.runId(),
+                        event.sequence(),
+                        event.type(),
+                        OutboxMessage.CURRENT_SCHEMA_VERSION,
+                        eventData,
+                        event.occurredAt()));
+                AgentRunSnapshot committed = AgentRunSnapshot.from(run, state.output(run.id()));
+                unitOfWork.afterCommit(() -> notifyCommitted(committed));
+                return committed;
+            });
+            return snapshot;
+        }
     }
 
     public AgentRunSnapshot cancelled(AgentRun run, RunTerminationReason reason) {
@@ -167,41 +183,52 @@ public final class RunTransitionCoordinator {
 
     private AgentRunSnapshot mutate(AgentRun run, String eventType, Consumer<AgentRun> mutation) {
         synchronized (locks.computeIfAbsent(run.id(), ignored -> new Object())) {
-            AgentRunSnapshot snapshot = retries.execute(
-                    () -> unitOfWork.execute(() -> {
-                        long expectedVersion = run.version();
-                        AgentRunStatus previous = run.status();
-                        mutation.accept(run);
-                        runs.save(run, expectedVersion);
-                        events.append(
-                                run.id(),
-                                eventType,
-                                Map.of(
-                                        "previousStatus",
-                                        previous.name(),
-                                        "status",
-                                        run.status().name(),
-                                        "version",
-                                        run.version()),
-                                time.now());
-                        outbox.append(new OutboxMessage(
-                                ids.nextValue(),
-                                run.id(),
-                                eventType,
-                                Map.of("status", run.status().name(), "version", run.version()),
-                                time.now()));
-                        return AgentRunSnapshot.from(run, state.output(run.id()));
-                    }),
-                    persistenceRetry.policy());
-            awaiter.signal(run.id());
-            for (AgentRunListener listener : listeners) {
-                try {
-                    listener.onRunChanged(snapshot);
-                } catch (RuntimeException ignored) {
-                    // Listener delivery is observational and must not change a committed lifecycle transition.
-                }
-            }
+            AgentRunSnapshot snapshot = unitOfWork.execute(() -> {
+                long expectedVersion = run.version();
+                AgentRunStatus previous = run.status();
+                mutation.accept(run);
+                runs.save(run, expectedVersion);
+                Map<String, Object> safeEventData = terminalEventData(run, previous);
+                RuntimeEvent event = events.append(run.id(), eventType, safeEventData, time.now());
+                outbox.append(new OutboxMessage(
+                        event.eventId(),
+                        event.runId(),
+                        event.sequence(),
+                        event.type(),
+                        OutboxMessage.CURRENT_SCHEMA_VERSION,
+                        safeEventData,
+                        event.occurredAt()));
+                AgentRunSnapshot committed = AgentRunSnapshot.from(run, state.output(run.id()));
+                unitOfWork.afterCommit(() -> notifyCommitted(committed));
+                return committed;
+            });
             return snapshot;
+        }
+    }
+
+    private static Map<String, Object> terminalEventData(AgentRun run, AgentRunStatus previous) {
+        Map<String, Object> eventData = new LinkedHashMap<>();
+        eventData.put("previousStatus", previous.name());
+        eventData.put("status", run.status().name());
+        eventData.put("version", run.version());
+        run.error().ifPresent(error -> {
+            eventData.put("errorCode", error.code().wireCode());
+            eventData.put("errorMessage", error.message());
+            eventData.put("errorCategory", error.category().name());
+            eventData.put("retryability", error.retryability().name());
+            error.optionalDiagnosticId().ifPresent(diagnosticId -> eventData.put("diagnosticId", diagnosticId));
+        });
+        return Map.copyOf(eventData);
+    }
+
+    private void notifyCommitted(AgentRunSnapshot snapshot) {
+        awaiter.signal(snapshot.runId());
+        for (AgentRunListener listener : listeners) {
+            try {
+                listener.onRunChanged(snapshot);
+            } catch (RuntimeException ignored) {
+                // Listener delivery is observational and must not change committed state.
+            }
         }
     }
 }

@@ -5,5 +5,26 @@ public interface SandboxProvider {
 
     SandboxCapabilities capabilities();
 
-    SandboxSession open(SandboxProfile profile, WorkspaceMount mount);
+    default SandboxConfigurationDigest configurationDigest() {
+        return SandboxConfigurationDigest.sha256Fields(
+                java.util.List.of(providerId(), getClass().getName()));
+    }
+
+    default boolean supportsManagedProcess() {
+        return false;
+    }
+
+    default SandboxPreflight preflight(SandboxProfile profile) {
+        java.util.Objects.requireNonNull(profile, "profile must not be null");
+        if (!providerId().equals(profile.providerId())) {
+            throw new SandboxException("CAPABILITY_UNAVAILABLE", "sandbox provider binding does not match");
+        }
+        if (!configurationDigest().equals(profile.providerConfigurationDigest())) {
+            throw new SandboxException("CAPABILITY_UNAVAILABLE", "sandbox provider configuration does not match");
+        }
+        return new SandboxPreflight(
+                providerId(), providerId(), configurationDigest(), capabilities(), supportsManagedProcess());
+    }
+
+    SandboxSession open(SandboxProfile profile, io.haifa.agent.project.workspace.WorkspaceId workspaceId);
 }

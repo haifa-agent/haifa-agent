@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://haifa.agent/schemas/testing/run-result-v1.schema.json",
+  "title": "Haifa Test Harness Run Result",
+  "type": "object",
+  "required": ["schemaVersion", "status", "nativeStatus", "failureClassification", "attachments"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "status": { "enum": ["PASSED", "FAILED", "ERROR", "TIMEOUT", "SKIPPED", "NOT_RUN"] },
+    "nativeStatus": { "type": "string", "minLength": 1 },
+    "failureClassification": {
+      "enum": [
+        "NONE",
+        "CONFIGURATION_REJECTED",
+        "AUTHORIZATION_REJECTED",
+        "PROVISION_FAILED",
+        "NOT_STARTED",
+        "EXECUTION_FAILED",
+        "ACCEPTANCE_FAILED",
+        "EVIDENCE_FAILED",
+        "CLEANUP_FAILED",
+        "TIMEOUT"
+      ]
+    },
+    "attachments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "relativePath", "size", "sha256"],
+        "properties": {
+          "type": { "type": "string", "minLength": 1 },
+          "relativePath": { "type": "string", "pattern": "^attachments/" },
+          "size": { "type": "integer", "minimum": 0 },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        }
+      }
+    }
+  }
+}

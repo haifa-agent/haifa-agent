@@ -4,7 +4,12 @@ import io.haifa.agent.core.tool.ToolCallId;
 import java.util.Objects;
 
 public record ToolApprovalTarget(
-        ToolCallId toolCallId, String coordinate, String definitionHash, String argumentsDigest, String principalScope)
+        ToolCallId toolCallId,
+        String coordinate,
+        String definitionHash,
+        String argumentsDigest,
+        String principalScope,
+        String requirementDigest)
         implements InteractionTarget {
     public ToolApprovalTarget {
         Objects.requireNonNull(toolCallId, "toolCallId");
@@ -12,6 +17,7 @@ public record ToolApprovalTarget(
         definitionHash = requireText(definitionHash, "definitionHash");
         argumentsDigest = requireText(argumentsDigest, "argumentsDigest");
         principalScope = requireText(principalScope, "principalScope");
+        requirementDigest = requireText(requirementDigest, "requirementDigest");
     }
 
     private static String requireText(String value, String name) {

@@ -1,0 +1,62 @@
+package io.haifa.agent.personalassistant.server;
+
+import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
+
+import com.tngtech.archunit.core.domain.JavaClasses;
+import com.tngtech.archunit.core.importer.ClassFileImporter;
+import com.tngtech.archunit.core.importer.ImportOption;
+import org.junit.jupiter.api.Tag;
+import org.junit.jupiter.api.Test;
+
+@Tag("architecture")
+class PersonalAssistantServerArchitectureTest {
+    private static final JavaClasses classes = new ClassFileImporter()
+            .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
+            .importPackages("io.haifa.agent.personalassistant.server");
+
+    @Test
+    void dtoDoesNotExposeDomainSdkOrProviderTypes() {
+        noClasses()
+                .that()
+                .resideInAnyPackage("..web.v1.dto..", "..web.admin.v1.dto..")
+                .should()
+                .dependOnClassesThat()
+                .resideInAnyPackage(
+                        "io.haifa.agent.core..",
+                        "io.haifa.agent.runtime..",
+                        "io.haifa.agent.sdk..",
+                        "io.haifa.agent.store..",
+                        "io.modelcontextprotocol..")
+                .check(classes);
+    }
+
+    @Test
+    void controllersDoNotQueryPersistenceOrInternalMappers() {
+        noClasses()
+                .that()
+                .resideInAnyPackage("..web.v1.controller..", "..web.admin.v1.controller..")
+                .should()
+                .dependOnClassesThat()
+                .resideInAnyPackage("io.haifa.agent.store..", "..mybatis..")
+                .check(classes);
+    }
+
+    @Test
+    void serverDoesNotUseServletMvcOrTestingProductionTypes() {
+        noClasses()
+                .should()
+                .dependOnClassesThat()
+                .resideInAnyPackage(
+                        "org.springframework.web.servlet..", "jakarta.servlet..", "io.haifa.agent.testing..")
+                .check(classes);
+    }
+
+    @Test
+    void serverDoesNotDependOnCodingAgentWorkspaceAccessOrProductPackages() {
+        noClasses()
+                .should()
+                .dependOnClassesThat()
+                .resideInAnyPackage("io.haifa.agent.application.project..")
+                .check(classes);
+    }
+}

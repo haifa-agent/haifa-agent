@@ -3,6 +3,8 @@ package io.haifa.agent.runtime.core.tool;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.tool.RuntimeIdempotencyKey;
 import io.haifa.agent.core.tool.ToolResult;
+import io.haifa.agent.tool.api.ToolDispatchEvidence;
+import io.haifa.agent.tool.api.ToolIdempotency;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -12,14 +14,10 @@ import java.util.Set;
 public final class InMemoryToolExecutionJournal implements ToolExecutionJournal {
     private final Set<String> intents = new HashSet<>();
     private final Set<String> uncertain = new HashSet<>();
-    private final Map<String, ToolResult> completed = new HashMap<>();
     private final Map<String, ToolResult> pendingResults = new HashMap<>();
+    private final Map<String, ToolResult> uncertainResults = new HashMap<>();
+    private final Map<String, ToolDispatchEvidence> dispatchEvidence = new HashMap<>();
     private final Map<String, ToolJournalState> states = new HashMap<>();
-
-    @Override
-    public synchronized Optional<ToolResult> completed(AgentRunId runId, RuntimeIdempotencyKey key) {
-        return Optional.ofNullable(completed.get(id(runId, key)));
-    }
 
     @Override
     public synchronized Optional<ToolResult> pendingResult(AgentRunId runId, RuntimeIdempotencyKey key) {
@@ -27,7 +25,18 @@ public final class InMemoryToolExecutionJournal implements ToolExecutionJournal 
     }
 
     @Override
+    public synchronized Optional<ToolResult> uncertainResult(AgentRunId runId, RuntimeIdempotencyKey key) {
+        return Optional.ofNullable(uncertainResults.get(id(runId, key)));
+    }
+
+    @Override
     public synchronized void recordIntent(AgentRunId runId, RuntimeIdempotencyKey key) {
+        recordIntent(runId, key, ToolIdempotency.UNKNOWN);
+    }
+
+    @Override
+    public synchronized void recordIntent(
+            AgentRunId runId, RuntimeIdempotencyKey key, ToolIdempotency toolIdempotency) {
         String id = id(runId, key);
         if (!intents.add(id)) throw new IllegalStateException("duplicate active tool intent: " + key);
         states.put(id, ToolJournalState.INTENT_RECORDED);
@@ -35,7 +44,26 @@ public final class InMemoryToolExecutionJournal implements ToolExecutionJournal 
 
     @Override
     public synchronized void recordDispatched(AgentRunId runId, RuntimeIdempotencyKey key) {
-        states.put(id(runId, key), ToolJournalState.DISPATCHED);
+        String id = id(runId, key);
+        if (states.get(id) != ToolJournalState.ACKNOWLEDGED) {
+            states.put(id, ToolJournalState.DISPATCHED);
+        }
+    }
+
+    @Override
+    public synchronized void recordDispatched(
+            AgentRunId runId, RuntimeIdempotencyKey key, ToolDispatchEvidence evidence) {
+        recordDispatched(runId, key);
+        String id = id(runId, key);
+        ToolDispatchEvidence previous = dispatchEvidence.putIfAbsent(id, evidence);
+        if (previous != null && !previous.equals(evidence)) {
+            throw new IllegalStateException("tool dispatch evidence changed for the same idempotency key");
+        }
+    }
+
+    @Override
+    public synchronized Optional<ToolDispatchEvidence> dispatchEvidence(AgentRunId runId, RuntimeIdempotencyKey key) {
+        return Optional.ofNullable(dispatchEvidence.get(id(runId, key)));
     }
 
     @Override
@@ -44,21 +72,32 @@ public final class InMemoryToolExecutionJournal implements ToolExecutionJournal 
     }
 
     @Override
-    public synchronized void recordCompleted(AgentRunId runId, RuntimeIdempotencyKey key, ToolResult result) {
+    public synchronized void recordCompleted(AgentRunId runId, RuntimeIdempotencyKey key) {
         String id = id(runId, key);
-        completed.put(id, result);
         uncertain.remove(id);
+        uncertainResults.remove(id);
         pendingResults.remove(id);
         states.put(id, ToolJournalState.COMPLETED);
     }
 
     @Override
     public synchronized void recordPendingResult(AgentRunId runId, RuntimeIdempotencyKey key, ToolResult result) {
-        ToolResult existing = pendingResults.putIfAbsent(id(runId, key), result);
+        String id = id(runId, key);
+        ToolJournalState current = states.get(id);
+        if (current != ToolJournalState.INTENT_RECORDED
+                && current != ToolJournalState.DISPATCHED
+                && current != ToolJournalState.ACKNOWLEDGED
+                && current != ToolJournalState.OUTCOME_UNKNOWN
+                && current != ToolJournalState.PENDING_RESULT) {
+            throw new IllegalStateException("tool journal cannot accept a pending result from " + current);
+        }
+        ToolResult existing = pendingResults.putIfAbsent(id, result);
         if (existing != null && !existing.equals(result)) {
             throw new IllegalStateException("pending tool result changed for the same idempotency key");
         }
-        states.put(id(runId, key), ToolJournalState.PENDING_RESULT);
+        uncertain.remove(id);
+        uncertainResults.remove(id);
+        states.put(id, ToolJournalState.PENDING_RESULT);
     }
 
     @Override
@@ -68,10 +107,22 @@ public final class InMemoryToolExecutionJournal implements ToolExecutionJournal 
     }
 
     @Override
+    public synchronized void recordUncertain(AgentRunId runId, RuntimeIdempotencyKey key, ToolResult observedResult) {
+        recordUncertain(runId, key);
+        String id = id(runId, key);
+        ToolResult previous = uncertainResults.putIfAbsent(id, observedResult);
+        if (previous != null && !previous.equals(observedResult)) {
+            throw new IllegalStateException("uncertain tool result changed for the same idempotency key");
+        }
+    }
+
+    @Override
     public synchronized void recordFailed(AgentRunId runId, RuntimeIdempotencyKey key) {
         String id = id(runId, key);
         states.put(id, ToolJournalState.FAILED);
         uncertain.remove(id);
+        uncertainResults.remove(id);
+        pendingResults.remove(id);
     }
 
     @Override

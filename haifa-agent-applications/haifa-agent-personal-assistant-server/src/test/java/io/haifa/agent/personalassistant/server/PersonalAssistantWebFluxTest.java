@@ -1,0 +1,1092 @@
+package io.haifa.agent.personalassistant.server;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.haifa.agent.execution.core.tool.ExecutionOperatingSystem;
+import io.haifa.agent.execution.host.tool.HostScriptRuntimeResolver;
+import io.haifa.agent.personalassistant.server.mcp.PersonalMcpTestServer;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.sql.DriverManager;
+import java.time.Duration;
+import java.util.Base64;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledOnOs;
+import org.junit.jupiter.api.condition.OS;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.reactive.AutoConfigureWebTestClient;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.http.MediaType;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.web.reactive.server.WebTestClient;
+
+@SpringBootTest(
+        classes = PersonalAssistantServerApplication.class,
+        webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+        properties = "spring.config.location=classpath:/application-deterministic-model.yml")
+@AutoConfigureWebTestClient
+@Tag("slow")
+class PersonalAssistantWebFluxTest {
+    private static final Duration HTTP_TIMEOUT = Duration.ofSeconds(15);
+    private static final Duration RUN_STATUS_TIMEOUT = Duration.ofSeconds(30);
+    private static final Duration RUN_STATUS_POLL_INTERVAL = Duration.ofMillis(100);
+    private static final Path DATA = temporaryDirectory();
+    private static final PersonalMcpTestServer MCP = PersonalMcpTestServer.start();
+    private static final AtomicInteger IDS = new AtomicInteger();
+
+    @AfterAll
+    static void stopMcp() {
+        MCP.close();
+    }
+
+    @Autowired
+    WebTestClient web;
+
+    @Autowired
+    ObjectMapper mapper;
+
+    @LocalServerPort
+    int serverPort;
+
+    @BeforeEach
+    void useExplicitLoopbackHost() {
+        web = WebTestClient.bindToServer()
+                .baseUrl("http://127.0.0.1:" + serverPort)
+                .responseTimeout(HTTP_TIMEOUT)
+                .build();
+    }
+
+    @Test
+    void unsupportedRequestContentTypePreservesTheHttpStatus() {
+        web.post()
+                .uri("/api/v1/missions/not-created/cancel")
+                .header("X-Haifa-CSRF", "1")
+                .header("Idempotency-Key", "unsupported-media-" + IDS.incrementAndGet())
+                .header("If-Match", "1")
+                .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                .bodyValue("ignored=true")
+                .exchange()
+                .expectStatus()
+                .isEqualTo(415)
+                .expectBody()
+                .jsonPath("$.code")
+                .isEqualTo("UNSUPPORTED_MEDIA_TYPE");
+    }
+
+    @Test
+    void conversationCreationPersistsTheExactModelSelectionAtomically() throws Exception {
+        JsonNode model = get("/api/v1/models").get(0);
+        var selection = mapper.createObjectNode();
+        selection.put("modelBindingId", model.path("id").asText());
+        selection.put(
+                "preferenceSchemaVersion", model.path("preferenceSchemaVersion").asText());
+        var preferences = selection.putObject("preferences");
+        preferences.put("responseMode", "RECOMMENDED");
+        preferences.putNull("effort");
+        preferences.put("responseLength", "LONG");
+
+        var request = mapper.createObjectNode();
+        request.put("displayName", "Atomic model selection");
+        request.put("message", "Reply with one short sentence.");
+        request.set("modelSelection", selection);
+
+        JsonNode created = post("/api/v1/conversations", mapper.writeValueAsString(request));
+
+        assertThat(created.path("model").path("model").path("id").asText())
+                .isEqualTo(model.path("id").asText());
+        assertThat(created.path("model").path("selectionCompatibility").asText())
+                .isEqualTo("CURRENT");
+        assertThat(created.path("model")
+                        .path("preferences")
+                        .path("responseMode")
+                        .asText())
+                .isEqualTo("RECOMMENDED");
+        assertThat(created.path("model")
+                        .path("preferences")
+                        .path("responseLength")
+                        .asText())
+                .isEqualTo("LONG");
+        awaitTerminal(created.path("activeRunId").asText());
+        JsonNode conversation = awaitConversationIdle(created.path("id").asText());
+        assertThat(conversation
+                        .path("model")
+                        .path("preferences")
+                        .path("responseLength")
+                        .asText())
+                .isEqualTo("LONG");
+    }
+
+    @Test
+    void modelSelectionAtomicallyValidatesBindingProfileAndPreferences() throws Exception {
+        JsonNode model = get("/api/v1/models").get(0);
+        JsonNode created = post(
+                "/api/v1/conversations",
+                """
+                {"displayName":"Model preference contract","message":"Reply with one short sentence."}
+                """);
+        awaitTerminal(created.path("activeRunId").asText());
+        JsonNode conversation = awaitConversationIdle(created.path("id").asText());
+
+        var request = mapper.createObjectNode();
+        request.put("modelBindingId", model.path("id").asText());
+        request.put(
+                "preferenceSchemaVersion", model.path("preferenceSchemaVersion").asText());
+        var preferences = request.putObject("preferences");
+        preferences.put("responseMode", "RECOMMENDED");
+        preferences.putNull("effort");
+        preferences.put("responseLength", "LONG");
+
+        web.patch()
+                .uri("/api/v1/conversations/{id}/model", created.path("id").asText())
+                .header("X-Haifa-CSRF", "1")
+                .header("Idempotency-Key", "model-selection-" + IDS.incrementAndGet())
+                .header(
+                        "If-Match",
+                        '"' + conversation.path("model").path("revision").asText() + '"')
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(request)
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectBody()
+                .jsonPath("$.model.id")
+                .isEqualTo(model.path("id").asText())
+                .jsonPath("$.selectionCompatibility")
+                .isEqualTo("CURRENT")
+                .jsonPath("$.model.profileDigest")
+                .doesNotExist()
+                .jsonPath("$.model.recommendedPreferences.responseLength")
+                .isEqualTo("RECOMMENDED")
+                .jsonPath("$.available")
+                .isEqualTo(true);
+    }
+
+    @Test
+    void conversationWithoutAnExactModelPreferenceFailsClosed() throws Exception {
+        JsonNode created = post(
+                "/api/v1/conversations",
+                """
+                {"displayName":"Missing model preference","message":"Reply with one short sentence."}
+                """);
+        awaitTerminal(created.path("activeRunId").asText());
+        String conversationId = created.path("id").asText();
+
+        try (var connection = DriverManager.getConnection("jdbc:sqlite:"
+                        + DATA.resolve("personal-assistant.sqlite").toAbsolutePath());
+                var statement = connection.prepareStatement(
+                        "DELETE FROM personal_model_preference WHERE conversation_id = ?")) {
+            statement.setString(1, conversationId);
+            assertThat(statement.executeUpdate()).isEqualTo(1);
+        }
+
+        web.get()
+                .uri("/api/v1/conversations/{id}", conversationId)
+                .exchange()
+                .expectStatus()
+                .isEqualTo(409)
+                .expectBody()
+                .jsonPath("$.code")
+                .isEqualTo("MODEL_SELECTION_REQUIRED");
+
+        removeConversationProjection(conversationId);
+    }
+
+    @DynamicPropertySource
+    static void properties(DynamicPropertyRegistry registry) {
+        registry.add("haifa.personal.data-directory", DATA::toString);
+        registry.add("haifa.personal.continuation-key-base64", () -> Base64.getEncoder()
+                .encodeToString(new byte[32]));
+        registry.add("haifa.personal.mcp.mode", () -> "external");
+        registry.add("haifa.personal.mcp.endpoint", () -> MCP.endpoint().toString());
+        registry.add("haifa.personal.mcp.allowed-tools", () -> "echo");
+        registry.add("haifa.personal.mcp.required", () -> "true");
+        registry.add("haifa.personal.execution.trusted-host-enabled", () -> "true");
+    }
+
+    private static void removeConversationProjection(String conversationId) throws Exception {
+        try (var connection = DriverManager.getConnection(
+                "jdbc:sqlite:" + DATA.resolve("personal-assistant.sqlite").toAbsolutePath())) {
+            connection.setAutoCommit(false);
+            try (var conversation = connection.prepareStatement("DELETE FROM sdk_conversation WHERE session_id = ?")) {
+                conversation.setString(1, conversationId);
+                assertThat(conversation.executeUpdate()).isEqualTo(1);
+                connection.commit();
+            } catch (Exception exception) {
+                connection.rollback();
+                throw exception;
+            }
+        }
+    }
+
+    @Test
+    void webfluxApiExecutesToolSkillAndMcpThroughOneRuntimePipeline() throws Exception {
+        web.get()
+                .uri("/api/v1/bootstrap")
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectHeader()
+                .contentTypeCompatibleWith(MediaType.APPLICATION_JSON)
+                .expectBody()
+                .jsonPath("$.capabilities")
+                .value(value -> assertThat(value.toString())
+                        .contains("tool", "skill", "mcp", "web-research")
+                        .doesNotContain("admin"));
+
+        Set<String> observedKinds = new HashSet<>();
+        for (var vertical : java.util.List.of(
+                new Vertical("[tool] verify checklist", "TOOL"),
+                new Vertical("[skill] load daily planning", "SKILL"),
+                new Vertical("[mcp] verify local echo", "MCP"))) {
+            JsonNode conversation = post(
+                    "/api/v1/conversations",
+                    """
+                    {"displayName":"Acceptance","message":%s}
+                    """
+                            .formatted(mapper.writeValueAsString(vertical.prompt())));
+            String runId = conversation.path("activeRunId").asText();
+            assertThat(runId).isNotBlank();
+            JsonNode run = awaitTerminal(runId);
+            assertThat(run.path("status").asText()).isEqualTo("COMPLETED");
+            assertThat(run.path("usage").path("inputTokens").asLong()).isPositive();
+            assertThat(run.path("usage").path("outputTokens").asLong()).isPositive();
+            assertThat(run.path("usage").path("totalTokens").asLong())
+                    .isEqualTo(run.path("usage").path("inputTokens").asLong()
+                            + run.path("usage").path("outputTokens").asLong());
+            assertThat(run.path("usage").path("modelCalls").asLong()).isEqualTo(2);
+            assertThat(run.path("usage").path("toolCalls").asLong()).isEqualTo(1);
+
+            JsonNode activities = get("/api/v1/runs/" + runId + "/activities");
+            assertThat(activities.isArray()).isTrue();
+            assertThat(java.util.stream.StreamSupport.stream(activities.spliterator(), false)
+                            .toList())
+                    .anySatisfy(activity -> {
+                        assertThat(activity.path("kind").asText()).isEqualTo(vertical.kind());
+                        assertThat(activity.path("activityId").asText()).startsWith("tool:");
+                        assertThat(activity.path("eventId").asText()).isNotBlank();
+                        assertThat(activity.path("occurredAt").asText()).isNotBlank();
+                        assertThat(activity.path("requestedAt").asText()).isNotBlank();
+                        assertThat(activity.path("startedAt").asText()).isNotBlank();
+                        assertThat(activity.path("completedAt").asText()).isNotBlank();
+                        assertThat(activity.path("safeResultSummary").asText()).isNotBlank();
+                    });
+            assertThat(java.util.stream.StreamSupport.stream(activities.spliterator(), false)
+                            .toList())
+                    .anySatisfy(activity -> {
+                        assertThat(activity.path("kind").asText()).isEqualTo("MODEL");
+                        assertThat(activity.path("displayName").asText()).isNotBlank();
+                        assertThat(activity.path("safeTargetSummary").asText()).contains("iteration", "attempt");
+                        assertThat(activity.path("status").asText()).isEqualTo("SUCCEEDED");
+                        assertThat(activity.path("safeResultSummary").asText()).contains("Input", "Output");
+                    });
+            activities.forEach(
+                    activity -> observedKinds.add(activity.path("kind").asText()));
+
+            var sse = web.get()
+                    .uri("/api/v1/runs/" + runId + "/stream")
+                    .accept(MediaType.TEXT_EVENT_STREAM)
+                    .exchange()
+                    .expectStatus()
+                    .isOk()
+                    .returnResult(String.class)
+                    .getResponseBody()
+                    .collectList()
+                    .block(Duration.ofSeconds(5));
+            assertThat(sse).isNotEmpty();
+        }
+        assertThat(observedKinds).containsExactlyInAnyOrder("MODEL", "TOOL", "SKILL", "MCP");
+    }
+
+    @Test
+    void missionApiCreatesSnapshotsConfirmsAndEnforcesRevision() throws Exception {
+        JsonNode conversation = post(
+                "/api/v1/conversations",
+                """
+                {"displayName":"Mission API","message":"Prepare the workspace"}
+                """);
+        String conversationId = conversation.path("id").asText();
+        String key = "mission-create-" + IDS.incrementAndGet();
+        String request =
+                """
+                {"conversationId":%s,"objective":"Deliver an accepted plan","acceptanceCriteria":["Plan is explicit"],"constraints":{"maxTasks":4,"maxDependencyDepth":3}}
+                """
+                        .formatted(mapper.writeValueAsString(conversationId));
+
+        JsonNode mission = missionCreate(key, request);
+        assertThat(mission.path("schemaVersion").asText()).isEqualTo("pa.mission-snapshot/v2");
+        assertThat(mission.path("modelBinding").path("modelId").asText()).isEqualTo("personal-test");
+        assertThat(mission.path("modelBinding").path("configurationDigest").asText())
+                .startsWith("sha256:");
+        assertThat(mission.path("state").asText()).isEqualTo("WAITING_CONFIRMATION");
+        assertThat(mission.path("tasks").isArray()).isTrue();
+        assertThat(mission.path("tasks").size()).isPositive();
+        assertThat(mission.path("artifacts").size()).isZero();
+        assertThat(mission.path("sources").size()).isZero();
+        String missionId = mission.path("missionId").asText();
+
+        awaitTerminal(conversation.path("activeRunId").asText());
+        JsonNode idleConversation = awaitConversationIdle(conversationId);
+        JsonNode selectedModel = get("/api/v1/models").get(0);
+        var modelSelection = mapper.createObjectNode();
+        modelSelection.put("modelBindingId", selectedModel.path("id").asText());
+        modelSelection.put(
+                "preferenceSchemaVersion",
+                selectedModel.path("preferenceSchemaVersion").asText());
+        var preferences = modelSelection.putObject("preferences");
+        preferences.put("responseMode", "RECOMMENDED");
+        preferences.putNull("effort");
+        preferences.put("responseLength", "LONG");
+        web.patch()
+                .uri("/api/v1/conversations/{id}/model", conversationId)
+                .header("X-Haifa-CSRF", "1")
+                .header("Idempotency-Key", "model-during-mission-" + IDS.incrementAndGet())
+                .header(
+                        "If-Match",
+                        '"' + idleConversation.path("model").path("revision").asText() + '"')
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(modelSelection)
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectBody()
+                .jsonPath("$.preferences.responseLength")
+                .isEqualTo("LONG");
+        JsonNode missionAfterModelChange = get("/api/v1/missions/" + missionId + "/snapshot");
+        assertThat(missionAfterModelChange.path("modelBinding")).isEqualTo(mission.path("modelBinding"));
+
+        JsonNode duplicate = missionCreate(key, request);
+        assertThat(duplicate.path("missionId").asText()).isEqualTo(missionId);
+
+        JsonNode snapshot = get("/api/v1/missions/" + missionId + "/snapshot");
+        assertThat(snapshot.path("version").asLong())
+                .isEqualTo(mission.path("version").asLong());
+        JsonNode page = get("/api/v1/missions?conversationId=" + conversationId + "&size=20");
+        assertThat(page.path("items").size()).isEqualTo(1);
+
+        byte[] confirmedBody = web.post()
+                .uri("/api/v1/missions/" + missionId + "/confirm")
+                .header("X-Haifa-CSRF", "1")
+                .header("Idempotency-Key", "mission-confirm-" + IDS.incrementAndGet())
+                .header("If-Match", '"' + Long.toString(snapshot.path("version").asLong()) + '"')
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{}")
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectBody()
+                .returnResult()
+                .getResponseBody();
+        JsonNode confirmed = mapper.readTree(confirmedBody);
+        assertThat(confirmed.path("state").asText()).isEqualTo("RUNNING");
+
+        web.post()
+                .uri("/api/v1/missions/" + missionId + "/cancel")
+                .header("X-Haifa-CSRF", "1")
+                .header("Idempotency-Key", "mission-cancel-" + IDS.incrementAndGet())
+                .header("If-Match", '"' + Long.toString(snapshot.path("version").asLong()) + '"')
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{}")
+                .exchange()
+                .expectStatus()
+                .isEqualTo(412)
+                .expectBody()
+                .jsonPath("$.code")
+                .isEqualTo("MISSION_REVISION_STALE");
+    }
+
+    @Test
+    void missionApiAcceptsModeratelyAdjustedDeepResearchPlanAndFreezesItOnConfirmation() throws Exception {
+        JsonNode conversation = post(
+                "/api/v1/conversations",
+                """
+                {"displayName":"数据库技术研究","message":"准备技术选型研究工作区"}
+                """);
+        String conversationId = conversation.path("id").asText();
+        String createRequest =
+                """
+                {
+                  "conversationId":%s,
+                  "objective":"研究主流开源数据库过去三年的演进与适用场景",
+                  "acceptanceCriteria":["形成有来源支持的技术选型分析"],
+                  "constraints":{"maxTasks":8,"maxDependencyDepth":4},
+                  "mode":"DEEP_RESEARCH",
+                  "selectedSkillId":"deep-research",
+                  "researchBrief":{
+                    "question":"主流开源数据库如何支持不同工作负载？",
+                    "scope":"公开发布的稳定版本与生态资料",
+                    "timeRange":"过去三年至今",
+                    "region":"全球",
+                    "audience":"技术决策者",
+                    "sourcePreferences":["官方文档与一手技术资料"],
+                    "exclusions":["无来源营销材料"],
+                    "deliveryFormat":"中文 Markdown 报告"
+                  }
+                }
+                """
+                        .formatted(mapper.writeValueAsString(conversationId));
+        JsonNode mission = missionCreate("mission-adjust-create-" + IDS.incrementAndGet(), createRequest);
+        String missionId = mission.path("missionId").asText();
+
+        String replacement =
+                """
+                {"plan":{"tasks":[
+                  {"taskId":"history-evolution","ordinal":1,"title":"技术发展沿革","objective":"梳理版本演进与关键节点","acceptanceCriteria":["形成可核验时间线"],"dependsOn":[],"taskType":"RESEARCH","requiredSkillIds":["deep-research"],"resultSchemaId":"pa.research-task-result","resultSchemaVersion":"v1","state":"PLANNED"},
+                  {"taskId":"current-capabilities","ordinal":2,"title":"当前能力与生态","objective":"整理当前能力与生态现状","acceptanceCriteria":["核心指标标注版本或年份"],"dependsOn":[],"taskType":"RESEARCH","requiredSkillIds":["deep-research"],"resultSchemaId":"pa.research-task-result","resultSchemaVersion":"v1","state":"PLANNED"},
+                  {"taskId":"governance-security","ordinal":3,"title":"治理、安全与兼容性","objective":"核验治理、安全与兼容性边界","acceptanceCriteria":["重大判断引用权威来源"],"dependsOn":[],"taskType":"RESEARCH","requiredSkillIds":["deep-research"],"resultSchemaId":"pa.research-task-result","resultSchemaVersion":"v1","state":"PLANNED"},
+                  {"taskId":"performance-cost","ordinal":4,"title":"性能、成本与公开基准","objective":"整理技术选型关键指标","acceptanceCriteria":["形成指标清单","至少选取 3 组可核验的公开基准或案例"],"dependsOn":["current-capabilities","governance-security"],"taskType":"RESEARCH","requiredSkillIds":["deep-research"],"resultSchemaId":"pa.research-task-result","resultSchemaVersion":"v1","state":"PLANNED"},
+                  {"taskId":"migration-ecosystem","ordinal":5,"title":"迁移案例与生态验证","objective":"验证典型迁移案例并识别生态约束","acceptanceCriteria":["给出可核验的结论与来源"],"dependsOn":["current-capabilities","governance-security"],"taskType":"RESEARCH","requiredSkillIds":["deep-research"],"resultSchemaId":"pa.research-task-result","resultSchemaVersion":"v1","state":"PLANNED"},
+                  {"taskId":"selection-framework","ordinal":6,"title":"选型框架与综合建议","objective":"形成选型建议与验证清单","acceptanceCriteria":["给出三种场景建议"],"dependsOn":["performance-cost","migration-ecosystem"],"taskType":"RESEARCH","requiredSkillIds":["deep-research"],"resultSchemaId":"pa.research-task-result","resultSchemaVersion":"v1","state":"PLANNED"}
+                ]}}
+                """;
+        byte[] replacedBody = web.put()
+                .uri("/api/v1/missions/" + missionId + "/plan")
+                .header("X-Haifa-CSRF", "1")
+                .header("Idempotency-Key", "mission-adjust-replace-" + IDS.incrementAndGet())
+                .header("If-Match", '"' + Long.toString(mission.path("version").asLong()) + '"')
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(replacement)
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectBody()
+                .returnResult()
+                .getResponseBody();
+        JsonNode replaced = mapper.readTree(replacedBody);
+        assertThat(replaced.path("state").asText()).isEqualTo("WAITING_CONFIRMATION");
+        assertThat(replaced.path("plan").path("revision").asInt()).isEqualTo(2);
+        assertThat(replaced.path("tasks").size()).isEqualTo(6);
+        assertThat(replaced.path("tasks").get(1).path("dependsOn").size()).isZero();
+        assertThat(replaced.path("tasks").get(2).path("dependsOn").size()).isZero();
+        assertThat(replaced.path("tasks").get(3).path("acceptanceCriteria").toString())
+                .contains("3 组可核验的公开基准");
+        assertThat(replaced.path("tasks").get(5).path("dependsOn").size()).isEqualTo(2);
+
+        byte[] confirmedBody = web.post()
+                .uri("/api/v1/missions/" + missionId + "/confirm")
+                .header("X-Haifa-CSRF", "1")
+                .header("Idempotency-Key", "mission-adjust-confirm-" + IDS.incrementAndGet())
+                .header("If-Match", '"' + Long.toString(replaced.path("version").asLong()) + '"')
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{}")
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectBody()
+                .returnResult()
+                .getResponseBody();
+        JsonNode confirmed = mapper.readTree(confirmedBody);
+        assertThat(confirmed.path("state").asText()).isEqualTo("RUNNING");
+        assertThat(confirmed.path("plan").path("revision").asInt()).isEqualTo(2);
+
+        var rejectedResult = web.put()
+                .uri("/api/v1/missions/" + missionId + "/plan")
+                .header("X-Haifa-CSRF", "1")
+                .header("Idempotency-Key", "mission-adjust-frozen-" + IDS.incrementAndGet())
+                .header(
+                        "If-Match",
+                        '"' + Long.toString(confirmed.path("version").asLong()) + '"')
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(replacement)
+                .exchange()
+                .expectBody()
+                .returnResult();
+        assertThat(rejectedResult.getStatus().value()).isIn(409, 412);
+        JsonNode rejected = mapper.readTree(rejectedResult.getResponseBody());
+        assertThat(rejected.path("code").asText())
+                .isEqualTo(
+                        rejectedResult.getStatus().value() == 409 ? "MISSION_PLAN_FROZEN" : "MISSION_REVISION_STALE");
+    }
+
+    @Test
+    void missionOperationsExposeReadinessAndQuiescentUpgradeFacts() throws Exception {
+        JsonNode operations = get("/v1/admin/missions/operations");
+        assertThat(operations.path("dispatcherStatus").asText()).isEqualTo("READY");
+        assertThat(operations.path("ready").asBoolean()).isTrue();
+        assertThat(operations.path("schemaVersion").asInt()).isEqualTo(7);
+        assertThat(operations.path("capacityBlockerCode").asText()).isEqualTo("NONE");
+        assertThat(operations.path("retentionBoundary").asText()).contains("No automatic");
+
+        JsonNode upgrade = get("/v1/admin/missions/upgrade-readiness");
+        assertThat(upgrade.path("blockerCodes").isArray()).isTrue();
+        assertThat(upgrade.path("requiredAction").asText())
+                .isEqualTo(
+                        upgrade.path("ready").asBoolean()
+                                ? "CREATE_BACKUP_THEN_UPGRADE"
+                                : "WAIT_OR_CANCEL_ACTIVE_MISSIONS");
+
+        get("/actuator/health/readiness");
+    }
+
+    @Test
+    void uploadedImageFlowsThroughTheConversationAndRemainsAnOpaqueTurnReference() throws Exception {
+        byte[] png = new byte[] {(byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1};
+        String uploadBody = web.post()
+                .uri("/api/v1/images")
+                .header("X-Haifa-CSRF", "1")
+                .header("Idempotency-Key", "image-" + IDS.incrementAndGet())
+                .header("X-Image-Filename", "cat.png")
+                .contentType(MediaType.IMAGE_PNG)
+                .bodyValue(png)
+                .exchange()
+                .expectStatus()
+                .isCreated()
+                .expectBody(String.class)
+                .returnResult()
+                .getResponseBody();
+        String imageId = mapper.readTree(uploadBody).path("imageId").asText();
+
+        JsonNode conversation = post(
+                "/api/v1/conversations",
+                """
+                {"displayName":"Image","message":"Describe this image","images":[{"kind":"upload","imageId":%s}]}
+                """
+                        .formatted(mapper.writeValueAsString(imageId)));
+        assertThat(awaitTerminal(conversation.path("activeRunId").asText())
+                        .path("status")
+                        .asText())
+                .isEqualTo("COMPLETED");
+
+        web.get()
+                .uri("/api/v1/conversations/{id}/turns", conversation.path("id").asText())
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectBody()
+                .jsonPath("$[0].images[0].kind")
+                .isEqualTo("upload")
+                .jsonPath("$[0].images[0].imageId")
+                .isEqualTo(imageId)
+                .jsonPath("$[0].images[0].url")
+                .doesNotExist();
+
+        web.get()
+                .uri("/api/v1/images/{imageId}", imageId)
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectHeader()
+                .contentType(MediaType.IMAGE_PNG)
+                .expectHeader()
+                .contentLength(png.length)
+                .expectBody(byte[].class)
+                .isEqualTo(png);
+    }
+
+    @Test
+    void imageUploadMayUseTheDocumentedBudgetBeyondTheDefaultApiBodyLimit() {
+        byte[] png = new byte[70 * 1024];
+        byte[] signature = new byte[] {(byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a};
+        System.arraycopy(signature, 0, png, 0, signature.length);
+
+        web.post()
+                .uri("/api/v1/images")
+                .header("X-Haifa-CSRF", "1")
+                .header("Idempotency-Key", "large-image-" + IDS.incrementAndGet())
+                .header("X-Image-Filename", "large.png")
+                .contentType(MediaType.IMAGE_PNG)
+                .bodyValue(png)
+                .exchange()
+                .expectStatus()
+                .isCreated()
+                .expectBody()
+                .jsonPath("$.sizeBytes")
+                .isEqualTo(png.length);
+    }
+
+    @Test
+    void uploadedAudioFlowsThroughTheConversationAndRemainsAnOpaqueTurnReference() throws Exception {
+        byte[] wav = "RIFF\u0004\u0000\u0000\u0000WAVEfmt ".getBytes(java.nio.charset.StandardCharsets.ISO_8859_1);
+        String uploadBody = web.post()
+                .uri("/api/v1/audios")
+                .header("X-Haifa-CSRF", "1")
+                .header("Idempotency-Key", "audio-" + IDS.incrementAndGet())
+                .header("X-Audio-Filename", "verification.wav")
+                .contentType(MediaType.parseMediaType("audio/wav"))
+                .bodyValue(wav)
+                .exchange()
+                .expectStatus()
+                .isCreated()
+                .expectBody(String.class)
+                .returnResult()
+                .getResponseBody();
+        String audioId = mapper.readTree(uploadBody).path("audioId").asText();
+
+        JsonNode conversation = post(
+                "/api/v1/conversations",
+                """
+                {"displayName":"Audio","message":"Transcribe this audio","audios":[{"kind":"upload","audioId":%s}]}
+                """
+                        .formatted(mapper.writeValueAsString(audioId)));
+        assertThat(awaitTerminal(conversation.path("activeRunId").asText())
+                        .path("status")
+                        .asText())
+                .isEqualTo("COMPLETED");
+
+        web.get()
+                .uri("/api/v1/conversations/{id}/turns", conversation.path("id").asText())
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectBody()
+                .jsonPath("$[0].audios[0].audioId")
+                .isEqualTo(audioId)
+                .jsonPath("$[0].audios[0].mediaType")
+                .isEqualTo("audio/wav");
+    }
+
+    @Test
+    void recommendationEndpointBindsToTheCompletedAnswerAndAllowsAnEmptyResult() throws Exception {
+        JsonNode conversation = post(
+                "/api/v1/conversations",
+                """
+                {"displayName":"Recommendations","message":"What is 2 + 2?"}
+                """);
+        String conversationId = conversation.path("id").asText();
+        String runId = conversation.path("activeRunId").asText();
+        assertThat(awaitTerminal(runId).path("status").asText()).isEqualTo("COMPLETED");
+
+        JsonNode result =
+                post("/api/v1/conversations/" + conversationId + "/runs/" + runId + "/recommend-questions", "{}");
+
+        assertThat(result.path("questions").isArray()).isTrue();
+        assertThat(result.path("questions")).isEmpty();
+        assertThat(get("/api/v1/bootstrap").path("capabilities").toString()).contains("recommended-questions");
+    }
+
+    @Test
+    void executionRequiresExactApprovalAndPublishesSafeActivity() throws Exception {
+        JsonNode conversation = post(
+                "/api/v1/conversations",
+                """
+                {"displayName":"Execution acceptance","message":"[execution-script]"}
+                """);
+        String runId = conversation.path("activeRunId").asText();
+        JsonNode waiting = awaitStatus(runId, Set.of("WAITING_APPROVAL"));
+        assertThat(waiting.path("status").asText()).isEqualTo("WAITING_APPROVAL");
+
+        JsonNode interaction = get("/api/v1/runs/" + runId + "/interaction");
+        assertThat(interaction.path("kind").asText()).isEqualTo("approval");
+        assertThat(interaction.path("allowedActions").toString()).contains("approve", "reject");
+        assertThat(interaction.path("safePrompt").asText())
+                .contains(
+                        "Mode: SCRIPT",
+                        "Language: " + expectedScriptLanguage(),
+                        "Purpose: " + expectedArgumentEchoPurpose(),
+                        "Risks: HIGH",
+                        expectedArgumentEchoScript())
+                .doesNotContain("operatingSystem", "executable");
+
+        post(
+                "/api/v1/runs/" + runId + "/interactions/"
+                        + interaction.path("id").asText() + "/response",
+                interaction.path("revision").asLong(),
+                """
+                {"action":"approve","text":null}
+        """);
+        JsonNode completed = awaitTerminal(runId);
+        JsonNode activities = get("/api/v1/runs/" + runId + "/activities");
+        assertThat(completed.path("status").asText())
+                .as(completed.toPrettyString() + "\n" + activities.toPrettyString())
+                .isEqualTo("COMPLETED");
+        assertThat(activities.toString())
+                .contains("execution_run", "SCRIPT", expectedScriptLanguage(), expectedArgumentEchoPurpose())
+                .contains("first argument|second'argument");
+    }
+
+    @Test
+    @EnabledOnOs(OS.WINDOWS)
+    void powerShellCommandRequiresExactApprovalAndPublishesSafeActivity() throws Exception {
+        JsonNode conversation = post(
+                "/api/v1/conversations",
+                """
+                {"displayName":"PowerShell command acceptance","message":"[execution-command]"}
+                """);
+        String runId = conversation.path("activeRunId").asText();
+        JsonNode waiting = awaitStatus(runId, Set.of("WAITING_APPROVAL"));
+
+        JsonNode interaction = get("/api/v1/runs/" + runId + "/interaction");
+        assertThat(interaction.path("safePrompt").asText())
+                .contains(
+                        "Mode: COMMAND",
+                        "Language: default-shell",
+                        "Purpose: 读取当前 PowerShell 版本",
+                        "$PSVersionTable.PSVersion.ToString()",
+                        "Risks: HIGH");
+
+        post(
+                "/api/v1/runs/" + runId + "/interactions/"
+                        + interaction.path("id").asText() + "/response",
+                interaction.path("revision").asLong(),
+                """
+                {"action":"approve","text":null}
+        """);
+        JsonNode completed = awaitTerminal(runId);
+        JsonNode activities = get("/api/v1/runs/" + runId + "/activities");
+        assertThat(completed.path("status").asText())
+                .as(completed.toPrettyString() + "\n" + activities.toPrettyString())
+                .isEqualTo("COMPLETED");
+        assertThat(activities.toString()).contains("execution_run", "COMMAND", "读取当前 PowerShell 版本");
+        assertThat(java.util.stream.StreamSupport.stream(activities.spliterator(), false)
+                        .toList())
+                .anySatisfy(activity -> assertThat(
+                                activity.path("safeResultSummary").asText())
+                        .matches("\\d+\\.\\d+(?:\\.\\d+){0,2}\\s*"));
+    }
+
+    @Test
+    @EnabledOnOs(OS.WINDOWS)
+    void approvedPowerShellDiskQueryCompletesThroughTheGuardedHost() throws Exception {
+        JsonNode conversation = post(
+                "/api/v1/conversations",
+                """
+                {"displayName":"PowerShell disk query","message":"[execution-disk]"}
+                """);
+        String runId = conversation.path("activeRunId").asText();
+        JsonNode waiting = awaitStatus(runId, Set.of("WAITING_APPROVAL"));
+        assertThat(waiting.path("status").asText()).isEqualTo("WAITING_APPROVAL");
+
+        JsonNode interaction = get("/api/v1/runs/" + runId + "/interaction");
+        assertThat(interaction.path("safePrompt").asText())
+                .contains("Mode: COMMAND", "Get-PSDrive -PSProvider FileSystem", "Risks: HIGH");
+        post(
+                "/api/v1/runs/" + runId + "/interactions/"
+                        + interaction.path("id").asText() + "/response",
+                interaction.path("revision").asLong(),
+                """
+                {"action":"approve","text":null}
+                """);
+
+        JsonNode completed = awaitTerminal(runId);
+        JsonNode activities = get("/api/v1/runs/" + runId + "/activities");
+        assertThat(completed.path("status").asText())
+                .as(completed.toPrettyString() + "\n" + activities.toPrettyString())
+                .isEqualTo("COMPLETED");
+        assertThat(activities.toString()).contains("execution_run", "COMMAND", "Inspect filesystem drive usage");
+    }
+
+    @Test
+    void cpuObservationScriptWaitsForExactApproval() throws Exception {
+        JsonNode conversation = post(
+                "/api/v1/conversations",
+                """
+                {"displayName":"CPU observation","message":"请看下当前系统的CPU使用率 [execution-cpu]"}
+                """);
+        String runId = conversation.path("activeRunId").asText();
+
+        JsonNode waiting = awaitStatus(runId, Set.of("WAITING_APPROVAL", "FAILED"));
+        assertThat(waiting.path("status").asText()).isEqualTo("WAITING_APPROVAL");
+        JsonNode interaction = get("/api/v1/runs/" + runId + "/interaction");
+        assertThat(interaction.path("safePrompt").asText())
+                .contains(
+                        "Mode: SCRIPT",
+                        "Language: " + expectedScriptLanguage(),
+                        "读取当前系统 CPU 使用率与逻辑处理器数量",
+                        expectedCpuProbe());
+    }
+
+    @Test
+    void mutationsRequireCsrfAndIdempotencyHeaders() {
+        web.post()
+                .uri("/api/v1/conversations")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"displayName\":\"Blocked\",\"message\":\"hello\"}")
+                .exchange()
+                .expectStatus()
+                .isForbidden();
+
+        web.post()
+                .uri("/api/v1/conversations")
+                .header("X-Haifa-CSRF", "1")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"displayName\":\"Missing key\",\"message\":\"hello\"}")
+                .exchange()
+                .expectStatus()
+                .is4xxClientError();
+    }
+
+    @Test
+    void adminListsFrozenToolMcpAndSkillRegistrationsWithoutRuntimeSecrets() throws Exception {
+        JsonNode capabilities = get("/v1/admin/capabilities");
+
+        assertThat(capabilities.path("toolCatalogDigest").asText()).isNotBlank();
+        assertThat(capabilities.path("skillCatalogDigest").asText()).isNotBlank();
+        assertThat(capabilities.path("skillResolutionPolicy").asText()).isNotBlank();
+        assertThat(java.util.stream.StreamSupport.stream(
+                                capabilities.path("registrations").spliterator(), false)
+                        .map(registration -> registration.path("kind").asText())
+                        .toList())
+                .contains("TOOL", "MCP", "SKILL");
+
+        String snapshot = capabilities.toString();
+        assertThat(snapshot)
+                .contains(
+                        "execution_run",
+                        "personal-local",
+                        "personal_mcp_echo",
+                        "2025-11-25",
+                        "daily-planning",
+                        "local-script-execution",
+                        "SKILL.md")
+                .doesNotContain("continuation-key-base64", "sessionId", "credentialValue", "resolvedCredential");
+    }
+
+    @Test
+    void adminListsOnlySafeVersionedModelValidationMetadata() throws Exception {
+        JsonNode models = get("/v1/admin/models");
+
+        assertThat(models.path("bindings").isArray()).isTrue();
+        assertThat(models.path("bindings")).isNotEmpty();
+        JsonNode binding = models.path("bindings").get(0);
+        assertThat(binding.path("id").asText()).isNotBlank();
+        assertThat(binding.path("profileVersion").asText()).isNotBlank();
+        assertThat(binding.path("profileDigest").asText()).startsWith("sha256:");
+        assertThat(binding.path("preferenceSchemaVersion").asText()).isNotBlank();
+        assertThat(binding.path("validationStatus").asText()).isEqualTo("VERIFIED");
+        assertThat(binding.path("lastVerifiedOn").asText()).matches("\\d{4}-\\d{2}-\\d{2}");
+        assertThat(models.toString())
+                .doesNotContain("credential", "apiKey", "secret", "endpoint", "reasoning_content", "rawReasoning");
+    }
+
+    @Test
+    void adminBuildsOneRunTreeWithoutExposingPromptOrToolPayloads() throws Exception {
+        String sensitivePrompt = "[tool] private-admin-prompt-7f29";
+        JsonNode conversation = post(
+                "/api/v1/conversations",
+                """
+                {"displayName":"Admin diagnostics","message":%s}
+                """
+                        .formatted(mapper.writeValueAsString(sensitivePrompt)));
+        String sessionId = conversation.path("id").asText();
+        String runId = conversation.path("activeRunId").asText();
+        assertThat(awaitTerminal(runId).path("status").asText()).isEqualTo("COMPLETED");
+
+        JsonNode sessions = get("/v1/admin/sessions");
+        assertThat(sessions.toString()).contains(sessionId);
+        JsonNode runs = get("/v1/admin/sessions/" + sessionId + "/runs");
+        assertThat(runs.toString()).contains(runId, "Objective hidden").doesNotContain(sensitivePrompt);
+
+        JsonNode tree = get("/v1/admin/sessions/" + sessionId + "/runs/" + runId + "/tree");
+        assertThat(tree.path("root").path("id").asText()).isEqualTo("run:" + runId);
+        assertThat(tree.toString())
+                .contains("Frozen agent and model configuration", "personal_checklist", "contentHidden")
+                .doesNotContain(sensitivePrompt, "review the plan", "confirm completion");
+        assertThat(java.util.stream.StreamSupport.stream(tree.path("nodes").spliterator(), false)
+                        .map(node -> node.path("kind").asText())
+                        .toList())
+                .contains("configuration", "message", "attempt", "step", "tool", "event");
+    }
+
+    @Test
+    void publishesTheVersionedOpenApiContract() {
+        web.get()
+                .uri("/api/v1/openapi.json")
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectHeader()
+                .contentTypeCompatibleWith(MediaType.APPLICATION_JSON)
+                .expectBody()
+                .jsonPath("$.openapi")
+                .isEqualTo("3.1.0")
+                .jsonPath("$.paths['/api/v1/runs/{runId}/stream'].get.responses['200'].content['text/event-stream']")
+                .exists()
+                .jsonPath("$.components.schemas.Run.properties.plan")
+                .exists()
+                .jsonPath("$.components.schemas.Plan.properties.items")
+                .exists()
+                .jsonPath("$.components.schemas.Activity.properties.eventId")
+                .exists()
+                .jsonPath("$.components.schemas.Activity.properties.parentActivityId")
+                .exists()
+                .jsonPath("$.paths['/api/v1/missions'].post")
+                .exists()
+                .jsonPath("$.paths['/api/v1/missions/{missionId}/snapshot'].get")
+                .exists()
+                .jsonPath("$.components.schemas.MissionSnapshot.properties.tasks")
+                .exists();
+    }
+
+    @Test
+    void doesNotServeFrontendRoutes() {
+        web.get().uri("/").exchange().expectStatus().isNotFound();
+        web.get().uri("/conversation/local-history").exchange().expectStatus().isNotFound();
+        web.get().uri("/api/v1/not-a-route").exchange().expectStatus().isNotFound();
+    }
+
+    @Test
+    void allowsTheStandaloneLoopbackWebOrigin() {
+        web.options()
+                .uri("/api/v1/conversations")
+                .header("Origin", "http://127.0.0.1:20000")
+                .header("Access-Control-Request-Method", "POST")
+                .header("Access-Control-Request-Headers", "Content-Type,X-Haifa-CSRF,Idempotency-Key")
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectHeader()
+                .valueEquals("Access-Control-Allow-Origin", "http://127.0.0.1:20000")
+                .expectHeader()
+                .doesNotExist("Access-Control-Allow-Credentials");
+
+        web.options()
+                .uri("/v1/admin/sessions")
+                .header("Origin", "http://127.0.0.1:20000")
+                .header("Access-Control-Request-Method", "GET")
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectHeader()
+                .valueEquals("Access-Control-Allow-Origin", "http://127.0.0.1:20000");
+
+        web.options()
+                .uri("/api/v1/missions/mission-1/plan")
+                .header("Origin", "http://[::1]:20000")
+                .header("Access-Control-Request-Method", "PUT")
+                .header("Access-Control-Request-Headers", "Content-Type,X-Haifa-CSRF,Idempotency-Key,If-Match")
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectHeader()
+                .valueEquals("Access-Control-Allow-Origin", "http://[::1]:20000")
+                .expectHeader()
+                .valueEquals("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,OPTIONS");
+    }
+
+    private JsonNode post(String uri, String json) throws Exception {
+        return post(uri, null, json);
+    }
+
+    private JsonNode post(String uri, Long revision, String json) throws Exception {
+        WebTestClient.RequestBodySpec request = web.post()
+                .uri(uri)
+                .header("X-Haifa-CSRF", "1")
+                .header("Idempotency-Key", "test-" + IDS.incrementAndGet())
+                .contentType(MediaType.APPLICATION_JSON);
+        if (revision != null) request.header("If-Match", '"' + revision.toString() + '"');
+        byte[] body = request.bodyValue(json)
+                .exchange()
+                .expectStatus()
+                .is2xxSuccessful()
+                .expectBody()
+                .returnResult()
+                .getResponseBody();
+        return mapper.readTree(body);
+    }
+
+    private JsonNode missionCreate(String idempotencyKey, String json) throws Exception {
+        byte[] body = web.post()
+                .uri("/api/v1/missions")
+                .header("X-Haifa-CSRF", "1")
+                .header("Idempotency-Key", idempotencyKey)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(json)
+                .exchange()
+                .expectStatus()
+                .isAccepted()
+                .expectBody()
+                .returnResult()
+                .getResponseBody();
+        return mapper.readTree(body);
+    }
+
+    private JsonNode get(String uri) throws Exception {
+        byte[] body = web.get()
+                .uri(uri)
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectBody()
+                .returnResult()
+                .getResponseBody();
+        return mapper.readTree(body);
+    }
+
+    private JsonNode awaitTerminal(String runId) throws Exception {
+        return awaitStatus(runId, Set.of("COMPLETED", "FAILED", "CANCELLED", "TIMEOUT"));
+    }
+
+    private static String expectedScriptLanguage() {
+        return currentOperatingSystem() == ExecutionOperatingSystem.WINDOWS ? "powershell" : "bash";
+    }
+
+    private static String expectedArgumentEchoScript() {
+        return currentOperatingSystem() == ExecutionOperatingSystem.WINDOWS
+                ? "$args -join '|'"
+                : "printf '%s|%s' \"$1\" \"$2\"";
+    }
+
+    private static String expectedArgumentEchoPurpose() {
+        return "验证 "
+                + (currentOperatingSystem() == ExecutionOperatingSystem.WINDOWS ? "PowerShell" : "Bash")
+                + " 脚本参数通过 stdin 安全传递";
+    }
+
+    private static String expectedCpuProbe() {
+        return switch (currentOperatingSystem()) {
+            case WINDOWS -> "Get-CimInstance Win32_Processor";
+            case MACOS -> "top -l 2 -n 0";
+            case LINUX -> "/proc/stat";
+        };
+    }
+
+    private static ExecutionOperatingSystem currentOperatingSystem() {
+        return HostScriptRuntimeResolver.currentOperatingSystem();
+    }
+
+    private JsonNode awaitStatus(String runId, Set<String> expected) throws Exception {
+        long deadline = System.nanoTime() + RUN_STATUS_TIMEOUT.toNanos();
+        JsonNode latest;
+        do {
+            latest = get("/api/v1/runs/" + runId);
+            if (expected.contains(latest.path("status").asText())) {
+                return latest;
+            }
+            Thread.sleep(RUN_STATUS_POLL_INTERVAL);
+        } while (System.nanoTime() < deadline);
+        throw new AssertionError("run did not become terminal: " + latest);
+    }
+
+    private JsonNode awaitConversationIdle(String conversationId) throws Exception {
+        long deadline = System.nanoTime() + RUN_STATUS_TIMEOUT.toNanos();
+        JsonNode latest;
+        int consecutiveIdleObservations = 0;
+        do {
+            latest = get("/api/v1/conversations/" + conversationId);
+            JsonNode activeRunId = latest.path("activeRunId");
+            if (activeRunId.isMissingNode()
+                    || activeRunId.isNull()
+                    || activeRunId.asText().isBlank()) {
+                if (++consecutiveIdleObservations == 2) return latest;
+            } else {
+                consecutiveIdleObservations = 0;
+            }
+            Thread.sleep(RUN_STATUS_POLL_INTERVAL);
+        } while (System.nanoTime() < deadline);
+        throw new AssertionError("conversation did not become idle: " + latest);
+    }
+
+    private static Path temporaryDirectory() {
+        try {
+            Path root = Path.of("target", "personal-webflux-" + UUID.randomUUID())
+                    .toAbsolutePath()
+                    .normalize();
+            return Files.createDirectories(root);
+        } catch (IOException exception) {
+            throw new ExceptionInInitializerError(exception);
+        }
+    }
+
+    private record Vertical(String prompt, String kind) {}
+}

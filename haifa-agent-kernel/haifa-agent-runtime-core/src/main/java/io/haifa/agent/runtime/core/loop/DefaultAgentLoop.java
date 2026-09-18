@@ -3,6 +3,13 @@ package io.haifa.agent.runtime.core.loop;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.checkpoint.CheckpointType;
+import io.haifa.agent.core.content.TextPart;
+import io.haifa.agent.core.error.AgentError;
+import io.haifa.agent.core.error.AgentErrorCode;
+import io.haifa.agent.core.message.AgentMessageId;
+import io.haifa.agent.core.message.MessageRole;
+import io.haifa.agent.core.message.MessageStatus;
+import io.haifa.agent.core.message.MessageVisibility;
 import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.run.AgentRunUsageDelta;
@@ -14,8 +21,12 @@ import io.haifa.agent.core.step.AgentStepResult;
 import io.haifa.agent.core.step.AgentStepType;
 import io.haifa.agent.model.api.ModelErrorCategory;
 import io.haifa.agent.model.api.ModelInvocationException;
+import io.haifa.agent.model.api.ModelRequestId;
 import io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt;
 import io.haifa.agent.runtime.core.checkpoint.CheckpointManager;
+import io.haifa.agent.runtime.core.compaction.CompactionEvaluationOutcome;
+import io.haifa.agent.runtime.core.compaction.SemanticCompactionCoordinator;
+import io.haifa.agent.runtime.core.control.CancellationObservedException;
 import io.haifa.agent.runtime.core.control.RunControlRegistry;
 import io.haifa.agent.runtime.core.control.RunControlSignal;
 import io.haifa.agent.runtime.core.control.SafePoint;
@@ -23,8 +34,14 @@ import io.haifa.agent.runtime.core.decision.AgentDecision;
 import io.haifa.agent.runtime.core.decision.AgentLoopDirective;
 import io.haifa.agent.runtime.core.decision.DecisionExecutor;
 import io.haifa.agent.runtime.core.decision.DecisionValidator;
+import io.haifa.agent.runtime.core.decision.DelegationDecision;
 import io.haifa.agent.runtime.core.decision.FinalAnswerDecision;
+import io.haifa.agent.runtime.core.decision.ToolCallDecision;
+import io.haifa.agent.runtime.core.execution.AgentExecutionFailureException;
 import io.haifa.agent.runtime.core.guard.AgentLoopGuard;
+import io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException;
+import io.haifa.agent.runtime.core.guard.RuntimeQuotaExceededException;
+import io.haifa.agent.runtime.core.input.RunInputApplier;
 import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.middleware.AgentRuntimeMiddlewareChain;
 import io.haifa.agent.runtime.core.middleware.RuntimeMiddlewareContext;
@@ -32,11 +49,19 @@ import io.haifa.agent.runtime.core.middleware.RuntimePhase;
 import io.haifa.agent.runtime.core.model.FrozenModelBinding;
 import io.haifa.agent.runtime.core.model.FrozenModelInvoker;
 import io.haifa.agent.runtime.core.model.ModelInvocationResult;
+import io.haifa.agent.runtime.core.model.continuation.ModelContinuationException;
+import io.haifa.agent.runtime.core.recovery.RunBudgetSnapshot;
 import io.haifa.agent.runtime.core.retry.ModelRetryPolicy;
 import io.haifa.agent.runtime.core.retry.RetryExecutor;
+import io.haifa.agent.runtime.core.retry.RetryListener;
 import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
+import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
+import io.haifa.agent.runtime.core.trace.PromptDiagnosticsSink;
+import io.haifa.agent.runtime.core.trace.RuntimeTraceContext;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
+import io.haifa.agent.runtime.core.trace.RuntimeTraceScope;
+import io.haifa.agent.runtime.core.trace.RuntimeTraceStatus;
 import io.haifa.agent.runtime.core.trace.TracePort;
 import java.time.Duration;
 import java.util.LinkedHashMap;
@@ -44,6 +69,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalInt;
+import java.util.Set;
 
 /** Persisted, guarded and resumable observe-decide-act Agent loop. */
 public final class DefaultAgentLoop implements AgentLoop {
@@ -62,8 +89,11 @@ public final class DefaultAgentLoop implements AgentLoop {
     private final IdentifierGenerator ids;
     private final TimeProvider time;
     private final TracePort trace;
+    private final PromptDiagnosticsSink promptDiagnostics;
     private final RuntimeStateReconciler reconciler;
     private final AgentRuntimeMiddlewareChain middleware;
+    private final RunInputApplier runInputs;
+    private final SemanticCompactionCoordinator compactionCoordinator;
 
     public DefaultAgentLoop(
             RunControlRegistry controls,
@@ -81,8 +111,54 @@ public final class DefaultAgentLoop implements AgentLoop {
             IdentifierGenerator ids,
             TimeProvider time,
             TracePort trace,
+            PromptDiagnosticsSink promptDiagnostics,
             RuntimeStateReconciler reconciler,
-            AgentRuntimeMiddlewareChain middleware) {
+            AgentRuntimeMiddlewareChain middleware,
+            RunInputApplier runInputs) {
+        this(
+                controls,
+                guards,
+                contextBuilder,
+                models,
+                validator,
+                decisionExecutor,
+                checkpoints,
+                transitions,
+                state,
+                events,
+                retries,
+                modelRetryPolicy,
+                ids,
+                time,
+                trace,
+                promptDiagnostics,
+                reconciler,
+                middleware,
+                runInputs,
+                null);
+    }
+
+    public DefaultAgentLoop(
+            RunControlRegistry controls,
+            List<AgentLoopGuard> guards,
+            RuntimeContextBuilder contextBuilder,
+            FrozenModelInvoker models,
+            DecisionValidator validator,
+            DecisionExecutor decisionExecutor,
+            CheckpointManager checkpoints,
+            RunTransitionCoordinator transitions,
+            RuntimeStateRepository state,
+            RuntimeEventAppender events,
+            RetryExecutor retries,
+            ModelRetryPolicy modelRetryPolicy,
+            IdentifierGenerator ids,
+            TimeProvider time,
+            TracePort trace,
+            PromptDiagnosticsSink promptDiagnostics,
+            RuntimeStateReconciler reconciler,
+            AgentRuntimeMiddlewareChain middleware,
+            RunInputApplier runInputs,
+            SemanticCompactionCoordinator compactionCoordinator) {
         this.controls = Objects.requireNonNull(controls);
         this.guards = List.copyOf(guards);
         this.contextBuilder = Objects.requireNonNull(contextBuilder);
@@ -98,26 +174,32 @@ public final class DefaultAgentLoop implements AgentLoop {
         this.ids = Objects.requireNonNull(ids);
         this.time = Objects.requireNonNull(time);
         this.trace = Objects.requireNonNull(trace);
+        this.promptDiagnostics = Objects.requireNonNull(promptDiagnostics);
         this.reconciler = Objects.requireNonNull(reconciler);
         this.middleware = Objects.requireNonNull(middleware);
+        this.runInputs = Objects.requireNonNull(runInputs);
+        this.compactionCoordinator = compactionCoordinator;
     }
 
     @Override
-    public AgentLoopResult run(AgentRun run, AgentRunExecutionAttempt attempt) {
-        var restored = checkpoints.restoreLatest(run);
-        AgentLoopContext progress = restored.map(value -> new AgentLoopContext(
-                        value.nextIteration(), value.decisionFingerprints(), value.forcedContextRebuildAttempts()))
-                .orElseGet(() -> new AgentLoopContext(1, List.of()));
+    public AgentLoopResult run(AgentRun run, AgentRunExecutionAttempt attempt, RuntimeTraceContext traceContext) {
         decisionExecutor.applyPendingToolApproval(run);
+        reconciler.reconcileRecoveryFacts(run, attempt);
+        var restored = checkpoints.restore(run, attempt.resumedFromCheckpointId());
+        AgentLoopContext progress = restored.map(value ->
+                        new AgentLoopContext(value.nextIteration(), value.forcedContextRebuildAttempts(), traceContext))
+                .orElseGet(() -> new AgentLoopContext(1, 0, traceContext));
+        if (restored.isPresent()) {
+            progress.restoreBudgetThresholds(RunBudgetSnapshot.from(run, progress.iteration(), time.now()));
+        }
         middleware.apply(RuntimePhase.BEFORE_RUN, new RuntimeMiddlewareContext(run, state));
-        String traceId = ids.nextValue();
         while (run.status() == AgentRunStatus.RUNNING || run.status() == AgentRunStatus.SUSPENDING) {
             AgentLoopIteration iteration = new AgentLoopIteration(progress.iteration(), time.now());
             if (applyControl(run, progress, SafePoint.BEFORE_ITERATION, progress.iteration() - 1)) {
                 return new AgentLoopResult(run.status(), iteration, AgentLoopDirective.STOP);
             }
-            if (Duration.between(run.createdAt(), time.now()).toMillis()
-                    > run.limits().maxWallTimeMillis()) {
+            runInputs.applyPending(run, attempt, progress.iteration());
+            if (run.activeElapsedMillis(time.now()) > run.limits().maxWallTimeMillis()) {
                 transitions.timedOut(
                         run, new RunTerminationReason("WALL_TIME_EXCEEDED", "Run wall-time limit exceeded"));
                 return new AgentLoopResult(run.status(), iteration, AgentLoopDirective.STOP);
@@ -128,54 +210,197 @@ public final class DefaultAgentLoop implements AgentLoop {
                         run, new RunTerminationReason("IDLE_TIME_EXCEEDED", "Run idle-time limit exceeded"));
                 return new AgentLoopResult(run.status(), iteration, AgentLoopDirective.STOP);
             }
+            RuntimeException beforeModelLimit = modelContinuationLimit(run, progress.iteration());
+            if (beforeModelLimit != null) {
+                if (beforeModelLimit instanceof RuntimeLimitExceededException limitExceeded
+                        && decisionExecutor.supportsBudgetLimitedCompletion(run)) {
+
+                    decisionExecutor.completeBudgetLimited(run, limitExceeded, Optional.empty());
+                    return new AgentLoopResult(run.status(), iteration, AgentLoopDirective.STOP);
+                }
+                throw beforeModelLimit;
+            }
             guards.forEach(guard -> guard.check(run, progress));
+            RunBudgetSnapshot budget = RunBudgetSnapshot.from(run, progress.iteration(), time.now());
+            Set<Integer> thresholds = progress.updateBudgetSnapshot(budget);
+            events.append(
+                    run.id(),
+                    "loop.budget-snapshot",
+                    Map.ofEntries(
+                            Map.entry("remainingModelCalls", budget.remainingModelCalls()),
+                            Map.entry("remainingToolCalls", budget.remainingToolCalls()),
+                            Map.entry("remainingIterations", budget.remainingIterations()),
+                            Map.entry("remainingWallTimeMillis", budget.remainingWallTimeMillis()),
+                            Map.entry("remainingInputTokens", budget.remainingInputTokens()),
+                            Map.entry("remainingOutputTokens", budget.remainingOutputTokens()),
+                            Map.entry("limitingResource", budget.limitingResource()),
+                            Map.entry("limitingUsed", budget.limitingUsed()),
+                            Map.entry("limitingLimit", budget.limitingLimit()),
+                            Map.entry("remainingPercent", budget.remainingPercent()),
+                            Map.entry(
+                                    "newThresholds",
+                                    thresholds.stream().sorted().toList())),
+                    time.now());
+            if (!thresholds.isEmpty()) {
+                List<Integer> orderedThresholds = thresholds.stream()
+                        .sorted(java.util.Comparator.reverseOrder())
+                        .toList();
+                appendRuntimeControlMessage(
+                        run,
+                        String.join(
+                                "\n",
+                                "[RUNTIME_CONTROL_UPDATE]",
+                                "type=BUDGET_THRESHOLD",
+                                "thresholds="
+                                        + orderedThresholds.stream()
+                                                .map(value -> value + "%")
+                                                .collect(java.util.stream.Collectors.joining("|")),
+                                "nextAction=converge with authoritative evidence"),
+                        Map.of(
+                                "runtimeControl",
+                                true,
+                                "runtimeControlType",
+                                "BUDGET_THRESHOLD",
+                                "budgetThresholds",
+                                orderedThresholds));
+            }
             Optional<AgentLoopDirective> pendingTools = decisionExecutor.resumePendingTools(run, progress);
-            if (pendingTools.filter(value -> value == AgentLoopDirective.WAIT).isPresent()) {
-                return new AgentLoopResult(run.status(), iteration, AgentLoopDirective.WAIT);
+            if (pendingTools
+                    .filter(value -> value != AgentLoopDirective.CONTINUE)
+                    .isPresent()) {
+                return new AgentLoopResult(run.status(), iteration, pendingTools.orElseThrow());
             }
             reconciler.reconcile(run, attempt);
-            trace.record(new RuntimeTraceEvent(
-                    traceId,
+            recordTrace(new RuntimeTraceEvent(
+                    traceContext.traceId(),
                     run.id(),
                     java.util.Optional.of(attempt.attemptId()),
                     run.sessionId(),
                     java.util.Optional.empty(),
                     java.util.Optional.empty(),
                     attempt.workerId(),
-                    progress.iteration(),
+                    OptionalInt.of(progress.iteration()),
                     RuntimePhase.BEFORE_CONTEXT_BUILD,
                     "loop.iteration",
+                    RuntimeTraceScope.ITERATION,
+                    RuntimeTraceStatus.ACTIVE,
                     Map.of("iteration", progress.iteration()),
                     time.now()));
 
             FrozenModelBinding model = models.bind(run);
-            RuntimeContextBuildResult built = contextBuilder.build(run, progress, model);
-            trace.record(new RuntimeTraceEvent(
-                    traceId,
+            CompactionEvaluationOutcome preBuildOutcome = CompactionEvaluationOutcome.NONE;
+            if (compactionCoordinator != null) {
+                preBuildOutcome = compactionCoordinator.evaluateAndCompactIfNeeded(run, progress.iteration(), model);
+            }
+            ContextBuildExecution buildExecution = buildContext(run, progress, model, preBuildOutcome);
+            RuntimeContextBuildResult built = buildExecution.built();
+            CompactionEvaluationOutcome compactionOutcome = buildExecution.outcome();
+            recordPromptDiagnostics(built);
+            recordTrace(new RuntimeTraceEvent(
+                    traceContext.traceId(),
                     run.id(),
                     java.util.Optional.of(attempt.attemptId()),
                     run.sessionId(),
                     java.util.Optional.empty(),
                     java.util.Optional.empty(),
                     attempt.workerId(),
-                    progress.iteration(),
+                    OptionalInt.of(progress.iteration()),
                     RuntimePhase.AFTER_CONTEXT_BUILD,
                     "context.built",
-                    Map.of(
-                            "modelConfigDigest", built.context().trace().modelConfigurationDigest(),
-                            "estimatedInputTokens", built.context().context().estimatedInputTokens(),
-                            "selectedItems", built.context().context().items().size(),
-                            "traceItems", built.context().trace().items().size(),
-                            "estimatorVersion", built.context().trace().estimatorVersion(),
-                            "selectionPolicyVersion", built.context().trace().selectionPolicyVersion(),
-                            "compressionPolicyVersion", built.context().trace().compressionPolicyVersion(),
-                            "compressorVersion", built.context().trace().compressorVersion(),
-                            "forcedRebuildAttempt", built.context().trace().forcedRebuildAttempt(),
-                            "sourceIds",
-                                    built.context().trace().items().stream()
-                                            .map(item -> item.sourceType() + ":" + item.sourceId() + "@"
-                                                    + item.sourceVersion())
+                    RuntimeTraceScope.ITERATION,
+                    RuntimeTraceStatus.SUCCESS,
+                    Map.<String, Object>ofEntries(
+                            Map.entry(
+                                    "modelConfigDigest",
+                                    built.context().report().modelConfigurationDigest()),
+                            Map.entry(
+                                    "runConfigurationDigest",
+                                    model.configuration().reference().contentHash()),
+                            Map.entry(
+                                    "estimatedInputTokens",
+                                    built.context().context().estimatedInputTokens()),
+                            Map.entry(
+                                    "selectedItems",
+                                    built.context().context().items().size()),
+                            Map.entry(
+                                    "traceItems",
+                                    built.context().report().components().stream()
+                                            .filter(component -> component.kind()
+                                                    == io.haifa.agent.context.trace.ContextReportComponent.ComponentKind
+                                                            .CONTEXT)
+                                            .count()),
+                            Map.entry(
+                                    "estimatorVersion", built.context().report().estimatorVersion()),
+                            Map.entry(
+                                    "selectionPolicyVersion",
+                                    built.context().report().selectionPolicyVersion()),
+                            Map.entry(
+                                    "compressionPolicyVersion",
+                                    built.context().report().compressionPolicyVersion()),
+                            Map.entry(
+                                    "compressorVersion",
+                                    built.context().report().compressorVersion()),
+                            Map.entry(
+                                    "forcedRebuildAttempt",
+                                    built.context().report().forcedRebuildAttempt()),
+                            Map.entry("semanticCompactionReason", compactionOutcome.semanticCompactionReason()),
+                            Map.entry("tier1PruningBypassedSummary", compactionOutcome.tier1PruningBypassedSummary()),
+                            Map.entry(
+                                    "projectedActiveHistoryTokensBefore",
+                                    compactionOutcome.projectedActiveHistoryTokensBefore()),
+                            Map.entry(
+                                    "projectedActiveHistoryTokensAfter",
+                                    compactionOutcome.projectedActiveHistoryTokensAfter()),
+                            Map.entry("omittedToolPayloadTokens", compactionOutcome.omittedToolPayloadTokens()),
+                            Map.entry("omittedToolResultCount", compactionOutcome.omittedToolResultCount()),
+                            Map.entry(
+                                    "compactionSummaryCacheHitRate", compactionOutcome.compactionSummaryCacheHitRate()),
+                            Map.entry(
+                                    "compactionEvaluationElapsedMillis",
+                                    compactionOutcome.compactionEvaluationElapsedMillis()),
+                            Map.entry("windowGeneration", built.windowIdentity()),
+                            Map.entry(
+                                    "compactionGeneration",
+                                    built.sessionSelection().windowGeneration()),
+                            Map.entry(
+                                    "compactionCount", built.sessionSelection().compactionCount()),
+                            Map.entry("compacted", built.sessionSelection().compacted()),
+                            Map.entry(
+                                    "compactionReason",
+                                    built.sessionSelection().compactionReason().name()),
+                            Map.entry(
+                                    "compactionElapsedMillis",
+                                    built.sessionSelection().compactionElapsedMillis()),
+                            Map.entry(
+                                    "estimatedSessionTokens",
+                                    built.sessionSelection().estimatedSessionTokens()),
+                            Map.entry(
+                                    "sessionTokenBudget",
+                                    built.sessionSelection().sessionTokenBudget()),
+                            Map.entry(
+                                    "summarySourceHash",
+                                    built.sessionSelection()
+                                            .summary()
+                                            .map(io.haifa.agent.context.compression.ConversationSummary::sourceHash)
+                                            .orElse("none")),
+                            Map.entry(
+                                    "instructionComponentDigests",
+                                    built.context().report().components().stream()
+                                            .filter(component -> component.kind()
+                                                    == io.haifa.agent.context.trace.ContextReportComponent.ComponentKind
+                                                            .PROMPT)
+                                            .map(component -> component.id() + "@" + component.version() + ":"
+                                                    + component.contentHash())
                                             .toList()),
+                            Map.entry(
+                                    "sourceIds",
+                                    built.context().report().components().stream()
+                                            .filter(component -> component.kind()
+                                                    == io.haifa.agent.context.trace.ContextReportComponent.ComponentKind
+                                                            .CONTEXT)
+                                            .map(component -> component.sourceType() + ":" + component.sourceId() + "@"
+                                                    + component.version())
+                                            .toList())),
                     time.now()));
             RuntimeContextBuildResult[] builtRef = {built};
             RuntimeMiddlewareContext[] middlewareContextRef = {built.middlewareContext()};
@@ -194,15 +419,23 @@ public final class DefaultAgentLoop implements AgentLoop {
                     time.now());
             state.appendStep(modelStep);
             modelStep.start(time.now());
+            state.appendStep(modelStep);
             AgentStep[] modelStepRef = {modelStep};
             AgentDecision decision;
             ModelInvocationResult response;
+            RuntimeException[] budgetLimitRef = {null};
+            java.util.concurrent.atomic.AtomicReference<ModelInvocationResult> invocationRef =
+                    new java.util.concurrent.atomic.AtomicReference<>();
+            ModelRequestId[] modelRequestIdRef = {new ModelRequestId(ids.nextValue())};
+            int[] requestAttemptOffset = {0};
             try {
                 response = retries.execute(
-                        () -> {
-                            if (run.usage().modelCalls() >= run.budget().maxModelCalls()) {
+                        retryAttempt -> {
+                            if (run.usage().modelCalls() >= run.limits().maxModelCalls()) {
                                 throw new io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException(
-                                        "model call budget exhausted");
+                                        "modelCalls",
+                                        run.limits().maxModelCalls(),
+                                        run.usage().modelCalls());
                             }
                             transitions.usage(run, new AgentRunUsageDelta(0, 0, 0, 1, 0, 0, 0, 0));
                             try {
@@ -210,57 +443,61 @@ public final class DefaultAgentLoop implements AgentLoop {
                                         model,
                                         run,
                                         progress.iteration(),
-                                        builtRef[0].context().context());
+                                        builtRef[0].context().context(),
+                                        modelRequestIdRef[0],
+                                        retryAttempt - requestAttemptOffset[0]);
                             } catch (ModelInvocationException contextTooLong) {
                                 if (contextTooLong.category() != ModelErrorCategory.CONTEXT_TOO_LONG
                                         || progress.forcedContextRebuildAttempts() > 0) {
                                     throw contextTooLong;
                                 }
-                                trace.record(new RuntimeTraceEvent(
-                                        traceId,
+                                recordTrace(new RuntimeTraceEvent(
+                                        traceContext.traceId(),
                                         run.id(),
                                         java.util.Optional.of(attempt.attemptId()),
                                         run.sessionId(),
                                         java.util.Optional.of(modelStepRef[0].id()),
                                         java.util.Optional.empty(),
                                         attempt.workerId(),
-                                        progress.iteration(),
+                                        OptionalInt.of(progress.iteration()),
                                         RuntimePhase.ON_ERROR,
                                         "model.context-too-long",
+                                        RuntimeTraceScope.STEP,
+                                        RuntimeTraceStatus.FAILURE,
                                         modelErrorAttributes(run, contextTooLong),
                                         time.now()));
                                 failModelStep(modelStepRef[0], contextTooLong);
                                 progress.recordForcedContextRebuild();
-                                checkpoints.capture(
-                                        run,
-                                        Math.max(0, progress.iteration() - 1),
-                                        progress.fingerprints(),
-                                        progress.forcedContextRebuildAttempts(),
-                                        CheckpointType.AUTOMATIC);
+
+                                if (compactionCoordinator != null) {
+                                    compactionCoordinator.forceCompactOnOverflow(run, progress.iteration(), model);
+                                }
                                 builtRef[0] = contextBuilder.build(run, progress, model);
                                 middlewareContextRef[0] = builtRef[0].middlewareContext();
-                                trace.record(new RuntimeTraceEvent(
-                                        traceId,
+                                recordTrace(new RuntimeTraceEvent(
+                                        traceContext.traceId(),
                                         run.id(),
                                         java.util.Optional.of(attempt.attemptId()),
                                         run.sessionId(),
                                         java.util.Optional.empty(),
                                         java.util.Optional.empty(),
                                         attempt.workerId(),
-                                        progress.iteration(),
+                                        OptionalInt.of(progress.iteration()),
                                         RuntimePhase.AFTER_CONTEXT_BUILD,
                                         "context.forced-rebuild",
+                                        RuntimeTraceScope.ITERATION,
+                                        RuntimeTraceStatus.SUCCESS,
                                         Map.of(
                                                 "modelConfigDigest",
-                                                builtRef[0].context().trace().modelConfigurationDigest(),
+                                                builtRef[0].context().report().modelConfigurationDigest(),
                                                 "forcedRebuildAttempt",
                                                 progress.forcedContextRebuildAttempts(),
                                                 "estimatedInputTokens",
                                                 builtRef[0].context().context().estimatedInputTokens(),
                                                 "compressionPolicyVersion",
-                                                builtRef[0].context().trace().compressionPolicyVersion(),
+                                                builtRef[0].context().report().compressionPolicyVersion(),
                                                 "compressorVersion",
-                                                builtRef[0].context().trace().compressorVersion()),
+                                                builtRef[0].context().report().compressorVersion()),
                                         time.now()));
                                 AgentStep recoveryStep = new AgentStep(
                                         new AgentStepId(ids.nextValue()),
@@ -272,20 +509,32 @@ public final class DefaultAgentLoop implements AgentLoop {
                                         time.now());
                                 state.appendStep(recoveryStep);
                                 recoveryStep.start(time.now());
+                                state.appendStep(recoveryStep);
                                 modelStepRef[0] = recoveryStep;
-                                if (run.usage().modelCalls() >= run.budget().maxModelCalls()) {
+                                modelRequestIdRef[0] = new ModelRequestId(ids.nextValue());
+                                requestAttemptOffset[0] = retryAttempt - 1;
+                                if (run.usage().modelCalls() >= run.limits().maxModelCalls()) {
                                     throw new io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException(
-                                            "model call budget exhausted during context rebuild");
+                                            "modelCalls",
+                                            run.limits().maxModelCalls(),
+                                            run.usage().modelCalls());
                                 }
                                 transitions.usage(run, new AgentRunUsageDelta(0, 0, 0, 1, 0, 0, 0, 0));
                                 return models.invoke(
                                         model,
                                         run,
                                         progress.iteration(),
-                                        builtRef[0].context().context());
+                                        builtRef[0].context().context(),
+                                        modelRequestIdRef[0],
+                                        1);
                             }
                         },
-                        modelRetryPolicy.policy());
+                        modelRetryPolicy.policy(),
+                        (failedAttempt, failure) -> modelRetryDelay(run, failedAttempt, failure),
+                        () -> checkModelRetryControl(run),
+                        modelRetryListener(run, progress, modelRequestIdRef, requestAttemptOffset),
+                        modelRetryPolicy::maxAttempts);
+                invocationRef.set(response);
                 transitions.usage(
                         run,
                         new AgentRunUsageDelta(
@@ -297,77 +546,110 @@ public final class DefaultAgentLoop implements AgentLoop {
                                 0,
                                 response.costMinorUnits(),
                                 0));
-                if (run.budget().isExceededBy(run.usage())) {
-                    throw new IllegalStateException("run budget exceeded by model usage");
-                }
-                trace.record(new RuntimeTraceEvent(
-                        traceId,
+                recordTrace(new RuntimeTraceEvent(
+                        traceContext.traceId(),
                         run.id(),
                         java.util.Optional.of(attempt.attemptId()),
                         run.sessionId(),
                         java.util.Optional.of(modelStepRef[0].id()),
                         java.util.Optional.empty(),
                         attempt.workerId(),
-                        progress.iteration(),
+                        OptionalInt.of(progress.iteration()),
                         RuntimePhase.AFTER_MODEL_CALL,
                         "model.invoke",
+                        RuntimeTraceScope.STEP,
+                        RuntimeTraceStatus.SUCCESS,
                         modelTraceAttributes(run, response),
                         time.now()));
                 middleware.apply(RuntimePhase.AFTER_MODEL_CALL, middlewareContextRef[0]);
                 decision = response.decision();
                 validator.validate(run, decision);
+                budgetLimitRef[0] = decisionBudgetLimit(run, progress.iteration(), decision);
+                if (budgetLimitRef[0] != null) {
+                    if (!(budgetLimitRef[0] instanceof RuntimeLimitExceededException)
+                            || !decisionExecutor.supportsBudgetLimitedCompletion(run)) {
+                        throw budgetLimitRef[0];
+                    }
+                }
+            } catch (CancellationObservedException cancelled) {
+                AgentStep cancelledModelStep = modelStepRef[0];
+                if (cancelledModelStep != null
+                        && cancelledModelStep.status() == io.haifa.agent.core.step.AgentStepStatus.RUNNING) {
+                    cancelledModelStep.cancel(time.now());
+                    state.appendStep(cancelledModelStep);
+                }
+                throw cancelled;
             } catch (RuntimeException error) {
                 RuntimeException terminal = isContextTooLong(error) && progress.forcedContextRebuildAttempts() > 0
                         ? new ContextRebuildExhaustedException(
                                 "model context remained too long after the single forced rebuild")
                         : error;
-                trace.record(new RuntimeTraceEvent(
-                        traceId,
+                recordTrace(new RuntimeTraceEvent(
+                        traceContext.traceId(),
                         run.id(),
                         java.util.Optional.of(attempt.attemptId()),
                         run.sessionId(),
                         java.util.Optional.of(modelStepRef[0].id()),
                         java.util.Optional.empty(),
                         attempt.workerId(),
-                        progress.iteration(),
+                        OptionalInt.of(progress.iteration()),
                         RuntimePhase.ON_ERROR,
                         "model.error",
+                        RuntimeTraceScope.STEP,
+                        RuntimeTraceStatus.FAILURE,
                         modelErrorAttributes(run, error),
                         time.now()));
-                failModelStep(modelStepRef[0], terminal);
+                AgentError classified = failModelStep(modelStepRef[0], terminal);
+                if (invocationRef.get() != null) {
+                    models.failed(run, invocationRef.get(), progress.iteration());
+                }
                 middleware.apply(RuntimePhase.ON_ERROR, middlewareContextRef[0]);
-                throw terminal;
+                throw classified == null ? terminal : new AgentExecutionFailureException(classified, terminal);
             }
-            String fingerprint = decision.getClass().getSimpleName() + ":" + decision;
-            progress.record(fingerprint);
             Map<String, Object> stepMetadata = new LinkedHashMap<>(modelTraceAttributes(run, response));
-            stepMetadata.put("fingerprint", fingerprint);
             modelStepRef[0].complete(
                     new AgentStepResult(
                             "Model decision: " + decision.getClass().getSimpleName(), stepMetadata, List.of()),
                     time.now());
+            state.appendStep(modelStepRef[0]);
 
             if (applyControl(run, progress, SafePoint.AFTER_MODEL_CALL, progress.iteration() - 1)) {
+                models.failed(run, response, progress.iteration());
                 return new AgentLoopResult(run.status(), iteration, AgentLoopDirective.STOP);
+            }
+
+            if (budgetLimitRef[0] != null) {
+                if (budgetLimitRef[0] instanceof RuntimeLimitExceededException limitExceeded) {
+                    middleware.apply(RuntimePhase.BEFORE_COMPLETION, middlewareContextRef[0]);
+
+                    Optional<FinalAnswerDecision> finalDecision = budgetLimitedFinalDecision(
+                            run, progress, model, builtRef[0].context().context(), decision, limitExceeded);
+                    decisionExecutor.completeBudgetLimited(run, limitExceeded, finalDecision);
+                    models.committed(run, response, progress.iteration());
+                    middleware.apply(RuntimePhase.AFTER_COMPLETION, middlewareContextRef[0]);
+                    events.append(
+                            run.id(),
+                            "loop.iteration-persisted",
+                            Map.of("iteration", progress.iteration(), "directive", AgentLoopDirective.STOP.name()),
+                            time.now());
+                    return new AgentLoopResult(run.status(), iteration, AgentLoopDirective.STOP);
+                }
+                throw budgetLimitRef[0];
             }
 
             if (decision instanceof FinalAnswerDecision) {
                 middleware.apply(RuntimePhase.BEFORE_COMPLETION, middlewareContextRef[0]);
-                checkpoints.capture(
-                        run,
-                        progress.iteration(),
-                        progress.fingerprints(),
-                        progress.forcedContextRebuildAttempts(),
-                        CheckpointType.AUTOMATIC);
             }
             middleware.apply(RuntimePhase.BEFORE_DECISION_EXECUTION, middlewareContextRef[0]);
             AgentLoopDirective directive;
             try {
-                directive = decisionExecutor.execute(run, decision, progress);
+                directive = decisionExecutor.executeModel(run, response, progress);
             } catch (RuntimeException error) {
+                models.failed(run, response, progress.iteration());
                 middleware.apply(RuntimePhase.ON_ERROR, middlewareContextRef[0]);
                 throw error;
             }
+            models.committed(run, response, progress.iteration());
             middleware.apply(RuntimePhase.AFTER_DECISION_EXECUTION, middlewareContextRef[0]);
             if (decision instanceof FinalAnswerDecision && run.status() == AgentRunStatus.COMPLETED) {
                 middleware.apply(RuntimePhase.AFTER_COMPLETION, middlewareContextRef[0]);
@@ -377,13 +659,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                     "loop.iteration-persisted",
                     Map.of("iteration", progress.iteration(), "directive", directive.name()),
                     time.now());
-            progress.recordProgress(progressSignature(run));
-            checkpoints.capture(
-                    run,
-                    progress.iteration(),
-                    progress.fingerprints(),
-                    progress.forcedContextRebuildAttempts(),
-                    directive == AgentLoopDirective.WAIT ? CheckpointType.INTERACTION : CheckpointType.AUTOMATIC);
+
             if (directive != AgentLoopDirective.CONTINUE)
                 return new AgentLoopResult(run.status(), iteration, directive);
             if (applyControl(run, progress, SafePoint.AFTER_DECISION_PERSISTED, progress.iteration())) {
@@ -405,7 +681,7 @@ public final class DefaultAgentLoop implements AgentLoop {
             return true;
         }
         if (signal == RunControlSignal.TIMEOUT) {
-            transitions.timedOut(run, new RunTerminationReason("CONTROL_TIMEOUT", "Runtime timeout signal observed"));
+            transitions.timedOut(run, new RunTerminationReason("WALL_TIME_EXCEEDED", "Run wall-time limit exceeded"));
             controls.clear(run.id());
             return true;
         }
@@ -426,7 +702,6 @@ public final class DefaultAgentLoop implements AgentLoop {
             checkpoints.capture(
                     run,
                     Math.max(0, completedIteration),
-                    progress.fingerprints(),
                     progress.forcedContextRebuildAttempts(),
                     CheckpointType.MANUAL);
             transitions.suspended(run);
@@ -436,24 +711,386 @@ public final class DefaultAgentLoop implements AgentLoop {
         return false;
     }
 
-    private void failModelStep(AgentStep step, RuntimeException error) {
-        if (step.status() != io.haifa.agent.core.step.AgentStepStatus.RUNNING) return;
-        step.fail(
-                new AgentStepError(new io.haifa.agent.core.error.AgentError(
-                        new io.haifa.agent.core.error.AgentErrorCode("MODEL_CALL_FAILED"),
-                        io.haifa.agent.core.error.AgentErrorCategory.MODEL,
-                        io.haifa.agent.core.error.AgentErrorSeverity.ERROR,
-                        io.haifa.agent.core.error.Retryability.UNKNOWN,
-                        "Model call or response validation failed",
-                        null,
-                        Map.of("exceptionType", error.getClass().getSimpleName()),
-                        time.now())),
-                time.now());
+    private AgentError failModelStep(AgentStep step, RuntimeException error) {
+        if (step.status() != io.haifa.agent.core.step.AgentStepStatus.RUNNING) return null;
+        AgentError classified =
+                new AgentError(modelErrorCode(error), modelErrorDetails(error), ids.nextValue(), time.now());
+        step.fail(new AgentStepError(classified), time.now());
+        state.appendStep(step);
+        return classified;
+    }
+
+    private void recordTrace(RuntimeTraceEvent event) {
+        try {
+            trace.record(event);
+        } catch (RuntimeException ignored) {
+            // Trace is a best-effort projection and never changes Agent execution semantics.
+        }
+    }
+
+    private void recordPromptDiagnostics(RuntimeContextBuildResult built) {
+        try {
+            promptDiagnostics.record(built.context().report());
+        } catch (RuntimeException ignored) {
+            // Diagnostics are a best-effort projection and never change Agent execution semantics.
+        }
+    }
+
+    private void appendRuntimeControlMessage(AgentRun run, String text, Map<String, Object> metadata) {
+        state.appendSessionMessage(new SessionMessageDraft(
+                new AgentMessageId(ids.nextValue()),
+                run.sessionId(),
+                Optional.of(run.id()),
+                Optional.empty(),
+                MessageRole.RUNTIME,
+                MessageStatus.COMPLETED,
+                MessageVisibility.AGENT_VISIBLE,
+                List.of(new TextPart(text, "plain")),
+                metadata,
+                time.now()));
+    }
+
+    private static AgentErrorCode modelErrorCode(RuntimeException error) {
+        ModelContinuationException continuationFailure = findFailure(error, ModelContinuationException.class);
+        if (continuationFailure != null) {
+            return AgentErrorCode.CROSS_MODEL_CONTINUATION_INVALID;
+        }
+        if (error instanceof RuntimeQuotaExceededException quotaExceeded) {
+            return switch (quotaExceeded.resource()) {
+                case "inputTokens" -> AgentErrorCode.RUN_INPUT_QUOTA_EXHAUSTED;
+                case "outputTokens" -> AgentErrorCode.RUN_OUTPUT_QUOTA_EXHAUSTED;
+                case "costMinorUnits" -> AgentErrorCode.RUN_COST_QUOTA_EXHAUSTED;
+                default -> AgentErrorCode.RUN_BUDGET_EXCEEDED;
+            };
+        }
+        if (error instanceof RuntimeLimitExceededException limitExceeded) {
+            return switch (limitExceeded.resource()) {
+                case "iterations",
+                        "modelCalls",
+                        "toolCalls",
+                        "childRuns",
+                        "wallTimeMillis",
+                        "idleTimeMillis",
+                        "depth" -> AgentErrorCode.RUN_EXECUTION_LIMIT_EXCEEDED;
+                default -> AgentErrorCode.RUN_BUDGET_EXCEEDED;
+            };
+        }
+        if (error instanceof ContextRebuildExhaustedException) return AgentErrorCode.MODEL_CONTEXT_TOO_LONG;
+        if (!(error instanceof ModelInvocationException modelError)) return AgentErrorCode.MODEL_CALL_FAILED;
+        if ("structured_output_unsupported".equals(modelError.providerCode())) {
+            return AgentErrorCode.MODEL_STRUCTURED_OUTPUT_UNSUPPORTED;
+        }
+        if ("structured_output_invalid".equals(modelError.providerCode())) {
+            return AgentErrorCode.MODEL_STRUCTURED_OUTPUT_INVALID;
+        }
+        if ("output_truncated".equals(modelError.providerCode())) {
+            return AgentErrorCode.MODEL_OUTPUT_TRUNCATED;
+        }
+        return switch (modelError.category()) {
+            case AUTHENTICATION_FAILED -> AgentErrorCode.MODEL_AUTHENTICATION_FAILED;
+            case PAYMENT_REQUIRED -> AgentErrorCode.MODEL_PAYMENT_REQUIRED;
+            case PERMISSION_DENIED -> AgentErrorCode.MODEL_PERMISSION_DENIED;
+            case RATE_LIMITED -> AgentErrorCode.MODEL_RATE_LIMITED;
+            case TIMEOUT -> AgentErrorCode.MODEL_TIMEOUT;
+            case PROVIDER_UNAVAILABLE, SERVER_ERROR, TRANSPORT_ERROR -> AgentErrorCode.MODEL_PROVIDER_UNAVAILABLE;
+            case INVALID_REQUEST -> AgentErrorCode.MODEL_REQUEST_INVALID;
+            case MODEL_NOT_FOUND -> AgentErrorCode.MODEL_NOT_FOUND;
+            case CONTEXT_TOO_LONG -> AgentErrorCode.MODEL_CONTEXT_TOO_LONG;
+            case CONTENT_REJECTED -> AgentErrorCode.MODEL_CONTENT_REJECTED;
+            case EMPTY_RESPONSE, PARTIAL_RESPONSE, MALFORMED_RESPONSE, OUTPUT_LIMIT_EXCEEDED ->
+                AgentErrorCode.MODEL_RESPONSE_INVALID;
+            case CANCELLED -> AgentErrorCode.MODEL_CANCELLED;
+            case UNKNOWN_PROVIDER_ERROR -> AgentErrorCode.MODEL_CALL_FAILED;
+        };
+    }
+
+    private static RuntimeException modelContinuationLimit(AgentRun run, int iteration) {
+        if (run.usage().modelCalls() >= run.limits().maxModelCalls()) {
+            return new RuntimeLimitExceededException(
+                    "modelCalls", run.limits().maxModelCalls(), run.usage().modelCalls());
+        }
+        if (iteration > run.limits().maxIterations()) {
+            return new RuntimeLimitExceededException(
+                    "iterations", run.limits().maxIterations(), Math.max(0, iteration - 1L));
+        }
+        var quota = run.quotaPolicy();
+        if (quota.mode() == io.haifa.agent.core.run.QuotaMode.HARD_STOP) {
+            if (quota.maxInputTokens() != null
+                    && quota.maxInputTokens() > 0
+                    && run.usage().inputTokens() >= quota.maxInputTokens()) {
+                return new RuntimeQuotaExceededException(
+                        "inputTokens", quota.maxInputTokens(), run.usage().inputTokens());
+            }
+            if (quota.maxOutputTokens() != null
+                    && quota.maxOutputTokens() > 0
+                    && run.usage().outputTokens() >= quota.maxOutputTokens()) {
+                return new RuntimeQuotaExceededException(
+                        "outputTokens", quota.maxOutputTokens(), run.usage().outputTokens());
+            }
+            if (quota.maxCostMinorUnits() != null
+                    && quota.maxCostMinorUnits() > 0
+                    && run.usage().costMinorUnits() >= quota.maxCostMinorUnits()) {
+                return new RuntimeQuotaExceededException(
+                        "costMinorUnits", quota.maxCostMinorUnits(), run.usage().costMinorUnits());
+            }
+        }
+        return null;
+    }
+
+    private static RuntimeException decisionBudgetLimit(AgentRun run, int iteration, AgentDecision decision) {
+        var quota = run.quotaPolicy();
+        if (quota.mode() == io.haifa.agent.core.run.QuotaMode.HARD_STOP && quota.isExceededBy(run.usage())) {
+            if (quota.maxInputTokens() != null
+                    && quota.maxInputTokens() > 0
+                    && run.usage().inputTokens() >= quota.maxInputTokens()) {
+                return new RuntimeQuotaExceededException(
+                        "inputTokens", quota.maxInputTokens(), run.usage().inputTokens());
+            }
+            if (quota.maxOutputTokens() != null
+                    && quota.maxOutputTokens() > 0
+                    && run.usage().outputTokens() >= quota.maxOutputTokens()) {
+                return new RuntimeQuotaExceededException(
+                        "outputTokens", quota.maxOutputTokens(), run.usage().outputTokens());
+            }
+            if (quota.maxCostMinorUnits() != null
+                    && quota.maxCostMinorUnits() > 0
+                    && run.usage().costMinorUnits() >= quota.maxCostMinorUnits()) {
+                return new RuntimeQuotaExceededException(
+                        "costMinorUnits", quota.maxCostMinorUnits(), run.usage().costMinorUnits());
+            }
+            return RuntimeLimitExceededException.forRunBudget(run);
+        }
+        if (decision instanceof FinalAnswerDecision) return null;
+        if (decision instanceof ToolCallDecision toolDecision) {
+            long projectedToolCalls =
+                    run.usage().toolCalls() + toolDecision.requests().size();
+            if (projectedToolCalls > run.limits().maxToolCalls()) {
+                return new RuntimeLimitExceededException(
+                        "toolCalls", run.limits().maxToolCalls(), projectedToolCalls);
+            }
+        }
+        if (decision instanceof DelegationDecision) {
+            long projectedChildRuns = run.usage().childRuns() + 1;
+            if (projectedChildRuns > run.limits().maxChildRuns()) {
+                return new RuntimeLimitExceededException(
+                        "childRuns", run.limits().maxChildRuns(), projectedChildRuns);
+            }
+        }
+        if (run.usage().modelCalls() >= run.limits().maxModelCalls()) {
+            return new RuntimeLimitExceededException(
+                    "modelCalls", run.limits().maxModelCalls(), run.usage().modelCalls());
+        }
+        if (iteration >= run.limits().maxIterations()) {
+            return new RuntimeLimitExceededException("iterations", run.limits().maxIterations(), iteration);
+        }
+        return null;
+    }
+
+    private Optional<FinalAnswerDecision> budgetLimitedFinalDecision(
+            AgentRun run,
+            AgentLoopContext progress,
+            FrozenModelBinding model,
+            io.haifa.agent.context.api.AgentContext context,
+            AgentDecision decision,
+            RuntimeLimitExceededException limit) {
+        if (decision instanceof FinalAnswerDecision answer) return Optional.of(answer);
+        if (!"toolCalls".equals(limit.resource())
+                || run.usage().modelCalls() >= run.limits().maxModelCalls()
+                || run.activeElapsedMillis(time.now()) >= run.limits().maxWallTimeMillis()) {
+            return Optional.empty();
+        }
+        try {
+            transitions.usage(run, new AgentRunUsageDelta(0, 0, 0, 1, 0, 0, 0, 0));
+            ModelInvocationResult synthesis = models.invokeWithoutTools(
+                    model, run, progress.iteration(), context, new ModelRequestId(ids.nextValue()), 1);
+            transitions.usage(
+                    run,
+                    new AgentRunUsageDelta(
+                            synthesis.inputTokens(),
+                            synthesis.outputTokens(),
+                            0,
+                            0,
+                            0,
+                            0,
+                            synthesis.costMinorUnits(),
+                            0));
+            if (synthesis.decision() instanceof FinalAnswerDecision answer) {
+                models.committed(run, synthesis, progress.iteration());
+                events.append(
+                        run.id(),
+                        "budget.finalization-synthesized",
+                        Map.of("limitingResource", "TOOL_CALLS"),
+                        time.now());
+                return Optional.of(answer);
+            }
+            models.failed(run, synthesis, progress.iteration());
+        } catch (RuntimeException ignored) {
+            // The existing bounded summary is the deliberately safe fallback for a failed final synthesis attempt.
+        }
+        events.append(run.id(), "budget.finalization-fallback", Map.of("limitingResource", "TOOL_CALLS"), time.now());
+        return Optional.empty();
+    }
+
+    private Duration modelRetryDelay(AgentRun run, int failedAttempt, RuntimeException failure) {
+        Duration selected = modelRetryPolicy.delay(failedAttempt, failure);
+        long elapsed = run.activeElapsedMillis(time.now());
+        long remaining = Math.max(0, run.limits().maxWallTimeMillis() - elapsed);
+        Duration remainingWindow = Duration.ofMillis(remaining);
+        return selected.compareTo(remainingWindow) <= 0 ? selected : remainingWindow;
+    }
+
+    private void checkModelRetryControl(AgentRun run) {
+        RunControlSignal signal = controls.signal(run.id());
+        if (signal.stopsExecution()) throw new CancellationObservedException(signal);
+        long elapsed = run.activeElapsedMillis(time.now());
+        if (elapsed >= run.limits().maxWallTimeMillis()) {
+            throw new RuntimeLimitExceededException(
+                    "wallTimeMillis", run.limits().maxWallTimeMillis(), elapsed);
+        }
+    }
+
+    private RetryListener modelRetryListener(
+            AgentRun run, AgentLoopContext progress, ModelRequestId[] requestIds, int[] requestAttemptOffsets) {
+        return new RetryListener() {
+            @Override
+            public void retryScheduled(int failedAttempt, RuntimeException failure, Duration delay) {
+                append("model.attempt.retry-scheduled", "RETRY_SCHEDULED", failedAttempt, failure, delay, false);
+            }
+
+            @Override
+            public void exhausted(int finalAttempt, RuntimeException failure) {
+                append("model.attempt.exhausted", "EXHAUSTED", finalAttempt, failure, Duration.ZERO, true);
+            }
+
+            private void append(
+                    String eventType,
+                    String status,
+                    int retryExecutorAttempt,
+                    RuntimeException failure,
+                    Duration delay,
+                    boolean exhausted) {
+                Map<String, Object> data = new LinkedHashMap<>();
+                data.put("modelRequestId", requestIds[0].value());
+                data.put("status", status);
+                int attemptNumber = Math.max(1, retryExecutorAttempt - requestAttemptOffsets[0]);
+                data.put("attempt", attemptNumber);
+                data.put("delayMillis", safeDurationMillis(delay));
+                String failureCategory;
+                boolean retryable = false;
+                if (failure instanceof ModelInvocationException modelFailure) {
+                    data.put("modelCallId", modelFailure.callId().value());
+                    data.put("category", modelFailure.category().name());
+                    data.put("providerCode", modelFailure.providerCode());
+                    data.put("retryable", modelFailure.retryable());
+                    data.put("outputObserved", modelFailure.outputObserved());
+                    failureCategory = modelFailure.category().name();
+                    retryable = modelFailure.retryable();
+                } else {
+                    data.put("category", failure.getClass().getSimpleName());
+                    failureCategory = failure.getClass().getSimpleName();
+                }
+                events.append(run.id(), eventType, data, time.now());
+                recordTrace(new RuntimeTraceEvent(
+                        progress.traceContext().traceId(),
+                        run.id(),
+                        progress.traceContext().attemptId(),
+                        run.sessionId(),
+                        Optional.empty(),
+                        Optional.empty(),
+                        progress.traceContext().workerId(),
+                        OptionalInt.of(progress.iteration()),
+                        RuntimePhase.ON_ERROR,
+                        eventType,
+                        RuntimeTraceScope.ITERATION,
+                        exhausted ? RuntimeTraceStatus.FAILURE : RuntimeTraceStatus.ACTIVE,
+                        Map.of(
+                                "attemptNumber",
+                                attemptNumber,
+                                "failureCategory",
+                                failureCategory,
+                                "retryable",
+                                retryable,
+                                "delayMillis",
+                                safeDurationMillis(delay),
+                                "exhausted",
+                                exhausted),
+                        time.now()));
+            }
+        };
+    }
+
+    private static long safeDurationMillis(Duration duration) {
+        try {
+            return duration.toMillis();
+        } catch (ArithmeticException ignored) {
+            return Long.MAX_VALUE;
+        }
+    }
+
+    private static Map<String, Object> modelErrorDetails(RuntimeException error) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        ModelContinuationException continuationFailure = findFailure(error, ModelContinuationException.class);
+        if (continuationFailure != null) {
+            details.put("continuationFailure", continuationFailure.failure().name());
+            details.put("continuationMessage", continuationFailure.getMessage());
+        }
+        if (error instanceof RuntimeLimitExceededException limit) {
+            details.put("resource", limit.resource());
+            details.put("limit", limit.limit());
+            details.put("used", limit.used());
+        }
+        if (error instanceof ModelInvocationException modelError) {
+            details.put("modelCallId", modelError.callId().value());
+            details.put("modelCategory", modelError.category().name());
+            if (modelError.httpStatus() > 0) details.put("httpStatus", modelError.httpStatus());
+            if (!modelError.providerCode().isBlank()) details.put("providerCode", modelError.providerCode());
+            details.put("outputObserved", modelError.outputObserved());
+            modelError.retryAfterMillis().ifPresent(delay -> details.put("retryAfterMillis", delay));
+            details.put("retryDecision", modelError.retryDecision());
+            modelError.providerRequestId().ifPresent(id -> details.put("providerRequestId", id));
+            details.put("providerMessage", modelError.getMessage());
+        }
+        return Map.copyOf(details);
+    }
+
+    private static <T extends Throwable> T findFailure(Throwable error, Class<T> failureType) {
+        Throwable current = error;
+        int depth = 0;
+        while (current != null && depth < 8) {
+            if (failureType.isInstance(current)) return failureType.cast(current);
+            current = current.getCause();
+            depth++;
+        }
+        return null;
     }
 
     private boolean isContextTooLong(RuntimeException error) {
         return error instanceof ModelInvocationException modelError
                 && modelError.category() == ModelErrorCategory.CONTEXT_TOO_LONG;
+    }
+
+    private record ContextBuildExecution(RuntimeContextBuildResult built, CompactionEvaluationOutcome outcome) {}
+
+    private ContextBuildExecution buildContext(
+            AgentRun run,
+            AgentLoopContext progress,
+            FrozenModelBinding model,
+            CompactionEvaluationOutcome initialOutcome) {
+        try {
+            return new ContextBuildExecution(contextBuilder.build(run, progress, model), initialOutcome);
+        } catch (LocalContextOverflowException overflow) {
+            progress.recordForcedContextRebuild();
+            CompactionEvaluationOutcome overflowOutcome = initialOutcome;
+            if (compactionCoordinator != null) {
+                overflowOutcome = compactionCoordinator.forceCompactOnOverflow(run, progress.iteration(), model);
+            }
+            try {
+                return new ContextBuildExecution(contextBuilder.build(run, progress, model), overflowOutcome);
+            } catch (LocalContextOverflowException exhausted) {
+                throw new ContextRebuildExhaustedException(
+                        "local context remained too long after the single forced rebuild");
+            }
+        }
     }
 
     private Map<String, Object> modelTraceAttributes(AgentRun run, ModelInvocationResult response) {
@@ -475,6 +1112,11 @@ public final class DefaultAgentLoop implements AgentLoop {
             attributes.put("httpStatus", modelError.httpStatus());
             attributes.put("providerCode", modelError.providerCode());
             attributes.put("modelCallId", modelError.callId().value());
+            attributes.put("outputObserved", modelError.outputObserved());
+            modelError.retryAfterMillis().ifPresent(delay -> attributes.put("retryAfterMillis", delay));
+            attributes.put("retryDecision", modelError.retryDecision());
+            modelError.providerRequestId().ifPresent(id -> attributes.put("providerRequestId", id));
+            attributes.put("providerMessage", modelError.getMessage());
         }
         return Map.copyOf(attributes);
     }
@@ -490,23 +1132,5 @@ public final class DefaultAgentLoop implements AgentLoop {
             attributes.put("modelConfigDigest", model.configurationDigest());
         });
         return attributes;
-    }
-
-    private String progressSignature(AgentRun run) {
-        long completedTools = state.toolCalls(run.id()).stream()
-                .filter(call -> call.status() == io.haifa.agent.core.tool.ToolCallStatus.COMPLETED)
-                .count();
-        long artifacts = state.toolCalls(run.id()).stream()
-                .flatMap(call -> call.result().stream())
-                .mapToLong(result -> result.artifacts().size())
-                .sum();
-        String todos = state.plan(run.id())
-                .map(plan -> plan.items().stream()
-                        .map(item -> item.id() + ":" + item.status())
-                        .toList()
-                        .toString())
-                .orElse("none");
-        return state.messages(run.id()).size() + "|" + completedTools + "|" + artifacts + "|"
-                + run.usage().childRuns() + "|" + todos + "|" + run.status();
     }
 }

@@ -9,8 +9,14 @@ import io.haifa.agent.execution.api.ExecutionCommandMode;
 import io.haifa.agent.execution.api.ExecutionEnvironmentRef;
 import io.haifa.agent.execution.api.ExecutionId;
 import io.haifa.agent.execution.api.ExecutionLimits;
+import io.haifa.agent.execution.api.ExecutionOrigin;
+import io.haifa.agent.execution.api.ExecutionOutputChannel;
+import io.haifa.agent.execution.api.ExecutionOutputObserver;
 import io.haifa.agent.execution.api.ExecutionRequest;
 import io.haifa.agent.execution.api.ExecutionStatus;
+import io.haifa.agent.execution.api.ManagedProcessRequest;
+import io.haifa.agent.execution.api.ProcessInputChunk;
+import io.haifa.agent.execution.api.ResolvedExecutionEnvironment;
 import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.execution.api.TrustedExecutionContext;
 import io.haifa.agent.execution.core.manifest.ManifestBudget;
@@ -18,38 +24,25 @@ import io.haifa.agent.execution.core.manifest.ManifestDiffService;
 import io.haifa.agent.execution.core.manifest.WorkspaceManifestService;
 import io.haifa.agent.execution.core.store.InMemoryExecutionOutputStore;
 import io.haifa.agent.execution.core.store.InMemoryExecutionStore;
-import io.haifa.agent.project.binding.WorkspaceBinding;
-import io.haifa.agent.project.binding.WorkspaceBindingId;
-import io.haifa.agent.project.binding.WorkspaceBindingMode;
-import io.haifa.agent.project.binding.WorkspaceLocationRef;
-import io.haifa.agent.project.changeset.FileChangeSetService;
-import io.haifa.agent.project.changeset.InMemoryFileChangeSetStore;
-import io.haifa.agent.project.changeset.ObservedFileChangeService;
+import io.haifa.agent.project.core.store.InMemoryWorkspaceStore;
 import io.haifa.agent.project.domain.ProjectId;
-import io.haifa.agent.project.path.ProjectPath;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceFileService;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
+import io.haifa.agent.project.hostworkspace.SensitivePathPolicy;
 import io.haifa.agent.project.path.WorkspacePath;
-import io.haifa.agent.project.provider.local.LocalWorkspaceFileService;
-import io.haifa.agent.project.provider.local.LocalWorkspaceLocationStore;
-import io.haifa.agent.project.provider.local.SensitivePathPolicy;
-import io.haifa.agent.project.store.InMemoryWorkspaceBindingStore;
-import io.haifa.agent.project.store.InMemoryWorkspaceStore;
 import io.haifa.agent.project.workspace.Workspace;
-import io.haifa.agent.project.workspace.WorkspaceCapabilitySet;
 import io.haifa.agent.project.workspace.WorkspaceId;
-import io.haifa.agent.project.workspace.WorkspacePermissionSet;
-import io.haifa.agent.project.workspace.WorkspacePurpose;
 import io.haifa.agent.project.workspace.WorkspaceRevision;
-import io.haifa.agent.project.workspace.WorkspaceRoot;
-import io.haifa.agent.sandbox.api.NetworkPolicy;
 import io.haifa.agent.sandbox.api.SandboxCapabilities;
+import io.haifa.agent.sandbox.api.SandboxException;
 import io.haifa.agent.sandbox.api.SandboxExecution;
+import io.haifa.agent.sandbox.api.SandboxManagedProcess;
 import io.haifa.agent.sandbox.api.SandboxProcessResult;
 import io.haifa.agent.sandbox.api.SandboxProcessStatus;
 import io.haifa.agent.sandbox.api.SandboxProfile;
 import io.haifa.agent.sandbox.api.SandboxProvider;
 import io.haifa.agent.sandbox.api.SandboxSession;
 import io.haifa.agent.sandbox.api.SandboxSessionId;
-import io.haifa.agent.sandbox.api.WorkspaceMount;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -57,6 +50,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
@@ -73,6 +67,7 @@ class ExecutionCoreTest {
         Files.writeString(root.resolve("before.txt"), "before\n");
         Fixture fixture = fixture();
         AtomicInteger policyCalls = new AtomicInteger();
+        List<ExecutionPolicyEntryPoint> policyEntryPoints = new java.util.ArrayList<>();
         SandboxProvider provider = fakeProvider(
                 () -> {
                     try {
@@ -81,31 +76,33 @@ class ExecutionCoreTest {
                         throw new RuntimeException(exception);
                     }
                 },
-                ("secret-token\n" + "x".repeat(5000)).getBytes(StandardCharsets.UTF_8));
-        DefaultExecutionBroker broker = fixture.broker(provider, request -> policyCalls.incrementAndGet());
-        ExecutionRequest request = fixture.request("execution-1", "key-1", Set.of("execution.run"), List.of("fake"));
+                ("secret-token\nhttps://user:remote-secret@github.example/repo.git\n" + "x".repeat(5000))
+                        .getBytes(StandardCharsets.UTF_8));
+        DefaultExecutionBroker broker = fixture.broker(provider, (request, entryPoint) -> {
+            policyCalls.incrementAndGet();
+            policyEntryPoints.add(entryPoint);
+        });
+        ExecutionRequest request = fixture.request("execution-1", "key-1", Set.of("execution_run"), List.of("fake"));
 
         var result = broker.execute(request);
 
-        assertThat(result.status()).isEqualTo(ExecutionStatus.SUCCEEDED);
-        assertThat(result.optionalFileChangeSetId()).isPresent();
-        assertThat(result.stdout().summary()).doesNotContain("secret-token");
+        assertThat(result.status()).isEqualTo(ExecutionStatus.EXITED);
+        assertThat(result.isExited()).isTrue();
+        assertThat(result.optionalFailure()).isEmpty();
+        assertThat(result.stdout().summary()).doesNotContain("secret-token", "remote-secret");
         assertThat(result.stdout().optionalAssetRef()).isPresent();
         byte[] stored = fixture.outputs.load(result.stdout().assetRef()).orElseThrow();
         assertThat(new String(stored, StandardCharsets.UTF_8))
-                .doesNotContain("secret-token")
-                .contains("***");
-        assertThat(fixture.changeSets
-                        .find(result.fileChangeSetId())
-                        .orElseThrow()
-                        .changes())
-                .extracting(change -> change.path().value())
-                .contains("created.txt");
+                .doesNotContain("secret-token", "remote-secret")
+                .contains("***", "https://***@github.example/repo.git");
         assertThat(broker.execute(request).replayed()).isTrue();
-        assertThat(policyCalls).hasValue(1);
+        assertThat(policyCalls).hasValue(2);
+        assertThat(policyEntryPoints)
+                .containsExactly(
+                        ExecutionPolicyEntryPoint.FIRST_EXECUTION, ExecutionPolicyEntryPoint.IDEMPOTENT_REPLAY);
 
         assertThatThrownBy(() -> broker.execute(
-                        fixture.request("execution-2", "key-1", Set.of("execution.run"), List.of("different"))))
+                        fixture.request("execution-2", "key-1", Set.of("execution_run"), List.of("different"))))
                 .isInstanceOf(ExecutionRejectedException.class);
         assertThatThrownBy(() -> broker.execute(fixture.request("execution-3", "key-3", Set.of(), List.of("fake"))))
                 .isInstanceOfSatisfying(ExecutionRejectedException.class, exception -> assertThat(exception.code())
@@ -113,87 +110,134 @@ class ExecutionCoreTest {
     }
 
     @Test
-    void manifestDiffRecognizesMoveAsOneCorrelatedChange() throws Exception {
-        Files.writeString(root.resolve("old.txt"), "same\n");
+    void currentPolicyCanRevokeAnIdempotentReplayBeforeTheCachedResultReturns() {
         Fixture fixture = fixture();
-        var before = fixture.manifests.capture(fixture.workspaceId);
-        Files.move(root.resolve("old.txt"), root.resolve("new.txt"));
-        var after = fixture.manifests.capture(fixture.workspaceId);
-        var changes = new ManifestDiffService().diff(before, after);
-        assertThat(changes).singleElement().satisfies(change -> {
-            assertThat(change.type()).isEqualTo(io.haifa.agent.project.changeset.FileChangeType.MOVE);
-            assertThat(change.path().value()).isEqualTo("old.txt");
-            assertThat(change.destination().value()).isEqualTo("new.txt");
-        });
+        AtomicInteger providerCalls = new AtomicInteger();
+        java.util.concurrent.atomic.AtomicBoolean revoked = new java.util.concurrent.atomic.AtomicBoolean();
+        DefaultExecutionBroker broker =
+                fixture.broker(fakeProvider(providerCalls::incrementAndGet, new byte[0]), (request, entryPoint) -> {
+                    if (revoked.get()) {
+                        throw new ExecutionRejectedException("LIVE_AUTHORITY_REVOKED", "live authority was revoked");
+                    }
+                });
+        ExecutionRequest request =
+                fixture.request("replay-revoke", "replay-revoke-key", Set.of("execution_run"), List.of("fake"));
+
+        assertThat(broker.execute(request).replayed()).isFalse();
+        revoked.set(true);
+
+        assertThatThrownBy(() -> broker.execute(request))
+                .isInstanceOfSatisfying(ExecutionRejectedException.class, exception -> assertThat(exception.code())
+                        .isEqualTo("LIVE_AUTHORITY_REVOKED"));
+        assertThat(providerCalls).hasValue(1);
     }
 
-    private Fixture fixture() {
-        WorkspaceId workspaceId = new WorkspaceId("workspace-1");
-        WorkspaceBindingId bindingId = new WorkspaceBindingId("binding-1");
-        WorkspaceLocationRef locationRef = new WorkspaceLocationRef("location-1");
-        var workspaces = new InMemoryWorkspaceStore();
-        var bindings = new InMemoryWorkspaceBindingStore();
-        var locations = new LocalWorkspaceLocationStore();
-        locations.register(locationRef, root);
-        WorkspaceBinding binding = WorkspaceBinding.provision(
-                        bindingId,
-                        locationRef,
-                        WorkspaceBindingMode.DIRECT,
-                        new PrincipalRef("owner", "user"),
-                        WorkspaceCapabilitySet.executionFiles(),
-                        WorkspacePermissionSet.readWriteExecute(),
-                        LocalWorkspaceLocationStore.fingerprintFor(root),
-                        NOW)
-                .activate(NOW);
-        bindings.create(binding);
-        Workspace workspace = Workspace.provision(
-                        workspaceId,
-                        new ProjectId("project-1"),
-                        WorkspacePurpose.PRIMARY,
-                        new WorkspaceRoot(ProjectPath.root(), bindingId, "test"),
-                        WorkspaceRevision.initial(binding.rootFingerprint()),
-                        NOW)
-                .activate(NOW);
-        workspaces.create(workspace);
-        var fileService =
-                new LocalWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
-        var manifests = new WorkspaceManifestService(
-                workspaces, fileService, new ManifestBudget(100, 1024 * 1024, 1024 * 1024), "test-v1");
-        var changeSets = new InMemoryFileChangeSetStore();
-        var ids = new AtomicInteger();
-        var changeSetService = new FileChangeSetService(changeSets, () -> "change-" + ids.incrementAndGet(), () -> NOW);
-        var observed = new ObservedFileChangeService(workspaces, changeSets, changeSetService, () -> NOW);
-        return new Fixture(
-                workspaceId, workspaces, bindings, manifests, changeSets, observed, new InMemoryExecutionOutputStore());
+    @Test
+    void policyDenialHappensBeforeExecutionStateOrProviderOpen() {
+        Fixture fixture = fixture();
+        AtomicInteger providerCalls = new AtomicInteger();
+        DefaultExecutionBroker broker =
+                fixture.broker(fakeProvider(providerCalls::incrementAndGet, new byte[0]), (request, entryPoint) -> {
+                    throw new ExecutionRejectedException("PRODUCT_DENIED", "product denied execution");
+                });
+        ExecutionRequest request =
+                fixture.request("policy-denied", "policy-denied-key", Set.of("execution_run"), List.of("fake"));
+
+        assertThatThrownBy(() -> broker.execute(request)).isInstanceOf(ExecutionRejectedException.class);
+        assertThat(broker.find(request.id())).isEmpty();
+        assertThat(providerCalls).hasValue(0);
     }
 
-    private static SandboxProvider fakeProvider(Runnable effect, byte[] stdout) {
-        return new SandboxProvider() {
+    @Test
+    void brokerPreservesConfirmedProcessLimitAsATerminalResourceFailure() {
+        Fixture fixture = fixture();
+        SandboxProvider provider = fakeProvider(() -> {}, new byte[0], SandboxProcessStatus.PROCESS_LIMIT_EXCEEDED);
+        DefaultExecutionBroker broker = fixture.broker(provider, (request, entryPoint) -> {});
+
+        var result = broker.execute(
+                fixture.request("process-limit", "process-limit-key", Set.of("execution_run"), List.of("fake")));
+
+        assertThat(result.status()).isEqualTo(ExecutionStatus.PROCESS_LIMIT_EXCEEDED);
+        assertThat(result.exitCode()).isNull();
+        assertThat(result.optionalFailure())
+                .hasValueSatisfying(failure -> assertThat(failure.code()).isEqualTo("PROCESS_LIMIT_EXCEEDED"));
+    }
+
+    @Test
+    void brokerPreservesTheReasonForAnUnknownTimeoutTree() {
+        Fixture fixture = fixture();
+        SandboxProvider provider = fakeProvider(
+                () -> {}, new byte[0], SandboxProcessStatus.UNKNOWN, null, "TIMEOUT_TREE_UNCONFIRMED", true);
+        DefaultExecutionBroker broker = fixture.broker(provider, (request, entryPoint) -> {});
+
+        var result = broker.execute(
+                fixture.request("timeout-tree", "timeout-tree-key", Set.of("execution_run"), List.of("fake")));
+
+        assertThat(result.status()).isEqualTo(ExecutionStatus.UNKNOWN);
+        assertThat(result.outputIncomplete()).isTrue();
+        assertThat(result.optionalFailure())
+                .hasValueSatisfying(failure -> assertThat(failure.code()).isEqualTo("TIMEOUT_TREE_UNCONFIRMED"));
+    }
+
+    @Test
+    void brokerPreservesOutputIncompleteWithoutChangingExitedStatus() {
+        Fixture fixture = fixture();
+        SandboxProvider provider = fakeProvider(() -> {}, new byte[0], SandboxProcessStatus.EXITED, 0, null, true);
+        DefaultExecutionBroker broker = fixture.broker(provider, (request, entryPoint) -> {});
+
+        var result = broker.execute(fixture.request(
+                "incomplete-output", "incomplete-output-key", Set.of("execution_run"), List.of("fake")));
+
+        assertThat(result.status()).isEqualTo(ExecutionStatus.EXITED);
+        assertThat(result.optionalFailure()).isEmpty();
+        assertThat(result.outputIncomplete()).isTrue();
+    }
+
+    @Test
+    void streamingObserverRedactsSecretsSplitAcrossChunks() {
+        Fixture fixture = fixture();
+        SandboxProvider provider = new SandboxProvider() {
             @Override
             public String providerId() {
-                return "fake";
+                return "streaming-fake";
             }
 
             @Override
             public SandboxCapabilities capabilities() {
-                return new SandboxCapabilities(true, true, true, true, true);
+                return new SandboxCapabilities(true);
             }
 
             @Override
-            public SandboxSession open(SandboxProfile profile, WorkspaceMount mount) {
+            public SandboxSession open(
+                    SandboxProfile profile, io.haifa.agent.project.workspace.WorkspaceId workspaceId) {
                 return new SandboxSession() {
                     @Override
                     public SandboxSessionId id() {
-                        return new SandboxSessionId("session-1");
+                        return new SandboxSessionId("streaming-session");
                     }
 
                     @Override
                     public SandboxProcessResult execute(SandboxExecution execution) {
-                        effect.run();
+                        throw new UnsupportedOperationException();
+                    }
+
+                    @Override
+                    public SandboxProcessResult execute(SandboxExecution execution, ExecutionOutputObserver observer) {
+                        observer.onStarted();
+                        observer.onOutput(new io.haifa.agent.execution.api.ProcessOutputChunk(
+                                ExecutionOutputChannel.STDOUT,
+                                "secret-".getBytes(StandardCharsets.UTF_8),
+                                false,
+                                false));
+                        observer.onOutput(new io.haifa.agent.execution.api.ProcessOutputChunk(
+                                ExecutionOutputChannel.STDOUT,
+                                "token\n".getBytes(StandardCharsets.UTF_8),
+                                true,
+                                false));
                         return new SandboxProcessResult(
                                 SandboxProcessStatus.EXITED,
                                 0,
-                                stdout,
+                                "secret-token\n".getBytes(StandardCharsets.UTF_8),
                                 new byte[0],
                                 NOW,
                                 NOW.plusSeconds(1),
@@ -213,40 +257,611 @@ class ExecutionCoreTest {
                 };
             }
         };
+        ResolvedExecutionEnvironment resolvedEnv =
+                ResolvedExecutionEnvironment.of(Map.of("SECRET", "secret-token"), Set.of("SECRET"));
+        DefaultExecutionBroker broker = fixture.broker(provider, (request, entryPoint) -> {}, resolvedEnv);
+        var streamed = new java.io.ByteArrayOutputStream();
+        AtomicInteger starts = new AtomicInteger();
+
+        var result = broker.execute(
+                fixture.request("streamed", "streamed-key", Set.of("execution_run"), List.of("fake")),
+                new ExecutionOutputObserver() {
+                    @Override
+                    public void onStarted() {
+                        starts.incrementAndGet();
+                    }
+
+                    @Override
+                    public void onOutput(io.haifa.agent.execution.api.ProcessOutputChunk chunk) {
+                        streamed.writeBytes(chunk.bytes());
+                    }
+                });
+
+        assertThat(starts).hasValue(1);
+        assertThat(new String(streamed.toByteArray(), StandardCharsets.UTF_8)).isEqualTo("***\n");
+        assertThat(result.stdout().summary()).isEqualTo("***\n");
+
+        var observerFailureResult = broker.execute(
+                fixture.request("observer-failure", "observer-failure-key", Set.of("execution_run"), List.of("fake")),
+                chunk -> {
+                    throw new IllegalStateException("presentation failed");
+                });
+        assertThat(observerFailureResult.status()).isEqualTo(ExecutionStatus.EXITED);
+    }
+
+    @Test
+    void keepsBaselineEnvironmentValuesVisibleWhileRedactingSecretLikeValues() {
+        Fixture fixture = fixture();
+        Map<String, String> environment = Map.of(
+                "PATH", "C:\\Windows\\System32",
+                "USERPROFILE", "C:\\Users\\dev",
+                "GIT_PAGER", "cat",
+                "GIT_TERMINAL_PROMPT", "0",
+                "PORT", "8080",
+                "BUILD_ID", "1234",
+                "COLORTERM", "truecolor",
+                "SHORT_SECRET", "k9x",
+                "CUSTOM_TOKENISH", "supersecret1");
+        ResolvedExecutionEnvironment resolvedEnv =
+                ResolvedExecutionEnvironment.of(environment, Set.of("SHORT_SECRET", "CUSTOM_TOKENISH"));
+        byte[] stdout =
+                ("port 8080 build 1234 color truecolor; cat in C:\\Users\\dev and C:\\Windows\\System32; key: k9x; token: supersecret1\n"
+                                + "clone url: https://user:secret-pass@github.example/repo.git\n")
+                        .getBytes(StandardCharsets.UTF_8);
+        DefaultExecutionBroker broker =
+                fixture.broker(fakeProvider(() -> {}, stdout), (request, entryPoint) -> {}, resolvedEnv);
+
+        var result = broker.execute(
+                fixture.request("redaction-policy", "redaction-policy-key", Set.of("execution_run"), List.of("fake")));
+
+        assertThat(result.status()).isEqualTo(ExecutionStatus.EXITED);
+        assertThat(result.stdout().summary())
+                .contains(
+                        "port 8080 build 1234 color truecolor; cat in C:\\Users\\dev and C:\\Windows\\System32; key: ***; token: ***\n")
+                .doesNotContain("supersecret1", "secret-pass")
+                .contains("https://***@github.example/repo.git");
+
+        var streamed = new java.io.ByteArrayOutputStream();
+        var observer = new RedactingExecutionOutputObserver(
+                chunk -> streamed.writeBytes(chunk.bytes()),
+                RedactingExecutionOutputObserver.extractSecrets(resolvedEnv));
+        observer.onOutput(new io.haifa.agent.execution.api.ProcessOutputChunk(
+                ExecutionOutputChannel.STDOUT, stdout, true, false));
+        assertThat(new String(streamed.toByteArray(), StandardCharsets.UTF_8))
+                .contains(
+                        "port 8080 build 1234 color truecolor; cat in C:\\Users\\dev and C:\\Windows\\System32; key: ***; token: ***\n")
+                .doesNotContain("supersecret1", "secret-pass")
+                .contains("https://***@github.example/repo.git");
+    }
+
+    @Test
+    void manifestDiffRecognizesMoveAsOneCorrelatedChange() throws Exception {
+        Files.writeString(root.resolve("old.txt"), "same\n");
+        Fixture fixture = fixture();
+        var before = fixture.manifests.capture(fixture.workspaceId);
+        Files.move(root.resolve("old.txt"), root.resolve("new.txt"));
+        var after = fixture.manifests.capture(fixture.workspaceId);
+        var changes = new ManifestDiffService().diff(before, after);
+        assertThat(changes).singleElement().satisfies(change -> {
+            assertThat(change.type()).isEqualTo(io.haifa.agent.project.changeset.FileChangeType.MOVE);
+            assertThat(change.path().value()).isEqualTo("old.txt");
+            assertThat(change.destination().value()).isEqualTo("new.txt");
+        });
+    }
+
+    @Test
+    void managedSessionUsesTheSameAuthorizationRedactionAuditAndCompletionPath() throws Exception {
+        Fixture fixture = fixture();
+        var provider = managedProvider();
+        AtomicInteger policyCalls = new AtomicInteger();
+        List<ExecutionPolicyEntryPoint> policyEntryPoints = new java.util.ArrayList<>();
+        DefaultExecutionBroker broker = fixture.broker(provider, (request, entryPoint) -> {
+            policyCalls.incrementAndGet();
+            policyEntryPoints.add(entryPoint);
+        });
+        ExecutionRequest request =
+                fixture.request("managed-execution", "managed-key", Set.of("execution_run"), List.of("fake"));
+
+        try (var session = broker.openManagedSession(new ManagedProcessRequest(request))) {
+            session.write(new ProcessInputChunk("request\n".getBytes(StandardCharsets.UTF_8)));
+            var output1 = session.read(Duration.ofSeconds(1));
+            var output2 = session.read(Duration.ofSeconds(1));
+            String accumulated = (output1.map(chunk -> new String(chunk.bytes(), StandardCharsets.UTF_8))
+                            .orElse("")
+                    + output2.map(chunk -> new String(chunk.bytes(), StandardCharsets.UTF_8))
+                            .orElse(""));
+            assertThat(accumulated).doesNotContain("remote-secret").contains("https://***@github.example/repo.git");
+            assertThat(session.exit()
+                            .get(2, java.util.concurrent.TimeUnit.SECONDS)
+                            .status())
+                    .isEqualTo(ExecutionStatus.EXITED);
+        }
+
+        var result = broker.find(request.id()).orElseThrow();
+        assertThat(result.status()).isEqualTo(ExecutionStatus.EXITED);
+        assertThat(result.stdout().summary()).doesNotContain("remote-secret");
+        assertThat(policyCalls)
+                .as("managed execution must pass the same final ExecutionPolicy choke point")
+                .hasValue(1);
+        assertThat(policyEntryPoints).containsExactly(ExecutionPolicyEntryPoint.MANAGED_SESSION);
+    }
+
+    @Test
+    void managedSessionFlushesTrailingCarryoverOnProcessExitWithoutDataLoss() throws Exception {
+        Fixture fixture = fixture();
+        var provider = managedProvider((exit, ignored) -> new SandboxManagedProcess() {
+            private boolean readOnce = false;
+
+            @Override
+            public Instant startedAt() {
+                return NOW;
+            }
+
+            @Override
+            public void write(ProcessInputChunk input) {}
+
+            @Override
+            public Optional<io.haifa.agent.execution.api.ProcessOutputChunk> read(Duration timeout) {
+                if (!readOnce) {
+                    readOnce = true;
+                    java.util.concurrent.CompletableFuture.delayedExecutor(
+                                    20, java.util.concurrent.TimeUnit.MILLISECONDS)
+                            .execute(() -> exit.complete(new io.haifa.agent.execution.api.ProcessExit(
+                                    ExecutionStatus.EXITED, 0, true, NOW.plusSeconds(1))));
+                    return Optional.of(new io.haifa.agent.execution.api.ProcessOutputChunk(
+                            ExecutionOutputChannel.STDOUT,
+                            "{\"result\":\"partial-sec".getBytes(StandardCharsets.UTF_8),
+                            false,
+                            false));
+                }
+                return Optional.empty();
+            }
+
+            @Override
+            public java.util.concurrent.CompletableFuture<io.haifa.agent.execution.api.ProcessExit> exit() {
+                return exit;
+            }
+
+            @Override
+            public int observedProcessCount() {
+                return 1;
+            }
+
+            @Override
+            public boolean cancel() {
+                return true;
+            }
+
+            @Override
+            public void close() {}
+        });
+
+        ResolvedExecutionEnvironment env =
+                ResolvedExecutionEnvironment.of(Map.of("LEAS_KEY", "secret-token"), Set.of("LEAS_KEY"));
+        DefaultExecutionBroker broker = fixture.broker(provider, (request, entryPoint) -> {}, env);
+        ExecutionRequest request =
+                fixture.request("flush-exit", "flush-exit-key", Set.of("execution_run"), List.of("fake"));
+
+        try (var session = broker.openManagedSession(new ManagedProcessRequest(request))) {
+            var accumulated = new StringBuilder();
+            while (!session.exit().isDone()) {
+                session.read(Duration.ofMillis(50))
+                        .ifPresent(chunk -> accumulated.append(new String(chunk.bytes(), StandardCharsets.UTF_8)));
+            }
+            while (true) {
+                var chunk = session.read(Duration.ofMillis(10));
+                if (chunk.isEmpty()) break;
+                accumulated.append(new String(chunk.get().bytes(), StandardCharsets.UTF_8));
+            }
+            assertThat(accumulated.toString()).isEqualTo("{\"result\":\"partial-sec");
+            assertThat(session.exit()
+                            .get(2, java.util.concurrent.TimeUnit.SECONDS)
+                            .status())
+                    .isEqualTo(ExecutionStatus.EXITED);
+        }
+
+        var result = broker.find(request.id()).orElseThrow();
+        assertThat(result.stdout().summary()).isEqualTo("{\"result\":\"partial-sec");
+    }
+
+    @Test
+    void rejectsStaleProviderConfigurationBeforeOpeningTheSandbox() {
+        Fixture fixture = fixture();
+        AtomicInteger opens = new AtomicInteger();
+        SandboxProvider provider = new SandboxProvider() {
+            @Override
+            public String providerId() {
+                return "insufficient";
+            }
+
+            @Override
+            public SandboxCapabilities capabilities() {
+                return new SandboxCapabilities(true);
+            }
+
+            @Override
+            public SandboxSession open(
+                    SandboxProfile profile, io.haifa.agent.project.workspace.WorkspaceId workspaceId) {
+                opens.incrementAndGet();
+                throw new AssertionError("open must not be called");
+            }
+        };
+        SandboxProfile profile = new SandboxProfile(
+                new SandboxProfileRef("test", "1"),
+                provider.providerId(),
+                io.haifa.agent.sandbox.api.SandboxConfigurationDigest.sha256Fields(List.of("stale-configuration")),
+                Set.of("fake"),
+                Set.of("SECRET"),
+                false);
+        DefaultExecutionBroker broker = fixture.broker(provider, (request, entryPoint) -> {}, profile);
+
+        assertThatThrownBy(() -> broker.execute(fixture.request(
+                        "capability-missing", "capability-key", Set.of("execution_run"), List.of("fake"))))
+                .isInstanceOfSatisfying(SandboxException.class, exception -> assertThat(exception.code())
+                        .isEqualTo("CAPABILITY_UNAVAILABLE"));
+        assertThat(opens).hasValue(0);
+    }
+
+    @Test
+    void executesANewlyAuthorizedWorktreeWorkspaceWithoutChangeObservationPreflight() throws Exception {
+        Fixture fixture = fixture();
+        WorkspaceId worktreeId = new WorkspaceId("workspace-worktree");
+        Path worktreeRoot = root.resolve("worktree");
+        Files.createDirectories(worktreeRoot);
+        fixture.locations().register(worktreeId, worktreeRoot);
+        fixture.workspaces()
+                .create(Workspace.provision(
+                                worktreeId, new ProjectId("project-1"), WorkspaceRevision.initial("worktree-v1"), NOW)
+                        .activate(NOW));
+        AtomicInteger opens = new AtomicInteger();
+        SandboxProvider provider = new SandboxProvider() {
+            @Override
+            public String providerId() {
+                return "fake";
+            }
+
+            @Override
+            public SandboxCapabilities capabilities() {
+                return new SandboxCapabilities(true);
+            }
+
+            @Override
+            public SandboxSession open(
+                    SandboxProfile profile, io.haifa.agent.project.workspace.WorkspaceId workspaceId) {
+                opens.incrementAndGet();
+                return new SandboxSession() {
+                    @Override
+                    public SandboxSessionId id() {
+                        return new SandboxSessionId("session-worktree");
+                    }
+
+                    @Override
+                    public SandboxProcessResult execute(SandboxExecution execution) {
+                        return new SandboxProcessResult(
+                                SandboxProcessStatus.EXITED,
+                                0,
+                                "rev-parse-ok\n".getBytes(StandardCharsets.UTF_8),
+                                new byte[0],
+                                NOW,
+                                NOW.plusSeconds(1),
+                                false,
+                                false,
+                                true,
+                                1);
+                    }
+
+                    @Override
+                    public boolean cancel() {
+                        return true;
+                    }
+
+                    @Override
+                    public void close() {}
+                };
+            }
+        };
+        DefaultExecutionBroker broker = fixture.broker(provider, (request, entryPoint) -> {});
+
+        var result = broker.execute(fixture.request(
+                worktreeId, "worktree-execution", "worktree-key", Set.of("execution_run"), List.of("fake")));
+
+        assertThat(opens).hasValue(1);
+        assertThat(result.status()).isEqualTo(ExecutionStatus.EXITED);
+        assertThat(result.stdout().summary()).isEqualTo("rev-parse-ok\n");
+    }
+
+    private Fixture fixture() {
+        WorkspaceId workspaceId = new WorkspaceId("workspace-1");
+        var workspaces = new InMemoryWorkspaceStore();
+        var locations = new HostWorkspaceLocationStore();
+        locations.register(workspaceId, root);
+        Workspace workspace = Workspace.provision(
+                        workspaceId, new ProjectId("project-1"), WorkspaceRevision.initial("test"), NOW)
+                .activate(NOW);
+        workspaces.create(workspace);
+        var fileService = new HostWorkspaceFileService(workspaces, locations, SensitivePathPolicy.defaults());
+        var manifests = new WorkspaceManifestService(
+                workspaces, fileService, new ManifestBudget(100, 1024 * 1024, 1024 * 1024), "test-v1");
+        return new Fixture(workspaceId, root, workspaces, locations, manifests, new InMemoryExecutionOutputStore());
+    }
+
+    @Test
+    void brokerCapturesNonzeroExitAsExitedStatusWithoutFailureObject() {
+        Fixture fixture = fixture();
+        SandboxProvider provider = fakeProvider(
+                () -> {}, "diff output\n".getBytes(StandardCharsets.UTF_8), SandboxProcessStatus.EXITED, 1);
+        DefaultExecutionBroker broker = fixture.broker(provider, (request, entryPoint) -> {});
+
+        var result = broker.execute(
+                fixture.request("nonzero-exit", "nonzero-key", Set.of("execution_run"), List.of("git", "diff")));
+
+        assertThat(result.status()).isEqualTo(ExecutionStatus.EXITED);
+        assertThat(result.exitCode()).isEqualTo(1);
+        assertThat(result.isExited()).isTrue();
+        assertThat(result.optionalFailure()).isEmpty();
+        assertThat(result.stdout().summary()).isEqualTo("diff output\n");
+    }
+
+    private static SandboxProvider fakeProvider(Runnable effect, byte[] stdout) {
+        return fakeProvider(effect, stdout, SandboxProcessStatus.EXITED, 0);
+    }
+
+    private static SandboxProvider fakeProvider(Runnable effect, byte[] stdout, SandboxProcessStatus processStatus) {
+        return fakeProvider(effect, stdout, processStatus, processStatus == SandboxProcessStatus.EXITED ? 0 : null);
+    }
+
+    private static SandboxProvider fakeProvider(
+            Runnable effect, byte[] stdout, SandboxProcessStatus processStatus, Integer exitCode) {
+        return fakeProvider(effect, stdout, processStatus, exitCode, null, false);
+    }
+
+    private static SandboxProvider fakeProvider(
+            Runnable effect,
+            byte[] stdout,
+            SandboxProcessStatus processStatus,
+            Integer exitCode,
+            String failureCode,
+            boolean outputIncomplete) {
+        return new SandboxProvider() {
+            @Override
+            public String providerId() {
+                return "fake";
+            }
+
+            @Override
+            public SandboxCapabilities capabilities() {
+                return new SandboxCapabilities(true);
+            }
+
+            @Override
+            public SandboxSession open(
+                    SandboxProfile profile, io.haifa.agent.project.workspace.WorkspaceId workspaceId) {
+                return new SandboxSession() {
+                    @Override
+                    public SandboxSessionId id() {
+                        return new SandboxSessionId("session-1");
+                    }
+
+                    @Override
+                    public SandboxProcessResult execute(SandboxExecution execution) {
+                        effect.run();
+                        return new SandboxProcessResult(
+                                processStatus,
+                                exitCode,
+                                stdout,
+                                new byte[0],
+                                NOW,
+                                NOW.plusSeconds(1),
+                                false,
+                                false,
+                                true,
+                                1,
+                                false,
+                                false,
+                                failureCode,
+                                outputIncomplete);
+                    }
+
+                    @Override
+                    public boolean cancel() {
+                        return true;
+                    }
+
+                    @Override
+                    public void close() {}
+                };
+            }
+        };
+    }
+
+    private static SandboxProvider managedProvider() {
+        return managedProvider((exit, ignored) -> {
+            int[] emitCount = new int[] {0};
+            return new SandboxManagedProcess() {
+                @Override
+                public Instant startedAt() {
+                    return NOW;
+                }
+
+                @Override
+                public void write(ProcessInputChunk input) {
+                    assertThat(new String(input.bytes(), StandardCharsets.UTF_8))
+                            .isEqualTo("request\n");
+                }
+
+                @Override
+                public java.util.Optional<io.haifa.agent.execution.api.ProcessOutputChunk> read(Duration timeout) {
+                    if (emitCount[0] == 0) {
+                        emitCount[0]++;
+                        return java.util.Optional.of(new io.haifa.agent.execution.api.ProcessOutputChunk(
+                                io.haifa.agent.execution.api.ExecutionOutputChannel.STDOUT,
+                                "https://user:remote-".getBytes(StandardCharsets.UTF_8),
+                                false,
+                                false));
+                    } else if (emitCount[0] == 1) {
+                        emitCount[0]++;
+                        java.util.concurrent.CompletableFuture.delayedExecutor(
+                                        20, java.util.concurrent.TimeUnit.MILLISECONDS)
+                                .execute(() -> exit.complete(new io.haifa.agent.execution.api.ProcessExit(
+                                        ExecutionStatus.EXITED, 0, true, NOW.plusSeconds(1))));
+                        return java.util.Optional.of(new io.haifa.agent.execution.api.ProcessOutputChunk(
+                                io.haifa.agent.execution.api.ExecutionOutputChannel.STDOUT,
+                                "secret@github.example/repo.git\n".getBytes(StandardCharsets.UTF_8),
+                                true,
+                                false));
+                    }
+                    return java.util.Optional.empty();
+                }
+
+                @Override
+                public java.util.concurrent.CompletableFuture<io.haifa.agent.execution.api.ProcessExit> exit() {
+                    return exit;
+                }
+
+                @Override
+                public int observedProcessCount() {
+                    return 1;
+                }
+
+                @Override
+                public boolean cancel() {
+                    return true;
+                }
+
+                @Override
+                public void close() {}
+            };
+        });
+    }
+
+    private static SandboxProvider managedProvider(
+            java.util.function.BiFunction<
+                            java.util.concurrent.CompletableFuture<io.haifa.agent.execution.api.ProcessExit>,
+                            Runnable,
+                            SandboxManagedProcess>
+                    factory) {
+        return new SandboxProvider() {
+            @Override
+            public String providerId() {
+                return "managed-fake";
+            }
+
+            @Override
+            public SandboxCapabilities capabilities() {
+                return new SandboxCapabilities(true);
+            }
+
+            @Override
+            public boolean supportsManagedProcess() {
+                return true;
+            }
+
+            @Override
+            public SandboxSession open(
+                    SandboxProfile profile, io.haifa.agent.project.workspace.WorkspaceId workspaceId) {
+                return new SandboxSession() {
+                    private final java.util.concurrent.CompletableFuture<io.haifa.agent.execution.api.ProcessExit>
+                            exit = new java.util.concurrent.CompletableFuture<>();
+
+                    @Override
+                    public SandboxSessionId id() {
+                        return new SandboxSessionId("managed-session");
+                    }
+
+                    @Override
+                    public SandboxProcessResult execute(SandboxExecution execution) {
+                        throw new UnsupportedOperationException();
+                    }
+
+                    @Override
+                    public SandboxManagedProcess openManagedProcess(SandboxExecution execution) {
+                        return factory.apply(exit, () -> {});
+                    }
+
+                    @Override
+                    public boolean cancel() {
+                        return true;
+                    }
+
+                    @Override
+                    public void close() {}
+                };
+            }
+        };
     }
 
     private record Fixture(
             WorkspaceId workspaceId,
+            Path root,
             InMemoryWorkspaceStore workspaces,
-            InMemoryWorkspaceBindingStore bindings,
+            HostWorkspaceLocationStore locations,
             WorkspaceManifestService manifests,
-            InMemoryFileChangeSetStore changeSets,
-            ObservedFileChangeService observed,
             InMemoryExecutionOutputStore outputs) {
         DefaultExecutionBroker broker(SandboxProvider provider, ExecutionPolicy policy) {
-            SandboxProfile profile = new SandboxProfile(
-                    new SandboxProfileRef("test", "1"), Set.of("fake"), Set.of("SECRET"), false, NetworkPolicy.ALLOW);
+            return broker(provider, policy, profile(provider));
+        }
+
+        SandboxProfile profile(SandboxProvider provider) {
+            return new SandboxProfile(
+                    new SandboxProfileRef("test", "1"),
+                    provider.providerId(),
+                    provider.configurationDigest(),
+                    Set.of("fake"),
+                    Set.of("SECRET"),
+                    false);
+        }
+
+        DefaultExecutionBroker broker(SandboxProvider provider, ExecutionPolicy policy, SandboxProfile profile) {
+            return broker(
+                    provider,
+                    policy,
+                    profile,
+                    ResolvedExecutionEnvironment.of(Map.of("SECRET", "secret-token"), Set.of("SECRET")));
+        }
+
+        DefaultExecutionBroker broker(
+                SandboxProvider provider, ExecutionPolicy policy, Map<String, String> environment) {
+            return broker(provider, policy, profile(provider), ResolvedExecutionEnvironment.of(environment));
+        }
+
+        DefaultExecutionBroker broker(
+                SandboxProvider provider, ExecutionPolicy policy, ResolvedExecutionEnvironment environment) {
+            return broker(provider, policy, profile(provider), environment);
+        }
+
+        DefaultExecutionBroker broker(
+                SandboxProvider provider,
+                ExecutionPolicy policy,
+                SandboxProfile profile,
+                ResolvedExecutionEnvironment environment) {
             return new DefaultExecutionBroker(
                     new InMemoryExecutionStore(),
                     outputs,
-                    ignored -> Map.of("SECRET", "secret-token"),
+                    ignored -> environment,
                     policy,
                     ignored -> profile,
                     ignored -> provider,
-                    workspaces,
-                    bindings,
-                    manifests,
-                    new ManifestDiffService(),
-                    observed);
+                    workspaces);
         }
 
         ExecutionRequest request(String id, String key, Set<String> capabilities, List<String> argv) {
+            return request(workspaceId, id, key, capabilities, argv);
+        }
+
+        ExecutionRequest request(
+                WorkspaceId workspace, String id, String key, Set<String> capabilities, List<String> argv) {
             return new ExecutionRequest(
                     new ExecutionId(id),
                     key,
-                    new TrustedExecutionContext("run-1", new PrincipalRef("actor", "user"), capabilities, "allow-1"),
-                    workspaceId,
-                    WorkspacePath.root(workspaceId),
+                    new TrustedExecutionContext(
+                            new io.haifa.agent.core.reference.TenantRef("tenant"),
+                            "run-1",
+                            new PrincipalRef("actor", "user"),
+                            capabilities,
+                            ExecutionOrigin.PRODUCT_USER_COMMAND,
+                            Optional.empty()),
+                    workspace,
+                    WorkspacePath.root(workspace),
                     new ExecutionCommand(ExecutionCommandMode.DIRECT, argv),
                     new ExecutionEnvironmentRef(List.of("lease-1")),
                     new ExecutionLimits(Duration.ofSeconds(5), 8192, 8192, 2),

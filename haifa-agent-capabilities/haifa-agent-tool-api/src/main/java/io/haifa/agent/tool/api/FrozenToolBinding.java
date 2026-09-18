@@ -19,5 +19,8 @@ public record FrozenToolBinding(
                 || !coordinate.providerId().equals(definition.providerId())) {
             throw new IllegalArgumentException("coordinate does not identify definition");
         }
+        if (!alias.value().equals(definition.name().value())) {
+            throw new IllegalArgumentException("tool alias must equal tool name");
+        }
     }
 }

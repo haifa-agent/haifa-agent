@@ -3,10 +3,7 @@ package io.haifa.agent.core;
 import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.agent.AgentDefinitionVersion;
 import io.haifa.agent.core.error.AgentError;
-import io.haifa.agent.core.error.AgentErrorCategory;
 import io.haifa.agent.core.error.AgentErrorCode;
-import io.haifa.agent.core.error.AgentErrorSeverity;
-import io.haifa.agent.core.error.Retryability;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.ProjectRef;
 import io.haifa.agent.core.reference.RunConfigurationSnapshotRef;
@@ -43,14 +40,6 @@ final class CoreTestFixtures {
     }
 
     static AgentError error(Instant at) {
-        return new AgentError(
-                new AgentErrorCode("MODEL_RATE_LIMITED"),
-                AgentErrorCategory.MODEL,
-                AgentErrorSeverity.ERROR,
-                Retryability.RETRYABLE_WITH_BACKOFF,
-                "The model endpoint rejected the request",
-                "trace:error-1",
-                Map.of("providerCode", "429"),
-                at);
+        return new AgentError(AgentErrorCode.MODEL_RATE_LIMITED, Map.of("providerCode", "429"), "trace:error-1", at);
     }
 }
