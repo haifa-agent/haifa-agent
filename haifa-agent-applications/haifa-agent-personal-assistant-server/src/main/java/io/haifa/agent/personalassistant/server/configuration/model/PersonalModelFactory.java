@@ -801,6 +801,12 @@ public final class PersonalModelFactory {
         private final String scriptLanguage;
         private final AtomicLong sequence = new AtomicLong();
 
+        /**
+         * Alias produced by the reviewed MCP namespace ({@code personal_mcp}) and Tool ({@code echo}) that the
+         * deterministic acceptance tests point at an external loopback MCP server.
+         */
+        private static final String MCP_TOOL_ALIAS = "personal_mcp_echo";
+
         private DeterministicAcceptanceModel(String modelId, PersonalShellRuntime shell) {
             this.modelId = modelId;
             this.operatingSystem = shell.operatingSystem();
@@ -1030,7 +1036,7 @@ public final class PersonalModelFactory {
                 alias = PersonalAssistantProfile.SKILL_LOAD_ALIAS;
                 arguments = Map.of("skill", PersonalAssistantProfile.BUNDLED_SKILL_ALIAS);
             } else if (prompt.contains("[mcp]")) {
-                alias = PersonalAssistantProfile.MCP_TOOL_ALIAS;
+                alias = MCP_TOOL_ALIAS;
                 arguments = Map.of("text", "offline MCP verification");
             } else if (prompt.contains("[tool]")) {
                 alias = PersonalAssistantProfile.PRODUCT_TOOL_ALIAS;
