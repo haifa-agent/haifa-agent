@@ -84,6 +84,9 @@ def ensure_jre(repo_root: Path, work_dir: Path, force_rebuild: bool = False) -> 
         "jdk.unsupported",
         "jdk.crypto.ec",
         "jdk.httpserver",
+        # ServiceLoader-provided RandomGenerator algorithms (L32X64MixRandom, ...) are not
+        # reachable from java.base in the module graph, so jlink must include jdk.random explicitly.
+        "jdk.random",
     ]
 
     cmd = [
@@ -100,6 +103,16 @@ def ensure_jre(repo_root: Path, work_dir: Path, force_rebuild: bool = False) -> 
     if result.returncode != 0:
         print(f"[ERROR] jlink execution failed:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}")
         sys.exit(result.returncode)
+
+    java_exe = jre_dir / "bin" / ("java.exe" if os.name == "nt" else "java")
+    listed = subprocess.run(
+        [str(java_exe), "--list-modules"], capture_output=True, text=True, encoding="utf-8", errors="replace"
+    )
+    available = {line.split("@", 1)[0].strip() for line in listed.stdout.splitlines() if line.strip()}
+    missing = [module for module in modules if module not in available]
+    if listed.returncode != 0 or missing:
+        print(f"[ERROR] Minimal JRE is missing required modules: {', '.join(missing) or 'unknown'}")
+        sys.exit(1)
 
     jre_size_mb = sum(f.stat().st_size for f in jre_dir.rglob("*") if f.is_file()) / (1024 * 1024)
     print(f"[INFO] Minimal JRE generated successfully! Size: {jre_size_mb:.2f} MB")
