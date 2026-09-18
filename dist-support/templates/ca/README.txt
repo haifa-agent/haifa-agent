@@ -8,7 +8,7 @@ Haifa Coding Agent - Windows x64 便携版
 【快速开始】
 
 1. (推荐) 配置全局环境变量：
-   右键以 PowerShell 运行 bin/install.ps1，脚本会自动将 bin/ 目录加入
+   双击运行 bin/install.bat，脚本会自动将 bin/ 目录加入
    当前用户的 PATH 环境变量。
    配置后在任意终端输入 `haifa` 即可使用。
 
