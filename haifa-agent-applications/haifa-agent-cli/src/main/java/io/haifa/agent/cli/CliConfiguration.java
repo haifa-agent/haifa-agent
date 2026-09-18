@@ -3,7 +3,6 @@ package io.haifa.agent.cli;
 import io.haifa.agent.application.project.persistence.ProjectPersistenceConfiguration;
 import io.haifa.agent.application.project.policy.CodingApprovalThreshold;
 import io.haifa.agent.execution.api.ExecutionLimits;
-import io.haifa.agent.model.anthropic.AnthropicMessagesDialects;
 import io.haifa.agent.model.api.ApiStyleId;
 import io.haifa.agent.model.api.CredentialRef;
 import io.haifa.agent.model.api.ModelCapability;

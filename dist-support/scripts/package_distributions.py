@@ -134,9 +134,7 @@ def validate_model_configuration(content: str) -> None:
     required_fragments = (
         "allowedBindings:",
         "deepseek-responses-flash",
-        "deepseek-anthropic-flash",
-        "bindingEndpointOverrides:",
-        "https://api.deepseek.com/anthropic",
+        "deepseek-chat-pro",
         "model-auth://deepseek/default",
     )
     missing = [fragment for fragment in required_fragments if fragment not in content]
