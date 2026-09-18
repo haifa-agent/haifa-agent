@@ -428,7 +428,7 @@ http://127.0.0.1:20001/actuator/health
 Maven 只构建后端 executable JAR，不需要 Node.js/npm，也不读取相邻 Web 目录。前端构建和部署
 命令见 `../haifa-agent-personal-assistant-web/README.md`。
 
-真实 DeepSeek、产品默认 `embedded-echo` MCP 和独立 Web 的可重复环境搭建方法见
+真实 DeepSeek、可选外部 MCP 和独立 Web 的可重复环境搭建方法见
 [`REAL_ENVIRONMENT.md`](REAL_ENVIRONMENT.md)。PowerShell 与 POSIX Shell 入口都要求 Python 3；两者只负责
 参数兼容和解释器发现，启动、健康检查、状态文件与安全停止逻辑统一由根目录
 [`scripts/real_environment.py`](../../scripts/real_environment.py) 实现。
