@@ -29,8 +29,7 @@ class PersonalAssistantMcpDegradationTest {
             "--server.port=0",
             "--spring.config.location=classpath:/application-deterministic-model.yml",
             "--haifa.personal.data-directory=" + data,
-            "--haifa.personal.continuation-key-base64="
-                    + Base64.getEncoder().encodeToString(new byte[32]),
+            "--haifa.personal.continuation-key-base64=" + Base64.getEncoder().encodeToString(new byte[32]),
             "--haifa.personal.mcp.mode=external",
             "--haifa.personal.mcp.endpoint=http://127.0.0.1:" + unavailablePort + "/mcp",
             "--haifa.personal.mcp.allowed-tools=echo",
