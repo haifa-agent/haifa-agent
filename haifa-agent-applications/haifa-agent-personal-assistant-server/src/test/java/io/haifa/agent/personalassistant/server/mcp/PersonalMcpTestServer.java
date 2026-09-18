@@ -46,8 +46,7 @@ public final class PersonalMcpTestServer implements AutoCloseable {
             candidate.start();
             return new PersonalMcpTestServer(candidate, executor);
         }
-        throw new IllegalStateException(
-                "no free Personal MCP test port between " + FIRST_PORT + " and " + LAST_PORT);
+        throw new IllegalStateException("no free Personal MCP test port between " + FIRST_PORT + " and " + LAST_PORT);
     }
 
     public URI endpoint() {
@@ -103,13 +102,7 @@ public final class PersonalMcpTestServer implements AutoCloseable {
                                                     "properties",
                                                     Map.of(
                                                             "text",
-                                                            Map.of(
-                                                                    "type",
-                                                                    "string",
-                                                                    "minLength",
-                                                                    1,
-                                                                    "maxLength",
-                                                                    512)),
+                                                            Map.of("type", "string", "minLength", 1, "maxLength", 512)),
                                                     "required",
                                                     List.of("text"),
                                                     "additionalProperties",
@@ -133,9 +126,8 @@ public final class PersonalMcpTestServer implements AutoCloseable {
             exchange.sendResponseHeaders(200, response.length);
             exchange.getResponseBody().write(response);
         } catch (IllegalArgumentException exception) {
-            byte[] response =
-                    "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"invalid request\"}}"
-                            .getBytes(StandardCharsets.UTF_8);
+            byte[] response = "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"invalid request\"}}"
+                    .getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "application/json");
             exchange.sendResponseHeaders(400, response.length);
             exchange.getResponseBody().write(response);

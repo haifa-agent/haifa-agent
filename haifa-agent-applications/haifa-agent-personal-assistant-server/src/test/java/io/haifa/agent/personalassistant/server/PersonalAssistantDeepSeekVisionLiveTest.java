@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
-import java.net.ServerSocket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
@@ -176,5 +175,4 @@ class PersonalAssistantVisionLiveTest {
             throw new ExceptionInInitializerError(exception);
         }
     }
-
 }
