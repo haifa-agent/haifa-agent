@@ -166,12 +166,25 @@ final class Tui4jCodingTerminalModel implements Model {
         int requestedScrollRows = pendingTranscriptScrollRows;
         pendingTranscriptScrollRows = 0;
         Duration elapsed = activityElapsed(state);
+        boolean secureInput = controller.secureInputRequested();
+        boolean isUpdate = controller.secureInputIsUpdate();
+        String secureInputHint = controller.secureInputHint();
         String rendered = view.render(
-                state, transcript, editor, followTranscript, newOutputPending, elapsed, requestedScrollRows);
+                state,
+                transcript,
+                editor,
+                followTranscript,
+                newOutputPending,
+                elapsed,
+                requestedScrollRows,
+                secureInput,
+                isUpdate,
+                secureInputHint);
         if (requestedScrollRows > 0 && transcript.atBottom()) {
             followTranscript = true;
             newOutputPending = false;
-            rendered = view.render(state, transcript, editor, true, false, elapsed, 0);
+            rendered = view.render(
+                    state, transcript, editor, true, false, elapsed, 0, secureInput, isUpdate, secureInputHint);
         }
         return rendered;
     }
@@ -438,6 +451,8 @@ final class Tui4jCodingTerminalModel implements Model {
             accept(TerminalInput.Kind.SELECT_PREVIOUS);
         } else if (key.type() == KeyType.KeyDown) {
             accept(TerminalInput.Kind.SELECT_NEXT);
+        } else if (key.type() == KeyType.KeyLeft) {
+            accept(TerminalInput.Kind.NAVIGATE_BACK);
         } else if (key.type() == KeyType.keyCR) {
             accept(TerminalInput.Kind.SUBMIT);
         } else if (key.type() == KeyType.keyESC) {
@@ -567,16 +582,23 @@ final class Tui4jCodingTerminalModel implements Model {
         TerminalUiState state = controller.state();
         boolean secureInput = controller.secureInputRequested();
         if (secureInput) {
-            String mask = "•".repeat(secretBuffer.codePointCount(0, secretBuffer.length()));
-            if (!editor.value().equals(mask) || editorCursor != mask.length()) {
-                synchronizeEditor(mask, mask.length());
+            boolean masked = controller.secureInputIsMasked();
+            String display = masked
+                    ? "•".repeat(secretBuffer.codePointCount(0, secretBuffer.length()))
+                    : secretBuffer.toString();
+            if (!editor.value().equals(display) || editorCursor != display.length()) {
+                synchronizeEditor(display, display.length());
             }
-            editor.setPrompt("API key ┃ ");
-            editor.setPlaceholder("Stored in system credential store");
+            editor.setHeight(1);
+            editor.setMaxHeight(1);
+            editor.setPrompt(controller.secureInputPrompt());
+            editor.setPlaceholder(controller.secureInputPlaceholder());
             secretPresentation = true;
         } else {
             if (secretPresentation) {
                 clearSecretBuffer();
+                editor.setHeight(3);
+                editor.setMaxHeight(3);
                 editor.setPrompt("┃ ");
                 editor.setPlaceholder("Type a message, /command, @file, !command, or !!command");
                 secretPresentation = false;

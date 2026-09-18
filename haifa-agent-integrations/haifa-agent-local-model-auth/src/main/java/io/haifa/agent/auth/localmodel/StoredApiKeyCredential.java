@@ -10,10 +10,17 @@ public final class StoredApiKeyCredential implements StoredModelCredential {
 
     private final LocalModelAuthReference reference;
     private final String apiKey;
+    private final java.util.Map<String, String> attributes;
 
     public StoredApiKeyCredential(LocalModelAuthReference reference, String apiKey) {
+        this(reference, apiKey, java.util.Map.of());
+    }
+
+    public StoredApiKeyCredential(
+            LocalModelAuthReference reference, String apiKey, java.util.Map<String, String> attributes) {
         this.reference = Objects.requireNonNull(reference, "reference must not be null");
         this.apiKey = secret(apiKey, "apiKey");
+        this.attributes = java.util.Map.copyOf(Objects.requireNonNull(attributes, "attributes must not be null"));
     }
 
     @Override
@@ -23,6 +30,23 @@ public final class StoredApiKeyCredential implements StoredModelCredential {
 
     public String apiKey() {
         return apiKey;
+    }
+
+    public java.util.Map<String, String> attributes() {
+        return attributes;
+    }
+
+    public Optional<String> attribute(String name) {
+        Objects.requireNonNull(name, "name must not be null");
+        return Optional.ofNullable(attributes.get(name));
+    }
+
+    public Optional<String> workspaceId() {
+        return attribute("workspace_id");
+    }
+
+    public Optional<String> region() {
+        return attribute("region");
     }
 
     @Override
