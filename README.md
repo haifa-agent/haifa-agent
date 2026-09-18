@@ -11,7 +11,7 @@ Tool、MCP、Skill、Memory、Workspace、Policy、Credential、持久化与恢�
 场景需要的那一部分。它帮助 Java 应用在确有失败恢复、审批或外部副作用等需求时，以可测试的运行语义
 处理这些问题，而不是把每一次模型请求预先做成完整的平台。
 
-> **项目状态**：当前版本为 `0.1.0-SNAPSHOT`，仍处于活跃开发阶段。本文只描述当前源码、POM 和测试中
+> **项目状态**：当前版本为 `0.1.0`，仍处于活跃开发阶段。本文只描述当前源码、POM 和测试中
 > 已落地的能力；未实现范围在文末单独列出。
 
 > **设计基线**：可恢复、可审计、可追踪、可扩展不是每个能力的默认需求。新增领域对象、持久化、状态机、
@@ -197,7 +197,7 @@ Tool Call 或未经校验的 JSON 文本不会被伪装成类型化结果。
         <dependency>
             <groupId>io.haifa</groupId>
             <artifactId>haifa-agent-bom</artifactId>
-            <version>0.1.0-SNAPSHOT</version>
+            <version>0.1.0</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>
@@ -220,7 +220,7 @@ Tool Call 或未经校验的 JSON 文本不会被伪装成类型化结果。
         <dependency>
             <groupId>io.haifa</groupId>
             <artifactId>haifa-agent-spring-bom</artifactId>
-            <version>0.1.0-SNAPSHOT</version>
+            <version>0.1.0</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>

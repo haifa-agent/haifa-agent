@@ -261,11 +261,11 @@ Mission Store 处于 quiescent 状态；恢复目标必须是全新目录。`pro
 `skill-binding` 使用 Mission 快照中冻结的完整 Deep Research Skill binding：
 
 ```powershell
-java -jar .\target\haifa-agent-personal-assistant-server-0.1.0-SNAPSHOT.jar `
+java -jar .\target\haifa-agent-personal-assistant-server-0.1.0.jar `
   mission-maintenance backup <data-dir> <backup-dir> <product-digest> "<skill-binding>"
-java -jar .\target\haifa-agent-personal-assistant-server-0.1.0-SNAPSHOT.jar `
+java -jar .\target\haifa-agent-personal-assistant-server-0.1.0.jar `
   mission-maintenance verify <backup-dir> - <product-digest> "<skill-binding>"
-java -jar .\target\haifa-agent-personal-assistant-server-0.1.0-SNAPSHOT.jar `
+java -jar .\target\haifa-agent-personal-assistant-server-0.1.0.jar `
   mission-maintenance restore <backup-dir> <fresh-data-dir> <product-digest> "<skill-binding>"
 ```
 
@@ -415,7 +415,7 @@ $env:HAIFA_PERSONAL_SKILL_ROOT='D:\agents\hermes-agent\optional-skills\finance'
 
 ```powershell
 $env:HAIFA_PERSONAL_CONTINUATION_KEY='<base64-aes-256-key>'
-java -jar .\target\haifa-agent-personal-assistant-server-0.1.0-SNAPSHOT.jar
+java -jar .\target\haifa-agent-personal-assistant-server-0.1.0.jar
 ```
 
 OpenAPI 和健康检查：

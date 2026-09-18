@@ -33,7 +33,7 @@ Windows PowerShell：
 ```powershell
 .\mvnw.cmd -pl :haifa-agent-runtime-demo -am package
 
-$jar = ".\haifa-agent-applications\haifa-agent-runtime-demo\target\haifa-agent-runtime-demo-0.1.0-SNAPSHOT-deepseek-runtime.jar"
+$jar = ".\haifa-agent-applications\haifa-agent-runtime-demo\target\haifa-agent-runtime-demo-0.1.0-deepseek-runtime.jar"
 $env:DEEPSEEK_API_KEY = "<secret>"
 java -jar $jar
 
