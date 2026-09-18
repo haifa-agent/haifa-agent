@@ -1321,43 +1321,51 @@ public final class CodingTerminalController implements AutoCloseable {
             apply(new TerminalUiAction.RecoverableFailure("AUTH_METHOD_UNSUPPORTED"));
             return;
         }
-        boolean hasExistingKey = authentication.connections().stream()
-                .anyMatch(c -> c.providerId().equalsIgnoreCase(providerId)
-                        && c.method() == CodingAuthenticationView.Method.API_KEY);
+        boolean bailian = "aliyun-bailian".equalsIgnoreCase(providerId);
+        String workspaceId = bailian && parts.length > 1 ? parts[1].strip() : null;
+        String region = bailian && parts.length > 2 ? parts[2].strip() : null;
+        if (workspaceId != null && !DNS_LABEL_PATTERN.matcher(workspaceId).matches()) {
+            apply(new TerminalUiAction.RecoverableFailure("AUTH_WORKSPACE_ID_INVALID"));
+            return;
+        }
+        if (region != null && !DNS_LABEL_PATTERN.matcher(region).matches()) {
+            apply(new TerminalUiAction.RecoverableFailure("AUTH_REGION_INVALID"));
+            return;
+        }
+        // Credential-store reads may block, so they run off the UI thread; secure-input state is
+        // only entered once the lookup succeeds, leaving nothing half-initialised on failure.
+        submitEffect(
+                () -> {
+                    boolean hasExistingKey = authentication.connections().stream()
+                            .anyMatch(c -> c.providerId().equalsIgnoreCase(providerId)
+                                    && c.method() == CodingAuthenticationView.Method.API_KEY);
+                    Map<String, String> attributes = bailian
+                            ? authentication.providerAttributes(providerId).orElse(Map.of())
+                            : Map.of();
+                    return () -> enterApiKeyInput(providerId, hasExistingKey, attributes, workspaceId, region);
+                },
+                code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+    }
+
+    private void enterApiKeyInput(
+            String providerId,
+            boolean hasExistingKey,
+            Map<String, String> attributes,
+            String workspaceId,
+            String region) {
+        resetBailianState();
         pendingApiKeyProvider = providerId;
         pendingApiKeyIsUpdate = hasExistingKey;
 
         if ("aliyun-bailian".equalsIgnoreCase(providerId)) {
-            var attrs = authentication.providerAttributes(providerId).orElse(Map.of());
-            existingBailianWorkspaceId = attrs.get("workspace_id");
-            existingBailianRegion = attrs.get("region");
-            if (parts.length > 1) {
-                String ws = parts[1].strip();
-                if (!DNS_LABEL_PATTERN.matcher(ws).matches()) {
-                    resetBailianState();
-                    pendingApiKeyProvider = null;
-                    pendingApiKeyIsUpdate = false;
-                    apply(new TerminalUiAction.RecoverableFailure("AUTH_WORKSPACE_ID_INVALID"));
-                    return;
-                }
-                pendingBailianWorkspaceId = ws;
-                if (parts.length > 2) {
-                    String reg = parts[2].strip();
-                    if (!DNS_LABEL_PATTERN.matcher(reg).matches()) {
-                        resetBailianState();
-                        pendingApiKeyProvider = null;
-                        pendingApiKeyIsUpdate = false;
-                        apply(new TerminalUiAction.RecoverableFailure("AUTH_REGION_INVALID"));
-                        return;
-                    }
-                    pendingBailianRegion = reg;
-                } else {
-                    pendingBailianRegion = existingBailianRegion != null ? existingBailianRegion : "cn-beijing";
-                }
-                bailianStep = BailianConfigStep.API_KEY;
-            } else {
-                bailianStep = BailianConfigStep.API_KEY;
+            existingBailianWorkspaceId = attributes.get("workspace_id");
+            existingBailianRegion = attributes.get("region");
+            if (workspaceId != null) {
+                pendingBailianWorkspaceId = workspaceId;
+                pendingBailianRegion =
+                        region != null ? region : existingBailianRegion != null ? existingBailianRegion : "cn-beijing";
             }
+            bailianStep = BailianConfigStep.API_KEY;
             if (hasExistingKey) {
                 apply(
                         new TerminalUiAction.StatusChanged(
@@ -1370,7 +1378,6 @@ public final class CodingTerminalController implements AutoCloseable {
             return;
         }
 
-        resetBailianState();
         if (hasExistingKey) {
             apply(new TerminalUiAction.StatusChanged("Update API key for " + providerId
                     + " (existing key found · will overwrite in system credential store)"));
