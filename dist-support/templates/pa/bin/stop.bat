@@ -16,7 +16,7 @@ if defined FOUND_PID (
     taskkill /F /PID !FOUND_PID! >nul 2>&1
     echo [OK] Haifa Personal Assistant service stopped.
 ) else (
-    echo [INFO] Personal Assistant is not currently running (port 20001 is idle).
+    echo [INFO] Personal Assistant is not currently running - port 20001 is idle.
 )
 
 endlocal
