@@ -30,6 +30,7 @@ import io.haifa.agent.tool.core.ToolDefinitionCanonicalizer;
 import java.net.URI;
 import java.time.Clock;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -37,31 +38,64 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-/** Explicit loopback MCP discovery and provider lifecycle for a reviewed Tool allowlist. */
+/**
+ * Explicit loopback MCP discovery and provider lifecycle for a reviewed Tool allowlist.
+ *
+ * <p>A configured server either becomes available, or degrades deterministically: a REQUIRED server fails closed,
+ * while an OPTIONAL server only contributes a warning and no MCP Tools.
+ */
 public final class PersonalMcpPlatform implements AutoCloseable {
-    public static final String REMOTE_TOOL = "echo";
-    public static final String LOCAL_ALIAS = "personal_mcp_echo";
+    /** Unavailable server state; the capability contributes no Tool and no connection. */
+    public static final String STATE_UNAVAILABLE = "unavailable";
+
+    /** Disabled server state; MCP is not configured at all. */
+    public static final String STATE_DISABLED = "disabled";
+
+    private static final String STATE_AVAILABLE = "available";
+    private static final System.Logger LOGGER = System.getLogger(PersonalMcpPlatform.class.getName());
+
     private final McpConnectionManager connections;
     private final McpServerDefinition server;
     private final McpServerSnapshot serverSnapshot;
     private final List<McpToolImportCandidate> candidates;
     private final List<McpToolCatalogContribution> contributions;
+    private final String state;
+    private final String degradationReason;
 
     private PersonalMcpPlatform(
             McpConnectionManager connections,
             McpServerDefinition server,
             McpServerSnapshot serverSnapshot,
             List<McpToolImportCandidate> candidates,
-            List<McpToolCatalogContribution> contributions) {
+            List<McpToolCatalogContribution> contributions,
+            String state,
+            String degradationReason) {
         this.connections = connections;
         this.server = server;
         this.serverSnapshot = serverSnapshot;
         this.candidates = List.copyOf(candidates);
         this.contributions = List.copyOf(contributions);
+        this.state = state;
+        this.degradationReason = degradationReason;
     }
 
+    /** No MCP server is configured; nothing is connected and nothing is reported. */
+    public static PersonalMcpPlatform disabled() {
+        return new PersonalMcpPlatform(null, null, null, List.of(), List.of(), STATE_DISABLED, null);
+    }
+
+    /**
+     * Connects to the configured loopback MCP server, or degrades without failing product startup.
+     *
+     * <p>A {@code null} configuration disables MCP. When the server or one of its configured Tools cannot be
+     * imported, a REQUIRED server fails closed, while an OPTIONAL server logs one warning that carries no server
+     * payload and contributes no MCP Tools.
+     */
     public static PersonalMcpPlatform connect(
             PersonalMcpConfiguration configuration, TenantRef tenant, PrincipalRef principal, Clock clock) {
+        if (configuration == null) {
+            return disabled();
+        }
         requireLoopback(configuration.endpoint());
         Set<String> allowedTools = configuration.allowedTools();
         var policy = new McpToolImportPolicy(
@@ -113,14 +147,33 @@ public final class PersonalMcpPlatform implements AutoCloseable {
             Map<String, McpToolImportCandidate> reviewed = candidates.stream()
                     .filter(candidate -> allowedTools.contains(candidate.remoteName()))
                     .collect(Collectors.toMap(McpToolImportCandidate::remoteName, Function.identity()));
+            List<String> skipped = new ArrayList<>();
             for (String tool : allowedTools) {
                 McpToolImportCandidate candidate = reviewed.get(tool);
                 if (candidate == null) {
-                    throw new IllegalStateException("required MCP Tool was not discovered: " + tool);
+                    if (configuration.required()) {
+                        throw new IllegalStateException("required MCP Tool was not discovered: " + tool);
+                    }
+                    skipped.add(tool + " was not discovered");
+                    continue;
                 }
                 if (!candidate.enabled()) {
-                    throw new IllegalStateException("required MCP Tool failed local review: " + tool);
+                    if (configuration.required()) {
+                        throw new IllegalStateException("required MCP Tool failed local review: " + tool);
+                    }
+                    skipped.add(tool + " failed local review");
+                    reviewed.remove(tool);
                 }
+            }
+            if (!skipped.isEmpty()) {
+                LOGGER.log(
+                        System.Logger.Level.WARNING,
+                        "Personal MCP server {0} does not expose every configured Tool; ignoring {1}",
+                        configuration.serverId(),
+                        String.join("; ", skipped));
+            }
+            if (reviewed.isEmpty()) {
+                throw new IllegalStateException("no reviewed MCP Tool is available");
             }
             var provider =
                     new McpToolProvider(server.serverId(), bindings, connections, new McpContentMapper(redactor));
@@ -134,17 +187,51 @@ public final class PersonalMcpPlatform implements AutoCloseable {
             McpServerSnapshot serverSnapshot = connections
                     .acquire(server.serverId(), tenant, principal, Map.of())
                     .serverSnapshot();
-            return new PersonalMcpPlatform(connections, server, serverSnapshot, importedCandidates, contributions);
+            return new PersonalMcpPlatform(
+                    connections, server, serverSnapshot, importedCandidates, contributions, STATE_AVAILABLE, null);
         } catch (RuntimeException exception) {
             connections.close();
-            throw exception;
+            if (configuration.required()) {
+                throw exception;
+            }
+            LOGGER.log(
+                    System.Logger.Level.WARNING,
+                    "Personal MCP server {0} at {1} is unavailable; starting without MCP Tools ({2})",
+                    configuration.serverId(),
+                    configuration.endpoint(),
+                    exception.getClass().getSimpleName());
+            return new PersonalMcpPlatform(
+                    null,
+                    null,
+                    null,
+                    List.of(),
+                    List.of(),
+                    STATE_UNAVAILABLE,
+                    exception.getClass().getSimpleName());
         }
     }
 
+    /** Whether the configured server was connected and reviewed. */
+    public boolean available() {
+        return STATE_AVAILABLE.equals(state);
+    }
+
+    /** {@code available}, {@code unavailable}, or {@code disabled}. */
+    public String state() {
+        return state;
+    }
+
+    /** Safe degradation cause without any server payload, or {@code null} when the server is usable. */
+    public String degradationReason() {
+        return degradationReason;
+    }
+
+    /** Connected server definition; {@code null} unless {@link #available()}. */
     public McpServerDefinition server() {
         return server;
     }
 
+    /** Connected server snapshot; {@code null} unless {@link #available()}. */
     public McpServerSnapshot serverSnapshot() {
         return serverSnapshot;
     }
@@ -165,7 +252,9 @@ public final class PersonalMcpPlatform implements AutoCloseable {
 
     @Override
     public void close() {
-        connections.close();
+        if (connections != null) {
+            connections.close();
+        }
     }
 
     private static void requireLoopback(URI endpoint) {
