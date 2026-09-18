@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | Personal Assistant Web | `http://127.0.0.1:20000/` | Node.js `serve` 直接提供 `dist/` |
 | Personal Assistant Server | `http://127.0.0.1:20001/` | Spring Boot executable JAR，或 IDE 当前编译 classpath |
-| Utility MCP Server | `http://127.0.0.1:20002/mcp` | Maven Spring Boot Plugin |
+| Personal Server 内置 MCP | `http://127.0.0.1:20002/mcp` | Server 进程内的 `embedded-echo`（脚本不再启动外部 MCP） |
 
 Web 在浏览器中直接请求 `http://127.0.0.1:20001/api/v1`。Server 已限定允许来自
 loopback `20000` 的 Origin，方案中没有反向代理。
@@ -14,40 +14,27 @@ loopback `20000` 的 Origin，方案中没有反向代理。
 ## 1. 准备条件
 
 - Java 21；
-- Maven 可通过 `mvn.cmd` 使用；
-- Node.js 22.x、npm 10.x；
+- Node.js 22.x、npm 10.x；后端构建使用仓库自带的 Maven Wrapper，不要求 PATH 上有 `mvn`；
 - Python 3；PowerShell 与 POSIX Shell 入口共用仓库根目录 `scripts/real_environment.py` 中的生命周期实现；
 - 主仓：`D:\workspace\haifa-agent`；
-- Utility MCP 仓库：
-  `D:\workspace\haifa\haifa-ai\haifa-ai-utility-mcp-server`；
-- DeepSeek Key 文件：`D:\workspace\secrets\ss-deepseek.env`，内容为 `DEEPSEEK_API_KEY=...`；
-- 可选百炼 Key 文件：`D:\workspace\secrets\ss-bailian.env`，使用 env 格式，支持
-  `DASHSCOPE_API_KEY`、`ALIYUN_BAILIAN_WORKSPACE_ID` 和可选 `ALIYUN_BAILIAN_REGION`；region 缺省为
-  `cn-beijing`；
-- 可选 Kimi Key 文件：`D:\workspace\secrets\ss-kimi.env`，内容为 `KIMI_API_KEY=...`；
-- 可选智谱 Key 文件：`D:\workspace\secrets\ss-bigmodel.env`，内容为 `BIGMODEL_API_KEY=...`；
-- 可选硅基流动 Key 文件：`D:\workspace\secrets\ss-siliconflow.env`，内容为
-  `SILICONFLOW_API_KEY=...`；
-- Tavily Key 文件：`D:\workspace\secrets\ss-tavily.env`，内容为 `TAVILY_API_KEY=...`；默认 Search 与
-  Fetch 均读取此文件；
-- 可选 Aliyun IQS Key 文件：`D:\workspace\secrets\ss-aliyun-iqs.env`，内容为
-  `ALIYUN_IQS_API_KEY=...`，仅在 Search 或 Fetch 选择 Aliyun 时读取；
-- 可选 Browserless Token 文件：`D:\workspace\secrets\ss-browserless.env`，内容为
-  `BROWSERLESS_TOKEN=...`，仅在 Fetch 选择 Browserless 时读取；
-- Personal Skill 根目录：`D:\agents\hermes-agent\optional-skills\finance`，其直接子目录分别包含
-  `SKILL.md`。
+- `DEEPSEEK_API_KEY`：必需，只从当前进程环境读取（Windows 也回退到用户环境变量）；
+- `TAVILY_API_KEY`：必需，默认 Search 与 Fetch Provider 都是 Tavily；
+- 可选 `DASHSCOPE_API_KEY` + `ALIYUN_BAILIAN_WORKSPACE_ID`（可选 `ALIYUN_BAILIAN_REGION`，缺省
+  `cn-beijing`）；
+- 可选 `KIMI_API_KEY`、`BIGMODEL_API_KEY`、`SILICONFLOW_API_KEY`；
+- 可选 `ALIYUN_IQS_API_KEY`、`BROWSERLESS_TOKEN`：只在 Search/Fetch 显式选择对应 Provider 时必需。
 
-这些 env 文件不能提交到 Git，也不要把内容复制到命令历史、日志或文档。文件仅允许包含对应 Provider
-明确列出的变量；启动脚本遇到未知变量、重复变量、空值或旧的裸 Key 格式时会拒绝启动。
+凭据只来自环境变量，脚本不再读取任何 Key 文件。不要把凭据写进命令行参数、命令历史、日志或文档；
+脚本从不打印凭据值，只把它们注入子进程环境。
 
 `OPENAI_BASE_URL`、`OPENAI_API_KEY`、`OPENAI_MODEL_ID` 仅用于可选的本机 OpenAI Responses
 Provider。三项都配置时启用该 Provider；全部缺失或仅配置一部分时继续使用 DeepSeek-only 环境，
 其中不完整配置会输出不含配置值的警告。
 
-百炼只有 API Key、Workspace ID 和 region 全部有效时才启用。可分别用
-`DASHSCOPE_API_KEY`、`ALIYUN_BAILIAN_WORKSPACE_ID`、`ALIYUN_BAILIAN_REGION` 覆盖 Key 文件；后端配置
-只保存 `env://DASHSCOPE_API_KEY`。Kimi、智谱、硅基流动可分别用 `KIMI_API_KEY`、`BIGMODEL_API_KEY`、
-`SILICONFLOW_API_KEY` 覆盖 Key 文件，
+百炼只有 API Key、Workspace ID 和 region 全部有效时才启用；三者分别来自
+`DASHSCOPE_API_KEY`、`ALIYUN_BAILIAN_WORKSPACE_ID`、`ALIYUN_BAILIAN_REGION`，后端配置
+只保存 `env://DASHSCOPE_API_KEY`。Kimi、智谱、硅基流动分别来自 `KIMI_API_KEY`、`BIGMODEL_API_KEY`、
+`SILICONFLOW_API_KEY`，
 配置只保存对应 `env://...` 引用。可选 Provider 只扩展目录，未显式指定 `--default-model-id` 时继续使用
 `deepseek-chat-flash`。启动本身不会调用任何模型 API；百炼 Chat/Responses、Kimi Chat、智谱 Chat/
 Anthropic 和硅基流动 Chat 的真实调用必须另行明确发起。硅基流动只发布已验证的
@@ -87,8 +74,8 @@ io.haifa.agent.personalassistant.server.development.PersonalAssistantRealEnviron
 ```
 
 该 Main 会把 IDE 已编译的模块 classpath 规范化为绝对路径，并以
-`--backend-launch-mode classpath` 调用同一个 `scripts/real_environment.py`。Provider 清单、Key 文件、
-Utility MCP、Web、端口、健康检查、PID 状态和停止流程仍由 Python 实现；Java 入口不维护第二份装配。
+`--backend-launch-mode classpath` 调用同一个 `scripts/real_environment.py`。Provider 清单、环境变量
+凭据、Web、端口、健康检查、PID 状态和停止流程仍由 Python 实现；Java 入口不维护第二份装配。
 因此修改 Java 源码后只需让 IDE 增量编译，再停止旧环境并重新运行该 Main，不会执行 Maven `package`、
 Spring Boot `repackage` 或 JAR staging。
 
@@ -104,26 +91,29 @@ Main 参数会原样传给 Python，例如在 IDE Program arguments 中填写：
 
 脚本会依次完成：
 
-1. 校验本机工具、DeepSeek、所选 Web Provider Key、finance Skill 根目录和 Utility MCP 目录；
-2. 首次运行时生成随机 32 字节 Continuation Key，并持久化到
-   `D:\workspace\secrets\ss-haifa-personal-continuation.env`，变量名为
+1. 校验本机工具（`java`、`node`、`npm`、仓库 Maven Wrapper）和必需环境变量
+   （`DEEPSEEK_API_KEY`、所选 Web Provider 的 Key）；
+2. 解析 Continuation Key：优先 `HAIFA_PERSONAL_CONTINUATION_KEY`，其次 `--continuation-key-file`，
+   都没有时才生成随机 32 字节 Key 并持久化到
+   `local-tmp/personal-assistant-real/continuation-key.env`，变量名为
    `HAIFA_PERSONAL_CONTINUATION_KEY`；
 3. JAR 模式只在后端 JAR 不存在时构建后端；IDE classpath 模式直接使用当前编译结果；
 4. 按内容摘要把后端 JAR 复制到 `local-tmp/personal-assistant-real/backend/`，从运行副本启动，避免
    Java 进程锁定 Maven `target/` 下的构建产物；复制前校验 Spring Boot Manifest 和 `BOOT-INF`，
    遇到未完成 `repackage` 的普通 JAR 时自动重新执行 `package`，二次校验失败则拒绝启动；
 5. 只在 `node_modules` 不存在时执行 `npm ci`，只在 `dist` 不存在时构建前端；
-6. 启动或复用健康的 20002 Utility MCP；
-7. 以真实 `deepseek-v4-flash`、Aliyun Search、Browserless Fetch、finance Skills 和外部 MCP 模式启动
-   20001 后端；
-8. 用 Node.js `serve` 启动 20000 前端；
-9. 等待三个 HTTP 健康检查成功，并输出 PID、各组件工作目录、数据/日志目录、访问
+6. 以真实模型和所选 Web Provider 启动 20001 后端；脚本不再注入 MCP 覆盖项，也不注入本地 Skill 根
+   目录，因此后端使用产品默认的 `embedded-echo` MCP 且不加载本地 Skill；
+7. 用 Node.js `serve` 启动 20000 前端；
+8. 等待两个 HTTP 健康检查成功，并输出 PID、各组件工作目录、数据/日志目录、访问
    地址和状态文件位置。
 
 因此日常再次启动不会重复执行 npm 构建；运行 PA 时也可以执行 Maven `clean`、`package` 和全仓验证。
 脚本不会杀掉端口上的未知进程；如果端口被非目标服务占用，它会直接失败并保留现场。
 升级脚本前已经直接从 `target/` 启动的后端需要完成一次“`--stop` 后重新启动”，才会迁移到运行副本；
 停止流程继续识别旧命令行路径，不需要使用 `--force`。
+升级脚本前由脚本启动的 20002 Utility MCP 不再由脚本管理：必须先用旧脚本停止它，否则它会占用
+20002 并让后端进程内的 `embedded-echo` MCP 绑定失败。
 
 如果 PowerShell 的脚本执行策略阻止本次运行，可仅对当前进程临时放开：
 
@@ -140,7 +130,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 ```
 
 停止前，脚本会同时核对 `last-start.json` 记录的 PID、端口当前监听 PID、进程名和
-命令行身份标识（组件工作路径或 MCP 主类）。任一项不一致都会拒绝停止，不会把
+命令行身份标识（组件工作路径或启动类）。任一项不一致都会拒绝停止，不会把
 同端口上的其他程序当作本环境。
 需要只查看将要停止的进程时：
 
@@ -148,7 +138,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 & .\scripts\start-real-environment.ps1 --stop --dry-run
 ```
 
-状态文件缺失、记录 PID 已过期或进程身份校验无法通过时，可按三个固定端口的当前监听
+状态文件缺失、记录 PID 已过期或进程身份校验无法通过时，可按两个固定端口的当前监听
 进程显式强制停止：
 
 ```powershell
@@ -156,36 +146,31 @@ Set-ExecutionPolicy -Scope Process Bypass
 ```
 
 `--force` 只允许与 `--stop` 一起使用。它会把状态或身份不一致降级为警告，并强制结束
-当前监听 `20000`、`20001`、`20002` 的进程，因此可能终止占用这些端口的非目标程序。
+当前监听 `20000`、`20001` 的进程，因此可能终止占用这些端口的非目标程序。
 需要先核对强制停止目标时，可使用 `--stop --force --dry-run`。
 
-确认 20000、20001、20002 均已释放后，再执行：
+确认 20000、20001 均已释放后，再执行：
 
 ```powershell
 & .\scripts\start-real-environment.ps1 --rebuild
 ```
 
 `--rebuild` 会重新构建后端和前端。后端已使用独立运行副本，不再锁定 Maven 构建产物；但为了保证
-三个服务来自同一次受控重建、避免旧页面产物混用，只要三个端口中任意一个仍被占用，重建仍会拒绝执行。
+两个服务来自同一次受控重建、避免旧页面产物混用，只要这两个端口中任意一个仍被占用，重建仍会拒绝执行。
 
-需要使用非默认 Key 或 MCP 路径时：
+凭据只能通过环境变量提供，没有对应的命令行参数。需要显式指定 Web Provider 或持久化 Continuation
+Key 位置时：
 
 ```powershell
 & .\scripts\start-real-environment.ps1 `
-  --deepseek-key-file 'D:\secure\deepseek.txt' `
-  --bailian-key-file 'D:\secure\bailian.txt' `
   --bailian-region cn-beijing `
-  --kimi-key-file 'D:\secure\kimi.txt' `
-  --bigmodel-key-file 'D:\secure\bigmodel.txt' `
-  --siliconflow-key-file 'D:\secure\siliconflow.txt' `
-  --aliyun-iqs-key-file 'D:\secure\aliyun-iqs.txt' `
-  --continuation-key-file 'D:\secure\personal-continuation.txt' `
-  --personal-skill-root 'D:\agents\hermes-agent\optional-skills\finance' `
-  --utility-mcp-directory 'D:\src\haifa-ai-utility-mcp-server'
+  --web-search-provider aliyun `
+  --web-fetch-provider browserless `
+  --continuation-key-file 'D:\secure\personal-continuation.env'
 ```
 
-Continuation Key 文件必须长期保留。删除或更换它会使旧的加密 continuation token
-无法恢复；脚本从不打印 Key 内容。
+Continuation Key 文件必须长期保留。删除、更换它或改用另一个 `HAIFA_PERSONAL_CONTINUATION_KEY`
+都会使旧的加密 continuation token 无法恢复；脚本从不打印 Key 内容。
 
 ## 4. 当前真实能力配置
 
@@ -213,23 +198,13 @@ HAIFA_PERSONAL_WEB_FETCH_ENABLED=true
 HAIFA_PERSONAL_WEB_FETCH_PROVIDER=tavily
 HAIFA_PERSONAL_WEB_FETCH_ENDPOINT=https://api.tavily.com/extract
 HAIFA_PERSONAL_WEB_FETCH_CREDENTIAL=env://TAVILY_API_KEY
-HAIFA_PERSONAL_SKILL_ROOT=D:\agents\hermes-agent\optional-skills\finance
-HAIFA_PERSONAL_MCP_MODE=external
-HAIFA_PERSONAL_MCP_ENDPOINT=http://127.0.0.1:20002/mcp
-HAIFA_PERSONAL_MCP_ALIAS_NAMESPACE=utility
 HAIFA_PERSONAL_EXECUTION_TRUSTED_HOST_ENABLED=true
 HAIFA_PERSONAL_PYTHON_PATH='D:\Program Files\Python311\python.exe'
 ```
 
-允许的 Utility MCP 工具共 19 个：
-
-```text
-location_search, weather_current, weather_forecast, air_quality,
-time_now, time_convert, currency_rate, currency_convert,
-holiday_list, holiday_next, workday_is_workday, workday_add,
-calculate, unit_convert, wikipedia_search, wikipedia_summary,
-microsoft_docs_search, microsoft_docs_fetch, microsoft_code_sample_search
-```
+脚本不再设置 `HAIFA_PERSONAL_MCP_*` 覆盖项，也不再设置 `HAIFA_PERSONAL_SKILL_ROOT`：MCP 由产品
+默认配置决定（`mcp.mode=embedded-echo`，只暴露本地 `echo` Tool，端口 `20002`），本地 Skill 根目录保持
+为空。需要外部 MCP 或本地 Skill 时，按产品 README 手工配置后端环境变量，脚本不代为管理。
 
 `HAIFA_PERSONAL_EXECUTION_TRUSTED_HOST_ENABLED=true` 只确认当前本机部署允许启动受控
 宿主进程；具体命令或脚本调用仍需经过 Runtime 的 exact approval。
@@ -239,7 +214,6 @@ microsoft_docs_search, microsoft_docs_fetch, microsoft_code_sample_search
 启动完成后检查：
 
 ```powershell
-Invoke-WebRequest -UseBasicParsing http://127.0.0.1:20002/actuator/health
 Invoke-WebRequest -UseBasicParsing http://127.0.0.1:20001/actuator/health
 Invoke-WebRequest -UseBasicParsing http://127.0.0.1:20000/
 ```
@@ -268,52 +242,38 @@ D:\workspace\haifa-agent\local-tmp\personal-assistant-real\last-stop.json
 
 ```powershell
 Get-NetTCPConnection -State Listen |
-  Where-Object LocalPort -in 20000, 20001, 20002
+  Where-Object LocalPort -in 20000, 20001
 ```
 
-## 6. Web Tool 与 finance Skills
+## 6. Web Tool
 
-脚本默认只读取 `D:\workspace\secrets\ss-tavily.env`，向后端子进程注入 `TAVILY_API_KEY`，默认组合为
-`web.search=tavily`、`web.fetch=tavily`。可通过 `--web-search-provider aliyun`，或通过
-`--web-fetch-provider aliyun|browserless` 单独覆盖；脚本只读取所选 Provider 的 Key 文件，选择
-Aliyun Fetch 时继续复用 IQS Key。
+脚本从当前进程环境读取 `TAVILY_API_KEY` 并注入后端子进程，默认组合为 `web.search=tavily`、
+`web.fetch=tavily`。可通过 `--web-search-provider aliyun`，或通过
+`--web-fetch-provider aliyun|browserless` 单独覆盖；选择 Aliyun 时需要 `ALIYUN_IQS_API_KEY`，选择
+Browserless 时需要 `BROWSERLESS_TOKEN`。缺少所选 Provider 的必需变量时脚本拒绝启动。
 两个 Tool 分别精确绑定公共模块中的 `web.search` 与 `web.fetch`，并继续经过 Runtime Tool Pipeline、
 Policy、Approval 和 Credential lease；没有隐式 Provider fallback，也不会把一个 Provider 的秘密交给另一个。
-
-`D:\agents\hermes-agent\optional-skills\finance` 是 Skill Source 根目录，不是一个 Skill 包。启动时会
-发现它下面直接包含 `SKILL.md` 的子目录（当前包括 `3-statement-model`、`comps-analysis`、
-`dcf-model`、`excel-author`、`lbo-model`、`merger-model`、`pptx-author` 和 `stocks`）。
-其中带脚本资源的 `dcf-model`、`excel-author` 和 `stocks` 按当前 Skill 安全基线标记为
-`REVIEW_REQUIRED`，不会进入模型可用 Catalog；其余五个 finance Skill 会直接启用。配置可信目录
-只表示允许发现和读取包，不等同于批准包内脚本。
 
 ## 7. macOS 一键启动
 
 macOS 使用同目录的 `start-real-environment.sh`，功能与 PowerShell 脚本对齐：
 
 - 构建或复用 Personal Server JAR 和 Personal Web `dist`，并从仓库 `target/` 之外的 JAR 副本启动；
-- 启动或复用 Utility MCP、Personal Server 和 Personal Web；
-- 固定使用 `127.0.0.1:20002/20001/20000` 并等待 HTTP 健康检查；
-- 密钥只注入后端子进程，不写入状态文件或日志；
+- 启动或复用 Personal Server 和 Personal Web；
+- 固定使用 `127.0.0.1:20001/20000` 并等待 HTTP 健康检查；
+- 凭据只从环境变量读取并注入后端子进程，不写入状态文件或日志；
 - 未知进程占用端口时直接失败；
 - 停止前核对 `last-start.json`、监听 PID、进程名和命令行身份标识。
 
-要求 macOS 已安装 Java 21、Maven、Node.js 22.x、npm 10.x，以及系统命令
-`curl`、`lsof`、`openssl`。脚本按已选择的 Provider 从以下默认路径读取所需文件：
+要求 macOS 已安装 Java 21、Node.js 22.x、npm 10.x，以及系统命令 `lsof`（用于端口监听 PID 发现）。
+凭据全部来自进程环境，没有默认 Key 文件路径。Continuation Key 的默认持久化位置是：
 
 ```text
-~/workspace/secrets/ss-deepseek.env
-~/workspace/secrets/ss-aliyun-iqs.env
-~/workspace/secrets/ss-browserless.env
-~/workspace/secrets/ss-tavily.env
-~/workspace/secrets/ss-haifa-personal-continuation.env
-~/workspace/haifa/haifa-ai/haifa-ai-utility-mcp-server
-~/agents/hermes-agent/optional-skills/finance
+local-tmp/personal-assistant-real/continuation-key.env
 ```
 
-前四个分别是 DeepSeek Key、可选 Aliyun IQS Key、可选 Browserless Token 和默认 Tavily Key；随后是持久
-Continuation Key。所有文件均使用 `KEY=VALUE` env 格式。Continuation Key 不存在时，脚本会生成随机
-32 字节 Key，以 `HAIFA_PERSONAL_CONTINUATION_KEY=...` 写入，并把文件权限设为 `0600`。
+该文件使用 `KEY=VALUE` env 格式。Continuation Key 不存在且 `HAIFA_PERSONAL_CONTINUATION_KEY` 未设置时，
+脚本会生成随机 32 字节 Key，以 `HAIFA_PERSONAL_CONTINUATION_KEY=...` 写入，并把文件权限设为 `0600`。
 
 从主仓根目录启动：
 
@@ -327,34 +287,26 @@ Continuation Key。所有文件均使用 `KEY=VALUE` env 格式。Continuation K
 ./scripts/start-real-environment.sh --default-model-id deepseek-chat-flash
 ```
 
-路径不同时显式覆盖：
+需要覆盖 Provider 选择或 Continuation Key 位置时：
 
 ```bash
 ./scripts/start-real-environment.sh \
-  --deepseek-key-file /absolute/secure/deepseek.txt \
-  --bailian-key-file /absolute/secure/bailian.txt \
   --bailian-region cn-beijing \
-  --aliyun-iqs-key-file /absolute/secure/aliyun-iqs.txt \
-  --continuation-key-file /absolute/secure/personal-continuation.txt \
-  --utility-mcp-directory /absolute/src/haifa-ai-utility-mcp-server \
-  --personal-skill-root /absolute/skills/finance
+  --web-search-provider aliyun \
+  --web-fetch-provider browserless \
+  --continuation-key-file /absolute/secure/personal-continuation.env
 ```
 
 也可以使用对应环境变量：
 
 ```text
-HAIFA_DEEPSEEK_KEY_FILE
-HAIFA_BAILIAN_KEY_FILE
-HAIFA_KIMI_KEY_FILE
-HAIFA_BIGMODEL_KEY_FILE
-HAIFA_SILICONFLOW_KEY_FILE
-ALIYUN_BAILIAN_REGION
-HAIFA_ALIYUN_IQS_KEY_FILE
-HAIFA_BROWSERLESS_KEY_FILE
-HAIFA_TAVILY_KEY_FILE
+HAIFA_PERSONAL_CONTINUATION_KEY
 HAIFA_PERSONAL_CONTINUATION_KEY_FILE
-HAIFA_UTILITY_MCP_DIRECTORY
-HAIFA_PERSONAL_SKILL_ROOT
+HAIFA_PERSONAL_DEFAULT_MODEL_ID
+HAIFA_PERSONAL_BACKEND_LAUNCH_MODE
+HAIFA_PERSONAL_WEB_SEARCH_PROVIDER
+HAIFA_PERSONAL_WEB_FETCH_PROVIDER
+ALIYUN_BAILIAN_REGION
 HAIFA_PERSONAL_TRUSTED_SCRIPT_MANIFEST
 ```
 
@@ -368,7 +320,7 @@ HAIFA_PERSONAL_TRUSTED_SCRIPT_MANIFEST
 # 安全停止
 ./scripts/start-real-environment.sh --stop
 
-# 三个端口释放后执行后端 clean package、重新构建前端并启动
+# 端口释放后执行后端 clean package、重新构建前端并启动
 ./scripts/start-real-environment.sh --rebuild
 ```
 
