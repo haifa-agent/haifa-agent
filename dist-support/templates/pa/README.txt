@@ -40,6 +40,14 @@ Haifa Personal Assistant - Windows x64 便携版
    大模型 API Key 不以明文存放在磁盘上，而是通过 Windows API 加密保存在
    Windows 系统的“凭据管理器”（Credential Manager）中。
 
+4. 首次启动会在 data/continuation-key.env 生成一个随机的持久化状态加密密钥，
+   用于重启后解密历史会话。请勿删除或修改该文件；迁移/重装时请一并保留。
+
+【默认运行设置（由 bin/start.bat 提供，可用环境变量覆盖）】
+- HAIFA_PERSONAL_EXECUTION_TRUSTED_HOST_ENABLED=true：为便携包显式开启受控宿主执行。
+- HAIFA_CODEX_ORIGINATOR=haifa、HAIFA_CODEX_USER_AGENT=haifa-agent/1：内置 Codex 客户端标识。
+- 如直接 java -jar 启动而非使用 start.bat，请自行设置上述变量及 HAIFA_PERSONAL_CONTINUATION_KEY。
+
 【模型配置与使用】
 - 打开 Web 界面后，点击右上角“模型 / 模型连接”按钮；
 - 支持配置 DeepSeek、ChatGPT Codex、Google Gemini 等模型连接。
