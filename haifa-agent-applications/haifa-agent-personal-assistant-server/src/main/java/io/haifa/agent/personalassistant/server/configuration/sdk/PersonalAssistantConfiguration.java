@@ -98,9 +98,9 @@ public class PersonalAssistantConfiguration {
         return PersonalModelProxySelector.from(properties.modelProviders(), settings, ProxySelector.getDefault());
     }
 
-    @Bean(destroyMethod = "close")
-    PersonalMcpRuntime personalMcpRuntime(PersonalAssistantProperties properties, ObjectMapper mapper) {
-        return new PersonalMcpRuntime(properties.mcp(), mapper);
+    @Bean
+    PersonalMcpRuntime personalMcpRuntime(PersonalAssistantProperties properties) {
+        return new PersonalMcpRuntime(properties.mcp());
     }
 
     @Bean(destroyMethod = "close")
