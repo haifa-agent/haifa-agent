@@ -72,7 +72,7 @@ The intended distribution is L1×5, L2×5, L3×4, L4×4, L5×3 and L6×2. L1..L4
 of 23 cases (78% ≥ 70% baseline); L5/L6 carry 5 (22% ≤ 30%).
 
 The published `cases/` tree is generated from the asset repository's `authoring/` sources; the asset
-version in use is `2026.09.11.2` (every case at `caseVersion` 2.0.0). Invariants the case set keeps,
+version in use is `2026.09.16.1` (every `ladder-v1` case byte-identical to `2026.09.11.2`, at `caseVersion` 2.0.0). Invariants the case set keeps,
 regardless of the individual case:
 
 - Hygiene checks guard only what a case promises: existing tests and protected files stay
@@ -118,7 +118,8 @@ The runner side is implemented and case-set agnostic:
 - Every run record and both reports carry `caseSet`; `hard-v1` cases are additionally summarized per
   difficulty tier, with `level` holding the capability dimension.
 
-The `hard-v1` cases themselves are authored in the asset repository and are not part of the lock yet.
+The locked asset version `2026.09.16.1` publishes the four tier-1 `hard-v1` cases (`H11-01`, `H21-01`,
+`H31-01`, `H41-01`); the tier-2 and tier-3 cases are still being authored.
 
 ---
 

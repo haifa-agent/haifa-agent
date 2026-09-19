@@ -15,13 +15,13 @@
      - 架构设计文档 [`docs/prompts/34-testing-architecture-simplification/34-autonomous-delivery-capability-ladder-design.md`](../../docs/prompts/34-testing-architecture-simplification/34-autonomous-delivery-capability-ladder-design.md)
 4. **题集分组（case set）**：资产仓可以同时发布多套题集，Runner 一次只评测其中一套：
    - `ladder-v1`：现有 23 题的能力阶梯，日常防退化回归用，默认题集；
-   - `hard-v1`：高阶能力探针题集（4 能力维度 × 3 难度档），题目在资产仓作者化中，设计见
+   - `hard-v1`：高阶能力探针题集（4 能力维度 × 3 难度档），已发布 4 道 T1 题（`H11-01` `H21-01` `H31-01` `H41-01`），T2/T3 仍在资产仓作者化中，设计见
      [`34-autonomous-delivery-hard-ladder-design.md`](../../docs/prompts/34-testing-architecture-simplification/34-autonomous-delivery-hard-ladder-design.md)；
    - 两套题集的成员不重叠，`--cases` 的通配也不会跨题集选中题目，报告与运行记录都带 `caseSet`，结果不会互相污染。
 
 ## 当前状态
 
-23 题已在独立资产仓 [`haifa-agent-autonomous-delivery-assets`](https://github.com/haifa-agent/haifa-agent-autonomous-delivery-assets) 作者化（L1×5、L2×5、L3×4、L4×4、L5×3、L6×2，其中 L6-02 为 Java/Maven 题），当前资产版本 `2026.09.11.2`。每个题目目录 `cases/<caseId>/` 自包含 `case.yaml`（单源元数据）、`prompt.txt`（英文题面）、`base-workspace/`（初始工作区）、`reference/`（参考解）与 `acceptance.py`（工作区之外执行的黑盒验收，输出单行 JSON）；资产仓的 `cases/` 由其 `authoring/` 生成，不手工编辑。
+23 题已在独立资产仓 [`haifa-agent-autonomous-delivery-assets`](https://github.com/haifa-agent/haifa-agent-autonomous-delivery-assets) 作者化（L1×5、L2×5、L3×4、L4×4、L5×3、L6×2，其中 L6-02 为 Java/Maven 题），当前资产版本 `2026.09.16.1`（`ladder-v1` 的 23 题与 `2026.09.11.2` 逐字节相同，另含 `hard-v1` 的 4 道 T1 题）。每个题目目录 `cases/<caseId>/` 自包含 `case.yaml`（单源元数据）、`prompt.txt`（英文题面）、`base-workspace/`（初始工作区）、`reference/`（参考解）与 `acceptance.py`（工作区之外执行的黑盒验收，输出单行 JSON）；资产仓的 `cases/` 由其 `authoring/` 生成，不手工编辑。
 
 验收约定（资产仓 `README.md` 为准）：卫生检查只守护该题承诺的内容（既有测试与受保护文件逐字节不变、改动源文件在可编辑范围与改动预算内），新增测试文件、工具缓存与临时产物不判失败；每个隐藏检查在独立解释器中带独立超时运行；性能检查与本机 O(n) 基准校准而非固定秒数；L3/L4 共用一个带分层约束的中等规模工程，题面不给文件路径。
 
@@ -31,7 +31,7 @@
 python haifa-agent-testing/haifa-agent-autonomous-delivery/tools/fetch_assets.py `
   --cache-dir D:\haifa-agent-cache\autonomous-delivery --print-path
 python haifa-agent-testing/haifa-agent-autonomous-delivery/tools/run_case.py `
-  --assets-dir D:\haifa-agent-cache\autonomous-delivery\assets-34674c775b68d84163f508bf7e6364cad205de93 `
+  --assets-dir D:\haifa-agent-cache\autonomous-delivery\assets-76b4e6821ff3b7d8203fc97b2583830bdf8866ab `
   --case L1-01 --mode nop
 ```
 
