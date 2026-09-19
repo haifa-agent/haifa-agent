@@ -29,6 +29,7 @@ def arguments(**overrides):
         "model": None,
         "credential_env": None,
         "approval": None,
+        "case_set": None,
         "cases": None,
         "repeat": None,
         "timeout_scale": None,
@@ -53,6 +54,7 @@ def settings(**overrides):
         "model": None,
         "credential_env": None,
         "approval": "auto",
+        "case_set": "ladder-v1",
         "case_patterns": [],
         "repeat": 1,
         "timeout_scale": 1.0,
@@ -150,15 +152,33 @@ class LauncherTest(unittest.TestCase):
 
 
 class SelectionTest(unittest.TestCase):
+    LADDER = ["L1-01", "L1-02", "L4-03"]
+
     def test_patterns_filter_the_available_cases(self):
         with tempfile.TemporaryDirectory() as directory:
             cases_root = Path(directory)
             for case_id in ("L1-01", "L1-02", "L4-03", "notes"):
                 (cases_root / case_id).mkdir()
 
-            self.assertEqual(["L1-01", "L1-02", "L4-03"], MODULE.select_cases(cases_root, []))
-            self.assertEqual(["L1-01", "L1-02"], MODULE.select_cases(cases_root, ["L1-*"]))
-            self.assertEqual(["L1-02", "L4-03"], MODULE.select_cases(cases_root, ["L1-02", "L4-03"]))
+            self.assertEqual(self.LADDER, MODULE.select_cases(cases_root, [], self.LADDER))
+            self.assertEqual(["L1-01", "L1-02"], MODULE.select_cases(cases_root, ["L1-*"], self.LADDER))
+            self.assertEqual(["L1-02", "L4-03"], MODULE.select_cases(cases_root, ["L1-02", "L4-03"], self.LADDER))
+
+    def test_a_case_set_never_selects_a_case_of_another_set(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cases_root = Path(directory)
+            for case_id in ("L1-01", "H11-01", "H21-01"):
+                (cases_root / case_id).mkdir()
+
+            self.assertEqual(["H11-01", "H21-01"], MODULE.select_cases(cases_root, [], ["H11-01", "H21-01"]))
+            self.assertEqual([], MODULE.select_cases(cases_root, ["L1-*"], ["H11-01", "H21-01"]))
+
+    def test_a_member_without_a_case_directory_is_dropped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cases_root = Path(directory)
+            (cases_root / "H11-01").mkdir()
+
+            self.assertEqual(["H11-01"], MODULE.select_cases(cases_root, [], ["H11-01", "H12-01"]))
 
     def test_missing_environment_requires_the_cost_acknowledgement(self):
         problems = MODULE.missing_environment(settings(allow_real_provider=False))
@@ -416,6 +436,7 @@ class RunRecordTest(unittest.TestCase):
                 "model": "glm-5.3-flash",
                 "modelSource": "override",
                 "approval": "auto",
+                "caseSet": "ladder-v1",
                 "assetVersion": "2026.09.11.2",
                 "assetManifestSha256": "b" * 64,
                 "assetsPinned": False,
@@ -729,6 +750,7 @@ class SettingsTest(unittest.TestCase):
                     model="from-flag",
                     credential_env=None,
                     approval=None,
+                    case_set=None,
                     cases="L2-*",
                     repeat=2,
                     timeout_scale=None,
@@ -749,6 +771,32 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(["L2-*"], resolved.case_patterns)
         self.assertEqual(2, resolved.repeat)
         self.assertEqual("auto", resolved.approval)
+        self.assertEqual("ladder-v1", resolved.case_set)
+
+    def test_the_case_set_comes_from_the_flag_then_the_environment_then_the_default(self):
+        os.environ["HAIFA_LADDER_CASE_SET"] = "hard-v1"
+        try:
+            self.assertEqual("ladder-v1", MODULE.resolve_settings(arguments(case_set="ladder-v1")).case_set)
+            self.assertEqual("hard-v1", MODULE.resolve_settings(arguments()).case_set)
+        finally:
+            os.environ.pop("HAIFA_LADDER_CASE_SET", None)
+
+        self.assertEqual("ladder-v1", MODULE.resolve_settings(arguments()).case_set)
+
+    def test_the_hard_case_set_is_repeated_so_that_one_lucky_run_is_not_a_pass(self):
+        self.assertEqual(3, MODULE.default_repeat("hard-v1"))
+        self.assertEqual(1, MODULE.default_repeat("ladder-v1"))
+        self.assertEqual(3, MODULE.resolve_settings(arguments(case_set="hard-v1")).repeat)
+        self.assertEqual(1, MODULE.resolve_settings(arguments(case_set="ladder-v1")).repeat)
+
+    def test_an_explicit_repeat_wins_over_the_case_set_default(self):
+        self.assertEqual(1, MODULE.resolve_settings(arguments(case_set="hard-v1", repeat=1)).repeat)
+
+        os.environ["HAIFA_LADDER_REPEAT"] = "5"
+        try:
+            self.assertEqual(5, MODULE.resolve_settings(arguments(case_set="hard-v1")).repeat)
+        finally:
+            os.environ.pop("HAIFA_LADDER_REPEAT", None)
 
 
 if __name__ == "__main__":

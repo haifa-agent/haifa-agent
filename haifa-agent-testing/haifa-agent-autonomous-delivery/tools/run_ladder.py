@@ -15,8 +15,9 @@ Environment variables (a flag of the same name always wins):
 | HAIFA_LADDER_MODEL | no | Model id passed as `--model`; defaults to the agent configuration |
 | HAIFA_LADDER_CREDENTIAL_ENV | no | Credential variable to verify; inferred from the model id when unset |
 | HAIFA_LADDER_APPROVAL | no | Approval mode, default `auto` (a ladder run must stay non-interactive) |
-| HAIFA_LADDER_CASES | no | Comma separated case ids or glob patterns, default every case |
-| HAIFA_LADDER_REPEAT | no | Runs per case, default 1 |
+| HAIFA_LADDER_CASE_SET | no | Published case set, default `ladder-v1` (`hard-v1` is the high-difficulty set) |
+| HAIFA_LADDER_CASES | no | Comma separated case ids or glob patterns, default every case of the set |
+| HAIFA_LADDER_REPEAT | no | Runs per case, default 1 (`hard-v1` defaults to 3) |
 | HAIFA_LADDER_TIMEOUT_SCALE | no | Multiplies the per-case budget, default 1.0 |
 | HAIFA_LADDER_OUTPUT | no | Report directory, default `local-tmp/autonomous-delivery-ladder/<timestamp>` |
 | HAIFA_LADDER_CACHE_DIR | no | Asset cache directory, default `local-tmp/autonomous-delivery-assets` |
@@ -93,6 +94,7 @@ class Settings:
     model: str | None
     credential_env: str | None
     approval: str
+    case_set: str
     case_patterns: list[str]
     repeat: int
     timeout_scale: float
@@ -283,12 +285,22 @@ def number(name: str, fallback: float) -> float:
         raise SystemExit(f"{name} must be a number, got {value!r}") from None
 
 
+def default_repeat(case_set: str) -> int:
+    """Runs per case when the caller did not ask for a number.
+
+    The hard case set is calibrated to sit near the capability boundary, where a single lucky run
+    is not evidence: its cases are repeated so that a result is a pass rate, not one bit.
+    """
+    return 3 if case_set == run_case.HARD_CASE_SET else 1
+
+
 def resolve_settings(arguments: argparse.Namespace) -> Settings:
     timestamp = time.strftime("%Y%m%dT%H%M%S")
     output = arguments.output or os.environ.get("HAIFA_LADDER_OUTPUT")
     cache = arguments.cache_dir or os.environ.get("HAIFA_LADDER_CACHE_DIR")
     assets = arguments.assets_dir or os.environ.get("HAIFA_LADDER_ASSETS_DIR")
     cases = arguments.cases or os.environ.get("HAIFA_LADDER_CASES", "")
+    case_set = arguments.case_set or os.environ.get("HAIFA_LADDER_CASE_SET") or run_case.DEFAULT_CASE_SET
     return Settings(
         action=arguments.action,
         allow_real_provider=environment_flag("HAIFA_LADDER_ALLOW_REAL_PROVIDER"),
@@ -296,8 +308,13 @@ def resolve_settings(arguments: argparse.Namespace) -> Settings:
         model=arguments.model or os.environ.get("HAIFA_LADDER_MODEL") or os.environ.get("HAIFA_MODEL_ID"),
         credential_env=arguments.credential_env or os.environ.get("HAIFA_LADDER_CREDENTIAL_ENV"),
         approval=arguments.approval or os.environ.get("HAIFA_LADDER_APPROVAL", "auto"),
+        case_set=case_set,
         case_patterns=[pattern.strip() for pattern in cases.split(",") if pattern.strip()],
-        repeat=arguments.repeat if arguments.repeat is not None else integer("HAIFA_LADDER_REPEAT", 1),
+        repeat=(
+            arguments.repeat
+            if arguments.repeat is not None
+            else integer("HAIFA_LADDER_REPEAT", default_repeat(case_set))
+        ),
         timeout_scale=(
             arguments.timeout_scale if arguments.timeout_scale is not None else number("HAIFA_LADDER_TIMEOUT_SCALE", 1.0)
         ),
@@ -455,6 +472,7 @@ def describe_settings(settings: Settings) -> None:
     say(f"  model            : {model or '(unknown)'} ({source})")
     say(f"  credential       : {variable or '-'} [{state}] ({reason})")
     say(f"  approval         : {settings.approval}")
+    say(f"  case set         : {settings.case_set}")
     say(f"  cases            : {', '.join(settings.case_patterns) if settings.case_patterns else 'all'}")
     say(f"  repeat           : {settings.repeat}    timeout scale: {settings.timeout_scale}")
     say(f"  assets           : {assets}")
@@ -494,11 +512,14 @@ def check_runner_tests() -> tuple[bool, str]:
     return completed.returncode == 0, (tail[0] if tail else "no output")
 
 
+def read_manifest(checkout: Path) -> dict:
+    return json.loads((checkout / run_case.ASSET_MANIFEST_NAME).read_text(encoding="utf-8"))
+
+
 def asset_provenance(checkout: Path, lock: dict) -> AssetProvenance:
     """Return the identity of the case set at ``checkout`` relative to the immutable lock."""
-    manifest_path = checkout / run_case.ASSET_MANIFEST_NAME
-    digest = fetch_assets.sha256_file(manifest_path)
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    digest = fetch_assets.sha256_file(checkout / run_case.ASSET_MANIFEST_NAME)
+    manifest = read_manifest(checkout)
     return AssetProvenance(
         manifest_sha256=digest,
         pinned=digest == lock["manifestSha256"],
@@ -548,8 +569,9 @@ def resolve_assets(settings: Settings) -> tuple[bool, str, Path | None, AssetPro
     return True, f"locked revision {provenance.asset_version} at {checkout}", checkout, provenance
 
 
-def select_cases(cases_root: Path, patterns: list[str]) -> list[str]:
-    available = sorted(path.name for path in cases_root.glob("L*-*") if path.is_dir())
+def select_cases(cases_root: Path, patterns: list[str], members: list[str]) -> list[str]:
+    """Return the selected cases of one case set; a pattern never reaches across case sets."""
+    available = [case_id for case_id in members if (cases_root / case_id).is_dir()]
     if not patterns:
         return available
     return [case_id for case_id in available if any(fnmatch.fnmatchcase(case_id, pattern) for pattern in patterns)]
@@ -609,8 +631,18 @@ def preflight(settings: Settings) -> tuple[bool, Path | None, list[str], AssetPr
         return False, None, [], None
 
     cases_root = checkout / "cases"
-    case_ids = select_cases(cases_root, settings.case_patterns)
-    report_check("case selection", bool(case_ids), f"{len(case_ids)} case(s): {', '.join(case_ids)}")
+    try:
+        members = run_case.case_set_members(read_manifest(checkout), settings.case_set)
+    except SystemExit as error:
+        report_check("case set", False, str(error))
+        say("LADDER_PREFLIGHT_RESULT FAIL")
+        return False, None, [], None
+    case_ids = select_cases(cases_root, settings.case_patterns, members)
+    report_check(
+        "case selection",
+        bool(case_ids),
+        f"{settings.case_set}: {len(case_ids)} case(s): {', '.join(case_ids)}",
+    )
 
     ok_tests, tests_detail = check_runner_tests()
     report_check("runner tests", ok_tests, tests_detail)
@@ -823,6 +855,7 @@ def provenance_fields(settings: Settings, provenance: AssetProvenance) -> dict[s
         "model": model,
         "modelSource": source,
         "approval": settings.approval,
+        "caseSet": settings.case_set,
         "assetVersion": provenance.asset_version,
         "assetManifestSha256": provenance.manifest_sha256,
         "assetsPinned": provenance.pinned,
@@ -919,9 +952,10 @@ def evaluate_case(
     if contract_problems:
         status = "FAILED"
     duration_seconds = time.monotonic() - started
+    group, tier = run_case.case_axes(case_dir.name)
     record = {
         "caseId": case_dir.name,
-        "level": metadata["level"],
+        "level": group,
         "attempt": attempt,
         "verdict": "OK" if result.get("passed") and not contract_problems else "UNEXPECTED",
         "accepted": bool(result.get("passed")) and not contract_problems,
@@ -939,6 +973,8 @@ def evaluate_case(
         "contractProblems": contract_problems,
         **provenance_fields(settings, provenance),
     }
+    if tier:
+        record["tier"] = tier
     if not settings.keep_workdir and not settings.rehearse and record["accepted"]:
         shutil.rmtree(workspace, ignore_errors=True)
 
@@ -946,7 +982,7 @@ def evaluate_case(
     return (
         CaseOutcome(
             case_id=case_dir.name,
-            level=metadata["level"],
+            level=group,
             attempt=attempt,
             status=status,
             duration_seconds=duration_seconds,
@@ -1007,7 +1043,7 @@ def write_reports(settings: Settings, records: list[dict], cases_root: Path, pro
     with records_path.open("w", encoding="utf-8", newline="\n") as handle:
         for record in records:
             handle.write(json.dumps(record, ensure_ascii=True, sort_keys=True) + "\n")
-    arguments = argparse.Namespace(mode=run_mode(settings), repeat=settings.repeat)
+    arguments = argparse.Namespace(mode=run_mode(settings), repeat=settings.repeat, case_set=settings.case_set)
     report = run_case.build_report(records, arguments, cases_root)
     # Provenance keeps a retained report attributable: which model produced it, and which case set.
     model, source = effective_model(settings)
@@ -1016,6 +1052,7 @@ def write_reports(settings: Settings, records: list[dict], cases_root: Path, pro
         "model": model,
         "modelSource": source,
         "approval": settings.approval,
+        "caseSet": settings.case_set,
         "assets": provenance.as_dict(),
     }
     report_path = settings.output_dir / "ladder-report.json"
@@ -1032,10 +1069,15 @@ def print_summary(records: list[dict], report_path: Path, started: float, proven
     tally = Counter(record["status"] for record in records)
     accepted = accepted_runs(records)
     levels: dict[str, list[int]] = {}
+    tiers: dict[str, list[int]] = {}
     for record in records:
         bucket = levels.setdefault(record["level"], [0, 0])
         bucket[0] += 1
         bucket[1] += 1 if record["accepted"] else 0
+        if record.get("tier"):
+            bucket = tiers.setdefault(record["tier"], [0, 0])
+            bucket[0] += 1
+            bucket[1] += 1 if record["accepted"] else 0
     say("LADDER_SUMMARY")
     say(
         f"  runs={len(records)} passed={accepted} failed={tally['FAILED']} "
@@ -1044,6 +1086,9 @@ def print_summary(records: list[dict], report_path: Path, started: float, proven
     for level in sorted(levels):
         total, passed = levels[level]
         say(f"  {level}  {passed}/{total}  {passed * 100 // total if total else 0}%")
+    for tier in sorted(tiers):
+        total, passed = tiers[tier]
+        say(f"  {tier}  {passed}/{total}  {passed * 100 // total if total else 0}%")
     not_accepted = [record["caseId"] for record in records if not record["accepted"]]
     if not_accepted:
         say(f"  not passed: {', '.join(not_accepted)}")
@@ -1110,8 +1155,13 @@ def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--model", default=None, help="model id (HAIFA_LADDER_MODEL)")
     parser.add_argument("--credential-env", default=None, help="credential variable to verify")
     parser.add_argument("--approval", default=None, help="approval mode, default auto")
+    parser.add_argument(
+        "--case-set",
+        default=None,
+        help=f"published case set, e.g. {run_case.LADDER_CASE_SET} or {run_case.HARD_CASE_SET}",
+    )
     parser.add_argument("--cases", default=None, help="comma separated case ids or glob patterns")
-    parser.add_argument("--repeat", type=int, default=None, help="runs per case, default 1")
+    parser.add_argument("--repeat", type=int, default=None, help="runs per case, default 1 (hard-v1: 3)")
     parser.add_argument("--timeout-scale", type=float, default=None, help="multiplies the per-case budget")
     parser.add_argument("--output", default=None, help="report directory")
     parser.add_argument("--cache-dir", default=None, help="asset cache directory")

@@ -88,7 +88,41 @@ regardless of the individual case:
 
 ---
 
-## 6. Current State & Legacy Material
+## 6. Case Sets: `ladder-v1` and `hard-v1`
+
+The 23 cases above are one published **case set**, `ladder-v1`. A second set, `hard-v1`, probes the
+same agent one difficulty level higher; its design is
+[`34-autonomous-delivery-hard-ladder-design.md`](../../docs/prompts/34-testing-architecture-simplification/34-autonomous-delivery-hard-ladder-design.md).
+
+Why a second set: across every archived evaluation the ladder produced no capability failure — two
+flash-class models scored 23/23 and 20/23, and the two non-perfect runs failed with an empty
+acceptance result, which is a startup problem rather than a capability signal. The ladder can still
+show that nothing broke, but it can no longer say *in which dimension* an agent regressed, which is
+the question this module exists to answer. `hard-v1` restores that resolution; `ladder-v1` stays
+byte-identical and keeps serving the daily regression probe.
+
+`hard-v1` is organised as 4 capability dimensions × 3 difficulty tiers, one case per slot
+(`H<dimension><tier>-<seq>`), and expands to 24 cases by adding a second case per slot. The
+dimensions are localization, specification gap, blast radius and long-horizon convergence: a case
+withholds exactly one class of information, so a failure attributes to one dimension.
+
+The runner side is implemented and case-set agnostic:
+
+- An asset manifest published with `schemaVersion: 2` carries a `caseSets` object whose sets are
+  non-empty, disjoint, and together exactly the `cases` list. A `schemaVersion: 1` manifest keeps
+  working and holds one implicit set, `ladder-v1`.
+- `--case-set` (or `HAIFA_LADDER_CASE_SET`) selects the set; `--case all` and `--cases` patterns
+  never reach across sets, so one report never mixes two benchmarks.
+- `--repeat` defaults to 1 for `ladder-v1` and 3 for `hard-v1`: a set calibrated near the capability
+  boundary is read as a pass rate, not as one bit per case.
+- Every run record and both reports carry `caseSet`; `hard-v1` cases are additionally summarized per
+  difficulty tier, with `level` holding the capability dimension.
+
+The `hard-v1` cases themselves are authored in the asset repository and are not part of the lock yet.
+
+---
+
+## 7. Current State & Legacy Material
 
 - **Legacy Cases (`cases/01` ~ `cases/17`)**: 已冻结为历史素材（决策：冷冻 Legacy），保留在 `haifa-agent-test-fixtures` 中可运行、可校验，不进入能力阶梯探针题集。
 - **Implementation State**: All 23 cases (L1..L6) are authored in the external asset repository. The Maven module publishes the result contract, validates the immutable asset lock locally, and provides the explicit `fetch_assets.py` and offline `run_case.py` workflow. Each run validates against the shared `acceptance-result.schema.json` published by `haifa-agent-test-fixtures`. The current asset revision passes the NOP and oracle gates three times per case, plus an adversarial probe suite kept in the asset repository.
