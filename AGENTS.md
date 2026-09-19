@@ -1,8 +1,9 @@
 # Haifa Agent 开发索引
 
 本文件是主仓的 Coding Agent 入口，适用于整个根仓。它只保留稳定约束、事实源和任务路由；
-详细设计、模块清单和命令矩阵转入对应文档。公开 `docs/` 现在属于主仓并遵守本文件；
-`test-config/` 仍是独立私有仓库并遵守其自己的 `AGENTS.md`。
+详细设计、模块清单和命令矩阵转入对应文档。公开 `docs/` 属于主仓并遵守本文件；`private-docs/`
+是独立私有文档仓 `haifa-agent-internal-docs` 的工作副本，`test-config/` 是独立私有仓库
+`haifa-agent-test-config`；两者各自遵守其仓库的 `AGENTS.md`。
 
 ## 开始工作前
 
@@ -19,10 +20,13 @@
 - Git Commit Message 和 GitHub Pull Request 说明必须使用英文。大任务 PR 说明最多 7 条；小修改最多
   2 条，验证结果也计入上限。
 - GitHub 平台操作必须使用 GitHub CLI（`gh`）；本地 Git 和远端分支操作使用 `git`。
-- `docs/` 是主仓公开文档目录，必须与相关代码通过同一分支和 Pull Request 演进；内部设计历史、Prompt、PRD、复盘和未定型方案继续保留在私有文档仓，不复制进公开 `docs/`。
+- `docs/` 是主仓公开文档目录，必须与相关代码通过同一分支和 Pull Request 演进；内部设计历史、Prompt、PRD、复盘和未定型方案继续保留在独立私有文档仓 `haifa-agent-internal-docs`，不复制进公开 `docs/`。
+- `private-docs/` 是独立私有文档仓 `haifa-agent-internal-docs`；使用 `git -C private-docs ...` 并遵守其
+  `AGENTS.md`。
 - `test-config/` 是独立私有仓库 `haifa-agent-test-config`；使用 `git -C test-config ...`并遵守其
   `AGENTS.md`，默认在其 `main` 上直接提交并推送。
-- 根仓（含 `docs/`）与 `test-config/` 必须分别检查、暂存、提交和推送；禁止把私有测试配置混入主仓。
+- 根仓（含 `docs/`）、`private-docs/` 与 `test-config/` 必须分别检查、暂存、提交和推送；禁止把私有文档或
+  私有测试配置混入主仓。
 - 建立git worktree使用父目录统一在../haifa-agent-worktrees/
 
 ## 事实源与任务路由
@@ -32,12 +36,12 @@
 1. 当前任务的明确需求和验收标准；
 2. 当前代码、自动化测试、根/聚合 `pom.xml` 与架构测试所体现的已实现行为；
 3. 模块 `README.md` 与公开 [`docs/`](docs/README.md) 中的当前行为和稳定边界；
-4. 私有架构历史、专题设计、开发提示词和开发报告（仅作为历史/背景证据，不得覆盖当前代码事实）。
+4. `private-docs/` 中的私有架构历史、专题设计、开发提示词和开发报告（仅作为历史/背景证据，不得覆盖当前代码事实）。
 
 当前能力和产品入口见 [`README.md`](README.md)；Reactor 模块以根/聚合 `pom.xml` 为准；公开架构入口见
 [`docs/architecture/overview.md`](docs/architecture/overview.md)；专题文档从 [`docs/README.md`](docs/README.md) 进入。
 不得将未采纳或未实现的设计稿当作现有行为。公开文档与代码不一致时，以当前源码、POM 和测试为事实源并同步修正文档；
-私有历史设计不能覆盖当前实现。`test-config/` 的版本状态仍在其独立仓库中核对。
+私有历史设计不能覆盖当前实现。`private-docs/` 与 `test-config/` 的版本状态仍在其各自独立仓库中核对。
 
 ## 全局实现约束
 

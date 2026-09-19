@@ -11,6 +11,7 @@ __pycache__/
 *.py[cod]
 .DS_Store
 Thumbs.db
+private-docs/
 test-config/
 local-tmp/
 third-agent/
