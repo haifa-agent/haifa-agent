@@ -3,6 +3,7 @@ providerId: tokenrhythm
 version: "2026-09-m3"
 displayName: TokenRhythm
 status: ACTIVE
+showOrder: 6
 authenticationMethods: [API_KEY]
 bindings:
   - resource: bindings/tokenrhythm-glm-5.yaml

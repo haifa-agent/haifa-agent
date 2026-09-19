@@ -3,6 +3,7 @@ providerId: aliyun-bailian
 version: "2026-09-m2"
 displayName: Alibaba Cloud Model Studio
 status: ACTIVE
+showOrder: 2
 authenticationMethods: [API_KEY]
 bindings:
   - resource: bindings/qwen3-8-max-0902.yaml

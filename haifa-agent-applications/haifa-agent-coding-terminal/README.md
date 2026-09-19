@@ -242,7 +242,7 @@ Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、s
   Transcript 指引展示；Browser Callback 尝试自动打开浏览器，同时始终展示可复制授权 URL 并继续等待本机
   回调，避免系统报告已启动但窗口不可见。认证成功完成（或 API Key 保存成功）后自动触发会话
   reconcile，实时刷新页脚模型连接状态；API Key 输入使用
-  独立单行掩码缓冲区（自适应首次录入与更新覆盖），不进入 Reducer、Session、Transcript、History 或 Completion，凭据安全持久化至原生系统凭据管理器（Windows Credential Manager）；针对百炼（Aliyun Bailian）等带端点元数据的 Provider，提供 3 步向导式交互配置（API Key、Workspace ID、Region）与 `/login api aliyun-bailian <workspaceId> [region]` 命令行快捷路径，回车支持继承既有配置或默认 cn-beijing；
+  独立单行掩码缓冲区（自适应首次录入与更新覆盖），不进入 Reducer、Session、Transcript、History 或 Completion，凭据安全持久化至原生系统凭据管理器（Windows Credential Manager）；针对百炼（Aliyun Bailian）等带端点元数据的 Provider，提供单步掩码输入（API Key、Workspace ID、Region 可在同一行提交）与 `/login api aliyun-bailian <workspaceId> [region]` 命令行快捷路径，首次配置要求真实 Workspace ID，更新既有配置时回车可继承已保存 Workspace，Region 缺省为 cn-beijing；
 - `/trust` 通过标准产品客户端异步展示脱敏的持久 Workspace 授权；
   `/trust revoke <workspaceRef>` 可撤销非初始根，不暴露宿主路径且不阻塞 UI；
 - `/settings`、`/tree`、`/fork`、`/clone` 在没有真实 API 时返回

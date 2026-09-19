@@ -13,8 +13,13 @@ import io.haifa.agent.auth.localmodel.LocalModelAuthenticationService;
 import io.haifa.agent.auth.localmodel.antigravity.AntigravityExternalLoginMethod;
 import io.haifa.agent.auth.localmodel.codex.CodexExternalLoginMethod;
 import io.haifa.agent.model.api.CredentialRef;
+import io.haifa.agent.model.api.ModelAuthenticationMethod;
+import io.haifa.agent.model.core.ModelCatalogManifest;
+import io.haifa.agent.model.core.ModelCatalogProvider;
+import io.haifa.agent.model.core.PackagedModelCatalog;
 import java.time.Duration;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
@@ -25,12 +30,15 @@ import java.util.function.Consumer;
 /** Highest-layer adapter from Coding Agent authentication use cases to shared local model auth. */
 final class CliCodingAuthenticationClient implements CodingAuthenticationClient, AutoCloseable {
     private static final Duration POLL_INTERVAL = Duration.ofMillis(50);
+    private static final ModelCatalogManifest DEFAULT_CATALOG =
+            PackagedModelCatalog.load(CliCodingAuthenticationClient.class.getClassLoader());
 
     private final LocalModelAuthenticationService authentication;
     private final String selectedCredentialReference;
     private final String selectedProviderId;
     private final List<CredentialRef> availableCredentialReferences;
     private final boolean antigravityConnectionSupported;
+    private final ModelCatalogManifest catalog;
     private final CodingAuthenticationMapper mapper;
 
     CliCodingAuthenticationClient(
@@ -42,7 +50,8 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient,
                 selectedCredentialReference,
                 selectedProviderId,
                 List.of(selectedCredentialReference),
-                false);
+                false,
+                DEFAULT_CATALOG);
     }
 
     CliCodingAuthenticationClient(
@@ -50,7 +59,13 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient,
             String selectedCredentialReference,
             String selectedProviderId,
             Collection<String> availableCredentialReferences) {
-        this(authentication, selectedCredentialReference, selectedProviderId, availableCredentialReferences, false);
+        this(
+                authentication,
+                selectedCredentialReference,
+                selectedProviderId,
+                availableCredentialReferences,
+                false,
+                DEFAULT_CATALOG);
     }
 
     CliCodingAuthenticationClient(
@@ -59,6 +74,22 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient,
             String selectedProviderId,
             Collection<String> availableCredentialReferences,
             boolean antigravityConnectionSupported) {
+        this(
+                authentication,
+                selectedCredentialReference,
+                selectedProviderId,
+                availableCredentialReferences,
+                antigravityConnectionSupported,
+                DEFAULT_CATALOG);
+    }
+
+    CliCodingAuthenticationClient(
+            LocalModelAuthenticationService authentication,
+            String selectedCredentialReference,
+            String selectedProviderId,
+            Collection<String> availableCredentialReferences,
+            boolean antigravityConnectionSupported,
+            ModelCatalogManifest catalog) {
         this.authentication = Objects.requireNonNull(authentication, "authentication must not be null");
         this.selectedCredentialReference = Objects.requireNonNull(
                         selectedCredentialReference, "selectedCredentialReference must not be null")
@@ -80,6 +111,7 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient,
         }
         this.availableCredentialReferences = List.copyOf(references);
         this.antigravityConnectionSupported = antigravityConnectionSupported;
+        this.catalog = Objects.requireNonNull(catalog, "catalog must not be null");
         this.mapper = new CodingAuthenticationMapper();
     }
 
@@ -94,9 +126,32 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient,
     }
 
     @Override
+    public List<String> supportedApiKeyProviders() {
+        List<String> catalogProviders = catalog.providers().stream()
+                .filter(provider -> provider.authenticationMethods().contains(ModelAuthenticationMethod.API_KEY))
+                .filter(provider -> hasWritableCredentialReference(provider.id().value()))
+                .sorted(Comparator.comparingInt(ModelCatalogProvider::showOrder)
+                        .thenComparing(provider -> provider.id().value()))
+                .map(provider -> provider.id().value())
+                .toList();
+        LinkedHashSet<String> providers = new LinkedHashSet<>(catalogProviders);
+        if (apiKeyConnectionSupported() && !providers.contains(selectedProviderId)) {
+            providers.add(selectedProviderId);
+        }
+        return List.copyOf(providers);
+    }
+
+    @Override
     public boolean apiKeyConnectionSupported() {
-        return !selectedCredentialReference.startsWith("model-auth://openai-codex/")
+        return hasWritableCredentialReference(selectedProviderId)
+                && !selectedCredentialReference.startsWith("model-auth://openai-codex/")
                 && !selectedCredentialReference.startsWith("model-auth://google-antigravity/");
+    }
+
+    private boolean hasWritableCredentialReference(String providerId) {
+        String reference = "model-auth://" + providerId + "/default";
+        return availableCredentialReferences.stream()
+                .anyMatch(value -> value.value().equals(reference));
     }
 
     @Override
