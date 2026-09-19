@@ -88,7 +88,17 @@ public final class AttemptExecutor {
             finish(attempt, statusFor(run.status()), terminalError);
         } catch (CancellationObservedException cancelled) {
             if (!run.status().isTerminal()) {
-                applyStopSignal(run, cancelled.signal());
+                if (cancelled.signal() == io.haifa.agent.runtime.core.control.RunControlSignal.TIMEOUT
+                        || cancelled.signal() == io.haifa.agent.runtime.core.control.RunControlSignal.CANCEL) {
+                    var reason = cancelled.directive().terminationReason().orElseThrow();
+                    if (cancelled.signal() == io.haifa.agent.runtime.core.control.RunControlSignal.TIMEOUT) {
+                        transitions.timedOut(run, reason);
+                    } else {
+                        transitions.cancelled(run, reason);
+                    }
+                } else {
+                    applyStopSignal(run, cancelled.signal());
+                }
             }
             recordRunTerminal(run, traceContext);
             finish(attempt, statusFor(run.status()), null);

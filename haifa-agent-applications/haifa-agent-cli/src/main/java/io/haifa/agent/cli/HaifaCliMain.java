@@ -129,8 +129,11 @@ public final class HaifaCliMain {
                         activityOutput.close();
                         removeShutdownHook(shutdownHook);
                     }
-                    if (!completed.status().isTerminal()) {
-                        agent.timeout(accepted.runId());
+                    boolean deadlineExceeded = !completed.status().isTerminal();
+                    if (deadlineExceeded) {
+                        agent.cancel(
+                                accepted.runId(),
+                                io.haifa.agent.runtime.api.RunCancellation.deadlineExceeded(configuration.timeout()));
                         completed = awaitTerminal(agent, accepted.runId(), Duration.ofSeconds(3));
                     }
                     if (!activityOutput.streamed().get()) completed.output().ifPresent(output::println);
@@ -140,10 +143,8 @@ public final class HaifaCliMain {
                             && completed.status() == io.haifa.agent.core.run.AgentRunStatus.COMPLETED) {
                         return 0;
                     }
-                    if (completed.status() == AgentRunStatus.TIMEOUT
-                            || !completed.status().isTerminal()) {
-                        error.println("Task exceeded the CLI timeout of " + configuration.timeout() + ".");
-                        return 124;
+                    if (deadlineExceeded || completed.status() == AgentRunStatus.TIMEOUT) {
+                        return reportDeadlineExceeded(configuration.timeout(), error);
                     }
                     completed.error().ifPresent(value -> {
                         LOGGER.log(
@@ -190,6 +191,11 @@ public final class HaifaCliMain {
 
     static AtomicBoolean attachStreamingOutput(Consumer<AgentRunOutputListener> registrar, PrintStream output) {
         return CliActivityOutput.attach(registrar, output, output, false, false).streamed();
+    }
+
+    static int reportDeadlineExceeded(Duration timeout, PrintStream error) {
+        error.println("[DEADLINE_EXCEEDED] Task exceeded the CLI timeout of " + timeout.toMillis() + " ms.");
+        return 124;
     }
 
     private static io.haifa.agent.runtime.api.AgentRunSnapshot await(
