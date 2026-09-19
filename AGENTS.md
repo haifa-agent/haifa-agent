@@ -1,15 +1,15 @@
 # Haifa Agent 开发索引
 
 本文件是主仓的 Coding Agent 入口，适用于整个根仓。它只保留稳定约束、事实源和任务路由；
-详细设计、模块清单和命令矩阵转入对应文档。`docs/` 和 `test-config/` 是独立仓库，并各自拥有
-`AGENTS.md`；修改时必须同时遵守。
+详细设计、模块清单和命令矩阵转入对应文档。公开 `docs/` 现在属于主仓并遵守本文件；
+`test-config/` 仍是独立私有仓库并遵守其自己的 `AGENTS.md`。
 
 ## 开始工作前
 
 1. 先读根目录 [`README.md`](README.md)，确认当前已实现范围和常用入口。
 2. 根据根/聚合 `pom.xml` 定位模块，并阅读最近的模块 `README.md`、`pom.xml` 和架构测试。
-3. 涉及架构、模块边界或新能力时，先读 [`docs/architecture-baseline.md`](docs/architecture-baseline.md)，
-   再按 [`docs/README.md`](docs/README.md) 进入对应专题。
+3. 涉及架构、模块边界或新能力时，先读 [`docs/architecture/overview.md`](docs/architecture/overview.md) 与
+   [`docs/architecture/runtime-and-module-boundaries.md`](docs/architecture/runtime-and-module-boundaries.md)，再按 [`docs/README.md`](docs/README.md) 进入对应专题。
 4. 开始修改前分别检查本次涉及仓库的 `git status --short`，保留用户已有改动。
 
 ## 仓库与交付边界
@@ -19,11 +19,10 @@
 - Git Commit Message 和 GitHub Pull Request 说明必须使用英文。大任务 PR 说明最多 7 条；小修改最多
   2 条，验证结果也计入上限。
 - GitHub 平台操作必须使用 GitHub CLI（`gh`）；本地 Git 和远端分支操作使用 `git`。
-- `docs/` 是独立仓库 `haifa-agent-internal-docs`；使用 `git -C docs ...`，默认在其 `main` 上直接提交并
-  推送 `origin/main`，不为普通文档改动创建 PR。
+- `docs/` 是主仓公开文档目录，必须与相关代码通过同一分支和 Pull Request 演进；内部设计历史、Prompt、PRD、复盘和未定型方案继续保留在私有文档仓，不复制进公开 `docs/`。
 - `test-config/` 是独立私有仓库 `haifa-agent-test-config`；使用 `git -C test-config ...`并遵守其
   `AGENTS.md`，默认在其 `main` 上直接提交并推送。
-- 根仓、`docs/` 和 `test-config/` 必须分别检查、暂存、提交和推送；禁止跨仓库混合交付。
+- 根仓（含 `docs/`）与 `test-config/` 必须分别检查、暂存、提交和推送；禁止把私有测试配置混入主仓。
 - 建立git worktree使用父目录统一在../haifa-agent-worktrees/
 
 ## 事实源与任务路由
@@ -31,22 +30,21 @@
 项目事实按以下顺序判断：
 
 1. 当前任务的明确需求和验收标准；
-2. [`docs/architecture-baseline.md`](docs/architecture-baseline.md) 中已确定的架构决策；
-3. 模块 `README.md`、`pom.xml` 和 `*ArchitectureTest.java` 中的边界约束；
-4. 当前代码与自动化测试所体现的已实现行为；
-5. 其他专题设计、开发提示词和开发报告。
+2. 当前代码、自动化测试、根/聚合 `pom.xml` 与架构测试所体现的已实现行为；
+3. 模块 `README.md` 与公开 [`docs/`](docs/README.md) 中的当前行为和稳定边界；
+4. 私有架构历史、专题设计、开发提示词和开发报告（仅作为历史/背景证据，不得覆盖当前代码事实）。
 
-当前能力和产品入口见 [`README.md`](README.md)；Reactor 模块以根/聚合 `pom.xml` 为准；稳定依赖方向和
-边界以架构基线为准；专题文档从 [`docs/README.md`](docs/README.md) 进入。不得将未采纳或未实现的设计稿
-当作现有行为。文档与代码不一致时，先区分未来设计与实现漂移；专题设计与架构基线冲突时，通过 ADR 或
-用户决策解决，不得静默选边。`docs/` 和 `test-config/` 的版本状态必须在各自仓库中核对。
+当前能力和产品入口见 [`README.md`](README.md)；Reactor 模块以根/聚合 `pom.xml` 为准；公开架构入口见
+[`docs/architecture/overview.md`](docs/architecture/overview.md)；专题文档从 [`docs/README.md`](docs/README.md) 进入。
+不得将未采纳或未实现的设计稿当作现有行为。公开文档与代码不一致时，以当前源码、POM 和测试为事实源并同步修正文档；
+私有历史设计不能覆盖当前实现。`test-config/` 的版本状态仍在其独立仓库中核对。
 
 ## 全局实现约束
 
 - 新能力先从当前产品的具体场景和失败模式出发。不得仅因“可审计、可追踪、企业级、未来扩展”而新增
   领域对象、持久化 Store、状态机、通用 SPI 或跨产品抽象；这些结构须有当前不可替代的不变量，或至少两个
   已确认消费者。审计/恢复/扩展只按实际副作用、重启需求和产品承诺建模，详细检查见
-  [`docs/engineering/evidence-driven-abstraction.md`](docs/engineering/evidence-driven-abstraction.md)。
+  [`docs/architecture/design-principles.md`](docs/architecture/design-principles.md)。
 - Core 对象不是 JPA Entity，公共 API 不暴露框架、Provider SDK 或 Runtime Core 类型。Spring Framework
   从 Adapter/Integration 边界引入，Spring Boot 只进入 Starter 和最高层 Application。
 - `AgentRun` 生命周期只由 Core 的命名行为决定；Runtime 不维护第二份状态转换表，也不绕过聚合行为。

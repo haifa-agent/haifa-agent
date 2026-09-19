@@ -4,20 +4,20 @@
 ![Java 21](https://img.shields.io/badge/Java-21-ED8B00?logo=openjdk&logoColor=white)
 ![Maven Wrapper 3.9.15](https://img.shields.io/badge/Maven%20Wrapper-3.9.15-C71A36?logo=apachemaven&logoColor=white)
 ![Spring Boot 3.5.16](https://img.shields.io/badge/Spring%20Boot-3.5.16-6DB33F?logo=springboot&logoColor=white)
-![Version](https://img.shields.io/badge/version-0.1.0--SNAPSHOT-blue)
+![Version](https://img.shields.io/badge/version-0.1.1--SNAPSHOT-blue)
 
 Haifa Agent 是面向 Java 与 Spring 生态的 Agent Runtime、SDK 和产品开发平台。它提供模型调用、
 Tool、MCP、Skill、Memory、Workspace、Policy、Credential、持久化与恢复等可组合能力；产品只装配当前
 场景需要的那一部分。它帮助 Java 应用在确有失败恢复、审批或外部副作用等需求时，以可测试的运行语义
 处理这些问题，而不是把每一次模型请求预先做成完整的平台。
 
-> **项目状态**：当前版本为 `0.1.0`，仍处于活跃开发阶段。本文只描述当前源码、POM 和测试中
+> **项目状态**：当前版本为 `0.1.1-SNAPSHOT`，仍处于活跃开发阶段。本文只描述当前源码、POM 和测试中
 > 已落地的能力；未实现范围在文末单独列出。
 
 > **设计基线**：可恢复、可审计、可追踪、可扩展不是每个能力的默认需求。新增领域对象、持久化、状态机、
 > 通用 SPI 或跨产品抽象前，先用当前产品场景、不可替代的不变量和相邻测试证明它们确有必要；否则优先采用
 > 产品内、一次性且可删除的最小实现。具体检查见
-> [`docs/engineering/evidence-driven-abstraction.md`](docs/engineering/evidence-driven-abstraction.md)。
+> [`docs/architecture/design-principles.md`](docs/architecture/design-principles.md)。
 
 ## 为什么使用 Haifa Agent
 
@@ -35,7 +35,7 @@ Tool、MCP、Skill、Memory、Workspace、Policy、Credential、持久化与恢�
 - **面向产品而不绑定单一产品**：同一个 Runtime 与 SDK 已用于 Coding Agent、Personal Assistant
   和独立消费者示例，产品语义留在 Application 层。
 - **安全边界显式可见**：凭据只通过短生命周期 Lease 使用；高风险动作受 Policy/Approval 约束；
-  Host、Local Native 和未来更强 Sandbox 的能力边界不会被混为一谈。
+  Host execution 的真实能力边界会明确披露，不把应用层进程治理描述成 OS 级强隔离。
 
 ## 核心概念
 
@@ -197,7 +197,7 @@ Tool Call 或未经校验的 JSON 文本不会被伪装成类型化结果。
         <dependency>
             <groupId>io.haifa</groupId>
             <artifactId>haifa-agent-bom</artifactId>
-            <version>0.1.0</version>
+            <version>0.1.1-SNAPSHOT</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>
@@ -220,7 +220,7 @@ Tool Call 或未经校验的 JSON 文本不会被伪装成类型化结果。
         <dependency>
             <groupId>io.haifa</groupId>
             <artifactId>haifa-agent-spring-bom</artifactId>
-            <version>0.1.0</version>
+            <version>0.1.1-SNAPSHOT</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>
@@ -345,7 +345,7 @@ Core、Runtime 或 Capability API。Spring Framework 从适配边界开始引入
 | `examples/haifa-agent-example/` | 不加入 Reactor 的独立消费者构建。 |
 
 详细模块、依赖方向和稳定边界以
-[`docs/architecture-baseline.md`](docs/architecture-baseline.md) 为准。
+[`docs/architecture/overview.md`](docs/architecture/overview.md) 与 [`docs/architecture/runtime-and-module-boundaries.md`](docs/architecture/runtime-and-module-boundaries.md) 为准。
 
 ## 示例与产品入口
 
@@ -418,7 +418,7 @@ Release 验证必须通过 `-pl` 指定受影响模块；完整分层矩阵见
 - Knowledge/RAG、Graph/Workflow 与多 Agent 调度；
 - Skill Hub、Skill 创作/安装/企业管理面和动态插件平台；
 - 完整的企业级 Approval 产品体验、审批路由与工作流；
-- Windows Local Native Adapter、容器、gVisor、microVM 或 Kubernetes Sandbox；
+- 内建容器、gVisor、microVM、Kubernetes Sandbox 或其它 OS 级强隔离；
 - Coding Session Tree/Fork/Clone、PTY、交互式子进程和后台 Job；
 - MCP Server Hosting，以及 MCP Resources、Prompts、Sampling、Elicitation、OAuth 等后续协议能力。
 
@@ -427,15 +427,18 @@ Host Sandbox 是可信本地受控执行，也不等同于网络、CPU、内存�
 
 ## 文档
 
-- [架构基线](docs/architecture-baseline.md)
-- [产品定位与总体架构](docs/01-product-positioning-and-overall-architecture.md)
-- [当前模块与依赖](docs/02-repository-modules-and-dependencies.md)
-- [Runtime 与 AgentLoop](docs/04-agent-runtime-and-agent-loop.md)
-- [Tool、MCP 与 Skill 实现总览](docs/07-implementation-overview.md)
-- [持久化与存储架构](docs/08-persistence-and-storage-architecture.md)
-- [SDK 基建与多产品演进路线](docs/roadmap/sdk-foundation-and-multi-product-roadmap.md)
-- [Agent 产品文档索引](docs/products/README.md)
-- [已知待办](docs/00-to-do-note.md)
+公开文档现在与主仓代码一起版本化：
+
+- [文档首页](docs/README.md)
+- [快速开始](docs/get-started/quickstart.md)
+- [核心概念](docs/get-started/key-concepts.md)
+- [架构概览](docs/architecture/overview.md)
+- [Runtime 与模块边界](docs/architecture/runtime-and-module-boundaries.md)
+- [Coding Agent](docs/applications/coding-agent.md)
+- [Personal Assistant](docs/applications/personal-assistant.md)
+- [安全边界](docs/reference/security.md)
+
+更具体的 Maven 模块实现细节继续以相邻模块 README、POM、源码与测试为准。
 
 ## 参与开发
 
@@ -443,5 +446,5 @@ Host Sandbox 是可信本地受控执行，也不等同于网络、CPU、内存�
 功能开发使用 `feat-*` 分支，并向 `dev` 发起 Pull Request。提交前至少完成受影响模块测试；最终交付应在
 同一 Git SHA 上通过 `-Pci-fast clean verify`，或明确记录未完成验证及原因。
 
-`docs/` 与 `test-config/` 是独立 Git 仓库，不参与主仓暂存、提交和 Pull Request。真实 Provider 测试
-不得输出 API Key、完整 Prompt、原始供应商响应或其他敏感内容。
+`docs/` 已纳入主仓 Git 跟踪，公开文档与代码通过同一个 Pull Request 演进。`test-config/` 仍是独立私有仓库。
+真实 Provider 测试不得输出 API Key、完整 Prompt、原始供应商响应或其他敏感内容。
