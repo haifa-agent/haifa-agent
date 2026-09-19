@@ -1,10 +1,10 @@
 # Java Tools
 
-The SDK provides a typed Java Tool path for application code that does not need to work directly with the lower-level Tool Catalog and provider APIs.
+SDK 提供了一条类型化 Java Tool 路径，使应用代码不需要直接操作更底层的 Tool Catalog 与 Provider API。
 
-## Define a Tool
+## 定义 Tool
 
-Use Java records for the bounded input/output contract:
+使用 Java record 声明有界输入/输出契约：
 
 ~~~java
 public record WeatherRequest(String city) {}
@@ -36,7 +36,7 @@ public final class WeatherTool
 }
 ~~~
 
-Register it with the Starter:
+通过 Starter 注册：
 
 ~~~java
 try (var agent = HaifaAgentStarter.builder()
@@ -46,35 +46,35 @@ try (var agent = HaifaAgentStarter.builder()
 }
 ~~~
 
-Spring Boot applications can register the same implementation as a Spring bean.
+Spring Boot 应用可以把同一个实现注册成 Spring Bean。
 
-## Schema and execution
+## Schema 与执行
 
-The SDK derives the bounded JSON Schema/codec from the record type and registers the Tool into the shared Tool Core pipeline.
+SDK 会从 record 类型派生有界 JSON Schema / Codec，并把 Tool 注册进共享 Tool Core Pipeline。
 
-The application does not need to manually build Catalog digests, frozen bindings, Invokers, or schema validators for this path.
+使用这条路径时，应用不需要手工构造 Catalog digest、Frozen Binding、Invoker 或 Schema Validator。
 
-## Risk declaration
+## Risk 声明
 
-pure() is the explicit low-risk declaration for a Tool that has no external side effect.
+pure() 是一个明确的低风险声明，只适用于真正没有外部 Side Effect 的 Tool。
 
-A Tool that performs network mutation, filesystem writes, process execution, purchases, account changes, or other external side effects must not be marked pure.
+会进行网络写入、文件修改、进程执行、购买、账户变更或其它外部 Side Effect 的 Tool，不能标记为 pure。
 
-Policy and Approval remain separate from the Tool implementation.
+Policy 与 Approval 仍然独立于 Tool 实现本身。
 
-## Runtime path
+## Runtime 执行路径
 
-A model Tool Call is not executed directly. It passes through:
+Model 产生的 Tool Call 不会直接执行，而会经过：
 
-1. Tool identity/binding resolution;
-2. input schema validation;
-3. Policy and, when required, exact-target Approval;
-4. credential/execution boundaries;
-5. provider invocation;
-6. result validation and persistence.
+1. Tool identity / binding resolution；
+2. Input Schema Validation；
+3. Policy，以及必要时的 exact-target Approval；
+4. Credential / Execution 边界；
+5. Provider invocation；
+6. Result Validation 与 Persistence。
 
-Unknown side-effect outcomes are not blindly retried.
+有 Side Effect 的 Tool 如果 Outcome Unknown，不会被盲目 Retry。
 
-## When to use the lower-level Tool API
+## 何时直接使用底层 Tool API
 
-Use the complete Tool API rather than JavaTool when you need provider-owned identity, advanced resource declarations, custom credential semantics, or a pre-built Tool platform.
+如果你需要 Provider-owned identity、高级 Resource 声明、自定义 Credential 语义或已经存在完整 Tool Platform，则应直接使用完整 Tool API，而不是 JavaTool Convenience API。

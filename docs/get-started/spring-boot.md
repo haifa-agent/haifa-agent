@@ -1,24 +1,24 @@
 # Spring Boot
 
-Haifa Agent keeps Spring at the adapter edge. Core, Runtime, SDK, and capability APIs remain usable without Spring.
+Haifa Agent 把 Spring 保持在 Adapter 边界。Core、Runtime、SDK 与主要 Capability API 都可以在不依赖 Spring 的情况下使用。
 
-The Spring Boot Starter creates a container-managed HaifaAgent only when:
+Spring Boot Starter 只在以下条件同时成立时创建由容器托管的 HaifaAgent：
 
-- Haifa Agent SDK/Starter classes are present;
-- haifa.agent.enabled is true (the default);
-- the application has not already provided a HaifaAgent bean.
+- classpath 中存在 Haifa Agent SDK / Starter；
+- haifa.agent.enabled 为 true（默认）；
+- 应用没有自行声明 HaifaAgent Bean。
 
-## Add the Starter
+## 添加 Starter
 
-See [Installation](installation.md) for the BOM and dependency coordinates.
+BOM 与 Dependency 坐标见 [安装](installation.md)。
 
-## Set the default credential
+## 配置默认 Credential
 
 ~~~bash
 export DEEPSEEK_API_KEY="<your-api-key>"
 ~~~
 
-## Inject the Agent
+## 注入 Agent
 
 ~~~java
 package example;
@@ -40,11 +40,11 @@ public final class HelloAgentService {
 }
 ~~~
 
-The container closes the Agent when the application context shuts down.
+Spring Context 关闭时会自动关闭 Agent。
 
-## Java Tool beans
+## Java Tool Bean
 
-Beans implementing JavaTool<I, O> are collected in Spring ordering and registered into the Agent:
+实现 JavaTool<I, O> 的 Bean 会按照 Spring 排序规则被收集并注册到 Agent：
 
 ~~~java
 @Component
@@ -72,13 +72,13 @@ public final class WeatherTool
 }
 ~~~
 
-## Taking control
+## 何时接管默认装配
 
-Use the default auto-configuration for local development and simple applications. For a production assembly, you can:
+默认 Auto-configuration 适合本地开发和简单应用。生产装配可以：
 
-- provide your own HaifaAgent bean;
-- provide a trusted SdkCallerProvider;
-- register ordered HaifaAgentStarterCustomizer beans;
-- disable the default path with haifa.agent.enabled=false.
+- 提供自己的 HaifaAgent Bean；
+- 提供可信 SdkCallerProvider；
+- 注册有序的 HaifaAgentStarterCustomizer Bean；
+- 通过 haifa.agent.enabled=false 关闭默认装配。
 
-The default Starter remains process-local and is not a durable production deployment.
+默认 Starter 仍然只使用进程内状态，不应被视为 Durable Production Deployment。

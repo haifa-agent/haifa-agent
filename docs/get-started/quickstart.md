@@ -1,28 +1,28 @@
-# Quickstart
+# 快速开始
 
-The shortest path to a working Haifa Agent is the pure Java Starter.
+体验 Haifa Agent 最短的路径是 Pure Java Starter。
 
-The Starter currently uses DeepSeek V4 Flash, reads DEEPSEEK_API_KEY, disables Thinking for the built-in default model, and stores Runtime and Conversation state only in the current process. It does **not** implicitly enable files, Shell, Git, MCP, Web, Memory, Artifact, or Execution.
+当前 Starter 默认使用 DeepSeek V4 Flash，从 DEEPSEEK_API_KEY 读取凭据，内建默认 Model Snapshot 关闭 Thinking，并且只在当前进程内保存 Runtime 与 Conversation 状态。它不会隐式启用文件、Shell、Git、MCP、Web、Memory、Artifact 或 Execution。
 
-A real model call can incur provider charges.
+真实 Model 调用可能产生 Provider 费用。
 
-## 1. Set the credential
+## 1. 配置 Credential
 
-macOS/Linux:
+macOS / Linux：
 
 ~~~bash
 export DEEPSEEK_API_KEY="<your-api-key>"
 ~~~
 
-Windows PowerShell:
+Windows PowerShell：
 
 ~~~powershell
 $env:DEEPSEEK_API_KEY = '<your-api-key>'
 ~~~
 
-Do not put the API key in source code, prompts, checked-in YAML, or logs.
+不要把 API Key 写进源码、Prompt、提交到 Git 的 YAML 或日志。
 
-## 2. Create an Agent
+## 2. 创建 Agent
 
 ~~~java
 import io.haifa.agent.starter.HaifaAgentStarter;
@@ -39,40 +39,40 @@ public final class HelloHaifa {
 }
 ~~~
 
-HaifaAgent owns Runtime resources and should be closed by the host application.
+HaifaAgent 持有 Runtime 资源，因此应由宿主应用负责关闭。
 
-## 3. Run the repository example
+## 3. 运行仓库中的示例
 
-The repository contains the same path as an executable example.
+仓库已经包含与上面相同路径的可执行示例。
 
-macOS/Linux:
+macOS / Linux：
 
 ~~~bash
 ./mvnw -pl :haifa-agent-sdk-example -am compile org.codehaus.mojo:exec-maven-plugin:3.5.1:java -Dexec.mainClass=io.haifa.example.sdk.basic.HelloHaifa
 ~~~
 
-Windows PowerShell:
+Windows PowerShell：
 
 ~~~powershell
 .\mvnw.cmd -pl :haifa-agent-sdk-example -am compile org.codehaus.mojo:exec-maven-plugin:3.5.1:java '-Dexec.mainClass=io.haifa.example.sdk.basic.HelloHaifa'
 ~~~
 
-## What the Starter gives you
+## Starter 默认提供什么
 
-The default Starter intentionally optimizes for first use:
+默认 Starter 的目标是降低第一次使用门槛：
 
-- a single process-local HaifaAgent;
-- DeepSeek V4 Flash as the built-in model;
-- environment-variable credential resolution;
-- process-local Runtime and Conversation persistence;
-- the standard approval policy preset;
-- a default Agent name and fallback instructions.
+- 一个进程内 HaifaAgent；
+- 内建 DeepSeek V4 Flash Model；
+- 基于环境变量的 Credential 解析；
+- 进程内 Runtime 与 Conversation Persistence；
+- standard approval Policy preset；
+- 默认 Agent name 与 fallback instructions。
 
-Its state is lost when the process exits. Production applications should explicitly choose persistence, identity, credentials, policy, and capabilities rather than treating Starter defaults as a production profile.
+进程退出后，这些进程内状态会丢失。生产应用应显式选择 Persistence、Identity、Credential、Policy 与所需 Capabilities，而不是把 Starter 默认值直接当成生产配置。
 
-## Next steps
+## 下一步
 
-- [Configuration](configuration.md)
-- [Key concepts](key-concepts.md)
+- [配置](configuration.md)
+- [核心概念](key-concepts.md)
 - [Java Tools](../advanced/tools.md)
-- [Structured output](../advanced/structured-output.md)
+- [Structured Output](../advanced/structured-output.md)

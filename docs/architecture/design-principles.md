@@ -1,56 +1,60 @@
-# Evidence-driven design principles
+# 证据驱动的设计原则
 
-Haifa Agent deliberately treats "enterprise-grade", "auditable", "recoverable", and "extensible" as outcomes that require evidence, not instructions to create more framework layers.
+Haifa Agent 刻意把“Enterprise-grade”“Auditable”“Recoverable”“Extensible”看成需要证据支撑的结果，而不是自动增加 Framework Layer 的建模指令。
 
-These principles guide new public abstractions.
+这些原则用于约束新的公共抽象。
 
-## Start from a concrete failure or product promise
+## 从具体 Failure 或 Product Promise 出发
 
-Add durable state, a state machine, SPI, or shared domain type only when there is a concrete reason, such as:
+只有存在明确理由时，才增加 Durable State、State Machine、SPI 或 Shared Domain Type，例如：
 
-- a reproducible failure that a simpler implementation cannot handle safely;
-- an explicit cross-restart/retry/approval/recovery promise;
-- a security invariant that must be enforced consistently;
-- multiple real consumers that need the same semantics.
+- 已经发生或可复现的 Failure，简单实现无法安全处理；
+- 产品明确承诺跨 Restart / Retry / Approval / Recovery；
+- 某个 Security Invariant 必须在所有调用点一致执行；
+- 多个真实 Consumer 需要完全相同的语义。
 
-"Maybe useful later" is not enough.
+“以后可能有用”本身不够。
 
-## Persist only authoritative facts
+## 只持久化 Authoritative Fact
 
-Recovery does not require copying every transient object.
+Recovery 不等于复制所有 Transient Object。
 
-Prefer one authoritative fact source and rebuild transient views. Duplicate persistence increases disagreement and migration cost.
+优先保留唯一 Authoritative Fact Source，再从它重建 Transient View。
 
-## Keep product semantics in products
+重复 Persistence 往往只会增加事实冲突、Migration 与 Compatibility 成本。
 
-A feature used by Coding Agent does not automatically belong in Runtime.
+## Product Semantics 留在 Product
 
-Move behavior down only when the lower layer owns a genuine invariant or multiple consumers demonstrate stable shared semantics.
+Coding Agent 使用的能力，不会自动因此属于 Runtime。
 
-## Prefer explicit composition over dynamic meta-frameworks
+只有低层真正拥有 Invariant，或多个 Consumer 已经证明稳定共享语义时，才应该向下抽取。
 
-A typed builder with a small number of explicit components is usually easier to understand, test, and remove than a generic capability-resolution engine.
+## 优先 Explicit Composition
 
-Introduce dynamic discovery only when the product genuinely needs dynamic discovery.
+少量 Explicit Typed Component 的 Builder，通常比 Generic Capability Resolution Engine 更容易理解、测试和删除。
 
-## Separate safety from complexity
+只有产品确实需要 Dynamic Discovery 时，才引入 Dynamic Discovery。
 
-Necessary safety boundaries stay hard:
+## Safety 不等于 Complexity
 
-- exact-target approval;
-- secret isolation;
-- unknown side-effect protection;
-- idempotency;
-- cancellation and budget enforcement.
+真正必要的 Safety Boundary 仍然必须保持硬约束：
 
-But those requirements do not imply a full IAM platform, universal audit event sourcing, distributed coordinator, or capability marketplace.
+- exact-target Approval；
+- Secret Isolation；
+- Unknown Side-effect Protection；
+- Idempotency；
+- Cancellation 与 Budget Enforcement。
 
-## Design for deletion
+但这些要求并不自动推出完整 IAM Platform、Universal Audit Event Sourcing、Distributed Coordinator 或 Capability Marketplace。
 
-A good early abstraction should be easy to remove if the evidence disappears.
+## 为删除而设计
 
-Prefer local, bounded mechanisms before introducing public types or persistence formats that create long-term compatibility obligations.
+早期抽象如果证据消失，应尽量容易删除。
 
-## Documentation rule
+在引入长期 Public Type、Persistence Format 与 Compatibility Obligation 之前，优先使用 Product-local、Bounded、可替换的机制。
 
-Public documentation describes current supported behavior. Historical architecture plans, prompts, implementation reports, and retrospectives are useful engineering records, but they should not silently become public contracts.
+## 文档规则
+
+公开文档只描述当前支持的行为。
+
+历史 Architecture Plan、Prompt、Implementation Report 与 Retrospective 可以保留在内部工程文档，但不能静默演变成 Public Contract。

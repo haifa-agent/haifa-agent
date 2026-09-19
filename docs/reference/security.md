@@ -1,48 +1,60 @@
-# Security
+# 安全边界
 
-Haifa Agent is designed around explicit trust boundaries, but it is not a complete security platform.
+Haifa Agent 围绕显式 Trust Boundary 设计，但它不是一套完整 Security Platform。
 
 ## Secrets
 
-Secret values must not enter prompts, ProductProfile, public diagnostics, browser DTOs, or ordinary logs.
+Secret 不应进入 Prompt、ProductProfile、Public Diagnostics、Browser DTO 或普通 Log。
 
-Model and Tool integrations should use indirect Credential references and resolve secrets at the trusted execution boundary.
+Model / Tool Integration 应使用间接 Credential Reference，并在可信 Execution Boundary 解析 Secret。
 
-## Policy and approval
+## Policy 与 Approval
 
-Policy decisions are transient. A request classified ASK creates an exact-target Interaction.
+PolicyDecision 是瞬态事实。
 
-Approval means "this trusted responder approved this exact action under the current binding." It is not a reusable bearer token and does not create a general IAM permission.
+当 Request 被判定为 ASK 时，会创建绑定到 Exact Target 的 Interaction。
 
-## Tool inputs
+Approval 的含义是：“这个可信 Responder 在当前 Binding 下批准了这次精确 Action。”
 
-Tool input is schema-validated before execution. Rejected untrusted values should not be echoed into arbitrary diagnostic messages.
+它不是可复用 Bearer Token，也不会自动创建通用 IAM Permission。
 
-## Unknown side effects
+## Tool Input
 
-If a side-effecting Tool was dispatched and the outcome becomes unknown, Runtime fails closed rather than automatically replaying the action.
+Tool Input 在执行前必须通过 Schema Validation。
 
-## Host execution
+被拒绝的不可信值不应被原样拼进任意 Diagnostic Message。
 
-The host-guarded provider is **not** a hostile-code sandbox.
+## Unknown Side Effect
 
-It cannot be used as the sole isolation mechanism for untrusted multi-tenant code. Use an external VM/container/security boundary when that threat model applies.
+如果有 Side Effect 的 Tool 已经 Dispatch，但 Outcome 变成 Unknown，Runtime 会 fail closed，而不是自动 Replay。
+
+## Host Execution
+
+host-guarded Provider **不是** Hostile-code Sandbox。
+
+面对 Untrusted Multi-tenant Code 时，不能把它当作唯一 Isolation Mechanism。
+
+这类 Threat Model 应使用外部 VM / Container / Security Boundary。
 
 ## Filesystem
 
-Application-level workspace/path validation limits what Haifa intends to access. It is not equivalent to kernel-enforced filesystem isolation.
+Application-level Workspace / Path Validation 约束的是 Haifa “打算访问什么”。
 
-## Public output and logs
+它不等价于 Kernel-enforced Filesystem Isolation。
 
-Public Runtime events and diagnostics are designed to carry bounded lifecycle facts, not:
+## Public Output 与 Logs
 
-- credentials;
-- full prompts;
-- protected reasoning/continuation;
-- raw provider responses;
-- arbitrary Tool payloads;
-- host filesystem secrets.
+Public Runtime Event / Diagnostics 应只包含有界 Lifecycle Fact，不包含：
 
-## Local applications
+- Credential；
+- 完整 Prompt；
+- Protected Reasoning / Continuation；
+- Raw Provider Response；
+- 任意 Tool Payload；
+- Host Filesystem Secret。
 
-The Personal Assistant server is loopback-oriented and the Coding Agent is a trusted local developer tool. Neither should be interpreted as a hardened public multi-tenant service without an additional deployment security layer.
+## Local Applications
+
+Personal Assistant Server 面向 Loopback Trusted-local 使用；Coding Agent 是 Trusted Local Developer Tool。
+
+如果没有额外 Deployment Security Layer，它们都不应被解释成 Hardened Public Multi-tenant Service。
