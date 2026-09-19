@@ -94,11 +94,14 @@ class CredentialTest(unittest.TestCase):
         self.assertNotIn("s3cr3t", line)
 
     def test_an_empty_credential_is_not_redacted(self):
+        # A provider key set on the evaluation machine must not leak into this assertion.
+        saved = {name: os.environ.pop(name) for name in MODULE.PROVIDER_CREDENTIAL_ENV.values() if name in os.environ}
         os.environ["TINY_KEY"] = "   "
         try:
             self.assertEqual([], MODULE.secret_values(settings(credential_env="TINY_KEY")))
         finally:
             os.environ.pop("TINY_KEY", None)
+            os.environ.update(saved)
 
 
 class LauncherTest(unittest.TestCase):
