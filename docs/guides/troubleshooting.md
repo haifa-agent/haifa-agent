@@ -1,59 +1,69 @@
-# Troubleshooting
+# 故障排查
 
-## Starter says DEEPSEEK_API_KEY is not configured
+## Starter 提示 DEEPSEEK_API_KEY 未配置
 
-The safe-default Starter requires the environment variable before build/create succeeds.
+安全默认 Starter 在 build / create 时就要求该环境变量存在。
 
-macOS/Linux:
+macOS / Linux：
 
 ~~~bash
 export DEEPSEEK_API_KEY="<your-api-key>"
 ~~~
 
-Windows PowerShell:
+Windows PowerShell：
 
 ~~~powershell
 $env:DEEPSEEK_API_KEY = '<your-api-key>'
 ~~~
 
-Do not put the key into source code to work around this check.
+不要为了绕过检查把 Key 写进源码。
 
-## A Tool exists but the model cannot call it
+## Tool 已注册，但 Model 不能调用
 
-Check all relevant layers:
+依次检查：
 
-1. the Tool is registered in the actual product assembly;
-2. its alias/name is allowed by the ProductProfile/current frozen binding;
-3. the selected model supports Tool Calling;
-4. input schema and Tool definition are valid;
-5. Policy/Approval permits the exact request.
+1. Tool 是否真的注册进当前 Product Assembly；
+2. Tool alias / name 是否被当前 ProductProfile / Frozen Binding 允许；
+3. 所选 Model 是否支持 Tool Calling；
+4. Input Schema 与 Tool Definition 是否有效；
+5. Policy / Approval 是否允许这次精确 Request。
 
-MCP discovery alone does not guarantee that a discovered Tool becomes available to a Run.
+MCP Discovery 成功，并不代表发现的每个 Tool 都自动对 Run 可用。
 
-## An approved command still fails
+## Command 已批准但仍然失败
 
-Approval only authorizes an exact request. Execution can still fail because of workspace authorization, missing executable, invalid cwd, timeout, host process error, resource limit, or cancellation.
+Approval 只表示这次 Exact Request 获得授权。
 
-## A command returned a non-zero exit code
+Execution 仍可能因为 Workspace Authorization、Executable 缺失、cwd 非法、Timeout、Host Process Failure、Resource Limit 或 Cancellation 失败。
 
-A process exit code is part of the command result. Many developer tools use non-zero codes for meaningful outcomes.
+## Command 返回非零 Exit Code
 
-Do not automatically classify every non-zero exit as a Runtime exception. Inspect bounded stdout/stderr and the command semantics.
+Process Exit Code 本身就是 Command Result 的一部分。
 
-## A Run did not resume after a crash
+很多开发工具会用非零 Code 表示具有业务含义的结果。
 
-Unexpected loss of an actively executing owner is not transparent failover. Runtime settles abandoned execution safely.
+不要把所有非零 Exit Code 自动分类成 Runtime Exception；应结合 Bounded stdout / stderr 与 Command Semantics 判断。
 
-Intentional pauses/Interactions have different continuation semantics. See [Persistence and recovery](../core-components/persistence-and-recovery.md).
+## Crash 之后 Run 没有继续
 
-## Browser or client cannot see provider details
+执行 owner 异常丢失并不等于 Transparent Failover。
 
-This is generally intentional. Product APIs expose safe model metadata rather than credentials, raw endpoints, provider payloads, or internal snapshot digests.
+Runtime 会安全收敛 Abandoned Execution。
 
-## Host execution cannot access a path
+Intentional Pause / Interaction 使用另一套 Continuation Semantics。详见 [持久化与恢复](../core-components/persistence-and-recovery.md)。
 
-Coding Agent and other host products enforce explicit workspace/authorized-directory boundaries. Attaching a directory for READ does not imply DEVELOP/execution authority.
+## Browser / Client 看不到 Provider 细节
 
-## Need deeper module diagnostics
+通常这是有意的安全边界。
 
-Use the adjacent module README and tests as the current implementation authority. Start from the module index in the repository root README.
+Product API 暴露的是 Safe Model Metadata，而不是 Credential、Raw Endpoint、Provider Payload 或 Internal Snapshot Digest。
+
+## Host Execution 无法访问某个 Path
+
+Coding Agent 等 Host Product 使用显式 Workspace / Authorized Directory Boundary。
+
+Attach 一个 READ Directory，不代表自动拥有 DEVELOP / Execution 权限。
+
+## 需要进一步诊断
+
+更底层行为以相邻模块 README 与测试为当前实现事实来源。可以从仓库根 README 的模块入口继续阅读。

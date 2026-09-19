@@ -1,6 +1,6 @@
-# Architecture overview
+# 架构概览
 
-Haifa Agent is organized as a layered Java system: domain/runtime semantics stay in pure Java, integrations adapt external systems, and applications assemble concrete products.
+Haifa Agent 是一个分层 Java 系统：Domain / Runtime 语义保持 Pure Java，Integration 负责适配外部系统，Application 负责装配具体产品。
 
 ~~~text
 Applications
@@ -14,51 +14,61 @@ Kernel / Core domain
 Host adapters and external integrations
 ~~~
 
-## Main layers
+## 主要层次
 
 ### Kernel
 
-The kernel contains common/domain types, Runtime API/Core, Context, Project APIs/Core/Host, and Artifact foundations.
+Kernel 包含 Common / Core Domain、Runtime API / Core、Context、Project API / Core / Host 与 Artifact 基础能力。
 
-The Core domain owns authoritative lifecycle rules such as AgentRun state transitions.
+Core Domain 拥有 AgentRun Lifecycle 等权威规则。
 
 ### Capabilities
 
-Model, Tool, Skill, Credential, Memory, and Policy are separate capability families. They expose pure Java APIs and core implementations rather than requiring Spring or product applications.
+Model、Tool、Skill、Credential、Memory、Policy 是彼此独立的 Capability Family。
+
+它们提供 Pure Java API / Core Implementation，不要求依赖 Spring 或具体产品 Application。
 
 ### Execution
 
-Execution API/Core coordinates command/process execution. Host adapters own physical process/filesystem interaction. The sandbox SPI is kept narrow; the current local provider is host-based and does not claim strong OS isolation.
+Execution API / Core 负责协调 Command / Process Execution。
+
+Host Adapter 拥有物理 Process / Filesystem Interaction。
+
+Sandbox SPI 有意保持窄小；当前本地 Provider 基于 Host Process，并不宣称强 OS Isolation。
 
 ### Integrations
 
-Integrations implement protocol/storage boundaries such as model providers, MCP, Web, SQLite, JSONL, HTTP/SSE, and Git evidence helpers.
+Integration 实现 Model Provider、MCP、Web、SQLite、JSONL、HTTP / SSE、Git Evidence 等协议或存储边界。
 
 ### SDK
 
-The SDK provides the high-level HaifaAgent facade, Conversation/Run APIs, typed Java Tools, structured final output, and explicit product composition.
+SDK 提供高层 HaifaAgent Facade、Conversation / Run API、Typed Java Tool、Structured Final Output 与显式 Product Composition。
 
 ### Spring
 
-Spring Boot is an adapter around the pure Java SDK. It handles configuration, bean discovery, and lifecycle. Spring does not own Runtime semantics.
+Spring Boot 只是 Pure Java SDK 外的一层 Adapter，负责 Configuration、Bean Discovery 与 Lifecycle。
+
+Spring 不拥有 Runtime 语义。
 
 ### Applications
 
-Coding Agent and Personal Assistant are product assemblies. Product concepts remain at the application layer unless a lower-level invariant is independently proven reusable.
+Coding Agent 与 Personal Assistant 是具体 Product Assembly。
 
-## Dependency rule
+产品概念应停留在 Application Layer，除非有独立证据证明某个低层 Invariant 稳定且可复用。
 
-High layers may depend on lower layers; lower layers must not depend on product applications.
+## Dependency Rule
 
-In particular:
+高层可以依赖低层，低层不能反向依赖具体产品 Application。
 
-- Core must not depend on Spring, SQLite, provider SDKs, or product UI concepts.
-- Runtime must not depend on Coding Agent or Personal Assistant domain types.
-- provider integrations adapt to provider-neutral APIs.
-- applications are composition roots.
+尤其：
 
-## Current non-goals
+- Core 不依赖 Spring、SQLite、Provider SDK 或产品 UI 概念；
+- Runtime 不依赖 Coding Agent / Personal Assistant Domain Type；
+- Provider Integration 适配 Provider-neutral API；
+- Application 是 Composition Root。
 
-The 0.1.1 baseline does not claim a distributed Worker/Control Plane platform, Graph/Workflow runtime, enterprise IAM product, or strong built-in sandbox.
+## 当前 Non-goals
 
-See [Runtime and module boundaries](runtime-and-module-boundaries.md).
+0.1.1 baseline 不宣称已经提供 Distributed Worker / Control Plane、Graph / Workflow Runtime、Enterprise IAM Product 或强内建 Sandbox。
+
+详见 [Runtime 与模块边界](runtime-and-module-boundaries.md)。

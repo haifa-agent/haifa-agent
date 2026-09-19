@@ -1,38 +1,46 @@
-# Upgrading
+# 升级
 
-Haifa Agent is pre-1.0, so an upgrade should be treated as a code-and-data compatibility event rather than assuming semantic-versioning stability across every internal/public surface.
+Haifa Agent 仍处于 Pre-1.0。
 
-## Before upgrading
+因此升级时应把它看成一次 Code + Data Compatibility Event，而不是假设所有 Internal / Public Surface 都已经获得完整 Semantic Versioning 稳定承诺。
 
-1. Read [CHANGELOG.md](../../CHANGELOG.md).
-2. Review changes in the BOM/Starter version.
-3. Check provider binding changes if your deployment uses non-default providers.
-4. Back up durable SQLite/application data according to the product's operational procedure.
-5. Run your own product tests against the new version.
+## 升级之前
 
-## Frozen Runs and persisted data
+1. 阅读 [CHANGELOG.md](../../CHANGELOG.md)。
+2. 检查 BOM / Starter Version 变化。
+3. 如果使用非默认 Provider，检查 Provider Binding 变化。
+4. 按产品运维流程备份 Durable SQLite / Application Data。
+5. 用新版本运行自己的 Product Test。
 
-Do not assume a newer binary can reinterpret every historical experimental payload.
+## Frozen Run 与 Persisted Data
 
-The project intentionally removes some unused/superseded compatibility layers before 1.0 rather than accumulating readers for every internal prototype.
+不要假设新 Binary 一定可以解释所有历史实验 Payload。
 
-If a release note calls for rebuilding development data, do so instead of bypassing migration/codec checks.
+在 1.0 之前，项目会主动删除部分无用 / Superseded Compatibility Layer，而不是为每一代内部 Prototype 永久保留 Reader。
 
-## Provider changes
+如果 Release Note 明确要求重建开发数据，应按要求重建，而不是绕过 Migration / Codec Check。
 
-Provider capabilities and dialects are explicit frozen bindings. When upgrading, revalidate:
+## Provider Change
 
-- endpoint;
-- credential reference;
-- provider/model ID;
-- API style/dialect;
-- capability set;
-- reasoning/structured-output behavior.
+Provider Capability / Dialect 属于显式 Frozen Binding。
 
-## Application products
+升级后应重新核对：
 
-Coding Agent and Personal Assistant can have product-owned persistence in addition to common Runtime state. Follow product-specific migration/backup instructions when present.
+- Endpoint；
+- Credential Reference；
+- Provider / Model ID；
+- API Style / Dialect；
+- Capability Set；
+- Reasoning / Structured Output Behavior。
+
+## Application Products
+
+Coding Agent 与 Personal Assistant 除共享 Runtime State 外，也可能拥有 Product-owned Persistence。
+
+有产品专用 Migration / Backup 说明时，应遵循产品说明。
 
 ## Verification
 
-Build and test the exact revision you will deploy. Do not validate one commit and release another.
+构建并测试你真正准备部署的同一个 Revision。
+
+不要验证一个 Commit，却发布另一个 Commit。

@@ -1,22 +1,22 @@
-# Configuration
+# 配置
 
-The pure Java Starter exposes a deliberately small configuration surface. Security-sensitive model identity, endpoint selection, and credentials are not accepted from an untrusted prompt or conversation message.
+Pure Java Starter 刻意只暴露一组很小的配置面。Model 身份、Endpoint 选择、Credential 等安全敏感信息不能由不可信 Prompt 或 Conversation 消息直接注入。
 
-## Built-in defaults
+## 内建默认值
 
-| Setting | Built-in Starter behavior |
+| 配置 | Starter 默认行为 |
 | --- | --- |
 | Model | deepseek-v4-flash |
 | Endpoint | https://api.deepseek.com |
-| Credential reference | env://DEEPSEEK_API_KEY |
-| Thinking | disabled for the built-in default snapshot |
-| Runtime/Conversation state | process-local |
-| Files/Shell/Git/MCP/Web/Memory/Artifact/Execution | disabled unless explicitly assembled |
+| Credential Reference | env://DEEPSEEK_API_KEY |
+| Thinking | 内建默认 Snapshot 关闭 |
+| Runtime / Conversation 状态 | 进程内 |
+| 文件 / Shell / Git / MCP / Web / Memory / Artifact / Execution | 除非显式装配，否则关闭 |
 | Policy | PolicyPresets.standardApproval() |
 
-The underlying provider integrations can support other reasoning modes and providers. The table above describes only the Starter's built-in default.
+底层 Provider Integration 可以支持其它 Reasoning 模式和 Provider。上表只描述 Starter 自己的内建默认行为。
 
-## Customize safe Starter settings
+## 调整 Starter 的安全配置
 
 ~~~java
 import io.haifa.agent.starter.HaifaAgentStarter;
@@ -32,21 +32,23 @@ try (var agent = HaifaAgentStarter.builder()
 }
 ~~~
 
-The value passed to credentialEnvironmentVariable(...) is an environment-variable **name**, never the secret itself.
+credentialEnvironmentVariable(...) 接收的是环境变量名称，而不是 Secret 值本身。
 
-## Register explicit models
+## 注册显式 Model
 
-A trusted host can replace the built-in model catalog with explicitly registered model configurations or adapter/snapshot pairs. Multiple registered models are selected by stable model ID; defaultModel(...) chooses the default.
+可信宿主可以使用显式的 Model Configuration，或者直接提供 Adapter + ResolvedModelSnapshot，以替换 Starter 的内建 Model Catalog。
 
-The Starter does not provide model discovery, automatic fallback, health-based routing, or dynamic provider catalogs.
+可以注册多个稳定 Model ID，并通过 defaultModel(...) 选择默认 Model。
 
-See [Model providers](../advanced/model-providers.md).
+Starter 不提供 Model 自动发现、隐式 fallback、基于健康状态的路由或动态 Provider Catalog。
 
-## Spring Boot configuration
+详见 [Model Providers](../advanced/model-providers.md)。
 
-The Spring Boot Starter exposes only a narrow property set:
+## Spring Boot 配置
 
-| Property | Default |
+Spring Boot Starter 只暴露有限的 Properties：
+
+| Property | 默认值 |
 | --- | --- |
 | haifa.agent.enabled | true |
 | haifa.agent.name | haifa-agent |
@@ -54,6 +56,6 @@ The Spring Boot Starter exposes only a narrow property set:
 | haifa.agent.model.credential-environment-variable | DEEPSEEK_API_KEY |
 | haifa.agent.model.connect-timeout | 10s |
 
-There is intentionally no ordinary property for an API-key value, arbitrary endpoint, model ID, or Thinking switch.
+这里有意不提供明文 api-key、任意 Endpoint、Model ID 或 Thinking 开关。
 
-For production assembly, provide your own HaifaAgent bean or trusted customizer rather than widening untrusted external configuration.
+生产环境如果需要更完整的装配，应提供自己的 HaifaAgent Bean 或可信 Customizer，而不是继续扩大不可信外部配置面。

@@ -1,20 +1,24 @@
-# Conversations and Runs
+# Conversation 与 Run
 
-The SDK Conversation API and the Runtime Run API solve different problems.
+SDK Conversation API 与 Runtime Run API 解决的是两个不同层次的问题。
 
 ## Conversation
 
-A Conversation is the product-facing multi-turn container. It uses the Core Session identity as its authoritative identity and keeps lightweight display/index metadata such as name, timestamps, and revision.
+Conversation 是面向产品的多轮容器。
 
-The Runtime remains authoritative for Sessions, Runs, Turns, and execution state.
+它使用 Core Session identity 作为权威身份，并保存 display name、时间、revision 等轻量展示/索引元数据。
 
-A Conversation can contain multiple Runs over time, but a normal user interaction path has at most one active Run for that Conversation.
+Session、Run、Turn 以及执行状态仍由 Runtime 负责。
+
+一个 Conversation 随时间可以包含多个 Run，但正常用户路径下，同一个 Conversation 同时最多只有一个活动 Run。
 
 ## Run
 
-A Run is one execution of an Agent definition under a frozen configuration. Starting a new user turn normally creates a new Run; resuming an intentional pause continues the existing Run.
+Run 表示某个 Agent Definition 在一份冻结配置下的一次执行。
 
-Typical lifecycle paths include:
+新的用户 Turn 通常创建新的 Run；从有意暂停恢复时，则继续原 Run。
+
+典型 Lifecycle：
 
 ~~~text
 PENDING -> QUEUED -> RUNNING
@@ -25,22 +29,32 @@ RUNNING -> COMPLETING -> COMPLETED
 non-terminal -> FAILED | CANCELLED | TIMEOUT
 ~~~
 
-The Core domain model is authoritative for legal transitions. Runtime coordinates those transitions but must not maintain an alternative lifecycle table.
+合法状态转换的权威来源是 Core Domain Model。Runtime 负责协调这些行为，但不能再维护第二份 Lifecycle 表。
 
-## Asynchronous start
+## Asynchronous Start
 
-Runtime start accepts/persists the Run and returns before the work necessarily completes. Callers that want the terminal state must explicitly await or observe the Run.
+Runtime start 在 Run 被接受、持久化并提交执行后返回；返回时真实工作未必已经完成。
 
-Waiting in the client is not equivalent to cancelling the Run.
+需要终态的调用方必须显式 await 或 observe Run。
 
-## Attempts
+客户端等待超时，也不等于 Run 自动被取消。
 
-A Run can have physical execution Attempts. Intentional resume can create a new Attempt for the same logical Run. Abnormal loss of an executing owner is not transparently taken over: recovery settles the interrupted execution safely instead of guessing whether external side effects happened.
+## Attempt
 
-## Interactions
+一个逻辑 Run 可以存在多个物理 Execution Attempt。
 
-Clarification and approval use persistent Interaction state. Human waiting time is treated separately from active execution time so an operator does not accidentally exhaust the Run just by taking time to respond.
+正常 Resume 可以为同一个 Run 创建新的 Attempt。
+
+如果执行中的 owner 异常丢失，系统不会假装发生了透明 Failover；Recovery 会安全收敛被中断的执行，而不是猜测外部 Side Effect 是否已经发生。
+
+## Interaction
+
+Clarification 与 Approval 使用持久 Interaction State。
+
+Human waiting 与 Active execution time 分开计算，避免用户只是花时间审批就意外耗尽 Run 的活动执行预算。
 
 ## Idempotency
 
-Runtime start and Conversation write operations use caller-scoped idempotency and request digests. Reusing an idempotency key for a different request fails closed instead of silently returning unrelated work.
+Runtime start 与 Conversation write command 使用 caller-scoped idempotency 与 request digest。
+
+同一个 Idempotency Key 如果被用于不同请求，会 fail closed，而不是静默返回另一份不相关结果。

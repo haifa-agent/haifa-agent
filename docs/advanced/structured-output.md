@@ -1,6 +1,6 @@
-# Structured output
+# Structured Output
 
-The SDK can request a typed final result by using a bounded Java record as the output contract.
+SDK 可以把一个有界 Java record 作为某次调用的最终输出契约：
 
 ~~~java
 public record TripPlan(
@@ -14,28 +14,30 @@ var response =
 TripPlan plan = response.value();
 ~~~
 
-## What is guaranteed
+## 保证什么
 
-The record schema is frozen into the Run requirement.
+Record Schema 会冻结进本次 Run Requirement。
 
-Provider adapters map that requirement to the provider protocol when the selected model declares structured-output capability.
+当所选 Model 声明 Structured Output Capability 时，Provider Adapter 会把这份 Requirement 映射到对应 Provider Protocol。
 
-Runtime validates the **final** model answer against the frozen schema and persists the structured result before the SDK decodes the record.
+Runtime 会对 **最终** Model Answer 按 Frozen Schema 做校验，并在 Structured Result 持久化成功之后，SDK 才把它解码成 record。
 
-The SDK does not construct the business object from an arbitrary unvalidated JSON string.
+SDK 不会直接从一段任意、未验证的 JSON 文本构造业务对象。
 
-## Tool loops
+## Tool Loop
 
-Structured final output does not prevent Tool use.
+Structured Final Output 不会禁止 Tool 使用。
 
-A model may first return Tool Calls. Those Calls execute through the normal Tool Pipeline. The schema requirement applies when the model eventually produces the final answer.
+Model 可以先返回 Tool Call，这些 Tool Call 仍通过正常 Tool Pipeline 执行；只有 Model 最终给出 Final Answer 时，才应用最终输出 Schema。
 
-## Failure behavior
+## Failure Behavior
 
-Invalid JSON, schema mismatch, provider rejection, unsupported capability, and output truncation fail explicitly.
+Invalid JSON、Schema mismatch、Provider rejection、Capability unsupported 与 Output truncated 都会显式失败。
 
-There is no typed partial stream. value() is meaningful only for a successful terminal typed response.
+当前不存在 typed partial stream；只有成功进入终态的 Typed Response 才能安全调用 value()。
 
-## Scope
+## 支持范围
 
-The convenience API intentionally supports the bounded type set already supported by the shared record schema/codec implementation. It is not a general arbitrary-POJO serializer.
+当前 Convenience API 只支持共享 Record Schema / Codec 已经覆盖的有界类型集合。
+
+它不是任意 POJO Serialization Framework。

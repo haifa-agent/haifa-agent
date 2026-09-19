@@ -1,45 +1,64 @@
-# Key concepts
+# 核心概念
 
-Haifa Agent separates the model-facing execution loop from product-facing composition. The distinction matters because a model call, a user conversation, and a durable execution are not the same thing.
+Haifa Agent 将面向 Model 的执行循环与面向产品的 Composition 分开。这个区分很重要，因为一次 Model 调用、一次用户 Conversation 与一次可恢复执行并不是同一个概念。
 
 ## HaifaAgent
 
-HaifaAgent is the assembled, host-owned SDK facade. It owns Runtime resources and provides access to Conversation and Run APIs. It is not a single request.
+HaifaAgent 是完成装配后由宿主持有的 SDK Facade。它拥有 Runtime 资源，并提供 Conversation 与 Run API。
+
+HaifaAgent 不是某一次请求，也不是某一个 Run。
 
 ## Conversation / Session
 
-A Conversation is the SDK-facing multi-turn container backed by the Core Session identity. It stores user-visible conversation metadata while Runtime remains authoritative for Session, Turn, and Run facts.
+Conversation 是 SDK 面向用户的多轮容器，底层使用 Core Session identity。
 
-A new user turn normally creates a new Run. Resuming an intentional pause continues the existing Run.
+Conversation 层只保存面向产品的轻量展示/索引元数据；Session、Turn、Run 等权威执行事实仍由 Runtime 持有。
+
+新的用户 Turn 通常创建新的 Run；恢复一个有意暂停的执行则继续原 Run。
 
 ## AgentRun
 
-An AgentRun is one authoritative execution with a controlled lifecycle. A Run freezes the configuration it needs so later changes to model catalogs or product defaults do not silently change an in-flight or historical execution.
+AgentRun 表示一次权威执行，并拥有受控 Lifecycle。
 
-The public SDK exposes snapshots/results; Runtime Core owns the execution machinery.
+Run 创建时会冻结后续执行需要的配置，使 Model Catalog、Product 默认值等之后发生变化时，不会静默改变正在执行或历史 Run 的语义。
+
+公开 SDK 主要暴露 Snapshot / Result，而实际执行机制由 Runtime Core 持有。
 
 ## ProductProfile
 
-A ProductProfile is trusted host configuration: product identity, Agent definition reference, instructions, default run profile, budgets/limits, and Tool/Skill allowlists.
+ProductProfile 是可信宿主提供的产品配置，包括：
 
-It is not an IAM system and no longer acts as a generic capability-resolution framework.
+- Product identity；
+- Agent Definition reference；
+- instructions；
+- default Run Profile；
+- budget / limits；
+- Tool / Skill allowlist。
+
+它不是 IAM 系统，也不再承担通用 Capability Resolution Framework 的职责。
 
 ## Capabilities
 
-Model, Tool, Skill, Memory, Credential, Policy, Artifact, Project/Workspace, Execution, MCP, and persistence are separate capabilities or integrations. A product should assemble only the capabilities it actually needs.
+Model、Tool、Skill、Memory、Credential、Policy、Artifact、Project / Workspace、Execution、MCP 与 Persistence 是彼此分离的能力或 Integration。
 
-## Tool, Skill, and MCP
+一个产品只应该装配当前场景真正需要的部分。
 
-- **Tool** is the unified callable execution unit seen by the Runtime Tool Pipeline.
-- **MCP** is one way to discover/import Tools; it does not create a parallel execution runtime.
-- **Skill** is a controlled package of instructions/resources that may expose methods to the model. Installing a Skill does not grant host, network, credential, or Tool permissions.
+## Tool、Skill 与 MCP
 
-## Interaction and approval
+- **Tool**：Runtime Tool Pipeline 看到的统一可调用执行单元。
+- **MCP**：发现/导入 Tool 的一种方式，不建立第二套 Tool Runtime。
+- **Skill**：受控的 instructions / resources 包，可帮助 Model 学会如何完成某类任务，但安装 Skill 不会自动获得 Host、Network、Credential 或 Tool 权限。
 
-When policy returns ASK, Runtime creates a blocking Interaction bound to the exact action target. A trusted responder can approve or reject it. Approval does not create a reusable universal permission grant.
+## Interaction 与 Approval
 
-## Persistence and recovery
+当 Policy 返回 ASK 时，Runtime 会创建一个绑定到精确 Action Target 的阻塞 Interaction。
 
-Haifa Agent persists facts that are required for the product's explicit recovery guarantees. It does not attempt to snapshot every capability or make every external side effect transparently replayable.
+可信 Responder 可以批准或拒绝该 Interaction。Approval 不会自动变成可以重复使用的通用权限 Grant。
 
-See [Persistence and recovery](../core-components/persistence-and-recovery.md).
+## Persistence 与 Recovery
+
+Haifa Agent 只持久化产品明确恢复承诺所需要的权威事实。
+
+它不会尝试 Snapshot 每一个 Capability，也不会把所有外部 Side Effect 都伪装成可以透明重放的操作。
+
+详见 [持久化与恢复](../core-components/persistence-and-recovery.md)。
