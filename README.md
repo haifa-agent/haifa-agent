@@ -2,194 +2,185 @@
 
 [![Feature PR Fast](https://github.com/haifa-agent/haifa-agent/actions/workflows/feature-pr-fast.yml/badge.svg?branch=dev)](https://github.com/haifa-agent/haifa-agent/actions/workflows/feature-pr-fast.yml)
 ![Java 21](https://img.shields.io/badge/Java-21-ED8B00?logo=openjdk&logoColor=white)
-![Maven Wrapper 3.9.15](https://img.shields.io/badge/Maven%20Wrapper-3.9.15-C71A36?logo=apachemaven&logoColor=white)
-![Spring Boot 3.5.16](https://img.shields.io/badge/Spring%20Boot-3.5.16-6DB33F?logo=springboot&logoColor=white)
+![Spring Boot 3.5](https://img.shields.io/badge/Spring%20Boot-3.5-6DB33F?logo=springboot&logoColor=white)
 ![Version](https://img.shields.io/badge/version-0.1.1--SNAPSHOT-blue)
 
-Haifa Agent 是面向 Java 与 Spring 生态的 Agent Runtime、SDK 和产品开发平台。它提供模型调用、
-Tool、MCP、Skill、Memory、Workspace、Policy、Credential、持久化与恢复等可组合能力；产品只装配当前
-场景需要的那一部分。它帮助 Java 应用在确有失败恢复、审批或外部副作用等需求时，以可测试的运行语义
-处理这些问题，而不是把每一次模型请求预先做成完整的平台。
+**Java / Spring 生态的 Agent Runtime、SDK 与本地 Agent 应用。**
 
-> **项目状态**：当前版本为 `0.1.1-SNAPSHOT`，仍处于活跃开发阶段。本文只描述当前源码、POM 和测试中
-> 已落地的能力；未实现范围在文末单独列出。
+用 Pure Java 构建可以调用 Tool、进行多轮 Conversation、支持 HITL、持久化与长任务执行的 AI Agent。
 
-> **设计基线**：可恢复、可审计、可追踪、可扩展不是每个能力的默认需求。新增领域对象、持久化、状态机、
-> 通用 SPI 或跨产品抽象前，先用当前产品场景、不可替代的不变量和相邻测试证明它们确有必要；否则优先采用
-> 产品内、一次性且可删除的最小实现。具体检查见
-> [`docs/architecture/design-principles.md`](docs/architecture/design-principles.md)。
+你可以直接使用 Haifa Agent 自带的 **Coding Agent** 和 **Personal Assistant**，也可以通过 **Java SDK** 把 Agent 能力嵌入现有 Java / Spring Boot 应用。
 
-## 为什么使用 Haifa Agent
+> 当前版本：`0.1.1-SNAPSHOT`  
+> 项目仍处于快速演进阶段，README 和 `docs/` 只描述当前源码已经实现的能力。
 
-直接调用模型 API 很容易；困难的是让包含模型、工具和业务状态的长流程在失败、重启、审批和配置变化后
-仍然保持确定的语义。Haifa Agent 重点解决这些运行期问题：
+---
 
-- **可恢复的 Agent Run**：同步接收请求、异步执行 Run，通过 Attempt、Checkpoint、Interaction、
-  Run Input 和 Event Journal 支持暂停、审批、恢复与终态收敛。
-- **冻结而不是猜测**：Run 创建时冻结 Definition、模型快照、Tool/Skill Binding、产品配置和预算；
-  历史 Run 不受后续目录或配置变化影响。
-- **统一的能力管线**：Java Tool、远端 MCP Tool、Skill 激活、Web Tool 和执行能力都进入同一套
-  Catalog、Schema、Policy、Credential、Journal 与恢复边界。
-- **Java 优先，Spring 可选**：Core、Runtime、SDK 和主要 Capability 保持纯 Java；Spring Boot
-  Starter 只负责配置、Bean 收集和生命周期适配。
-- **面向产品而不绑定单一产品**：同一个 Runtime 与 SDK 已用于 Coding Agent、Personal Assistant
-  和独立消费者示例，产品语义留在 Application 层。
-- **安全边界显式可见**：凭据只通过短生命周期 Lease 使用；高风险动作受 Policy/Approval 约束；
-  Host execution 的真实能力边界会明确披露，不把应用层进程治理描述成 OS 级强隔离。
+## 三种使用 Haifa Agent 的方式
 
-## 核心概念
+### Coding Agent
 
-| 概念 | 在 Haifa Agent 中的含义 |
-| --- | --- |
-| `AgentDefinition` | Agent 的版本化定义。Run 创建时冻结其版本引用，不随运行中配置变化漂移。 |
-| `ProductProfile` | 可信宿主声明的产品边界与默认值，包括模型、指令、预算、限制和 Tool/Skill allowlist。 |
-| `HaifaAgent` | 已完成装配、由宿主持有并负责资源生命周期的 Runtime 实例，不是某一次 Run。 |
-| Conversation / Session | 面向用户的多轮容器；可以包含多个 Run，但同一会话最多只有一个活动 Run。 |
-| `AgentRun` | 一次权威执行及其状态机；`AgentRunSnapshot` 是运行视图，`AgentRunResult` 是最终结果。 |
-| Attempt / Checkpoint | Run 的物理执行尝试与正常暂停续跑计数。批准／暂停可跨重启继续；异常中断不会透明接管执行。 |
-| Tool / MCP / Skill | Tool 是统一执行单元；MCP Tool 先经本地审查再导入；Skill 通过渐进披露按需激活。 |
-| Artifact | 显式导出的、内容寻址且带 provenance 的结果，不等同于 Workspace 文件。 |
-
-Run 的主要生命周期由 Core 统一约束：
+面向本地软件开发的 Terminal Agent：读取和修改代码、执行 Shell / Build / Test、使用 `git` / `gh`，并通过持续 Conversation 完成长任务。
 
 ```text
-PENDING -> QUEUED -> RUNNING
-RUNNING -> SUSPENDING -> SUSPENDED -> RUNNING
-RUNNING -> WAITING_INTERACTION / WAITING_APPROVAL -> RUNNING
-RUNNING -> COMPLETING -> COMPLETED
-非终态 -> FAILED / CANCELLED / TIMEOUT
+┌──────────────────────────────────────────────────────────────────────┐
+│ Haifa Coding Agent                                      GPT-5.6 Sol │
+├──────────────────────────────────────────────────────────────────────┤
+│ > Fix the failing tests in haifa-agent-runtime-core                 │
+│                                                                      │
+│ Searched for RuntimeCoreTest                                        │
+│ Viewed RuntimeCore.java:120-260                                     │
+│ Ran: ./mvnw -pl :haifa-agent-runtime-core -am test                  │
+│                                                                      │
+│ ✦ Found the failure in checkpoint recovery                          │
+│ ✦ Updated 2 files                                                   │
+│ ✦ Tests: 48 passed                                                  │
+│                                                                      │
+├──────────────────────────────────────────────────────────────────────┤
+│ > _                                                                  │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
-Runtime 负责协调，不能复制或绕过这套状态机。
+支持：
 
-## 快速开始
+- File read / write / patch
+- Shell / Build / Test
+- `git` / `gh`
+- Multi-turn Coding Session
+- Workspace authorization
+- Model selection
+- HITL Approval
+- Session persistence / resume
 
-### 前置条件
+[查看 Coding Agent →](docs/applications/coding-agent.md)
 
-- JDK 21；
-- Git；
-- 使用仓库自带 Maven Wrapper，无需预装 Maven；
-- 只有运行真实模型示例时才需要 `DEEPSEEK_API_KEY`。
+---
 
-### 运行第一个 Agent
+### Personal Assistant
 
-克隆仓库：
+本地 Web Assistant，在同一个 Runtime 上组合 Conversation、Tool、Skill、Memory、Mission 与 Deep Research。
 
-```bash
-git clone https://github.com/haifa-agent/haifa-agent.git
-cd haifa-agent
+```text
+┌──────────────────────────────────────────────────────────────────────┐
+│ Haifa Personal Assistant                                  DeepSeek  │
+├───────────────────────┬──────────────────────────────────────────────┤
+│ Conversations         │ 帮我调研最近两周 Java Agent 生态的发展     │
+│                       │                                              │
+│ ▸ Agent Runtime       │ Research Plan                                │
+│ ▸ AI Infrastructure  │   ✓ 搜索资料                                 │
+│ ▸ Weekly Research     │   ✓ 阅读来源                                 │
+│                       │   ◉ 综合报告                                 │
+│                       │                                              │
+│ Missions              │ Sources 12 · Tool Calls 28                   │
+│ ▸ Java Agent Research │                                              │
+│                       │ Java Agent 生态目前主要沿着……                │
+├───────────────────────┴──────────────────────────────────────────────┤
+│ Ask anything...                                                     │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
-macOS / Linux：
+支持：
 
-```bash
-export DEEPSEEK_API_KEY="<your-api-key>"
-./mvnw -pl :haifa-agent-sdk-example -am \
-  compile org.codehaus.mojo:exec-maven-plugin:3.5.1:java \
-  -Dexec.mainClass=io.haifa.example.sdk.basic.HelloHaifa
-```
+- Multi-turn Conversation
+- 多 Model / Provider
+- Tool / Skill / MCP
+- Memory
+- Mission
+- Deep Research
+- Image / Audio input
+- Local Web UI
+- Durable SQLite state
 
-Windows PowerShell：
+[查看 Personal Assistant →](docs/applications/personal-assistant.md)
 
-```powershell
-$env:DEEPSEEK_API_KEY = '<your-api-key>'
-.\mvnw.cmd -pl :haifa-agent-sdk-example -am `
-  compile org.codehaus.mojo:exec-maven-plugin:3.5.1:java `
-  '-Dexec.mainClass=io.haifa.example.sdk.basic.HelloHaifa'
-```
+---
 
-示例背后的 Java 代码只有一次构建和一次调用：
+### Java SDK
+
+把 Agent 直接嵌入你的 Java 应用。
 
 ```java
 import io.haifa.agent.starter.HaifaAgentStarter;
 
-try (var haifa = HaifaAgentStarter.create()) {
-    System.out.println(haifa.chat("Hello, Java!").await().text());
-}
-```
+public class HelloHaifa {
+    public static void main(String[] args) throws Exception {
+        try (var agent = HaifaAgentStarter.create()) {
+            var response = agent
+                    .chat("用一句话介绍 Haifa Agent")
+                    .await();
 
-默认 Starter 使用 DeepSeek V4 Flash、关闭 Thinking，并采用进程内 Runtime Persistence 与
-Conversation Store。它默认不启用文件、Shell、Git、MCP、Web、Memory、Artifact 或 Execution；
-进程退出后状态会丢失。真实调用会访问外部服务并可能产生费用。
-
-### 注册类型化 Java Tool
-
-应用可以用 Java record 定义 Tool 输入输出，不必手写 Catalog、Binding、Schema Codec 或 Invoker：
-
-```java
-public final class WeatherTool
-        implements JavaTool<WeatherTool.Request, WeatherTool.Response> {
-
-    public record Request(String city) {}
-    public record Response(String forecast) {}
-
-    private static final JavaToolSpec<Request, Response> SPEC =
-            JavaToolSpec.builder("weather_get", Request.class, Response.class)
-                    .description("Get the current weather for a city")
-                    .pure()
-                    .build();
-
-    @Override
-    public JavaToolSpec<Request, Response> spec() {
-        return SPEC;
-    }
-
-    @Override
-    public Response invoke(Request input, JavaToolContext context) {
-        return new Response(weatherClient.current(input.city()));
+            System.out.println(response.text());
+        }
     }
 }
 ```
 
-把 Tool 加入 Starter 后，调用仍会经过统一 Tool Pipeline：
+输出示例：
 
-```java
-try (var agent = HaifaAgentStarter.builder()
-        .name("weather-agent")
-        .instructions("Use weather_get for weather questions.")
-        .tool(new WeatherTool())
-        .build()) {
-    var response = agent.chat("What is the weather in Shanghai?").await();
-    System.out.println(response.text());
-}
+```text
+Haifa Agent 是一个面向 Java 与 Spring 生态的 Agent Runtime 与开发框架。
 ```
 
-### 获取类型化最终结果
-
-对支持 `STRUCTURED_OUTPUT` 的模型，可以把有界 Java record 冻结为本次 Run 的最终输出契约：
-
-```java
-public record TranslationRequest(String sourceLanguage, List<String> phrases, List<String> destLangs) {}
-public record TranslationResult(Map<String, List<String>> translations) {}
-
-var request = new TranslationRequest("Chinese",
-        List.of("你好", "谢谢", "再见"),
-        List.of("English", "Japanese", "French"));
-
-var prompt = "Translate the following %s phrases %s into these languages: %s. "
-        + "Return a JSON object where each key is a target language "
-        + "and the value is the list of translated phrases in the same order."
-                .formatted(request.sourceLanguage(), request.phrases(), request.destLangs());
-
-var response = agent.chat(prompt, TranslationResult.class).await();
-TranslationResult result = response.value();
-// result.translations(): {"English": ["Hello", "Thank you", "Goodbye"], "Japanese": [...], ...}
-```
-
-Provider Adapter 映射结构化输出协议，Runtime 校验并持久化最终结果后，SDK 才解码 record。中间流、
-Tool Call 或未经校验的 JSON 文本不会被伪装成类型化结果。
-
-## 接入现有项目
-
-当前版本尚未作为稳定版发布。先从仓库根目录把匹配版本制品安装到本地 Maven 仓库：
+Starter 默认使用 DeepSeek V4 Flash。设置：
 
 ```bash
-./mvnw \
-  -pl :haifa-agent-bom,:haifa-agent-spring-bom,:haifa-agent-sdk-starter,:haifa-agent-spring-boot-starter \
-  -am -DskipTests install
+export DEEPSEEK_API_KEY="<your-api-key>"
 ```
 
-### Pure Java
+即可运行第一个真实 Model 请求。
+
+Tool、MCP、Execution、Memory 等能力不会被默认全部打开，而是根据产品需要显式装配。
+
+[SDK Quickstart →](docs/get-started/quickstart.md)
+
+---
+
+## 快速开始
+
+### 方式一：运行 Coding Agent
+
+#### macOS / Linux
+
+构建本地发行目录：
+
+```bash
+./scripts/package-local-coding-agent.sh
+export PATH="$HOME/.haifa-agent/coding:$PATH"
+```
+
+进入任意项目：
+
+```bash
+cd /path/to/your/project
+haifa-coding
+```
+
+#### Windows
+
+```powershell
+.\scripts\package-local-coding-agent.ps1
+$env:Path = "$env:USERPROFILE\.haifa-agent\coding;$env:Path"
+```
+
+然后：
+
+```powershell
+Set-Location D:\path\to\your\project
+haifa-coding
+```
+
+首次使用时根据 Terminal 引导配置 Model Credential。
+
+Coding Agent 默认使用当前目录作为 Workspace。
+
+### 方式二：嵌入 Java 应用
+
+Haifa Agent 当前要求：
+
+- Java 21
+- Maven 3.9+，或直接使用仓库自带 Maven Wrapper
+
+Pure Java 项目：
 
 ```xml
 <dependencyManagement>
@@ -212,239 +203,409 @@ Tool Call 或未经校验的 JSON 文本不会被伪装成类型化结果。
 </dependencies>
 ```
 
-### Spring Boot
+当前 `0.1.1-SNAPSHOT` 尚不是正式公共 Release，源码开发阶段可以先从本仓库安装到本地 Maven Repository。
 
-```xml
-<dependencyManagement>
-    <dependencies>
-        <dependency>
-            <groupId>io.haifa</groupId>
-            <artifactId>haifa-agent-spring-bom</artifactId>
-            <version>0.1.1-SNAPSHOT</version>
-            <type>pom</type>
-            <scope>import</scope>
-        </dependency>
-    </dependencies>
-</dependencyManagement>
+[Installation →](docs/get-started/installation.md)
 
-<dependencies>
-    <dependency>
-        <groupId>io.haifa</groupId>
-        <artifactId>haifa-agent-spring-boot-starter</artifactId>
-    </dependency>
-</dependencies>
+---
+
+## 为什么使用 Haifa Agent
+
+### Pure Java Core，Spring 原生友好
+
+Core、Runtime、SDK、Tool、Memory 等核心能力保持 Pure Java。
+
+Spring Boot 只作为 Adapter / Starter 层存在，负责 Bean、Configuration 与 Lifecycle：
+
+```text
+Your Spring Application
+        │
+        ▼
+Spring Boot Starter
+        │
+        ▼
+Haifa Agent SDK
+        │
+        ▼
+Agent Runtime
 ```
 
-Spring Boot Starter 默认创建单例 `HaifaAgent`，自动收集 `JavaTool` Bean，支持有序
-`HaifaAgentStarterCustomizer`，并在应用关闭时释放 Agent。它不会把 Spring AI 或 Provider SDK
-引入纯 Java Core、Runtime 或 SDK。
+运行 Agent 不需要额外启动一套 Python Agent Service。
 
-完整的外部消费者应用位于 [`examples/haifa-agent-example`](examples/haifa-agent-example/README.md)，
-分别展示 Pure Java 与 Spring Boot 接入。
+### 用 Java record 定义 Tool
 
-## 已实现能力
+不需要手写一堆 JSON Schema 和参数解析代码。
 
-### Runtime 与模型
+```java
+public record WeatherRequest(String city) {}
 
-- Core 领域模型、`AgentRun` 状态机、Runtime API、异步 AgentLoop、Attempt、Checkpoint、
-  Interaction、Run Input、Plan/Todo 和完成门禁；
-- Provider-neutral Model API，以及确定性模型目录、选择、访问策略、健康状态和 Adapter Registry；
-- OpenAI-compatible Adapter 支持同步与 SSE、Tool Call、最终 usage、结构化输出和受保护的
-  reasoning continuation；
-- Google Gemini Integration 支持官方 `generateContent` / `streamGenerateContent` 文本、Function Calling、
-  结构化输出、原生 inline 图片/音频、Usage 和受保护 Thought Signature continuation；Antigravity Direct
-  仅作为独立方言；
-- 已治理的 OpenAI、Google Antigravity、DeepSeek、阿里云百炼、Kimi、智谱和火山方舟接入，覆盖当前已验证的
-  Chat Completions、Responses 与 Anthropic Messages Binding；
-- 不进行隐式模型 fallback、轮询或运行中热替换。
+public record WeatherResponse(String forecast) {}
 
-### Tool、MCP、Skill 与 Web
+public final class WeatherTool
+        implements JavaTool<WeatherRequest, WeatherResponse> {
 
-- 类型化 `JavaTool<I, O>`、Java record Schema/Codec、受限 JSON Schema Draft 2020-12 子集、
-  精确 Tool Binding 和统一 Tool Catalog；
-- 可精确固定到 `2025-03-26`、`2025-06-18`、`2025-11-25` 或 `2026-07-28` 的 MCP Client，
-  支持 Streamable HTTP 与由 `ExecutionBroker` 托管的 stdio；明确不支持 `2024-11-05`，晚于当前适配
-  上限的有效日期版本会返回待适配提示且不猜测其协议行为；
-- 兼容 `SKILL.md` 的 Skill API/Core/Base，支持分层发现、内容寻址冻结、摘要披露、Run 级激活和
-  资源按需读取；
-- Personal Assistant `github-project-watch` 等业务 Product Skill；Skill 只提供流程，不授予执行、
-  网络或 Credential 权限；系统 `git` / `gh` 由 `execution_run` 直接调用，不依赖内置 Skill；
-- `web_search` 支持 Aliyun IQS、Brave、Tavily；`web_fetch` 支持 Aliyun IQS、Browserless、Tavily；
-- MCP Tool 和 Skill 激活不会绕过 Runtime Tool Pipeline，也不能扩大 Run 已冻结的 Tool 集。
+    @Override
+    public JavaToolSpec<WeatherRequest, WeatherResponse> spec() {
+        return JavaToolSpec.builder(
+                        "weather_get",
+                        WeatherRequest.class,
+                        WeatherResponse.class)
+                .description("Get weather for a city")
+                .pure()
+                .build();
+    }
 
-### Context、Memory 与持久化
-
-- 分层 Context IR、受控压缩与安全的 Prompt Diagnostics；诊断只返回组件、顺序、摘要和 Token 估算，
-  不返回 Prompt、用户消息、Memory 或 Tool 正文；
-- Run、Session、User Scope 的 Memory API/Core，以及 SQLite 中全人工确认的 Candidate、正式 Memory
-  和最小 Audit；
-- CA、PA 与显式 SQLite SDK 共用唯一 `HaifaAgentStoreMigrations` clean baseline 和 V1.0 初始化 artifact，
-  提供版本化 Codec、线程绑定 UoW、完整 Runtime Persistence Port、Conversation 与 Artifact 单机存储；
-- JSONL 是可删除、可重建的安全 Transcript Outbox 投影，不是恢复事实源。
-
-### Project、Execution 与安全
-
-- 受控 Workspace 多根目录授权、安全文件操作、`SessionChangeLedger` 纯内存变更账本、Patch 与索引；
-- 显式 Artifact Export、内容寻址 payload、provenance、完整性校验与 SQLite 单机持久化；
-- `ExecutionBroker`、Sandbox SPI 与唯一受控 Host Provider（`host-guarded`：受控进程启动、cwd、超时、
-  取消、输出与进程树回收，不提供 OS 级文件、网络或资源隔离）；
-- 模型通过受控 `execution_run` 直接调用系统 `git` / `gh`；Java 不解析 Git/GH 子命令、参数或业务风险，
-  普通命令、Wrapper 和客户脚本走同一通用执行路径，仅保留防止宿主凭据进入模型的封闭 fail-closed 边界。
-  Java Git Integration 只保留不向模型披露的 Revision Probe，以及供 Path-local
-  Review 使用的有界仓库检查和只读证据采集，不再注册 `git.*` / `github.*` 子命令 Tool；
-- 五字段瞬态 Policy Decision、`DENY > ASK > ALLOW`、Interaction-owned ASK 恢复、CA 单一授权目录记录
-  （owner + `WorkspaceId` + 规范宿主根 + `READ`/`DEVELOP`）、AES-GCM 本地 Credential Store 与短生命周期
-  Lease；不持久化 Decision/Grant/Project Trust。
-
-### SDK、协议与产品
-
-- 纯 Java `haifa-agent-sdk` Facade、可信 `ProductProfile`、显式类型化组件装配、
-  Conversation/Run API、轻量 `chat()` 和类型化最终输出；
-- Spring Boot Starter 与自动装配；
-- 公共 Contract、持久 Run Event Feed，以及框架中立 HTTP/JSON + SSE 参考 Adapter；
-- 可恢复的 Coding Session、tui4j Terminal 和唯一可执行 CLI；
-- Personal Assistant 的纯 Java Application、本机 loopback-only Spring Boot WebFlux Server、
-  React Web、只读诊断 Admin、持久 Mission 与精简 Deep Research Product Skill；
-- Reactor 末端的 Test Harness、共享 Fixture、Transport TCK、Integration、Live 与 E2E 测试模块。
-
-## 架构
-
-```mermaid
-flowchart TB
-  APP["Applications: Coding Agent / Personal Assistant"] --> SDK["Pure Java SDK"]
-  APP --> INTEGRATIONS["Integrations: Model / MCP / Web / SQLite / HTTP"]
-  SDK --> RUNTIME["Runtime API + Runtime Core"]
-  INTEGRATIONS --> RUNTIME
-  RUNTIME --> CAP["Capability APIs: Model / Tool / Skill / Memory / Policy / Credential"]
-  RUNTIME --> KERNEL["Core / Context / Project API + Core / Artifact"]
-  APP --> HOST["Project Host / Execution Host / Sandbox Providers"]
-  HOST --> KERNEL
-  HOST --> RUNTIME
-  CAP --> CORE["Core + Common"]
-  KERNEL --> CORE
-  TESTING["Testing"] -.-> APP
-  TESTING -.-> INTEGRATIONS
+    @Override
+    public WeatherResponse invoke(
+            WeatherRequest request,
+            JavaToolContext context) {
+        return new WeatherResponse("Sunny");
+    }
+}
 ```
 
-固定原则：高层可以依赖低层，低层不能反向依赖高层；Application 负责装配，不把产品语义回灌到
-Core、Runtime 或 Capability API。Spring Framework 从适配边界开始引入，Spring Boot 只进入 Starter
-和最高层 Application。
+SDK 自动完成：
 
-仓库按职责分为：
+```text
+Java record
+    ↓
+JSON Schema
+    ↓
+Tool Catalog
+    ↓
+Model Tool Call
+    ↓
+Schema Validation
+    ↓
+Policy / Approval
+    ↓
+Java Method
+```
 
-| 目录 | 职责 |
+[Java Tool Guide →](docs/advanced/tools.md)
+
+### 原生 HITL 与安全恢复
+
+Agent 可以在执行过程中暂停，等待：
+
+- Clarification
+- Confirmation
+- Approval
+
+这些正常 Interaction / Pause 状态可以持久化，并在进程重启后继续。
+
+对于已经 Dispatch、但最终结果无法确认的 Side Effect，Runtime 不会冒险自动重放：
+
+```text
+Known result
+    → continue
+
+Waiting for approval
+    → persist
+    → restart
+    → continue
+
+Unknown side effect
+    → fail closed
+    → do not blindly replay
+```
+
+Haifa Agent 追求的不是“任何 Crash 都假装无缝恢复”，而是**恢复已经知道的事实，不猜测不知道的事实**。
+
+[Persistence & Recovery →](docs/core-components/persistence-and-recovery.md)
+
+### 多 Provider，但不偷偷降级
+
+当前已经提供或验证的 Model Integration 包括：
+
+- DeepSeek
+- Google Gemini
+- OpenAI-compatible API
+- Anthropic-style API
+- 多个 OpenAI-compatible Provider Binding
+
+Run 创建时会冻结实际 Model Binding。
+
+如果某个 Provider 或 Binding 不可用，Haifa Agent 会显式失败，而不是偷偷换一个 Model 继续运行。
+
+[Model Providers →](docs/advanced/model-providers.md)
+
+---
+
+## 已经能做什么
+
+| 能力 | 当前支持 |
 | --- | --- |
-| `haifa-agent-kernel/` | Common、Core、Runtime、Context、Project API/Core/Host 与 Artifact；Project Host 是唯一物理文件系统边界。 |
-| `haifa-agent-capabilities/` | Model、Tool、Skill、Credential、Memory 与 Policy API/Core。 |
-| `haifa-agent-execution/` | Execution API/Core、窄 Execution Host、Sandbox SPI 与本地 Provider。 |
-| `haifa-agent-integrations/` | 模型、Web、MCP、Git、SQLite、JSONL 与 HTTP Adapter。 |
-| `haifa-agent-sdk/`、`haifa-agent-sdk-starter/` | 高层纯 Java Facade 与安全默认 Quickstart。 |
-| `haifa-agent-spring/` | Spring Boot 自动装配与依赖 Starter。 |
-| `haifa-agent-applications/` | Coding Agent、CLI、Personal Assistant、SDK 示例与 Runtime Demo。 |
-| `haifa-agent-testing/` | Reactor 末端的 Harness、Fixture、TCK、Integration 与 E2E。 |
-| `examples/haifa-agent-example/` | 不加入 Reactor 的独立消费者构建。 |
+| Conversation / Run | Multi-turn Conversation、异步 Run、Cancel、Resume |
+| Streaming | Assistant Output Stream、Durable Run Event |
+| Java Tool | Typed Java record、自动 Schema、Tool Loop |
+| Structured Output | Java record 作为 Final Output Contract |
+| MCP | MCP Client、Tool Discovery / Import、stdio / HTTP |
+| Skill | `SKILL.md`、Progressive Disclosure、Resource Read |
+| HITL | Clarification、Approval、ASK / ALLOW / DENY |
+| Persistence | SQLite、Conversation / Run / Interaction State |
+| Memory | Candidate、Review、Formal Memory |
+| Artifact | 显式 Artifact Export 与 Metadata |
+| Workspace | Authorized Directory、File Tool |
+| Execution | Shell、Build、Test、git、gh |
+| Web | Web Search / Fetch Integration |
+| Model | DeepSeek、Gemini、OpenAI-compatible 等 |
+| Spring | Spring Boot Starter、JavaTool Bean 自动装配 |
 
-详细模块、依赖方向和稳定边界以
-[`docs/architecture/overview.md`](docs/architecture/overview.md) 与 [`docs/architecture/runtime-and-module-boundaries.md`](docs/architecture/runtime-and-module-boundaries.md) 为准。
+Haifa Agent 不会因为“平台化”而默认开启全部 Capability。
 
-## 示例与产品入口
+产品只装配真正需要的能力。
 
-| 入口 | 适合场景 | 默认网络行为 |
-| --- | --- | --- |
-| [`haifa-agent-sdk-starter`](haifa-agent-sdk-starter/README.md) | 最小 Pure Java 接入 | `chat()` 使用真实 DeepSeek，需显式提供凭据 |
-| [`haifa-agent-sdk-example`](haifa-agent-applications/haifa-agent-sdk-example/README.md) | 从 Basic 到 Advanced 学习 SDK | 除 `HelloHaifa` 外默认离线 |
-| [`examples/haifa-agent-example`](examples/haifa-agent-example/README.md) | 验证外部 Pure Java / Spring Boot 消费方式 | 测试离线，运行应用需凭据 |
-| [`haifa-agent-runtime-demo`](haifa-agent-applications/haifa-agent-runtime-demo/README.md) | 直接观察 Runtime、Tool、MCP、Skill 装配 | 真实调用必须显式 opt-in |
-| [`haifa-agent-cli`](haifa-agent-applications/haifa-agent-cli/README.md) | 本地 Coding Agent Terminal 与 one-shot | 由显式配置决定 |
-| [`haifa-agent-personal-assistant-server`](haifa-agent-applications/haifa-agent-personal-assistant-server/README.md) | 本机 Personal Assistant API / SSE | loopback-only，外部能力显式配置 |
+---
+
+## Architecture
+
+Haifa Agent 的核心结构很简单：
+
+```text
+       Coding Agent       Personal Assistant        Your App
+             \                  |                      /
+              \                 |                     /
+               └──────── Haifa Agent SDK ───────────┘
+                              |
+                              ▼
+                         Agent Runtime
+                              |
+          ┌─────────┬─────────┼─────────┬─────────┐
+          ▼         ▼         ▼         ▼         ▼
+        Model      Tool      Skill     Memory    Policy
+          │         │         │         │         │
+          └─────────┴──────┬──┴─────────┴─────────┘
+                           ▼
+                       Integrations
+                           |
+       DeepSeek · Gemini · MCP · SQLite · Web · Host
+```
+
+三个基本原则：
+
+1. **Core / Runtime / SDK 保持 Pure Java**
+2. **Provider、Spring、SQLite、MCP 位于 Adapter / Integration 边界**
+3. **Coding Agent 与 Personal Assistant 是同一个 Runtime 上的不同 Product Assembly**
+
+不会因为某个产品需要某项功能，就自动把产品概念下沉进 Runtime。
+
+[Architecture Overview →](docs/architecture/overview.md)
+
+[Runtime & Module Boundaries →](docs/architecture/runtime-and-module-boundaries.md)
+
+---
+
+## Coding Agent
+
+Coding Agent 不是 SDK Demo，而是 Haifa Runtime 的实际产品之一。
+
+它把：
+
+```text
+Model
+ + File Tools
+ + Shell
+ + git / gh
+ + Workspace
+ + Skill
+ + MCP
+ + Policy / Approval
+ + Persistence
+```
+
+组合成一个可以长期使用的 Terminal Coding Agent。
+
+典型任务：
+
+```text
+> 分析这个项目为什么 Windows CI 比 Linux 慢
+
+> 修复 failing test，并运行相关验证
+
+> 阅读这个模块，找出 Runtime 与 Product Layer 耦合的位置
+
+> 修改实现，但不要创建 commit
+```
+
+Model 自己负责理解任务、规划步骤和解释 Command Result。
+
+Runtime 只负责真正应该由 Runtime 保证的事情：
+
+- Tool Contract
+- Workspace Boundary
+- Approval
+- Cancellation
+- Budget
+- Unknown Side Effect
+- Lifecycle
+- Persistence
+
+[了解 Coding Agent →](docs/applications/coding-agent.md)
+
+---
+
+## Personal Assistant
+
+Personal Assistant 展示了另一种完全不同的 Product Assembly。
+
+它重点组合：
+
+```text
+Conversation
+ + Model Selection
+ + Tool / Skill / MCP
+ + Memory
+ + Web
+ + Mission
+ + Deep Research
+ + Artifact
+ + Local Web UI
+```
+
+PA 使用本地 Spring Boot Server + React Web，并默认运行在 Loopback Trusted-local 环境。
+
+它不是一个面向公网、多租户的通用 Agent Server。
+
+[了解 Personal Assistant →](docs/applications/personal-assistant.md)
+
+---
+
+## SDK 示例
+
+仓库包含一组可以直接运行的 SDK Example。
+
+```text
+haifa-agent-sdk-example
+├── basic
+│   ├── HelloHaifa
+│   ├── MultiTurnConversationExample
+│   └── AgentReuseLifecycleExample
+│
+├── intermediate
+│   ├── TypedJavaToolExample
+│   ├── MultiToolCollaborationExample
+│   ├── StructuredOutputExample
+│   ├── MultiModelProviderExample
+│   └── PromptDiagnosticsExample
+│
+└── advanced
+    ├── ConversationManagementExample
+    ├── IdempotencyAndRevisionExample
+    ├── RunOutputStreamingExample
+    ├── RunEventJournalExample
+    ├── RunQueryControlExample
+    ├── TrustedCallerExample
+    ├── AssemblyDiagnosticsExample
+    └── SqliteDurableReferenceAssemblyExample
+```
+
+普通 Example 默认不访问真实 Provider；当前只有 `basic.HelloHaifa` 明确使用真实 Provider，并要求 `DEEPSEEK_API_KEY`。
+
+[SDK Examples →](haifa-agent-applications/haifa-agent-sdk-example/README.md)
+
+---
+
+## 当前边界
+
+Haifa Agent 当前重点面向：
+
+> **单机 / 本地可信环境中的 Java Agent Runtime 与产品开发。**
+
+`0.1.1` 暂不提供：
+
+- Distributed Worker / Control Plane
+- Graph / Workflow Runtime
+- Enterprise IAM / Approval Workflow
+- Built-in Container / gVisor / microVM Sandbox
+- MCP Server Hosting
+- 通用公网 Multi-tenant Agent Server
+
+当前 `host-guarded` Execution 提供的是受控 Host Process Execution，而不是 OS Kernel-level Isolation。
+
+如果需要执行完全不可信代码，应把 Haifa Agent 放入外部 VM / Container 等安全边界。
+
+[Security →](docs/reference/security.md)
+
+---
+
+## 文档
+
+第一次使用：
+
+- [Installation](docs/get-started/installation.md)
+- [Quickstart](docs/get-started/quickstart.md)
+- [Key Concepts](docs/get-started/key-concepts.md)
+
+深入理解：
+
+- [Agent Runtime](docs/core-components/agent-runtime.md)
+- [Capabilities](docs/core-components/capabilities.md)
+- [Architecture](docs/architecture/overview.md)
+
+开发 Agent：
+
+- [Java Tools](docs/advanced/tools.md)
+- [Skills & MCP](docs/advanced/skills-and-mcp.md)
+- [Structured Output](docs/advanced/structured-output.md)
+- [Model Providers](docs/advanced/model-providers.md)
+
+产品：
+
+- [Coding Agent](docs/applications/coding-agent.md)
+- [Personal Assistant](docs/applications/personal-assistant.md)
+
+完整文档入口：
+
+**[docs/README.md →](docs/README.md)**
+
+---
 
 ## 构建与测试
 
-普通测试默认不访问真实模型、MCP 或 Web Provider。真实调用必须设置对应的显式开关与凭据，并可能
-产生费用。
+普通测试默认不会访问真实 Model、MCP 或 Web Provider。
 
 macOS / Linux：
 
 ```bash
-# 精确测试，L1 默认串行
-./build-support/scripts/invoke-haifa-maven.sh --layer L1 -- \
-  -pl :haifa-agent-runtime-core -am \
-  -Dtest=RuntimeCoreTest -Dsurefire.failIfNoSpecifiedTests=false test
-
-# 受影响模块完整测试，L2 固定 -T 4
+# 受影响模块测试
 ./build-support/scripts/invoke-haifa-maven.sh --layer L2 -- \
   -pl :haifa-agent-runtime-core -am test
 
-# 全仓 Unit / Contract / Architecture
-./build-support/scripts/invoke-haifa-maven.sh --layer L2 -- test
-
-# 本地最终门禁，L3 固定 -T 2
-./build-support/scripts/invoke-haifa-maven.sh --layer L3 -- -Pci-fast clean verify
-
-# 显式执行默认排除的慢速 Surefire 测试
-./build-support/scripts/invoke-haifa-maven.sh --layer L2 -- -Pslow-tests test
+# 最终本地门禁
+./build-support/scripts/invoke-haifa-maven.sh --layer L3 -- \
+  -Pci-fast clean verify
 ```
 
 Windows PowerShell：
 
 ```powershell
-.\build-support\scripts\invoke-haifa-maven.ps1 --layer L1 '--' `
-  -pl :haifa-agent-runtime-core -am `
-  '-Dtest=RuntimeCoreTest' '-Dsurefire.failIfNoSpecifiedTests=false' test
-
 .\build-support\scripts\invoke-haifa-maven.ps1 --layer L2 '--' `
   -pl :haifa-agent-runtime-core -am test
 
-.\build-support\scripts\invoke-haifa-maven.ps1 --layer L2 '--' test
-
-.\build-support\scripts\invoke-haifa-maven.ps1 --layer L3 '--' -Pci-fast clean verify
-
-.\build-support\scripts\invoke-haifa-maven.ps1 --layer L2 '--' -Pslow-tests test
+.\build-support\scripts\invoke-haifa-maven.ps1 --layer L3 '--' `
+  -Pci-fast clean verify
 ```
 
-普通 Surefire、L2 和 L3 `ci-fast` 默认排除类级 `@Tag("slow")`；当前慢测集合及精确运行方式见
-[`build-support/README.md`](build-support/README.md)。测试代码仍由 `slow-tests` Profile 显式执行。
+更完整的构建与测试规则见：
 
-同一 SHA 已通过 `ci-fast` 后，可使用 `-Pci-integration-only verify` 只运行 Failsafe Integration。
-Release 验证必须通过 `-pl` 指定受影响模块；完整分层矩阵见
-[`build-support/README.md`](build-support/README.md)。
+[build-support/README.md](build-support/README.md)
 
-## 当前未实现
+---
 
-以下能力不应被视为当前行为：
+## Contributing
 
-- Enterprise SDK、通用生产级 HTTP Server、Worker、Scheduler、Control Plane 和企业 Admin Server；
-- 分布式 Store/Lease、生产 KMS/Vault、对象存储和跨机器恢复；
-- Knowledge/RAG、Graph/Workflow 与多 Agent 调度；
-- Skill Hub、Skill 创作/安装/企业管理面和动态插件平台；
-- 完整的企业级 Approval 产品体验、审批路由与工作流；
-- 内建容器、gVisor、microVM、Kubernetes Sandbox 或其它 OS 级强隔离；
-- Coding Session Tree/Fork/Clone、PTY、交互式子进程和后台 Job；
-- MCP Server Hosting，以及 MCP Resources、Prompts、Sampling、Elicitation、OAuth 等后续协议能力。
+开始修改前，请先阅读：
 
-Personal Assistant Server 是受信本机、仅监听 loopback 的具体产品宿主，不能据此视为通用生产 Server。
-Host Sandbox 是可信本地受控执行，也不等同于网络、CPU、内存或文件系统强隔离。
+- [AGENTS.md](AGENTS.md)
+- 对应模块的 `README.md`
+- 对应模块 `pom.xml`
+- 相关 Architecture Test
 
-## 文档
+功能开发使用 `feat-*` 分支并发起 Pull Request。
 
-公开文档现在与主仓代码一起版本化：
+代码与公开文档应在同一个 PR 中同步演进。
 
-- [文档首页](docs/README.md)
-- [快速开始](docs/get-started/quickstart.md)
-- [核心概念](docs/get-started/key-concepts.md)
-- [架构概览](docs/architecture/overview.md)
-- [Runtime 与模块边界](docs/architecture/runtime-and-module-boundaries.md)
-- [Coding Agent](docs/applications/coding-agent.md)
-- [Personal Assistant](docs/applications/personal-assistant.md)
-- [安全边界](docs/reference/security.md)
+Haifa Agent 仍处于快速发展阶段。相比提前构建大量“未来可能需要”的抽象，我们更倾向于从真实 Product、真实 Failure 和真实 Consumer 出发逐步演进。
 
-更具体的 Maven 模块实现细节继续以相邻模块 README、POM、源码与测试为准。
-
-## 参与开发
-
-开始修改前请阅读 [`AGENTS.md`](AGENTS.md) 和受影响模块的 `README.md`、`pom.xml`、架构测试。
-功能开发使用 `feat-*` 分支，并向 `dev` 发起 Pull Request。提交前至少完成受影响模块测试；最终交付应在
-同一 Git SHA 上通过 `-Pci-fast clean verify`，或明确记录未完成验证及原因。
-
-`docs/` 已纳入主仓 Git 跟踪，公开文档与代码通过同一个 Pull Request 演进。`test-config/` 仍是独立私有仓库。
-真实 Provider 测试不得输出 API Key、完整 Prompt、原始供应商响应或其他敏感内容。
+[Design Principles →](docs/architecture/design-principles.md)
