@@ -29,6 +29,7 @@ def arguments(**overrides):
         "model": None,
         "credential_env": None,
         "approval": None,
+        "case_set": None,
         "cases": None,
         "repeat": None,
         "timeout_scale": None,
@@ -53,6 +54,7 @@ def settings(**overrides):
         "model": None,
         "credential_env": None,
         "approval": "auto",
+        "case_set": "ladder-v1",
         "case_patterns": [],
         "repeat": 1,
         "timeout_scale": 1.0,
@@ -70,19 +72,6 @@ def settings(**overrides):
 
 
 class CredentialTest(unittest.TestCase):
-    def test_model_prefix_selects_the_provider_variable(self):
-        self.assertEqual("BIGMODEL_API_KEY", MODULE.credential_variable("glm-5.3-flash", None)[0])
-        self.assertEqual("KIMI_API_KEY", MODULE.credential_variable("kimi-k3", None)[0])
-
-    def test_model_auth_providers_need_no_variable(self):
-        variable, reason = MODULE.credential_variable("deepseek-responses-flash", None)
-
-        self.assertIsNone(variable)
-        self.assertIn("auth.json", reason)
-
-    def test_explicit_variable_wins(self):
-        self.assertEqual("MY_KEY", MODULE.credential_variable("glm-5.3-flash", "MY_KEY")[0])
-
     def test_secret_values_are_redacted(self):
         os.environ["BIGMODEL_API_KEY"] = "super-secret-value"
         try:
@@ -105,11 +94,14 @@ class CredentialTest(unittest.TestCase):
         self.assertNotIn("s3cr3t", line)
 
     def test_an_empty_credential_is_not_redacted(self):
+        # A provider key set on the evaluation machine must not leak into this assertion.
+        saved = {name: os.environ.pop(name) for name in MODULE.PROVIDER_CREDENTIAL_ENV.values() if name in os.environ}
         os.environ["TINY_KEY"] = "   "
         try:
             self.assertEqual([], MODULE.secret_values(settings(credential_env="TINY_KEY")))
         finally:
             os.environ.pop("TINY_KEY", None)
+            os.environ.update(saved)
 
 
 class LauncherTest(unittest.TestCase):
@@ -150,15 +142,33 @@ class LauncherTest(unittest.TestCase):
 
 
 class SelectionTest(unittest.TestCase):
+    LADDER = ["L1-01", "L1-02", "L4-03"]
+
     def test_patterns_filter_the_available_cases(self):
         with tempfile.TemporaryDirectory() as directory:
             cases_root = Path(directory)
             for case_id in ("L1-01", "L1-02", "L4-03", "notes"):
                 (cases_root / case_id).mkdir()
 
-            self.assertEqual(["L1-01", "L1-02", "L4-03"], MODULE.select_cases(cases_root, []))
-            self.assertEqual(["L1-01", "L1-02"], MODULE.select_cases(cases_root, ["L1-*"]))
-            self.assertEqual(["L1-02", "L4-03"], MODULE.select_cases(cases_root, ["L1-02", "L4-03"]))
+            self.assertEqual(self.LADDER, MODULE.select_cases(cases_root, [], self.LADDER))
+            self.assertEqual(["L1-01", "L1-02"], MODULE.select_cases(cases_root, ["L1-*"], self.LADDER))
+            self.assertEqual(["L1-02", "L4-03"], MODULE.select_cases(cases_root, ["L1-02", "L4-03"], self.LADDER))
+
+    def test_a_case_set_never_selects_a_case_of_another_set(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cases_root = Path(directory)
+            for case_id in ("L1-01", "H11-01", "H21-01"):
+                (cases_root / case_id).mkdir()
+
+            self.assertEqual(["H11-01", "H21-01"], MODULE.select_cases(cases_root, [], ["H11-01", "H21-01"]))
+            self.assertEqual([], MODULE.select_cases(cases_root, ["L1-*"], ["H11-01", "H21-01"]))
+
+    def test_a_member_without_a_case_directory_is_dropped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cases_root = Path(directory)
+            (cases_root / "H11-01").mkdir()
+
+            self.assertEqual(["H11-01"], MODULE.select_cases(cases_root, [], ["H11-01", "H12-01"]))
 
     def test_missing_environment_requires_the_cost_acknowledgement(self):
         problems = MODULE.missing_environment(settings(allow_real_provider=False))
@@ -416,6 +426,7 @@ class RunRecordTest(unittest.TestCase):
                 "model": "glm-5.3-flash",
                 "modelSource": "override",
                 "approval": "auto",
+                "caseSet": "ladder-v1",
                 "assetVersion": "2026.09.11.2",
                 "assetManifestSha256": "b" * 64,
                 "assetsPinned": False,
@@ -512,58 +523,39 @@ class ModelResolutionTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             launcher = self.distribution(directory, "glm-5.3-flash")
             os.environ.pop("BIGMODEL_API_KEY", None)
-
-            problems = MODULE.missing_environment(settings(agent=str(launcher)))
-
-        self.assertTrue(any("BIGMODEL_API_KEY is empty" in problem for problem in problems))
-
-
-class StoredConnectionTest(unittest.TestCase):
-    def store(self, directory: str, references: list[str]) -> Path:
-        path = Path(directory) / "auth.json"
-        path.write_text(
-            json.dumps({"version": 1, "credentials": {reference: {"kind": "api_key"} for reference in references}}),
-            encoding="utf-8",
-        )
-        return path
-
-    def test_model_auth_providers_are_recognized(self):
-        self.assertEqual("deepseek", MODULE.model_auth_provider("deepseek-responses-flash"))
-        self.assertEqual("openai-codex", MODULE.model_auth_provider("gpt-5.6-sol"))
-        self.assertIsNone(MODULE.model_auth_provider("glm-5.3-flash"))
-
-    def test_a_present_connection_is_accepted(self):
-        with tempfile.TemporaryDirectory() as directory:
-            original = MODULE.AUTH_STORE
-            MODULE.AUTH_STORE = self.store(directory, ["model-auth://deepseek/default"])
+            original = MODULE.os_credential_present
+            MODULE.os_credential_present = lambda target: False
             try:
-                self.assertIsNone(MODULE.stored_connection_problem("deepseek"))
+                problems = MODULE.missing_environment(settings(agent=str(launcher)))
             finally:
-                MODULE.AUTH_STORE = original
+                MODULE.os_credential_present = original
 
-    def test_a_missing_connection_stops_the_run_before_it_starts(self):
-        with tempfile.TemporaryDirectory() as directory:
-            original = MODULE.AUTH_STORE
-            MODULE.AUTH_STORE = self.store(directory, ["model-auth://openai-codex/default"])
-            try:
-                problem = MODULE.stored_connection_problem("deepseek")
-                problems = MODULE.missing_environment(settings(model="deepseek-responses-flash"))
-            finally:
-                MODULE.AUTH_STORE = original
-
-        self.assertIn("no stored connection for deepseek", problem)
-        self.assertTrue(any("no stored connection for deepseek" in entry for entry in problems))
-
-    def test_a_missing_store_is_reported(self):
-        original = MODULE.AUTH_STORE
-        MODULE.AUTH_STORE = Path(tempfile.gettempdir()) / "no-such-haifa-auth.json"
-        try:
-            self.assertIn("does not exist", MODULE.stored_connection_problem("deepseek"))
-        finally:
-            MODULE.AUTH_STORE = original
+        self.assertTrue(any("BIGMODEL_API_KEY is not set" in problem for problem in problems))
 
 
-class CredentialReferenceTest(unittest.TestCase):
+class CredentialPlanTest(unittest.TestCase):
+    """The provider API key variable wins; without it the agent falls back to the OS credential store."""
+
+    VARIABLES = ("DEEPSEEK_API_KEY", "BIGMODEL_API_KEY", "MY_KEY")
+
+    def setUp(self):
+        self.saved = {name: os.environ.pop(name) for name in self.VARIABLES if name in os.environ}
+        self.original_present = MODULE.os_credential_present
+        self.lookups: list[str] = []
+        self.stored: set[str] = set()
+
+        def present(target: str):
+            self.lookups.append(target)
+            return target in self.stored
+
+        MODULE.os_credential_present = present
+
+    def tearDown(self):
+        MODULE.os_credential_present = self.original_present
+        for name in self.VARIABLES:
+            os.environ.pop(name, None)
+        os.environ.update(self.saved)
+
     def distribution(self, directory: str) -> Path:
         root = Path(directory)
         (root / "haifa-coding.yaml").write_text(
@@ -573,40 +565,129 @@ class CredentialReferenceTest(unittest.TestCase):
             + "    - id: deepseek" + chr(10)
             + "      endpoint: https://api.deepseek.com" + chr(10)
             + "      credentialRef: model-auth://deepseek/default" + chr(10)
+            + "      allowedBindings: [deepseek-chat-flash, deepseek-responses-flash]" + chr(10)
             + "    - id: zhipu" + chr(10)
-            + "      credentialRef: env://BIGMODEL_API_KEY" + chr(10),
+            + "      credentialRef: env://BIGMODEL_API_KEY" + chr(10)
+            + "      allowedBindings: [glm-5.3, glm-5.3-flash]" + chr(10)
+            + "    - id: aliyun-bailian" + chr(10)
+            + "      credentialRef: ${HAIFA_TEST_UNSET_REF:model-auth://aliyun-bailian/default}" + chr(10)
+            + "      allowedBindings: [qwen3.8-max]" + chr(10),
             encoding="utf-8",
         )
         launcher = root / "haifa-coding.cmd"
         launcher.write_text("@echo off" + chr(10), encoding="utf-8")
         return launcher
 
-    def test_the_configured_reference_is_read_per_provider(self):
+    def test_the_provider_variable_is_used_first(self):
+        os.environ["DEEPSEEK_API_KEY"] = "value"
+        self.stored.add("haifa:model-auth:deepseek/default")
+
+        plan = MODULE.plan_credential(settings(model="deepseek-responses-flash"))
+
+        self.assertEqual(("environment", "env://DEEPSEEK_API_KEY"), (plan.source, plan.reference))
+        self.assertIsNone(plan.problem)
+        self.assertEqual([], self.lookups)
+
+    def test_without_the_variable_the_os_credential_store_is_used(self):
+        self.stored.add("haifa:model-auth:deepseek/default")
+
+        plan = MODULE.plan_credential(settings(model="deepseek-responses-flash"))
+
+        self.assertEqual(("os", "model-auth://deepseek/default"), (plan.source, plan.reference))
+        self.assertIsNone(plan.problem)
+        self.assertIn("DEEPSEEK_API_KEY is not set", plan.note)
+
+    def test_a_credential_in_neither_place_stops_the_run_before_it_starts(self):
+        problems = MODULE.missing_environment(settings(model="deepseek-responses-flash"))
+
+        self.assertTrue(any("DEEPSEEK_API_KEY is not set" in entry for entry in problems))
+        self.assertTrue(any("no model-auth://deepseek/default" in entry for entry in problems))
+
+    def test_an_env_configured_provider_also_falls_back_to_the_os_store(self):
+        with tempfile.TemporaryDirectory() as directory:
+            launcher = self.distribution(directory)
+            self.stored.add("haifa:model-auth:zhipu/default")
+
+            plan = MODULE.plan_credential(settings(agent=str(launcher), model="glm-5.3-flash"))
+
+        self.assertEqual(("zhipu", "os", "model-auth://zhipu/default"), (plan.provider, plan.source, plan.reference))
+        self.assertIsNone(plan.problem)
+
+    def test_the_configured_account_is_the_one_looked_up(self):
+        with tempfile.TemporaryDirectory() as directory:
+            launcher = self.distribution(directory)
+            self.stored.add("haifa:model-auth:deepseek/other")
+
+            plan = MODULE.plan_credential(settings(agent=str(launcher)))
+
+        self.assertEqual(["haifa:model-auth:deepseek/default"], self.lookups)
+        self.assertIn("model-auth://deepseek/default", plan.problem)
+
+    def test_a_placeholder_reference_resolves_to_its_fallback(self):
         with tempfile.TemporaryDirectory() as directory:
             launcher = self.distribution(directory)
 
-            self.assertEqual("model-auth://deepseek/default", MODULE.credential_reference(str(launcher), "deepseek"))
-            self.assertEqual("env://BIGMODEL_API_KEY", MODULE.credential_reference(str(launcher), "zhipu"))
-            self.assertIsNone(MODULE.credential_reference(str(launcher), "kimi"))
+            reference = MODULE.credential_reference(str(launcher), "aliyun-bailian")
 
-    def test_another_account_of_the_same_provider_does_not_authenticate(self):
+        self.assertEqual("model-auth://aliyun-bailian/default", reference)
+
+    def test_an_explicit_variable_wins_and_must_be_set(self):
+        os.environ["BIGMODEL_API_KEY"] = "value"
+
+        empty = MODULE.plan_credential(settings(model="glm-5.3-flash", credential_env="MY_KEY"))
+        os.environ["MY_KEY"] = "value"
+        chosen = MODULE.plan_credential(settings(model="glm-5.3-flash", credential_env="MY_KEY"))
+
+        self.assertIn("MY_KEY is empty", empty.problem)
+        self.assertEqual("env://MY_KEY", chosen.reference)
+
+    def test_the_provider_comes_from_the_configuration_before_the_id_prefix(self):
         with tempfile.TemporaryDirectory() as directory:
             launcher = self.distribution(directory)
-            store = Path(directory) / "auth.json"
-            store.write_text(
-                json.dumps({"version": 1, "credentials": {"model-auth://deepseek/other": {"kind": "api_key"}}}),
-                encoding="utf-8",
-            )
-            original = MODULE.AUTH_STORE
-            MODULE.AUTH_STORE = store
-            try:
-                problem = MODULE.stored_connection_problem("deepseek", "model-auth://deepseek/default")
-                problems = MODULE.missing_environment(settings(agent=str(launcher)))
-            finally:
-                MODULE.AUTH_STORE = original
 
-        self.assertIn("model-auth://deepseek/default", problem)
-        self.assertTrue(any("model-auth://deepseek/default" in entry for entry in problems))
+            self.assertEqual("zhipu", MODULE.model_provider(str(launcher), "glm-5.3"))
+        self.assertEqual("siliconflow", MODULE.model_provider(None, "siliconflow-glm-5-2"))
+        self.assertEqual("tokenrhythm", MODULE.model_provider(None, "tokenrhythm-deepseek-v4-pro-0813"))
+        self.assertEqual("openai-codex", MODULE.model_provider(None, "gpt-5.6-sol"))
+        self.assertIsNone(MODULE.model_provider(None, "unknown-model"))
+
+    def test_an_unpinned_model_is_left_to_the_agent(self):
+        plan = MODULE.plan_credential(settings())
+
+        self.assertEqual("unknown", plan.source)
+        self.assertIsNone(plan.problem)
+
+    def test_the_agent_configuration_is_rewritten_to_the_selected_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            launcher = self.distribution(directory)
+            (Path(directory) / "haifa-agent.jar").write_bytes(b"")
+            os.environ["DEEPSEEK_API_KEY"] = "never-written"
+            configured = settings(agent=str(launcher), output_dir=Path(directory) / "out")
+
+            written = MODULE.write_agent_configuration(configured, MODULE.plan_credential(configured))
+            text = written.read_text(encoding="utf-8")
+            configured.agent_config = written
+            argv = MODULE.agent_argv(configured, Path(directory), "task", 60)
+
+        self.assertIn("credentialRef: env://DEEPSEEK_API_KEY", text)
+        self.assertIn("credentialRef: env://BIGMODEL_API_KEY", text)
+        self.assertNotIn("never-written", text)
+        self.assertEqual(str(written), argv[argv.index("--config") + 1])
+
+    def test_an_unchanged_source_keeps_the_distribution_configuration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            launcher = self.distribution(directory)
+            self.stored.add("haifa:model-auth:deepseek/default")
+            configured = settings(agent=str(launcher), output_dir=Path(directory) / "out")
+
+            written = MODULE.write_agent_configuration(configured, MODULE.plan_credential(configured))
+
+        self.assertIsNone(written)
+
+    def test_every_provider_variable_is_scrubbed_and_redacted(self):
+        names = MODULE.credential_variables(settings(credential_env="MY_KEY"))
+
+        self.assertTrue({"DEEPSEEK_API_KEY", "BIGMODEL_API_KEY", "DASHSCOPE_API_KEY", "MY_KEY"} <= names)
 
 
 class CredentialScrubbingTest(unittest.TestCase):
@@ -729,6 +810,7 @@ class SettingsTest(unittest.TestCase):
                     model="from-flag",
                     credential_env=None,
                     approval=None,
+                    case_set=None,
                     cases="L2-*",
                     repeat=2,
                     timeout_scale=None,
@@ -749,6 +831,32 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(["L2-*"], resolved.case_patterns)
         self.assertEqual(2, resolved.repeat)
         self.assertEqual("auto", resolved.approval)
+        self.assertEqual("ladder-v1", resolved.case_set)
+
+    def test_the_case_set_comes_from_the_flag_then_the_environment_then_the_default(self):
+        os.environ["HAIFA_LADDER_CASE_SET"] = "hard-v1"
+        try:
+            self.assertEqual("ladder-v1", MODULE.resolve_settings(arguments(case_set="ladder-v1")).case_set)
+            self.assertEqual("hard-v1", MODULE.resolve_settings(arguments()).case_set)
+        finally:
+            os.environ.pop("HAIFA_LADDER_CASE_SET", None)
+
+        self.assertEqual("ladder-v1", MODULE.resolve_settings(arguments()).case_set)
+
+    def test_the_hard_case_set_is_repeated_so_that_one_lucky_run_is_not_a_pass(self):
+        self.assertEqual(3, MODULE.default_repeat("hard-v1"))
+        self.assertEqual(1, MODULE.default_repeat("ladder-v1"))
+        self.assertEqual(3, MODULE.resolve_settings(arguments(case_set="hard-v1")).repeat)
+        self.assertEqual(1, MODULE.resolve_settings(arguments(case_set="ladder-v1")).repeat)
+
+    def test_an_explicit_repeat_wins_over_the_case_set_default(self):
+        self.assertEqual(1, MODULE.resolve_settings(arguments(case_set="hard-v1", repeat=1)).repeat)
+
+        os.environ["HAIFA_LADDER_REPEAT"] = "5"
+        try:
+            self.assertEqual(5, MODULE.resolve_settings(arguments(case_set="hard-v1")).repeat)
+        finally:
+            os.environ.pop("HAIFA_LADDER_REPEAT", None)
 
 
 if __name__ == "__main__":
