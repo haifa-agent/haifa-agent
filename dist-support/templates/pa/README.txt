@@ -9,9 +9,9 @@ Haifa Personal Assistant - Windows x64 便携版
 
 1. 前台启动（带控制台日志）：
    双击运行 bin/start.bat。
-   脚本会自动启动服务，并在 2 秒后自动打开系统浏览器访问：
+   脚本会自动启动服务，在服务启动就绪后自动打开系统浏览器访问：
    http://127.0.0.1:20001/index.html
-   关闭黑色命令行窗口即可退出服务。
+   使用 bin\stop.bat 停止服务；关闭命令行窗口不会替代停止操作。
 
 2. 后台静默启动（无黑框）：
    双击运行 bin/start-background.vbs。

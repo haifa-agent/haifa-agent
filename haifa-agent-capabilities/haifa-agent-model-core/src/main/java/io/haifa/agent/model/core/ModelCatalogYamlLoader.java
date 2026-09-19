@@ -48,6 +48,8 @@ public final class ModelCatalogYamlLoader {
     private static final String ROOT_SCHEMA = "haifa.model-catalog/v1";
     private static final String PROVIDER_SCHEMA = "haifa.model-catalog-provider/v1";
     private static final String BINDING_SCHEMA = "haifa.model-catalog-binding/v1";
+    private static final Set<String> MANDATORY_PROVIDER_FIELDS = Set.of(
+            "schemaVersion", "providerId", "version", "displayName", "status", "authenticationMethods", "bindings");
     private static final Pattern YAML_ANCHOR_OR_ALIAS =
             Pattern.compile("(?m)(?:^|[\\s:\\-\\[\\],])(?:&|\\*)[A-Za-z_][A-Za-z0-9_-]*");
 
@@ -99,17 +101,16 @@ public final class ModelCatalogYamlLoader {
     private ModelCatalogProvider loadProvider(String resource) {
         Map<String, Object> provider = document(resource, "provider");
         requireSchema(provider, PROVIDER_SCHEMA, resource);
-        requireFields(
-                provider,
-                Set.of(
-                        "schemaVersion",
-                        "providerId",
-                        "version",
-                        "displayName",
-                        "status",
-                        "authenticationMethods",
-                        "bindings"),
-                resource);
+        for (String field : provider.keySet()) {
+            if (!MANDATORY_PROVIDER_FIELDS.contains(field) && !"showOrder".equals(field)) {
+                throw new IllegalArgumentException("unknown field at " + resource + ": " + field);
+            }
+        }
+        for (String field : MANDATORY_PROVIDER_FIELDS) {
+            required(provider, field, resource);
+        }
+        int showOrder =
+                provider.containsKey("showOrder") ? positiveInt(provider, "showOrder", resource) : Integer.MAX_VALUE;
         ModelProviderId providerId = new ModelProviderId(requiredText(provider, "providerId", resource));
         Set<ModelAuthenticationMethod> authenticationMethods = enumSet(
                 stringList(provider, "authenticationMethods", resource),
@@ -132,7 +133,8 @@ public final class ModelCatalogYamlLoader {
                 requiredText(provider, "displayName", resource),
                 enumValue(requiredText(provider, "status", resource), ProviderStatus.class, resource, "status"),
                 authenticationMethods,
-                bindings);
+                bindings,
+                showOrder);
     }
 
     private ModelCatalogBinding loadBinding(ModelProviderId providerId, String resource) {

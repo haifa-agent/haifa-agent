@@ -3,6 +3,7 @@ providerId: deepseek
 version: "2026-09-m0"
 displayName: DeepSeek
 status: ACTIVE
+showOrder: 1
 authenticationMethods: [API_KEY]
 bindings:
   - resource: bindings/deepseek-chat-pro.yaml

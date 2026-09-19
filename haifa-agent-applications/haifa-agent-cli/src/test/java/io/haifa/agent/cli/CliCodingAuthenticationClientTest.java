@@ -164,11 +164,68 @@ class CliCodingAuthenticationClientTest {
                 .isFalse();
     }
 
+    @Test
+    void ordersSupportedApiKeyProvidersFromCatalogByShowOrder() {
+        var store = createStore();
+        var client = client(
+                store,
+                "model-auth://deepseek/default",
+                "deepseek",
+                Map.of(),
+                java.util.List.of(
+                        "model-auth://deepseek/default",
+                        "model-auth://aliyun-bailian/default",
+                        "model-auth://zhipu/default",
+                        "model-auth://kimi/default",
+                        "model-auth://siliconflow/default"));
+
+        var providers = client.supportedApiKeyProviders();
+        assertThat(providers).isNotEmpty();
+        assertThat(providers.get(0)).isEqualTo("deepseek");
+        assertThat(providers).containsSubsequence("deepseek", "aliyun-bailian", "zhipu", "kimi", "siliconflow");
+    }
+
+    @Test
+    void excludesCatalogProvidersBackedOnlyByEnvironmentReferences() {
+        var store = createStore();
+        var client = client(
+                store,
+                "model-auth://deepseek/default",
+                "deepseek",
+                Map.of(),
+                java.util.List.of("model-auth://deepseek/default", "env://KIMI_API_KEY"));
+
+        assertThat(client.supportedApiKeyProviders()).containsExactly("deepseek");
+    }
+
+    @Test
+    void excludesNonDefaultLocalReferencesBecauseSaveApiKeyUsesDefaultReference() {
+        var store = createStore();
+        var client = client(
+                store,
+                "model-auth://deepseek/custom",
+                "deepseek",
+                Map.of(),
+                java.util.List.of("model-auth://deepseek/custom"));
+
+        assertThat(client.apiKeyConnectionSupported()).isFalse();
+        assertThat(client.supportedApiKeyProviders()).isEmpty();
+    }
+
     private CliCodingAuthenticationClient client(
             WindowsLocalModelAuthStore store,
             String credentialReference,
             String providerId,
             Map<String, String> environment) {
+        return client(store, credentialReference, providerId, environment, java.util.List.of(credentialReference));
+    }
+
+    private CliCodingAuthenticationClient client(
+            WindowsLocalModelAuthStore store,
+            String credentialReference,
+            String providerId,
+            Map<String, String> environment,
+            java.util.List<String> availableCredentialReferences) {
         var service = new LocalModelAuthenticationService(
                 store,
                 java.util.Optional.empty(),
@@ -176,6 +233,7 @@ class CliCodingAuthenticationClientTest {
                     throw new AssertionError("credential resolution is not expected");
                 },
                 environment::get);
-        return new CliCodingAuthenticationClient(service, credentialReference, providerId);
+        return new CliCodingAuthenticationClient(
+                service, credentialReference, providerId, availableCredentialReferences);
     }
 }
