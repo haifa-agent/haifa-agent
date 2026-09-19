@@ -1,39 +1,45 @@
-# Persistence and recovery
+# 持久化与恢复
 
-Haifa Agent separates durable facts from transient process state. The goal is not to serialize the entire runtime, but to persist the facts required by explicit product guarantees.
+Haifa Agent 明确区分 Durable Fact 与 Transient Process State。
 
-## Current durable reference
+目标不是序列化整个 Runtime，而是只持久化产品明确恢复承诺所需要的权威事实。
 
-SQLite is the current single-node durable reference implementation. It provides versioned codecs/migrations and persistence ports for Runtime facts and selected product capabilities.
+## 当前 Durable Reference
 
-JSONL is a safe transcript projection. It is useful for inspection and export, but it is not the authoritative recovery source.
+SQLite 是当前 Single-node Durable Reference Implementation。
 
-## Intentional continuation
+它提供版本化 Codec / Migration，以及 Runtime Fact 与部分 Product Capability 所需的 Persistence Port。
 
-Normal pauses and blocking interactions can continue across process restarts when their authoritative persisted facts are present and still valid.
+JSONL 是安全 Transcript Projection，可用于检查或导出，但不是权威 Recovery Source。
 
-Checkpoint data is deliberately small. It does not duplicate Tool results, Memory, Skill contents, model continuation, or every external capability state.
+## Intentional Continuation
 
-## Interrupted execution
+正常 Pause 与阻塞 Interaction，只要权威持久化事实仍存在且有效，就可以跨进程重启继续。
 
-Unexpected loss of an executing owner is not treated as transparent failover.
+Checkpoint 有意保持很小，不复制 Tool Result、Memory、Skill Content、Model Continuation 或每一个外部 Capability State。
 
-Recovery settles an abandoned execution attempt safely. If a side-effecting Tool outcome is unknown, the Run fails with an unknown-outcome classification rather than dispatching the Tool again and guessing that replay is safe.
+## Interrupted Execution
 
-## Authoritative facts
+执行 owner 异常丢失时，不会被当成 Transparent Failover。
 
-Examples of authoritative facts include:
+Recovery 会安全收敛 Abandoned Execution Attempt。
 
-- Run, Session, Step, and Attempt state;
-- ToolCall result state;
-- pending Interaction state;
-- durable Runtime events;
-- frozen configuration references/digests required to interpret the Run.
+如果有 Side Effect 的 Tool Outcome Unknown，Run 会按 Unknown Outcome 失败，而不是再次 Dispatch Tool 并假设 Replay 一定安全。
 
-Transient assistant text streaming and process-local diagnostics are not recovery facts.
+## 权威事实
 
-## Product capabilities
+典型 Authoritative Facts 包括：
 
-A product can add persistence for Memory, Artifacts, Mission state, or other product-owned facts without forcing every capability into a universal snapshot protocol.
+- Run、Session、Step、Attempt State；
+- ToolCall Result State；
+- Pending Interaction State；
+- Durable Runtime Event；
+- 解释 Run 所需要的 Frozen Configuration reference / digest。
 
-This is a deliberate boundary: persistence follows concrete recovery promises, not the word "enterprise".
+Transient Assistant Text Streaming 与进程内 Diagnostics 都不是 Recovery Fact。
+
+## Product-owned Persistence
+
+产品可以为 Memory、Artifact、Mission 或其它产品事实增加持久化，而不必把每个 Capability 都塞进统一 Snapshot Protocol。
+
+这是有意的架构边界：Persistence 跟随具体 Recovery Promise，而不是跟随“Enterprise”这样的抽象形容词。
