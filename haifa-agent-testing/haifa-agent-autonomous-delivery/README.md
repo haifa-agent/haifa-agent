@@ -53,7 +53,7 @@ python -m unittest discover -s haifa-agent-testing/haifa-agent-autonomous-delive
 | --- | --- |
 | `HAIFA_LADDER_ALLOW_REAL_PROVIDER` | 必须为 `true`：评测调用真实 Provider 并产生费用 |
 | `HAIFA_LADDER_AGENT` | Coding Agent 启动器；未设置时自动发现 `~/.haifa-agent/coding/haifa-coding(.cmd)` |
-| 凭据 | 由生效模型推断：`glm-*` → `BIGMODEL_API_KEY`、`kimi-*` → `KIMI_API_KEY` 等；`deepseek`/`gpt-*`/`antigravity` 经系统凭据管理器（Windows Credential Manager 等）认证，体检会检查该 Provider 的连接是否已存在 |
+| 凭据 | 先读生效模型所属 Provider 的约定环境变量：`deepseek` → `DEEPSEEK_API_KEY`、`zhipu`（`glm-*`）→ `BIGMODEL_API_KEY`、`kimi` → `KIMI_API_KEY`、`aliyun-bailian`（`qwen*`）→ `DASHSCOPE_API_KEY`、`siliconflow` → `SILICONFLOW_API_KEY`、`tokenrhythm` → `TK_API_KEY`；未设置时回退到系统凭据管理器（Windows Credential Manager 中 Agent 登录后保存的 `model-auth://<provider>/default`）。`openai-codex`、`google-antigravity` 只有浏览器登录，总是走系统凭据管理器。体检只检查凭据是否存在，不读取凭据值；选中的来源与发行包配置不同时，Runner 会在报告目录写一份只改了 `credentialRef` 的 `agent-configuration.yaml` 交给 Agent，这份文件里只有引用、没有密钥 |
 
 可选：`HAIFA_LADDER_MODEL`、`HAIFA_LADDER_APPROVAL`（默认 `auto`，只接受 `auto` 或 `deny`：评测以关闭的 stdin 运行 Agent，`ask` 会让每次审批被拒，体检阶段直接拒绝）、`HAIFA_LADDER_CASE_SET`、`HAIFA_LADDER_CASES`、
 `HAIFA_LADDER_REPEAT`、`HAIFA_LADDER_TIMEOUT_SCALE`、`HAIFA_LADDER_OUTPUT`、`HAIFA_LADDER_CACHE_DIR`、

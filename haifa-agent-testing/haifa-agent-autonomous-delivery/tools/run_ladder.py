@@ -13,7 +13,7 @@ Environment variables (a flag of the same name always wins):
 | HAIFA_LADDER_ALLOW_REAL_PROVIDER | yes for `run` | Must be `true`: a real run calls a provider and costs money |
 | HAIFA_LADDER_AGENT | yes unless discovered | Coding agent launcher, e.g. `~/.haifa-agent/coding/haifa-coding.cmd` |
 | HAIFA_LADDER_MODEL | no | Model id passed as `--model`; defaults to the agent configuration |
-| HAIFA_LADDER_CREDENTIAL_ENV | no | Credential variable to verify; inferred from the model id when unset |
+| HAIFA_LADDER_CREDENTIAL_ENV | no | Credential variable to use; defaults to the API key variable of the provider serving the model |
 | HAIFA_LADDER_APPROVAL | no | Approval mode, default `auto` (a ladder run must stay non-interactive) |
 | HAIFA_LADDER_CASE_SET | no | Published case set, default `ladder-v1` (`hard-v1` is the high-difficulty set) |
 | HAIFA_LADDER_CASES | no | Comma separated case ids or glob patterns, default every case of the set |
@@ -53,19 +53,31 @@ HEARTBEAT_SECONDS = 15
 AGENT_SELF_LIMIT_RATIO = 0.9
 LAST_LINE_WIDTH = 96
 
-# Model id prefix -> credential variable of the provider that serves it (see the CLI distribution
-# configuration). Providers authenticated through `model-auth://` have no credential variable.
-CREDENTIAL_BY_PREFIX = {
-    "glm-": "BIGMODEL_API_KEY",
-    "qwen": "DASHSCOPE_API_KEY",
-    "kimi-": "KIMI_API_KEY",
-    "siliconflow-": "SILICONFLOW_API_KEY",
-    "tokenrhythm-": "TK_API_KEY",
+# Provider id -> the API key variable a ladder run reads first. Providers missing here log in through
+# the browser and exist only in the OS credential store.
+PROVIDER_CREDENTIAL_ENV = {
+    "deepseek": "DEEPSEEK_API_KEY",
+    "aliyun-bailian": "DASHSCOPE_API_KEY",
+    "siliconflow": "SILICONFLOW_API_KEY",
+    "kimi": "KIMI_API_KEY",
+    "zhipu": "BIGMODEL_API_KEY",
+    "tokenrhythm": "TK_API_KEY",
 }
-CREDENTIAL_FILE_PREFIXES = ("deepseek", "gpt-", "antigravity")
-# Providers that authenticate through the stored connections of ~/.haifa-agent/auth.json.
-MODEL_AUTH_PROVIDERS = {"deepseek": "deepseek", "gpt-": "openai-codex", "antigravity": "google-antigravity"}
-AUTH_STORE = Path.home() / ".haifa-agent" / "auth.json"
+# Model id prefix -> provider id, used when the distribution configuration does not list the model.
+PROVIDER_BY_PREFIX = {
+    "siliconflow-": "siliconflow",
+    "tokenrhythm-": "tokenrhythm",
+    "deepseek": "deepseek",
+    "gpt-": "openai-codex",
+    "antigravity": "google-antigravity",
+    "qwen": "aliyun-bailian",
+    "kimi-": "kimi",
+    "glm-": "zhipu",
+}
+# The agent keeps `model-auth://` connections and `os://` secrets in Windows Credential Manager under
+# these generic-credential target names (see WindowsLocalModelAuthStore and LocalModelCredentialResolver).
+OS_TARGET_PREFIXES = {"model-auth://": "haifa:model-auth:", "os://": "haifa:os:"}
+CRED_TYPE_GENERIC = 1
 # `ask` maps to the LOW approval threshold and reads the answer from stdin, which the evaluation closes.
 NON_INTERACTIVE_APPROVALS = frozenset({"auto", "deny"})
 RESULT_STATUSES = frozenset({"PASSED", "FAILED", "INCOMPLETE_BUDGET"})
@@ -106,6 +118,24 @@ class Settings:
     rehearse: bool
     keep_workdir: bool
     allow_unpinned_assets: bool
+    # Distribution configuration rewritten to the credential source the run selected, if it differs.
+    agent_config: Path | None = None
+
+
+@dataclass(frozen=True)
+class CredentialPlan:
+    """Where the evaluated agent will read its provider credential from.
+
+    ``reference`` is the ``credentialRef`` the agent resolves; ``problem`` is set when that
+    credential does not exist and the run cannot start.
+    """
+
+    provider: str | None
+    source: str
+    reference: str | None
+    variable: str | None
+    note: str
+    problem: str | None = None
 
 
 @dataclass
@@ -188,69 +218,152 @@ def effective_model(settings: "Settings") -> tuple[str | None, str]:
     return None, "unknown"
 
 
-def credential_reference(agent: str | None, provider: str) -> str | None:
-    """Return the credential reference the distribution configures for ``provider``."""
+def distribution_configuration(agent: str | None) -> Path | None:
+    """Return the configuration file the packaged launcher hands to the agent, if there is one."""
     if not agent:
         return None
     configuration = Path(agent).with_name("haifa-coding.yaml")
-    if not configuration.is_file():
-        return None
-    current: str | None = None
+    return configuration if configuration.is_file() else None
+
+
+def configured_providers(agent: str | None) -> list[dict]:
+    """Return ``id``, ``credentialRef`` and ``bindings`` of every provider the distribution configures."""
+    configuration = distribution_configuration(agent)
+    if configuration is None:
+        return []
+    providers: list[dict] = []
     for line in configuration.read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
         if stripped.startswith("- id:"):
-            current = stripped.split(":", 1)[1].strip()
-        elif stripped.startswith("credentialRef:") and current == provider:
-            return stripped.split(":", 1)[1].strip() or None
+            providers.append({"id": stripped.split(":", 1)[1].strip(), "credentialRef": None, "bindings": []})
+        elif providers and stripped.startswith("credentialRef:"):
+            providers[-1]["credentialRef"] = stripped.split(":", 1)[1].strip() or None
+        elif providers and stripped.startswith("allowedBindings:"):
+            listed = stripped.split(":", 1)[1].strip().strip("[]")
+            providers[-1]["bindings"] = [item.strip() for item in listed.split(",") if item.strip()]
+    return providers
+
+
+def credential_reference(agent: str | None, provider: str) -> str | None:
+    """Return the credential reference the distribution configures for ``provider``."""
+    for entry in configured_providers(agent):
+        if entry["id"] == provider:
+            return expand_placeholder(entry["credentialRef"]) if entry["credentialRef"] else None
     return None
 
 
-def model_auth_provider(model: str | None) -> str | None:
-    """Return the provider whose stored connection serves ``model``, if it uses one."""
-    lowered = (model or "").strip().lower()
-    for prefix, provider in MODEL_AUTH_PROVIDERS.items():
+def expand_placeholder(value: str) -> str:
+    """Resolve a whole-value ``${NAME:fallback}`` placeholder the way the agent configuration loader does."""
+    if not (value.startswith("${") and value.endswith("}")):
+        return value
+    name, _, fallback = value[2:-1].partition(":")
+    return os.environ.get(name, "").strip() or fallback
+
+
+def model_provider(agent: str | None, model: str | None) -> str | None:
+    """Return the provider that serves ``model``: the distribution configuration first, then the id prefix."""
+    if not model:
+        return None
+    for entry in configured_providers(agent):
+        if model in entry["bindings"]:
+            return entry["id"]
+    lowered = model.strip().lower()
+    for prefix, provider in PROVIDER_BY_PREFIX.items():
         if lowered.startswith(prefix):
             return provider
     return None
 
 
-def stored_connection_problem(provider: str, reference: str | None = None) -> str | None:
-    """Return why the stored connection of ``provider`` cannot be used, or None when it exists.
+def os_credential_target(reference: str) -> str | None:
+    """Return the OS credential store target name the agent resolves ``reference`` from."""
+    for scheme, prefix in OS_TARGET_PREFIXES.items():
+        if reference.startswith(scheme):
+            return prefix + reference[len(scheme):]
+    return None
 
-    ``reference`` is the exact ``model-auth://provider/account`` slot the launcher is configured to
-    use; a different account of the same provider does not authenticate the run.
+
+def os_credential_present(target: str) -> bool | None:
+    """Return whether the OS credential store holds ``target``; None where the agent has no OS store.
+
+    Only existence is checked: the credential handle is released at once and its value is never read.
     """
-    if not AUTH_STORE.is_file():
-        return f"no stored connection for {provider}: {AUTH_STORE} does not exist"
-    try:
-        store = json.loads(AUTH_STORE.read_text(encoding="utf-8"))
-        credentials = store.get("credentials", {}) if isinstance(store, dict) else {}
-    except (json.JSONDecodeError, OSError) as error:
-        return f"the stored connections cannot be read: {type(error).__name__}"
-    if not isinstance(credentials, dict):
-        return "the stored connections have an unexpected shape"
-    if reference:
-        if reference in credentials:
-            return None
-        return f"no stored connection {reference} in {AUTH_STORE}; start the agent once and use /login"
-    if any(str(entry).startswith(f"model-auth://{provider}/") for entry in credentials):
+    if os.name != "nt":
         return None
-    return f"no stored connection for {provider} in {AUTH_STORE}; start the agent once and use /login"
+    import ctypes
+    from ctypes import wintypes
+
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    advapi32.CredReadW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p)]
+    advapi32.CredReadW.restype = wintypes.BOOL
+    advapi32.CredFree.argtypes = [ctypes.c_void_p]
+    handle = ctypes.c_void_p()
+    if not advapi32.CredReadW(target, CRED_TYPE_GENERIC, 0, ctypes.byref(handle)):
+        return False
+    advapi32.CredFree(handle)
+    return True
 
 
-def credential_variable(model: str | None, explicit: str | None) -> tuple[str | None, str]:
-    """Return the credential variable to verify and how it was determined."""
-    if explicit:
-        return explicit, "HAIFA_LADDER_CREDENTIAL_ENV"
+def plan_credential(settings: "Settings") -> CredentialPlan:
+    """Decide where the agent reads its credential: the provider's API key variable, else the OS store."""
+    model, _ = effective_model(settings)
+    provider = model_provider(settings.agent, model)
+    variable = settings.credential_env or PROVIDER_CREDENTIAL_ENV.get(provider or "")
+    origin = "HAIFA_LADDER_CREDENTIAL_ENV" if settings.credential_env else f"provider {provider}"
+    if variable and os.environ.get(variable, "").strip():
+        return CredentialPlan(provider, "environment", f"env://{variable}", variable, f"{variable} is set ({origin})")
+    if settings.credential_env:
+        return CredentialPlan(
+            provider, "environment", f"env://{variable}", variable, origin, f"{variable} is empty ({origin})"
+        )
     if not model:
-        return None, "model not pinned, the agent configuration decides"
-    lowered = model.strip().lower()
-    for prefix, variable in CREDENTIAL_BY_PREFIX.items():
-        if lowered.startswith(prefix):
-            return variable, f"inferred from model id {model}"
-    if lowered.startswith(CREDENTIAL_FILE_PREFIXES):
-        return None, f"{model} authenticates through ~/.haifa-agent/auth.json"
-    return None, f"unknown provider for model id {model}"
+        return CredentialPlan(None, "unknown", None, None, "model not pinned, the agent configuration decides")
+    if not provider:
+        return CredentialPlan(None, "unknown", None, None, f"unknown provider for model id {model}")
+    configured = credential_reference(settings.agent, provider)
+    reference = configured if configured and os_credential_target(configured) else f"model-auth://{provider}/default"
+    unset = f"{variable} is not set" if variable else f"{provider} has no API key variable"
+    note = f"{unset}, falling back to the OS credential store ({reference})"
+    present = os_credential_present(os_credential_target(reference) or "")
+    if present:
+        return CredentialPlan(provider, "os", reference, variable, note)
+    if present is None:
+        problem = f"{unset}, and the agent keeps {reference} only in the Windows credential store"
+    else:
+        problem = f"{unset}, and the OS credential store has no {reference}; start the agent once and use /login"
+    return CredentialPlan(provider, "os", reference, variable, note, problem)
+
+
+def write_agent_configuration(settings: "Settings", plan: CredentialPlan) -> Path | None:
+    """Point the provider's ``credentialRef`` at the selected source when the distribution names another.
+
+    The copy carries a reference such as ``env://NAME``, never a credential value.
+    """
+    configuration = distribution_configuration(settings.agent)
+    if configuration is None or not plan.provider or not plan.reference:
+        return None
+    if credential_reference(settings.agent, plan.provider) == plan.reference:
+        return None
+    lines, current = [], None
+    for line in configuration.read_text(encoding="utf-8").splitlines(keepends=True):
+        stripped = line.strip()
+        if stripped.startswith("- id:"):
+            current = stripped.split(":", 1)[1].strip()
+        elif stripped.startswith("credentialRef:") and current == plan.provider:
+            indent = line[: len(line) - len(line.lstrip())]
+            line = f"{indent}credentialRef: {plan.reference}\n"
+        lines.append(line)
+    settings.output_dir.mkdir(parents=True, exist_ok=True)
+    target = settings.output_dir / "agent-configuration.yaml"
+    target.write_text("".join(lines), encoding="utf-8")
+    return target
+
+
+def credential_variables(settings: "Settings") -> set[str]:
+    """Every provider API key variable, plus an explicitly configured one."""
+    names = set(PROVIDER_CREDENTIAL_ENV.values())
+    if settings.credential_env:
+        names.add(settings.credential_env)
+    return names
 
 
 def absolute(value: str | Path) -> Path:
@@ -331,10 +444,7 @@ def resolve_settings(arguments: argparse.Namespace) -> Settings:
 
 def secret_values(settings: Settings) -> list[str]:
     """Every credential value that must never reach a log file or the console."""
-    names = set(CREDENTIAL_BY_PREFIX.values())
-    if settings.credential_env:
-        names.add(settings.credential_env)
-    return [value for value in (os.environ.get(name, "").strip() for name in names) if value]
+    return [value for value in (os.environ.get(name, "").strip() for name in credential_variables(settings)) if value]
 
 
 def redact(text: str, secrets: list[str]) -> str:
@@ -415,15 +525,9 @@ def missing_environment(settings: Settings) -> list[str]:
             launcher_argv(settings.agent)
         except SystemExit as error:
             problems.append(str(error))
-    model, _ = effective_model(settings)
-    variable, reason = credential_variable(model, settings.credential_env)
-    if variable and not os.environ.get(variable, "").strip():
-        problems.append(f"{variable} is empty ({reason})")
-    provider = model_auth_provider(model) if not settings.credential_env else None
-    if provider:
-        stored = stored_connection_problem(provider, credential_reference(settings.agent, provider))
-        if stored:
-            problems.append(stored)
+    plan = plan_credential(settings)
+    if plan.problem:
+        problems.append(plan.problem)
     return problems
 
 
@@ -436,8 +540,7 @@ def executable_launcher(agent: str) -> bool:
 
 
 def setup_hint(settings: Settings) -> str:
-    variable, _ = credential_variable(effective_model(settings)[0], settings.credential_env)
-    credential = variable or "BIGMODEL_API_KEY"
+    credential = plan_credential(settings).variable or "BIGMODEL_API_KEY"
     launcher = Path.home() / ".haifa-agent" / "coding" / ("haifa-coding.cmd" if os.name == "nt" else "haifa-coding")
     agent = settings.agent or str(launcher)
     windows = "\n".join(
@@ -446,7 +549,7 @@ def setup_hint(settings: Settings) -> str:
             '  $env:HAIFA_LADDER_ALLOW_REAL_PROVIDER = "true"',
             f'  $env:HAIFA_LADDER_AGENT = "{agent}"',
             '  $env:HAIFA_LADDER_MODEL = "glm-5.3-flash"   # optional, the agent configuration decides otherwise',
-            f'  $env:{credential} = "<api key>"            # not needed for model-auth:// providers',
+            f'  $env:{credential} = "<api key>"            # optional: without it the OS credential store is used',
         ]
     )
     posix = "\n".join(
@@ -463,14 +566,16 @@ def setup_hint(settings: Settings) -> str:
 
 def describe_settings(settings: Settings) -> None:
     model, source = effective_model(settings)
-    variable, reason = credential_variable(model, settings.credential_env)
-    state = "not required" if not variable else ("set" if os.environ.get(variable) else "MISSING")
+    plan = plan_credential(settings)
+    state = {"environment": "env", "os": "OS credential store"}.get(plan.source, "not verified")
+    if plan.problem:
+        state = "MISSING"
     assets = str(settings.assets_dir) if settings.assets_dir else f"download per lock into {settings.cache_dir}"
     say("LADDER_SETTINGS")
     say(f"  action           : {settings.action}{' (rehearsal, no provider call)' if settings.rehearse else ''}")
     say(f"  agent            : {settings.agent or '-'}{launcher_note(settings)}")
     say(f"  model            : {model or '(unknown)'} ({source})")
-    say(f"  credential       : {variable or '-'} [{state}] ({reason})")
+    say(f"  credential       : {plan.reference or '-'} [{state}] ({plan.note})")
     say(f"  approval         : {settings.approval}")
     say(f"  case set         : {settings.case_set}")
     say(f"  cases            : {', '.join(settings.case_patterns) if settings.case_patterns else 'all'}")
@@ -726,6 +831,8 @@ def agent_argv(settings: Settings, workspace: Path, prompt: str, budget_seconds:
     """Build the non-interactive one-shot command; the statement is passed as a single argument."""
     self_limit = max(60, int(budget_seconds * AGENT_SELF_LIMIT_RATIO))
     prefix, _ = launcher_argv(str(settings.agent))
+    if settings.agent_config and "--config" in prefix:
+        prefix[prefix.index("--config") + 1] = str(settings.agent_config)
     argv = [
         *prefix,
         "--workspace",
@@ -828,10 +935,7 @@ def without_credentials(settings: Settings):
 
     The acceptance script is authored outside this repository; it must never see a provider key.
     """
-    names = set(CREDENTIAL_BY_PREFIX.values())
-    if settings.credential_env:
-        names.add(settings.credential_env)
-    removed = {name: os.environ.pop(name) for name in names if name in os.environ}
+    removed = {name: os.environ.pop(name) for name in credential_variables(settings) if name in os.environ}
     try:
         yield
     finally:
@@ -1114,6 +1218,10 @@ def evaluate(settings: Settings, checkout: Path, case_ids: list[str], provenance
         applied = prepare_launcher_environment(settings.agent)
         if applied:
             say(f"  distribution data paths: {', '.join(applied)}")
+        plan = plan_credential(settings)
+        settings.agent_config = write_agent_configuration(settings, plan)
+        if settings.agent_config:
+            say(f"  credential: {plan.provider} reads {plan.reference} ({settings.agent_config.name})")
     say()
     for case_id in case_ids:
         for attempt in range(1, settings.repeat + 1):
