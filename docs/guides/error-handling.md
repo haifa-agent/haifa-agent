@@ -1,36 +1,40 @@
-# Error handling
+# 错误处理
 
-Haifa Agent tries to expose stable error semantics without leaking provider payloads, credentials, prompts, or internal stack traces through public APIs.
+Haifa Agent 尽量暴露稳定的 Error Semantics，同时避免通过 Public API 泄露 Provider Payload、Credential、Prompt 或 Internal Stack Trace。
 
-## Synchronous versus Run failures
+## 同步 Failure 与 Run Failure
 
-Failures before a Run is successfully accepted are API/command failures.
+Run 成功接受之前发生的失败属于 API / Command Failure。
 
-Failures during asynchronous execution become Run terminal state with a structured Agent error.
+异步执行过程中发生的失败，会作为 Run Terminal State 与结构化 Agent Error 保存。
 
-Callers should use stable error codes, category/retryability metadata, and diagnostic IDs rather than parsing English messages.
+调用方应使用稳定 Error Code、Category / Retryability Metadata 与 Diagnostic ID，而不是解析英文 Error Message。
 
 ## Retryability
 
-"Retryable" does not mean "always replay".
+Retryable 不等于“总是可以重新执行”。
 
-Runtime retry policies additionally consider whether a physical call can be safely repeated. Authentication errors, invalid requests, cancellation, context-too-long failures, and requests that already produced unsafe partial effects are not blindly replayed.
+Runtime Retry Policy 还会判断一个 Physical Call 是否真的可以安全 Replay。
 
-Side-effecting Tool calls with unknown outcome are never converted into ordinary automatic retries.
+Authentication Error、Invalid Request、Cancellation、Context-too-long，以及已经产生不安全 Partial Effect 的请求，都不会被盲目重放。
 
-## Provider errors
+有 Side Effect 的 Tool 如果 Outcome Unknown，也不会被转换成普通 Automatic Retry。
 
-Provider integrations normalize known protocol failures into bounded provider-neutral errors. Raw response bodies and secrets should not be returned to application clients or logs.
+## Provider Error
+
+Provider Integration 会把已知 Protocol Failure 归一化成有界、Provider-neutral Error。
+
+Raw Response Body 与 Secret 不应进入 Application Client 或普通 Log。
 
 ## Diagnostics
 
-Use diagnostic IDs to correlate a safe public failure with trusted internal diagnostics.
+使用 Diagnostic ID，把对外安全 Failure 与内部可信 Diagnostics 关联起来。
 
-Public diagnostics intentionally avoid:
+Public Diagnostics 有意避免包含：
 
-- full prompts;
-- model reasoning;
-- Tool arguments/results unless explicitly safe and bounded;
-- credentials;
-- raw provider payloads;
-- arbitrary exception messages containing user data.
+- 完整 Prompt；
+- Model Reasoning；
+- 未明确确认安全且有界的 Tool Arguments / Results；
+- Credential；
+- Raw Provider Payload；
+- 可能含用户数据的任意 Exception Message。

@@ -1,58 +1,74 @@
 # Coding Agent
 
-Haifa Coding Agent is the repository's local software-engineering product built on the same Runtime, Tool, Project, Execution, and persistence foundations exposed by the platform.
+Haifa Coding Agent 是构建在共享 Runtime、Tool、Project、Execution 与 Persistence 基础之上的本地软件工程产品。
 
-Its product philosophy is deliberately model-first: the model plans and interprets ordinary command results; Runtime enforces deterministic safety, lifecycle, budget, and execution boundaries.
+它的产品哲学刻意保持 Model-first：Model 负责规划，并解释普通 Command Result；Runtime 负责执行确定性的 Safety、Lifecycle、Budget 与 Execution 边界。
 
-## Product surface
+## 当前 Product Surface
 
-The current product includes:
+当前产品包括：
 
-- persistent Coding Sessions;
-- a tui4j/JLine terminal client;
-- authorized workspace directories;
-- file read/mutation Tools;
-- controlled host command execution;
-- direct use of system git/gh through the generic execution path;
-- Tool, Skill, optional MCP, and optional Web capabilities;
-- model selection through trusted product profiles;
-- SQLite-backed session/runtime persistence when configured;
-- explicit human approval for actions that Policy classifies as ASK.
+- 持久化 Coding Session；
+- 基于 tui4j / JLine 的 Terminal Client；
+- Authorized Workspace Directory；
+- 文件读取与修改 Tool；
+- 受控 Host Command Execution；
+- 通过通用 Execution Path 直接调用系统 git / gh；
+- Tool、Skill、可选 MCP 与可选 Web Capability；
+- 基于可信 Product Profile 的 Model Selection；
+- 配置后可使用 SQLite 持久化 Session / Runtime；
+- 对 Policy 判定为 ASK 的动作进行显式 Human Approval。
 
-The terminal/UI consume the CodingSessionClient product contract rather than reaching into Runtime stores directly.
+Terminal / UI 只依赖 CodingSessionClient 产品契约，而不会直接访问 Runtime Store。
 
-## Workspace authorization
+## Workspace Authorization
 
-Coding Agent does not assume arbitrary filesystem authority.
+Coding Agent 不假设自己拥有任意 Filesystem 权限。
 
-Host directories are attached as explicit authorized directories with READ or DEVELOP access. File mutation and model-triggered execution require the appropriate current authorization and are checked again at execution time.
+Host Directory 必须显式 Attach 成 Authorized Directory，并具有 READ 或 DEVELOP Access。
 
-The physical path/fingerprint is host-side security state, not a model-provided authorization token.
+File Mutation 与 Model-triggered Execution 会在实际执行时重新检查当前 Authorization。
 
-## Commands and git
+物理 Path / Fingerprint 属于 Host-side Security State，而不是 Model 可以提供的 Authorization Token。
 
-The model uses the general execution_run Tool for builds, tests, Shell commands, git, gh, and customer scripts.
+## Command 与 git
 
-Haifa does not maintain a large Java grammar that tries to understand every git/gh subcommand. A narrow fail-closed boundary still blocks known credential-disclosure/authentication mutations from flowing through the model execution path.
+Model 使用通用 execution_run Tool 执行 Build、Test、Shell、git、gh 与客户脚本。
 
-A non-zero process exit code remains part of the command result. It is not automatically equivalent to Runtime failure.
+Haifa 不再在 Java 中维护一套试图理解所有 git / gh 子命令的大型 Grammar。
+
+系统仍保留一条很窄的 fail-closed Credential Protection Boundary，用来阻止已知会泄露 Credential 或修改 Authentication State 的命令流经 Model Execution Path。
+
+Process 非零 Exit Code 只是 Command Result 的一部分，不会自动等同于 Runtime Failure。
 
 ## Completion
 
-Coding Agent no longer maintains a separate delivery-state machine that decides whether an open-ended coding task is "really complete".
+Coding Agent 不再维护第二套 Delivery State Machine，去判断开放式 Coding Task 是否“真正完成”。
 
-The model sees the task, repository instructions, Tool results, exit codes, and bounded output and decides what to do next. Runtime still blocks false success for deterministic conditions such as unresolved Tool calls, pending Interactions, unknown side effects, cancellation, timeouts, resource exhaustion, and final output protocol violations.
+Model 根据用户任务、仓库指令、Tool Result、Exit Code 与 Bounded Output 自己判断下一步。
 
-## Execution trust
+Runtime 仍会阻止确定性的 False Success，例如：
 
-Commands run through the host-guarded execution provider. See [Execution and sandbox boundaries](../advanced/execution-and-sandbox.md).
+- 未解决 Tool Call；
+- Pending Interaction；
+- Unknown Side Effect；
+- Cancellation；
+- Timeout；
+- Resource Exhaustion；
+- Final Output Protocol Violation。
 
-For local development this is a controlled trusted-host model, not hostile-code containment.
+## Execution Trust
 
-## Detailed product documentation
+Command 通过 host-guarded Execution Provider 运行。
 
-Implementation-level configuration and terminal behavior evolve faster than this overview. Use the module documentation for exact current commands and settings:
+详见 [Execution 与 Sandbox 边界](../advanced/execution-and-sandbox.md)。
 
-- [Coding Agent module](../../haifa-agent-applications/haifa-agent-coding-agent/README.md)
+对于本地开发，这是 Controlled Trusted-host Model，而不是 Hostile-code Containment。
+
+## 更详细的产品文档
+
+精确配置与 Terminal 行为变化通常比本概览更快，请以对应模块 README 为准：
+
+- [Coding Agent Module](../../haifa-agent-applications/haifa-agent-coding-agent/README.md)
 - [Coding Terminal](../../haifa-agent-applications/haifa-agent-coding-terminal/README.md)
 - [CLI](../../haifa-agent-applications/haifa-agent-cli/README.md)

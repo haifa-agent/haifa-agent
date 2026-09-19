@@ -1,45 +1,49 @@
-# Execution and sandbox boundaries
+# Execution 与 Sandbox 边界
 
-Haifa Agent can execute host processes, but the current implementation is intentionally **not** an operating-system security sandbox.
+Haifa Agent 可以执行宿主进程，但当前实现有意**不宣称自己是操作系统级 Security Sandbox**。
 
-## Current implementation
+## 当前实现
 
-The Execution Broker uses the sandbox SPI with the host-guarded provider as the current local implementation.
+Execution Broker 通过 Sandbox SPI 使用 host-guarded Provider 作为当前本地实现。
 
-It provides application-level process governance such as:
+它提供的是应用层 Process Governance，例如：
 
-- controlled process creation;
-- explicit working directory;
-- bounded output;
-- timeout and cancellation;
-- process-tree cleanup;
-- controlled environment handling;
-- managed-process support used by capabilities such as MCP stdio.
+- 受控 Process Creation；
+- 显式 Working Directory；
+- Bounded Output；
+- Timeout 与 Cancellation；
+- Process Tree Cleanup；
+- 受控 Environment Handling；
+- MCP stdio 等能力使用的 Managed Process。
 
-## What it does not provide
+## 当前不提供什么
 
-The current host provider does not claim:
+host-guarded Provider 当前不承诺：
 
-- Linux namespace isolation;
-- macOS Seatbelt isolation;
-- Windows AppContainer isolation;
-- container isolation;
-- network isolation;
-- CPU/memory cgroup isolation;
-- hostile multi-tenant code containment.
+- Linux namespace isolation；
+- macOS Seatbelt isolation；
+- Windows AppContainer isolation；
+- Container isolation；
+- Network isolation；
+- CPU / Memory cgroup isolation；
+- Hostile multi-tenant code containment。
 
-A working-directory check is not equivalent to kernel-enforced filesystem isolation.
+Working Directory 校验也不等价于 Kernel-enforced Filesystem Isolation。
 
-## Trust model
+## Trust Model
 
-Host execution is appropriate for trusted/local product scenarios where the operator understands that commands run under the current host account.
+Host Execution 适用于受信任、本地产品场景，前提是操作者明确知道命令会以当前 Host Account 权限执行。
 
-For hostile third-party code or strong multi-tenant isolation, place the entire Haifa Agent process inside an external security boundary such as a VM, hardened container, or another environment designed for that threat model.
+如果要执行敌对第三方代码，或者面对强 Multi-tenant Isolation 场景，应把整个 Haifa Agent 进程放进外部安全边界，例如 VM、Hardened Container 或其它专门针对该 Threat Model 的环境。
 
-## Approval is separate
+## Approval 是另一层边界
 
-Policy/Approval can require the operator to approve an exact execution request. Approval controls whether Haifa should perform the action; it does not turn a host process into a kernel sandbox.
+Policy / Approval 可以要求操作者批准一个精确 Execution Request。
+
+Approval 解决的是“Haifa 是否应该执行这次动作”，它不会把 Host Process 变成 Kernel Sandbox。
 
 ## Coding Agent
 
-Coding Agent uses authorized workspace directories and the shared execution path for Shell, git, gh, build tools, and customer scripts. Java does not try to reproduce every command's business semantics as a command-specific permission DSL.
+Coding Agent 通过 Authorized Workspace Directory 与统一 Execution Path 执行 Shell、git、gh、Build Tool 和客户脚本。
+
+Java 层不会再为每一种命令复制一套 Command-specific Permission DSL。

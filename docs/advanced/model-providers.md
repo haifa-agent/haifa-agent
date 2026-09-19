@@ -1,49 +1,57 @@
-# Model providers
+# Model Providers
 
-Haifa Agent separates provider-neutral model contracts from provider protocol adapters.
+Haifa Agent 将 Provider-neutral Model Contract 与具体 Provider Protocol Adapter 分离。
 
-A Run freezes the model snapshot and adapter coordinate it will use. Runtime does not silently move an in-flight Run to a different provider/model binding.
+Run 会冻结自己使用的 Model Snapshot 与 Adapter coordinate。Runtime 不会把已经创建的 Run 静默迁移到不同 Provider / Model Binding。
 
-## Built-in Starter
+## Starter 内建默认值
 
-The safe-default SDK Starter currently creates a DeepSeek V4 Flash binding:
+安全默认 SDK Starter 当前会构建一个 DeepSeek V4 Flash Binding：
 
-- endpoint: https://api.deepseek.com
-- credential: env://DEEPSEEK_API_KEY
-- built-in snapshot Thinking: disabled
-- process-local persistence
+- Endpoint：https://api.deepseek.com
+- Credential：env://DEEPSEEK_API_KEY
+- 内建 Snapshot Thinking：disabled
+- Persistence：process-local
 
-These are Starter defaults, not global restrictions on the model integrations.
+这些只是 Starter 默认值，不是整个 Model Integration 的全局限制。
 
-## Explicit model registration
+## 显式注册 Model
 
-Trusted application code can register:
+可信应用代码可以注册：
 
-- a typed OpenAI-compatible model configuration; or
-- an explicit AgentChatModel plus ResolvedModelSnapshot.
+- Typed OpenAI-compatible Model Configuration；
+- 或显式 AgentChatModel + ResolvedModelSnapshot。
 
-Registering custom models replaces the Starter's built-in model catalog. Multiple model IDs can be registered, and defaultModel(...) chooses the default.
+一旦注册自定义 Model，就会替代 Starter 内建 Model Catalog。
 
-## Provider integrations
+可以注册多个 Model ID，并通过 defaultModel(...) 选择默认项。
 
-The repository currently contains integrations for OpenAI-compatible protocols, Anthropic-style APIs, Google Gemini, and local-auth compatibility components.
+## Provider Integrations
 
-OpenAI-compatible support includes reviewed dialects/bindings for several providers. Exact provider/model compatibility changes faster than the public architecture, so the module README and tests are the authority:
+仓库当前包含 OpenAI-compatible、Anthropic-style、Google Gemini 以及 Local Auth Compatibility 等 Integration。
 
-- [OpenAI-compatible integration](../../haifa-agent-integrations/haifa-agent-model-openai-compatible/README.md)
-- [Anthropic integration](../../haifa-agent-integrations/haifa-agent-model-anthropic/README.md)
-- [Google Gemini integration](../../haifa-agent-integrations/haifa-agent-google-gemini/README.md)
+OpenAI-compatible 模块支持多个经过审查的 Provider Dialect / Binding。Provider / Model 兼容变化通常比公共 Architecture 更快，因此精确事实以模块 README 与测试为准：
 
-## No implicit fallback
+- [OpenAI-compatible Integration](../../haifa-agent-integrations/haifa-agent-model-openai-compatible/README.md)
+- [Anthropic Integration](../../haifa-agent-integrations/haifa-agent-model-anthropic/README.md)
+- [Google Gemini Integration](../../haifa-agent-integrations/haifa-agent-google-gemini/README.md)
 
-Haifa Agent does not treat a provider catalog as a best-effort router. Unknown, unavailable, or mismatched bindings fail explicitly. Authentication failures do not automatically switch to a different model.
+## 不做隐式 Fallback
 
-## Reasoning / continuation
+Haifa Agent 不把 Provider Catalog 当成 best-effort router。
 
-Reasoning support is provider- and binding-specific. Protected provider continuation needed for Tool-call protocol correctness is not public reasoning output.
+未知、不可用或不匹配的 Binding 会显式失败；Authentication failure 也不会自动切到另一个 Model。
 
-Public applications should rely on the normalized final answer, Tool Calls, usage, and safe Runtime lifecycle events rather than provider-private chain-of-thought data.
+## Reasoning / Continuation
+
+Reasoning 能力取决于具体 Provider 与 Binding。
+
+某些 Provider 为保持 Tool-call Protocol 正确性，需要保存受保护的 Provider Continuation；这类数据不是公开 Reasoning Output。
+
+面向产品的应用应依赖归一化 Final Answer、Tool Call、Usage 与安全 Runtime Lifecycle Event，而不是依赖 Provider 私有 Chain-of-Thought。
 
 ## Credentials
 
-Model credentials are referenced indirectly and resolved at the adapter boundary. Do not place secret values in ProductProfile, Run inputs, prompts, logs, or public diagnostics.
+Model Credential 通过间接 Reference 表达，并在 Adapter Boundary 解析。
+
+不要把 Secret 值写入 ProductProfile、Run Input、Prompt、Log 或 Public Diagnostics。
