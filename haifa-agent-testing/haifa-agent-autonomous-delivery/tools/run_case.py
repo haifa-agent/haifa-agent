@@ -3,7 +3,11 @@
 
 Usage:
   run_case.py --assets-dir ASSETS --case L1-01 --mode nop|oracle|agent [--agent-command CMD] [--repeat N]
-              [--report local-tmp/autonomous-delivery/ladder-report.json]
+              [--case-set ladder-v1|hard-v1] [--report local-tmp/autonomous-delivery/ladder-report.json]
+
+Case sets: an asset manifest published with schemaVersion 2 partitions its cases into named sets
+(`ladder-v1` holds the original capability ladder, `hard-v1` the high-difficulty probe set).
+`--case all` expands to the members of `--case-set` only, so the two sets never mix in one report.
 
 Modes:
   nop     copy base-workspace unchanged; acceptance must FAIL
@@ -42,8 +46,16 @@ BUDGET_EXIT_CODE = 3
 # non-UTF-8 locale would otherwise fail the reader thread and drop the whole run.
 CHILD_TEXT = {"text": True, "encoding": "utf-8", "errors": "replace"}
 
-CASE_ID_PATTERN = re.compile(r"^caseId:\s*(L[1-6]-0[1-9])", re.MULTILINE)
-LEVEL_PATTERN = re.compile(r"^level:\s*(L[1-6])", re.MULTILINE)
+LADDER_CASE_SET = "ladder-v1"
+HARD_CASE_SET = "hard-v1"
+DEFAULT_CASE_SET = LADDER_CASE_SET
+MANIFEST_SCHEMA_VERSIONS = (1, 2)
+# A ladder id is L<level>-<seq>; a hard-ladder id is H<dimension><tier>-<seq>.
+CASE_ID = r"(?:L[1-6]|H[1-4][1-3])-0[1-9]"
+CASE_SET_NAME = r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*"
+
+CASE_ID_PATTERN = re.compile(rf"^caseId:\s*({CASE_ID})", re.MULTILINE)
+LEVEL_PATTERN = re.compile(r"^level:\s*(L[1-6]|H[1-4])", re.MULTILINE)
 LABEL_PATTERN = re.compile(r"^\s+(localization|modificationSpan|acceptance):\s*(\d+)", re.MULTILINE)
 VARIANTS_PATTERN = re.compile(r"^variants:\s*\[([^\]]*)\]", re.MULTILINE)
 BUDGET_PATTERN = re.compile(r"timeoutSeconds:\s*(\d+)")
@@ -64,6 +76,63 @@ def case_tree_sha256(case_root: Path) -> str:
     return digest.hexdigest()
 
 
+def case_axes(case_id: str) -> tuple[str, str | None]:
+    """Return the report grouping axes of a case id.
+
+    A ladder case groups by its level (``L3-02`` -> ``L3``). A hard-ladder case groups by the
+    capability dimension it probes and additionally carries a difficulty tier
+    (``H12-01`` -> ``H1``, ``T2``), so that a failure attributes to one dimension instead of to a
+    single monolithic difficulty number.
+    """
+    if case_id.startswith("H"):
+        return f"H{case_id[1]}", f"T{case_id[2]}"
+    return case_id.split("-", 1)[0], None
+
+
+def published_case_ids(case_root: Path) -> list[str]:
+    """Return the case directories actually published under ``case_root``."""
+    return sorted(path.name for path in case_root.glob("*") if path.is_dir() and re.fullmatch(CASE_ID, path.name))
+
+
+def verify_case_sets(manifest: dict, cases: list[str]) -> None:
+    """A schemaVersion 2 manifest must partition its cases into named, disjoint case sets.
+
+    Overlapping sets would let one run be attributed to two benchmarks at once, and a case outside
+    every set could never be selected.
+    """
+    case_sets = manifest.get("caseSets")
+    if not isinstance(case_sets, dict) or not case_sets:
+        raise SystemExit("asset manifest caseSets must be a non-empty object")
+    claimed: set[str] = set()
+    for name, members in sorted(case_sets.items()):
+        if not re.fullmatch(CASE_SET_NAME, name):
+            raise SystemExit(f"asset manifest case set name must be kebab-case: {name}")
+        if not isinstance(members, list) or not members or not all(isinstance(item, str) for item in members):
+            raise SystemExit(f"asset manifest case set {name} must be a non-empty string list")
+        if len(members) != len(set(members)):
+            raise SystemExit(f"asset manifest case set {name} repeats a case id")
+        overlap = claimed.intersection(members)
+        if overlap:
+            raise SystemExit(f"asset manifest case sets overlap on: {', '.join(sorted(overlap))}")
+        claimed.update(members)
+    if claimed != set(cases):
+        raise SystemExit("asset manifest cases must be the union of its case sets")
+
+
+def case_set_members(manifest: dict, case_set: str) -> list[str]:
+    """Return the ordered members of one published case set."""
+    case_sets = manifest.get("caseSets")
+    if not isinstance(case_sets, dict):
+        # A schemaVersion 1 manifest publishes exactly one, implicit, case set.
+        if case_set != DEFAULT_CASE_SET:
+            raise SystemExit(f"asset manifest predates case sets and publishes no case set {case_set!r}")
+        return sorted(manifest["cases"])
+    members = case_sets.get(case_set)
+    if members is None:
+        raise SystemExit(f"unknown case set {case_set!r}; the manifest publishes: {', '.join(sorted(case_sets))}")
+    return sorted(members)
+
+
 def verify_assets_root(assets_root: Path) -> tuple[Path, dict]:
     """Validate an offline asset checkout and return its case root and manifest."""
     assets_root = assets_root.resolve()
@@ -74,18 +143,20 @@ def verify_assets_root(assets_root: Path) -> tuple[Path, dict]:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as error:
         raise SystemExit(f"invalid asset manifest: {error.msg}") from error
-    if not isinstance(manifest, dict) or manifest.get("schemaVersion") != 1:
-        raise SystemExit("asset manifest schemaVersion must be 1")
+    schema_version = manifest.get("schemaVersion") if isinstance(manifest, dict) else None
+    if schema_version not in MANIFEST_SCHEMA_VERSIONS:
+        raise SystemExit("asset manifest schemaVersion must be 1 or 2")
     if manifest.get("caseRoot") != "cases":
         raise SystemExit("asset manifest caseRoot must be cases")
     cases = manifest.get("cases")
     if not isinstance(cases, list) or not cases or not all(isinstance(case_id, str) for case_id in cases):
         raise SystemExit("asset manifest cases must be a non-empty string list")
-    if len(cases) != len(set(cases)) or any(not re.fullmatch(r"L[1-6]-0[1-9]", case_id) for case_id in cases):
-        raise SystemExit("asset manifest cases must contain unique ladder case ids")
+    if len(cases) != len(set(cases)) or any(not re.fullmatch(CASE_ID, case_id) for case_id in cases):
+        raise SystemExit("asset manifest cases must contain unique ladder or hard-ladder case ids")
+    if schema_version >= 2:
+        verify_case_sets(manifest, cases)
     case_root = assets_root / manifest["caseRoot"]
-    actual_cases = sorted(path.name for path in case_root.glob("L*-*") if path.is_dir())
-    if actual_cases != sorted(cases):
+    if published_case_ids(case_root) != sorted(cases):
         raise SystemExit("asset manifest case list does not match case directories")
     expected_digest = manifest.get("caseTreeSha256")
     if not isinstance(expected_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_digest):
@@ -242,9 +313,10 @@ def run_once(case_dir: Path, args: argparse.Namespace, index: int) -> dict:
         if contract_problems:
             verdict = "UNEXPECTED"
 
+    group, tier = case_axes(case_dir.name)
     record = {
         "caseId": case_dir.name,
-        "level": metadata["level"],
+        "level": group,
         "mode": args.mode,
         "verdict": verdict,
         "acceptanceExitCode": exit_code,
@@ -255,6 +327,8 @@ def run_once(case_dir: Path, args: argparse.Namespace, index: int) -> dict:
         "failures": result.get("failures") if isinstance(result, dict) else None,
         "contractProblems": contract_problems,
     }
+    if tier:
+        record["tier"] = tier
     if stderr:
         record["acceptanceStderr"] = stderr.splitlines()[-1][:400]
     if not args.keep_workdir:
@@ -265,7 +339,7 @@ def run_once(case_dir: Path, args: argparse.Namespace, index: int) -> dict:
 
 
 def build_report(records: list[dict], args: argparse.Namespace, cases_root: Path) -> dict:
-    """Aggregate runs per case and per level; host paths are deliberately excluded."""
+    """Aggregate runs per case, per level and per difficulty tier; host paths stay excluded."""
     cases: dict[str, dict] = {}
     for record in records:
         entry = cases.setdefault(
@@ -273,6 +347,7 @@ def build_report(records: list[dict], args: argparse.Namespace, cases_root: Path
             {
                 "caseId": record["caseId"],
                 "level": record["level"],
+                "tier": record.get("tier"),
                 "labels": {},
                 "variants": [],
                 "runs": 0,
@@ -292,13 +367,21 @@ def build_report(records: list[dict], args: argparse.Namespace, cases_root: Path
         entry["variants"] = metadata["variants"]
 
     levels: dict[str, dict] = {}
+    tiers: dict[str, dict] = {}
     for entry in cases.values():
         bucket = levels.setdefault(entry["level"], {"cases": 0, "runs": 0, "passedRuns": 0})
         bucket["cases"] += 1
         bucket["runs"] += entry["runs"]
         bucket["passedRuns"] += entry["passedRuns"]
+        if entry["tier"]:
+            bucket = tiers.setdefault(entry["tier"], {"cases": 0, "runs": 0, "passedRuns": 0})
+            bucket["cases"] += 1
+            bucket["runs"] += entry["runs"]
+            bucket["passedRuns"] += entry["passedRuns"]
 
     for entry in cases.values():
+        if entry["tier"] is None:
+            del entry["tier"]
         durations = sorted(entry["durationMillis"])
         entry["durationMillisMedian"] = durations[len(durations) // 2]
         del entry["durationMillis"]
@@ -307,9 +390,10 @@ def build_report(records: list[dict], args: argparse.Namespace, cases_root: Path
     for record in records:
         verdicts[record["verdict"]] = verdicts.get(record["verdict"], 0) + 1
 
-    return {
+    report = {
         "schemaVersion": 1,
         "mode": args.mode,
+        "caseSet": getattr(args, "case_set", DEFAULT_CASE_SET),
         "repeat": args.repeat,
         "generatedAtEpochMillis": int(time.time() * 1000),
         "totals": {
@@ -321,6 +405,9 @@ def build_report(records: list[dict], args: argparse.Namespace, cases_root: Path
         "levels": dict(sorted(levels.items())),
         "cases": [cases[key] for key in sorted(cases)],
     }
+    if tiers:
+        report["tiers"] = dict(sorted(tiers.items()))
+    return report
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -330,7 +417,12 @@ def main(argv: list[str] | None = None) -> int:
         required=True,
         help="verified asset checkout; use fetch_assets.py to materialize the locked GitHub revision",
     )
-    parser.add_argument("--case", required=True, help="case id, e.g. L1-01 (or 'all')")
+    parser.add_argument("--case", required=True, help="case id, e.g. L1-01 (or 'all' for the whole case set)")
+    parser.add_argument(
+        "--case-set",
+        default=DEFAULT_CASE_SET,
+        help=f"published case set to run, e.g. {LADDER_CASE_SET} or {HARD_CASE_SET} (default: {DEFAULT_CASE_SET})",
+    )
     parser.add_argument("--mode", choices=MODES, default="nop")
     parser.add_argument(
         "--agent-command",
@@ -350,11 +442,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--report", default=None, help="write the aggregated ladder report to this path")
     parser.add_argument("--json", action="store_true", help="print every run record")
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
-    cases_root, _ = verify_assets_root(Path(args.assets_dir))
+    cases_root, manifest = verify_assets_root(Path(args.assets_dir))
+    members = case_set_members(manifest, args.case_set)
 
     if args.case == "all":
-        case_dirs = sorted(path for path in cases_root.glob("L*-*") if path.is_dir())
+        case_dirs = [cases_root / case_id for case_id in members]
     else:
+        if args.case not in members:
+            print(f"case {args.case} is not a member of case set {args.case_set}", file=sys.stderr)
+            return 2
         case_dirs = [cases_root / args.case]
     missing = [path.name for path in case_dirs if not path.is_dir()]
     if missing:

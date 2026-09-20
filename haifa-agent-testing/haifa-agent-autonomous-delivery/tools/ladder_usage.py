@@ -400,6 +400,8 @@ def build_usage_report(
             "model": first.get("model"),
             "modelSource": first.get("modelSource"),
             "approval": first.get("approval"),
+            # Records written before case sets existed carry none; the field then stays null.
+            "caseSet": first.get("caseSet"),
             "assetVersion": first.get("assetVersion"),
             "assetsPinned": first.get("assetsPinned"),
         },
@@ -447,9 +449,10 @@ ROW = (
 
 def render_table(report: dict) -> str:
     evaluation, totals = report["evaluation"], report["totals"]
+    case_set = f" caseSet={evaluation['caseSet']}" if evaluation.get("caseSet") else ""
     lines = [
         f"LADDER_USAGE run={evaluation['run']} mode={evaluation['mode']} model={evaluation['model']} "
-        f"({evaluation['modelSource']}) assets={evaluation['assetVersion']} "
+        f"({evaluation['modelSource']}){case_set} assets={evaluation['assetVersion']} "
         f"({'pinned' if evaluation['assetsPinned'] else 'UNPINNED'})",
     ]
     if not report["runtimeDatabaseAvailable"]:
