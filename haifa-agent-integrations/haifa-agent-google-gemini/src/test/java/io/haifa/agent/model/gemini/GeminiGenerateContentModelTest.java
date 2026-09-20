@@ -585,7 +585,7 @@ class GeminiGenerateContentModelTest {
         String sse = ":" + "a".repeat(80) + "\n\n:" + "b".repeat(80) + "\n\n";
         start(new AtomicReference<>(), new AtomicReference<>(), List.of(Response.sse(sse)));
 
-        assertThatThrownBy(() -> model(128)
+        assertThatThrownBy(() -> modelWithTotalLimit(128)
                         .invokeStreaming(
                                 request(
                                         standardSnapshot(),
@@ -686,6 +686,18 @@ class GeminiGenerateContentModelTest {
                 maxResponseBytes,
                 true,
                 ref -> java.util.Optional.of("my-custom-project"));
+    }
+
+    private GeminiGenerateContentModel modelWithTotalLimit(int maxTotalStreamBytes) {
+        return new GeminiGenerateContentModel(
+                HttpClient.newHttpClient(),
+                json,
+                ignored -> new ResolvedCredential("secret-value"),
+                false,
+                1024 * 1024,
+                true,
+                ref -> java.util.Optional.of("my-custom-project"),
+                maxTotalStreamBytes);
     }
 
     @Test

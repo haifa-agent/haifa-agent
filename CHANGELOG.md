@@ -1,7 +1,9 @@
 # Changelog
 
-- OpenAI-compatible Chat and Gemini streaming response limits now distinguish total-stream from single-event overflow,
-  expose only bounded byte diagnostics, retry at most once before any visible output, and never replay after text or a
+- OpenAI-compatible Chat, OpenAI Responses, Gemini and Anthropic streaming response limits now distinguish local
+  transport boundaries: each SSE event is capped at 1 MiB and each raw stream has a fixed 64 MiB final fallback. The
+  semantic response limit remains independently configurable and provider token parameters remain the primary output
+  bound. The adapters expose only bounded byte diagnostics, retry at most once before any visible output, and never replay after text or a
   Tool Call was observed. CLI and Personal Assistant share a validated 1 MiB–32 MiB host setting (4 MiB default) across
   their model adapters. Runtime cancellation now distinguishes `USER_REQUEST` from `DEADLINE_EXCEEDED` in snapshots,
   terminal events and storage; CLI deadline expiry writes a stable stderr message and exits with code 124, while
