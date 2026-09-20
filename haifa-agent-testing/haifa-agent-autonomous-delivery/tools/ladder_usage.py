@@ -163,6 +163,35 @@ def error_code(payload: str | None) -> str | None:
     return str(code) if code else None
 
 
+def cached_input_tokens(connection: sqlite3.Connection, row: sqlite3.Row) -> int:
+    """Return the cached input tokens of a run, per model call when the run total is unset.
+
+    The run total was recorded as 0 by every runtime up to 2026-09-20, while each model call step
+    already carried the provider's ``cacheHitTokens``. Reading the calls keeps older runs readable.
+    """
+    recorded = int(row["usage_cached_input_tokens"] or 0)
+    if recorded:
+        return recorded
+    try:
+        steps = connection.execute(
+            "select result_payload from step where run_id=? and type='model.call' and result_payload is not null",
+            (row["run_id"],),
+        ).fetchall()
+    except sqlite3.Error:
+        # A runtime database without the step table simply reports no cache.
+        return 0
+    total = 0
+    for (payload,) in steps:
+        try:
+            data = (json.loads(payload) or {}).get("data") or {}
+        except (ValueError, AttributeError):
+            continue
+        value = data.get("cacheHitTokens")
+        if isinstance(value, (int, float)):
+            total += int(value)
+    return total
+
+
 def model_call_stats(connection: sqlite3.Connection, run_id: str) -> dict:
     durations: list[int] = []
     failures = 0
@@ -297,8 +326,8 @@ def case_usage(
         return entry
     used.add(row["run_id"])
     input_tokens = int(row["usage_input_tokens"] or 0)
-    cached_tokens = int(row["usage_cached_input_tokens"] or 0)
     output_tokens = int(row["usage_output_tokens"] or 0)
+    cached_tokens = cached_input_tokens(connection, row)
     entry.update(
         {
             "terminationReason": row["termination_reason"],
