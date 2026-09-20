@@ -2,6 +2,9 @@ package io.haifa.agent.cli;
 
 import io.haifa.agent.runtime.api.AgentRunOutputEvent;
 import io.haifa.agent.runtime.api.AgentRunOutputListener;
+import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
+import io.haifa.agent.runtime.core.trace.RuntimeTraceScope;
+import io.haifa.agent.runtime.core.trace.RuntimeTraceStatus;
 import java.io.PrintStream;
 import java.time.Duration;
 import java.util.Objects;
@@ -32,6 +35,8 @@ final class CliActivityOutput implements AutoCloseable {
     private long startedNanos;
     private boolean contentLineOpen;
     private boolean closed;
+    private int runningTools;
+    private String runningTool;
 
     static CliActivityOutput attach(
             Consumer<AgentRunOutputListener> registrar,
@@ -93,20 +98,59 @@ final class CliActivityOutput implements AutoCloseable {
         }
     }
 
+    /**
+     * Track tool execution so that the status line names what actually occupies the run.
+     *
+     * <p>A tool call can hold the run for minutes; reporting it as a wait for the model sends anyone
+     * reading the log after the fact looking for a provider problem that is not there.
+     */
+    synchronized void onTrace(RuntimeTraceEvent event) {
+        Objects.requireNonNull(event, "event must not be null");
+        if (closed || !statusEnabled || event.scope() != RuntimeTraceScope.TOOL_CALL) return;
+        if (event.status() == RuntimeTraceStatus.STARTED) {
+            runningTools++;
+            runningTool = toolName(event);
+            enterStatus(State.TOOL);
+        } else if (event.status() == RuntimeTraceStatus.SUCCESS || event.status() == RuntimeTraceStatus.FAILURE) {
+            runningTools = Math.max(0, runningTools - 1);
+            if (runningTools > 0 || state != State.TOOL) return;
+            runningTool = null;
+            enterStatus(State.WAITING);
+        }
+    }
+
+    private void enterStatus(State next) {
+        if (statusEnabled && tty && isActive()) clearTtyStatus();
+        finishContentLine();
+        state = next;
+        startedNanos = nanoTime.getAsLong();
+        if (statusEnabled && tty) renderTtyStatus();
+        scheduleStatus();
+    }
+
+    private static String toolName(RuntimeTraceEvent event) {
+        Object name = event.safeAttributes().get("toolName");
+        return name == null ? null : name.toString();
+    }
+
+    private boolean isActive() {
+        return state == State.WAITING || state == State.THINKING || state == State.TOOL;
+    }
+
     synchronized void emitNonTtyStatus() {
-        if (closed || !statusEnabled || tty || (state != State.WAITING && state != State.THINKING)) return;
+        if (closed || !statusEnabled || tty || !isActive()) return;
         error.printf("[status] %s elapsed=%ds%n", statusText(), elapsedSeconds());
         error.flush();
     }
 
     synchronized void emitTtyStatus() {
-        if (closed || !statusEnabled || !tty || (state != State.WAITING && state != State.THINKING)) return;
+        if (closed || !statusEnabled || !tty || !isActive()) return;
         renderTtyStatus();
     }
 
     private void renderContent(String delta) {
         if (delta.isEmpty()) return;
-        if (statusEnabled && tty && (state == State.WAITING || state == State.THINKING)) clearTtyStatus();
+        if (statusEnabled && tty && isActive()) clearTtyStatus();
         state = State.CONTENT;
         if (streamed.compareAndSet(false, true)) output.print("[stream] ");
         output.print(delta);
@@ -120,7 +164,11 @@ final class CliActivityOutput implements AutoCloseable {
     }
 
     private String statusText() {
-        return state == State.THINKING ? "Model is thinking..." : "Waiting for model...";
+        return switch (state) {
+            case THINKING -> "Model is thinking...";
+            case TOOL -> runningTool == null ? "Running a tool..." : "Running " + runningTool + "...";
+            default -> "Waiting for model...";
+        };
     }
 
     private long elapsedSeconds() {
@@ -128,8 +176,10 @@ final class CliActivityOutput implements AutoCloseable {
     }
 
     private void finishStatus() {
-        if (statusEnabled && tty && (state == State.WAITING || state == State.THINKING)) clearTtyStatus();
+        if (statusEnabled && tty && isActive()) clearTtyStatus();
         state = State.IDLE;
+        runningTools = 0;
+        runningTool = null;
         if (periodicStatus != null) periodicStatus.cancel(false);
         periodicStatus = null;
     }
@@ -171,6 +221,7 @@ final class CliActivityOutput implements AutoCloseable {
         IDLE,
         WAITING,
         THINKING,
+        TOOL,
         CONTENT
     }
 }
