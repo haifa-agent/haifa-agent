@@ -15,12 +15,26 @@ public record ModelCatalogProvider(
         String displayName,
         ProviderStatus status,
         Set<ModelAuthenticationMethod> authenticationMethods,
-        List<ModelCatalogBinding> bindings) {
+        List<ModelCatalogBinding> bindings,
+        int showOrder) {
+    public ModelCatalogProvider(
+            ModelProviderId id,
+            String version,
+            String displayName,
+            ProviderStatus status,
+            Set<ModelAuthenticationMethod> authenticationMethods,
+            List<ModelCatalogBinding> bindings) {
+        this(id, version, displayName, status, authenticationMethods, bindings, Integer.MAX_VALUE);
+    }
+
     public ModelCatalogProvider {
         id = Objects.requireNonNull(id, "id must not be null");
         version = requireText(version, "version");
         displayName = requireText(displayName, "displayName");
         status = Objects.requireNonNull(status, "status must not be null");
+        if (showOrder < 1) {
+            throw new IllegalArgumentException("showOrder must be a positive integer: " + showOrder);
+        }
         authenticationMethods =
                 Set.copyOf(Objects.requireNonNull(authenticationMethods, "authenticationMethods must not be null"));
         if (authenticationMethods.isEmpty()) {

@@ -360,7 +360,7 @@ final class Tui4jCodingTerminalModel implements Model {
     }
 
     private void appendSecretCharacter(char character) {
-        if (!Character.isISOControl(character) && !Character.isWhitespace(character)) {
+        if (!Character.isISOControl(character) && (!Character.isWhitespace(character) || character == ' ')) {
             secretBuffer.append(character);
         }
     }

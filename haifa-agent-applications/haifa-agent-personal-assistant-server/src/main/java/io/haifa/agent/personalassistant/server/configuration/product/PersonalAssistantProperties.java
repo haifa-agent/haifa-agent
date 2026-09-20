@@ -17,6 +17,7 @@ public record PersonalAssistantProperties(
         Caller caller,
         List<ModelProvider> modelProviders,
         String defaultModelId,
+        int modelMaxResponseBytes,
         boolean allowInsecureLoopbackModel,
         Web web,
         Mission mission,
@@ -52,6 +53,9 @@ public record PersonalAssistantProperties(
         String selectedDefaultModelId = defaultModelId;
         if (!configuredModels.contains(selectedDefaultModelId)) {
             throw new IllegalArgumentException("defaultModelId must identify a configured model");
+        }
+        if (modelMaxResponseBytes < 1024 * 1024 || modelMaxResponseBytes > 32 * 1024 * 1024) {
+            throw new IllegalArgumentException("modelMaxResponseBytes must be between 1048576 and 33554432");
         }
         localSkillRoot = localSkillRoot == null ? "" : localSkillRoot.trim();
         trustedScriptManifest = trustedScriptManifest == null ? "" : trustedScriptManifest.trim();

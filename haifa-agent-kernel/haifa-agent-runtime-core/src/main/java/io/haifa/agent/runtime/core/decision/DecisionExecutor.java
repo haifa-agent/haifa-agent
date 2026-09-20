@@ -32,6 +32,7 @@ import io.haifa.agent.runtime.core.checkpoint.CheckpointManager;
 import io.haifa.agent.runtime.core.completion.CompletionBlocker;
 import io.haifa.agent.runtime.core.completion.CompletionGuard;
 import io.haifa.agent.runtime.core.control.CancellationObservedException;
+import io.haifa.agent.runtime.core.control.RunControlDirective;
 import io.haifa.agent.runtime.core.control.RunControlRegistry;
 import io.haifa.agent.runtime.core.control.RunControlSignal;
 import io.haifa.agent.runtime.core.delegation.DelegationPort;
@@ -883,8 +884,11 @@ public final class DecisionExecutor {
     }
 
     private void throwIfStopped(AgentRun run) {
-        RunControlSignal signal = controls.signal(run.id());
-        if (signal.stopsExecution()) throw new CancellationObservedException(signal);
+        RunControlDirective directive = controls.directive(run.id());
+        if (directive.signal() == RunControlSignal.CANCEL || directive.signal() == RunControlSignal.TIMEOUT) {
+            throw new CancellationObservedException(directive);
+        }
+        if (directive.signal().stopsExecution()) throw new CancellationObservedException(directive.signal());
     }
 
     private static String upperSnake(String value) {
