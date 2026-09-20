@@ -14,6 +14,10 @@ public interface CodingAuthenticationClient {
         return "openai";
     }
 
+    default List<String> supportedApiKeyProviders() {
+        return List.of("deepseek", "aliyun-bailian", "zhipu", "kimi", "siliconflow");
+    }
+
     default boolean apiKeyConnectionSupported() {
         return true;
     }

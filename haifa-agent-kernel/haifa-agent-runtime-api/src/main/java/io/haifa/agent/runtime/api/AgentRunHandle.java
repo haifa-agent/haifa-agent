@@ -19,5 +19,9 @@ public interface AgentRunHandle {
 
     RuntimeCommandResult pause();
 
-    RuntimeCommandResult cancel();
+    default RuntimeCommandResult cancel() {
+        return cancel(RunCancellation.userRequest());
+    }
+
+    RuntimeCommandResult cancel(RunCancellation cancellation);
 }

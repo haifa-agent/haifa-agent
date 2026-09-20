@@ -56,6 +56,9 @@ Server 只接受 `haifa.personal.model-providers` 受信 Provider 列表和显�
 和 Conversation 只返回脱敏信息；Endpoint、
 Credential、`providerModelId`、Adapter 和完整 Snapshot 不进入浏览器。模型偏好保存在 Personal
 SQLite 中并可跨重启恢复；deterministic acceptance model 不能混入 production 可选列表。
+所有 Personal 模型 Adapter 共享 `model-max-response-bytes` 响应上限，允许 1 MiB～32 MiB，默认 4 MiB；
+环境变量 `HAIFA_PERSONAL_MODEL_MAX_RESPONSE_BYTES` 可覆盖该值。流式响应越界只记录稳定限制类型、上限、
+已观测字节数和物理 Attempt，不记录响应正文。
 Bootstrap 仅在 `web_search` 与 `web_fetch` 均完成受信注册时发布 `web-research` 能力，供 Web 在创建
 Deep Research 计划前做确定性可用性检查；该标记不包含 Provider、Endpoint 或凭据细节。
 
@@ -75,6 +78,7 @@ Provider 是接入实例，持有共享 Endpoint、Credential、`native-streamin
 haifa:
   personal:
     default-model-id: deepseek-chat-flash
+    model-max-response-bytes: 4194304
     model-providers:
       - id: deepseek
         display-name: DeepSeek

@@ -1,5 +1,14 @@
 # Changelog
 
+- OpenAI-compatible Chat, OpenAI Responses, Gemini and Anthropic streaming response limits now distinguish local
+  transport boundaries: each SSE event is capped at 1 MiB and each raw stream has a fixed 64 MiB final fallback. The
+  semantic response limit remains independently configurable and provider token parameters remain the primary output
+  bound. The adapters expose only bounded byte diagnostics, retry at most once before any visible output, and never replay after text or a
+  Tool Call was observed. CLI and Personal Assistant share a validated 1 MiB–32 MiB host setting (4 MiB default) across
+  their model adapters. Runtime cancellation now distinguishes `USER_REQUEST` from `DEADLINE_EXCEEDED` in snapshots,
+  terminal events and storage; CLI deadline expiry writes a stable stderr message and exits with code 124, while
+  Personal Assistant exposes the termination reason and maps Mission deadlines explicitly.
+
 - Coding Terminal 移除应用级鼠标事件接管，恢复宿主终端（Windows Terminal、VS Code Terminal、iTerm2 等）原生文本划词选择与剪贴板复制能力。`Tui4jTerminalIo` 禁用 SGR cell-motion 鼠标上报，保持启动与退出时的防御性 mouse reset；删除 `TerminalScreenCells`、`TerminalTextSelection` 及应用层拖拽高亮/自动滚动/剪贴板传输逻辑；历史内容继续由 `PageUp`/`PageDown` 键盘导航视口。
 
 - Review follow-ups for the SDK reduction baseline. SDK Conversation `submit` now re-checks the conversation revision inside the persistence transaction, so two concurrent submits on the same revision start exactly one Run instead of double-dispatching, and a `submit` replay with a changed request fails closed with `CONVERSATION_IDEMPOTENCY_CONFLICT` instead of silently returning the old Run. Status-filtered conversation lists page through the store until the requested statuses fill the limit, `ConversationStore.changeStatus` drops its dead `expected`/`target` parameters, `SkillPlatformContribution` rejects non-empty `scriptExecutionGrants` instead of silently ignoring them, and `JavaToolSpec` rejects `NETWORK_ACCESS` because Java Tools cannot constrain target hosts. `PersonalAssistantAssembler.productDigest` serializes the Memory/Artifact policies deterministically and folds in the Web provider bindings plus the shell runtime identity, `runtime_applied_command` is now `STRICT` (the V1.0 init artifact is regenerated; upgrade action: rebuild local SQLite databases as V13 already requires, and note that rename/archive commands applied before V13 lose their applied-command de-dup ledger and can re-apply once after upgrade), and the SDK Starter declares its policy dependencies explicitly.

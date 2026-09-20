@@ -53,6 +53,7 @@ public final class AnthropicMessagesModel implements AgentChatModel {
     private static final int DEFAULT_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
     private static final int MAX_EVENTS = 100_000;
     private static final int MAX_EVENT_BYTES = 1024 * 1024;
+    private static final int MAX_TOTAL_STREAM_BYTES = 64 * 1024 * 1024;
     private static final String REASONING_FORMAT = "anthropic-thinking-v1";
 
     private final HttpClient http;
@@ -666,7 +667,9 @@ public final class AnthropicMessagesModel implements AgentChatModel {
 
         private void addBytes(long value) {
             bytes += value;
-            if (bytes > maxResponseBytes) throw malformed(request, "Anthropic SSE stream is too large");
+            if (bytes > MAX_TOTAL_STREAM_BYTES) {
+                throw malformed(request, "Anthropic SSE stream exceeds Haifa's fixed 64 MiB transport safety limit");
+            }
         }
 
         private void accept(String eventName, String data) {

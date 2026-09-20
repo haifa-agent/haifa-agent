@@ -36,6 +36,38 @@ OpenAI-compatible 模块支持多个经过审查的 Provider Dialect / Binding�
 - [Anthropic Integration](../../haifa-agent-integrations/haifa-agent-model-anthropic/README.md)
 - [Google Gemini Integration](../../haifa-agent-integrations/haifa-agent-google-gemini/README.md)
 
+## Provider token limits and stream safety
+
+`AgentChatRequest.maxOutputTokens` is mapped to each protocol's provider-side output-token parameter. This is the
+semantic limit that should normally stop generation; it is not a byte limit and therefore cannot by itself bound an
+SSE response body.
+
+| Provider / binding | Request parameter sent by the adapter | Provider-side end signal |
+| --- | --- | --- |
+| OpenAI native Chat Completions | `max_completion_tokens` (current OpenAI field) | Chat `finish_reason=length`; SSE usage/terminal chunks |
+| Generic OpenAI-compatible Chat bindings | `max_tokens` by default | Chat `finish_reason=length`; SSE ends with `[DONE]` where supported |
+| OpenAI-compatible Ark | `max_tokens`, or `max_completion_tokens` when `token_limit_parameter` selects it | Provider-specific Chat `finish_reason` and stream terminal event |
+| OpenAI Responses | `max_output_tokens` | `response.incomplete` with `incomplete_details.reason=max_output_tokens` |
+| DeepSeek Responses | `max_output_tokens` | Responses-compatible incomplete reason; Chat API uses `max_tokens` |
+| Google Gemini `generateContent` | `generationConfig.maxOutputTokens` | `finishReason=MAX_TOKENS` |
+| Anthropic Messages | `max_tokens` | `message_delta` / final message stop reason `max_tokens` |
+
+The OpenAI-compatible adapter also serves DeepSeek, Bailian, Kimi, Zhipu, SiliconFlow and TokenRhythm Chat bindings;
+they inherit the `max_tokens` field unless their dialect explicitly changes it. The Antigravity Gemini private dialect
+removes `maxOutputTokens` because that endpoint does not accept the public Gemini field. The Codex Responses dialect
+also intentionally omits `max_output_tokens` because its endpoint contract does not accept it.
+
+Provider token limits remain the primary semantic guard. Haifa additionally applies a local transport safety policy to
+native SSE responses: each event is capped at 1 MiB, and the complete raw stream is capped at a fixed 64 MiB. The
+64 MiB cap is only a final defensive fallback for malformed, misconfigured, or unexpectedly verbose streams; it is
+not a provider-published stream-size guarantee and is independent of the configured semantic response-byte budget.
+
+协议参数的官方参考： [OpenAI Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)、
+[OpenAI Responses streaming events](https://developers.openai.com/api/reference/resources/responses/streaming-events)、
+[DeepSeek Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion/)、
+[Gemini generateContent](https://ai.google.dev/api/generate-content) 和
+[Anthropic Messages](https://docs.anthropic.com/en/api/messages)。
+
 ## 不做隐式 Fallback
 
 Haifa Agent 不把 Provider Catalog 当成 best-effort router。

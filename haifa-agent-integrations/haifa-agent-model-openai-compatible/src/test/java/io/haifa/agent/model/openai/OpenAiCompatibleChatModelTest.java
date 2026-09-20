@@ -548,6 +548,27 @@ class OpenAiCompatibleChatModelTest {
     }
 
     @Test
+    void oversizedTotalStreamBeforeOutputIsRetryableAndCarriesSafeLimits() {
+        response.set(Response.sse(":" + "a".repeat(80) + "\n\n:" + "b".repeat(80) + "\n\n"));
+
+        assertThatThrownBy(() -> modelWithTotalLimit(128)
+                        .invokeStreaming(simpleRequest(), ignored -> ModelStreamControl.CONTINUE))
+                .isInstanceOfSatisfying(ModelInvocationException.class, failure -> {
+                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.MALFORMED_RESPONSE);
+                    assertThat(failure.providerCode()).isEqualTo("stream_response_too_large");
+                    assertThat(failure.retryable()).isTrue();
+                    assertThat(failure.outputObserved()).isFalse();
+                    assertThat(failure.retryDecision()).isEqualTo("RETRYABLE");
+                    assertThat(failure.responseLimit()).hasValueSatisfying(limit -> {
+                        assertThat(limit.limitKind().name()).isEqualTo("TOTAL_STREAM");
+                        assertThat(limit.limitBytes()).isEqualTo(128);
+                        assertThat(limit.observedBytes()).isGreaterThan(128);
+                        assertThat(limit.attempt()).isEqualTo(1);
+                    });
+                });
+    }
+
+    @Test
     void reasoningSemanticLimitRemainsObservedAndNonRetryable() {
         response.set(
                 Response.sse(
@@ -565,6 +586,27 @@ class OpenAiCompatibleChatModelTest {
                     assertThat(failure.category()).isEqualTo(ModelErrorCategory.OUTPUT_LIMIT_EXCEEDED);
                     assertThat(failure.outputObserved()).isTrue();
                     assertThat(failure.retryable()).isFalse();
+                });
+    }
+
+    @Test
+    void oversizedSingleEventAfterOutputIsTerminal() {
+        String first =
+                "data: {\"id\":\"stream-limit\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"first\"},\"finish_reason\":null}]}\n\n";
+        response.set(Response.sse(first + "data: " + "x".repeat(1024 * 1024 + 1) + "\n\n"));
+
+        assertThatThrownBy(() ->
+                        model(2 * 1024 * 1024).invokeStreaming(simpleRequest(), ignored -> ModelStreamControl.CONTINUE))
+                .isInstanceOfSatisfying(ModelInvocationException.class, failure -> {
+                    assertThat(failure.providerCode()).isEqualTo("stream_response_too_large");
+                    assertThat(failure.retryable()).isFalse();
+                    assertThat(failure.outputObserved()).isTrue();
+                    assertThat(failure.retryDecision()).isEqualTo("TERMINAL");
+                    assertThat(failure.responseLimit()).hasValueSatisfying(limit -> {
+                        assertThat(limit.limitKind().name()).isEqualTo("SINGLE_EVENT");
+                        assertThat(limit.limitBytes()).isEqualTo(1024 * 1024);
+                        assertThat(limit.observedBytes()).isGreaterThan(1024 * 1024);
+                    });
                 });
     }
 
@@ -1007,6 +1049,19 @@ class OpenAiCompatibleChatModelTest {
                 ignored -> new ResolvedCredential("test-secret"),
                 true,
                 maxResponseBytes);
+    }
+
+    private OpenAiCompatibleChatModel modelWithTotalLimit(int maxTotalStreamBytes) {
+        return new OpenAiCompatibleChatModel(
+                provider,
+                HttpClient.newBuilder()
+                        .followRedirects(HttpClient.Redirect.NEVER)
+                        .build(),
+                json,
+                ignored -> new ResolvedCredential("test-secret"),
+                true,
+                1024 * 1024,
+                maxTotalStreamBytes);
     }
 
     private AgentChatRequest simpleRequest() {
