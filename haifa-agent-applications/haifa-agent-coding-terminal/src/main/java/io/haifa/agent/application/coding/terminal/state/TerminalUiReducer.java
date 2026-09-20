@@ -9,7 +9,6 @@ import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.AgentRunOutputEvent;
 import io.haifa.agent.runtime.api.AgentRunOutputEventType;
 import io.haifa.agent.runtime.api.RunEventPayloads;
-import io.haifa.agent.runtime.api.display.ToolDisplayBudget;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -20,7 +19,9 @@ import java.util.Set;
 /** Deterministic, side-effect-free projection of product and committed Runtime facts. */
 public final class TerminalUiReducer {
     private static final int MAX_TRANSCRIPT_TITLE_LENGTH = 256;
-    private static final ToolDisplayBudget TOOL_DISPLAY_BUDGET = new ToolDisplayBudget(16 * 1_024, 200);
+    private static final int MAX_TOOL_TARGET_LENGTH = 256;
+    private static final String OUTCOME_UNKNOWN_STATUS = "OUTCOME_UNKNOWN";
+    private static final String TOOL_OUTCOME_UNKNOWN_CODE = "TOOL_OUTCOME_UNKNOWN";
     private static final String OUTCOME_UNKNOWN_NEXT_ACTION =
             "Inspect authoritative local or remote state before deciding whether another command is safe.";
     private static final Set<String> TERMINAL_RUN_STATUSES = Set.of("COMPLETED", "FAILED", "CANCELLED", "TIMEOUT");
@@ -543,13 +544,13 @@ public final class TerminalUiReducer {
                 items.set(index, items.get(index).append(payload.textDelta()));
             }
         } else if (event.payload() instanceof RunEventPayloads.ToolLifecycle payload) {
-            ToolCallDisplayProjection display = ToolCallDisplayProjection.from(payload, TOOL_DISPLAY_BUDGET);
-            String id = "tool-" + display.toolCallId();
+            String id = "tool-" + payload.toolCallId();
+            String projectedStatus = displayStatus(payload);
             int existing = index(items, id);
             Optional<Long> startedAt = existing >= 0 ? items.get(existing).startedAtEpochMillis() : Optional.empty();
             if (startedAt.isEmpty()) startedAt = Optional.of(event.occurredAt().toEpochMilli());
             Optional<Long> duration = existing >= 0 ? items.get(existing).durationMillis() : Optional.empty();
-            if (terminalToolStatus(display.displayStatus())) {
+            if (terminalToolStatus(projectedStatus)) {
                 duration = Optional.of(Math.max(0, event.occurredAt().toEpochMilli() - startedAt.orElseThrow()));
             }
             upsert(
@@ -557,9 +558,9 @@ public final class TerminalUiReducer {
                     new TranscriptItem(
                             id,
                             TranscriptItem.Kind.TOOL,
-                            toolTitle(display),
-                            toolBody(display),
-                            display.displayStatus(),
+                            toolTitle(payload),
+                            toolBody(payload),
+                            projectedStatus,
                             false,
                             Optional.empty(),
                             startedAt,
@@ -815,34 +816,71 @@ public final class TerminalUiReducer {
         return -1;
     }
 
-    private static String toolBody(ToolCallDisplayProjection display) {
+    private static String toolBody(RunEventPayloads.ToolLifecycle lifecycle) {
         List<String> lines = new ArrayList<>();
-        if (!display.target().isBlank()) lines.add("Target: " + display.target());
-        if (display.outcomeUnknown()) {
+        String target = boundedTarget(lifecycle.targetSummary());
+        if (!target.isBlank()) lines.add("Target: " + target);
+        Optional<String> reasonCode = normalizedReasonCode(lifecycle.reasonCode());
+        if (isOutcomeUnknown(lifecycle.status(), lifecycle.reasonCode())) {
             lines.add("Outcome: UNKNOWN");
-            if (!ToolCallDisplayProjection.OUTCOME_UNKNOWN_STATUS.equalsIgnoreCase(display.status())) {
-                lines.add("Status: " + display.status());
+            if (!OUTCOME_UNKNOWN_STATUS.equalsIgnoreCase(lifecycle.status())) {
+                lines.add("Status: " + lifecycle.status());
             }
-            display.reasonCode().ifPresent(reason -> lines.add("Reason: " + reason));
+            reasonCode.ifPresent(reason -> lines.add("Reason: " + reason));
             lines.add("Next: " + OUTCOME_UNKNOWN_NEXT_ACTION);
         } else {
-            display.reasonCode().ifPresent(reason -> {
+            reasonCode.ifPresent(reason -> {
                 lines.add("Reason: " + reason);
                 String nextAction = nextAction(reason);
                 if (!nextAction.isBlank()) lines.add("Next: " + nextAction);
             });
         }
-        display.processState().ifPresent(state -> lines.add("Process: " + state));
-        display.exitCode().ifPresent(code -> lines.add("Exit: " + code));
-        display.outputPreview().ifPresent(preview -> {
-            lines.add("Output" + (preview.truncated() ? " (truncated)" : "") + ":");
-            lines.add(preview.text());
-            if (preview.truncated()) {
-                lines.add("Output truncated · " + preview.byteCount() + " bytes · " + preview.lineCount() + " lines");
-            }
-        });
-        display.outputReference().ifPresent(reference -> lines.add("Result: " + reference));
+        lifecycle
+                .observation()
+                .flatMap(RunEventPayloads.ToolObservation::outputPreview)
+                .ifPresent(preview -> {
+                    lines.add("Output" + (preview.truncated() ? " (truncated)" : "") + ":");
+                    lines.add(preview.text());
+                    if (preview.truncated()) {
+                        lines.add("Output truncated · " + preview.byteCount() + " bytes · " + preview.lineCount()
+                                + " lines");
+                    }
+                });
+        String resultRef =
+                lifecycle.resultRef() == null ? "" : lifecycle.resultRef().strip();
+        if (!resultRef.isBlank()) lines.add("Result: " + resultRef);
         return String.join("\n", lines);
+    }
+
+    private static boolean isOutcomeUnknown(String status, String reasonCode) {
+        return OUTCOME_UNKNOWN_STATUS.equalsIgnoreCase(status)
+                || TOOL_OUTCOME_UNKNOWN_CODE.equalsIgnoreCase(reasonCode);
+    }
+
+    private static String displayStatus(RunEventPayloads.ToolLifecycle lifecycle) {
+        return isOutcomeUnknown(lifecycle.status(), lifecycle.reasonCode())
+                ? OUTCOME_UNKNOWN_STATUS
+                : lifecycle.status();
+    }
+
+    private static Optional<String> normalizedReasonCode(String reasonCode) {
+        if (reasonCode == null) return Optional.empty();
+        String normalized = reasonCode.strip();
+        if (normalized.isEmpty() || "NONE".equalsIgnoreCase(normalized)) return Optional.empty();
+        return Optional.of(normalized);
+    }
+
+    private static String boundedTarget(String value) {
+        String target = value == null ? "" : value.strip();
+        if (target.length() <= MAX_TOOL_TARGET_LENGTH) return target;
+        int end = MAX_TOOL_TARGET_LENGTH - 1;
+        if (end > 0
+                && end < target.length()
+                && Character.isLowSurrogate(target.charAt(end))
+                && Character.isHighSurrogate(target.charAt(end - 1))) {
+            end--;
+        }
+        return target.substring(0, end) + "…";
     }
 
     private static String nextAction(String reasonCode) {
@@ -901,12 +939,13 @@ public final class TerminalUiReducer {
         return stage + "Reason: " + code + "\nNext: " + next;
     }
 
-    private static String toolTitle(ToolCallDisplayProjection display) {
-        String target = display.target().strip();
-        if (target.isBlank() || target.equalsIgnoreCase(display.toolName())) {
-            return display.toolName();
+    private static String toolTitle(RunEventPayloads.ToolLifecycle lifecycle) {
+        String toolName = lifecycle.displayName();
+        String target = boundedTarget(lifecycle.targetSummary());
+        if (target.isBlank() || target.equalsIgnoreCase(toolName)) {
+            return toolName;
         }
-        String prefix = display.toolName() + " · ";
+        String prefix = toolName + " · ";
         int available = MAX_TRANSCRIPT_TITLE_LENGTH - prefix.length();
         if (target.length() <= available) return prefix + target;
         int end = Math.max(0, available - 1);

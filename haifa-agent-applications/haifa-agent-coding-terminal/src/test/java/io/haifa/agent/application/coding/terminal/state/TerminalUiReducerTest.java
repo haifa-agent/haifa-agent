@@ -536,12 +536,28 @@ class TerminalUiReducerTest {
                     .contains(
                             "Target: long run",
                             "Reason: WALL_TIME_EXCEEDED",
-                            "Process: KILLED",
-                            "Exit: 137",
                             "Output (truncated):",
-                            "Output truncated · ",
+                            "Output truncated · 2500 bytes · 501 lines",
                             "Result: asset-1")
                     .doesNotContain("Outcome: UNKNOWN");
+        });
+    }
+
+    @Test
+    void boundsLongToolTargetWithoutSplittingSurrogatePairs() {
+        String target = "x".repeat(300) + "😀tail";
+
+        TerminalUiState state = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1", "workspace.read", "SUCCEEDED", "NONE", target, "asset-1"))));
+
+        assertThat(state.transcript()).singleElement().satisfies(item -> {
+            assertThat(item.body()).contains("Target: " + "x".repeat(255) + "…");
+            assertThat(item.body()).doesNotContain("😀");
         });
     }
 
@@ -576,7 +592,7 @@ class TerminalUiReducerTest {
         assertThat(replayed).isSameAs(succeeded);
         assertThat(succeeded.transcript()).singleElement().satisfies(item -> {
             assertThat(item.status()).isEqualTo("SUCCEEDED");
-            assertThat(item.body()).contains("Process: EXITED", "Exit: 0", "Output:", "done", "Result: asset-1");
+            assertThat(item.body()).contains("Output:", "done", "Result: asset-1");
         });
     }
 
