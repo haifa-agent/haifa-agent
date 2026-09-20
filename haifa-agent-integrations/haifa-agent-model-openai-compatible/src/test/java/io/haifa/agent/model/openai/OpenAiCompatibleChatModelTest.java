@@ -551,7 +551,8 @@ class OpenAiCompatibleChatModelTest {
     void oversizedTotalStreamBeforeOutputIsRetryableAndCarriesSafeLimits() {
         response.set(Response.sse(":" + "a".repeat(80) + "\n\n:" + "b".repeat(80) + "\n\n"));
 
-        assertThatThrownBy(() -> model(128).invokeStreaming(simpleRequest(), ignored -> ModelStreamControl.CONTINUE))
+        assertThatThrownBy(() -> modelWithTotalLimit(128)
+                        .invokeStreaming(simpleRequest(), ignored -> ModelStreamControl.CONTINUE))
                 .isInstanceOfSatisfying(ModelInvocationException.class, failure -> {
                     assertThat(failure.category()).isEqualTo(ModelErrorCategory.MALFORMED_RESPONSE);
                     assertThat(failure.providerCode()).isEqualTo("stream_response_too_large");
@@ -1048,6 +1049,19 @@ class OpenAiCompatibleChatModelTest {
                 ignored -> new ResolvedCredential("test-secret"),
                 true,
                 maxResponseBytes);
+    }
+
+    private OpenAiCompatibleChatModel modelWithTotalLimit(int maxTotalStreamBytes) {
+        return new OpenAiCompatibleChatModel(
+                provider,
+                HttpClient.newBuilder()
+                        .followRedirects(HttpClient.Redirect.NEVER)
+                        .build(),
+                json,
+                ignored -> new ResolvedCredential("test-secret"),
+                true,
+                1024 * 1024,
+                maxTotalStreamBytes);
     }
 
     private AgentChatRequest simpleRequest() {

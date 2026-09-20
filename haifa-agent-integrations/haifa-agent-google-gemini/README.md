@@ -13,6 +13,11 @@ require the CloudCode PA `response` envelope; the adapter unwraps that envelope 
 The dialects are for personal local development. Haifa never reads external OAuth files, OS keyrings, or cookies directly from disk.
 429 quota exhaustion (`QUOTA_EXHAUSTED` / `INSUFFICIENT_G1_CREDITS_BALANCE`) triggers non-retryable fail-closed errors.
 
+The standard Gemini request maps `AgentChatRequest.maxOutputTokens` to `generationConfig.maxOutputTokens`; the
+Antigravity private dialect removes that public field because its endpoint does not accept it. Native SSE parsing
+limits each event to 1 MiB and the complete raw stream to a fixed 64 MiB emergency bound. The latter is a local
+transport safeguard, not a provider-published stream-size guarantee.
+
 `generateContent` accepts native inline image and audio parts. Image URLs are rejected: callers must resolve trusted
 uploads to `ImageDataPart` before invocation. Audio uses `AudioDataPart`. The adapter Base64-encodes both as Gemini
 `inlineData`, limits the combined decoded media payload to 12 MiB so the encoded JSON remains below the official
