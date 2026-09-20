@@ -99,13 +99,23 @@ public final class HaifaCliMain {
                     terminalRunner.run(workspace, configuration, startup, output, trace);
                     return 0;
                 }
+                // The status line also follows tool execution, so that a long tool call is not
+                // reported as a wait for the model.
+                java.util.concurrent.atomic.AtomicReference<CliActivityOutput> activity =
+                        new java.util.concurrent.atomic.AtomicReference<>();
+                java.util.function.Consumer<io.haifa.agent.runtime.core.trace.RuntimeTraceEvent> traces = event -> {
+                    trace.accept(event);
+                    CliActivityOutput renderer = activity.get();
+                    if (renderer != null) renderer.onTrace(event);
+                };
                 try (StandaloneCodingAgent standalone =
-                        StandaloneCodingAgents.open(workspace, configuration, output, trace)) {
+                        StandaloneCodingAgents.open(workspace, configuration, output, traces)) {
                     LocalCodingAgent agent = standalone.localAgent();
                     java.util.concurrent.atomic.AtomicReference<AgentRunOutputListener> outputListener =
                             new java.util.concurrent.atomic.AtomicReference<>();
                     CliActivityOutput activityOutput = CliActivityOutput.attach(
                             outputListener::set, output, error, !parsed.quiet(), System.console() != null);
+                    activity.set(activityOutput);
                     if (parsed.verbose()) output.println("Submitting coding task in " + workspace.getFileName());
                     if (parsed.verbose()) output.println(LocalCodingAgent.reasoningSummary(configuration));
                     var accepted = agent.start(parsed.message().orElseThrow());
