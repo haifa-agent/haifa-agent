@@ -11,7 +11,8 @@
 
 你可以直接使用 Haifa Agent 自带的 **Coding Agent** 和 **Personal Assistant**，也可以通过 **Java SDK** 把 Agent 能力嵌入现有 Java / Spring Boot 应用。
 
-> 当前版本：`0.1.1-SNAPSHOT`  
+> 当前版本：`0.1.1-SNAPSHOT`
+>
 > 项目仍处于快速演进阶段，README 和 `docs/` 只描述当前源码已经实现的能力。
 
 ---
