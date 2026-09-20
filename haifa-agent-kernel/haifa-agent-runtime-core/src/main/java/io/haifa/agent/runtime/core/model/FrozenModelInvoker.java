@@ -173,6 +173,7 @@ public final class FrozenModelInvoker {
                 "SCHEDULED",
                 0,
                 0,
+                0,
                 "",
                 "NONE",
                 0,
@@ -186,6 +187,7 @@ public final class FrozenModelInvoker {
                 physicalAttempt,
                 "model.call.started",
                 "STARTED",
+                0,
                 0,
                 0,
                 "",
@@ -221,6 +223,7 @@ public final class FrozenModelInvoker {
                     decision,
                     response.usage().inputTokens(),
                     response.usage().outputTokens(),
+                    Math.min(response.usage().cacheHitTokens(), response.usage().inputTokens()),
                     response.usage().costKnown(),
                     response.usage().costMinorUnits(),
                     Map.ofEntries(
@@ -261,6 +264,7 @@ public final class FrozenModelInvoker {
                     "SUCCEEDED",
                     response.usage().inputTokens(),
                     response.usage().outputTokens(),
+                    Math.min(response.usage().cacheHitTokens(), response.usage().inputTokens()),
                     response.finishReason().name(),
                     "NONE",
                     elapsedMillis(startedAt),
@@ -328,6 +332,7 @@ public final class FrozenModelInvoker {
                     cancelled ? "CANCELLED" : "FAILED",
                     0,
                     0,
+                    0,
                     "",
                     cancelled
                             ? "CANCELLED"
@@ -363,6 +368,7 @@ public final class FrozenModelInvoker {
             String status,
             long inputTokens,
             long outputTokens,
+            long cachedInputTokens,
             String finishReason,
             String reasonCode,
             long durationMillis,
@@ -378,6 +384,7 @@ public final class FrozenModelInvoker {
         data.put("attempt", attempt);
         data.put("inputTokens", inputTokens);
         data.put("outputTokens", outputTokens);
+        data.put("cachedInputTokens", cachedInputTokens);
         data.put("finishReason", finishReason);
         data.put("reasonCode", reasonCode);
         data.put("durationMillis", durationMillis);
