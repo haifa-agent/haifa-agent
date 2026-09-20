@@ -20,6 +20,7 @@ import io.haifa.agent.runtime.core.storage.RuntimeOutboxPublisher;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import io.haifa.agent.runtime.core.storage.RuntimeUnitOfWork;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -92,7 +93,10 @@ public final class RunTransitionCoordinator {
     }
 
     public AgentRunSnapshot completed(AgentRun run, AgentRunResult result) {
-        return mutate(run, "run.completed", value -> value.complete(result, time.now()));
+        return mutate(run, "run.completed", value -> {
+            recordWallTime(value);
+            value.complete(result, time.now());
+        });
     }
 
     /** Commits final assistant message, public output and terminal Run state in one Unit of Work. */
@@ -104,6 +108,7 @@ public final class RunTransitionCoordinator {
                 AgentRunStatus previous = run.status();
                 run.beginCompleting(time.now());
                 state.saveFinalOutputAndMessage(run.id(), output, finalMessage);
+                recordWallTime(run);
                 run.complete(result, time.now());
                 runs.save(run, expectedVersion);
                 RuntimeEvent event = events.append(
@@ -134,7 +139,10 @@ public final class RunTransitionCoordinator {
     }
 
     public AgentRunSnapshot failed(AgentRun run, AgentError error) {
-        return mutate(run, "run.failed", value -> value.fail(error, time.now()));
+        return mutate(run, "run.failed", value -> {
+            recordWallTime(value);
+            value.fail(error, time.now());
+        });
     }
 
     /** Commits a partial assistant summary, public output and failed Run state in one Unit of Work. */
@@ -145,6 +153,7 @@ public final class RunTransitionCoordinator {
                 long expectedVersion = run.version();
                 AgentRunStatus previous = run.status();
                 state.saveFinalOutputAndMessage(run.id(), output, finalMessage);
+                recordWallTime(run);
                 run.fail(error, time.now());
                 runs.save(run, expectedVersion);
                 Map<String, Object> eventData = terminalEventData(run, previous);
@@ -166,11 +175,17 @@ public final class RunTransitionCoordinator {
     }
 
     public AgentRunSnapshot cancelled(AgentRun run, RunTerminationReason reason) {
-        return mutate(run, "run.cancelled", value -> value.cancel(reason, time.now()));
+        return mutate(run, "run.cancelled", value -> {
+            recordWallTime(value);
+            value.cancel(reason, time.now());
+        });
     }
 
     public AgentRunSnapshot timedOut(AgentRun run, RunTerminationReason reason) {
-        return mutate(run, "run.timeout", value -> value.timeout(reason, time.now()));
+        return mutate(run, "run.timeout", value -> {
+            recordWallTime(value);
+            value.timeout(reason, time.now());
+        });
     }
 
     public AgentRunSnapshot usage(AgentRun run, AgentRunUsageDelta delta) {
@@ -179,6 +194,24 @@ public final class RunTransitionCoordinator {
 
     public void addListener(AgentRunListener listener) {
         listeners.add(Objects.requireNonNull(listener));
+    }
+
+    /**
+     * Brings the recorded wall time up to the run's active elapsed time before it turns terminal.
+     *
+     * <p>Nothing else increments it, so without this the persisted usage reports a run of zero
+     * duration; the time excludes intervals the run spent waiting for a human.
+     */
+    private void recordWallTime(AgentRun run) {
+        Instant now = time.now();
+        if (now.isBefore(run.updatedAt())) {
+            return;
+        }
+        long elapsed = run.activeElapsedMillis(now);
+        long recorded = run.usage().wallTimeMillis();
+        if (elapsed > recorded) {
+            run.recordUsage(new AgentRunUsageDelta(0, 0, 0, 0, 0, 0, 0, elapsed - recorded));
+        }
     }
 
     private AgentRunSnapshot mutate(AgentRun run, String eventType, Consumer<AgentRun> mutation) {

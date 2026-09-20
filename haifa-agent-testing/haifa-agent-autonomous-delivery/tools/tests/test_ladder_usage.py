@@ -44,8 +44,15 @@ def create_database(path: Path) -> None:
         create table runtime_event (run_id text, type text, data_payload text, occurred_at integer);
         create table tool_call (
             run_id text, tool_name text, status text, requested_at integer, started_at integer, completed_at integer);
+        create table step (run_id text, type text, result_payload text);
         """
     )
+
+    def model_step(run_id, input_tokens, cache_hit_tokens):
+        connection.execute(
+            "insert into step values (?, 'model.call', ?)",
+            (run_id, json.dumps({"data": {"inputTokens": input_tokens, "cacheHitTokens": cache_hit_tokens}})),
+        )
 
     def run(run_id, created, status, reason=None, error=None, tokens=(0, 0, 0), calls=(0, 0)):
         connection.execute(
@@ -74,7 +81,10 @@ def create_database(path: Path) -> None:
     # A manual run just after L1-01 ended must not be attributed to any case.
     run("run-stray", BASE + 100_500, "COMPLETED", tokens=(999_999, 0, 999_999), calls=(99, 99))
     # L1-02: cancelled exactly at the CLI self-limit of a 300 s budget, recorded as USER_CANCELLED.
+    # L1-02: the run total predates the cached-token fix, so only the model call steps carry it.
     run("run-deadline", BASE + 202_000, "CANCELLED", reason="USER_CANCELLED", tokens=(50_000, 0, 2_000), calls=(2, 3))
+    model_step("run-deadline", 20_000, 15_000)
+    model_step("run-deadline", 30_000, 10_000)
     # L6-01: failed with a stable error code.
     run("run-failed", BASE + 502_000, "FAILED", error=json.dumps({"code": "MODEL_RESPONSE_INVALID"}), tokens=(10_000, 0, 500), calls=(1, 1))
     connection.commit()
@@ -169,6 +179,20 @@ class UsageReportTest(unittest.TestCase):
         self.assertEqual(33, entry["budgetUsedPercent"])
         self.assertEqual(12, len(entry["runRef"]))
         self.assertNotIn("run-completed", json.dumps(entry))
+
+    def test_the_cached_tokens_of_an_older_run_come_from_its_model_calls(self):
+        report = self.report(STANDARD_RECORDS)
+
+        entry = self.case(report, "L1-02")
+
+        # The run total is 0; the two model call steps carry 15k + 10k of a 50k input.
+        self.assertEqual(25_000, entry["tokens"]["cachedInput"])
+        self.assertEqual(50, entry["cacheHitPercent"])
+
+    def test_a_recorded_run_total_wins_over_the_model_calls(self):
+        entry = self.case(self.report(STANDARD_RECORDS), "L1-01")
+
+        self.assertEqual(40_000, entry["tokens"]["cachedInput"])
 
     def test_totals(self):
         totals = self.report(STANDARD_RECORDS)["totals"]

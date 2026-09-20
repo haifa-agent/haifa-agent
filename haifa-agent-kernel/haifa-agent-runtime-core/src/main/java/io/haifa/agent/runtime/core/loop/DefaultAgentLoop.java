@@ -540,7 +540,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                         new AgentRunUsageDelta(
                                 response.inputTokens(),
                                 response.outputTokens(),
-                                0,
+                                response.cachedInputTokens(),
                                 0,
                                 0,
                                 0,
@@ -909,7 +909,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                     new AgentRunUsageDelta(
                             synthesis.inputTokens(),
                             synthesis.outputTokens(),
-                            0,
+                            synthesis.cachedInputTokens(),
                             0,
                             0,
                             0,
