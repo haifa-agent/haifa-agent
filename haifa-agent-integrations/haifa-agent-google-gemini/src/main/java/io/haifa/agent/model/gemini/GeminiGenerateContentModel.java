@@ -57,6 +57,7 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
     public static final String ADAPTER_VERSION = "1.0.0";
     private static final int DEFAULT_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
     private static final int MAX_SSE_LINE_CHARS = 1024 * 1024;
+    private static final int MAX_TOTAL_STREAM_BYTES = 64 * 1024 * 1024;
     private static final int MAX_INLINE_MEDIA_BYTES = 12 * 1024 * 1024;
     private static final Set<String> LOOPBACK_NAMES = Set.of("localhost", "127.0.0.1", "::1", "0:0:0:0:0:0:0:1");
     private static final Set<String> ANTIGRAVITY_DIRECT_HOSTS =
@@ -68,6 +69,7 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
     private final boolean allowInsecureLoopback;
     private final boolean allowStandardLoopbackStub;
     private final int maxResponseBytes;
+    private final int maxTotalStreamBytes;
     private final AntigravityCloudCodeProjectResolver trustedProjectResolver;
 
     public GeminiGenerateContentModel(HttpClient http, ObjectMapper json, CredentialResolver credentials) {
@@ -116,6 +118,26 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
             int maxResponseBytes,
             boolean allowStandardLoopbackStub,
             AntigravityCloudCodeProjectResolver trustedProjectResolver) {
+        this(
+                http,
+                json,
+                credentials,
+                allowInsecureLoopback,
+                maxResponseBytes,
+                allowStandardLoopbackStub,
+                trustedProjectResolver,
+                MAX_TOTAL_STREAM_BYTES);
+    }
+
+    GeminiGenerateContentModel(
+            HttpClient http,
+            ObjectMapper json,
+            CredentialResolver credentials,
+            boolean allowInsecureLoopback,
+            int maxResponseBytes,
+            boolean allowStandardLoopbackStub,
+            AntigravityCloudCodeProjectResolver trustedProjectResolver,
+            int maxTotalStreamBytes) {
         this.http = Objects.requireNonNull(http, "http must not be null");
         this.json = Objects.requireNonNull(json, "json must not be null");
         this.credentials = Objects.requireNonNull(credentials, "credentials must not be null");
@@ -124,7 +146,9 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
         this.trustedProjectResolver =
                 Objects.requireNonNull(trustedProjectResolver, "trustedProjectResolver must not be null");
         if (maxResponseBytes < 1) throw new IllegalArgumentException("maxResponseBytes must be positive");
+        if (maxTotalStreamBytes < 1) throw new IllegalArgumentException("maxTotalStreamBytes must be positive");
         this.maxResponseBytes = maxResponseBytes;
+        this.maxTotalStreamBytes = maxTotalStreamBytes;
     }
 
     @Override
@@ -239,13 +263,13 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
                     int lineBytes = line.getBytes(StandardCharsets.UTF_8).length + 1;
                     totalBytes = Math.addExact(totalBytes, lineBytes);
                     eventBytes = Math.addExact(eventBytes, lineBytes);
-                    int eventLimit = Math.min(maxResponseBytes, MAX_SSE_LINE_CHARS);
-                    if (totalBytes > maxResponseBytes) {
+                    int eventLimit = MAX_SSE_LINE_CHARS;
+                    if (totalBytes > maxTotalStreamBytes) {
                         throw responseLimitFailure(
                                 request,
                                 response.statusCode(),
                                 ModelResponseLimitKind.TOTAL_STREAM,
-                                maxResponseBytes,
+                                maxTotalStreamBytes,
                                 totalBytes);
                     }
                     if (eventBytes > eventLimit) {
@@ -1034,8 +1058,8 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
     private ModelInvocationException responseLimitFailure(
             AgentChatRequest request, int status, ModelResponseLimitKind kind, long limitBytes, long observedBytes) {
         String message = kind == ModelResponseLimitKind.TOTAL_STREAM
-                ? "provider stream exceeds the configured total size limit; increase model-max-response-bytes"
-                : "provider stream event exceeds the configured single-event size limit; increase model-max-response-bytes";
+                ? "provider stream exceeds Haifa's fixed 64 MiB total transport safety limit"
+                : "provider stream event exceeds Haifa's fixed 1 MiB transport safety limit";
         return new ModelInvocationException(
                 ModelErrorCategory.MALFORMED_RESPONSE,
                 true,
