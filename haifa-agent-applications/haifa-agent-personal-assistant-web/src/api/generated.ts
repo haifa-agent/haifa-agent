@@ -298,7 +298,20 @@ export interface Activity {
   occurredAt: string;
   safeResultSummary: string;
   interactionRef?: string | null;
+  toolDetail?: ActivityToolDetail | null;
   version: number;
+}
+
+export interface ActivityToolDetail {
+  outputPreview?: string | null;
+  truncated?: boolean;
+  byteCount?: number;
+  lineCount?: number;
+  truncationReason?: string | null;
+  processState?: string | null;
+  exitCode?: number | null;
+  resultRef?: string | null;
+  outcomeUnknown?: boolean;
 }
 
 export interface Interaction {

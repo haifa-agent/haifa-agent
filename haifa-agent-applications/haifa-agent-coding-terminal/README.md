@@ -100,10 +100,12 @@ Error、Queued 和 Focus。TrueColor 参考色会按明暗背景自适应；NoCo
 - User 使用低对比消息块，便于定位用户意图；
 - Assistant 正文直接进入对话流，不使用厚卡片；高频 Markdown 子集只在 View 层转换为终端样式，
   `TranscriptItem`、Session 与持久化继续保留原始 Markdown；
-- Tool 根据 `requested/started/succeeded/failed/cancelled` 使用状态色。折叠项只占一行：
-  以 `✓`/`✗`/`●` 状态符号开头，随后是 `名称 · 目标` 与完成耗时（如 `✓ file_read · README.md · 0.3s`），
-  并把 `ctrl+o expand` 放在同一行；连续折叠项之间不插入空行。失败项在折叠状态额外保留
-  最多两行安全原因，展开后才显示既有有界详情和 `Duration … · N lines · X KB` 元数据尾行；
+- Tool 通过 `haifa-agent-runtime-api` 的 bounded display 原语投影为有界展示：目标最多 256 字符，输出预览最多
+  16 KiB / 200 行，只保留 head/tail 采样、原始字节/行统计和结果引用；不显示完整参数、Provider 原文或完整结果。
+  折叠项只占一行：以 `✓`/`✗`/`?`/`●` 状态符号开头，随后是 `名称 · 目标` 与完成耗时
+  （如 `✓ file_read · README.md · 0.3s`），并把 `ctrl+o expand` 放在同一行；连续折叠项之间不插入空行。
+  失败项在折叠状态额外保留最多两行安全原因；`OUTCOME_UNKNOWN` 使用 `?`，保留原因与“检查权威状态”提示，
+  绝不显示为成功。展开后才显示有界详情和 `Duration … · N lines · X KB` 元数据尾行；
 - Run 进入终态（completed/failed/cancelled/timeout）时追加一张 Run Summary 卡片，
   标题显示终态与可得耗时（如 `Run completed · 24s`），正文显示终态、稳定错误码及耗时，
   不再从本地 Transcript 反推或累加工具与变更集计数；

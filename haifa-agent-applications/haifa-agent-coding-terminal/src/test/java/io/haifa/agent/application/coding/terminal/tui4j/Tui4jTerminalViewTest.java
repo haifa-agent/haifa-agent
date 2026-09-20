@@ -548,6 +548,44 @@ class Tui4jTerminalViewTest {
     }
 
     @Test
+    void rendersUnknownToolOutcomeDistinctlyFromSuccessAndFailure() {
+        TerminalUiState initial = TerminalUiState.initial(100, 30);
+        TerminalUiState state = new TerminalUiState(
+                initial.header(),
+                initial.loadedResources(),
+                List.of(item(
+                        "tool-1",
+                        TranscriptItem.Kind.TOOL,
+                        "execution_run · rm -rf build",
+                        "Outcome: UNKNOWN\nReason: AUTOMATIC_REPLAY_FORBIDDEN\nResult: asset-1",
+                        "OUTCOME_UNKNOWN",
+                        false)),
+                initial.pending(),
+                initial.status(),
+                initial.editorBuffer(),
+                initial.editorCursor(),
+                initial.selector(),
+                initial.footer(),
+                initial.columns(),
+                initial.rows(),
+                initial.session(),
+                initial.currentRunId(),
+                initial.appliedCursor(),
+                initial.seenEventIds(),
+                initial.recoverableError(),
+                initial.exitRequested());
+
+        String content = view.transcriptContent(state);
+
+        assertThat(content)
+                .contains(
+                        "? execution_run · rm -rf build · ctrl+o expand",
+                        "Outcome: UNKNOWN",
+                        "Reason: AUTOMATIC_REPLAY_FORBIDDEN")
+                .doesNotContain("✓", "✗");
+    }
+
+    @Test
     void rendersDurationsRunSummaryChipsAndExpandedToolMetadata() {
         TerminalUiState initial = TerminalUiState.initial(100, 30);
         TerminalUiState state = new TerminalUiState(

@@ -9,6 +9,7 @@ import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.AgentRunOutputEvent;
 import io.haifa.agent.runtime.api.AgentRunOutputEventType;
 import io.haifa.agent.runtime.api.RunEventPayloads;
+import io.haifa.agent.runtime.api.display.ToolDisplayBudget;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -19,6 +20,9 @@ import java.util.Set;
 /** Deterministic, side-effect-free projection of product and committed Runtime facts. */
 public final class TerminalUiReducer {
     private static final int MAX_TRANSCRIPT_TITLE_LENGTH = 256;
+    private static final ToolDisplayBudget TOOL_DISPLAY_BUDGET = new ToolDisplayBudget(16 * 1_024, 200);
+    private static final String OUTCOME_UNKNOWN_NEXT_ACTION =
+            "Inspect authoritative local or remote state before deciding whether another command is safe.";
     private static final Set<String> TERMINAL_RUN_STATUSES = Set.of("COMPLETED", "FAILED", "CANCELLED", "TIMEOUT");
     private static final Set<String> AUTHENTICATION_PROGRESS_STATUSES =
             Set.of("STARTING", "WAITING_USER", "EXCHANGING", "STORING");
@@ -539,12 +543,13 @@ public final class TerminalUiReducer {
                 items.set(index, items.get(index).append(payload.textDelta()));
             }
         } else if (event.payload() instanceof RunEventPayloads.ToolLifecycle payload) {
-            String id = "tool-" + payload.toolCallId();
+            ToolCallDisplayProjection display = ToolCallDisplayProjection.from(payload, TOOL_DISPLAY_BUDGET);
+            String id = "tool-" + display.toolCallId();
             int existing = index(items, id);
             Optional<Long> startedAt = existing >= 0 ? items.get(existing).startedAtEpochMillis() : Optional.empty();
             if (startedAt.isEmpty()) startedAt = Optional.of(event.occurredAt().toEpochMilli());
             Optional<Long> duration = existing >= 0 ? items.get(existing).durationMillis() : Optional.empty();
-            if (terminalToolStatus(payload.status())) {
+            if (terminalToolStatus(display.displayStatus())) {
                 duration = Optional.of(Math.max(0, event.occurredAt().toEpochMilli() - startedAt.orElseThrow()));
             }
             upsert(
@@ -552,9 +557,9 @@ public final class TerminalUiReducer {
                     new TranscriptItem(
                             id,
                             TranscriptItem.Kind.TOOL,
-                            toolTitle(payload),
-                            toolBody(payload),
-                            payload.status(),
+                            toolTitle(display),
+                            toolBody(display),
+                            display.displayStatus(),
                             false,
                             Optional.empty(),
                             startedAt,
@@ -694,7 +699,7 @@ public final class TerminalUiReducer {
     private static String toolActivityStatus(String status, String fallback) {
         return switch (status) {
             case "STARTED", "RUNNING", "WAITING", "APPROVED" -> "WORKING";
-            case "SUCCEEDED", "COMPLETED", "FAILED", "DENIED", "CANCELLED", "TIMEOUT" -> "THINKING";
+            case "SUCCEEDED", "COMPLETED", "FAILED", "DENIED", "CANCELLED", "TIMEOUT", "OUTCOME_UNKNOWN" -> "THINKING";
             default -> fallback;
         };
     }
@@ -716,7 +721,7 @@ public final class TerminalUiReducer {
     }
 
     private static boolean terminalToolStatus(String status) {
-        return Set.of("SUCCEEDED", "COMPLETED", "FAILED", "DENIED", "CANCELLED", "TIMEOUT")
+        return Set.of("SUCCEEDED", "COMPLETED", "FAILED", "DENIED", "CANCELLED", "TIMEOUT", "OUTCOME_UNKNOWN")
                 .contains(status);
     }
 
@@ -810,15 +815,33 @@ public final class TerminalUiReducer {
         return -1;
     }
 
-    private static String toolBody(RunEventPayloads.ToolLifecycle payload) {
+    private static String toolBody(ToolCallDisplayProjection display) {
         List<String> lines = new ArrayList<>();
-        lines.add("Target: " + payload.targetSummary());
-        if (!payload.reasonCode().isBlank() && !"NONE".equals(payload.reasonCode())) {
-            lines.add("Reason: " + payload.reasonCode());
-            String nextAction = nextAction(payload.reasonCode());
-            if (!nextAction.isBlank()) lines.add("Next: " + nextAction);
+        if (!display.target().isBlank()) lines.add("Target: " + display.target());
+        if (display.outcomeUnknown()) {
+            lines.add("Outcome: UNKNOWN");
+            if (!ToolCallDisplayProjection.OUTCOME_UNKNOWN_STATUS.equalsIgnoreCase(display.status())) {
+                lines.add("Status: " + display.status());
+            }
+            display.reasonCode().ifPresent(reason -> lines.add("Reason: " + reason));
+            lines.add("Next: " + OUTCOME_UNKNOWN_NEXT_ACTION);
+        } else {
+            display.reasonCode().ifPresent(reason -> {
+                lines.add("Reason: " + reason);
+                String nextAction = nextAction(reason);
+                if (!nextAction.isBlank()) lines.add("Next: " + nextAction);
+            });
         }
-        if (!payload.resultRef().isBlank()) lines.add("Result: " + payload.resultRef());
+        display.processState().ifPresent(state -> lines.add("Process: " + state));
+        display.exitCode().ifPresent(code -> lines.add("Exit: " + code));
+        display.outputPreview().ifPresent(preview -> {
+            lines.add("Output" + (preview.truncated() ? " (truncated)" : "") + ":");
+            lines.add(preview.text());
+            if (preview.truncated()) {
+                lines.add("Output truncated · " + preview.byteCount() + " bytes · " + preview.lineCount() + " lines");
+            }
+        });
+        display.outputReference().ifPresent(reference -> lines.add("Result: " + reference));
         return String.join("\n", lines);
     }
 
@@ -878,12 +901,12 @@ public final class TerminalUiReducer {
         return stage + "Reason: " + code + "\nNext: " + next;
     }
 
-    private static String toolTitle(RunEventPayloads.ToolLifecycle payload) {
-        String target = payload.targetSummary().strip();
-        if (target.isBlank() || target.equalsIgnoreCase(payload.displayName())) {
-            return payload.displayName();
+    private static String toolTitle(ToolCallDisplayProjection display) {
+        String target = display.target().strip();
+        if (target.isBlank() || target.equalsIgnoreCase(display.toolName())) {
+            return display.toolName();
         }
-        String prefix = payload.displayName() + " · ";
+        String prefix = display.toolName() + " · ";
         int available = MAX_TRANSCRIPT_TITLE_LENGTH - prefix.length();
         if (target.length() <= available) return prefix + target;
         int end = Math.max(0, available - 1);

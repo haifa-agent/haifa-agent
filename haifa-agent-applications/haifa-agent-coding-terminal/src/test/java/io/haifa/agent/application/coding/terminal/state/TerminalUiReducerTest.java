@@ -30,6 +30,8 @@ import io.haifa.agent.runtime.api.InteractionTargetView;
 import io.haifa.agent.runtime.api.InteractionView;
 import io.haifa.agent.runtime.api.RunEventCursor;
 import io.haifa.agent.runtime.api.RunEventPayloads;
+import io.haifa.agent.runtime.api.display.BoundedText;
+import io.haifa.agent.runtime.api.display.ToolDisplayBudget;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -440,6 +442,142 @@ class TerminalUiReducerTest {
                 .contains(
                         "Reason: ABSOLUTE_WORKDIR_FORBIDDEN",
                         "Next: Use workspaceRef with relativeWorkdir; remove absolute cd directory changes."));
+    }
+
+    @Test
+    void preservesUnknownToolOutcomeWithoutProjectingSuccessOrFailure() {
+        TerminalUiState started = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1", "execution_run", "STARTED", "NONE", "rm -rf build", ""),
+                        Instant.parse("2026-07-27T00:00:01Z"))));
+        TerminalUiState unknown = reducer.reduce(
+                started,
+                new TerminalUiAction.RunEventReceived(event(
+                        2,
+                        "event-2",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1",
+                                "execution_run",
+                                "OUTCOME_UNKNOWN",
+                                "AUTOMATIC_REPLAY_FORBIDDEN",
+                                "rm -rf build",
+                                "asset-1"),
+                        Instant.parse("2026-07-27T00:00:02Z"))));
+
+        assertThat(unknown.transcript()).singleElement().satisfies(item -> {
+            assertThat(item.status()).isEqualTo("OUTCOME_UNKNOWN");
+            assertThat(item.durationMillis()).contains(1000L);
+            assertThat(item.body())
+                    .contains(
+                            "Outcome: UNKNOWN",
+                            "Reason: AUTOMATIC_REPLAY_FORBIDDEN",
+                            "Next: Inspect authoritative local or remote state before deciding whether another command is safe.",
+                            "Result: asset-1");
+        });
+        assertThat(unknown.status()).isEqualTo("THINKING");
+    }
+
+    @Test
+    void rendersAuthoritativeFailureWithUnknownOutcomeReasonAsUnknownNotFailure() {
+        TerminalUiState failed = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1",
+                                "execution_run",
+                                "FAILED",
+                                "TOOL_OUTCOME_UNKNOWN",
+                                "rm -rf build",
+                                "asset-1"))));
+
+        assertThat(failed.transcript()).singleElement().satisfies(item -> {
+            assertThat(item.status()).isEqualTo("OUTCOME_UNKNOWN");
+            assertThat(item.body())
+                    .contains(
+                            "Outcome: UNKNOWN",
+                            "Status: FAILED",
+                            "Reason: TOOL_OUTCOME_UNKNOWN",
+                            "Next: Inspect authoritative local or remote state before deciding whether another command is safe.",
+                            "Result: asset-1");
+        });
+    }
+
+    @Test
+    void rendersTimedOutToolObservationWithBoundedTruncatedOutput() {
+        String longOutput = "line\n".repeat(500);
+
+        TerminalUiState state = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1",
+                                "execution_run",
+                                "TIMEOUT",
+                                "WALL_TIME_EXCEEDED",
+                                "long run",
+                                "asset-1",
+                                Optional.of(new RunEventPayloads.ToolObservation(
+                                        Optional.of(BoundedText.of(longOutput, new ToolDisplayBudget(16 * 1_024, 8))),
+                                        Optional.of("KILLED"),
+                                        Optional.of(137)))))));
+
+        assertThat(state.transcript()).singleElement().satisfies(item -> {
+            assertThat(item.status()).isEqualTo("TIMEOUT");
+            assertThat(item.durationMillis()).isPresent();
+            assertThat(item.body())
+                    .contains(
+                            "Target: long run",
+                            "Reason: WALL_TIME_EXCEEDED",
+                            "Process: KILLED",
+                            "Exit: 137",
+                            "Output (truncated):",
+                            "Output truncated · ",
+                            "Result: asset-1")
+                    .doesNotContain("Outcome: UNKNOWN");
+        });
+    }
+
+    @Test
+    void replayedToolEventDoesNotRollBackNewerObservation() {
+        TerminalUiState started = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1", "execution_run", "STARTED", "NONE", "git status", ""),
+                        Instant.parse("2026-07-27T00:00:01Z"))));
+        AgentRunEvent succeededEvent = event(
+                2,
+                "event-2",
+                new RunEventPayloads.ToolLifecycle(
+                        "tool-1",
+                        "execution_run",
+                        "SUCCEEDED",
+                        "NONE",
+                        "git status",
+                        "asset-1",
+                        Optional.of(new RunEventPayloads.ToolObservation(
+                                Optional.of(BoundedText.of("done", new ToolDisplayBudget(1_024, 20))),
+                                Optional.of("EXITED"),
+                                Optional.of(0)))),
+                Instant.parse("2026-07-27T00:00:02Z"));
+        TerminalUiState succeeded = reducer.reduce(started, new TerminalUiAction.RunEventReceived(succeededEvent));
+        TerminalUiState replayed = reducer.reduce(succeeded, new TerminalUiAction.RunEventReceived(succeededEvent));
+
+        assertThat(replayed).isSameAs(succeeded);
+        assertThat(succeeded.transcript()).singleElement().satisfies(item -> {
+            assertThat(item.status()).isEqualTo("SUCCEEDED");
+            assertThat(item.body()).contains("Process: EXITED", "Exit: 0", "Output:", "done", "Result: asset-1");
+        });
     }
 
     @Test

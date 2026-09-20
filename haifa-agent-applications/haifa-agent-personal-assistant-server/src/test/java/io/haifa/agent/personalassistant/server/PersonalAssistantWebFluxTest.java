@@ -281,6 +281,14 @@ class PersonalAssistantWebFluxTest {
                         assertThat(activity.path("startedAt").asText()).isNotBlank();
                         assertThat(activity.path("completedAt").asText()).isNotBlank();
                         assertThat(activity.path("safeResultSummary").asText()).isNotBlank();
+                        assertThat(activity.path("toolDetail")
+                                        .path("outputPreview")
+                                        .asText())
+                                .isNotBlank();
+                        assertThat(activity.path("toolDetail")
+                                        .path("outcomeUnknown")
+                                        .asBoolean())
+                                .isFalse();
                     });
             assertThat(java.util.stream.StreamSupport.stream(activities.spliterator(), false)
                             .toList())

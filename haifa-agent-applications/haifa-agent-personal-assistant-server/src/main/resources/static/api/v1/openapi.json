@@ -876,7 +876,22 @@
           "occurredAt": {"type": "string", "format": "date-time"},
           "safeResultSummary": {"type": "string"},
           "interactionRef": {"type": ["string", "null"]},
+          "toolDetail": {"oneOf": [{"$ref": "#/components/schemas/ActivityToolDetail"}, {"type": "null"}]},
           "version": {"type": "integer", "format": "int64"}
+        }
+      },
+      "ActivityToolDetail": {
+        "type": "object",
+        "properties": {
+          "outputPreview": {"type": ["string", "null"]},
+          "truncated": {"type": "boolean"},
+          "byteCount": {"type": "integer", "format": "int64"},
+          "lineCount": {"type": "integer", "format": "int64"},
+          "truncationReason": {"type": ["string", "null"]},
+          "processState": {"type": ["string", "null"]},
+          "exitCode": {"type": ["integer", "null"]},
+          "resultRef": {"type": ["string", "null"]},
+          "outcomeUnknown": {"type": "boolean"}
         }
       },
       "Interaction": {

@@ -81,14 +81,48 @@ public sealed interface RunEventPayload
         }
     }
 
+    /**
+     * Bounded, display-only copy of already typed tool result facts. It never replaces the authoritative
+     * result and never carries raw arguments, provider payloads or full output.
+     */
+    record ToolObservation(
+            String outputPreview,
+            boolean truncated,
+            long byteCount,
+            long lineCount,
+            String truncationReason,
+            String processState,
+            Integer exitCode) {
+        public ToolObservation {
+            outputPreview = optional(outputPreview, "outputPreview", 16_384);
+            if (byteCount < 0 || lineCount < 0) {
+                throw new IllegalArgumentException("preview counts must not be negative");
+            }
+            truncationReason = optional(truncationReason, "truncationReason", 32);
+            processState = optional(processState, "processState", 64);
+        }
+    }
+
     record ToolLifecycle(
             String toolCallId,
             String displayName,
             String status,
             String reasonCode,
             String targetSummary,
-            String resultRef)
+            String resultRef,
+            Optional<ToolObservation> observation)
             implements RunEventPayload {
+        /** Backward-compatible constructor for producers that carry no bounded observation. */
+        public ToolLifecycle(
+                String toolCallId,
+                String displayName,
+                String status,
+                String reasonCode,
+                String targetSummary,
+                String resultRef) {
+            this(toolCallId, displayName, status, reasonCode, targetSummary, resultRef, Optional.empty());
+        }
+
         public ToolLifecycle {
             toolCallId = require(toolCallId, "toolCallId", 256);
             displayName = require(displayName, "displayName", 128);
@@ -96,6 +130,7 @@ public sealed interface RunEventPayload
             reasonCode = require(reasonCode, "reasonCode", 128);
             targetSummary = optional(targetSummary, "targetSummary", 512);
             resultRef = optional(resultRef, "resultRef", 512);
+            observation = java.util.Objects.requireNonNull(observation, "observation must not be null");
         }
     }
 

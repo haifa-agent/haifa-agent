@@ -3,8 +3,10 @@ package io.haifa.agent.runtime.core.event;
 import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.RunEventCursor;
 import io.haifa.agent.runtime.api.RunEventPayloads;
+import io.haifa.agent.runtime.api.display.BoundedText;
 import io.haifa.agent.runtime.core.storage.RunStateRepository;
 import io.haifa.agent.runtime.core.storage.RuntimeEvent;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -212,7 +214,36 @@ public final class RuntimeClientEventProjector {
                         text(event.data(), "status", status),
                         text(event.data(), "reasonCode", reasonCode),
                         text(event.data(), "targetSummary", ""),
-                        text(event.data(), "resultRef", "")));
+                        text(event.data(), "resultRef", ""),
+                        toolObservation(event.data())));
+    }
+
+    /** Rebuilds the bounded observation from allowlisted journal fields already written by the pipeline. */
+    private static Optional<RunEventPayloads.ToolObservation> toolObservation(Map<String, Object> data) {
+        Optional<BoundedText> preview = boundedPreview(data);
+        Optional<String> processState = optionalText(data, "processState");
+        Integer exitCode = exactInteger(data, "exitCode");
+        if (preview.isEmpty() && processState.isEmpty() && exitCode == null) return Optional.empty();
+        return Optional.of(new RunEventPayloads.ToolObservation(preview, processState, Optional.ofNullable(exitCode)));
+    }
+
+    private static Optional<BoundedText> boundedPreview(Map<String, Object> data) {
+        Object value = data.get("outputPreview");
+        if (!(value instanceof String text)) return Optional.empty();
+        long byteCount = number(data, "outputPreviewByteCount", text.getBytes(StandardCharsets.UTF_8).length);
+        long lineCount = number(data, "outputPreviewLineCount", 0);
+        boolean truncated = Boolean.TRUE.equals(data.get("outputPreviewTruncated"));
+        return Optional.of(new BoundedText(
+                text, truncated, byteCount, lineCount, truncationReason(data.get("outputPreviewTruncationReason"))));
+    }
+
+    private static Optional<BoundedText.TruncationReason> truncationReason(Object value) {
+        if (!(value instanceof String text)) return Optional.empty();
+        try {
+            return Optional.of(BoundedText.TruncationReason.valueOf(text));
+        } catch (IllegalArgumentException ignored) {
+            return Optional.empty();
+        }
     }
 
     private static Projection resource(String eventType, RuntimeEvent event) {
@@ -310,6 +341,24 @@ public final class RuntimeClientEventProjector {
     private static int integer(Map<String, Object> data, String key, int fallback) {
         Integer value = integer(data, key);
         return value == null ? fallback : value;
+    }
+
+    /**
+     * Reads an allowlisted integer field unchanged. Only an exact integer inside the Java {@code int} range is
+     * accepted; fractional values, non-finite numbers and overflow are dropped instead of being truncated.
+     */
+    private static Integer exactInteger(Map<String, Object> data, String key) {
+        Object value = data.get(key);
+        if (!(value instanceof Number number)) return null;
+        double numeric = number.doubleValue();
+        long integral = number.longValue();
+        if (!Double.isFinite(numeric)
+                || numeric != Math.rint(numeric)
+                || integral < Integer.MIN_VALUE
+                || integral > Integer.MAX_VALUE) {
+            return null;
+        }
+        return (int) integral;
     }
 
     private static long longValue(Map<String, Object> data, String key, long fallback) {

@@ -337,6 +337,18 @@ final class HttpJsonCodec {
             node.put("reasonCode", value.reasonCode());
             node.put("targetSummary", value.targetSummary());
             node.put("resultRef", value.resultRef());
+            value.observation().ifPresent(observation -> {
+                ObjectNode observed = node.putObject("observation");
+                observed.put("outputPreview", observation.outputPreview());
+                observed.put("truncated", observation.truncated());
+                observed.put("byteCount", observation.byteCount());
+                observed.put("lineCount", observation.lineCount());
+                if (!observation.truncationReason().isBlank()) {
+                    observed.put("truncationReason", observation.truncationReason());
+                }
+                if (!observation.processState().isBlank()) observed.put("processState", observation.processState());
+                if (observation.exitCode() != null) observed.put("exitCode", observation.exitCode());
+            });
         } else if (payload instanceof RunEventPayload.ResourceAvailable value) {
             node.put("reference", value.reference());
             node.put("kind", value.kind());

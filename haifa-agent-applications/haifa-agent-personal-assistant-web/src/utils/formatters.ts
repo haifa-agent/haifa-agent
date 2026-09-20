@@ -62,6 +62,8 @@ export function statusLabel(status: string): string {
     STARTED: "进行中",
     REQUESTED: "准备调用",
     SUCCEEDED: "已完成",
+    OUTCOME_UNKNOWN: "结果未知",
+    UNKNOWN_OUTCOME: "结果未知",
     TIMED_OUT: "已超时",
     APPROVE: "批准",
     REJECT: "拒绝",
