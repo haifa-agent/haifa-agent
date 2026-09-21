@@ -17,6 +17,7 @@ import io.haifa.agent.model.api.ModelStreamEvent;
 import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeConfigurationSnapshot;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions;
+import io.haifa.agent.runtime.core.context.ActiveContextSnapshots;
 import io.haifa.agent.runtime.core.control.CancellationObservedException;
 import io.haifa.agent.runtime.core.control.RunControlRegistry;
 import io.haifa.agent.runtime.core.control.RunControlSignal;
@@ -52,10 +53,25 @@ public final class FrozenModelInvoker {
             TimeProvider time,
             ModelImageResolver imageResolver,
             ModelAudioResolver audioResolver) {
+        this(state, adapters, ids, output, controls, events, time, imageResolver, audioResolver, null);
+    }
+
+    public FrozenModelInvoker(
+            RuntimeStateRepository state,
+            Map<ModelAdapterKey, AgentChatModel> adapters,
+            IdentifierGenerator ids,
+            RuntimeModelOutputPublisher output,
+            RunControlRegistry controls,
+            RuntimeEventAppender events,
+            TimeProvider time,
+            ModelImageResolver imageResolver,
+            ModelAudioResolver audioResolver,
+            ActiveContextSnapshots activeContexts) {
         this.state = Objects.requireNonNull(state, "state must not be null");
         this.adapters = Map.copyOf(Objects.requireNonNull(adapters, "adapters must not be null"));
         this.ids = Objects.requireNonNull(ids, "ids must not be null");
-        this.messages = new ModelMessageAssembler(state, imageResolver, audioResolver);
+        this.messages = new ModelMessageAssembler(
+                state, imageResolver, audioResolver, new ModelMessageProjectionPlanner(state), activeContexts);
         this.responses = new AgentChatResponseMapper(ids);
         this.output = Objects.requireNonNull(output, "output must not be null");
         this.controls = Objects.requireNonNull(controls, "controls must not be null");
@@ -146,6 +162,8 @@ public final class FrozenModelInvoker {
                     "selected model does not support structured output",
                     null);
         }
+        ModelMessageAssembler.AssemblyResult messageAssembly = messages.assembleWithMetrics(
+                run, context, binding.configuration().model());
         AgentChatRequest request = new AgentChatRequest(
                 callId,
                 requestId,
@@ -153,7 +171,7 @@ public final class FrozenModelInvoker {
                 iteration,
                 physicalAttempt,
                 binding.configuration().model(),
-                messages.assemble(run.id(), context, binding.configuration().model()),
+                messageAssembly.messages(),
                 disclosedTools,
                 Math.toIntExact(Math.min(
                         context.budget().outputReserve(),
@@ -177,7 +195,14 @@ public final class FrozenModelInvoker {
                 "",
                 "NONE",
                 0,
-                null);
+                null,
+                Map.of(
+                        "requestAssemblyElapsedMillis",
+                                messageAssembly.metrics().elapsedMillis(),
+                        "continuationBatchCount", messageAssembly.metrics().continuationBatchCount(),
+                        "continuationRecordCount", messageAssembly.metrics().continuationRecordCount(),
+                        "assemblerToolCallBatchCount", messageAssembly.metrics().toolCallBatchCount(),
+                        "snapshotFactsReused", messageAssembly.metrics().snapshotFactsReused()));
         appendLifecycle(
                 binding,
                 run,
@@ -373,6 +398,42 @@ public final class FrozenModelInvoker {
             String reasonCode,
             long durationMillis,
             ModelInvocationException failure) {
+        appendLifecycle(
+                binding,
+                run,
+                callId,
+                requestId,
+                iteration,
+                attempt,
+                type,
+                status,
+                inputTokens,
+                outputTokens,
+                cachedInputTokens,
+                finishReason,
+                reasonCode,
+                durationMillis,
+                failure,
+                Map.of());
+    }
+
+    private void appendLifecycle(
+            FrozenModelBinding binding,
+            AgentRun run,
+            ModelCallId callId,
+            ModelRequestId requestId,
+            int iteration,
+            int attempt,
+            String type,
+            String status,
+            long inputTokens,
+            long outputTokens,
+            long cachedInputTokens,
+            String finishReason,
+            String reasonCode,
+            long durationMillis,
+            ModelInvocationException failure,
+            Map<String, Object> diagnostics) {
         var model = binding.configuration().model();
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("modelCallId", callId.value());
@@ -388,6 +449,11 @@ public final class FrozenModelInvoker {
         data.put("finishReason", finishReason);
         data.put("reasonCode", reasonCode);
         data.put("durationMillis", durationMillis);
+        diagnostics.forEach((key, value) -> {
+            if (data.putIfAbsent(key, value) != null) {
+                throw new IllegalArgumentException("model lifecycle diagnostic conflicts with a stable field: " + key);
+            }
+        });
         if (failure != null) {
             data.put("providerCode", failure.providerCode());
             data.put("retryable", failure.retryable());

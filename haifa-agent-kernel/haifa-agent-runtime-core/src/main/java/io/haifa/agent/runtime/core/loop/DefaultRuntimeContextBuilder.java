@@ -69,6 +69,8 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
 
     @Override
     public RuntimeContextBuildResult build(AgentRun run, AgentLoopContext loopContext, FrozenModelBinding model) {
+        long contextBuildStartedAt = System.nanoTime();
+        SessionMessageSource.SelectionMetrics selectionMetrics = SessionMessageSource.SelectionMetrics.NONE;
         RuntimeMiddlewareContext middlewareContext = new RuntimeMiddlewareContext(run, state);
         middleware.apply(RuntimePhase.BEFORE_CONTEXT_BUILD, middlewareContext);
         middleware.apply(RuntimePhase.AFTER_CONTEXT_BUILD, middlewareContext);
@@ -113,7 +115,10 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
                         memorySource.select(run, model, loopContext), budget.availableInputTokens() - requiredTokens);
         long memoryTokens = memoryItems.stream().mapToLong(budget::estimate).sum();
         long sessionTokenBudget = positiveBudget(budget.availableInputTokens() - requiredTokens - memoryTokens);
-        SessionMessageSource.Selection selection = sessionMessages.select(run, sessionTokenBudget);
+        SessionMessageSource.MeasuredSelection measuredSelection =
+                sessionMessages.selectMeasured(run, sessionTokenBudget);
+        selectionMetrics = selectionMetrics.plus(measuredSelection.metrics());
+        SessionMessageSource.Selection selection = measuredSelection.selection();
         ContextAssembly assembly =
                 assemble(selection, middlewareContext.contextItems(), memoryItems, budget, fixedTokens);
 
@@ -122,12 +127,16 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
         if (assembly.exceeds(budget) && !memoryItems.isEmpty()) {
             memoryItems = List.of();
             sessionTokenBudget = positiveBudget(budget.availableInputTokens() - requiredTokens);
-            selection = sessionMessages.select(run, sessionTokenBudget);
+            measuredSelection = sessionMessages.selectMeasured(run, sessionTokenBudget);
+            selectionMetrics = selectionMetrics.plus(measuredSelection.metrics());
+            selection = measuredSelection.selection();
             assembly = assemble(selection, middlewareContext.contextItems(), memoryItems, budget, fixedTokens);
         }
         if (assembly.exceeds(budget) || loopContext.forcedContextRebuildAttempts() > 0) {
-            selection = sessionMessages.compactIfNeeded(
+            measuredSelection = sessionMessages.compactIfNeededMeasured(
                     run, loopContext.forcedContextRebuildAttempts(), sessionTokenBudget);
+            selectionMetrics = selectionMetrics.plus(measuredSelection.metrics());
+            selection = measuredSelection.selection();
             assembly = assemble(selection, middlewareContext.contextItems(), memoryItems, budget, fixedTokens);
         }
         if (assembly.exceeds(budget)) {
@@ -142,6 +151,11 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
                 contextReport(run, loopContext, model, middlewareContext, items, selection, budget, totalTokens));
         String windowIdentity =
                 windowIdentity(built.report(), middlewareContext, memoryItems, selection, model, effectiveTools);
+        long contextBuildElapsedMillis =
+                java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - contextBuildStartedAt);
+        middlewareContext.put(
+                ContextPreparationMetrics.MIDDLEWARE_ATTRIBUTE,
+                ContextPreparationMetrics.from(Math.max(0L, contextBuildElapsedMillis), selectionMetrics));
         return new RuntimeContextBuildResult(built, middlewareContext, selection, windowIdentity);
     }
 
