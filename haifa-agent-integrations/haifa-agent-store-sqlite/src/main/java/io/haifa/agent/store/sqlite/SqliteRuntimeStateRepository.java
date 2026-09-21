@@ -9,6 +9,7 @@ import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.step.AgentStep;
 import io.haifa.agent.core.tool.ToolCall;
+import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.model.api.SensitiveModelReasoning;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeConfigurationSnapshot;
@@ -23,6 +24,7 @@ import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
 import io.haifa.agent.skill.api.SkillActivation;
 import io.haifa.agent.skill.api.SkillAlias;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -109,6 +111,19 @@ public final class SqliteRuntimeStateRepository implements RuntimeStateRepositor
     }
 
     @Override
+    public List<ToolCall> toolCallsByIds(Map<AgentRunId, Set<ToolCallId>> idsByRun) {
+        Set<ToolCallId> ids = idsByRun.values().stream()
+                .flatMap(Set::stream)
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        return loop.toolCallsByIds(ids);
+    }
+
+    @Override
+    public List<ToolCall> toolCallsByIds(Set<ToolCallId> ids) {
+        return loop.toolCallsByIds(ids);
+    }
+
+    @Override
     public Optional<AgentPlan> plan(AgentRunId runId) {
         return loop.plan(runId);
     }
@@ -162,6 +177,12 @@ public final class SqliteRuntimeStateRepository implements RuntimeStateRepositor
     @Override
     public List<ModelContinuationRecord> modelContinuations(AgentRunId runId) {
         return continuations.modelContinuations(runId);
+    }
+
+    @Override
+    public List<ModelContinuationRecord> continuationsForMessages(
+            Map<AgentRunId, Set<AgentMessageId>> messageIdsByRun) {
+        return continuations.continuationsForMessages(messageIdsByRun);
     }
 
     @Override

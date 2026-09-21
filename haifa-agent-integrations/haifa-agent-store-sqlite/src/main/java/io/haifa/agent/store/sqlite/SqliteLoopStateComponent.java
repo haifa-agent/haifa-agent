@@ -35,13 +35,16 @@ import io.haifa.agent.store.sqlite.payload.StringPayload;
 import io.haifa.agent.store.sqlite.payload.ToolArgumentsPayload;
 import io.haifa.agent.store.sqlite.payload.ToolResultPayload;
 import java.time.Clock;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Supplier;
 
 /** SQLite components for messages, steps, tool calls, plans, outputs and frozen configuration. */
 final class SqliteLoopStateComponent {
+    private static final int SQLITE_IN_BATCH_SIZE = 500;
 
     private final SqliteRuntimeUnitOfWork unitOfWork;
     private final VersionedPayloadCodecRegistry codecs;
@@ -93,6 +96,22 @@ final class SqliteLoopStateComponent {
         return execute(() -> unitOfWork.mapper(RuntimeStoreMapper.class).toolCallsForRun(runId.value()).stream()
                 .map(this::fromRow)
                 .toList());
+    }
+
+    List<ToolCall> toolCallsByIds(Set<ToolCallId> toolCallIds) {
+        if (toolCallIds.isEmpty()) return List.of();
+        List<String> ids = toolCallIds.stream().map(ToolCallId::value).sorted().toList();
+        return execute(() -> {
+            RuntimeStoreMapper mapper = unitOfWork.mapper(RuntimeStoreMapper.class);
+            List<ToolCall> calls = new ArrayList<>();
+            for (int start = 0; start < ids.size(); start += SQLITE_IN_BATCH_SIZE) {
+                int end = Math.min(ids.size(), start + SQLITE_IN_BATCH_SIZE);
+                mapper.toolCallsByIds(ids.subList(start, end)).stream()
+                        .map(this::fromRow)
+                        .forEach(calls::add);
+            }
+            return List.copyOf(calls);
+        });
     }
 
     Optional<AgentPlan> plan(AgentRunId runId) {

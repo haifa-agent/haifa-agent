@@ -57,9 +57,13 @@ import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.model.api.SensitiveModelReasoning;
 import io.haifa.agent.runtime.core.bootstrap.DefaultResolvedModelSnapshots;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationDraft;
+import io.haifa.agent.runtime.core.model.continuation.ModelContinuationRecord;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationRef;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
+import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
 import java.net.URI;
 import java.time.Instant;
 import java.util.EnumSet;
@@ -67,6 +71,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 class ModelMessageAssemblerTest {
@@ -448,10 +453,38 @@ class ModelMessageAssemblerTest {
                 previousModel.providerOptions(),
                 previousModel.invocationOptions());
 
-        var sameModelMessages = new ModelMessageAssembler(store).assemble(RUN_ID, context, previousModel);
+        AtomicInteger singleMessageReads = new AtomicInteger();
+        AtomicInteger batchReads = new AtomicInteger();
+        AtomicInteger prefetchedResolutions = new AtomicInteger();
+        RuntimeStateRepository countingStore = (RuntimeStateRepository) Proxy.newProxyInstance(
+                RuntimeStateRepository.class.getClassLoader(),
+                new Class<?>[] {RuntimeStateRepository.class},
+                (proxy, method, args) -> {
+                    if (method.getName().equals("continuationForMessage")) singleMessageReads.incrementAndGet();
+                    if (method.getName().equals("modelContinuations")) batchReads.incrementAndGet();
+                    if (method.getName().equals("resolveContinuation")
+                            && args != null
+                            && args.length > 0
+                            && args[0] instanceof ModelContinuationRecord) {
+                        prefetchedResolutions.incrementAndGet();
+                    }
+                    try {
+                        return method.invoke(store, args);
+                    } catch (InvocationTargetException exception) {
+                        throw exception.getCause();
+                    }
+                });
+        ModelMessageAssembler.AssemblyResult sameModelAssembly =
+                new ModelMessageAssembler(countingStore).assembleWithMetrics(RUN_ID, context, previousModel);
+        var sameModelMessages = sameModelAssembly.messages();
         assertThat(sameModelMessages.get(1).reasoning()).contains(reasoning);
         assertThat(sameModelMessages.get(1).toolCalls().getFirst().providerCorrelationId())
                 .isEqualTo(correlationId);
+        assertThat(singleMessageReads).hasValue(0);
+        assertThat(batchReads).hasValue(1);
+        assertThat(prefetchedResolutions).hasValue(1);
+        assertThat(sameModelAssembly.metrics().continuationBatchCount()).isEqualTo(1);
+        assertThat(sameModelAssembly.metrics().continuationRecordCount()).isEqualTo(1);
 
         var messages = new ModelMessageAssembler(store).assemble(RUN_ID, context, anthropicModel);
 
