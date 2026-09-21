@@ -218,6 +218,10 @@ final class Tui4jCodingTerminalModel implements Model {
             }
         }
         TerminalUiState state = controller.state();
+        if (shortcuts.matchesToggleExpansion(key)) {
+            accept(TerminalInput.Kind.TOGGLE_EXPANSION);
+            return Command.none();
+        }
         if (state.selector().isPresent()) {
             if ("completion".equals(state.selector().orElseThrow().kind()) && editCompletion(key)) {
                 return Command.none();
@@ -239,10 +243,6 @@ final class Tui4jCodingTerminalModel implements Model {
         }
         if (key.type() == KeyType.keyEOT) {
             accept(TerminalInput.Kind.EOF);
-            return Command.none();
-        }
-        if (shortcuts.matchesToggleExpansion(key)) {
-            accept(TerminalInput.Kind.TOGGLE_EXPANSION);
             return Command.none();
         }
         if (key.type() == KeyType.keyHT) {

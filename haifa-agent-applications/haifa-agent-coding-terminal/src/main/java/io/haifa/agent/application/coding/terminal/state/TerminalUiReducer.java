@@ -282,15 +282,18 @@ public final class TerminalUiReducer {
             var interaction = presented.interaction();
             var details = ApprovalDetails.from(interaction);
             List<TranscriptItem> items = new ArrayList<>(state.transcript());
+            String id = "interaction-" + interaction.requestId().value();
+            int existing = index(items, id);
+            boolean expanded = existing >= 0 && items.get(existing).expanded();
             upsert(
                     items,
                     new TranscriptItem(
-                            "interaction-" + interaction.requestId().value(),
+                            id,
                             TranscriptItem.Kind.APPROVAL,
-                            "Approval · " + interaction.title(),
-                            details.render(),
+                            "Approval · " + details.title(),
+                            details.content(),
                             interaction.state().name(),
-                            true,
+                            expanded,
                             Optional.of(details)));
             return copyWithTranscript(state, List.copyOf(items));
         }
@@ -615,17 +618,13 @@ public final class TerminalUiReducer {
             int existing = index(items, id);
             Optional<ApprovalDetails> details =
                     existing < 0 ? Optional.empty() : items.get(existing).approvalDetails();
-            String body = details.map(ApprovalDetails::render).orElse("Structured approval details are loading.");
+            boolean expanded = existing >= 0 && items.get(existing).expanded();
+            String title = details.map(value -> "Approval · " + value.title()).orElse("Approval · " + payload.kind());
+            String body = details.map(ApprovalDetails::content).orElse("Structured approval details are loading.");
             upsert(
                     items,
                     new TranscriptItem(
-                            id,
-                            TranscriptItem.Kind.APPROVAL,
-                            "Approval · " + payload.kind(),
-                            body,
-                            payload.state(),
-                            true,
-                            details));
+                            id, TranscriptItem.Kind.APPROVAL, title, body, payload.state(), expanded, details));
         } else if (event.payload() instanceof RunEventPayloads.RunLifecycle payload
                 && "FAILED".equals(payload.status())) {
             String message = payload.errorMessage().orElse("Agent execution failed");

@@ -688,6 +688,17 @@ class PersonalAssistantWebFluxTest {
                         expectedArgumentEchoScript())
                 .doesNotContain("operatingSystem", "executable");
 
+        JsonNode presentation = interaction.path("approvalPresentation");
+        assertThat(presentation.isMissingNode()).isFalse();
+        assertThat(presentation.path("title").asText()).isEqualTo("执行 " + expectedScriptDisplayLanguage() + " 脚本");
+        assertThat(presentation.path("purpose").asText()).isEqualTo(expectedArgumentEchoPurpose());
+        assertThat(presentation.path("contentType").asText()).isEqualTo(expectedScriptDisplayLanguage());
+        assertThat(presentation.path("content").asText()).isEqualTo(expectedArgumentEchoScript());
+        assertThat(presentation.path("environment").toString())
+                .contains("执行位置", "本机环境", "工作目录", "网络访问", "本次批准仅适用于这一次执行");
+        assertThat(presentation.path("technical").toString()).contains("调用摘要");
+        assertThat(presentation.path("risk").asText()).isEqualTo("HIGH");
+
         post(
                 "/api/v1/runs/" + runId + "/interactions/"
                         + interaction.path("id").asText() + "/response",
@@ -1019,6 +1030,10 @@ class PersonalAssistantWebFluxTest {
 
     private static String expectedScriptLanguage() {
         return currentOperatingSystem() == ExecutionOperatingSystem.WINDOWS ? "powershell" : "bash";
+    }
+
+    private static String expectedScriptDisplayLanguage() {
+        return currentOperatingSystem() == ExecutionOperatingSystem.WINDOWS ? "PowerShell" : "Bash";
     }
 
     private static String expectedArgumentEchoScript() {

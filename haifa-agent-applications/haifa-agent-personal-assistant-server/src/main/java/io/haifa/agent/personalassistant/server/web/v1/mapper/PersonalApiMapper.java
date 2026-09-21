@@ -359,7 +359,26 @@ public final class PersonalApiMapper {
                 value.inputType(),
                 value.maximumCharacters(),
                 value.createdAt(),
-                value.expiresAt());
+                value.expiresAt(),
+                value.approvalPresentation().map(PersonalApiMapper::approvalPresentation));
+    }
+
+    private static PersonalApiDtos.ApprovalPresentationDto approvalPresentation(
+            PersonalAssistantApplication.ApprovalPresentationValue value) {
+        return new PersonalApiDtos.ApprovalPresentationDto(
+                value.title(),
+                value.purpose(),
+                value.contentType(),
+                value.content(),
+                value.environment().stream()
+                        .map(PersonalApiMapper::approvalFact)
+                        .toList(),
+                value.technical().stream().map(PersonalApiMapper::approvalFact).toList(),
+                value.risk());
+    }
+
+    private static PersonalApiDtos.ApprovalFactDto approvalFact(PersonalAssistantApplication.ApprovalFactValue value) {
+        return new PersonalApiDtos.ApprovalFactDto(value.label(), value.value());
     }
 
     public PersonalApiDtos.InteractionReceipt receipt(PersonalAssistantApplication.InteractionReceipt value) {

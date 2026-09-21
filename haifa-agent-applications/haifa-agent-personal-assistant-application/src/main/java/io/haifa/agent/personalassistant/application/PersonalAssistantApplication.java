@@ -28,6 +28,7 @@ import io.haifa.agent.personalassistant.application.research.ResearchFetchEviden
 import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.AgentRunOutputEvent;
 import io.haifa.agent.runtime.api.AgentRunOutputEventType;
+import io.haifa.agent.runtime.api.ApprovalPresentation;
 import io.haifa.agent.runtime.api.InteractionAction;
 import io.haifa.agent.runtime.api.InteractionResponseId;
 import io.haifa.agent.runtime.api.InteractionResponseSubmission;
@@ -918,7 +919,27 @@ public final class PersonalAssistantApplication implements AutoCloseable {
                 value.inputContract().type().value(),
                 value.inputContract().maximumCharacters(),
                 value.createdAt(),
-                value.expiresAt());
+                value.expiresAt(),
+                value.approvalPresentation().map(PersonalAssistantApplication::approvalPresentation));
+    }
+
+    private static ApprovalPresentationValue approvalPresentation(ApprovalPresentation value) {
+        return new ApprovalPresentationValue(
+                value.title(),
+                value.purpose(),
+                value.contentType(),
+                value.content(),
+                value.environment().stream()
+                        .map(PersonalAssistantApplication::approvalFact)
+                        .toList(),
+                value.technical().stream()
+                        .map(PersonalAssistantApplication::approvalFact)
+                        .toList(),
+                value.risk());
+    }
+
+    private static ApprovalFactValue approvalFact(ApprovalPresentation.Fact fact) {
+        return new ApprovalFactValue(fact.label(), fact.value());
     }
 
     private Optional<ActivityView> activity(AgentRunEvent event) {
@@ -1231,7 +1252,19 @@ public final class PersonalAssistantApplication implements AutoCloseable {
             String inputType,
             int maximumCharacters,
             Instant createdAt,
-            Optional<Instant> expiresAt) {}
+            Optional<Instant> expiresAt,
+            Optional<ApprovalPresentationValue> approvalPresentation) {}
+
+    public record ApprovalFactValue(String label, String value) {}
+
+    public record ApprovalPresentationValue(
+            String title,
+            String purpose,
+            String contentType,
+            String content,
+            List<ApprovalFactValue> environment,
+            List<ApprovalFactValue> technical,
+            Optional<String> risk) {}
 
     public record InteractionReceipt(
             String responseId,

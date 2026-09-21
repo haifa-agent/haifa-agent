@@ -208,6 +208,23 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
+    void ctrlOExpandsTranscriptWhileApprovalSelectorOwnsInput() {
+        var fixture = fixture();
+        fixture.pump.offer(new TerminalUiAction.ShellCompleted("!pwd", "Command exited\nD:/workspace", "EXITED"));
+        fixture.pump.offer(new TerminalUiAction.SelectorOpened(
+                new TerminalSelector("interaction:approval-1", "Approval", List.of("reject", "approve"), 0)));
+        fixture.model.update(new WindowSizeMessage(100, 30));
+
+        assertThat(fixture.controller.state().selector()).isPresent();
+        assertThat(fixture.controller.state().transcript().getLast().expanded()).isTrue();
+
+        fixture.model.update(key(KeyType.keySI));
+
+        assertThat(fixture.controller.state().selector()).isPresent();
+        assertThat(fixture.controller.state().transcript().getLast().expanded()).isFalse();
+    }
+
+    @Test
     void keepsFollowingNewOutputWhenActiveRunLayoutShrinksALongTranscriptViewport() {
         var fixture = fixture();
         fixture.model.init();

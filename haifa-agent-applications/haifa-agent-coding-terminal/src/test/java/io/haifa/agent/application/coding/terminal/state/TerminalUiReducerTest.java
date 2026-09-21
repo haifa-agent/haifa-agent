@@ -22,6 +22,7 @@ import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.AgentRunOutputEvent;
 import io.haifa.agent.runtime.api.AgentRunOutputEventType;
+import io.haifa.agent.runtime.api.ApprovalPresentation;
 import io.haifa.agent.runtime.api.InteractionAction;
 import io.haifa.agent.runtime.api.InteractionConsequenceView;
 import io.haifa.agent.runtime.api.InteractionInputContract;
@@ -578,20 +579,55 @@ class TerminalUiReducerTest {
                                 "interaction-1", "APPROVAL", "PENDING", "UNSAFE_FREE_TEXT"))));
 
         assertThat(updated.transcript()).singleElement().satisfies(item -> {
-            assertThat(item.body())
-                    .contains(
-                            "Action: Write workspace file",
-                            "Target: src/App.java",
-                            "Risk: On approval: Write file",
-                            "Scope: tool · workspace.write",
-                            "Network: Not declared by runtime",
-                            "Reason: Allow this change?",
-                            "Allowed: reject / approve")
-                    .doesNotContain("UNSAFE_FREE_TEXT");
-            assertThat(item.approvalDetails()).isPresent();
+            assertThat(item.title()).isEqualTo("Approval · Write workspace file");
+            assertThat(item.body()).isEqualTo("Allow this change?").doesNotContain("UNSAFE_FREE_TEXT");
+            assertThat(item.approvalDetails()).hasValueSatisfying(details -> {
+                assertThat(details.title()).isEqualTo("Write workspace file");
+                assertThat(details.purpose()).isEqualTo("Write file");
+                assertThat(details.content()).isEqualTo("Allow this change?");
+                assertThat(details.technical()).isEmpty();
+                assertThat(details.allowedActions()).containsExactly("reject", "approve");
+            });
             assertThat(item.status()).isEqualTo("PENDING");
         });
         assertThat(updated.status()).isEqualTo("WAITING FOR APPROVAL");
+    }
+
+    @Test
+    void approvalPresentationIsProjectedIntoStructuredDetails() {
+        TerminalUiState presented = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.InteractionPresented(interactionWithPresentation()));
+
+        assertThat(presented.transcript()).singleElement().satisfies(item -> {
+            assertThat(item.title()).isEqualTo("Approval · 执行 PowerShell 命令");
+            assertThat(item.body()).isEqualTo("Start-Sleep -Seconds 4");
+            assertThat(item.approvalDetails()).hasValueSatisfying(details -> {
+                assertThat(details.contentType()).isEqualTo("PowerShell");
+                assertThat(details.environment()).singleElement().satisfies(fact -> assertThat(fact.value())
+                        .isEqualTo("本机环境"));
+                assertThat(details.technical()).singleElement().satisfies(fact -> assertThat(fact.value())
+                        .isEqualTo("digest-123"));
+                assertThat(details.risk()).contains("HIGH");
+            });
+        });
+    }
+
+    @Test
+    void approvalPresentationPreservesExpandedDetailsWhenRePresented() {
+        TerminalUiState presented = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.InteractionPresented(interactionWithPresentation()));
+        TerminalUiState toggled =
+                reducer.reduce(presented, new TerminalUiAction.ToggleExpanded("interaction-interaction-presentation"));
+        assertThat(toggled.transcript()).singleElement().satisfies(item -> assertThat(item.expanded())
+                .isTrue());
+
+        TerminalUiState represented =
+                reducer.reduce(toggled, new TerminalUiAction.InteractionPresented(interactionWithPresentation()));
+
+        assertThat(represented.transcript()).singleElement().satisfies(item -> assertThat(item.expanded())
+                .isTrue());
     }
 
     @Test
@@ -754,6 +790,39 @@ class TerminalUiReducerTest {
         assertThat(TerminalRecovery.fromCode("TERMINAL_FAILURE").category())
                 .isEqualTo(TerminalRecovery.Category.TERMINAL_FAILURE);
         assertThat(TerminalRecovery.fromCode("UNKNOWN_SAFE_CODE").action()).contains("draft is preserved");
+    }
+
+    private static InteractionView interactionWithPresentation() {
+        return new InteractionView(
+                new InteractionRequestId("interaction-presentation"),
+                new AgentRunId("run-1"),
+                new AgentSessionId("session-1"),
+                0,
+                InteractionKind.APPROVAL,
+                InteractionState.PENDING,
+                "Approval required",
+                "Mode: SCRIPT\nRisks: HIGH",
+                List.of(InteractionAction.REJECT, InteractionAction.APPROVE),
+                InteractionInputContract.NONE,
+                new InteractionTargetView(
+                        "tool",
+                        "execution_run",
+                        Optional.empty(),
+                        Optional.empty(),
+                        "Approval required for execution_run"),
+                new InteractionRequesterView("agent", "Personal Assistant"),
+                Instant.parse("2026-07-27T00:00:00Z"),
+                Optional.of(Instant.parse("2026-07-27T00:01:00Z")),
+                new InteractionConsequenceView(
+                        "Runtime will revalidate the target before continuing", "The action will not run", "Expire"),
+                Optional.of(new ApprovalPresentation(
+                        "执行 PowerShell 命令",
+                        "为了观察终端工具调用的实际效果。",
+                        "PowerShell",
+                        "Start-Sleep -Seconds 4",
+                        List.of(new ApprovalPresentation.Fact("执行位置", "本机环境")),
+                        List.of(new ApprovalPresentation.Fact("调用摘要", "digest-123")),
+                        Optional.of("HIGH"))));
     }
 
     private static InteractionView interaction() {
