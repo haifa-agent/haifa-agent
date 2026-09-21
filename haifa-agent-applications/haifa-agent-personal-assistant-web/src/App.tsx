@@ -757,10 +757,10 @@ function runPresentation(
   outputPhase: OutputPhase,
   connection: ConnectionState,
 ): LiveRunPresentation {
-  if (["WAITING_APPROVAL", "WAITING_INTERACTION"].includes(run.status)) {
+  if (run.status === "WAITING_APPROVAL" || run.status === "WAITING_INTERACTION") {
     const approval = run.status === "WAITING_APPROVAL";
     return {
-      tone: approval && interaction?.safePrompt.includes("Risks: HIGH") ? "danger" : "attention",
+      tone: "attention",
       label: approval ? "等待审批" : "等待回复",
       title: approval ? "需要你的审批" : "需要你的回复",
       detail: interaction?.title ?? (approval ? "审批详情正在加载" : "交互详情正在加载"),
@@ -879,6 +879,7 @@ function LiveRunCard({
   }, [latest?.activityId, latest?.status, run?.status]);
 
   if (!run || completedHidden) return null;
+  if (run.status === "WAITING_APPROVAL" && interaction) return null;
   const visibleActivity = latest?.activityId === suppressedActivityId ? null : latest;
   const preview = visibleActivity ? previews[visibleActivity.activityId] : undefined;
   const presentation = runPresentation(run, visibleActivity, interaction, outputPhase, connection);
@@ -974,7 +975,9 @@ function InteractionCard({
 }) {
   const [text, setText] = useState("");
   const [expanded, setExpanded] = useState(false);
-  const approvalContent = previewApprovalContent(interaction.safePrompt);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const presentation = interaction.approvalPresentation ?? null;
+  const approvalContent = previewApprovalContent(presentation?.content ?? interaction.safePrompt);
   const isApproval = interaction.kind.toLowerCase().includes("approval")
     || interaction.allowedActions.some((action) => (
       ["APPROVE", "REJECT"].includes(action.toUpperCase())
@@ -985,6 +988,7 @@ function InteractionCard({
   useEffect(() => {
     setText("");
     setExpanded(false);
+    setDetailsOpen(false);
   }, [interaction.id]);
 
   return (
@@ -993,46 +997,115 @@ function InteractionCard({
         <span className="interaction-icon"><ShieldCheck size={20} /></span>
         <div>
           <span className="eyebrow">{isApproval ? "需要你的审批" : "需要你的回复"}</span>
-          <h3 id={titleId}>{interaction.title}</h3>
+          <h3 id={titleId}>{presentation ? presentation.title : interaction.title}</h3>
         </div>
         <span className="interaction-state">待处理</span>
       </header>
 
       <div className="interaction-body">
-        <div className="interaction-context">
-          <span className="interaction-type">{interaction.kind}</span>
-          {interaction.safePrompt.includes("Risks: HIGH") && (
-            <span className="execution-risk-badge">
-              <CircleAlert size={13} /> 高风险执行 · 每次必须审批
-            </span>
-          )}
-        </div>
+        {presentation ? (
+          <>
+            <p className="approval-purpose">{presentation.purpose}</p>
 
-        <section className="approval-content-section" aria-labelledby={`${contentId}-label`}>
-          <div className="approval-section-heading">
-            <div>
-              <h4 id={`${contentId}-label`}>{isApproval ? "审批内容" : "交互内容"}</h4>
-              <span>请确认以下文本、命令或代码符合你的预期</span>
+            <section className="approval-content-section" aria-labelledby={`${contentId}-label`}>
+              <div className="approval-section-heading">
+                <div>
+                  <h4 id={`${contentId}-label`}>{presentation.contentType}</h4>
+                </div>
+              </div>
+              <pre id={contentId} className="approval-summary">
+                {expanded || !approvalContent.truncated
+                  ? approvalContent.content
+                  : `${approvalContent.preview}\n…`}
+              </pre>
+              {approvalContent.truncated && (
+                <button
+                  type="button"
+                  className="approval-expand-button"
+                  aria-expanded={expanded}
+                  aria-controls={contentId}
+                  onClick={() => setExpanded((value) => !value)}
+                >
+                  {expanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+                  {expanded ? "收起内容" : "展开查看全部内容"}
+                </button>
+              )}
+            </section>
+
+            {presentation.environment.length > 0 && (
+              <ul className="approval-facts">
+                {presentation.environment.map((fact) => (
+                  <li key={fact.label}>
+                    <span>{fact.label}</span>
+                    <strong>{fact.value}</strong>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {presentation.technical.length > 0 && (
+              <div className="approval-technical">
+                <button
+                  type="button"
+                  className="approval-technical-toggle"
+                  aria-expanded={detailsOpen}
+                  onClick={() => setDetailsOpen((value) => !value)}
+                >
+                  {detailsOpen ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+                  技术细节（可选）
+                </button>
+                {detailsOpen && (
+                  <dl className="approval-technical-list">
+                    {presentation.risk && (
+                      <div key="风险">
+                        <dt>风险</dt>
+                        <dd>{presentation.risk}</dd>
+                      </div>
+                    )}
+                    {presentation.technical.map((fact) => (
+                      <div key={fact.label}>
+                        <dt>{fact.label}</dt>
+                        <dd>{fact.value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                )}
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            <div className="interaction-context">
+              <span className="interaction-type">{interaction.kind}</span>
             </div>
-          </div>
-          <pre id={contentId} className="approval-summary">
-            {expanded || !approvalContent.truncated
-              ? approvalContent.content
-              : `${approvalContent.preview}\n…`}
-          </pre>
-          {approvalContent.truncated && (
-            <button
-              type="button"
-              className="approval-expand-button"
-              aria-expanded={expanded}
-              aria-controls={contentId}
-              onClick={() => setExpanded((value) => !value)}
-            >
-              {expanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
-              {expanded ? "收起内容" : "展开查看全部内容"}
-            </button>
-          )}
-        </section>
+
+            <section className="approval-content-section" aria-labelledby={`${contentId}-label`}>
+              <div className="approval-section-heading">
+                <div>
+                  <h4 id={`${contentId}-label`}>{isApproval ? "审批内容" : "交互内容"}</h4>
+                  <span>请确认以下文本、命令或代码符合你的预期</span>
+                </div>
+              </div>
+              <pre id={contentId} className="approval-summary">
+                {expanded || !approvalContent.truncated
+                  ? approvalContent.content
+                  : `${approvalContent.preview}\n…`}
+              </pre>
+              {approvalContent.truncated && (
+                <button
+                  type="button"
+                  className="approval-expand-button"
+                  aria-expanded={expanded}
+                  aria-controls={contentId}
+                  onClick={() => setExpanded((value) => !value)}
+                >
+                  {expanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+                  {expanded ? "收起内容" : "展开查看全部内容"}
+                </button>
+              )}
+            </section>
+          </>
+        )}
 
         {interaction.maximumCharacters > 0 && interaction.inputType !== "NONE" && (
           <label className="interaction-input">

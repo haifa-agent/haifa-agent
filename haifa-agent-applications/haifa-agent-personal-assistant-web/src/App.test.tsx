@@ -2327,7 +2327,7 @@ describe("Personal Assistant application", () => {
     expect(screen.getByText("模型正在准备首段内容")).toBeTruthy();
   });
 
-  it("shows the exact high-risk execution approval content", async () => {
+  it("renders a structured execution approval presentation instead of the raw prompt", async () => {
     const active = { ...conversation, activeRunId: "run-approval" };
     const waiting = { ...run, id: "run-approval", status: "WAITING_APPROVAL" };
     const interaction: Interaction = {
@@ -2337,7 +2337,7 @@ describe("Personal Assistant application", () => {
       revision: 1,
       kind: "approval",
       state: "PENDING",
-      title: "Approve execution",
+      title: "Approval required",
       safePrompt:
         "Mode: SCRIPT\nLanguage: powershell\nPurpose: inspect CPU\nRisks: HIGH\nFull content:\nGet-CimInstance Win32_Processor",
       allowedActions: ["approve", "reject"],
@@ -2345,6 +2345,23 @@ describe("Personal Assistant application", () => {
       maximumCharacters: 0,
       createdAt: "2026-07-28T01:00:00Z",
       expiresAt: "2026-07-28T02:00:00Z",
+      approvalPresentation: {
+        title: "执行 PowerShell 命令",
+        purpose: "为了观察终端工具调用的实际效果，将执行一次 4 秒 sleep 测试。",
+        contentType: "PowerShell",
+        content: "Write-Output \"sleep4 start\"\nStart-Sleep -Seconds 4",
+        environment: [
+          { label: "执行位置", value: "本机环境" },
+          { label: "工作目录", value: "当前项目" },
+          { label: "网络访问", value: "未请求" },
+          { label: "说明", value: "本次批准仅适用于这一次执行" },
+        ],
+        technical: [
+          { label: "超时", value: "15000 ms" },
+          { label: "调用摘要", value: "digest-123" },
+        ],
+        risk: "HIGH",
+      },
     };
     const api = client();
     vi.mocked(api.conversations).mockResolvedValue([active]);
@@ -2354,21 +2371,50 @@ describe("Personal Assistant application", () => {
 
     const { container } = render(<App client={api} />);
 
-    expect(await screen.findByRole("heading", { name: "Approve execution" })).toBeTruthy();
-    expect(screen.getByText(/Get-CimInstance Win32_Processor/)).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "审批内容" })).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "审批选项" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "批准" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "执行 PowerShell 命令" })).toBeTruthy();
+    expect(screen.getByText(/观察终端工具调用的实际效果/)).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "PowerShell" })).toBeTruthy();
+    expect(screen.getByText(/Start-Sleep -Seconds 4/)).toBeTruthy();
+    expect(screen.getByText("执行位置")).toBeTruthy();
+    expect(screen.getByText("本机环境")).toBeTruthy();
+    expect(screen.queryByText("digest-123")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "技术细节（可选）" }));
+    expect(await screen.findByText("digest-123")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "批准并执行" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "拒绝" })).toBeTruthy();
-    expect(container.querySelector(".execution-risk-badge")).toBeTruthy();
+    expect(container.querySelector(".execution-risk-badge")).toBeNull();
+    expect(screen.queryByText(/Risks: HIGH/)).toBeNull();
     const interactionCard = container.querySelector<HTMLElement>(".messages > .interaction-card");
     expect(interactionCard).toBeTruthy();
     expect(container.querySelector(".activity-panel .interaction-card")).toBeNull();
-    const liveCard = container.querySelector<HTMLElement>(".live-run-card");
-    expect(liveCard).toBeTruthy();
-    expect(within(liveCard!).getByText("需要你的审批")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /查看并处理/ }));
-    expect(document.activeElement).toBe(interactionCard);
+    expect(container.querySelector(".live-run-card")).toBeNull();
+  });
+
+  it("shows the approval loading hint above the composer before the snapshot arrives", async () => {
+    const active = { ...conversation, activeRunId: "run-loading-approval" };
+    const waiting = { ...run, id: "run-loading-approval", status: "WAITING_APPROVAL" };
+    let resolveInteraction!: (interaction: Interaction | null) => void;
+    const pending = new Promise<Interaction | null>((resolve) => {
+      resolveInteraction = resolve;
+    });
+    const api = client();
+    vi.mocked(api.conversations).mockResolvedValue([active]);
+    vi.mocked(api.conversation).mockResolvedValue(active);
+    vi.mocked(api.run).mockResolvedValue(waiting);
+    vi.mocked(api.interaction).mockReturnValue(pending);
+    vi.mocked(api.streamRun).mockImplementation(async (_runId, _handlers, signal) => {
+      await new Promise<void>((resolve) =>
+        signal.addEventListener("abort", () => resolve(), { once: true }),
+      );
+    });
+
+    const { container } = render(<App client={api} />);
+
+    await waitFor(() => expect(container.querySelector(".live-run-card")).toBeTruthy());
+    expect(
+      within(container.querySelector<HTMLElement>(".live-run-card")!).getByText("需要你的审批"),
+    ).toBeTruthy();
+    await act(async () => resolveInteraction(null));
   });
 
   it("renders an approval without waiting for the activities snapshot", async () => {

@@ -63,7 +63,7 @@ export function statusLabel(status: string): string {
     REQUESTED: "准备调用",
     SUCCEEDED: "已完成",
     TIMED_OUT: "已超时",
-    APPROVE: "批准",
+    APPROVE: "批准并执行",
     REJECT: "拒绝",
     SUBMIT: "提交",
   };

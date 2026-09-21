@@ -30,7 +30,8 @@ public final class InteractionViewProjector {
                 new InteractionRequesterView(request.requester().principalType(), "requester"),
                 request.createdAt(),
                 request.expiresAt(),
-                consequences(request, kind));
+                consequences(request, kind),
+                request.presentation());
     }
 
     static String boundedSafePrompt(String prompt) {

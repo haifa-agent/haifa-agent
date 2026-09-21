@@ -695,6 +695,13 @@ public final class CodingTerminalController implements AutoCloseable {
             }
             return;
         }
+        if (input.kind() == TerminalInput.Kind.TOGGLE_EXPANSION) {
+            state.transcript().stream()
+                    .filter(io.haifa.agent.application.coding.terminal.state.TranscriptItem::toggleable)
+                    .reduce((first, second) -> second)
+                    .ifPresent(value -> apply(new TerminalUiAction.ToggleExpanded(value.id())));
+            return;
+        }
         if (state.selector().isPresent()) {
             acceptSelector(input);
             return;
@@ -723,13 +730,6 @@ public final class CodingTerminalController implements AutoCloseable {
         if (input.kind() == TerminalInput.Kind.SELECT_PREVIOUS
                 || input.kind() == TerminalInput.Kind.SELECT_NEXT
                 || input.kind() == TerminalInput.Kind.NAVIGATE_BACK) {
-            return;
-        }
-        if (input.kind() == TerminalInput.Kind.TOGGLE_EXPANSION) {
-            state.transcript().stream()
-                    .filter(io.haifa.agent.application.coding.terminal.state.TranscriptItem::toggleable)
-                    .reduce((first, second) -> second)
-                    .ifPresent(value -> apply(new TerminalUiAction.ToggleExpanded(value.id())));
             return;
         }
         submitText(input.text(), input.kind() == TerminalInput.Kind.FOLLOW_UP);
