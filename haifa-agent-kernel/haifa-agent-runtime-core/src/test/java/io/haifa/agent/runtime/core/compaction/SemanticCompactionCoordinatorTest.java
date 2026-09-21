@@ -45,6 +45,7 @@ import io.haifa.agent.runtime.api.RuntimeOverrides;
 import io.haifa.agent.runtime.core.DefaultAgentRuntime;
 import io.haifa.agent.runtime.core.RuntimeCoreBuilder;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeConfigurationSnapshot;
+import io.haifa.agent.runtime.core.context.ActiveContextSnapshots;
 import io.haifa.agent.runtime.core.control.RunControlRegistry;
 import io.haifa.agent.runtime.core.execution.ManualExecutionScheduler;
 import io.haifa.agent.runtime.core.lifecycle.RunAwaiter;
@@ -52,6 +53,7 @@ import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.loop.SessionMessageSource;
 import io.haifa.agent.runtime.core.model.FrozenModelBinding;
 import io.haifa.agent.runtime.core.model.ModelMessageAssembler;
+import io.haifa.agent.runtime.core.model.ModelMessageProjectionPlanner;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.storage.OptimisticLockException;
 import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
@@ -696,7 +698,14 @@ class SemanticCompactionCoordinatorTest {
         FrozenModelBinding binding = createBinding(store, run, chatModel);
         coordinator.forceCompactOnOverflow(run, 1, binding);
 
-        SessionMessageSource messageSource = new SessionMessageSource(store, store, deterministic, policy, ids, time);
+        SessionMessageSource messageSource = new SessionMessageSource(
+                store,
+                store,
+                deterministic,
+                policy,
+                ids,
+                time,
+                new ActiveContextSnapshots(store, store, policy, deterministic));
 
         var selection = messageSource.select(run);
         assertThat(selection.summary()).isPresent();
@@ -1723,6 +1732,75 @@ class SemanticCompactionCoordinatorTest {
                 ids,
                 time,
                 store);
+    }
+
+    @Test
+    void coldStartAndForcedRebuildCompactOversizedHistoryInBoundedPages() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AtomicInteger idGen = new AtomicInteger();
+        IdentifierGenerator ids = () -> "cold-id-" + idGen.incrementAndGet();
+        TimeProvider time = () -> NOW;
+        CompressionPolicy policy = CompressionPolicy.defaults()
+                .withSemanticCompactionEnabled(true)
+                .withDegradedFallback(true)
+                .withTailTokenBounds(5, 50);
+        DeterministicContextCompressor deterministic = new DeterministicContextCompressor();
+        ActiveContextSnapshots snapshots = new ActiveContextSnapshots(store, store, policy, deterministic);
+        RunTransitionCoordinator transitions =
+                new RunTransitionCoordinator(store, store, store, store, ids, time, new RunAwaiter(), store);
+        SemanticCompactionCoordinator coordinator = new SemanticCompactionCoordinator(
+                store,
+                store,
+                new SummaryModelInvoker(transitions, new RunControlRegistry(), ids, time, policy),
+                new CompactionTriggerEvaluator(policy),
+                policy,
+                deterministic,
+                ids,
+                time,
+                store,
+                new ModelMessageProjectionPlanner(store),
+                snapshots);
+        AgentRun run = createAndSaveRun(store);
+        for (int index = 0; index < 4_100; index++) {
+            store.appendSessionMessage(draft(
+                    "cold-message-" + index,
+                    run.sessionId(),
+                    run.id().value(),
+                    index % 2 == 0 ? MessageRole.USER : MessageRole.ASSISTANT,
+                    "message " + index));
+        }
+        AgentChatModel failingModel = request -> {
+            throw new RuntimeException("expected cold-start fallback");
+        };
+
+        CompactionEvaluationOutcome outcome = coordinator.evaluateAndCompactIfNeeded(
+                run, 1, createBindingWithContextWindow(store, run, failingModel, 40_000));
+
+        assertThat(outcome.semanticCompactionReason()).isEqualTo(CompactionTriggerReason.ACTIVE_WINDOW_LIMIT.name());
+        assertThat(store.latestValid(run.sessionId())).isPresent();
+        assertThat(snapshots.current(run.sessionId()).snapshot().hasMoreHistory())
+                .isFalse();
+        assertThat(snapshots.current(run.sessionId()).snapshot().activeMessages())
+                .hasSizeLessThan(4_096);
+
+        for (int index = 0; index < 4_100; index++) {
+            store.appendSessionMessage(draft(
+                    "forced-message-" + index,
+                    run.sessionId(),
+                    run.id().value(),
+                    index % 2 == 0 ? MessageRole.USER : MessageRole.ASSISTANT,
+                    "forced message " + index));
+        }
+        long summaryVersionBeforeForcedRebuild = store.latestVersion(run.sessionId());
+
+        CompactionEvaluationOutcome forcedOutcome = coordinator.forceCompactOnOverflow(
+                run, 2, createBindingWithContextWindow(store, run, failingModel, 40_000));
+
+        assertThat(forcedOutcome.triggerReason()).isNotNull();
+        assertThat(store.latestVersion(run.sessionId())).isGreaterThan(summaryVersionBeforeForcedRebuild);
+        assertThat(snapshots.current(run.sessionId()).status()).isEqualTo(ActiveContextSnapshots.AccessStatus.READY);
+        assertThat(snapshots.current(run.sessionId()).snapshot().hasMoreHistory())
+                .isFalse();
     }
 
     private static AgentChatResponse response(String id, String content) {

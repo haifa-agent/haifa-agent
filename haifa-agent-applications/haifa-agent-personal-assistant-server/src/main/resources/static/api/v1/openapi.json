@@ -910,8 +910,27 @@
           "inputType": {"type": "string"},
           "maximumCharacters": {"type": "integer"},
           "createdAt": {"type": "string", "format": "date-time"},
-          "expiresAt": {"type": ["string", "null"], "format": "date-time"}
+          "expiresAt": {"type": ["string", "null"], "format": "date-time"},
+          "approvalPresentation": {"oneOf": [{"$ref": "#/components/schemas/ApprovalPresentation"}, {"type": "null"}]}
         }
+      },
+      "ApprovalPresentation": {
+        "type": "object",
+        "required": ["title", "purpose", "contentType", "content", "environment", "technical"],
+        "properties": {
+          "title": {"type": "string"},
+          "purpose": {"type": "string"},
+          "contentType": {"type": "string"},
+          "content": {"type": "string"},
+          "environment": {"type": "array", "items": {"$ref": "#/components/schemas/ApprovalFact"}},
+          "technical": {"type": "array", "items": {"$ref": "#/components/schemas/ApprovalFact"}},
+          "risk": {"type": ["string", "null"]}
+        }
+      },
+      "ApprovalFact": {
+        "type": "object",
+        "required": ["label", "value"],
+        "properties": {"label": {"type": "string"}, "value": {"type": "string"}}
       },
       "InteractionResponse": {
         "type": "object",
@@ -1150,7 +1169,11 @@
           "value": {"type": "string"},
           "activity": {"oneOf": [{"$ref": "#/components/schemas/Activity"}, {"type": "null"}]},
           "source": {"type": "string", "enum": ["durable", "transient", "snapshot"]},
-          "sequence": {"type": "integer", "format": "int64"}
+          "sequence": {"type": "integer", "format": "int64"},
+          "toolCallId": {"type": "string"},
+          "outputChannel": {"type": "string", "enum": ["stdout", "stderr"]},
+          "outputTruncated": {"type": "boolean"},
+          "previewDropped": {"type": "boolean"}
         }
       },
       "ApiError": {

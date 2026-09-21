@@ -200,4 +200,27 @@ describe("HttpPersonalAssistantClient deployment boundary", () => {
       code: "RESPONSE_TOO_LARGE",
     });
   });
+
+  it("does not replace the reconnect cursor with a transient tool preview", async () => {
+    const frames = [
+      'data: {"eventId":"cursor-1","type":"run.status","runId":"run-1","occurredAt":"2026-07-28T00:00:00Z","value":"RUNNING","source":"durable","sequence":1}\n\n',
+      'data: {"eventId":"cursor-1","type":"tool.output.preview","runId":"run-1","occurredAt":"2026-07-28T00:00:01Z","value":"hello","source":"transient","sequence":0,"toolCallId":"call-1"}\n\n',
+    ].join("");
+    const response = (body: string) => new Response(new ReadableStream({
+      start(controller) {
+        if (body) controller.enqueue(new TextEncoder().encode(body));
+        controller.close();
+      },
+    }), { status: 200, headers: { "Content-Type": "text/event-stream" } });
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(response(frames))
+      .mockResolvedValueOnce(response(""));
+    vi.stubGlobal("fetch", fetch);
+    const client = new HttpPersonalAssistantClient();
+
+    await client.streamRun("run-1", { onEvent: vi.fn() }, new AbortController().signal);
+    await client.streamRun("run-1", { onEvent: vi.fn() }, new AbortController().signal);
+
+    expect(fetch.mock.calls[1]?.[1]?.headers).toMatchObject({ "Last-Event-ID": "cursor-1" });
+  });
 });

@@ -5,6 +5,8 @@ import io.haifa.agent.application.project.product.coding.CodingModelState;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationProgressView;
 import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.execution.api.ExecutionOutputChannel;
+import io.haifa.agent.execution.api.ToolOutputPreview;
 import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.AgentRunOutputEvent;
 import io.haifa.agent.runtime.api.AgentRunOutputEventType;
@@ -285,15 +287,18 @@ public final class TerminalUiReducer {
             var interaction = presented.interaction();
             var details = ApprovalDetails.from(interaction);
             List<TranscriptItem> items = new ArrayList<>(state.transcript());
+            String id = "interaction-" + interaction.requestId().value();
+            int existing = index(items, id);
+            boolean expanded = existing >= 0 && items.get(existing).expanded();
             upsert(
                     items,
                     new TranscriptItem(
-                            "interaction-" + interaction.requestId().value(),
+                            id,
                             TranscriptItem.Kind.APPROVAL,
-                            "Approval · " + interaction.title(),
-                            details.render(),
+                            "Approval · " + details.title(),
+                            details.content(),
                             interaction.state().name(),
-                            true,
+                            expanded,
                             Optional.of(details)));
             return copyWithTranscript(state, List.copyOf(items));
         }
@@ -314,6 +319,19 @@ public final class TerminalUiReducer {
         }
         if (action instanceof TerminalUiAction.RunOutputReceived received) {
             return output(state, received.event());
+        }
+        if (action instanceof TerminalUiAction.ToolOutputPreviewReceived received) {
+            var preview = received.preview();
+            if (state.currentRunId().filter(preview.runId()::equals).isEmpty()) return state;
+            String id = "tool-" + preview.toolCallId().value();
+            int existing = index(state.transcript(), id);
+            if (existing < 0 || (preview.text().isEmpty() && !preview.outputTruncated() && !preview.previewDropped()))
+                return state;
+            List<TranscriptItem> items = new ArrayList<>(state.transcript());
+            TranscriptItem current = items.get(existing);
+            if (terminalToolStatus(current.status())) return state;
+            items.set(existing, appendToolPreview(current, preview));
+            return copyWithTranscript(state, List.copyOf(items));
         }
         if (action instanceof TerminalUiAction.UserMessageCommitted committed) {
             var items = new ArrayList<>(state.transcript());
@@ -456,6 +474,31 @@ public final class TerminalUiReducer {
         throw new IllegalArgumentException("Unsupported Terminal UI action");
     }
 
+    private static TranscriptItem appendToolPreview(TranscriptItem current, ToolOutputPreview preview) {
+        final String heading = "\nOutput (streaming):\n";
+        int headingIndex = current.body().indexOf(heading);
+        String prefix = headingIndex >= 0
+                ? current.body().substring(0, headingIndex + heading.length())
+                : current.body() + heading;
+        String previous = headingIndex >= 0 ? current.body().substring(headingIndex + heading.length()) : "";
+        String channel = previewChannelMarker(previous, preview.channel());
+        String outputTruncated = preview.outputTruncated() ? "\n[execution output truncated]\n" : "";
+        String previewDropped = preview.previewDropped() ? "\n[preview output dropped]\n" : "";
+        String output = previous + channel + preview.text() + outputTruncated + previewDropped;
+        int maximumOutput = Math.max(0, 16_384 - prefix.length());
+        if (output.length() > maximumOutput) output = output.substring(output.length() - maximumOutput);
+        return current.withStatus(current.status(), prefix + output);
+    }
+
+    private static String previewChannelMarker(String previous, ExecutionOutputChannel channel) {
+        if (previous.isEmpty()) return channel == ExecutionOutputChannel.STDERR ? "[stderr]\n" : "";
+        int stdoutMarker = previous.lastIndexOf("[stdout]\n");
+        int stderrMarker = previous.lastIndexOf("[stderr]\n");
+        ExecutionOutputChannel previousChannel =
+                stderrMarker > stdoutMarker ? ExecutionOutputChannel.STDERR : ExecutionOutputChannel.STDOUT;
+        return previousChannel == channel ? "" : "\n[" + channel.name().toLowerCase(Locale.ROOT) + "]\n";
+    }
+
     private TerminalUiState event(TerminalUiState state, AgentRunEvent event) {
         if (state.seenEventIds().contains(event.eventId())) return state;
         if (state.currentRunId().isPresent()
@@ -581,17 +624,13 @@ public final class TerminalUiReducer {
             int existing = index(items, id);
             Optional<ApprovalDetails> details =
                     existing < 0 ? Optional.empty() : items.get(existing).approvalDetails();
-            String body = details.map(ApprovalDetails::render).orElse("Structured approval details are loading.");
+            boolean expanded = existing >= 0 && items.get(existing).expanded();
+            String title = details.map(value -> "Approval · " + value.title()).orElse("Approval · " + payload.kind());
+            String body = details.map(ApprovalDetails::content).orElse("Structured approval details are loading.");
             upsert(
                     items,
                     new TranscriptItem(
-                            id,
-                            TranscriptItem.Kind.APPROVAL,
-                            "Approval · " + payload.kind(),
-                            body,
-                            payload.state(),
-                            true,
-                            details));
+                            id, TranscriptItem.Kind.APPROVAL, title, body, payload.state(), expanded, details));
         } else if (event.payload() instanceof RunEventPayloads.RunLifecycle payload
                 && "FAILED".equals(payload.status())) {
             String message = payload.errorMessage().orElse("Agent execution failed");

@@ -9,9 +9,11 @@ import io.haifa.agent.execution.api.ExecutionEnvironmentRef;
 import io.haifa.agent.execution.api.ExecutionOutputObserver;
 import io.haifa.agent.execution.api.ExecutionScratchSpaceSpec;
 import io.haifa.agent.execution.api.SandboxProfileRef;
+import io.haifa.agent.execution.api.ToolOutputPreviewPublisher;
 import io.haifa.agent.execution.core.DefaultExecutionBroker;
 import io.haifa.agent.execution.core.ImmutableSandboxProfileRegistry;
 import io.haifa.agent.execution.core.ImmutableSandboxProviderRegistry;
+import io.haifa.agent.execution.core.TransientToolOutputPreviewPublisher;
 import io.haifa.agent.execution.core.store.InMemoryExecutionOutputStore;
 import io.haifa.agent.execution.core.store.InMemoryExecutionStore;
 import io.haifa.agent.execution.core.tool.ExecutionInvocationScopeResolver.ExecutionInvocationScope;
@@ -119,7 +121,8 @@ public final class PersonalExecutionRuntime {
                 environmentNames,
                 true);
         host.preflight(profile);
-        var configuration = createToolConfiguration(profile, properties, runtimes);
+        ToolOutputPreviewPublisher previewPublisher = new TransientToolOutputPreviewPublisher();
+        var configuration = createToolConfiguration(profile, properties, runtimes, previewPublisher);
         var publicToolPolicy = new DefaultPublicToolPolicy(
                 new DefaultToolPolicyRequestAdapter("haifa-personal-assistant", ApprovalMode.ASK),
                 policy.evaluator(),
@@ -157,6 +160,14 @@ public final class PersonalExecutionRuntime {
 
     static ExecutionToolConfiguration createToolConfiguration(
             SandboxProfile profile, PersonalAssistantProperties.Execution properties, ScriptRuntimeResolver runtimes) {
+        return createToolConfiguration(profile, properties, runtimes, ToolOutputPreviewPublisher.noop());
+    }
+
+    static ExecutionToolConfiguration createToolConfiguration(
+            SandboxProfile profile,
+            PersonalAssistantProperties.Execution properties,
+            ScriptRuntimeResolver runtimes,
+            ToolOutputPreviewPublisher previewPublisher) {
         return new ExecutionToolConfiguration(
                 new ExecutionEnvironmentRef(
                         List.of("personal-execution-" + profile.contentDigest().value())),
@@ -170,7 +181,8 @@ public final class PersonalExecutionRuntime {
                 runtimes,
                 ExecutionOutputObserver.noop(),
                 java.util.function.UnaryOperator.identity(),
-                ExecutionScratchSpaceSpec.none());
+                ExecutionScratchSpaceSpec.none(),
+                previewPublisher);
     }
 
     private static Optional<Path> configuredPath(String value) {

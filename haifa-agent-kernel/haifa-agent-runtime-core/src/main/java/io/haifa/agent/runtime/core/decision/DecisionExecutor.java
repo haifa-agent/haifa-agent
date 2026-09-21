@@ -561,6 +561,7 @@ public final class DecisionExecutor {
         var binding = approval.binding();
         String interactionType = approval.reauthentication() ? "tool-reauthentication" : "tool-approval";
         var createdAt = time.now().truncatedTo(java.time.temporal.ChronoUnit.MILLIS);
+        var approvalPrompt = approvalPrompts.format(binding, call, approval.reauthentication());
         unitOfWork.execute(() -> {
             interactions.create(new InteractionRequest(
                     new InteractionRequestId(requestId),
@@ -568,12 +569,14 @@ public final class DecisionExecutor {
                     run.tenant(),
                     run.principal(),
                     interactionType,
-                    approvalPrompts.format(binding, call, approval.reauthentication()),
+                    approvalPrompt.prompt(),
                     true,
                     io.haifa.agent.runtime.core.interaction.ToolApprovalTargets.ordinary(
                             run, call.id(), binding, requestFrom(call), approval.decision()),
                     createdAt,
-                    Optional.empty()));
+                    Optional.empty(),
+                    io.haifa.agent.runtime.core.interaction.InteractionExpirationOutcome.CANCEL_RUN,
+                    approvalPrompt.presentation()));
             checkpoints.capture(
                     run,
                     loopContext.iteration(),

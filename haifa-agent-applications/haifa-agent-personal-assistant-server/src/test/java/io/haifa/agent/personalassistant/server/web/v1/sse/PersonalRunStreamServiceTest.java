@@ -6,6 +6,10 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.core.tool.ToolCallId;
+import io.haifa.agent.execution.api.ExecutionOutputChannel;
+import io.haifa.agent.execution.api.ToolOutputPreview;
 import io.haifa.agent.personalassistant.application.PersonalAssistantApplication;
 import io.haifa.agent.personalassistant.server.web.v1.mapper.PersonalApiMapper;
 import java.time.Instant;
@@ -14,6 +18,7 @@ import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import org.junit.jupiter.api.Test;
 
 class PersonalRunStreamServiceTest {
@@ -177,6 +182,102 @@ class PersonalRunStreamServiceTest {
 
         assertThat(eventTypes).containsExactly("answer.started", "run.status", "answer.committed", "run.final");
         assertThat(closed).isTrue();
+    }
+
+    @Test
+    void previewReusesTheCurrentCursorWithoutBecomingAnSseResumePoint() {
+        PersonalAssistantApplication application = mock(PersonalAssistantApplication.class);
+        AtomicReference<PersonalAssistantApplication.StreamListener> durable = new AtomicReference<>();
+        AtomicReference<Consumer<ToolOutputPreview>> preview = new AtomicReference<>();
+        AtomicBoolean previewClosed = new AtomicBoolean();
+        when(application.run("run-4")).thenReturn(Optional.of(running("run-4")));
+        when(application.initialStreamCursor("run-4")).thenReturn(new PersonalAssistantApplication.StreamCursor(0, 0));
+        when(application.subscribe(
+                        eq("run-4"),
+                        any(PersonalAssistantApplication.StreamCursor.class),
+                        any(PersonalAssistantApplication.StreamListener.class)))
+                .thenAnswer(invocation -> {
+                    durable.set(invocation.getArgument(2));
+                    return (PersonalAssistantApplication.StreamSubscription) () -> {};
+                });
+        when(application.subscribeToolOutput(eq("run-4"), any())).thenAnswer(invocation -> {
+            preview.set(invocation.getArgument(1));
+            return (PersonalAssistantApplication.StreamSubscription) () -> previewClosed.set(true);
+        });
+        when(application.now()).thenReturn(Instant.EPOCH);
+        PersonalRunStreamService service = new PersonalRunStreamService(application, new PersonalApiMapper());
+        List<
+                        org.springframework.http.codec.ServerSentEvent<
+                                io.haifa.agent.personalassistant.server.web.v1.dto.PersonalApiDtos.StreamEvent>>
+                received = new CopyOnWriteArrayList<>();
+        var disposable = service.open("run-4").subscribe(received::add);
+
+        durable.get()
+                .onEvent(new PersonalAssistantApplication.StreamEvent(
+                        "durable-1",
+                        "run.status",
+                        "run-4",
+                        Instant.EPOCH,
+                        "RUNNING",
+                        Optional.empty(),
+                        PersonalAssistantApplication.StreamSource.DURABLE,
+                        1));
+        String durableCursor = received.getFirst().id();
+        preview.get()
+                .accept(new ToolOutputPreview(
+                        new AgentRunId("run-4"),
+                        new ToolCallId("call-1"),
+                        ExecutionOutputChannel.STDERR,
+                        "problem",
+                        true,
+                        true));
+
+        var previewEvent = received.getLast();
+        assertThat(previewEvent.event()).isEqualTo("tool.output.preview");
+        assertThat(previewEvent.id()).isNull();
+        assertThat(previewEvent.data().eventId()).isEqualTo(durableCursor);
+        assertThat(previewEvent.data().sequence()).isZero();
+        assertThat(previewEvent.data().toolCallId()).contains("call-1");
+        assertThat(previewEvent.data().outputChannel()).contains("stderr");
+        assertThat(previewEvent.data().outputTruncated()).contains(true);
+        assertThat(previewEvent.data().previewDropped()).contains(true);
+        disposable.dispose();
+        assertThat(previewClosed).isTrue();
+    }
+
+    @Test
+    void previewSubscriptionFailureDoesNotTerminateTheDurableStream() {
+        PersonalAssistantApplication application = mock(PersonalAssistantApplication.class);
+        AtomicReference<PersonalAssistantApplication.StreamListener> durable = new AtomicReference<>();
+        when(application.run("run-5")).thenReturn(Optional.of(running("run-5")));
+        when(application.initialStreamCursor("run-5")).thenReturn(new PersonalAssistantApplication.StreamCursor(0, 0));
+        when(application.subscribe(
+                        eq("run-5"),
+                        any(PersonalAssistantApplication.StreamCursor.class),
+                        any(PersonalAssistantApplication.StreamListener.class)))
+                .thenAnswer(invocation -> {
+                    durable.set(invocation.getArgument(2));
+                    return (PersonalAssistantApplication.StreamSubscription) () -> {};
+                });
+        when(application.subscribeToolOutput(eq("run-5"), any()))
+                .thenThrow(new IllegalStateException("preview unavailable"));
+        PersonalRunStreamService service = new PersonalRunStreamService(application, new PersonalApiMapper());
+        List<String> received = new CopyOnWriteArrayList<>();
+        var disposable = service.open("run-5").subscribe(event -> received.add(event.event()));
+
+        durable.get()
+                .onEvent(new PersonalAssistantApplication.StreamEvent(
+                        "durable-1",
+                        "run.status",
+                        "run-5",
+                        Instant.EPOCH,
+                        "RUNNING",
+                        Optional.empty(),
+                        PersonalAssistantApplication.StreamSource.DURABLE,
+                        1));
+
+        assertThat(received).containsExactly("run.status");
+        disposable.dispose();
     }
 
     private static PersonalAssistantApplication.RunView running(String runId) {

@@ -100,12 +100,14 @@ Error、Queued 和 Focus。TrueColor 参考色会按明暗背景自适应；NoCo
 - User 使用低对比消息块，便于定位用户意图；
 - Assistant 正文直接进入对话流，不使用厚卡片；高频 Markdown 子集只在 View 层转换为终端样式，
   `TranscriptItem`、Session 与持久化继续保留原始 Markdown；
-- Tool 通过 `haifa-agent-runtime-api` 的 bounded display 原语投影为有界展示：目标最多 256 字符，输出预览最多
-  16 KiB / 200 行，只保留 head/tail 采样、原始字节/行统计和结果引用；不显示完整参数、Provider 原文或完整结果。
-  折叠项只占一行：以 `✓`/`✗`/`?`/`●` 状态符号开头，随后是 `名称 · 目标` 与完成耗时
-  （如 `✓ file_read · README.md · 0.3s`），并把 `ctrl+o expand` 放在同一行；连续折叠项之间不插入空行。
-  失败项在折叠状态额外保留最多两行安全原因；`OUTCOME_UNKNOWN` 使用 `?`，保留原因与“检查权威状态”提示，
-  绝不显示为成功。展开后才显示有界详情和 `Duration … · N lines · X KB` 元数据尾行；
+- Tool 根据 `requested/started/succeeded/failed/cancelled` 使用状态色。折叠项只占一行：
+  以 `✓`/`✗`/`●` 状态符号开头，随后是 `名称 · 目标` 与完成耗时（如 `✓ file_read · README.md · 0.3s`），
+  并把 `ctrl+o expand` 放在同一行；连续折叠项之间不插入空行。失败项在折叠状态额外保留
+  最多两行安全原因，展开后才显示既有有界详情和 `Duration … · N lines · X KB` 元数据尾行；
+- 运行中的执行工具通过进程内 transient publisher 增量刷新同一 Tool Call 卡片的
+  `Output (streaming):` 段；每批最多 4 KiB，卡片正文最多保留 16 KiB 尾部，stderr 和 preview
+  丢弃会显式标记；执行侧达到输出上限时使用独立截断标记，避免与预览丢批混淆。该内容不持久化、
+  不 replay，工具终态事件会用权威结果整体替换临时预览；
 - Run 进入终态（completed/failed/cancelled/timeout）时追加一张 Run Summary 卡片，
   标题显示终态与可得耗时（如 `Run completed · 24s`），正文显示终态、稳定错误码及耗时，
   不再从本地 Transcript 反推或累加工具与变更集计数；
@@ -129,7 +131,8 @@ delta，重复 frame 不重新解析；只有权威正文替换或 16 KB 有界�
 - [ ] Mermaid、数学公式与 KaTeX；
 - [ ] GFM 删除线、任务复选框及其他扩展；
 - [ ] OSC 8 可点击链接（当前显示 `label (URL)`）；
-- [ ] Tool 专用预览器、跨 Tool 聚合和批量展开；首版保持每个稳定 Tool Call ID 可独立审计。
+- [ ] Tool 专用结构化预览器、跨 Tool 聚合和批量展开；首版实时输出仍保持每个稳定 Tool Call ID
+  独立、有界地展示。
 
 Editor hint 根据当前事实变化：Idle 显示 `enter send`；活动 Run 显示对应宿主的 Follow-up 与 Interrupt
 快捷键。Windows/Linux 使用 `ctrl+o`、`alt+enter`、`alt+up` 等文本标签；macOS 使用 Apple 标准
@@ -150,7 +153,8 @@ Phase B 的工作流反馈只投影稳定产品 DTO 和 Runtime 事件：
   Result Ref，缺失的 Duration 不伪造。Terminal 不从 Runtime Event 解释 Execution 命令、Workdir、
   Stream、Exit 或输出；这些仅可由拥有 Execution 结果的产品集成另行展示；
 - Runtime Checkpoint 继续持久化并推进事件 Cursor，但作为内部恢复事实不投影到 Transcript；
-- Approval 从 `InteractionView` 显示 Action、Target、Risk、Scope、Network、Reason 与允许动作；
+- Approval 优先从 `InteractionView.approvalPresentation` 渲染结构化展示：动作标题、目的、内容类型与
+  正文、环境要点、默认折叠的技术细节和允许动作；缺少结构化展示时回退到 `safePrompt` 文本。
   `InteractionLifecycle.actionOrReason` 等自由文本不参与 UI 解析。Selector 接管输入期间以及响应回执后，
   原有 editor buffer/cursor 均保持不变；
 - `RunInputLifecycle.ACCEPTED` 将 Steer 放入 Pending，`APPLIED` 后移除；持久 Follow-up 与 Steer

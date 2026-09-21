@@ -23,6 +23,7 @@ import io.haifa.agent.application.project.product.coding.client.CodingAuthentica
 import io.haifa.agent.application.project.product.coding.client.CodingSessionClient;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.execution.api.ToolOutputPreviewPublisher;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.InteractionAction;
@@ -109,6 +110,9 @@ public final class CodingTerminalController implements AutoCloseable {
     private TerminalUiState state;
     private RunEventSubscription subscription;
     private RunOutputSubscription outputSubscription;
+    private ToolOutputPreviewPublisher.ToolOutputPreviewSubscription previewSubscription;
+    private ToolOutputPreviewPublisher previewPublisher = ToolOutputPreviewPublisher.noop();
+    private AgentRunId previewRunId;
     private io.haifa.agent.core.run.AgentRunId outputRunId;
     private RunOutputCursor outputCursor = RunOutputCursor.BEFORE_FIRST;
     private boolean awaitingNewSessionMessage;
@@ -305,6 +309,10 @@ public final class CodingTerminalController implements AutoCloseable {
 
     public TerminalUiState state() {
         return state;
+    }
+
+    public void attachToolOutputPreviewPublisher(ToolOutputPreviewPublisher publisher) {
+        this.previewPublisher = Objects.requireNonNull(publisher, "publisher must not be null");
     }
 
     /**
@@ -687,6 +695,13 @@ public final class CodingTerminalController implements AutoCloseable {
             }
             return;
         }
+        if (input.kind() == TerminalInput.Kind.TOGGLE_EXPANSION) {
+            state.transcript().stream()
+                    .filter(io.haifa.agent.application.coding.terminal.state.TranscriptItem::toggleable)
+                    .reduce((first, second) -> second)
+                    .ifPresent(value -> apply(new TerminalUiAction.ToggleExpanded(value.id())));
+            return;
+        }
         if (state.selector().isPresent()) {
             acceptSelector(input);
             return;
@@ -715,13 +730,6 @@ public final class CodingTerminalController implements AutoCloseable {
         if (input.kind() == TerminalInput.Kind.SELECT_PREVIOUS
                 || input.kind() == TerminalInput.Kind.SELECT_NEXT
                 || input.kind() == TerminalInput.Kind.NAVIGATE_BACK) {
-            return;
-        }
-        if (input.kind() == TerminalInput.Kind.TOGGLE_EXPANSION) {
-            state.transcript().stream()
-                    .filter(io.haifa.agent.application.coding.terminal.state.TranscriptItem::toggleable)
-                    .reduce((first, second) -> second)
-                    .ifPresent(value -> apply(new TerminalUiAction.ToggleExpanded(value.id())));
             return;
         }
         submitText(input.text(), input.kind() == TerminalInput.Kind.FOLLOW_UP);
@@ -1205,7 +1213,20 @@ public final class CodingTerminalController implements AutoCloseable {
             apply(new TerminalUiAction.RunEventReceived(event));
         }
         loaded.view().pendingInteraction().ifPresent(this::openInteractionSelector);
+        replacePreviewSubscription(
+                loaded.view().activeRun().map(value -> value.runId()).orElse(null));
         closeSubscriptionsInBackground(previousSubscription, previousOutputSubscription);
+    }
+
+    private void replacePreviewSubscription(AgentRunId runId) {
+        if (Objects.equals(previewRunId, runId) && previewSubscription != null) return;
+        if (previewSubscription != null) previewSubscription.close();
+        previewSubscription = null;
+        previewRunId = runId;
+        if (runId != null) {
+            previewSubscription = previewPublisher.subscribe(
+                    runId, preview -> pump.offer(new TerminalUiAction.ToolOutputPreviewReceived(preview)));
+        }
     }
 
     private void openRestoreSelector() {
@@ -2461,6 +2482,9 @@ public final class CodingTerminalController implements AutoCloseable {
         closeSubscriptions(subscription, outputSubscription);
         subscription = null;
         outputSubscription = null;
+        if (previewSubscription != null) previewSubscription.close();
+        previewSubscription = null;
+        previewRunId = null;
         if (ownedControlEffects != null) ownedControlEffects.shutdownNow();
         if (ownedEffects != null) ownedEffects.shutdownNow();
         if (ownedMaintenanceEffects != null) ownedMaintenanceEffects.shutdownNow();
