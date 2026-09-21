@@ -19,4 +19,16 @@ public interface ModelContinuationRepository {
 
     SensitiveModelReasoning resolveContinuation(
             AgentMessageId messageId, ResolvedModelSnapshot model, Set<String> toolCorrelationIds);
+
+    /**
+     * Resolves an already loaded continuation without requiring another repository lookup.
+     *
+     * <p>The default preserves compatibility for repository implementations that have not yet specialized the
+     * batched path. Durable adapters should override this method so validation and decryption consume the supplied
+     * authoritative record directly.
+     */
+    default SensitiveModelReasoning resolveContinuation(
+            ModelContinuationRecord record, ResolvedModelSnapshot model, Set<String> toolCorrelationIds) {
+        return resolveContinuation(record.assistantMessageId(), model, toolCorrelationIds);
+    }
 }

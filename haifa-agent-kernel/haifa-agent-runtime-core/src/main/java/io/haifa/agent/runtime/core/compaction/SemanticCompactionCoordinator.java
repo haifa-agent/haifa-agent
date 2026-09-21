@@ -1102,6 +1102,7 @@ public final class SemanticCompactionCoordinator {
                             end = candidate;
                         }
                     }
+                    if (results.containsAll(calls)) break;
                 }
                 if (!results.containsAll(calls)) {
                     index = end + 1;

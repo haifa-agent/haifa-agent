@@ -492,6 +492,15 @@ public final class InMemoryRuntimeStore
         ModelContinuationRecord record = Optional.ofNullable(modelContinuationsByMessage.get(messageId))
                 .orElseThrow(() -> new ModelContinuationException(
                         ModelContinuationFailure.MISSING, "required model continuation is unavailable"));
+        return resolveContinuation(record, model, toolCorrelationIds);
+    }
+
+    @Override
+    public synchronized io.haifa.agent.model.api.SensitiveModelReasoning resolveContinuation(
+            ModelContinuationRecord record,
+            io.haifa.agent.model.api.ResolvedModelSnapshot model,
+            java.util.Set<String> toolCorrelationIds) {
+        Objects.requireNonNull(record, "record must not be null");
         if (!"1.0".equals(record.reference().version())) {
             throw new ModelContinuationException(
                     ModelContinuationFailure.VERSION_UNSUPPORTED, "model continuation version is unsupported");

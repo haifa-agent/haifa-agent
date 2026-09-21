@@ -295,6 +295,12 @@ public final class DefaultAgentLoop implements AgentLoop {
             ContextBuildExecution buildExecution = buildContext(run, progress, model, preBuildOutcome);
             RuntimeContextBuildResult built = buildExecution.built();
             CompactionEvaluationOutcome compactionOutcome = buildExecution.outcome();
+            Object rawPreparationMetrics =
+                    built.middlewareContext().attributes().get(ContextPreparationMetrics.MIDDLEWARE_ATTRIBUTE);
+            ContextPreparationMetrics preparationMetrics =
+                    rawPreparationMetrics instanceof ContextPreparationMetrics metrics
+                            ? metrics
+                            : ContextPreparationMetrics.NONE;
             recordPromptDiagnostics(built);
             recordTrace(new RuntimeTraceEvent(
                     traceContext.traceId(),
@@ -371,6 +377,17 @@ public final class DefaultAgentLoop implements AgentLoop {
                             Map.entry(
                                     "compactionElapsedMillis",
                                     built.sessionSelection().compactionElapsedMillis()),
+                            Map.entry("contextBuildElapsedMillis", preparationMetrics.contextBuildElapsedMillis()),
+                            Map.entry(
+                                    "sessionSelectionElapsedMillis",
+                                    preparationMetrics.sessionSelectionElapsedMillis()),
+                            Map.entry("historyRowsRead", preparationMetrics.historyRowsRead()),
+                            Map.entry("activeRowsSelected", preparationMetrics.activeRowsSelected()),
+                            Map.entry("atomicGroupCandidateScans", preparationMetrics.atomicGroupCandidateScans()),
+                            Map.entry("atomicGroupsBuilt", preparationMetrics.atomicGroupsBuilt()),
+                            Map.entry("sessionToolCallBatchCount", preparationMetrics.toolCallBatchCount()),
+                            Map.entry("summaryRenderCacheHits", preparationMetrics.summaryRenderCacheHits()),
+                            Map.entry("summaryRenderCacheMisses", preparationMetrics.summaryRenderCacheMisses()),
                             Map.entry(
                                     "estimatedSessionTokens",
                                     built.sessionSelection().estimatedSessionTokens()),

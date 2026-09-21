@@ -49,10 +49,12 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 
 /** Loads cross-Run session facts and keeps tool protocol turns atomic during window selection. */
 public final class SessionMessageSource {
+    private static final int MAX_RENDERED_SUMMARY_ENTRIES = 256;
+    private static final long MAX_RENDERED_SUMMARY_CHARACTERS = 1_000_000L;
+
     public enum CompactionReason {
         NONE,
         TOKEN_THRESHOLD,
@@ -80,6 +82,55 @@ public final class SessionMessageSource {
         }
     }
 
+    record SelectionMetrics(
+            long elapsedMillis,
+            long historyRowsRead,
+            long activeRowsSelected,
+            long atomicGroupCandidateScans,
+            long atomicGroupsBuilt,
+            long toolCallBatchCount,
+            long summaryRenderCacheHits,
+            long summaryRenderCacheMisses) {
+        static final SelectionMetrics NONE = new SelectionMetrics(0, 0, 0, 0, 0, 0, 0, 0);
+
+        SelectionMetrics plus(SelectionMetrics other) {
+            return new SelectionMetrics(
+                    elapsedMillis + other.elapsedMillis,
+                    historyRowsRead + other.historyRowsRead,
+                    activeRowsSelected + other.activeRowsSelected,
+                    atomicGroupCandidateScans + other.atomicGroupCandidateScans,
+                    atomicGroupsBuilt + other.atomicGroupsBuilt,
+                    toolCallBatchCount + other.toolCallBatchCount,
+                    summaryRenderCacheHits + other.summaryRenderCacheHits,
+                    summaryRenderCacheMisses + other.summaryRenderCacheMisses);
+        }
+    }
+
+    record MeasuredSelection(Selection selection, SelectionMetrics metrics) {}
+
+    private static final class MetricsCollector {
+        private long historyRowsRead;
+        private long activeRowsSelected;
+        private long atomicGroupCandidateScans;
+        private long atomicGroupsBuilt;
+        private long toolCallBatchCount;
+        private long summaryRenderCacheHits;
+        private long summaryRenderCacheMisses;
+
+        private SelectionMetrics finish(long startedAt) {
+            long elapsed = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+            return new SelectionMetrics(
+                    Math.max(0L, elapsed),
+                    historyRowsRead,
+                    activeRowsSelected,
+                    atomicGroupCandidateScans,
+                    atomicGroupsBuilt,
+                    toolCallBatchCount,
+                    summaryRenderCacheHits,
+                    summaryRenderCacheMisses);
+        }
+    }
+
     private record SummaryRenderKey(SummaryId id, SummaryVersion version) {}
 
     private final RuntimeStateRepository messages;
@@ -88,7 +139,8 @@ public final class SessionMessageSource {
     private final CompressionPolicy policy;
     private final IdentifierGenerator ids;
     private final TimeProvider time;
-    private final Map<SummaryRenderKey, String> renderedMarkdownCache = new ConcurrentHashMap<>();
+    private final BoundedSummaryRenderCache<SummaryRenderKey> renderedMarkdownCache =
+            new BoundedSummaryRenderCache<>(MAX_RENDERED_SUMMARY_ENTRIES, MAX_RENDERED_SUMMARY_CHARACTERS);
 
     public SessionMessageSource(
             RuntimeStateRepository messages,
@@ -112,11 +164,18 @@ public final class SessionMessageSource {
 
     /** Reads the current window against the supplied assembly budget without triggering compaction. */
     public Selection select(AgentRun run, long sessionTokenBudget) {
+        return selectMeasured(run, sessionTokenBudget).selection();
+    }
+
+    MeasuredSelection selectMeasured(AgentRun run, long sessionTokenBudget) {
         Objects.requireNonNull(run, "run must not be null");
         if (sessionTokenBudget < 1) {
             throw new IllegalArgumentException("sessionTokenBudget must be positive");
         }
-        return currentSelection(run.sessionId(), sessionTokenBudget);
+        MetricsCollector metrics = new MetricsCollector();
+        long startedAt = System.nanoTime();
+        Selection selection = currentSelection(run.sessionId(), sessionTokenBudget, metrics);
+        return new MeasuredSelection(selection, metrics.finish(startedAt));
     }
 
     /**
@@ -124,27 +183,37 @@ public final class SessionMessageSource {
      * Semantic compaction remains owned by {@code SemanticCompactionCoordinator} during observation.
      */
     public Selection compactIfNeeded(AgentRun run, int forcedRebuildAttempt, long sessionTokenBudget) {
+        return compactIfNeededMeasured(run, forcedRebuildAttempt, sessionTokenBudget)
+                .selection();
+    }
+
+    MeasuredSelection compactIfNeededMeasured(AgentRun run, int forcedRebuildAttempt, long sessionTokenBudget) {
         Objects.requireNonNull(run, "run must not be null");
-        return compactSelection(run.sessionId(), forcedRebuildAttempt, sessionTokenBudget, false);
+        MetricsCollector metrics = new MetricsCollector();
+        long startedAt = System.nanoTime();
+        Selection selection =
+                compactSelection(run.sessionId(), forcedRebuildAttempt, sessionTokenBudget, false, metrics);
+        return new MeasuredSelection(selection, metrics.finish(startedAt));
     }
 
     /** Explicit deterministic compaction for the single linear Session path. */
     public Selection compact(AgentSessionId sessionId) {
-        return compactSelection(sessionId, 1, Long.MAX_VALUE, true);
+        return compactSelection(sessionId, 1, Long.MAX_VALUE, true, new MetricsCollector());
     }
 
-    private Selection currentSelection(AgentSessionId sessionId, long sessionTokenBudget) {
-        List<AgentMessage> visible = visibleMessages(sessionId);
+    private Selection currentSelection(AgentSessionId sessionId, long sessionTokenBudget, MetricsCollector metrics) {
+        List<AgentMessage> visible = visibleMessages(sessionId, metrics);
         if (visible.isEmpty()) {
             return emptySelection(sessionId, sessionTokenBudget);
         }
-        List<List<AgentMessage>> groups = atomicGroups(visible);
         Map<AgentRunId, Map<ToolCallId, ToolCall>> toolCallsByRun = new HashMap<>();
-        Optional<ConversationSummary> checkpoint = compatibleCheckpoint(sessionId, visible);
-        List<List<AgentMessage>> activeGroups = groupsAfterCheckpoint(visible, checkpoint);
+        Optional<ConversationSummary> checkpoint = compatibleCheckpoint(sessionId, visible, metrics);
+        List<List<AgentMessage>> activeGroups = groupsAfterCheckpoint(visible, checkpoint, metrics);
+        metrics.activeRowsSelected +=
+                activeGroups.stream().mapToLong(List::size).sum();
         long activeTokens = checkpoint.map(ConversationSummary::estimatedTokens).orElse(0)
                 + estimateGroups(activeGroups, toolCallsByRun);
-        return selection(
+        Selection selection = selection(
                 sessionId,
                 checkpoint,
                 activeGroups,
@@ -154,22 +223,30 @@ public final class SessionMessageSource {
                 CompactionReason.NONE,
                 0,
                 activeTokens,
-                sessionTokenBudget == Long.MAX_VALUE ? Math.max(1L, activeTokens) : sessionTokenBudget);
+                sessionTokenBudget == Long.MAX_VALUE ? Math.max(1L, activeTokens) : sessionTokenBudget,
+                metrics);
+        return selection;
     }
 
     private Selection compactSelection(
-            AgentSessionId sessionId, int forcedRebuildAttempt, long requestedSessionTokenBudget, boolean manual) {
+            AgentSessionId sessionId,
+            int forcedRebuildAttempt,
+            long requestedSessionTokenBudget,
+            boolean manual,
+            MetricsCollector metrics) {
         if (requestedSessionTokenBudget < 1) {
             throw new IllegalArgumentException("sessionTokenBudget must be positive");
         }
-        List<AgentMessage> visible = visibleMessages(sessionId);
+        List<AgentMessage> visible = visibleMessages(sessionId, metrics);
         if (visible.isEmpty()) {
             return emptySelection(sessionId, requestedSessionTokenBudget);
         }
-        List<List<AgentMessage>> groups = atomicGroups(visible);
+        List<List<AgentMessage>> groups = atomicGroups(visible, metrics);
         Map<AgentRunId, Map<ToolCallId, ToolCall>> toolCallsByRun = new HashMap<>();
-        Optional<ConversationSummary> checkpoint = compatibleCheckpoint(sessionId, visible);
-        List<List<AgentMessage>> activeGroups = groupsAfterCheckpoint(visible, checkpoint);
+        Optional<ConversationSummary> checkpoint = compatibleCheckpoint(sessionId, visible, metrics);
+        List<List<AgentMessage>> activeGroups = groupsAfterCheckpoint(visible, checkpoint, metrics);
+        metrics.activeRowsSelected +=
+                activeGroups.stream().mapToLong(List::size).sum();
         long activeTokens = checkpoint.map(ConversationSummary::estimatedTokens).orElse(0)
                 + estimateGroups(activeGroups, toolCallsByRun);
         long sessionTokenBudget = requestedSessionTokenBudget == Long.MAX_VALUE
@@ -193,7 +270,8 @@ public final class SessionMessageSource {
                     CompactionReason.NONE,
                     0,
                     activeTokens,
-                    sessionTokenBudget);
+                    sessionTokenBudget,
+                    metrics);
         }
 
         // When semantic compaction is enabled, the coordinator is the sole automatic writer.
@@ -210,7 +288,8 @@ public final class SessionMessageSource {
                     CompactionReason.NONE,
                     0,
                     activeTokens,
-                    sessionTokenBudget);
+                    sessionTokenBudget,
+                    metrics);
         }
 
         long totalRawTokens = estimateGroups(groups, toolCallsByRun);
@@ -231,7 +310,8 @@ public final class SessionMessageSource {
                     CompactionReason.NONE,
                     0,
                     activeTokens,
-                    sessionTokenBudget);
+                    sessionTokenBudget,
+                    metrics);
         }
 
         List<AgentMessage> older =
@@ -240,7 +320,7 @@ public final class SessionMessageSource {
         ConversationSummary summary = summaryFor(sessionId, older, visible);
         long compactionElapsedMillis =
                 java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(Math.max(0L, System.nanoTime() - compactionStarted));
-        List<List<AgentMessage>> tail = groupsAfterCheckpoint(visible, Optional.of(summary));
+        List<List<AgentMessage>> tail = groupsAfterCheckpoint(visible, Optional.of(summary), metrics);
         long compactedTokens = summary.estimatedTokens() + estimateGroups(tail, toolCallsByRun);
         MessageCursor selectedThrough =
                 summary.coveredThrough().compareTo(visible.getLast().cursor()) > 0
@@ -256,13 +336,14 @@ public final class SessionMessageSource {
                 reason,
                 compactionElapsedMillis,
                 compactedTokens,
-                sessionTokenBudget);
+                sessionTokenBudget,
+                metrics);
     }
 
-    private List<AgentMessage> visibleMessages(AgentSessionId sessionId) {
-        return messages.messagesAfter(sessionId, MessageCursor.BEFORE_FIRST, Integer.MAX_VALUE).stream()
-                .filter(this::visibleToContext)
-                .toList();
+    private List<AgentMessage> visibleMessages(AgentSessionId sessionId, MetricsCollector metrics) {
+        List<AgentMessage> history = messages.messagesAfter(sessionId, MessageCursor.BEFORE_FIRST, Integer.MAX_VALUE);
+        metrics.historyRowsRead += history.size();
+        return history.stream().filter(this::visibleToContext).toList();
     }
 
     private Selection emptySelection(AgentSessionId sessionId, long sessionTokenBudget) {
@@ -292,11 +373,38 @@ public final class SessionMessageSource {
             long compactionElapsedMillis,
             long estimatedTokens,
             long sessionTokenBudget) {
+        return selection(
+                sessionId,
+                summary,
+                groups,
+                through,
+                toolCallsByRun,
+                compacted,
+                reason,
+                compactionElapsedMillis,
+                estimatedTokens,
+                sessionTokenBudget,
+                null);
+    }
+
+    private Selection selection(
+            AgentSessionId sessionId,
+            Optional<ConversationSummary> summary,
+            List<List<AgentMessage>> groups,
+            MessageCursor through,
+            Map<AgentRunId, Map<ToolCallId, ToolCall>> toolCallsByRun,
+            boolean compacted,
+            CompactionReason reason,
+            long compactionElapsedMillis,
+            long estimatedTokens,
+            long sessionTokenBudget,
+            MetricsCollector metrics) {
         List<ContextItem> items = new ArrayList<>();
-        summary.ifPresent(value -> items.add(summaryItem(value)));
+        summary.ifPresent(value -> items.add(summaryItem(value, metrics)));
         for (int index = 0; index < groups.size(); index++) {
             items.add(groupItem(groups.get(index), index == groups.size() - 1, toolCallsByRun));
         }
+        if (metrics != null) metrics.toolCallBatchCount += toolCallsByRun.size();
         return new Selection(
                 items,
                 through,
@@ -313,13 +421,18 @@ public final class SessionMessageSource {
     }
 
     private Optional<ConversationSummary> compatibleCheckpoint(AgentSessionId sessionId, List<AgentMessage> visible) {
+        return compatibleCheckpoint(sessionId, visible, null);
+    }
+
+    private Optional<ConversationSummary> compatibleCheckpoint(
+            AgentSessionId sessionId, List<AgentMessage> visible, MetricsCollector metrics) {
         return summaries
                 .latestValid(sessionId)
                 .filter(summary -> summary.policyVersion().equals(policy.version()))
                 .filter(summary -> isCompatibleCompressor(summary.compressorVersion()))
                 .filter(summary -> summaries.coversValidSource(summary, summary.coveredThrough()))
                 .filter(summary -> {
-                    List<List<AgentMessage>> after = groupsAfterCheckpoint(visible, Optional.of(summary));
+                    List<List<AgentMessage>> after = groupsAfterCheckpoint(visible, Optional.of(summary), metrics);
                     return after.isEmpty() || isTurnAnchor(after.getFirst());
                 });
     }
@@ -334,11 +447,18 @@ public final class SessionMessageSource {
 
     private List<List<AgentMessage>> groupsAfterCheckpoint(
             List<AgentMessage> visible, Optional<ConversationSummary> checkpoint) {
+        return groupsAfterCheckpoint(visible, checkpoint, null);
+    }
+
+    private List<List<AgentMessage>> groupsAfterCheckpoint(
+            List<AgentMessage> visible, Optional<ConversationSummary> checkpoint, MetricsCollector metrics) {
         return checkpoint
-                .map(summary -> atomicGroups(visible.stream()
-                        .filter(message -> message.cursor().compareTo(summary.coveredThrough()) > 0)
-                        .toList()))
-                .orElseGet(() -> atomicGroups(visible));
+                .map(summary -> atomicGroups(
+                        visible.stream()
+                                .filter(message -> message.cursor().compareTo(summary.coveredThrough()) > 0)
+                                .toList(),
+                        metrics))
+                .orElseGet(() -> atomicGroups(visible, metrics));
     }
 
     private int tailSplit(
@@ -432,16 +552,25 @@ public final class SessionMessageSource {
     }
 
     private ContextItem summaryItem(ConversationSummary summary) {
+        return summaryItem(summary, null);
+    }
+
+    private ContextItem summaryItem(ConversationSummary summary, MetricsCollector metrics) {
         Optional<String> renderedMarkdown = summary.semanticSummary().map(sem -> {
             SummaryRenderKey key = new SummaryRenderKey(summary.id(), summary.version());
-            return renderedMarkdownCache.computeIfAbsent(key, k -> {
-                String md = SemanticSummaryRenderer.renderMarkdown(sem);
-                if (!summary.sourceMessageIds().isEmpty()) {
-                    var fileOps = CompactionFileOperationsTracker.track(summary.sourceMessageIds(), messages);
-                    md = CompactionFileOperationsTracker.appendToFileOperations(md, fileOps);
-                }
-                return md;
-            });
+            Optional<String> cached = renderedMarkdownCache.get(key);
+            if (cached.isPresent()) {
+                if (metrics != null) metrics.summaryRenderCacheHits++;
+                return cached.orElseThrow();
+            }
+            if (metrics != null) metrics.summaryRenderCacheMisses++;
+            String md = SemanticSummaryRenderer.renderMarkdown(sem);
+            if (!summary.sourceMessageIds().isEmpty()) {
+                var fileOps = CompactionFileOperationsTracker.track(summary.sourceMessageIds(), messages);
+                md = CompactionFileOperationsTracker.appendToFileOperations(md, fileOps);
+            }
+            renderedMarkdownCache.put(key, md);
+            return md;
         });
         int estimatedTokens =
                 renderedMarkdown.map(HeuristicTokenEstimator::tokens).orElse(summary.estimatedTokens());
@@ -494,6 +623,10 @@ public final class SessionMessageSource {
     }
 
     private List<List<AgentMessage>> atomicGroups(List<AgentMessage> source) {
+        return atomicGroups(source, null);
+    }
+
+    private List<List<AgentMessage>> atomicGroups(List<AgentMessage> source, MetricsCollector metrics) {
         List<List<AgentMessage>> groups = new ArrayList<>();
         int index = 0;
         while (index < source.size()) {
@@ -507,6 +640,7 @@ public final class SessionMessageSource {
             if (!calls.isEmpty()) {
                 Set<ToolCallId> results = new HashSet<>();
                 for (int candidate = index + 1; candidate < source.size(); candidate++) {
+                    if (metrics != null) metrics.atomicGroupCandidateScans++;
                     Set<ToolCallId> matchingResults = source.get(candidate).contents().stream()
                             .filter(ToolResultPart.class::isInstance)
                             .map(ToolResultPart.class::cast)
@@ -516,6 +650,7 @@ public final class SessionMessageSource {
                     if (!matchingResults.isEmpty()) {
                         results.addAll(matchingResults);
                         end = candidate;
+                        if (results.containsAll(calls)) break;
                     }
                 }
                 if (!results.containsAll(calls)) {
@@ -526,6 +661,7 @@ public final class SessionMessageSource {
             groups.add(List.copyOf(source.subList(index, end + 1)));
             index = end + 1;
         }
+        if (metrics != null) metrics.atomicGroupsBuilt += groups.size();
         return List.copyOf(groups);
     }
 
