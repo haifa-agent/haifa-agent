@@ -205,6 +205,7 @@ public final class SqliteConversationSummaryRepository implements ConversationSu
                     new MessageCursor(row.coveredFrom()),
                     new MessageCursor(row.coveredThrough()),
                     content.sourceMessageIds().stream().map(AgentMessageId::new).toList(),
+                    legacyCoveredSourceCount(row),
                     row.sourceHash(),
                     content.facts(),
                     content.decisions(),
@@ -237,6 +238,7 @@ public final class SqliteConversationSummaryRepository implements ConversationSu
                 new MessageCursor(row.coveredFrom()),
                 new MessageCursor(row.coveredThrough()),
                 content.sourceMessageIds().stream().map(AgentMessageId::new).toList(),
+                legacyCoveredSourceCount(row),
                 row.sourceHash(),
                 content.facts(),
                 content.decisions(),
@@ -247,7 +249,15 @@ public final class SqliteConversationSummaryRepository implements ConversationSu
                 row.policyVersion(),
                 row.compressorVersion(),
                 content.securityLabels(),
-                row.valid());
+                row.valid(),
+                Optional.empty(),
+                CompactionQuality.DETERMINISTIC_DEGRADED);
+    }
+
+    private long legacyCoveredSourceCount(ConversationSummaryRow row) {
+        return unitOfWork
+                .mapper(RuntimeStoreMapper.class)
+                .validSummarySourceRangeCount(row.sessionId(), row.coveredFrom(), row.coveredThrough());
     }
 
     private <T> T execute(Supplier<T> work) {

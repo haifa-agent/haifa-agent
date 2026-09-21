@@ -698,7 +698,14 @@ class SemanticCompactionCoordinatorTest {
         FrozenModelBinding binding = createBinding(store, run, chatModel);
         coordinator.forceCompactOnOverflow(run, 1, binding);
 
-        SessionMessageSource messageSource = new SessionMessageSource(store, store, deterministic, policy, ids, time);
+        SessionMessageSource messageSource = new SessionMessageSource(
+                store,
+                store,
+                deterministic,
+                policy,
+                ids,
+                time,
+                new ActiveContextSnapshots(store, store, policy, deterministic));
 
         var selection = messageSource.select(run);
         assertThat(selection.summary()).isPresent();
@@ -1728,7 +1735,7 @@ class SemanticCompactionCoordinatorTest {
     }
 
     @Test
-    void coldStartCompactsAnOversizedUnsummarizedHistoryInBoundedPages() {
+    void coldStartAndForcedRebuildCompactOversizedHistoryInBoundedPages() {
         InMemoryRuntimeStore store = new InMemoryRuntimeStore();
         AtomicInteger idGen = new AtomicInteger();
         IdentifierGenerator ids = () -> "cold-id-" + idGen.incrementAndGet();
@@ -1775,6 +1782,25 @@ class SemanticCompactionCoordinatorTest {
                 .isFalse();
         assertThat(snapshots.current(run.sessionId()).snapshot().activeMessages())
                 .hasSizeLessThan(4_096);
+
+        for (int index = 0; index < 4_100; index++) {
+            store.appendSessionMessage(draft(
+                    "forced-message-" + index,
+                    run.sessionId(),
+                    run.id().value(),
+                    index % 2 == 0 ? MessageRole.USER : MessageRole.ASSISTANT,
+                    "forced message " + index));
+        }
+        long summaryVersionBeforeForcedRebuild = store.latestVersion(run.sessionId());
+
+        CompactionEvaluationOutcome forcedOutcome = coordinator.forceCompactOnOverflow(
+                run, 2, createBindingWithContextWindow(store, run, failingModel, 40_000));
+
+        assertThat(forcedOutcome.triggerReason()).isNotNull();
+        assertThat(store.latestVersion(run.sessionId())).isGreaterThan(summaryVersionBeforeForcedRebuild);
+        assertThat(snapshots.current(run.sessionId()).status()).isEqualTo(ActiveContextSnapshots.AccessStatus.READY);
+        assertThat(snapshots.current(run.sessionId()).snapshot().hasMoreHistory())
+                .isFalse();
     }
 
     private static AgentChatResponse response(String id, String content) {

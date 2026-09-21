@@ -26,6 +26,7 @@ import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.RuntimeOverrides;
 import io.haifa.agent.runtime.core.DefaultAgentRuntime;
 import io.haifa.agent.runtime.core.RuntimeCoreBuilder;
+import io.haifa.agent.runtime.core.context.ActiveContextSnapshots;
 import io.haifa.agent.runtime.core.execution.ManualExecutionScheduler;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
@@ -97,7 +98,9 @@ class SessionMessageSourceMetricsTest {
                 new DeterministicContextCompressor(),
                 new CompressionPolicy(12, 32, 4),
                 () -> "summary-id",
-                () -> NOW);
+                () -> NOW,
+                new ActiveContextSnapshots(
+                        store, store, new CompressionPolicy(12, 32, 4), new DeterministicContextCompressor()));
 
         SessionMessageSource.MeasuredSelection measured = source.selectMeasured(run, Long.MAX_VALUE);
 
@@ -123,8 +126,14 @@ class SessionMessageSourceMetricsTest {
         AgentRun run = createRun(store);
         CompressionPolicy policy = new CompressionPolicy(12, 32, 4);
         DeterministicContextCompressor compressor = new DeterministicContextCompressor();
-        SessionMessageSource bounded =
-                new SessionMessageSource(store, store, compressor, policy, () -> "summary-bounded", () -> NOW);
+        SessionMessageSource bounded = new SessionMessageSource(
+                store,
+                store,
+                compressor,
+                policy,
+                () -> "summary-bounded",
+                () -> NOW,
+                new ActiveContextSnapshots(store, store, policy, compressor));
         SessionMessageSource oracle = SessionMessageSource.fullHistoryOracle(
                 store, store, compressor, policy, () -> "summary-oracle", () -> NOW);
         appendText(store, run, "oracle-assistant-1", MessageRole.ASSISTANT, "first response");
