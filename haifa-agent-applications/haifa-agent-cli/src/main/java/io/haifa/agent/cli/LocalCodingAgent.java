@@ -51,6 +51,7 @@ import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.core.run.AgentRunType;
 import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.execution.api.ToolOutputPreviewPublisher;
 import io.haifa.agent.model.anthropic.AnthropicMessagesModel;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.CredentialRef;
@@ -956,6 +957,12 @@ final class LocalCodingAgent implements AutoCloseable {
 
     Optional<CodingShellService> shell() {
         return shell;
+    }
+
+    ToolOutputPreviewPublisher previewPublisher() {
+        return executionPlatform
+                .map(CliExecutionPlatform::previewPublisher)
+                .orElseGet(ToolOutputPreviewPublisher::noop);
     }
 
     CodingSessionExportService exporter() {

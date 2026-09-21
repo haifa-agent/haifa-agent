@@ -32,20 +32,32 @@ export function UsagePanel({ run }: { run: Run | null }) {
   );
 }
 
-export function ActivityFeed({ activities, emptyText }: { activities: Activity[]; emptyText: string }) {
+function ActivityCard({ activity }: { activity: Activity }) {
+  return (
+    <article className={`activity-card ${activity.parentActivityId ? "activity-child" : ""}`}>
+      <div className={`activity-kind kind-${activity.kind.toLowerCase()}`}>
+        <ActivityIcon kind={activity.kind} /><span>{activity.kind}</span><small>{statusLabel(activity.status)}</small>
+      </div>
+      <strong>{activity.displayName}</strong>
+      {activity.safeTargetSummary && <pre className="activity-summary">{activity.safeTargetSummary}</pre>}
+      {activity.safeResultSummary && <pre className="activity-summary safe-result">{activity.safeResultSummary}</pre>}
+      {activity.parentActivityId && <small className="activity-relation">关联上级操作</small>}
+      <time>{formatTime(activity.startedAt ?? activity.requestedAt ?? activity.occurredAt)}</time>
+    </article>
+  );
+}
+
+export function ActivityFeed({
+  activities,
+  emptyText,
+}: {
+  activities: Activity[];
+  emptyText: string;
+}) {
   return (
     <div className="activity-list">
       {activities.map((activity) => (
-        <article className={`activity-card ${activity.parentActivityId ? "activity-child" : ""}`} key={activity.activityId}>
-          <div className={`activity-kind kind-${activity.kind.toLowerCase()}`}>
-            <ActivityIcon kind={activity.kind} /><span>{activity.kind}</span><small>{statusLabel(activity.status)}</small>
-          </div>
-          <strong>{activity.displayName}</strong>
-          {activity.safeTargetSummary && <pre className="activity-summary">{activity.safeTargetSummary}</pre>}
-          {activity.safeResultSummary && <pre className="activity-summary safe-result">{activity.safeResultSummary}</pre>}
-          {activity.parentActivityId && <small className="activity-relation">关联上级操作</small>}
-          <time>{formatTime(activity.startedAt ?? activity.requestedAt ?? activity.occurredAt)}</time>
-        </article>
+        <ActivityCard activity={activity} key={activity.activityId} />
       ))}
       {!activities.length && <p className="muted">{emptyText}</p>}
     </div>

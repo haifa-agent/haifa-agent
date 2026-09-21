@@ -208,6 +208,12 @@ transient cursor。`run.status` 只刷新 Run，`interaction.status` 只刷新 I
 投影的 `activity.committed` 直接合并到本地状态，缺少投影时才重取 Activities。Interaction 请求使用
 generation 门禁丢弃旧响应，审批卡片不会等待 Activities，也不会被较早返回的空响应覆盖。
 
+`tool.output.preview` 是独立的非 replay 临时帧，不参与 durable/transient sequence 去重，也不更新浏览器
+保存的 `Last-Event-ID`。页面按 `toolCallId` 合并到对话区当前“工具活动”卡片下方的实时输出区域，按
+16 KiB/200 行保留最新尾部，并仅在用户原本位于底部时自动跟随；终态 Activity 或 `run.final` 到达后
+立即清除临时内容，以最终安全 Activity 结果为准。执行输出截断与 preview 链路丢批使用不同提示，
+避免把 broker 输出上限误报为实时预览丢失。
+
 When a Run is waiting for approval or interaction and its interaction snapshot cannot be loaded, the page displays
 an explicit blocking error instead of silently hiding the approval controls.
 

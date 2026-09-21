@@ -15,6 +15,9 @@ import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.session.AgentSessionStatus;
+import io.haifa.agent.core.tool.ToolCallId;
+import io.haifa.agent.execution.api.ExecutionOutputChannel;
+import io.haifa.agent.execution.api.ToolOutputPreview;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.AgentRunOutputEvent;
@@ -214,6 +217,92 @@ class TerminalUiReducerTest {
                     assertThat(item.title()).isEqualTo("workspace.write · src/App.java");
                     assertThat(item.body()).contains("Target: src/App.java", "Result: artifact:tool-1");
                 });
+    }
+
+    @Test
+    void ignoresLatePreviewAfterAuthoritativeToolCompletion() {
+        TerminalUiState runStarted = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(
+                        event(1, "run-started", new RunEventPayloads.RunLifecycle("STARTED", 1, "NONE"))));
+        TerminalUiState requested = reducer.reduce(
+                runStarted,
+                new TerminalUiAction.RunEventReceived(event(
+                        2,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1", "execution_run", "STARTED", "NONE", "echo hi", ""))));
+        TerminalUiState stdoutPreviewed = reducer.reduce(
+                requested,
+                new TerminalUiAction.ToolOutputPreviewReceived(new ToolOutputPreview(
+                        new AgentRunId("run-1"),
+                        new ToolCallId("tool-1"),
+                        ExecutionOutputChannel.STDOUT,
+                        "live output",
+                        false,
+                        false)));
+        TerminalUiState stderrPreviewed = reducer.reduce(
+                stdoutPreviewed,
+                new TerminalUiAction.ToolOutputPreviewReceived(new ToolOutputPreview(
+                        new AgentRunId("run-1"),
+                        new ToolCallId("tool-1"),
+                        ExecutionOutputChannel.STDERR,
+                        "warning",
+                        true,
+                        false)));
+        TerminalUiState repeatedStderr = reducer.reduce(
+                stderrPreviewed,
+                new TerminalUiAction.ToolOutputPreviewReceived(new ToolOutputPreview(
+                        new AgentRunId("run-1"),
+                        new ToolCallId("tool-1"),
+                        ExecutionOutputChannel.STDERR,
+                        "warning again",
+                        false,
+                        false)));
+        TerminalUiState previewed = reducer.reduce(
+                repeatedStderr,
+                new TerminalUiAction.ToolOutputPreviewReceived(new ToolOutputPreview(
+                        new AgentRunId("run-1"),
+                        new ToolCallId("tool-1"),
+                        ExecutionOutputChannel.STDOUT,
+                        "resumed",
+                        false,
+                        true)));
+        TerminalUiState completed = reducer.reduce(
+                previewed,
+                new TerminalUiAction.RunEventReceived(event(
+                        3,
+                        "event-2",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1", "execution_run", "SUCCEEDED", "NONE", "echo hi", "final result"))));
+        TerminalUiState latePreview = reducer.reduce(
+                completed,
+                new TerminalUiAction.ToolOutputPreviewReceived(new ToolOutputPreview(
+                        new AgentRunId("run-1"),
+                        new ToolCallId("tool-1"),
+                        ExecutionOutputChannel.STDOUT,
+                        "late output",
+                        false,
+                        false)));
+
+        assertThat(previewed.transcript())
+                .filteredOn(item -> item.id().equals("tool-tool-1"))
+                .singleElement()
+                .satisfies(item -> assertThat(item.body())
+                        .contains(
+                                "Target: echo hi\nOutput (streaming):\n",
+                                "live output",
+                                "[stderr]\nwarning",
+                                "warning again",
+                                "[stdout]\nresumed",
+                                "[execution output truncated]",
+                                "[preview output dropped]"))
+                .satisfies(item -> assertThat(item.body()).containsOnlyOnce("[stderr]\n"));
+        assertThat(latePreview.transcript())
+                .filteredOn(item -> item.id().equals("tool-tool-1"))
+                .singleElement()
+                .satisfies(item ->
+                        assertThat(item.body()).contains("Result: final result").doesNotContain("late output"));
     }
 
     @Test

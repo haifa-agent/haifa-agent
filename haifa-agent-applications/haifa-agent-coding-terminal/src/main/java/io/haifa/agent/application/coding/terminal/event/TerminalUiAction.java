@@ -5,6 +5,7 @@ import io.haifa.agent.application.coding.terminal.state.TerminalSelector;
 import io.haifa.agent.application.project.product.coding.CodingSessionHistoryPage;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationProgressView;
+import io.haifa.agent.execution.api.ToolOutputPreview;
 import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.AgentRunOutputEvent;
 import io.haifa.agent.runtime.api.InteractionResponseReceipt;
@@ -64,6 +65,8 @@ public sealed interface TerminalUiAction {
     record RunEventReceived(AgentRunEvent event) implements TerminalUiAction {}
 
     record RunOutputReceived(AgentRunOutputEvent event) implements TerminalUiAction {}
+
+    record ToolOutputPreviewReceived(ToolOutputPreview preview) implements TerminalUiAction {}
 
     record InteractionPresented(InteractionView interaction) implements TerminalUiAction {}
 

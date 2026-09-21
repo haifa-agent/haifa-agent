@@ -292,9 +292,10 @@ API Error envelope。
 - 完成态 Run 的 `recommend-questions` 可选辅助推理接口；POST 绑定 Conversation/Run 和
   `Idempotency-Key`，模型判定为快问快答、简单计算等闭合问题时返回空数组；
 - Reactor Netty / Spring WebFlux HTTP；
-- `Flux<ServerSentEvent<?>>` Run 流合并 durable Run/Tool/Interaction Activity 与 transient Assistant
-  output；SSE ID 同时携带两套 source-local cursor 和进程 epoch，避免 sequence 冲突，并保留
-  heartbeat、bounded overflow、终态关闭和断连订阅清理；
+- `Flux<ServerSentEvent<?>>` Run 流合并 durable Run/Tool/Interaction Activity、transient Assistant
+  output 和 `tool.output.preview`。Tool preview 使用独立 `LATEST` Flux，不进入 durable sink，复用当前
+  复合 cursor 但不产生 SSE `id`；preview 订阅失败、背压或丢弃不会关闭 durable SSE。SSE ID 同时携带
+  两套 source-local cursor 和进程 epoch，并保留 heartbeat、终态关闭和断连订阅清理；
 - 固定可信 Caller、Host/Origin/CSRF、请求体上限和安全响应头；
 - Actuator liveness/readiness。
 
