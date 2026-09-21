@@ -342,7 +342,21 @@ public final class PersonalApiMapper {
                 value.occurredAt(),
                 value.safeResultSummary(),
                 value.interactionRef(),
-                value.version());
+                value.version(),
+                value.toolDetail().map(this::toolDetail));
+    }
+
+    private PersonalApiDtos.ActivityToolDetail toolDetail(PersonalAssistantApplication.ToolDetailView value) {
+        return new PersonalApiDtos.ActivityToolDetail(
+                value.outputPreview(),
+                value.truncated(),
+                value.byteCount(),
+                value.lineCount(),
+                value.truncationReason(),
+                value.processState(),
+                value.exitCode(),
+                value.resultRef(),
+                value.outcomeUnknown());
     }
 
     public PersonalApiDtos.Interaction interaction(PersonalAssistantApplication.InteractionViewValue value) {

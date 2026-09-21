@@ -959,37 +959,71 @@ public final class PersonalAssistantApplication implements AutoCloseable {
                     event.occurredAt(),
                     safeResult(model),
                     Optional.empty(),
-                    event.sequence()));
+                    event.sequence(),
+                    Optional.empty()));
         }
         if (!(event.payload() instanceof RunEventPayloads.ToolLifecycle tool)) return Optional.empty();
-        ActivityKind kind =
-                Set.of(PersonalAssistantProfile.SKILL_LOAD_ALIAS, PersonalAssistantProfile.SKILL_RESOURCE_ALIAS)
-                                        .contains(tool.displayName())
-                                || tool.displayName().startsWith("skill.")
-                        ? ActivityKind.SKILL
-                        : mcpToolAliases.contains(tool.displayName())
-                                        || tool.displayName().startsWith("mcp.")
-                                ? ActivityKind.MCP
-                                : ActivityKind.TOOL;
-        return Optional.of(new ActivityView(
+        return Optional.of(toolActivity(
+                event.eventId(), event.runId().value(), event.occurredAt(), event.sequence(), toolKind(tool), tool));
+    }
+
+    private ActivityKind toolKind(RunEventPayloads.ToolLifecycle tool) {
+        return Set.of(PersonalAssistantProfile.SKILL_LOAD_ALIAS, PersonalAssistantProfile.SKILL_RESOURCE_ALIAS)
+                                .contains(tool.displayName())
+                        || tool.displayName().startsWith("skill.")
+                ? ActivityKind.SKILL
+                : mcpToolAliases.contains(tool.displayName())
+                                || tool.displayName().startsWith("mcp.")
+                        ? ActivityKind.MCP
+                        : ActivityKind.TOOL;
+    }
+
+    /** Maps one authoritative tool lifecycle fact into the PA activity read model. */
+    static ActivityView toolActivity(
+            String eventId,
+            String runId,
+            Instant occurredAt,
+            long sequence,
+            ActivityKind kind,
+            RunEventPayloads.ToolLifecycle tool) {
+        return new ActivityView(
                 "tool:" + tool.toolCallId(),
-                event.eventId(),
+                eventId,
                 Optional.empty(),
-                event.runId().value(),
+                runId,
                 kind,
                 tool.displayName(),
                 tool.targetSummary(),
                 tool.status(),
-                "REQUESTED".equals(tool.status()) ? Optional.of(event.occurredAt()) : Optional.empty(),
-                "STARTED".equals(tool.status()) ? Optional.of(event.occurredAt()) : Optional.empty(),
-                terminal(tool.status()) ? Optional.of(event.occurredAt()) : Optional.empty(),
-                event.occurredAt(),
+                "REQUESTED".equals(tool.status()) ? Optional.of(occurredAt) : Optional.empty(),
+                "STARTED".equals(tool.status()) ? Optional.of(occurredAt) : Optional.empty(),
+                terminal(tool.status()) ? Optional.of(occurredAt) : Optional.empty(),
+                occurredAt,
                 safeResult(tool),
                 Optional.empty(),
-                event.sequence()));
+                sequence,
+                toolDetail(tool));
     }
 
-    private static ActivityView mergeActivity(ActivityView previous, ActivityView next) {
+    private static Optional<ToolDetailView> toolDetail(RunEventPayloads.ToolLifecycle tool) {
+        var observation = tool.observation();
+        boolean outcomeUnknown = unknownOutcome(tool.status(), tool.reasonCode());
+        Optional<String> resultRef = tool.resultRef().isBlank() ? Optional.empty() : Optional.of(tool.resultRef());
+        if (observation.isEmpty() && !outcomeUnknown && resultRef.isEmpty()) return Optional.empty();
+        var preview = observation.flatMap(RunEventPayloads.ToolObservation::outputPreview);
+        return Optional.of(new ToolDetailView(
+                preview.map(value -> value.text()),
+                preview.map(value -> value.truncated()).orElse(false),
+                preview.map(value -> value.byteCount()).orElse(0L),
+                preview.map(value -> value.lineCount()).orElse(0L),
+                preview.flatMap(value -> value.truncationReason()).map(Enum::name),
+                observation.flatMap(RunEventPayloads.ToolObservation::processState),
+                observation.flatMap(RunEventPayloads.ToolObservation::exitCode),
+                resultRef,
+                outcomeUnknown));
+    }
+
+    static ActivityView mergeActivity(ActivityView previous, ActivityView next) {
         if (next.version() < previous.version()) return previous;
         return new ActivityView(
                 next.activityId(),
@@ -1006,7 +1040,8 @@ public final class PersonalAssistantApplication implements AutoCloseable {
                 next.occurredAt(),
                 prefer(next.safeResultSummary(), previous.safeResultSummary()),
                 next.interactionRef().or(() -> previous.interactionRef()),
-                next.version());
+                next.version(),
+                next.toolDetail().or(() -> previous.toolDetail()));
     }
 
     private static Instant activitySortTime(ActivityView activity) {
@@ -1043,9 +1078,22 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     }
 
     private static String safeResult(RunEventPayloads.ToolLifecycle tool) {
+        if (unknownOutcome(tool.status(), tool.reasonCode())) {
+            return tool.reasonCode().isBlank() ? "Outcome unknown" : tool.reasonCode();
+        }
         if ("SUCCEEDED".equals(tool.status())) return "Completed";
-        if ("FAILED".equals(tool.status()) || "CANCELLED".equals(tool.status())) return tool.reasonCode();
+        if ("FAILED".equals(tool.status())
+                || "DENIED".equals(tool.status())
+                || "CANCELLED".equals(tool.status())
+                || "TIMEOUT".equals(tool.status())) return tool.reasonCode();
         return "";
+    }
+
+    /** Unknown side-effecting outcomes are never projected as a successful result. */
+    private static boolean unknownOutcome(String status, String reasonCode) {
+        return "OUTCOME_UNKNOWN".equalsIgnoreCase(status)
+                || "UNKNOWN_OUTCOME".equalsIgnoreCase(status)
+                || "TOOL_OUTCOME_UNKNOWN".equalsIgnoreCase(reasonCode);
     }
 
     private static String safeResult(RunEventPayloads.ModelLifecycle model) {
@@ -1057,7 +1105,8 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     }
 
     private static boolean terminal(String status) {
-        return Set.of("SUCCEEDED", "FAILED", "CANCELLED").contains(status);
+        return Set.of("SUCCEEDED", "FAILED", "DENIED", "CANCELLED", "TIMEOUT", "OUTCOME_UNKNOWN")
+                .contains(status);
     }
 
     private StreamEvent streamEvent(AgentRunEvent event) {
@@ -1282,6 +1331,21 @@ public final class PersonalAssistantApplication implements AutoCloseable {
         MCP
     }
 
+    /**
+     * Bounded, display-only tool detail derived from the Runtime observation. It never carries raw
+     * arguments, provider payloads or full output, and the authoritative result still lives in the asset chain.
+     */
+    public record ToolDetailView(
+            Optional<String> outputPreview,
+            boolean truncated,
+            long byteCount,
+            long lineCount,
+            Optional<String> truncationReason,
+            Optional<String> processState,
+            Optional<Integer> exitCode,
+            Optional<String> resultRef,
+            boolean outcomeUnknown) {}
+
     public record ActivityView(
             String activityId,
             String eventId,
@@ -1297,7 +1361,8 @@ public final class PersonalAssistantApplication implements AutoCloseable {
             Instant occurredAt,
             String safeResultSummary,
             Optional<String> interactionRef,
-            long version) {}
+            long version,
+            Optional<ToolDetailView> toolDetail) {}
 
     public record MemoryCandidateView(
             String id,

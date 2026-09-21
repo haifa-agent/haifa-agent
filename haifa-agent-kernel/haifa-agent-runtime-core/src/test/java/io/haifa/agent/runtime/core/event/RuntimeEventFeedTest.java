@@ -19,6 +19,7 @@ import io.haifa.agent.runtime.api.RunEventCursor;
 import io.haifa.agent.runtime.api.RunEventPayloads;
 import io.haifa.agent.runtime.api.RuntimeApiErrorCode;
 import io.haifa.agent.runtime.api.RuntimeContractException;
+import io.haifa.agent.runtime.api.display.BoundedText;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.storage.RuntimeEvent;
 import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
@@ -307,6 +308,204 @@ class RuntimeEventFeedTest {
         assertThat(execution).isEmpty();
         assertThat(resource.eventType()).isEqualTo("checkpoint.available");
         assertThat(resource.payload()).isInstanceOf(RunEventPayloads.ResourceAvailable.class);
+    }
+
+    @Test
+    void projectsBoundedToolObservationAndDropsUnlistedFields() {
+        InMemoryRuntimeStore store = storeWithRun("run");
+        AgentRunId runId = new AgentRunId("run");
+        RuntimeClientEventProjector projector = new RuntimeClientEventProjector(store);
+
+        var succeeded = projector
+                .project(new RuntimeEvent(
+                        "tool-observed",
+                        runId,
+                        1,
+                        "tool.succeeded",
+                        "1",
+                        Map.ofEntries(
+                                Map.entry("toolCallId", "call-1"),
+                                Map.entry("displayName", "execution_run"),
+                                Map.entry("status", "SUCCEEDED"),
+                                Map.entry("reasonCode", "NONE"),
+                                Map.entry("targetSummary", "execution_run"),
+                                Map.entry("resultRef", "asset-1"),
+                                Map.entry("outputPreview", "Command exited (exit 0)"),
+                                Map.entry("outputPreviewTruncated", true),
+                                Map.entry("outputPreviewByteCount", 48_000L),
+                                Map.entry("outputPreviewLineCount", 900L),
+                                Map.entry("outputPreviewTruncationReason", "OUTPUT_LINES"),
+                                Map.entry("processState", "EXITED"),
+                                Map.entry("exitCode", 0),
+                                Map.entry("rawArguments", "must-not-project"),
+                                Map.entry("providerBody", "must-not-project")),
+                        NOW,
+                        Optional.empty(),
+                        Optional.empty()))
+                .orElseThrow();
+
+        assertThat(succeeded.payload()).isInstanceOfSatisfying(RunEventPayloads.ToolLifecycle.class, payload -> {
+            assertThat(payload.toString()).doesNotContain("must-not-project");
+            assertThat(payload.observation()).hasValueSatisfying(observation -> {
+                assertThat(observation.processState()).contains("EXITED");
+                assertThat(observation.exitCode()).contains(0);
+                assertThat(observation.outputPreview()).hasValueSatisfying(preview -> {
+                    assertThat(preview.text()).isEqualTo("Command exited (exit 0)");
+                    assertThat(preview.truncated()).isTrue();
+                    assertThat(preview.truncationReason()).contains(BoundedText.TruncationReason.OUTPUT_LINES);
+                    assertThat(preview.byteCount()).isEqualTo(48_000L);
+                    assertThat(preview.lineCount()).isEqualTo(900L);
+                });
+            });
+        });
+
+        var unknown = projector
+                .project(new RuntimeEvent(
+                        "tool-unknown",
+                        runId,
+                        2,
+                        "tool.failed",
+                        "1",
+                        Map.of(
+                                "toolCallId", "call-2",
+                                "displayName", "execution_run",
+                                "status", "OUTCOME_UNKNOWN",
+                                "reasonCode", "AUTOMATIC_REPLAY_FORBIDDEN",
+                                "targetSummary", "execution_run",
+                                "resultRef", ""),
+                        NOW,
+                        Optional.empty(),
+                        Optional.empty()))
+                .orElseThrow();
+
+        assertThat(unknown.payload())
+                .isInstanceOfSatisfying(
+                        RunEventPayloads.ToolLifecycle.class,
+                        payload -> assertThat(payload.observation()).isEmpty());
+    }
+
+    @Test
+    void dropsOutOfRangeOrFractionalExitCodeFromProjectedToolObservation() {
+        InMemoryRuntimeStore store = storeWithRun("run");
+        AgentRunId runId = new AgentRunId("run");
+        RuntimeClientEventProjector projector = new RuntimeClientEventProjector(store);
+
+        assertThat(exitCodeOf(projector, runId, "overflow", 5_000_000_000L)).isEmpty();
+        assertThat(exitCodeOf(projector, runId, "fractional", 1.5)).isEmpty();
+        assertThat(exitCodeOf(projector, runId, "exact", 2)).contains(2);
+    }
+
+    private static Optional<Integer> exitCodeOf(
+            RuntimeClientEventProjector projector, AgentRunId runId, String suffix, Object exitCode) {
+        var projected = projector
+                .project(new RuntimeEvent(
+                        "tool-" + suffix,
+                        runId,
+                        1,
+                        "tool.succeeded",
+                        "1",
+                        Map.ofEntries(
+                                Map.entry("toolCallId", "call-" + suffix),
+                                Map.entry("displayName", "execution_run"),
+                                Map.entry("status", "SUCCEEDED"),
+                                Map.entry("reasonCode", "NONE"),
+                                Map.entry("targetSummary", "execution_run"),
+                                Map.entry("resultRef", ""),
+                                Map.entry("outputPreview", "ok"),
+                                Map.entry("exitCode", exitCode)),
+                        NOW,
+                        Optional.empty(),
+                        Optional.empty()))
+                .orElseThrow();
+        return ((RunEventPayloads.ToolLifecycle) projected.payload())
+                .observation()
+                .orElseThrow()
+                .exitCode();
+    }
+
+    @Test
+    void projectsTerminalToolStatusesWithStableIdentityAndReplaysDeterministically() {
+        InMemoryRuntimeStore store = storeWithRun("run");
+        AgentRunId runId = new AgentRunId("run");
+        RuntimeClientEventProjector projector = new RuntimeClientEventProjector(store);
+
+        RunEventPayloads.ToolLifecycle failed = projectTool(
+                projector,
+                runId,
+                "t-failed",
+                1,
+                "tool.failed",
+                Map.of(
+                        "status", "FAILED",
+                        "reasonCode", "IO_FAILED",
+                        "outputPreview", "boom",
+                        "processState", "EXITED",
+                        "exitCode", 2));
+        RunEventPayloads.ToolLifecycle cancelled =
+                projectTool(projector, runId, "t-cancelled", 2, "tool.cancelled", Map.of("status", "CANCELLED"));
+        RunEventPayloads.ToolLifecycle timedOut = projectTool(
+                projector,
+                runId,
+                "t-timeout",
+                3,
+                "tool.failed",
+                Map.of("status", "TIMEOUT", "reasonCode", "WALL_TIME_EXCEEDED"));
+        RunEventPayloads.ToolLifecycle unknown = projectTool(
+                projector,
+                runId,
+                "t-unknown",
+                4,
+                "tool.failed",
+                Map.of("status", "OUTCOME_UNKNOWN", "reasonCode", "TOOL_OUTCOME_UNKNOWN"));
+
+        assertThat(List.of(failed, cancelled, timedOut, unknown))
+                .allSatisfy(payload -> assertThat(payload.toolCallId()).isEqualTo("call-stable"));
+        assertThat(failed.status()).isEqualTo("FAILED");
+        assertThat(failed.reasonCode()).isEqualTo("IO_FAILED");
+        assertThat(failed.observation()).hasValueSatisfying(observation -> {
+            assertThat(observation.outputPreview())
+                    .hasValueSatisfying(preview -> assertThat(preview.text()).isEqualTo("boom"));
+            assertThat(observation.processState()).contains("EXITED");
+            assertThat(observation.exitCode()).contains(2);
+        });
+        assertThat(cancelled.status()).isEqualTo("CANCELLED");
+        assertThat(timedOut.status()).isEqualTo("TIMEOUT");
+        assertThat(unknown.status()).isEqualTo("OUTCOME_UNKNOWN");
+        assertThat(unknown.observation()).isEmpty();
+
+        assertThat(projectTool(
+                        projector,
+                        runId,
+                        "t-failed",
+                        1,
+                        "tool.failed",
+                        Map.of(
+                                "status", "FAILED",
+                                "reasonCode", "IO_FAILED",
+                                "outputPreview", "boom",
+                                "processState", "EXITED",
+                                "exitCode", 2)))
+                .isEqualTo(failed);
+    }
+
+    private static RunEventPayloads.ToolLifecycle projectTool(
+            RuntimeClientEventProjector projector,
+            AgentRunId runId,
+            String eventId,
+            long sequence,
+            String type,
+            Map<String, Object> extra) {
+        var data = new java.util.LinkedHashMap<String, Object>();
+        data.put("toolCallId", "call-stable");
+        data.put("displayName", "execution_run");
+        data.put("targetSummary", "git status");
+        data.put("resultRef", "");
+        data.putAll(extra);
+        var projected = projector
+                .project(new RuntimeEvent(
+                        eventId, runId, sequence, type, "1", Map.copyOf(data), NOW, Optional.empty(), Optional.empty()))
+                .orElseThrow();
+        return (RunEventPayloads.ToolLifecycle) projected.payload();
     }
 
     @Test

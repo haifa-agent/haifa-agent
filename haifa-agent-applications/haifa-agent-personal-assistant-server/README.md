@@ -48,7 +48,10 @@ requested/started/completed lifecycle timestamps. Existing Runs without a plan o
 
 The public activities endpoint projects bounded durable Model, Tool, Skill, and MCP
 events. Model activities never include prompts, assistant text, endpoints, credentials,
-or raw provider failures.
+or raw provider failures. Tool activities may carry an optional bounded `toolDetail`
+preview with truncation and size statistics, allowlisted `processState`/`exitCode` metadata
+and the authoritative result reference; raw arguments, provider payloads and full output
+are never returned.
 
 Server 只接受 `haifa.personal.model-providers` 受信 Provider 列表和显式
 `default-model-id`，不支持旧的单模型 `haifa.personal.model` 配置。产品 YAML 仅保留连接、

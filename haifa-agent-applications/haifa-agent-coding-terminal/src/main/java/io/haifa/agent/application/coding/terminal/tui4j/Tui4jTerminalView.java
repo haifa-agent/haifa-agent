@@ -73,6 +73,7 @@ final class Tui4jTerminalView {
             "REJECTED",
             "SHELL COMMAND DENIED",
             "TIMEOUT");
+    private static final Set<String> UNKNOWN_STATUSES = Set.of("OUTCOME_UNKNOWN", "UNKNOWN_OUTCOME");
 
     private final Tui4jTerminalTheme theme = new Tui4jTerminalTheme();
     private final IncrementalTerminalMarkdownRenderer markdown = new IncrementalTerminalMarkdownRenderer(theme);
@@ -318,7 +319,7 @@ final class Tui4jTerminalView {
         }
         if (item.collapsible()) {
             String content = title + theme.muted(" · " + shortcuts.toggleExpansion() + " expand");
-            if (isErrorStatus(item.status())) {
+            if (isErrorStatus(item.status()) || isUnknownStatus(item.status())) {
                 String details = item.body()
                         .lines()
                         .limit(2)
@@ -383,6 +384,7 @@ final class Tui4jTerminalView {
 
     private static String glyph(String status) {
         String normalized = status.strip().toUpperCase(Locale.ROOT);
+        if (UNKNOWN_STATUSES.contains(normalized)) return "?";
         if (SUCCESS_STATUSES.contains(normalized)) return "✓";
         if (ERROR_STATUSES.contains(normalized)) return "✗";
         return "●";
@@ -405,11 +407,15 @@ final class Tui4jTerminalView {
     }
 
     private boolean isCompactTool(TranscriptItem item) {
-        return item.collapsible() && !isErrorStatus(item.status());
+        return item.collapsible() && !isErrorStatus(item.status()) && !isUnknownStatus(item.status());
     }
 
     private boolean isErrorStatus(String status) {
         return ERROR_STATUSES.contains(status.strip().toUpperCase(Locale.ROOT));
+    }
+
+    private boolean isUnknownStatus(String status) {
+        return UNKNOWN_STATUSES.contains(status.strip().toUpperCase(Locale.ROOT));
     }
 
     private String indent(String value) {
