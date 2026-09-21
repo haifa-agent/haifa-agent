@@ -407,6 +407,21 @@ public final class PersonalApiDtos {
             Optional<Instant> startedAt,
             Optional<Instant> completedAt) {}
 
+    /**
+     * Bounded, display-only tool detail. It excludes raw arguments, provider payloads and full output; the
+     * authoritative result remains in the asset chain referenced by {@code resultRef}.
+     */
+    public record ActivityToolDetail(
+            Optional<String> outputPreview,
+            boolean truncated,
+            long byteCount,
+            long lineCount,
+            Optional<String> truncationReason,
+            Optional<String> processState,
+            Optional<Integer> exitCode,
+            Optional<String> resultRef,
+            boolean outcomeUnknown) {}
+
     public record Activity(
             String activityId,
             String eventId,
@@ -422,7 +437,8 @@ public final class PersonalApiDtos {
             Instant occurredAt,
             String safeResultSummary,
             Optional<String> interactionRef,
-            long version) {}
+            long version,
+            Optional<ActivityToolDetail> toolDetail) {}
 
     public record Interaction(
             String id,
