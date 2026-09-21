@@ -9,6 +9,8 @@ import io.haifa.agent.core.content.StoredImageContentPart;
 import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.execution.api.ToolOutputPreview;
+import io.haifa.agent.execution.api.ToolOutputPreviewPublisher;
 import io.haifa.agent.memory.api.MemoryCandidateId;
 import io.haifa.agent.memory.api.MemoryCandidateStatus;
 import io.haifa.agent.memory.api.MemoryId;
@@ -62,6 +64,7 @@ import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.function.Consumer;
 
 /** Pure-Java product use cases over the Phase 20 SDK and public Runtime views. */
 public final class PersonalAssistantApplication implements AutoCloseable {
@@ -78,6 +81,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     private final Map<String, String> skillBindingReferences;
     private final String productDigest;
     private final ResearchFetchEvidenceReader fetchEvidenceReader;
+    private final ToolOutputPreviewPublisher previewPublisher;
     private final ConcurrentMap<String, List<String>> recommendedQuestions = new ConcurrentHashMap<>();
 
     public PersonalAssistantApplication(
@@ -130,7 +134,8 @@ public final class PersonalAssistantApplication implements AutoCloseable {
                 skillBindingReferences,
                 agent.profile().productId().value() + "@"
                         + agent.profile().productVersion().value(),
-                fetchEvidenceReader);
+                fetchEvidenceReader,
+                ToolOutputPreviewPublisher.noop());
     }
 
     public PersonalAssistantApplication(
@@ -146,6 +151,36 @@ public final class PersonalAssistantApplication implements AutoCloseable {
             Map<String, String> skillBindingReferences,
             String productDigest,
             ResearchFetchEvidenceReader fetchEvidenceReader) {
+        this(
+                agent,
+                mcp,
+                clock,
+                capabilities,
+                models,
+                modelPreferences,
+                questionRecommender,
+                missionRuntime,
+                artifacts,
+                skillBindingReferences,
+                productDigest,
+                fetchEvidenceReader,
+                ToolOutputPreviewPublisher.noop());
+    }
+
+    public PersonalAssistantApplication(
+            HaifaAgent agent,
+            PersonalMcpPlatform mcp,
+            Clock clock,
+            PersonalCapabilityRegistry capabilities,
+            PersonalModelCatalog models,
+            PersonalModelPreferenceStore modelPreferences,
+            PersonalQuestionRecommender questionRecommender,
+            MissionRuntimeAccess missionRuntime,
+            ArtifactService artifacts,
+            Map<String, String> skillBindingReferences,
+            String productDigest,
+            ResearchFetchEvidenceReader fetchEvidenceReader,
+            ToolOutputPreviewPublisher previewPublisher) {
         this.agent = Objects.requireNonNull(agent);
         this.mcp = Objects.requireNonNull(mcp);
         this.clock = Objects.requireNonNull(clock);
@@ -158,6 +193,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
         this.skillBindingReferences = Map.copyOf(skillBindingReferences);
         this.productDigest = Objects.requireNonNull(productDigest, "productDigest must not be null");
         this.fetchEvidenceReader = Objects.requireNonNull(fetchEvidenceReader, "fetchEvidenceReader must not be null");
+        this.previewPublisher = Objects.requireNonNull(previewPublisher, "previewPublisher must not be null");
         this.mcpToolAliases = mcp.aliases();
     }
 
@@ -171,6 +207,16 @@ public final class PersonalAssistantApplication implements AutoCloseable {
 
     public ResearchFetchEvidenceReader fetchEvidenceReader() {
         return fetchEvidenceReader;
+    }
+
+    public Instant now() {
+        return clock.instant();
+    }
+
+    public StreamSubscription subscribeToolOutput(String runId, Consumer<ToolOutputPreview> listener) {
+        ToolOutputPreviewPublisher.ToolOutputPreviewSubscription subscription = previewPublisher.subscribe(
+                new AgentRunId(runId), Objects.requireNonNull(listener, "listener must not be null"));
+        return subscription::close;
     }
 
     public Optional<String> skillBindingReference(String alias) {

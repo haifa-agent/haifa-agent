@@ -2214,15 +2214,15 @@ describe("Personal Assistant application", () => {
     ));
   });
 
-  it("shows the latest safe activity in the live run card", async () => {
+  it("shows live tool output below the active tool in the conversation", async () => {
     const active = { ...conversation, activeRunId: "run-tool" };
     const activeRun = { ...run, id: "run-tool", status: "RUNNING", version: 1 };
     const startedActivity: Activity = {
       ...activity,
-      activityId: "activity-tool-started",
+      activityId: "tool:call-1",
       runId: activeRun.id,
-      displayName: "workspace.inspect",
-      safeTargetSummary: "Repository source files",
+      displayName: "execution_run",
+      safeTargetSummary: "Print five lines with delays",
       safeResultSummary: "",
       status: "STARTED",
       startedAt: new Date(Date.now()).toISOString(),
@@ -2234,13 +2234,34 @@ describe("Personal Assistant application", () => {
     vi.mocked(api.conversation).mockResolvedValue(active);
     vi.mocked(api.run).mockResolvedValue(activeRun);
     vi.mocked(api.activities).mockResolvedValue([startedActivity]);
+    vi.mocked(api.streamRun).mockImplementation(async (_runId, handlers, signal) => {
+      handlers.onOpen?.();
+      handlers.onEvent({
+        eventId: "cursor-1",
+        type: "tool.output.preview",
+        runId: activeRun.id,
+        occurredAt: "2026-07-28T01:00:00Z",
+        value: "Hello DeepSeek 1\nHello DeepSeek 2\n",
+        source: "transient",
+        sequence: 0,
+        toolCallId: "call-1",
+        outputChannel: "stdout",
+        outputTruncated: false,
+        previewDropped: false,
+      });
+      await new Promise<void>((resolve) =>
+        signal.addEventListener("abort", () => resolve(), { once: true }),
+      );
+    });
 
     const { container } = render(<App client={api} />);
 
     await waitFor(() => expect(container.querySelector(".live-run-card")).toBeTruthy());
     const liveCard = container.querySelector<HTMLElement>(".live-run-card")!;
-    expect(within(liveCard).getByText("正在运行 workspace.inspect")).toBeTruthy();
-    expect(within(liveCard).getByText("Repository source files")).toBeTruthy();
+    expect(within(liveCard).getByText("正在运行 execution_run")).toBeTruthy();
+    expect(within(liveCard).getByText("Print five lines with delays")).toBeTruthy();
+    const output = await within(liveCard).findByLabelText("execution_run 实时输出");
+    expect(within(output).getByText(/Hello DeepSeek 1\s+Hello DeepSeek 2/)).toBeTruthy();
     expect(within(liveCard).getByText("耗时 1秒")).toBeTruthy();
   });
 

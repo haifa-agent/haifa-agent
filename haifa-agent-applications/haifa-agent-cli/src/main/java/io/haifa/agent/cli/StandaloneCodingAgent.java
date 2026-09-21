@@ -3,6 +3,7 @@ package io.haifa.agent.cli;
 import io.haifa.agent.application.project.product.coding.client.CodingAgentClient;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationClient;
 import io.haifa.agent.application.project.product.coding.client.CodingSessionClient;
+import io.haifa.agent.execution.api.ToolOutputPreviewPublisher;
 import io.haifa.agent.project.domain.ProjectId;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -34,6 +35,11 @@ public final class StandaloneCodingAgent implements CodingAgentClient {
     public CodingAuthenticationClient authentication() {
         requireOpen();
         return localAgent.authentication();
+    }
+
+    public ToolOutputPreviewPublisher toolOutputPreviewPublisher() {
+        requireOpen();
+        return localAgent.previewPublisher();
     }
 
     public StandaloneCodingAgentMetadata metadata() {

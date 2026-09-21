@@ -7,6 +7,7 @@ import io.haifa.agent.personalassistant.application.mission.MissionSnapshot;
 import io.haifa.agent.personalassistant.server.web.v1.dto.PersonalApiDtos;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -404,6 +405,10 @@ public final class PersonalApiMapper {
                 value.value(),
                 value.activity().map(this::activity),
                 value.source().name().toLowerCase(java.util.Locale.ROOT),
-                value.sequence());
+                value.sequence(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty());
     }
 }
