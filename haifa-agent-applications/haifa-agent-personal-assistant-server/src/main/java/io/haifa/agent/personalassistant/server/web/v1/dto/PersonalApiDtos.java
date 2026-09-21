@@ -437,7 +437,19 @@ public final class PersonalApiDtos {
             String inputType,
             int maximumCharacters,
             Instant createdAt,
-            Optional<Instant> expiresAt) {}
+            Optional<Instant> expiresAt,
+            Optional<ApprovalPresentationDto> approvalPresentation) {}
+
+    public record ApprovalFactDto(String label, String value) {}
+
+    public record ApprovalPresentationDto(
+            String title,
+            String purpose,
+            String contentType,
+            String content,
+            List<ApprovalFactDto> environment,
+            List<ApprovalFactDto> technical,
+            Optional<String> risk) {}
 
     public record InteractionResponse(String action, String text) {}
 

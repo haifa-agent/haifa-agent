@@ -153,7 +153,8 @@ Phase B 的工作流反馈只投影稳定产品 DTO 和 Runtime 事件：
   Result Ref，缺失的 Duration 不伪造。Terminal 不从 Runtime Event 解释 Execution 命令、Workdir、
   Stream、Exit 或输出；这些仅可由拥有 Execution 结果的产品集成另行展示；
 - Runtime Checkpoint 继续持久化并推进事件 Cursor，但作为内部恢复事实不投影到 Transcript；
-- Approval 从 `InteractionView` 显示 Action、Target、Risk、Scope、Network、Reason 与允许动作；
+- Approval 优先从 `InteractionView.approvalPresentation` 渲染结构化展示：动作标题、目的、内容类型与
+  正文、环境要点、默认折叠的技术细节和允许动作；缺少结构化展示时回退到 `safePrompt` 文本。
   `InteractionLifecycle.actionOrReason` 等自由文本不参与 UI 解析。Selector 接管输入期间以及响应回执后，
   原有 editor buffer/cursor 均保持不变；
 - `RunInputLifecycle.ACCEPTED` 将 Steer 放入 Pending，`APPLIED` 后移除；持久 Follow-up 与 Steer

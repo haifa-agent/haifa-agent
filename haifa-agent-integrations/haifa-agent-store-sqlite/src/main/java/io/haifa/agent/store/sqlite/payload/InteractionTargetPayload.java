@@ -5,6 +5,7 @@ import io.haifa.agent.runtime.core.interaction.GenericInteractionTarget;
 import io.haifa.agent.runtime.core.interaction.InteractionTarget;
 import io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
 
+/** Version 1 encoded interaction target payload; it never carries an approval presentation. */
 public record InteractionTargetPayload(
         String kind,
         String type,

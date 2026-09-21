@@ -4,6 +4,7 @@ import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.tool.ToolCallId;
+import io.haifa.agent.runtime.api.ApprovalPresentation;
 import io.haifa.agent.runtime.api.InteractionAction;
 import io.haifa.agent.runtime.api.InteractionRequestId;
 import io.haifa.agent.runtime.api.InteractionResponse;
@@ -22,6 +23,7 @@ import io.haifa.agent.runtime.core.interaction.InteractionRequest;
 import io.haifa.agent.runtime.core.interaction.InteractionResolution;
 import io.haifa.agent.runtime.core.interaction.InteractionSemantics;
 import io.haifa.agent.runtime.core.interaction.InteractionSubmissionResolution;
+import io.haifa.agent.runtime.core.interaction.InteractionTarget;
 import io.haifa.agent.runtime.core.interaction.ResolvedInteraction;
 import io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
 import io.haifa.agent.store.sqlite.codec.EncodedPayload;
@@ -31,6 +33,7 @@ import io.haifa.agent.store.sqlite.mybatis.InteractionResponseRow;
 import io.haifa.agent.store.sqlite.mybatis.RuntimeStoreMapper;
 import io.haifa.agent.store.sqlite.payload.ContentPartsPayload;
 import io.haifa.agent.store.sqlite.payload.InteractionTargetPayload;
+import io.haifa.agent.store.sqlite.payload.InteractionTargetPayloadV2;
 import io.haifa.agent.store.sqlite.payload.SqliteRuntimePayloadTypes;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
@@ -66,8 +69,13 @@ public final class SqliteInteractionPort implements InteractionPort {
         }
         execute(() -> {
             RuntimeStoreMapper mapper = unitOfWork.mapper(RuntimeStoreMapper.class);
-            EncodedPayload target = codecs.encode(
-                    SqliteRuntimePayloadTypes.INTERACTION_TARGET, InteractionTargetPayload.from(request.target()));
+            EncodedPayload target = request.presentation().isPresent()
+                    ? codecs.encode(
+                            SqliteRuntimePayloadTypes.INTERACTION_TARGET_V2,
+                            InteractionTargetPayloadV2.from(request.target(), request.presentation()))
+                    : codecs.encode(
+                            SqliteRuntimePayloadTypes.INTERACTION_TARGET,
+                            InteractionTargetPayload.from(request.target()));
             String targetKind = request.target() instanceof ToolApprovalTarget ? "tool-approval" : "generic";
             mapper.insertInteractionRequest(new InteractionRequestRow(
                     request.id().value(),
@@ -441,16 +449,35 @@ public final class SqliteInteractionPort implements InteractionPort {
     }
 
     private InteractionRequest fromRequestRow(InteractionRequestRow row) {
-        InteractionTargetPayload target = codecs.decode(
-                SqliteRuntimePayloadTypes.INTERACTION_TARGET,
-                new EncodedPayload(
-                        SqliteRuntimePayloadTypes.INTERACTION_TARGET.name(),
-                        row.targetSchemaVersion(),
-                        row.targetPayload(),
-                        row.targetHash()));
         String expectedKind = "tool-approval".equals(row.targetType()) ? "tool-approval" : "generic";
-        if (!expectedKind.equals(target.kind())) {
-            throw new IllegalStateException("interaction target discriminator does not match payload");
+        InteractionTarget domainTarget;
+        Optional<ApprovalPresentation> presentation;
+        if ("2".equals(row.targetSchemaVersion())) {
+            InteractionTargetPayloadV2 target = codecs.decode(
+                    SqliteRuntimePayloadTypes.INTERACTION_TARGET_V2,
+                    new EncodedPayload(
+                            SqliteRuntimePayloadTypes.INTERACTION_TARGET_V2.name(),
+                            row.targetSchemaVersion(),
+                            row.targetPayload(),
+                            row.targetHash()));
+            if (!expectedKind.equals(target.kind())) {
+                throw new IllegalStateException("interaction target discriminator does not match payload");
+            }
+            domainTarget = target.toDomain();
+            presentation = target.presentationDomain();
+        } else {
+            InteractionTargetPayload target = codecs.decode(
+                    SqliteRuntimePayloadTypes.INTERACTION_TARGET,
+                    new EncodedPayload(
+                            SqliteRuntimePayloadTypes.INTERACTION_TARGET.name(),
+                            row.targetSchemaVersion(),
+                            row.targetPayload(),
+                            row.targetHash()));
+            if (!expectedKind.equals(target.kind())) {
+                throw new IllegalStateException("interaction target discriminator does not match payload");
+            }
+            domainTarget = target.toDomain();
+            presentation = Optional.empty();
         }
         return new InteractionRequest(
                 new InteractionRequestId(row.requestId()),
@@ -460,10 +487,11 @@ public final class SqliteInteractionPort implements InteractionPort {
                 row.type(),
                 row.prompt(),
                 row.approval(),
-                target.toDomain(),
+                domainTarget,
                 row.createdAt(),
                 Optional.ofNullable(row.expiresAt()),
-                InteractionExpirationOutcome.valueOf(row.expirationOutcome()));
+                InteractionExpirationOutcome.valueOf(row.expirationOutcome()),
+                presentation);
     }
 
     private InteractionRecord transition(
