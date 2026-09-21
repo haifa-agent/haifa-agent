@@ -75,7 +75,7 @@ import {
 } from "./api/client";
 import { appReducer, initialState } from "./state/appReducer";
 import { ModelConnectionsModal, type ModelConnectionsTab } from "./components/ModelConnectionsModal";
-import type { ConnectionState, OutputPhase } from "./types";
+import type { ConnectionState, OutputPhase, ToolOutputPreviewState } from "./types";
 import {
   defaultMissionAcceptanceCriteria,
   defaultResearchBrief,
@@ -844,6 +844,7 @@ function runPresentation(
 function LiveRunCard({
   run,
   activities,
+  previews,
   interaction,
   outputPhase,
   connection,
@@ -852,6 +853,7 @@ function LiveRunCard({
 }: {
   run: Run | null;
   activities: Activity[];
+  previews: Record<string, ToolOutputPreviewState>;
   interaction: Interaction | null;
   outputPhase: OutputPhase;
   connection: ConnectionState;
@@ -878,6 +880,7 @@ function LiveRunCard({
 
   if (!run || completedHidden) return null;
   const visibleActivity = latest?.activityId === suppressedActivityId ? null : latest;
+  const preview = visibleActivity ? previews[visibleActivity.activityId] : undefined;
   const presentation = runPresentation(run, visibleActivity, interaction, outputPhase, connection);
   const primaryAction = presentation.action === "interaction" ? onOpenInteraction : onOpenDetails;
   const actionLabel = presentation.action === "interaction" ? "查看并处理" : "查看运行详情";
@@ -909,6 +912,9 @@ function LiveRunCard({
         {presentation.detail && <span className="live-run-detail">{presentation.detail}</span>}
         <RunProgress run={run} activities={activities} outputPhase={outputPhase} />
       </div>
+      {preview && visibleActivity && (
+        <LiveToolOutput toolName={visibleActivity.displayName} preview={preview} />
+      )}
       {presentation.action && (
         <button
           type="button"
@@ -919,6 +925,41 @@ function LiveRunCard({
         </button>
       )}
     </section>
+  );
+}
+
+function LiveToolOutput({
+  toolName,
+  preview,
+}: {
+  toolName: string;
+  preview: ToolOutputPreviewState;
+}) {
+  const outputRef = useRef<HTMLPreElement>(null);
+  const followTail = useRef(true);
+
+  useEffect(() => {
+    const output = outputRef.current;
+    if (output && followTail.current) output.scrollTop = output.scrollHeight;
+  }, [preview.text]);
+
+  return (
+    <div className="live-run-tool-output" aria-label={`${toolName} 实时输出`}>
+      <div className="live-run-tool-output-heading">
+        <span>实时输出</span>
+        {preview.outputTruncated && <small>执行输出已截断</small>}
+        {preview.previewDropped && <small>部分实时输出已丢弃</small>}
+      </div>
+      <pre
+        ref={outputRef}
+        onScroll={(event) => {
+          const output = event.currentTarget;
+          followTail.current = output.scrollHeight - output.scrollTop - output.clientHeight <= 16;
+        }}
+      >
+        {preview.text}
+      </pre>
+    </div>
   );
 }
 
@@ -2454,6 +2495,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
           <LiveRunCard
             run={state.run}
             activities={state.activities}
+            previews={state.toolPreviews}
             interaction={state.interaction}
             outputPhase={state.outputPhase}
             connection={state.connection}

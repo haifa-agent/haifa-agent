@@ -1,6 +1,7 @@
 package io.haifa.agent.personalassistant.application.execution;
 
 import io.haifa.agent.core.tool.ToolCall;
+import io.haifa.agent.execution.api.ToolOutputPreviewPublisher;
 import io.haifa.agent.execution.core.tool.ExecutionToolDefinitionFactory;
 import io.haifa.agent.execution.core.tool.ExecutionToolProvider;
 import io.haifa.agent.execution.core.tool.ScriptRuntimeResolver;
@@ -69,6 +70,10 @@ public record PersonalExecutionPlatform(
                 + "\nInvocation digest: " + digest
                 + "\nRisks: HIGH, PROCESS_EXECUTION, NON_IDEMPOTENT, host access; approve once or reject";
         return boundedContent(summary, content);
+    }
+
+    public ToolOutputPreviewPublisher previewPublisher() {
+        return provider.previewPublisher();
     }
 
     static String boundedContent(String summary, String content) {

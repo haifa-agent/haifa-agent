@@ -2,6 +2,7 @@ package io.haifa.agent.execution.core.tool;
 
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
+import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.execution.api.ExecutionBroker;
 import io.haifa.agent.execution.api.ExecutionCommand;
@@ -14,6 +15,7 @@ import io.haifa.agent.execution.api.ExecutionRequest;
 import io.haifa.agent.execution.api.ExecutionResult;
 import io.haifa.agent.execution.api.ExecutionStatus;
 import io.haifa.agent.execution.api.ProcessOutputChunk;
+import io.haifa.agent.execution.api.ToolOutputPreviewPublisher;
 import io.haifa.agent.execution.api.TrustedExecutionContext;
 import io.haifa.agent.execution.core.ExecutionRejectedException;
 import io.haifa.agent.execution.core.command.CredentialEgressGuard;
@@ -94,6 +96,10 @@ public final class ExecutionToolProvider implements ToolProvider {
 
     public String scratchSpecDigest() {
         return configuration.scratchSpace().canonicalDigest();
+    }
+
+    public ToolOutputPreviewPublisher previewPublisher() {
+        return configuration.previewPublisher();
     }
 
     public String sandboxProfileIdentity() {
@@ -332,13 +338,20 @@ public final class ExecutionToolProvider implements ToolProvider {
             ToolCancellation cancellation,
             ToolInvocationObserver invocationObserver,
             ParsedInvocation parsed) {
+        ToolOutputPreviewPublisher.ToolOutputPreviewSink preview = request.context()
+                .sourceToolCallId()
+                .<ToolOutputPreviewPublisher.ToolOutputPreviewSink>map(toolCallId -> configuration
+                        .previewPublisher()
+                        .open(new AgentRunId(request.context().runRef()), toolCallId))
+                .orElseGet(ToolOutputPreviewPublisher::noopSink);
         MergedTailObserver merged = new MergedTailObserver(
                 configuration.outputObserver(),
                 invocationObserver,
                 configuration.maximumOutputBytes(),
                 configuration.maximumOutputLines(),
                 request.id().value(),
-                workingDirectoryDigest(request));
+                workingDirectoryDigest(request),
+                preview);
         AtomicBoolean complete = new AtomicBoolean();
         Thread watcher = Thread.ofVirtual()
                 .name("haifa-execution-tool-cancellation")
@@ -361,6 +374,7 @@ public final class ExecutionToolProvider implements ToolProvider {
         } finally {
             complete.set(true);
             watcher.interrupt();
+            preview.close();
         }
     }
 
@@ -498,6 +512,7 @@ public final class ExecutionToolProvider implements ToolProvider {
         private final int maximumLines;
         private final String executionId;
         private final String workingDirectoryDigest;
+        private final ToolOutputPreviewPublisher.ToolOutputPreviewSink preview;
         private boolean upstreamTruncated;
 
         private MergedTailObserver(
@@ -506,13 +521,15 @@ public final class ExecutionToolProvider implements ToolProvider {
                 int maximumBytes,
                 int maximumLines,
                 String executionId,
-                String workingDirectoryDigest) {
+                String workingDirectoryDigest,
+                ToolOutputPreviewPublisher.ToolOutputPreviewSink preview) {
             this.delegate = delegate;
             this.invocationObserver = invocationObserver;
             output = new io.haifa.agent.execution.api.BoundedOutputBuffer(maximumBytes);
             this.maximumLines = maximumLines;
             this.executionId = executionId;
             this.workingDirectoryDigest = workingDirectoryDigest;
+            this.preview = preview;
         }
 
         @Override
@@ -548,6 +565,11 @@ public final class ExecutionToolProvider implements ToolProvider {
                 delegate.onOutput(chunk);
             } catch (RuntimeException ignored) {
                 // Rendering or transport observers do not own the authoritative Tool result.
+            }
+            try {
+                preview.onOutput(chunk);
+            } catch (RuntimeException ignored) {
+                // Preview is best-effort and never changes the authoritative result.
             }
             output.write(chunk.bytes());
         }

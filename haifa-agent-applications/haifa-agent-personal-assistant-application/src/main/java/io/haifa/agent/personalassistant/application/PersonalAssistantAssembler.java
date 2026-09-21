@@ -265,7 +265,8 @@ public final class PersonalAssistantAssembler {
                     dependencies.artifact().service(),
                     skills.bindingReferences(),
                     productDigest(profile, dependencies, tools),
-                    new RuntimeFetchEvidenceReader(dependencies.persistence().runtimePersistence()));
+                    new RuntimeFetchEvidenceReader(dependencies.persistence().runtimePersistence()),
+                    dependencies.execution().previewPublisher());
         } catch (RuntimeException | Error exception) {
             try {
                 mcp.close();

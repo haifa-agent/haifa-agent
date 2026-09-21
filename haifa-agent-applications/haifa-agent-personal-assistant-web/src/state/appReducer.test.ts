@@ -136,6 +136,85 @@ describe("appReducer", () => {
     expect(retried.streamSequences).toEqual({ durable: 1, transient: 3 });
   });
 
+  it("accepts sequence-zero tool previews without advancing the replay cursor", () => {
+    const running: Run = {
+      id: "run-1",
+      conversationId: "conversation-1",
+      status: "RUNNING",
+      version: 1,
+      updatedAt: "2026-07-28T00:00:00Z",
+      usage,
+    };
+    const event: StreamEvent = {
+      eventId: "cursor-1",
+      type: "tool.output.preview",
+      runId: running.id,
+      occurredAt: "2026-07-28T00:00:00Z",
+      value: "hello\n",
+      source: "transient",
+      sequence: 0,
+      toolCallId: "call-1",
+      outputChannel: "stdout",
+      outputTruncated: false,
+      previewDropped: false,
+    };
+
+    const first = appReducer({ ...initialState, run: running }, { type: "streamEvent", event });
+    const second = appReducer(first, {
+      type: "streamEvent",
+      event: {
+        ...event,
+        value: "problem\n",
+        outputChannel: "stderr",
+        outputTruncated: true,
+        previewDropped: true,
+      },
+    });
+
+    expect(second.streamSequences).toEqual({ durable: 0, transient: 0 });
+    expect(second.toolPreviews["tool:call-1"]).toMatchObject({
+      text: "hello\n\n[stderr]\nproblem\n",
+      channel: "stderr",
+      outputTruncated: true,
+      previewDropped: true,
+    });
+  });
+
+  it("bounds tool preview tails and removes them when the final activity arrives", () => {
+    const preview: StreamEvent = {
+      eventId: "cursor-1",
+      type: "tool.output.preview",
+      runId: "run-1",
+      occurredAt: "2026-07-28T00:00:00Z",
+      value: Array.from({ length: 240 }, (_, index) => `line-${index}`).join("\n"),
+      source: "transient",
+      sequence: 0,
+      toolCallId: "call-1",
+      outputChannel: "stdout",
+      outputTruncated: false,
+      previewDropped: false,
+    };
+    const previewed = appReducer(initialState, { type: "streamEvent", event: preview });
+    expect(previewed.toolPreviews["tool:call-1"].text.split("\n")).toHaveLength(200);
+    expect(previewed.toolPreviews["tool:call-1"].outputTruncated).toBe(false);
+    expect(previewed.toolPreviews["tool:call-1"].previewDropped).toBe(true);
+
+    const completed: Activity = {
+      activityId: "tool:call-1",
+      eventId: "activity-1",
+      runId: "run-1",
+      kind: "TOOL",
+      displayName: "execution_run",
+      safeTargetSummary: "echo hello",
+      status: "SUCCEEDED",
+      occurredAt: "2026-07-28T00:00:01Z",
+      safeResultSummary: "Command exited (exit 0)",
+      version: 2,
+    };
+    const finalized = appReducer(previewed, { type: "activitiesLoaded", activities: [completed] });
+    expect(finalized.toolPreviews).toEqual({});
+  });
+
   it("clears current-run projections when a new run is selected", () => {
     const oldRun: Run = {
       id: "run-old",

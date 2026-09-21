@@ -104,6 +104,10 @@ Error、Queued 和 Focus。TrueColor 参考色会按明暗背景自适应；NoCo
   以 `✓`/`✗`/`●` 状态符号开头，随后是 `名称 · 目标` 与完成耗时（如 `✓ file_read · README.md · 0.3s`），
   并把 `ctrl+o expand` 放在同一行；连续折叠项之间不插入空行。失败项在折叠状态额外保留
   最多两行安全原因，展开后才显示既有有界详情和 `Duration … · N lines · X KB` 元数据尾行；
+- 运行中的执行工具通过进程内 transient publisher 增量刷新同一 Tool Call 卡片的
+  `Output (streaming):` 段；每批最多 4 KiB，卡片正文最多保留 16 KiB 尾部，stderr 和 preview
+  丢弃会显式标记；执行侧达到输出上限时使用独立截断标记，避免与预览丢批混淆。该内容不持久化、
+  不 replay，工具终态事件会用权威结果整体替换临时预览；
 - Run 进入终态（completed/failed/cancelled/timeout）时追加一张 Run Summary 卡片，
   标题显示终态与可得耗时（如 `Run completed · 24s`），正文显示终态、稳定错误码及耗时，
   不再从本地 Transcript 反推或累加工具与变更集计数；
@@ -127,7 +131,8 @@ delta，重复 frame 不重新解析；只有权威正文替换或 16 KB 有界�
 - [ ] Mermaid、数学公式与 KaTeX；
 - [ ] GFM 删除线、任务复选框及其他扩展；
 - [ ] OSC 8 可点击链接（当前显示 `label (URL)`）；
-- [ ] Tool 专用预览器、跨 Tool 聚合和批量展开；首版保持每个稳定 Tool Call ID 可独立审计。
+- [ ] Tool 专用结构化预览器、跨 Tool 聚合和批量展开；首版实时输出仍保持每个稳定 Tool Call ID
+  独立、有界地展示。
 
 Editor hint 根据当前事实变化：Idle 显示 `enter send`；活动 Run 显示对应宿主的 Follow-up 与 Interrupt
 快捷键。Windows/Linux 使用 `ctrl+o`、`alt+enter`、`alt+up` 等文本标签；macOS 使用 Apple 标准
