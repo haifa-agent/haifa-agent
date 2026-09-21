@@ -121,6 +121,13 @@ public final class SqliteModelContinuationRepository implements ModelContinuatio
         ModelContinuationRecord record = continuationForMessage(messageId)
                 .orElseThrow(() -> new ModelContinuationException(
                         ModelContinuationFailure.MISSING, "required model continuation is unavailable"));
+        return resolveContinuation(record, model, toolCorrelationIds);
+    }
+
+    @Override
+    public SensitiveModelReasoning resolveContinuation(
+            ModelContinuationRecord record, ResolvedModelSnapshot model, Set<String> toolCorrelationIds) {
+        Objects.requireNonNull(record, "record must not be null");
         if (!CONTINUATION_VERSION.equals(record.reference().version())) {
             throw new ModelContinuationException(
                     ModelContinuationFailure.VERSION_UNSUPPORTED, "model continuation version is unsupported");

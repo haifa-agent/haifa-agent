@@ -955,6 +955,15 @@ class RuntimeCoreTest {
                         "model.call.started",
                         "model.call.succeeded");
         assertThat(fixture.store.eventsFor(accepted.runId()))
+                .filteredOn(event -> event.type().equals("model.attempt.scheduled"))
+                .allSatisfy(event -> assertThat(event.data())
+                        .containsKeys(
+                                "requestAssemblyElapsedMillis",
+                                "continuationBatchCount",
+                                "continuationRecordCount",
+                                "assemblerToolCallBatchCount")
+                        .doesNotContainKeys("response", "reasoning", "prompt"));
+        assertThat(fixture.store.eventsFor(accepted.runId()))
                 .filteredOn(event -> event.type().startsWith("model.call."))
                 .allSatisfy(event -> assertThat(event.data())
                         .containsEntry(

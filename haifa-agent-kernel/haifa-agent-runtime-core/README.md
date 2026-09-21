@@ -44,7 +44,9 @@ pause state fails closed; normal continuation cannot select an earlier budget.
 `model.call.started` plus one terminal `model.call.succeeded` or `model.call.failed` event. Retry waiting and final
 exhaustion add `model.attempt.retry-scheduled` / `model.attempt.exhausted`. `RuntimeClientEventProjector` exposes only
 bounded provider-neutral `ModelLifecycle` and `ModelAttemptLifecycle` fields; model text, reasoning, Prompt and raw
-provider payloads remain outside the durable client feed.
+provider payloads remain outside the durable client feed. The scheduled event also records redacted request-assembly
+timing plus ToolCall/Continuation batch and record counts so long-session setup cost can be compared without retaining
+message or continuation content.
 
 An HTTP-success response with no content, Tool Call, or structured output is normalized as retryable
 `EMPTY_RESPONSE/empty_response`. Runtime defaults to the initial physical attempt plus at most three retries after 1,
@@ -139,7 +141,9 @@ replay-then-tail 订阅。Task 03 的 HTTP/SSE 参考 Adapter 位于 Integration
 手动入口始终显式可用。
 Tail 按 Token 预算从后向前选择，固定消息组数只作为安全上限，Tool Call/Result 原子组不会被拆开。
 `compact(sessionId)` 是产品手动压缩复用的唯一入口，并与自动切换共用 Policy/version、CAS、Redaction
-校验和原始 Message 保留语义。Context Trace 只记录窗口摘要、代次、触发原因和 Token 数，不记录正文。
+校验和原始 Message 保留语义。Context Trace 只记录窗口摘要、代次、触发原因、Token 数、读取/选择行数、
+原子组扫描数和 Summary 渲染缓存命中数，不记录正文。Summary 渲染结果使用同时受条目数和字符数限制的
+进程内 LRU；持久化 Summary 始终是权威事实。
 本次默认启用把 Policy 窗口版本从 `session-window-v2` 提升到 `session-window-v3`；Checkpoint 兼容性要求
 Policy 版本精确匹配，因此旧版本摘要不再被复用为 Checkpoint，并在下一次压缩中确定性重建，
 源消息始终是权威事实。

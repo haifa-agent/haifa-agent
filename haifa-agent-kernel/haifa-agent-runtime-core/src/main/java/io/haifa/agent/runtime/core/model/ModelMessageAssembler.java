@@ -18,6 +18,7 @@ import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.content.ToolCallPart;
 import io.haifa.agent.core.content.ToolResultPart;
 import io.haifa.agent.core.message.AgentMessage;
+import io.haifa.agent.core.message.AgentMessageId;
 import io.haifa.agent.core.message.MessageRole;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
@@ -30,6 +31,7 @@ import io.haifa.agent.model.api.ModelMessage;
 import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
+import io.haifa.agent.runtime.core.model.continuation.ModelContinuationRecord;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -50,6 +52,22 @@ import java.util.stream.Collectors;
 
 /** The only Runtime boundary that turns Context IR into provider-neutral ModelMessage values. */
 public final class ModelMessageAssembler {
+    record AssemblyMetrics(
+            long elapsedMillis, int continuationBatchCount, int continuationRecordCount, int toolCallBatchCount) {}
+
+    record AssemblyResult(List<ModelMessage> messages, AssemblyMetrics metrics) {
+        AssemblyResult {
+            messages = List.copyOf(messages);
+            Objects.requireNonNull(metrics, "metrics must not be null");
+        }
+    }
+
+    private record ContinuationIndex(
+            Map<AgentMessageId, ModelContinuationRecord> byMessage,
+            Map<AgentRunId, List<ModelContinuationRecord>> byRun,
+            int batchCount,
+            int recordCount) {}
+
     private final RuntimeStateRepository state;
     private final ModelImageResolver images;
     private final ModelAudioResolver audios;
@@ -87,16 +105,28 @@ public final class ModelMessageAssembler {
     }
 
     public List<ModelMessage> assemble(AgentRunId runId, AgentContext context, ResolvedModelSnapshot model) {
+        return assembleWithMetrics(runId, context, model).messages();
+    }
+
+    AssemblyResult assembleWithMetrics(AgentRunId runId, AgentContext context, ResolvedModelSnapshot model) {
+        long startedAt = System.nanoTime();
         List<ModelMessage> messages = new ArrayList<>();
         Set<ModelMessage> priorModelAssistants = Collections.newSetFromMap(new IdentityHashMap<>());
         context.prompts().forEach(prompt -> messages.add(ModelMessage.text(ModelMessageRole.SYSTEM, prompt.text())));
         Map<AgentRunId, Map<io.haifa.agent.core.tool.ToolCallId, ToolCall>> toolCallsByRun = new HashMap<>();
         ModelMessageProjectionPlan projectionPlan = planner.plan(runId, context, model);
+        ContinuationIndex continuations = loadContinuations(runId, context);
         for (ContextItem item : context.items()) {
             if (item.content() instanceof MessageGroupContextContent group) {
                 group.messages()
                         .forEach(message -> messages.addAll(mapMessage(
-                                runId, message, toolCallsByRun, model, priorModelAssistants, projectionPlan)));
+                                runId,
+                                message,
+                                toolCallsByRun,
+                                continuations,
+                                model,
+                                priorModelAssistants,
+                                projectionPlan)));
             } else if (item.content() instanceof TextContextContent text) {
                 messages.add(ModelMessage.text(mapRole(text.role()), text.text()));
             } else if (item.content() instanceof MemoryReferenceContent memory) {
@@ -113,7 +143,39 @@ public final class ModelMessageAssembler {
             throw new ContextBuildException(
                     ContextBuildFailure.REQUIRED_CONTEXT_TOO_LARGE, "model context must not be empty");
         }
-        return canonicalizeToolProtocol(messages, priorModelAssistants, model);
+        List<ModelMessage> assembled = canonicalizeToolProtocol(messages, priorModelAssistants, model);
+        long elapsedMillis = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+        return new AssemblyResult(
+                assembled,
+                new AssemblyMetrics(
+                        Math.max(0L, elapsedMillis),
+                        continuations.batchCount(),
+                        continuations.recordCount(),
+                        toolCallsByRun.size()));
+    }
+
+    private ContinuationIndex loadContinuations(AgentRunId currentRunId, AgentContext context) {
+        Set<AgentRunId> runIds = new LinkedHashSet<>();
+        for (ContextItem item : context.items()) {
+            if (!(item.content() instanceof MessageGroupContextContent group)) continue;
+            for (AgentMessage message : group.messages()) {
+                boolean hasToolCall = message.contents().stream().anyMatch(ToolCallPart.class::isInstance);
+                if (hasToolCall) runIds.add(message.runId().orElse(currentRunId));
+            }
+        }
+        Map<AgentRunId, List<ModelContinuationRecord>> byRun = new LinkedHashMap<>();
+        Map<AgentMessageId, ModelContinuationRecord> byMessage = new HashMap<>();
+        for (AgentRunId runId : runIds) {
+            List<ModelContinuationRecord> records = List.copyOf(state.modelContinuations(runId));
+            byRun.put(runId, records);
+            for (ModelContinuationRecord record : records) {
+                ModelContinuationRecord previous = byMessage.put(record.assistantMessageId(), record);
+                if (previous != null) {
+                    throw new IllegalStateException("multiple model continuations reference one assistant message");
+                }
+            }
+        }
+        return new ContinuationIndex(Map.copyOf(byMessage), Map.copyOf(byRun), runIds.size(), byMessage.size());
     }
 
     private List<ModelMessage> canonicalizeToolProtocol(List<ModelMessage> messages) {
@@ -231,6 +293,7 @@ public final class ModelMessageAssembler {
             AgentRunId currentRunId,
             AgentMessage message,
             Map<AgentRunId, Map<io.haifa.agent.core.tool.ToolCallId, ToolCall>> toolCallsByRun,
+            ContinuationIndex continuations,
             ResolvedModelSnapshot model,
             Set<ModelMessage> priorModelAssistants,
             ModelMessageProjectionPlan projectionPlan) {
@@ -289,28 +352,27 @@ public final class ModelMessageAssembler {
                         return new ModelToolCall(call.providerCorrelationId(), call.toolName(), arguments);
                     })
                     .toList();
-            if (isPriorModel(message, model)) {
+            if (isPriorModel(message, model, continuations)) {
                 ModelMessage historicalAssistant = ModelMessage.assistant(text, mapped);
                 priorModelAssistants.add(historicalAssistant);
                 return List.of(historicalAssistant);
             }
-            var continuation = state.continuationForMessage(message.id());
-            if (continuation.isEmpty()) return List.of(ModelMessage.assistant(text, mapped));
+            ModelContinuationRecord continuation = continuations.byMessage().get(message.id());
+            if (continuation == null) return List.of(ModelMessage.assistant(text, mapped));
             if (model == null) {
                 throw new IllegalStateException("model snapshot is required to resolve provider continuation");
             }
             var correlations = mapped.stream()
                     .map(call -> call.providerCorrelationId().value())
                     .collect(java.util.stream.Collectors.toUnmodifiableSet());
-            var record = continuation.orElseThrow();
-            if (!record.providerId().equals(model.providerId().value())
-                    || !record.modelId().equals(model.providerModelId())
-                    || !record.configurationDigest().equals(model.configurationDigest())
-                    || !record.toolCorrelationIds().equals(correlations)) {
+            if (!continuation.providerId().equals(model.providerId().value())
+                    || !continuation.modelId().equals(model.providerModelId())
+                    || !continuation.configurationDigest().equals(model.configurationDigest())
+                    || !continuation.toolCorrelationIds().equals(correlations)) {
                 return List.of(ModelMessage.assistant(text, mapped));
             }
             return List.of(
-                    ModelMessage.assistant(text, mapped, state.resolveContinuation(message.id(), model, correlations)));
+                    ModelMessage.assistant(text, mapped, state.resolveContinuation(continuation, model, correlations)));
         }
         if (message.role() == MessageRole.TOOL) {
             throw new IllegalStateException("tool message has no typed provider correlation");
@@ -409,13 +471,12 @@ public final class ModelMessageAssembler {
                 "unsupported context item content: " + item.content().getClass().getSimpleName());
     }
 
-    private boolean isPriorModel(AgentMessage message, ResolvedModelSnapshot model) {
+    private boolean isPriorModel(AgentMessage message, ResolvedModelSnapshot model, ContinuationIndex continuations) {
         if (model == null) {
             return false;
         }
-        var continuation = state.continuationForMessage(message.id());
-        if (continuation.isPresent()) {
-            var record = continuation.orElseThrow();
+        ModelContinuationRecord record = continuations.byMessage().get(message.id());
+        if (record != null) {
             return !matchesModelBinding(record.providerId(), record.modelId(), record.configurationDigest(), model);
         }
         Object metaProvider = message.metadata().get("providerId");
@@ -435,10 +496,11 @@ public final class ModelMessageAssembler {
             return true;
         }
         if (message.runId().isPresent()) {
-            var continuations = state.modelContinuations(message.runId().get());
-            if (!continuations.isEmpty()) {
-                var record = continuations.getFirst();
-                return !matchesModelBinding(record.providerId(), record.modelId(), record.configurationDigest(), model);
+            List<ModelContinuationRecord> runContinuations =
+                    continuations.byRun().getOrDefault(message.runId().get(), List.of());
+            if (!runContinuations.isEmpty()) {
+                ModelContinuationRecord first = runContinuations.getFirst();
+                return !matchesModelBinding(first.providerId(), first.modelId(), first.configurationDigest(), model);
             }
         }
         return false;

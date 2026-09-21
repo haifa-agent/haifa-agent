@@ -146,6 +146,8 @@ public final class FrozenModelInvoker {
                     "selected model does not support structured output",
                     null);
         }
+        ModelMessageAssembler.AssemblyResult messageAssembly = messages.assembleWithMetrics(
+                run.id(), context, binding.configuration().model());
         AgentChatRequest request = new AgentChatRequest(
                 callId,
                 requestId,
@@ -153,7 +155,7 @@ public final class FrozenModelInvoker {
                 iteration,
                 physicalAttempt,
                 binding.configuration().model(),
-                messages.assemble(run.id(), context, binding.configuration().model()),
+                messageAssembly.messages(),
                 disclosedTools,
                 Math.toIntExact(Math.min(
                         context.budget().outputReserve(),
@@ -177,7 +179,13 @@ public final class FrozenModelInvoker {
                 "",
                 "NONE",
                 0,
-                null);
+                null,
+                Map.of(
+                        "requestAssemblyElapsedMillis",
+                                messageAssembly.metrics().elapsedMillis(),
+                        "continuationBatchCount", messageAssembly.metrics().continuationBatchCount(),
+                        "continuationRecordCount", messageAssembly.metrics().continuationRecordCount(),
+                        "assemblerToolCallBatchCount", messageAssembly.metrics().toolCallBatchCount()));
         appendLifecycle(
                 binding,
                 run,
@@ -373,6 +381,42 @@ public final class FrozenModelInvoker {
             String reasonCode,
             long durationMillis,
             ModelInvocationException failure) {
+        appendLifecycle(
+                binding,
+                run,
+                callId,
+                requestId,
+                iteration,
+                attempt,
+                type,
+                status,
+                inputTokens,
+                outputTokens,
+                cachedInputTokens,
+                finishReason,
+                reasonCode,
+                durationMillis,
+                failure,
+                Map.of());
+    }
+
+    private void appendLifecycle(
+            FrozenModelBinding binding,
+            AgentRun run,
+            ModelCallId callId,
+            ModelRequestId requestId,
+            int iteration,
+            int attempt,
+            String type,
+            String status,
+            long inputTokens,
+            long outputTokens,
+            long cachedInputTokens,
+            String finishReason,
+            String reasonCode,
+            long durationMillis,
+            ModelInvocationException failure,
+            Map<String, Object> diagnostics) {
         var model = binding.configuration().model();
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("modelCallId", callId.value());
@@ -388,6 +432,11 @@ public final class FrozenModelInvoker {
         data.put("finishReason", finishReason);
         data.put("reasonCode", reasonCode);
         data.put("durationMillis", durationMillis);
+        diagnostics.forEach((key, value) -> {
+            if (data.putIfAbsent(key, value) != null) {
+                throw new IllegalArgumentException("model lifecycle diagnostic conflicts with a stable field: " + key);
+            }
+        });
         if (failure != null) {
             data.put("providerCode", failure.providerCode());
             data.put("retryable", failure.retryable());
