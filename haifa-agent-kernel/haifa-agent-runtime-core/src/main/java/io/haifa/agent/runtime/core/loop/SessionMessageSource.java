@@ -200,24 +200,6 @@ public final class SessionMessageSource {
             ContextCompressor compressor,
             CompressionPolicy policy,
             IdentifierGenerator ids,
-            TimeProvider time) {
-        this(
-                messages,
-                summaries,
-                compressor,
-                policy,
-                ids,
-                time,
-                new ActiveContextSnapshots(messages, summaries, policy, compressor),
-                false);
-    }
-
-    public SessionMessageSource(
-            RuntimeStateRepository messages,
-            ConversationSummaryRepository summaries,
-            ContextCompressor compressor,
-            CompressionPolicy policy,
-            IdentifierGenerator ids,
             TimeProvider time,
             ActiveContextSnapshots activeContexts) {
         this(messages, summaries, compressor, policy, ids, time, activeContexts, false);
@@ -305,11 +287,14 @@ public final class SessionMessageSource {
     }
 
     private Selection currentSelection(AgentSessionId sessionId, long sessionTokenBudget, MetricsCollector metrics) {
-        if (fullHistoryOracle) {
+        if (fullHistoryOracle || !policy.semanticCompactionEnabled()) {
             return fullHistorySelection(sessionId, sessionTokenBudget, metrics);
         }
         ActiveContextSnapshots.Access access = activeContexts.current(sessionId);
         metrics.absorb(access.metrics());
+        if (access.status() == ActiveContextSnapshots.AccessStatus.NEEDS_COMPACTION) {
+            throw new ActiveContextCompactionRequiredException();
+        }
         ActiveContextSnapshot snapshot = access.snapshot();
         if (snapshot.activeMessages().isEmpty() && snapshot.summary().isEmpty()) {
             return emptySelection(sessionId, sessionTokenBudget);

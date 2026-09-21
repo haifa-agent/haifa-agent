@@ -26,6 +26,7 @@ import io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt;
 import io.haifa.agent.runtime.core.checkpoint.CheckpointManager;
 import io.haifa.agent.runtime.core.compaction.CompactionEvaluationOutcome;
 import io.haifa.agent.runtime.core.compaction.SemanticCompactionCoordinator;
+import io.haifa.agent.runtime.core.context.ActiveContextWindowLimitException;
 import io.haifa.agent.runtime.core.control.CancellationObservedException;
 import io.haifa.agent.runtime.core.control.RunControlRegistry;
 import io.haifa.agent.runtime.core.control.RunControlSignal;
@@ -290,7 +291,7 @@ public final class DefaultAgentLoop implements AgentLoop {
             FrozenModelBinding model = models.bind(run);
             CompactionEvaluationOutcome preBuildOutcome = CompactionEvaluationOutcome.NONE;
             if (compactionCoordinator != null) {
-                preBuildOutcome = compactionCoordinator.evaluateAndCompactIfNeeded(run, progress.iteration(), model);
+                preBuildOutcome = evaluateCompaction(run, progress, model);
             }
             ContextBuildExecution buildExecution = buildContext(run, progress, model, preBuildOutcome);
             RuntimeContextBuildResult built = buildExecution.built();
@@ -1135,7 +1136,9 @@ public final class DefaultAgentLoop implements AgentLoop {
             CompactionEvaluationOutcome initialOutcome) {
         try {
             return new ContextBuildExecution(contextBuilder.build(run, progress, model), initialOutcome);
-        } catch (LocalContextOverflowException overflow) {
+        } catch (LocalContextOverflowException
+                | ActiveContextCompactionRequiredException
+                | ActiveContextWindowLimitException overflow) {
             progress.recordForcedContextRebuild();
             CompactionEvaluationOutcome overflowOutcome = initialOutcome;
             if (compactionCoordinator != null) {
@@ -1143,9 +1146,25 @@ public final class DefaultAgentLoop implements AgentLoop {
             }
             try {
                 return new ContextBuildExecution(contextBuilder.build(run, progress, model), overflowOutcome);
-            } catch (LocalContextOverflowException exhausted) {
+            } catch (LocalContextOverflowException
+                    | ActiveContextCompactionRequiredException
+                    | ActiveContextWindowLimitException exhausted) {
                 throw new ContextRebuildExhaustedException(
-                        "local context remained too long after the single forced rebuild");
+                        "active context remained too long after the single forced rebuild");
+            }
+        }
+    }
+
+    private CompactionEvaluationOutcome evaluateCompaction(
+            AgentRun run, AgentLoopContext progress, FrozenModelBinding model) {
+        try {
+            return compactionCoordinator.evaluateAndCompactIfNeeded(run, progress.iteration(), model);
+        } catch (ActiveContextWindowLimitException overflow) {
+            try {
+                return compactionCoordinator.forceCompactOnOverflow(run, progress.iteration(), model);
+            } catch (ActiveContextWindowLimitException exhausted) {
+                throw new ContextRebuildExhaustedException(
+                        "active context could not be compacted within its hard projection limits");
             }
         }
     }

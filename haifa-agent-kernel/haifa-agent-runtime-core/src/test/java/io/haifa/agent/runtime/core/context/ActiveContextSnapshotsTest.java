@@ -42,6 +42,7 @@ class ActiveContextSnapshotsTest {
 
         List<AgentMessage> messages = appendTurns(store, 3, 0);
         ActiveContextSnapshots.Access initial = snapshots.current(SESSION);
+        assertThat(initial.status()).isEqualTo(ActiveContextSnapshots.AccessStatus.READY);
         assertThat(initial.metrics().rebuildReason()).isEqualTo(ActiveContextSnapshots.RebuildReason.INITIAL);
         assertThat(initial.metrics().historyRowsRead()).isEqualTo(6);
         assertThat(initial.snapshot().activeMessages()).hasSize(6);
@@ -89,6 +90,25 @@ class ActiveContextSnapshotsTest {
         assertThat(afterSummary.snapshot().summary()).contains(summary);
         assertThat(afterSummary.snapshot().activeMessages()).hasSize(2);
         assertThat(afterSummary.snapshot().selectedMessages()).hasSize(2);
+    }
+
+    @Test
+    void currentReturnsNeedsCompactionInsteadOfThrowingWhenHistoryExceedsTheActiveWindow() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        CompressionPolicy policy = new CompressionPolicy(12, 32, 4);
+        DeterministicContextCompressor compressor = new DeterministicContextCompressor();
+        AgentSessionId session = new AgentSessionId("needs-compaction-session");
+        for (int index = 0; index < 4_097; index++) {
+            append(store, session, "needs-compaction-" + index, index);
+        }
+
+        ActiveContextSnapshots.Access access =
+                new ActiveContextSnapshots(store, store, policy, compressor).current(session);
+
+        assertThat(access.status()).isEqualTo(ActiveContextSnapshots.AccessStatus.NEEDS_COMPACTION);
+        assertThat(access.snapshot().hasMoreHistory()).isTrue();
+        assertThat(access.snapshot().activeMessages()).hasSize(4_096);
+        assertThat(access.metrics().historyRowsRead()).isEqualTo(4_097);
     }
 
     @Test

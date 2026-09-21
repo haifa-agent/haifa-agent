@@ -53,6 +53,12 @@ public final class ActiveContextSnapshots implements MessageRedactionListener {
         RELEASED
     }
 
+    /** Indicates whether the projection is complete or must be compacted before model assembly. */
+    public enum AccessStatus {
+        READY,
+        NEEDS_COMPACTION
+    }
+
     public record AccessMetrics(
             boolean snapshotHit,
             RebuildReason rebuildReason,
@@ -72,10 +78,11 @@ public final class ActiveContextSnapshots implements MessageRedactionListener {
         }
     }
 
-    public record Access(ActiveContextSnapshot snapshot, AccessMetrics metrics) {
+    public record Access(ActiveContextSnapshot snapshot, AccessMetrics metrics, AccessStatus status) {
         public Access {
             Objects.requireNonNull(snapshot, "snapshot must not be null");
             Objects.requireNonNull(metrics, "metrics must not be null");
+            Objects.requireNonNull(status, "status must not be null");
         }
     }
 
@@ -167,9 +174,6 @@ public final class ActiveContextSnapshots implements MessageRedactionListener {
         int loadLimit = allowPartial ? MAX_ACTIVE_MESSAGES + MAX_PROTOCOL_LOOKAHEAD + 1 : MAX_ACTIVE_MESSAGES + 1;
         List<AgentMessage> rows = state.messagesAfter(sessionId, boundary, loadLimit);
         boolean hasMoreHistory = rows.size() > MAX_ACTIVE_MESSAGES;
-        if (hasMoreHistory && !allowPartial) {
-            throw new ActiveContextWindowLimitException("messages", MAX_ACTIVE_MESSAGES, rows.size());
-        }
         int rowsRead = rows.size();
         if (hasMoreHistory) rows = boundedProtocolPage(rows);
         List<AgentMessage> visible =
@@ -189,9 +193,6 @@ public final class ActiveContextSnapshots implements MessageRedactionListener {
                 && rebuilt.atomicGroups().getFirst().getFirst().role() != MessageRole.USER) {
             rows = state.messagesAfter(sessionId, MessageCursor.BEFORE_FIRST, loadLimit);
             hasMoreHistory = rows.size() > MAX_ACTIVE_MESSAGES;
-            if (hasMoreHistory && !allowPartial) {
-                throw new ActiveContextWindowLimitException("messages", MAX_ACTIVE_MESSAGES, rows.size());
-            }
             rowsRead = rows.size();
             if (hasMoreHistory) rows = boundedProtocolPage(rows);
             visible = rows.stream().filter(this::visibleToContext).toList();
@@ -444,7 +445,8 @@ public final class ActiveContextSnapshots implements MessageRedactionListener {
                         deltaRows,
                         snapshot.estimatedTokens(),
                         snapshot.characterCount(),
-                        snapshot.payloadBytes()));
+                        snapshot.payloadBytes()),
+                snapshot.hasMoreHistory() ? AccessStatus.NEEDS_COMPACTION : AccessStatus.READY);
     }
 
     private void put(ActiveContextSnapshot snapshot) {

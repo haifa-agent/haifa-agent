@@ -385,13 +385,28 @@ public final class SemanticCompactionCoordinator {
      * Forces immediate compaction upon receiving CONTEXT_TOO_LONG error from provider.
      */
     public CompactionEvaluationOutcome forceCompactOnOverflow(AgentRun run, int iteration, FrozenModelBinding binding) {
+        return forceCompactOnOverflow(run, iteration, binding, 0);
+    }
+
+    private CompactionEvaluationOutcome forceCompactOnOverflow(
+            AgentRun run, int iteration, FrozenModelBinding binding, int boundedPageCount) {
         long startNanos = System.nanoTime();
         if (!policy.semanticCompactionEnabled()) {
             return CompactionEvaluationOutcome.NONE;
         }
         ActiveContextSnapshot activeSnapshot = activeContexts == null
                 ? null
-                : activeContexts.current(run.sessionId()).snapshot();
+                : activeContexts.currentForCompaction(run.sessionId()).snapshot();
+        if (activeSnapshot != null && activeSnapshot.hasMoreHistory()) {
+            if (boundedPageCount >= 128) {
+                throw new IllegalStateException("forced active-context compaction exceeded 128 bounded pages");
+            }
+            CompactionEvaluationOutcome pageOutcome =
+                    compactTruncatedWindow(run, iteration, binding, activeSnapshot, startNanos);
+            CompactionEvaluationOutcome finalOutcome =
+                    forceCompactOnOverflow(run, iteration, binding, boundedPageCount + 1);
+            return finalOutcome.triggerReason() == null ? pageOutcome : finalOutcome;
+        }
         List<AgentMessage> visible = activeSnapshot == null
                 ? state.messagesAfter(run.sessionId(), MessageCursor.BEFORE_FIRST, Integer.MAX_VALUE).stream()
                         .filter(this::visibleToContext)
