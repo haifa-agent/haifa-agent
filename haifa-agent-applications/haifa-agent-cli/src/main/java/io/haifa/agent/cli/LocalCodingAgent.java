@@ -101,6 +101,8 @@ import io.haifa.agent.project.workspace.WorkspaceRevision;
 import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.AgentRunSnapshot;
 import io.haifa.agent.runtime.api.AgentRuntime;
+import io.haifa.agent.runtime.api.ApprovalPresentation;
+import io.haifa.agent.runtime.api.ApprovalPrompt;
 import io.haifa.agent.runtime.api.RuntimeCommand;
 import io.haifa.agent.runtime.api.RuntimeCommandArguments;
 import io.haifa.agent.runtime.api.RuntimeCommandId;
@@ -154,6 +156,11 @@ import javax.crypto.spec.SecretKeySpec;
 final class LocalCodingAgent implements AutoCloseable {
     private static final AgentDefinitionId DEFINITION_ID = new AgentDefinitionId("haifa-cli-coding-agent");
     private static final Duration CLOSE_SETTLE_TIMEOUT = Duration.ofSeconds(3);
+    private static final int MAX_APPROVAL_CONTENT_LENGTH = 16_000;
+    private static final int MAX_APPROVAL_TITLE_LENGTH = 256;
+    private static final int MAX_PURPOSE_LENGTH = 512;
+    private static final int MAX_CONTENT_TYPE_LENGTH = 64;
+    private static final int MAX_FACT_VALUE_LENGTH = 512;
     private final IdentifierGenerator identifiers;
     private final TimeProvider time;
     private final AgentRuntime runtime;
@@ -650,8 +657,8 @@ final class LocalCodingAgent implements AutoCloseable {
                     .toolApprovalPrompts((binding, call, reauthentication) -> {
                         String toolName = binding.definition().name().value();
                         if (toolName.equals("workspace_attach")) {
-                            return workspaceAttachmentApprovalPrompt(
-                                    call.arguments().values());
+                            return ApprovalPrompt.of(workspaceAttachmentApprovalPrompt(
+                                    call.arguments().values()));
                         }
                         if (!toolName.equals("execution_run")) {
                             return io.haifa.agent.runtime.core.interaction.ToolApprovalPromptFormatter
@@ -672,14 +679,49 @@ final class LocalCodingAgent implements AutoCloseable {
                                         + " ms (capped by the Run deadline)";
                         String description = safeApprovalText(
                                 String.valueOf(arguments.getOrDefault("description", "Run shell command")));
-                        return description + "\nCommand: " + safeApprovalText(command) + "\nWorkspace: "
+                        String shell = executionPlatform == null ? "unavailable" : executionPlatform.shellDisplayName();
+                        String displayShell =
+                                executionPlatform == null ? "Shell" : executionPlatform.shellDisplayName();
+                        String security = executionPlatform == null
+                                ? "execution unavailable"
+                                : executionPlatform.securitySummary();
+                        String prompt = description + "\nCommand: " + safeApprovalText(command) + "\nWorkspace: "
                                 + safeApprovalText(workspaceRef) + "\nRelative workdir: "
-                                + safeApprovalText(relativeWorkdir) + "\nTimeout: " + timeout + "\nShell: "
-                                + (executionPlatform == null ? "unavailable" : executionPlatform.shellDisplayName())
-                                + "\nSecurity: "
-                                + (executionPlatform == null
-                                        ? "execution unavailable"
-                                        : executionPlatform.securitySummary());
+                                + safeApprovalText(relativeWorkdir) + "\nTimeout: " + timeout + "\nShell: " + shell
+                                + "\nSecurity: " + security;
+                        String presentationContent = boundedApprovalContent(safeApprovalText(command));
+                        return new ApprovalPrompt(
+                                prompt,
+                                presentationContent.isBlank()
+                                        ? Optional.empty()
+                                        : Optional.of(new ApprovalPresentation(
+                                                boundedApprovalValue(
+                                                        "执行 " + displayShell + " 命令", MAX_APPROVAL_TITLE_LENGTH),
+                                                description.isBlank()
+                                                        ? "Agent 请求执行命令以继续任务。"
+                                                        : boundedApprovalValue(description, MAX_PURPOSE_LENGTH),
+                                                boundedApprovalValue(displayShell, MAX_CONTENT_TYPE_LENGTH),
+                                                presentationContent,
+                                                List.of(
+                                                        new ApprovalPresentation.Fact("执行位置", "本机环境"),
+                                                        new ApprovalPresentation.Fact("工作目录", "当前项目"),
+                                                        new ApprovalPresentation.Fact("网络访问", "未请求"),
+                                                        new ApprovalPresentation.Fact("说明", "本次批准仅适用于这一次执行")),
+                                                List.of(
+                                                        new ApprovalPresentation.Fact(
+                                                                "工作区",
+                                                                nonBlankApprovalFact(safeApprovalText(workspaceRef))),
+                                                        new ApprovalPresentation.Fact(
+                                                                "相对工作目录",
+                                                                nonBlankApprovalFact(
+                                                                        safeApprovalText(relativeWorkdir))),
+                                                        new ApprovalPresentation.Fact(
+                                                                "超时", nonBlankApprovalFact(timeout)),
+                                                        new ApprovalPresentation.Fact(
+                                                                "Shell", nonBlankApprovalFact(shell)),
+                                                        new ApprovalPresentation.Fact(
+                                                                "安全", nonBlankApprovalFact(security))),
+                                                Optional.empty())));
                     })
                     .approvalVerification(policy.approvalVerification())
                     .publicToolPolicy(publicToolPolicy)
@@ -1092,6 +1134,23 @@ final class LocalCodingAgent implements AutoCloseable {
         String diagnostics = diagnosticCodes.isEmpty() ? "" : "; diagnostics=" + diagnosticCodes;
         throw new IllegalArgumentException(
                 "configured allowed Skills are unavailable: " + String.join(",", unavailable) + diagnostics);
+    }
+
+    private static String boundedApprovalContent(String value) {
+        return boundedApprovalValue(value, MAX_APPROVAL_CONTENT_LENGTH);
+    }
+
+    private static String nonBlankApprovalFact(String value) {
+        String bounded = boundedApprovalValue(value, MAX_FACT_VALUE_LENGTH);
+        return bounded.isBlank() ? "—" : bounded;
+    }
+
+    private static String boundedApprovalValue(String value, int maximumLength) {
+        if (value.length() <= maximumLength) return value;
+        String marker = "...[truncated]";
+        int end = Math.max(0, maximumLength - marker.length());
+        if (end > 0 && end < value.length() && Character.isHighSurrogate(value.charAt(end - 1))) end--;
+        return value.substring(0, end) + marker;
     }
 
     private static String safeApprovalText(String value) {

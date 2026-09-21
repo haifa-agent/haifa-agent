@@ -1,12 +1,17 @@
 package io.haifa.agent.store.sqlite.payload;
 
 import io.haifa.agent.core.tool.ToolCallId;
+import io.haifa.agent.runtime.api.ApprovalPresentation;
 import io.haifa.agent.runtime.core.interaction.GenericInteractionTarget;
 import io.haifa.agent.runtime.core.interaction.InteractionTarget;
 import io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
+import java.util.Optional;
 
-/** Version 1 encoded interaction target payload; it never carries an approval presentation. */
-public record InteractionTargetPayload(
+/**
+ * Version 2 encoded interaction target payload. It extends version 1 with the optional, display-only
+ * approval presentation that products may supply alongside the safe prompt.
+ */
+public record InteractionTargetPayloadV2(
         String kind,
         String type,
         String toolCallId,
@@ -14,14 +19,19 @@ public record InteractionTargetPayload(
         String definitionHash,
         String argumentsDigest,
         String principalScope,
-        String requirementDigest) {
+        String requirementDigest,
+        ApprovalPresentationPayload presentation) {
 
-    public static InteractionTargetPayload from(InteractionTarget target) {
+    public static InteractionTargetPayloadV2 from(
+            InteractionTarget target, Optional<ApprovalPresentation> presentation) {
+        ApprovalPresentationPayload encoded =
+                presentation.map(ApprovalPresentationPayload::from).orElse(null);
         if (target instanceof GenericInteractionTarget generic) {
-            return new InteractionTargetPayload("generic", generic.type(), null, null, null, null, null, null);
+            return new InteractionTargetPayloadV2(
+                    "generic", generic.type(), null, null, null, null, null, null, encoded);
         }
         if (target instanceof ToolApprovalTarget tool) {
-            return new InteractionTargetPayload(
+            return new InteractionTargetPayloadV2(
                     "tool-approval",
                     null,
                     tool.toolCallId().value(),
@@ -29,7 +39,8 @@ public record InteractionTargetPayload(
                     tool.definitionHash(),
                     tool.argumentsDigest(),
                     tool.principalScope(),
-                    tool.requirementDigest());
+                    tool.requirementDigest(),
+                    encoded);
         }
         throw new IllegalArgumentException("unsupported interaction target");
     }
@@ -47,5 +58,9 @@ public record InteractionTargetPayload(
                         requirementDigest);
             default -> throw new IllegalStateException("unknown interaction target kind");
         };
+    }
+
+    public Optional<ApprovalPresentation> presentationDomain() {
+        return Optional.ofNullable(presentation).map(ApprovalPresentationPayload::toDomain);
     }
 }

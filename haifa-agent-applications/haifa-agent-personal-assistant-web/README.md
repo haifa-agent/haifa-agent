@@ -141,7 +141,8 @@ JAR 的构建或静态资源打包。
 - Tool、Skill、MCP 的安全 Activity 投影，不展示原始参数、结果、路径或协议 JSON；
 - Memory Candidate 确认/拒绝、Memory 查看/停用；
 - 最终 Run 的后端权威 Token Usage；
-- 命令/脚本 exact approval 的完整可读正文、调用摘要和高风险警示；
+- 命令/脚本 exact approval 的结构化审批卡：动作标题、目的、可读正文、环境要点、默认折叠的技术细节与
+  允许动作；缺少结构化展示时回退到 `safePrompt`；
 - 执行 REQUESTED / STARTED / SUCCEEDED / FAILED / TIMED_OUT 安全活动及有界结果摘要；
 - 桌面三栏布局和移动端互斥抽屉。
 

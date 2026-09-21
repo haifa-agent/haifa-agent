@@ -315,6 +315,22 @@ export interface Interaction {
   maximumCharacters: number;
   createdAt: string;
   expiresAt?: string | null;
+  approvalPresentation?: ApprovalPresentation | null;
+}
+
+export interface ApprovalPresentation {
+  title: string;
+  purpose: string;
+  contentType: string;
+  content: string;
+  environment: Array<ApprovalFact>;
+  technical: Array<ApprovalFact>;
+  risk?: string | null;
+}
+
+export interface ApprovalFact {
+  label: string;
+  value: string;
 }
 
 export interface InteractionResponse {

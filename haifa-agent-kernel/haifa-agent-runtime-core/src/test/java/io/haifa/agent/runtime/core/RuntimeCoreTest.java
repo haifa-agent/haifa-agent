@@ -2483,7 +2483,8 @@ class RuntimeCoreTest {
                         true,
                         TestToolPlatform.approvalRequired(),
                         request -> new ToolResult(true, "written", Map.of(), List.of(), List.of(), false))
-                .toolApprovalPrompts((binding, call, reauthentication) -> oversizedPrompt));
+                .toolApprovalPrompts((binding, call, reauthentication) ->
+                        io.haifa.agent.runtime.api.ApprovalPrompt.of(oversizedPrompt)));
 
         var accepted = fixture.runtime.start(request("legacy-oversized-approval"));
         fixture.scheduler.runAll();

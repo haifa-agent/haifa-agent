@@ -8,6 +8,7 @@ import com.williamcallahan.tui4j.compat.bubbles.viewport.Viewport;
 import com.williamcallahan.tui4j.compat.lipgloss.color.NoColor;
 import com.williamcallahan.tui4j.term.TerminalInfo;
 import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
+import io.haifa.agent.application.coding.terminal.state.ApprovalDetails;
 import io.haifa.agent.application.coding.terminal.state.PendingMessage;
 import io.haifa.agent.application.coding.terminal.state.TerminalActivity;
 import io.haifa.agent.application.coding.terminal.state.TerminalFooter;
@@ -663,6 +664,86 @@ class Tui4jTerminalViewTest {
 
         assertThat(rendered.lines()).allMatch(line -> TextWidth.measureCellWidth(line) <= 59);
         assertThat(rendered).doesNotContain("\u001B", "\t").contains("workspace.read", "SAFE");
+    }
+
+    @Test
+    void rendersStructuredApprovalAndKeepsTechnicalDetailsCollapsedUntilExpanded() {
+        ApprovalDetails details = new ApprovalDetails(
+                "执行 PowerShell 命令",
+                "为了观察终端工具调用的实际效果。",
+                "PowerShell",
+                "Start-Sleep -Seconds 4",
+                List.of(new ApprovalDetails.Fact("执行位置", "本机环境")),
+                List.of(new ApprovalDetails.Fact("调用摘要", "digest-123")),
+                Optional.of("HIGH"),
+                List.of("reject", "approve"));
+        TerminalUiState initial = TerminalUiState.initial(120, 40);
+        TerminalUiState collapsed = withApproval(initial, details, false);
+        TerminalUiState expanded = withApproval(initial, details, true);
+
+        String collapsedContent = view.transcriptContent(collapsed);
+        assertThat(collapsedContent)
+                .contains(
+                        "Approval · 执行 PowerShell 命令 [pending]",
+                        "为了观察终端工具调用的实际效果。",
+                        "PowerShell",
+                        "Start-Sleep -Seconds 4",
+                        "执行位置：本机环境",
+                        "技术细节（可选）")
+                .doesNotContain("digest-123");
+
+        assertThat(view.transcriptContent(expanded)).contains("技术细节", "调用摘要: digest-123");
+    }
+
+    @Test
+    void collapsesLongApprovalContentUntilExpanded() {
+        String content = IntStream.rangeClosed(1, 8)
+                .mapToObj(index -> "line-" + index)
+                .collect(java.util.stream.Collectors.joining("\n"));
+        ApprovalDetails details = new ApprovalDetails(
+                "执行 PowerShell 命令",
+                "为了观察终端工具调用的实际效果。",
+                "PowerShell",
+                content,
+                List.of(),
+                List.of(),
+                Optional.empty(),
+                List.of("approve", "reject"));
+        TerminalUiState initial = TerminalUiState.initial(120, 40);
+
+        String collapsed = view.transcriptContent(withApproval(initial, details, false));
+        assertThat(collapsed).contains("line-1", "line-5", "共 8 行").doesNotContain("line-6");
+
+        String expanded = view.transcriptContent(withApproval(initial, details, true));
+        assertThat(expanded).contains("line-6", "line-8");
+    }
+
+    private TerminalUiState withApproval(TerminalUiState initial, ApprovalDetails details, boolean expanded) {
+        return new TerminalUiState(
+                initial.header(),
+                initial.loadedResources(),
+                List.of(new TranscriptItem(
+                        "interaction-1",
+                        TranscriptItem.Kind.APPROVAL,
+                        "Approval · " + details.title(),
+                        details.content(),
+                        "PENDING",
+                        expanded,
+                        Optional.of(details))),
+                initial.pending(),
+                initial.status(),
+                initial.editorBuffer(),
+                initial.editorCursor(),
+                initial.selector(),
+                initial.footer(),
+                initial.columns(),
+                initial.rows(),
+                initial.session(),
+                initial.currentRunId(),
+                initial.appliedCursor(),
+                initial.seenEventIds(),
+                initial.recoverableError(),
+                initial.exitRequested());
     }
 
     private TranscriptItem item(

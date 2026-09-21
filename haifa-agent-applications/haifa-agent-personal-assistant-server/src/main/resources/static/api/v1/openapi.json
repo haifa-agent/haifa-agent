@@ -895,8 +895,27 @@
           "inputType": {"type": "string"},
           "maximumCharacters": {"type": "integer"},
           "createdAt": {"type": "string", "format": "date-time"},
-          "expiresAt": {"type": ["string", "null"], "format": "date-time"}
+          "expiresAt": {"type": ["string", "null"], "format": "date-time"},
+          "approvalPresentation": {"oneOf": [{"$ref": "#/components/schemas/ApprovalPresentation"}, {"type": "null"}]}
         }
+      },
+      "ApprovalPresentation": {
+        "type": "object",
+        "required": ["title", "purpose", "contentType", "content", "environment", "technical"],
+        "properties": {
+          "title": {"type": "string"},
+          "purpose": {"type": "string"},
+          "contentType": {"type": "string"},
+          "content": {"type": "string"},
+          "environment": {"type": "array", "items": {"$ref": "#/components/schemas/ApprovalFact"}},
+          "technical": {"type": "array", "items": {"$ref": "#/components/schemas/ApprovalFact"}},
+          "risk": {"type": ["string", "null"]}
+        }
+      },
+      "ApprovalFact": {
+        "type": "object",
+        "required": ["label", "value"],
+        "properties": {"label": {"type": "string"}, "value": {"type": "string"}}
       },
       "InteractionResponse": {
         "type": "object",
