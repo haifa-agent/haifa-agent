@@ -419,6 +419,30 @@ public final class DefaultAgentLoop implements AgentLoop {
                                                     + component.version())
                                             .toList())),
                     time.now()));
+            events.append(
+                    run.id(),
+                    "context.prepared",
+                    Map.<String, Object>ofEntries(
+                            Map.entry("iteration", progress.iteration()),
+                            Map.entry("contextBuildElapsedMillis", preparationMetrics.contextBuildElapsedMillis()),
+                            Map.entry(
+                                    "sessionSelectionElapsedMillis",
+                                    preparationMetrics.sessionSelectionElapsedMillis()),
+                            Map.entry("historyRowsRead", preparationMetrics.historyRowsRead()),
+                            Map.entry("activeRowsSelected", preparationMetrics.activeRowsSelected()),
+                            Map.entry("atomicGroupCandidateScans", preparationMetrics.atomicGroupCandidateScans()),
+                            Map.entry("atomicGroupsBuilt", preparationMetrics.atomicGroupsBuilt()),
+                            Map.entry("sessionToolCallBatchCount", preparationMetrics.toolCallBatchCount()),
+                            Map.entry("sessionContinuationBatchCount", preparationMetrics.continuationBatchCount()),
+                            Map.entry("sessionContinuationRecordCount", preparationMetrics.continuationRecordCount()),
+                            Map.entry("snapshotHit", preparationMetrics.snapshotHits() > 0),
+                            Map.entry("snapshotHits", preparationMetrics.snapshotHits()),
+                            Map.entry("snapshotRebuildReason", preparationMetrics.snapshotRebuildReason()),
+                            Map.entry("snapshotDeltaRows", preparationMetrics.snapshotDeltaRows()),
+                            Map.entry("snapshotEstimatedTokens", preparationMetrics.snapshotEstimatedTokens()),
+                            Map.entry("snapshotCharacters", preparationMetrics.snapshotCharacters()),
+                            Map.entry("snapshotPayloadBytes", preparationMetrics.snapshotPayloadBytes())),
+                    time.now());
             RuntimeContextBuildResult[] builtRef = {built};
             RuntimeMiddlewareContext[] middlewareContextRef = {built.middlewareContext()};
             RuntimeMiddlewareContext middlewareContext = middlewareContextRef[0];

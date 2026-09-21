@@ -51,6 +51,7 @@ import io.haifa.agent.runtime.core.completion.CompletionPolicyResult;
 import io.haifa.agent.runtime.core.completion.DefaultCompletionGuard;
 import io.haifa.agent.runtime.core.completion.FrozenStructuredOutputValidator;
 import io.haifa.agent.runtime.core.completion.OutputContractValidator;
+import io.haifa.agent.runtime.core.context.ActiveContextSnapshots;
 import io.haifa.agent.runtime.core.control.DefaultRunControlService;
 import io.haifa.agent.runtime.core.control.RunControlRegistry;
 import io.haifa.agent.runtime.core.control.RunControlService;
@@ -93,6 +94,7 @@ import io.haifa.agent.runtime.core.model.FrozenModelInvoker;
 import io.haifa.agent.runtime.core.model.ModelAdapterKey;
 import io.haifa.agent.runtime.core.model.ModelAudioResolver;
 import io.haifa.agent.runtime.core.model.ModelImageResolver;
+import io.haifa.agent.runtime.core.model.ModelMessageProjectionPlanner;
 import io.haifa.agent.runtime.core.model.RuntimeModelOutputPublisher;
 import io.haifa.agent.runtime.core.retry.CompletionRepairPolicy;
 import io.haifa.agent.runtime.core.retry.ModelRetryPolicy;
@@ -462,15 +464,28 @@ public final class RuntimeCoreBuilder {
         InteractionPort interactions = persistence.interactions();
         RunInputPort configuredRunInputs = runInputs != null ? runInputs : persistence.runInputs();
         var summaries = persistence.conversationSummaries();
+        var compressor = new DeterministicContextCompressor();
+        var effectiveCompressionPolicy = compressionPolicy != null ? compressionPolicy : CompressionPolicy.defaults();
+        var activeContexts = new ActiveContextSnapshots(state, summaries, effectiveCompressionPolicy, compressor);
         var toolResultAssets = persistence.toolResultAssets();
         var messageRedactions = persistence.messageRedactions();
+        messageRedactions.register(activeContexts);
         RuntimeEventFeed eventFeed = new RuntimeEventFeed(events, new RuntimeClientEventProjector(runs));
         RuntimeEventSubscriptions eventSubscriptions = new RuntimeEventSubscriptions(eventFeed, eventWakeups);
         ExecutionOwnershipPort configuredOwnership =
                 ownership != null ? ownership : ExecutionOwnershipPort.local(workerId);
         RuntimeModelOutputPublisher modelOutput = new RuntimeModelOutputPublisher(time);
         FrozenModelInvoker models = new FrozenModelInvoker(
-                state, chatModels, ids, modelOutput, controls, events, time, modelImageResolver, modelAudioResolver);
+                state,
+                chatModels,
+                ids,
+                modelOutput,
+                controls,
+                events,
+                time,
+                modelImageResolver,
+                modelAudioResolver,
+                activeContexts);
         MemoryRetriever configuredMemoryRetriever = memoryRetriever;
         if (configuredMemoryRetriever == null) {
             InMemoryMemoryStore defaultMemoryStore = new InMemoryMemoryStore();
@@ -501,7 +516,10 @@ public final class RuntimeCoreBuilder {
         RunTransitionCoordinator transitions =
                 new RunTransitionCoordinator(runs, state, events, outbox, ids, time, awaiter, unitOfWork);
         transitions.addListener(snapshot -> {
-            if (snapshot.status().isTerminal()) modelOutput.markRunTerminal(snapshot.runId());
+            if (snapshot.status().isTerminal()) {
+                modelOutput.markRunTerminal(snapshot.runId());
+                runs.find(snapshot.runId()).ifPresent(run -> activeContexts.release(run.sessionId()));
+            }
         });
         RunControlService controlService = new DefaultRunControlService(controls);
         CapabilityAuthorizer authorizer =
@@ -579,10 +597,8 @@ public final class RuntimeCoreBuilder {
                 outbox);
         ResumeCoordinator resumeCoordinator = new ResumeCoordinator(
                 interactions, checkpointsRepository, transitions, state, access, toolInvoker, skillContentLoader);
-        var compressor = new DeterministicContextCompressor();
-        var effectiveCompressionPolicy = compressionPolicy != null ? compressionPolicy : CompressionPolicy.defaults();
-        var sessionMessageSource =
-                new SessionMessageSource(state, summaries, compressor, effectiveCompressionPolicy, ids, time);
+        var sessionMessageSource = new SessionMessageSource(
+                state, summaries, compressor, effectiveCompressionPolicy, ids, time, activeContexts);
         var memoryContextSource = new MemoryContextSource(configuredMemoryRetriever, state, time);
         RunInputApplier runInputApplier =
                 new RunInputApplier(configuredRunInputs, state, events, outbox, unitOfWork, ids, time);
@@ -597,7 +613,9 @@ public final class RuntimeCoreBuilder {
                 compressor,
                 ids,
                 time,
-                events);
+                events,
+                new ModelMessageProjectionPlanner(state),
+                activeContexts);
         var toolRecovery = new io.haifa.agent.runtime.core.loop.ToolRecoveryCoordinator(state, pipeline, ids, time);
         AgentLoop loop = new DefaultAgentLoop(
                 controls,

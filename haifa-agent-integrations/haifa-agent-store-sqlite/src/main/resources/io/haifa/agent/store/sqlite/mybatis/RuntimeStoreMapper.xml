@@ -513,6 +513,15 @@
         WHERE run_id = #{runId} ORDER BY requested_at ASC, tool_call_id ASC
     </select>
 
+    <select id="toolCallsByIds" resultMap="toolCallRow">
+        SELECT <include refid="toolCallColumns"/> FROM tool_call
+        WHERE tool_call_id IN
+        <foreach item="toolCallId" collection="toolCallIds" open="(" separator="," close=")">
+            #{toolCallId}
+        </foreach>
+        ORDER BY requested_at ASC, tool_call_id ASC
+    </select>
+
     <resultMap id="planRow" type="io.haifa.agent.store.sqlite.mybatis.PlanRow">
         <constructor>
             <arg column="plan_id" javaType="java.lang.String"/>
@@ -1310,6 +1319,15 @@
           </foreach>
     </select>
 
+    <select id="validSummarySourceRangeCount" resultType="int">
+        SELECT COUNT(*) FROM session_message
+        WHERE session_id = #{sessionId}
+          AND sequence &gt;= #{coveredFrom}
+          AND sequence &lt;= #{coveredThrough}
+          AND status = 'COMPLETED'
+          AND visibility IN ('USER_VISIBLE', 'AGENT_VISIBLE')
+    </select>
+
     <resultMap id="memorySelectionRow" type="io.haifa.agent.store.sqlite.mybatis.MemorySelectionRow">
         <constructor>
             <arg column="run_id" javaType="java.lang.String"/>
@@ -1503,5 +1521,14 @@
     <select id="modelContinuations" resultMap="modelContinuationRow">
         SELECT <include refid="modelContinuationColumns"/> FROM model_continuation
         WHERE run_id = #{runId} ORDER BY assistant_message_id ASC
+    </select>
+
+    <select id="continuationsForMessages" resultMap="modelContinuationRow">
+        SELECT <include refid="modelContinuationColumns"/> FROM model_continuation
+        WHERE assistant_message_id IN
+        <foreach item="messageId" collection="messageIds" open="(" separator="," close=")">
+            #{messageId}
+        </foreach>
+        ORDER BY assistant_message_id ASC
     </select>
 </mapper>

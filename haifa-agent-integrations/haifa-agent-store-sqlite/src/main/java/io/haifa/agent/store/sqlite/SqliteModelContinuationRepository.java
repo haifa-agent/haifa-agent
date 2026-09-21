@@ -24,13 +24,16 @@ import io.haifa.agent.store.sqlite.mybatis.RuntimeStoreMapper;
 import io.haifa.agent.store.sqlite.payload.BinaryPayload;
 import io.haifa.agent.store.sqlite.payload.SqliteRuntimePayloadTypes;
 import io.haifa.agent.store.sqlite.payload.StringSetPayload;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Supplier;
 
 public final class SqliteModelContinuationRepository implements ModelContinuationRepository {
+    private static final int SQLITE_IN_BATCH_SIZE = 500;
     private static final String CONTINUATION_VERSION = "1.0";
     private static final String PROTECTION_VERSION = "protector-v1";
 
@@ -113,6 +116,28 @@ public final class SqliteModelContinuationRepository implements ModelContinuatio
         return execute(() -> unitOfWork.mapper(RuntimeStoreMapper.class).modelContinuations(runId.value()).stream()
                 .map(this::fromRow)
                 .toList());
+    }
+
+    @Override
+    public List<ModelContinuationRecord> continuationsForMessages(
+            Map<AgentRunId, Set<AgentMessageId>> messageIdsByRun) {
+        List<String> messageIds = messageIdsByRun.values().stream()
+                .flatMap(Set::stream)
+                .map(AgentMessageId::value)
+                .distinct()
+                .toList();
+        if (messageIds.isEmpty()) return List.of();
+        return execute(() -> {
+            RuntimeStoreMapper mapper = unitOfWork.mapper(RuntimeStoreMapper.class);
+            List<ModelContinuationRecord> records = new ArrayList<>();
+            for (int start = 0; start < messageIds.size(); start += SQLITE_IN_BATCH_SIZE) {
+                int end = Math.min(messageIds.size(), start + SQLITE_IN_BATCH_SIZE);
+                mapper.continuationsForMessages(messageIds.subList(start, end)).stream()
+                        .map(this::fromRow)
+                        .forEach(records::add);
+            }
+            return List.copyOf(records);
+        });
     }
 
     @Override

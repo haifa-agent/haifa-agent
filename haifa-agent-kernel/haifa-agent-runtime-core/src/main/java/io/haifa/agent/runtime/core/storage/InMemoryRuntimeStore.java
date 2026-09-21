@@ -43,6 +43,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
@@ -89,6 +90,7 @@ public final class InMemoryRuntimeStore
     private final ModelContinuationProtector modelContinuationProtector = AesGcmModelContinuationProtector.ephemeral();
     private final Map<AgentRunId, List<AgentStep>> steps = new HashMap<>();
     private final Map<AgentRunId, List<ToolCall>> toolCalls = new HashMap<>();
+    private final Map<ToolCallId, ToolCall> toolCallsById = new HashMap<>();
     private final Map<AgentRunId, AgentPlan> plans = new HashMap<>();
     private final Map<AgentRunId, String> outputs = new ConcurrentHashMap<>();
     private final Map<String, RuntimeConfigurationSnapshot> configurations = new HashMap<>();
@@ -485,6 +487,17 @@ public final class InMemoryRuntimeStore
     }
 
     @Override
+    public synchronized List<ModelContinuationRecord> continuationsForMessages(
+            Map<AgentRunId, Set<AgentMessageId>> messageIdsByRun) {
+        return messageIdsByRun.values().stream()
+                .flatMap(Set::stream)
+                .distinct()
+                .map(modelContinuationsByMessage::get)
+                .filter(Objects::nonNull)
+                .toList();
+    }
+
+    @Override
     public synchronized io.haifa.agent.model.api.SensitiveModelReasoning resolveContinuation(
             AgentMessageId messageId,
             io.haifa.agent.model.api.ResolvedModelSnapshot model,
@@ -625,6 +638,7 @@ public final class InMemoryRuntimeStore
         List<ToolCall> current = toolCalls.computeIfAbsent(toolCall.runId(), ignored -> new ArrayList<>());
         current.removeIf(existing -> existing.id().equals(toolCall.id()));
         current.add(toolCall);
+        toolCallsById.put(toolCall.id(), toolCall);
     }
 
     @Override
@@ -645,6 +659,19 @@ public final class InMemoryRuntimeStore
     @Override
     public synchronized List<ToolCall> toolCalls(AgentRunId runId) {
         return List.copyOf(toolCalls.getOrDefault(runId, List.of()));
+    }
+
+    @Override
+    public synchronized List<ToolCall> toolCallsByIds(Map<AgentRunId, Set<ToolCallId>> idsByRun) {
+        Set<ToolCallId> ids = idsByRun.values().stream()
+                .flatMap(Set::stream)
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        return toolCallsByIds(ids);
+    }
+
+    @Override
+    public synchronized List<ToolCall> toolCallsByIds(Set<ToolCallId> ids) {
+        return ids.stream().map(toolCallsById::get).filter(Objects::nonNull).toList();
     }
 
     @Override
@@ -795,7 +822,7 @@ public final class InMemoryRuntimeStore
         List<ConversationSummary> stream = summaries.getOrDefault(sessionId, List.of());
         for (int index = 0; index < stream.size(); index++) {
             ConversationSummary summary = stream.get(index);
-            if (summary.valid() && summary.sourceMessageIds().contains(messageId)) {
+            if (summary.valid()) {
                 stream.set(index, summary.invalidate());
             }
         }
@@ -804,12 +831,14 @@ public final class InMemoryRuntimeStore
     @Override
     public synchronized boolean coversValidSource(ConversationSummary summary, MessageCursor through) {
         if (!summary.valid() || summary.coveredThrough().compareTo(through) < 0) return false;
-        return summary.sourceMessageIds().stream()
-                .map(messagesById::get)
-                .allMatch(message -> message != null
-                        && message.sessionId().equals(summary.sessionId())
-                        && message.status() == MessageStatus.COMPLETED
-                        && message.visibility() != MessageVisibility.REDACTED);
+        long valid = sessionMessages.getOrDefault(summary.sessionId(), List.of()).stream()
+                .filter(message -> message.cursor().compareTo(summary.coveredFrom()) >= 0)
+                .filter(message -> message.cursor().compareTo(summary.coveredThrough()) <= 0)
+                .filter(message -> message.status() == MessageStatus.COMPLETED)
+                .filter(message -> message.visibility() == MessageVisibility.USER_VISIBLE
+                        || message.visibility() == MessageVisibility.AGENT_VISIBLE)
+                .count();
+        return valid == summary.coveredSourceCount();
     }
 
     @Override

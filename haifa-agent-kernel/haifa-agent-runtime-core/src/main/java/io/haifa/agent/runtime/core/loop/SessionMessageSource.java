@@ -35,6 +35,9 @@ import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.runtime.core.compaction.CompactionFileOperationsTracker;
+import io.haifa.agent.runtime.core.context.ActiveContextSnapshot;
+import io.haifa.agent.runtime.core.context.ActiveContextSnapshots;
+import io.haifa.agent.runtime.core.context.AtomicMessageGroups;
 import io.haifa.agent.runtime.core.storage.OptimisticLockException;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import java.nio.charset.StandardCharsets;
@@ -42,7 +45,6 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
@@ -89,9 +91,17 @@ public final class SessionMessageSource {
             long atomicGroupCandidateScans,
             long atomicGroupsBuilt,
             long toolCallBatchCount,
+            long continuationBatchCount,
+            long continuationRecordCount,
             long summaryRenderCacheHits,
-            long summaryRenderCacheMisses) {
-        static final SelectionMetrics NONE = new SelectionMetrics(0, 0, 0, 0, 0, 0, 0, 0);
+            long summaryRenderCacheMisses,
+            long snapshotHits,
+            String snapshotRebuildReason,
+            long snapshotDeltaRows,
+            long snapshotEstimatedTokens,
+            long snapshotCharacters,
+            long snapshotPayloadBytes) {
+        static final SelectionMetrics NONE = new SelectionMetrics(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "NONE", 0, 0, 0, 0);
 
         SelectionMetrics plus(SelectionMetrics other) {
             return new SelectionMetrics(
@@ -101,8 +111,16 @@ public final class SessionMessageSource {
                     atomicGroupCandidateScans + other.atomicGroupCandidateScans,
                     atomicGroupsBuilt + other.atomicGroupsBuilt,
                     toolCallBatchCount + other.toolCallBatchCount,
+                    continuationBatchCount + other.continuationBatchCount,
+                    continuationRecordCount + other.continuationRecordCount,
                     summaryRenderCacheHits + other.summaryRenderCacheHits,
-                    summaryRenderCacheMisses + other.summaryRenderCacheMisses);
+                    summaryRenderCacheMisses + other.summaryRenderCacheMisses,
+                    snapshotHits + other.snapshotHits,
+                    "NONE".equals(other.snapshotRebuildReason) ? snapshotRebuildReason : other.snapshotRebuildReason,
+                    snapshotDeltaRows + other.snapshotDeltaRows,
+                    Math.max(snapshotEstimatedTokens, other.snapshotEstimatedTokens),
+                    Math.max(snapshotCharacters, other.snapshotCharacters),
+                    Math.max(snapshotPayloadBytes, other.snapshotPayloadBytes));
         }
     }
 
@@ -114,8 +132,32 @@ public final class SessionMessageSource {
         private long atomicGroupCandidateScans;
         private long atomicGroupsBuilt;
         private long toolCallBatchCount;
+        private long continuationBatchCount;
+        private long continuationRecordCount;
         private long summaryRenderCacheHits;
         private long summaryRenderCacheMisses;
+        private long snapshotHits;
+        private String snapshotRebuildReason = "NONE";
+        private long snapshotDeltaRows;
+        private long snapshotEstimatedTokens;
+        private long snapshotCharacters;
+        private long snapshotPayloadBytes;
+
+        private void absorb(ActiveContextSnapshots.AccessMetrics metrics) {
+            historyRowsRead += metrics.historyRowsRead();
+            activeRowsSelected += metrics.activeRowsSelected();
+            atomicGroupCandidateScans += metrics.atomicGroupCandidateScans();
+            atomicGroupsBuilt += metrics.atomicGroupsBuilt();
+            toolCallBatchCount += metrics.toolCallBatchCount();
+            continuationBatchCount += metrics.continuationBatchCount();
+            continuationRecordCount += metrics.continuationRecordCount();
+            snapshotHits += metrics.snapshotHit() ? 1 : 0;
+            snapshotRebuildReason = metrics.rebuildReason().name();
+            snapshotDeltaRows += metrics.snapshotDeltaRows();
+            snapshotEstimatedTokens = Math.max(snapshotEstimatedTokens, metrics.snapshotEstimatedTokens());
+            snapshotCharacters = Math.max(snapshotCharacters, metrics.snapshotCharacters());
+            snapshotPayloadBytes = Math.max(snapshotPayloadBytes, metrics.snapshotPayloadBytes());
+        }
 
         private SelectionMetrics finish(long startedAt) {
             long elapsed = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
@@ -126,8 +168,16 @@ public final class SessionMessageSource {
                     atomicGroupCandidateScans,
                     atomicGroupsBuilt,
                     toolCallBatchCount,
+                    continuationBatchCount,
+                    continuationRecordCount,
                     summaryRenderCacheHits,
-                    summaryRenderCacheMisses);
+                    summaryRenderCacheMisses,
+                    snapshotHits,
+                    snapshotRebuildReason,
+                    snapshotDeltaRows,
+                    snapshotEstimatedTokens,
+                    snapshotCharacters,
+                    snapshotPayloadBytes);
         }
     }
 
@@ -139,6 +189,8 @@ public final class SessionMessageSource {
     private final CompressionPolicy policy;
     private final IdentifierGenerator ids;
     private final TimeProvider time;
+    private final ActiveContextSnapshots activeContexts;
+    private final boolean fullHistoryOracle;
     private final BoundedSummaryRenderCache<SummaryRenderKey> renderedMarkdownCache =
             new BoundedSummaryRenderCache<>(MAX_RENDERED_SUMMARY_ENTRIES, MAX_RENDERED_SUMMARY_CHARACTERS);
 
@@ -149,12 +201,63 @@ public final class SessionMessageSource {
             CompressionPolicy policy,
             IdentifierGenerator ids,
             TimeProvider time) {
+        this(
+                messages,
+                summaries,
+                compressor,
+                policy,
+                ids,
+                time,
+                new ActiveContextSnapshots(messages, summaries, policy, compressor),
+                false);
+    }
+
+    public SessionMessageSource(
+            RuntimeStateRepository messages,
+            ConversationSummaryRepository summaries,
+            ContextCompressor compressor,
+            CompressionPolicy policy,
+            IdentifierGenerator ids,
+            TimeProvider time,
+            ActiveContextSnapshots activeContexts) {
+        this(messages, summaries, compressor, policy, ids, time, activeContexts, false);
+    }
+
+    private SessionMessageSource(
+            RuntimeStateRepository messages,
+            ConversationSummaryRepository summaries,
+            ContextCompressor compressor,
+            CompressionPolicy policy,
+            IdentifierGenerator ids,
+            TimeProvider time,
+            ActiveContextSnapshots activeContexts,
+            boolean fullHistoryOracle) {
         this.messages = Objects.requireNonNull(messages);
         this.summaries = Objects.requireNonNull(summaries);
         this.compressor = Objects.requireNonNull(compressor);
         this.policy = Objects.requireNonNull(policy);
         this.ids = Objects.requireNonNull(ids);
         this.time = Objects.requireNonNull(time);
+        this.activeContexts = Objects.requireNonNull(activeContexts);
+        this.fullHistoryOracle = fullHistoryOracle;
+    }
+
+    static SessionMessageSource fullHistoryOracle(
+            RuntimeStateRepository messages,
+            ConversationSummaryRepository summaries,
+            ContextCompressor compressor,
+            CompressionPolicy policy,
+            IdentifierGenerator ids,
+            TimeProvider time) {
+        return new SessionMessageSource(
+                messages,
+                summaries,
+                compressor,
+                policy,
+                ids,
+                time,
+                new ActiveContextSnapshots(messages, summaries, policy, compressor),
+                true);
     }
 
     /** Reads the current compatible checkpoint and complete atomic message groups without writing. */
@@ -202,18 +305,47 @@ public final class SessionMessageSource {
     }
 
     private Selection currentSelection(AgentSessionId sessionId, long sessionTokenBudget, MetricsCollector metrics) {
-        List<AgentMessage> visible = visibleMessages(sessionId, metrics);
-        if (visible.isEmpty()) {
+        if (fullHistoryOracle) {
+            return fullHistorySelection(sessionId, sessionTokenBudget, metrics);
+        }
+        ActiveContextSnapshots.Access access = activeContexts.current(sessionId);
+        metrics.absorb(access.metrics());
+        ActiveContextSnapshot snapshot = access.snapshot();
+        if (snapshot.activeMessages().isEmpty() && snapshot.summary().isEmpty()) {
             return emptySelection(sessionId, sessionTokenBudget);
         }
-        Map<AgentRunId, Map<ToolCallId, ToolCall>> toolCallsByRun = new HashMap<>();
+        Map<AgentRunId, Map<ToolCallId, ToolCall>> toolCallsByRun = toolCallsByRun(snapshot);
+        Optional<ConversationSummary> checkpoint = snapshot.summary();
+        List<List<AgentMessage>> activeGroups = snapshot.atomicGroups();
+        long activeTokens = snapshot.estimatedTokens();
+        Selection selection = selection(
+                sessionId,
+                checkpoint,
+                activeGroups,
+                snapshot.selectedThrough(),
+                toolCallsByRun,
+                false,
+                CompactionReason.NONE,
+                0,
+                activeTokens,
+                sessionTokenBudget == Long.MAX_VALUE ? Math.max(1L, activeTokens) : sessionTokenBudget,
+                null);
+        return selection;
+    }
+
+    private Selection fullHistorySelection(
+            AgentSessionId sessionId, long sessionTokenBudget, MetricsCollector metrics) {
+        List<AgentMessage> visible = visibleMessages(sessionId, metrics);
+        if (visible.isEmpty()) return emptySelection(sessionId, sessionTokenBudget);
+        List<List<AgentMessage>> groups = atomicGroups(visible, metrics);
         Optional<ConversationSummary> checkpoint = compatibleCheckpoint(sessionId, visible, metrics);
         List<List<AgentMessage>> activeGroups = groupsAfterCheckpoint(visible, checkpoint, metrics);
         metrics.activeRowsSelected +=
                 activeGroups.stream().mapToLong(List::size).sum();
+        Map<AgentRunId, Map<ToolCallId, ToolCall>> toolCallsByRun = new HashMap<>();
         long activeTokens = checkpoint.map(ConversationSummary::estimatedTokens).orElse(0)
                 + estimateGroups(activeGroups, toolCallsByRun);
-        Selection selection = selection(
+        return selection(
                 sessionId,
                 checkpoint,
                 activeGroups,
@@ -225,7 +357,6 @@ public final class SessionMessageSource {
                 activeTokens,
                 sessionTokenBudget == Long.MAX_VALUE ? Math.max(1L, activeTokens) : sessionTokenBudget,
                 metrics);
-        return selection;
     }
 
     private Selection compactSelection(
@@ -236,6 +367,9 @@ public final class SessionMessageSource {
             MetricsCollector metrics) {
         if (requestedSessionTokenBudget < 1) {
             throw new IllegalArgumentException("sessionTokenBudget must be positive");
+        }
+        if (policy.semanticCompactionEnabled() && !manual) {
+            return currentSelection(sessionId, requestedSessionTokenBudget, metrics);
         }
         List<AgentMessage> visible = visibleMessages(sessionId, metrics);
         if (visible.isEmpty()) {
@@ -318,6 +452,7 @@ public final class SessionMessageSource {
                 groups.subList(0, split).stream().flatMap(List::stream).toList();
         long compactionStarted = System.nanoTime();
         ConversationSummary summary = summaryFor(sessionId, older, visible);
+        activeContexts.invalidate(sessionId, ActiveContextSnapshots.RebuildReason.SUMMARY_CHANGED);
         long compactionElapsedMillis =
                 java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(Math.max(0L, System.nanoTime() - compactionStarted));
         List<List<AgentMessage>> tail = groupsAfterCheckpoint(visible, Optional.of(summary), metrics);
@@ -565,8 +700,17 @@ public final class SessionMessageSource {
             }
             if (metrics != null) metrics.summaryRenderCacheMisses++;
             String md = SemanticSummaryRenderer.renderMarkdown(sem);
-            if (!summary.sourceMessageIds().isEmpty()) {
+            if (!summary.sourceMessageIds().isEmpty()
+                    || !summary.toolOutcomeReferences().isEmpty()) {
                 var fileOps = CompactionFileOperationsTracker.track(summary.sourceMessageIds(), messages);
+                if (!summary.toolOutcomeReferences().isEmpty()) {
+                    try {
+                        fileOps = fileOps.merge(CompactionFileOperationsTracker.trackToolCalls(
+                                messages.toolCallsByIds(Set.copyOf(summary.toolOutcomeReferences()))));
+                    } catch (UnsupportedOperationException unsupportedGlobalLookup) {
+                        // Compatibility for third-party stores: direct-source tracking remains authoritative.
+                    }
+                }
                 md = CompactionFileOperationsTracker.appendToFileOperations(md, fileOps);
             }
             renderedMarkdownCache.put(key, md);
@@ -627,42 +771,19 @@ public final class SessionMessageSource {
     }
 
     private List<List<AgentMessage>> atomicGroups(List<AgentMessage> source, MetricsCollector metrics) {
-        List<List<AgentMessage>> groups = new ArrayList<>();
-        int index = 0;
-        while (index < source.size()) {
-            AgentMessage message = source.get(index);
-            Set<ToolCallId> calls = message.contents().stream()
-                    .filter(ToolCallPart.class::isInstance)
-                    .map(ToolCallPart.class::cast)
-                    .map(ToolCallPart::toolCallId)
-                    .collect(java.util.stream.Collectors.toCollection(HashSet::new));
-            int end = index;
-            if (!calls.isEmpty()) {
-                Set<ToolCallId> results = new HashSet<>();
-                for (int candidate = index + 1; candidate < source.size(); candidate++) {
-                    if (metrics != null) metrics.atomicGroupCandidateScans++;
-                    Set<ToolCallId> matchingResults = source.get(candidate).contents().stream()
-                            .filter(ToolResultPart.class::isInstance)
-                            .map(ToolResultPart.class::cast)
-                            .map(ToolResultPart::toolCallId)
-                            .filter(calls::contains)
-                            .collect(java.util.stream.Collectors.toSet());
-                    if (!matchingResults.isEmpty()) {
-                        results.addAll(matchingResults);
-                        end = candidate;
-                        if (results.containsAll(calls)) break;
-                    }
-                }
-                if (!results.containsAll(calls)) {
-                    index = end + 1;
-                    continue;
-                }
-            }
-            groups.add(List.copyOf(source.subList(index, end + 1)));
-            index = end + 1;
+        AtomicMessageGroups.Result result = AtomicMessageGroups.group(source);
+        if (metrics != null) {
+            metrics.atomicGroupCandidateScans += result.candidateScans();
+            metrics.atomicGroupsBuilt += result.groups().size();
         }
-        if (metrics != null) metrics.atomicGroupsBuilt += groups.size();
-        return List.copyOf(groups);
+        return result.groups();
+    }
+
+    private Map<AgentRunId, Map<ToolCallId, ToolCall>> toolCallsByRun(ActiveContextSnapshot snapshot) {
+        Map<AgentRunId, Map<ToolCallId, ToolCall>> byRun = new HashMap<>();
+        snapshot.toolCalls().values().forEach(call -> byRun.computeIfAbsent(call.runId(), ignored -> new HashMap<>())
+                .put(call.id(), call));
+        return byRun;
     }
 
     private boolean visibleToContext(AgentMessage message) {
