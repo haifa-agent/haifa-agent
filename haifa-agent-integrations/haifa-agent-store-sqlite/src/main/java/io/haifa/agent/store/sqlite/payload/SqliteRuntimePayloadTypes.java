@@ -41,6 +41,8 @@ public final class SqliteRuntimePayloadTypes {
             new PayloadType<>("conversation-summary-content", "1", ConversationSummaryPayload.class);
     public static final PayloadType<ConversationSummaryPayloadV2> CONVERSATION_SUMMARY_V2 =
             new PayloadType<>("conversation-summary-content", "2", ConversationSummaryPayloadV2.class);
+    public static final PayloadType<ConversationSummaryPayloadV3> CONVERSATION_SUMMARY_V3 =
+            new PayloadType<>("conversation-summary-content", "3", ConversationSummaryPayloadV3.class);
     public static final PayloadType<MemorySelectionPayload> MEMORY_SELECTION =
             new PayloadType<>("memory-selection", "1", MemorySelectionPayload.class);
     public static final PayloadType<StringSetPayload> STRING_SET =
@@ -71,6 +73,7 @@ public final class SqliteRuntimePayloadTypes {
                 .register(INTERACTION_TARGET)
                 .register(CONVERSATION_SUMMARY)
                 .register(CONVERSATION_SUMMARY_V2)
+                .register(CONVERSATION_SUMMARY_V3)
                 .register(MEMORY_SELECTION)
                 .register(STRING_SET)
                 .register(BINARY)

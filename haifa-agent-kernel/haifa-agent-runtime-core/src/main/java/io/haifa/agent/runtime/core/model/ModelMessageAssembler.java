@@ -20,6 +20,7 @@ import io.haifa.agent.core.content.ToolResultPart;
 import io.haifa.agent.core.message.AgentMessage;
 import io.haifa.agent.core.message.AgentMessageId;
 import io.haifa.agent.core.message.MessageRole;
+import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import io.haifa.agent.core.tool.ToolCall;
@@ -31,6 +32,8 @@ import io.haifa.agent.model.api.ModelMessage;
 import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
+import io.haifa.agent.runtime.core.context.ActiveContextSnapshot;
+import io.haifa.agent.runtime.core.context.ActiveContextSnapshots;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationRecord;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import java.nio.charset.StandardCharsets;
@@ -46,6 +49,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -53,7 +57,11 @@ import java.util.stream.Collectors;
 /** The only Runtime boundary that turns Context IR into provider-neutral ModelMessage values. */
 public final class ModelMessageAssembler {
     record AssemblyMetrics(
-            long elapsedMillis, int continuationBatchCount, int continuationRecordCount, int toolCallBatchCount) {}
+            long elapsedMillis,
+            int continuationBatchCount,
+            int continuationRecordCount,
+            int toolCallBatchCount,
+            boolean snapshotFactsReused) {}
 
     record AssemblyResult(List<ModelMessage> messages, AssemblyMetrics metrics) {
         AssemblyResult {
@@ -72,6 +80,7 @@ public final class ModelMessageAssembler {
     private final ModelImageResolver images;
     private final ModelAudioResolver audios;
     private final ModelMessageProjectionPlanner planner;
+    private final ActiveContextSnapshots activeContexts;
 
     public ModelMessageAssembler(RuntimeStateRepository state) {
         this(
@@ -94,10 +103,20 @@ public final class ModelMessageAssembler {
             ModelImageResolver images,
             ModelAudioResolver audios,
             ModelMessageProjectionPlanner planner) {
+        this(state, images, audios, planner, null);
+    }
+
+    public ModelMessageAssembler(
+            RuntimeStateRepository state,
+            ModelImageResolver images,
+            ModelAudioResolver audios,
+            ModelMessageProjectionPlanner planner,
+            ActiveContextSnapshots activeContexts) {
         this.state = Objects.requireNonNull(state, "state must not be null");
         this.images = Objects.requireNonNull(images, "images must not be null");
         this.audios = Objects.requireNonNull(audios, "audios must not be null");
         this.planner = Objects.requireNonNull(planner, "planner must not be null");
+        this.activeContexts = activeContexts;
     }
 
     public List<ModelMessage> assemble(AgentRunId runId, AgentContext context) {
@@ -109,13 +128,47 @@ public final class ModelMessageAssembler {
     }
 
     AssemblyResult assembleWithMetrics(AgentRunId runId, AgentContext context, ResolvedModelSnapshot model) {
+        return assembleWithMetrics(runId, null, context, model);
+    }
+
+    AssemblyResult assembleWithMetrics(AgentRun run, AgentContext context, ResolvedModelSnapshot model) {
+        Objects.requireNonNull(run, "run must not be null");
+        return assembleWithMetrics(run.id(), run.sessionId(), context, model);
+    }
+
+    private AssemblyResult assembleWithMetrics(
+            AgentRunId runId,
+            io.haifa.agent.core.session.AgentSessionId sessionId,
+            AgentContext context,
+            ResolvedModelSnapshot model) {
         long startedAt = System.nanoTime();
         List<ModelMessage> messages = new ArrayList<>();
         Set<ModelMessage> priorModelAssistants = Collections.newSetFromMap(new IdentityHashMap<>());
         context.prompts().forEach(prompt -> messages.add(ModelMessage.text(ModelMessageRole.SYSTEM, prompt.text())));
         Map<AgentRunId, Map<io.haifa.agent.core.tool.ToolCallId, ToolCall>> toolCallsByRun = new HashMap<>();
-        ModelMessageProjectionPlan projectionPlan = planner.plan(runId, context, model);
-        ContinuationIndex continuations = loadContinuations(runId, context);
+        List<AgentMessage> contextMessages = context.items().stream()
+                .filter(item -> item.content() instanceof MessageGroupContextContent)
+                .map(item -> (MessageGroupContextContent) item.content())
+                .flatMap(group -> group.messages().stream())
+                .toList();
+        Optional<ActiveContextSnapshot> reusable = sessionId == null || activeContexts == null
+                ? Optional.empty()
+                : activeContexts.cached(sessionId).filter(snapshot -> snapshot.containsAll(contextMessages));
+        reusable.ifPresent(snapshot -> snapshot.toolCalls().values().forEach(call -> toolCallsByRun
+                .computeIfAbsent(call.runId(), ignored -> new HashMap<>())
+                .put(call.id(), call)));
+        ModelMessageProjectionPlan projectionPlan = reusable.map(snapshot -> planner.plan(
+                        contextMessages,
+                        snapshot.toolCalls()::get,
+                        ModelMessageProjectionPlanner.DEFAULT_PURE_READ_TOOLS,
+                        context.budget().availableInputTokens()))
+                .orElseGet(() -> planner.plan(runId, context, model));
+        ContinuationIndex continuations = reusable.map(snapshot -> new ContinuationIndex(
+                        snapshot.continuationsByMessage(),
+                        snapshot.continuationsByRun(),
+                        0,
+                        snapshot.continuationsByMessage().size()))
+                .orElseGet(() -> loadContinuations(runId, context));
         for (ContextItem item : context.items()) {
             if (item.content() instanceof MessageGroupContextContent group) {
                 group.messages()
@@ -151,7 +204,8 @@ public final class ModelMessageAssembler {
                         Math.max(0L, elapsedMillis),
                         continuations.batchCount(),
                         continuations.recordCount(),
-                        toolCallsByRun.size()));
+                        reusable.isPresent() ? 0 : toolCallsByRun.size(),
+                        reusable.isPresent()));
     }
 
     private ContinuationIndex loadContinuations(AgentRunId currentRunId, AgentContext context) {

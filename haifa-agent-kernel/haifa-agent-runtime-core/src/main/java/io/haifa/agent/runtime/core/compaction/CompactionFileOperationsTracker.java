@@ -51,6 +51,15 @@ public final class CompactionFileOperationsTracker {
             return readFiles.isEmpty() && modifiedFiles.isEmpty();
         }
 
+        public FileOperations merge(FileOperations other) {
+            Objects.requireNonNull(other, "other must not be null");
+            Set<String> mergedReads = new TreeSet<>(readFiles);
+            mergedReads.addAll(other.readFiles);
+            Set<String> mergedModified = new TreeSet<>(modifiedFiles);
+            mergedModified.addAll(other.modifiedFiles);
+            return new FileOperations(mergedReads, mergedModified);
+        }
+
         public String toXmlTags() {
             if (isEmpty()) {
                 return "";
@@ -114,6 +123,15 @@ public final class CompactionFileOperationsTracker {
             }
         }
 
+        return new FileOperations(readFiles, modifiedFiles);
+    }
+
+    /** Extracts bounded derived file facts from already resolved authoritative Tool Calls. */
+    public static FileOperations trackToolCalls(Iterable<ToolCall> calls) {
+        Objects.requireNonNull(calls, "calls must not be null");
+        Set<String> readFiles = new TreeSet<>();
+        Set<String> modifiedFiles = new TreeSet<>();
+        calls.forEach(call -> processToolCall(call, readFiles, modifiedFiles));
         return new FileOperations(readFiles, modifiedFiles);
     }
 

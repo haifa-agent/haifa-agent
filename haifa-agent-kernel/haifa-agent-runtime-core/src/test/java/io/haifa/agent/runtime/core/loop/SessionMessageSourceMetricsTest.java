@@ -107,6 +107,47 @@ class SessionMessageSourceMetricsTest {
         assertThat(measured.metrics().atomicGroupsBuilt()).isEqualTo(1_002);
         assertThat(measured.metrics().toolCallBatchCount()).isEqualTo(1);
         assertThat(measured.selection().items()).hasSize(1_002);
+        SessionMessageSource oracle = SessionMessageSource.fullHistoryOracle(
+                store,
+                store,
+                new DeterministicContextCompressor(),
+                new CompressionPolicy(12, 32, 4),
+                () -> "oracle-summary",
+                () -> NOW);
+        assertThat(measured.selection()).isEqualTo(oracle.select(run, Long.MAX_VALUE));
+    }
+
+    @Test
+    void boundedSnapshotMatchesTheDisabledFullHistoryOracleBeforeAndAfterExternalAppend() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentRun run = createRun(store);
+        CompressionPolicy policy = new CompressionPolicy(12, 32, 4);
+        DeterministicContextCompressor compressor = new DeterministicContextCompressor();
+        SessionMessageSource bounded =
+                new SessionMessageSource(store, store, compressor, policy, () -> "summary-bounded", () -> NOW);
+        SessionMessageSource oracle = SessionMessageSource.fullHistoryOracle(
+                store, store, compressor, policy, () -> "summary-oracle", () -> NOW);
+        appendText(store, run, "oracle-assistant-1", MessageRole.ASSISTANT, "first response");
+
+        assertThat(bounded.select(run, Long.MAX_VALUE)).isEqualTo(oracle.select(run, Long.MAX_VALUE));
+
+        appendText(store, run, "oracle-user-2", MessageRole.USER, "external append");
+        appendText(store, run, "oracle-assistant-2", MessageRole.ASSISTANT, "second response");
+        assertThat(bounded.select(run, Long.MAX_VALUE)).isEqualTo(oracle.select(run, Long.MAX_VALUE));
+    }
+
+    private static void appendText(InMemoryRuntimeStore store, AgentRun run, String id, MessageRole role, String text) {
+        store.appendSessionMessage(new SessionMessageDraft(
+                new AgentMessageId(id),
+                run.sessionId(),
+                Optional.of(run.id()),
+                Optional.empty(),
+                role,
+                MessageStatus.COMPLETED,
+                role == MessageRole.USER ? MessageVisibility.USER_VISIBLE : MessageVisibility.AGENT_VISIBLE,
+                List.of(new TextPart(text, "plain")),
+                Map.of(),
+                NOW));
     }
 
     private static AgentRun createRun(InMemoryRuntimeStore store) {

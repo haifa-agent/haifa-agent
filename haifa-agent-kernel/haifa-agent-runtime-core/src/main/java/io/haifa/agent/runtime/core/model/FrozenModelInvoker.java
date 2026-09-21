@@ -17,6 +17,7 @@ import io.haifa.agent.model.api.ModelStreamEvent;
 import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeConfigurationSnapshot;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions;
+import io.haifa.agent.runtime.core.context.ActiveContextSnapshots;
 import io.haifa.agent.runtime.core.control.CancellationObservedException;
 import io.haifa.agent.runtime.core.control.RunControlRegistry;
 import io.haifa.agent.runtime.core.control.RunControlSignal;
@@ -52,10 +53,25 @@ public final class FrozenModelInvoker {
             TimeProvider time,
             ModelImageResolver imageResolver,
             ModelAudioResolver audioResolver) {
+        this(state, adapters, ids, output, controls, events, time, imageResolver, audioResolver, null);
+    }
+
+    public FrozenModelInvoker(
+            RuntimeStateRepository state,
+            Map<ModelAdapterKey, AgentChatModel> adapters,
+            IdentifierGenerator ids,
+            RuntimeModelOutputPublisher output,
+            RunControlRegistry controls,
+            RuntimeEventAppender events,
+            TimeProvider time,
+            ModelImageResolver imageResolver,
+            ModelAudioResolver audioResolver,
+            ActiveContextSnapshots activeContexts) {
         this.state = Objects.requireNonNull(state, "state must not be null");
         this.adapters = Map.copyOf(Objects.requireNonNull(adapters, "adapters must not be null"));
         this.ids = Objects.requireNonNull(ids, "ids must not be null");
-        this.messages = new ModelMessageAssembler(state, imageResolver, audioResolver);
+        this.messages = new ModelMessageAssembler(
+                state, imageResolver, audioResolver, new ModelMessageProjectionPlanner(state), activeContexts);
         this.responses = new AgentChatResponseMapper(ids);
         this.output = Objects.requireNonNull(output, "output must not be null");
         this.controls = Objects.requireNonNull(controls, "controls must not be null");
@@ -147,7 +163,7 @@ public final class FrozenModelInvoker {
                     null);
         }
         ModelMessageAssembler.AssemblyResult messageAssembly = messages.assembleWithMetrics(
-                run.id(), context, binding.configuration().model());
+                run, context, binding.configuration().model());
         AgentChatRequest request = new AgentChatRequest(
                 callId,
                 requestId,
@@ -185,7 +201,8 @@ public final class FrozenModelInvoker {
                                 messageAssembly.metrics().elapsedMillis(),
                         "continuationBatchCount", messageAssembly.metrics().continuationBatchCount(),
                         "continuationRecordCount", messageAssembly.metrics().continuationRecordCount(),
-                        "assemblerToolCallBatchCount", messageAssembly.metrics().toolCallBatchCount()));
+                        "assemblerToolCallBatchCount", messageAssembly.metrics().toolCallBatchCount(),
+                        "snapshotFactsReused", messageAssembly.metrics().snapshotFactsReused()));
         appendLifecycle(
                 binding,
                 run,

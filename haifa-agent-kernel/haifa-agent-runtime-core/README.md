@@ -139,6 +139,11 @@ replay-then-tail 订阅。Task 03 的 HTTP/SSE 参考 Adapter 位于 Integration
 多个有界批次，全部验证成功后只做一次 CAS；任一批次失败不提交中间状态。显式
 `withSemanticCompactionEnabled(false)` 关闭后，输入 Token 阈值与强制重建回退到确定性压缩；
 手动入口始终显式可用。
+Runtime 通过内部 `ActiveContextSnapshot` 共享 Summary 后的活动消息、原子组、ToolCall 与 Continuation
+权威投影。稳态先比较 Session Cursor：未变化时复用 Snapshot，前进时只读取增量，Summary/Redaction/CAS
+变化时有界重建；进程重启仍从权威 Store 恢复。Snapshot 同时限制消息/组数、估算 Token、字符、结构化
+Payload 与单个 Tool Result，并在 Run 终态释放。旧全历史选择路径仅作为包内测试 Oracle，生产装配默认关闭。
+Summary schema 3 使用覆盖区间、覆盖消息计数、滚动来源摘要和有界直接来源表示，避免把完整历史 ID 列表复制到热路径堆。
 Tail 按 Token 预算从后向前选择，固定消息组数只作为安全上限，Tool Call/Result 原子组不会被拆开。
 `compact(sessionId)` 是产品手动压缩复用的唯一入口，并与自动切换共用 Policy/version、CAS、Redaction
 校验和原始 Message 保留语义。Context Trace 只记录窗口摘要、代次、触发原因、Token 数、读取/选择行数、

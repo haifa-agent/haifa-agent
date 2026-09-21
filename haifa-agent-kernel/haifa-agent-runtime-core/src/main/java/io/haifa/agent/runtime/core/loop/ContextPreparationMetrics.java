@@ -9,10 +9,19 @@ record ContextPreparationMetrics(
         long atomicGroupCandidateScans,
         long atomicGroupsBuilt,
         long toolCallBatchCount,
+        long continuationBatchCount,
+        long continuationRecordCount,
         long summaryRenderCacheHits,
-        long summaryRenderCacheMisses) {
+        long summaryRenderCacheMisses,
+        long snapshotHits,
+        String snapshotRebuildReason,
+        long snapshotDeltaRows,
+        long snapshotEstimatedTokens,
+        long snapshotCharacters,
+        long snapshotPayloadBytes) {
     static final String MIDDLEWARE_ATTRIBUTE = "runtime.context-preparation-metrics";
-    static final ContextPreparationMetrics NONE = new ContextPreparationMetrics(0, 0, 0, 0, 0, 0, 0, 0, 0);
+    static final ContextPreparationMetrics NONE =
+            new ContextPreparationMetrics(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "NONE", 0, 0, 0, 0);
 
     public ContextPreparationMetrics {
         if (contextBuildElapsedMillis < 0
@@ -22,9 +31,19 @@ record ContextPreparationMetrics(
                 || atomicGroupCandidateScans < 0
                 || atomicGroupsBuilt < 0
                 || toolCallBatchCount < 0
+                || continuationBatchCount < 0
+                || continuationRecordCount < 0
                 || summaryRenderCacheHits < 0
-                || summaryRenderCacheMisses < 0) {
+                || summaryRenderCacheMisses < 0
+                || snapshotHits < 0
+                || snapshotDeltaRows < 0
+                || snapshotEstimatedTokens < 0
+                || snapshotCharacters < 0
+                || snapshotPayloadBytes < 0) {
             throw new IllegalArgumentException("context preparation metrics must not be negative");
+        }
+        if (snapshotRebuildReason == null || snapshotRebuildReason.isBlank()) {
+            throw new IllegalArgumentException("snapshotRebuildReason must not be blank");
         }
     }
 
@@ -38,7 +57,15 @@ record ContextPreparationMetrics(
                 selection.atomicGroupCandidateScans(),
                 selection.atomicGroupsBuilt(),
                 selection.toolCallBatchCount(),
+                selection.continuationBatchCount(),
+                selection.continuationRecordCount(),
                 selection.summaryRenderCacheHits(),
-                selection.summaryRenderCacheMisses());
+                selection.summaryRenderCacheMisses(),
+                selection.snapshotHits(),
+                selection.snapshotRebuildReason(),
+                selection.snapshotDeltaRows(),
+                selection.snapshotEstimatedTokens(),
+                selection.snapshotCharacters(),
+                selection.snapshotPayloadBytes());
     }
 }
