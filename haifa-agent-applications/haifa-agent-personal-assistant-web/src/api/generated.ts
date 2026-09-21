@@ -504,6 +504,10 @@ export interface StreamEvent {
   activity?: Activity | null;
   source: "durable" | "transient" | "snapshot";
   sequence: number;
+  toolCallId?: string;
+  outputChannel?: "stdout" | "stderr";
+  outputTruncated?: boolean;
+  previewDropped?: boolean;
 }
 
 export interface ApiError {

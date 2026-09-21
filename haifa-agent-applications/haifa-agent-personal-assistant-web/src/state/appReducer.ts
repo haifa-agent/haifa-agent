@@ -1,5 +1,9 @@
 import type { Activity, Conversation, Run } from "../api/generated";
-import type { AppAction, UiState } from "../types";
+import type { AppAction, ToolOutputPreviewState, UiState } from "../types";
+
+const MAX_PREVIEW_BYTES = 16 * 1024;
+const MAX_PREVIEW_LINES = 200;
+const terminalActivityStatuses = new Set(["SUCCEEDED", "COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"]);
 
 export const initialState: UiState = {
   bootstrap: null,
@@ -9,6 +13,7 @@ export const initialState: UiState = {
   turns: [],
   run: null,
   activities: [],
+  toolPreviews: {},
   interaction: null,
   interactionError: null,
   memoryCandidates: [],
@@ -75,6 +80,56 @@ function mergeActivities(current: Activity[], incoming: Activity[]): Activity[] 
   );
 }
 
+function trimUtf8Tail(value: string): { text: string; truncated: boolean } {
+  const lines = value.split("\n");
+  let text = lines.length > MAX_PREVIEW_LINES ? lines.slice(-MAX_PREVIEW_LINES).join("\n") : value;
+  let truncated = text !== value;
+  const encoder = new TextEncoder();
+  if (encoder.encode(text).length <= MAX_PREVIEW_BYTES) return { text, truncated };
+  let low = 0;
+  let high = text.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (encoder.encode(text.slice(middle)).length <= MAX_PREVIEW_BYTES) high = middle;
+    else low = middle + 1;
+  }
+  if (low < text.length && /[\uDC00-\uDFFF]/u.test(text[low])) low++;
+  text = text.slice(low);
+  return { text, truncated: true };
+}
+
+function appendPreview(
+  current: ToolOutputPreviewState | undefined,
+  value: string,
+  channel: "stdout" | "stderr",
+  outputTruncated: boolean,
+  previewDropped: boolean,
+): ToolOutputPreviewState {
+  const channelMarker = current
+    ? current.channel !== channel ? `\n[${channel}]\n` : ""
+    : channel === "stderr" ? "[stderr]\n" : "";
+  const bounded = trimUtf8Tail(`${current?.text ?? ""}${channelMarker}${value}`);
+  return {
+    text: bounded.text,
+    channel,
+    outputTruncated: Boolean(current?.outputTruncated || outputTruncated),
+    previewDropped: Boolean(current?.previewDropped || previewDropped || bounded.truncated),
+  };
+}
+
+function withoutTerminalPreviews(
+  previews: Record<string, ToolOutputPreviewState>,
+  activities: Activity[],
+): Record<string, ToolOutputPreviewState> {
+  const terminal = new Set(
+    activities
+      .filter((activity) => terminalActivityStatuses.has(activity.status.toUpperCase()))
+      .map((activity) => activity.activityId),
+  );
+  if (!terminal.size) return previews;
+  return Object.fromEntries(Object.entries(previews).filter(([activityId]) => !terminal.has(activityId)));
+}
+
 export function appReducer(state: UiState, action: AppAction): UiState {
   switch (action.type) {
     case "bootstrapLoaded": {
@@ -112,6 +167,7 @@ export function appReducer(state: UiState, action: AppAction): UiState {
         turns: [],
         run: null,
         activities: [],
+        toolPreviews: {},
         interaction: null,
         interactionError: null,
         streamDraft: "",
@@ -152,6 +208,10 @@ export function appReducer(state: UiState, action: AppAction): UiState {
         ...state,
         run: next,
         activities: changed ? [] : state.activities,
+        toolPreviews:
+          !next || changed || ["COMPLETED", "FAILED", "CANCELLED", "TIMEOUT"].includes(next.status)
+            ? {}
+            : state.toolPreviews,
         interaction: changed ? null : state.interaction,
         interactionError: changed ? null : state.interactionError,
         streamSequences: changed
@@ -167,8 +227,14 @@ export function appReducer(state: UiState, action: AppAction): UiState {
             : state.outputPhase,
       };
     }
-    case "activitiesLoaded":
-      return { ...state, activities: mergeActivities(state.activities, action.activities) };
+    case "activitiesLoaded": {
+      const activities = mergeActivities(state.activities, action.activities);
+      return {
+        ...state,
+        activities,
+        toolPreviews: withoutTerminalPreviews(state.toolPreviews, activities),
+      };
+    }
     case "interactionLoaded":
       return {
         ...state,
@@ -192,6 +258,27 @@ export function appReducer(state: UiState, action: AppAction): UiState {
         memories: action.memories,
       };
     case "streamEvent": {
+      if (action.event.type === "tool.output.preview") {
+        if (!action.event.toolCallId || (state.run && action.event.runId !== state.run.id)) return state;
+        const activityId = `tool:${action.event.toolCallId}`;
+        const activity = state.activities.find((value) => value.activityId === activityId);
+        if (activity && terminalActivityStatuses.has(activity.status.toUpperCase())) return state;
+        if (state.run && ["COMPLETED", "FAILED", "CANCELLED", "TIMEOUT"].includes(state.run.status)) return state;
+        const channel = action.event.outputChannel === "stderr" ? "stderr" : "stdout";
+        return {
+          ...state,
+          toolPreviews: {
+            ...state.toolPreviews,
+            [activityId]: appendPreview(
+              state.toolPreviews[activityId],
+              action.event.value,
+              channel,
+              Boolean(action.event.outputTruncated),
+              Boolean(action.event.previewDropped),
+            ),
+          },
+        };
+      }
       const source = action.event.source;
       if (
         source !== "snapshot" &&
@@ -211,6 +298,9 @@ export function appReducer(state: UiState, action: AppAction): UiState {
           : ["answer.committed", "answer.failed", "answer.superseded"].includes(action.event.type)
             ? "idle"
             : state.outputPhase;
+      const activities = action.event.activity
+        ? mergeActivities(state.activities, [action.event.activity])
+        : state.activities;
       return {
         ...state,
         streamSequences:
@@ -224,9 +314,11 @@ export function appReducer(state: UiState, action: AppAction): UiState {
               ? ""
               : state.streamDraft,
         outputPhase,
-        activities: action.event.activity
-          ? mergeActivities(state.activities, [action.event.activity])
-          : state.activities,
+        activities,
+        toolPreviews:
+          action.event.type === "run.final"
+            ? {}
+            : withoutTerminalPreviews(state.toolPreviews, activities),
       };
     }
     case "setConnection":

@@ -9,9 +9,11 @@ import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.execution.api.ExecutionEnvironmentRef;
 import io.haifa.agent.execution.api.ExecutionOutputObserver;
 import io.haifa.agent.execution.api.SandboxProfileRef;
+import io.haifa.agent.execution.api.ToolOutputPreviewPublisher;
 import io.haifa.agent.execution.core.DefaultExecutionBroker;
 import io.haifa.agent.execution.core.ImmutableSandboxProfileRegistry;
 import io.haifa.agent.execution.core.ImmutableSandboxProviderRegistry;
+import io.haifa.agent.execution.core.TransientToolOutputPreviewPublisher;
 import io.haifa.agent.execution.core.store.InMemoryExecutionOutputStore;
 import io.haifa.agent.execution.core.store.InMemoryExecutionStore;
 import io.haifa.agent.policy.api.PolicyDigest;
@@ -43,16 +45,19 @@ final class CliExecutionPlatform {
     private final SandboxProfile profile;
     private final String shellDisplayName;
     private final String securitySummary;
+    private final ToolOutputPreviewPublisher previewPublisher;
 
     private CliExecutionPlatform(
             ProjectExecutionToolOperations operations,
             SandboxProfile profile,
             String shellDisplayName,
-            String securitySummary) {
+            String securitySummary,
+            ToolOutputPreviewPublisher previewPublisher) {
         this.operations = operations;
         this.profile = profile;
         this.shellDisplayName = shellDisplayName;
         this.securitySummary = securitySummary;
+        this.previewPublisher = Objects.requireNonNull(previewPublisher, "previewPublisher must not be null");
     }
 
     static CliExecutionPlatform create(
@@ -155,6 +160,7 @@ final class CliExecutionPlatform {
                 providerRegistry,
                 workspaces);
         ExecutionOutputObserver observer = new CliOutputObserver(output);
+        ToolOutputPreviewPublisher previewPublisher = new TransientToolOutputPreviewPublisher();
         var operations = new ProjectExecutionToolOperations(
                 broker,
                 identifiers,
@@ -168,14 +174,19 @@ final class CliExecutionPlatform {
                 observer,
                 java.util.function.UnaryOperator.identity(),
                 io.haifa.agent.execution.api.ExecutionScratchSpaceSpec.none(),
-                workspaceTargetResolver(provisioning, tenant, principal));
+                workspaceTargetResolver(provisioning, tenant, principal),
+                previewPublisher);
         String securitySummary = securitySummary(profile, preflight);
         output.println("Execution security: " + securitySummary);
-        return new CliExecutionPlatform(operations, profile, shell.displayName(), securitySummary);
+        return new CliExecutionPlatform(operations, profile, shell.displayName(), securitySummary, previewPublisher);
     }
 
     ProjectExecutionToolOperations operations() {
         return operations;
+    }
+
+    ToolOutputPreviewPublisher previewPublisher() {
+        return previewPublisher;
     }
 
     static io.haifa.agent.application.project.tool.ExecutionWorkspaceTargetResolver workspaceTargetResolver(

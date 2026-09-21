@@ -1135,7 +1135,11 @@
           "value": {"type": "string"},
           "activity": {"oneOf": [{"$ref": "#/components/schemas/Activity"}, {"type": "null"}]},
           "source": {"type": "string", "enum": ["durable", "transient", "snapshot"]},
-          "sequence": {"type": "integer", "format": "int64"}
+          "sequence": {"type": "integer", "format": "int64"},
+          "toolCallId": {"type": "string"},
+          "outputChannel": {"type": "string", "enum": ["stdout", "stderr"]},
+          "outputTruncated": {"type": "boolean"},
+          "previewDropped": {"type": "boolean"}
         }
       },
       "ApiError": {

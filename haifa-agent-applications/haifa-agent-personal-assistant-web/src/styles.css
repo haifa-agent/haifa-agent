@@ -720,6 +720,38 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   gap: 6px;
   overflow: hidden;
 }
+.live-run-tool-output {
+  grid-column: 2 / 4;
+  grid-row: 3;
+  min-width: 0;
+  margin-top: 3px;
+  overflow: hidden;
+  border: 1px solid #30394b;
+  border-radius: 7px;
+  background: #18202f;
+}
+.live-run-tool-output-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 7px;
+  color: #aeb9cc;
+  font-size: 9px;
+  font-weight: 650;
+  border-bottom: 1px solid #30394b;
+}
+.live-run-tool-output-heading small { margin-left: auto; color: #e2aa72; font-size: 9px; }
+.live-run-tool-output-heading small + small { margin-left: 0; }
+.live-run-tool-output pre {
+  max-height: 160px;
+  margin: 0;
+  padding: 7px;
+  overflow: auto;
+  color: #dce5f4;
+  font: 10px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .live-run-label {
   flex: 0 0 auto;
   color: #9aa3b2;

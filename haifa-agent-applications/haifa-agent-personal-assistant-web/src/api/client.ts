@@ -698,7 +698,7 @@ export class HttpPersonalAssistantClient implements PersonalAssistantClient {
           .join("\n");
         if (data) {
           const event = JSON.parse(data) as StreamEvent;
-          this.streamCursors.set(runId, event.eventId);
+          if (event.type !== "tool.output.preview") this.streamCursors.set(runId, event.eventId);
           handlers.onEvent(event);
           if (event.type === "run.final") this.streamCursors.delete(runId);
         }
