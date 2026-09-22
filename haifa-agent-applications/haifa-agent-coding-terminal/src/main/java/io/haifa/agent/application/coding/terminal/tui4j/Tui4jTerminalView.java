@@ -279,8 +279,9 @@ final class Tui4jTerminalView {
         });
         state.selector()
                 .ifPresentOrElse(
-                        selector -> lines.addAll(selector(selector, compact ? 1 : 4)), () -> lines.add(editor.view()));
-        lines.add(theme.focus(editorHint(state, secureInput, isUpdate, secureInputHint)));
+                        selector -> lines.addAll(selector(selector, compact ? 1 : 4)),
+                        () -> lines.add(theme.editor(editor.view(), Math.max(1, state.columns() - 1), 3)));
+        lines.add(theme.muted(editorHint(state, secureInput, isUpdate, secureInputHint)));
         var footer = state.footer();
         List<String> workspace = new ArrayList<>();
         if (!footer.model().isBlank()) addMeaningful(workspace, "model: " + footer.model());

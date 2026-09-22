@@ -55,6 +55,25 @@ class Tui4jTerminalViewTest {
     }
 
     @Test
+    void keepsTheEmptyEditorAtThreeRowsAndRendersOneMutedEditorHint() {
+        TerminalUiState state = TerminalUiState.initial(80, 24);
+        String rendered = view.render(state, transcript(state), editor(80), true, false);
+        String hint = "enter send · shift+enter/ctrl+j newline · tab complete";
+        List<String> lines = rendered.lines().toList();
+        int editorLine = IntStream.range(0, lines.size())
+                .filter(index -> lines.get(index).contains("Type a message"))
+                .findFirst()
+                .orElseThrow();
+        int hintLine = IntStream.range(0, lines.size())
+                .filter(index -> lines.get(index).contains(hint))
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(hintLine - editorLine).isEqualTo(3);
+        assertThat(rendered.indexOf(hint)).isEqualTo(rendered.lastIndexOf(hint));
+    }
+
+    @Test
     void rendersMacSpecialShortcutNamesFromTheSamePlatformProfileUsedForInput() {
         TerminalHostInfo mac = TerminalHostInfo.detect(
                 Map.of(

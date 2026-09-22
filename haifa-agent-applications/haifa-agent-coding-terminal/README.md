@@ -113,7 +113,8 @@ Error、Queued 和 Focus。TrueColor 参考色会按明暗背景自适应；NoCo
   不再从本地 Transcript 反推或累加工具与变更集计数；
 - Approval 使用 Pending 语义，Error 使用 Error 语义；`delivery-*` 与
   `resource-*` Resource 项默认可折叠为一行，认证、历史等关键 Resource 项保持展开可见；
-- Editor/Selector 的当前操作提示使用 Focus 语义。
+- Editor 的当前操作提示使用弱化的 Muted 语义，Selector 仍使用 Focus 语义；普通 Editor 始终保留
+  3 行输入区域，并使用深色背景区分可编辑范围。顶部全局快捷键区保持独立展示。
 
 ### Assistant Markdown
 
