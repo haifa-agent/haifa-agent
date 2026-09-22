@@ -56,6 +56,23 @@ class SdkArchitectureTest {
                 .noneMatch(method -> method.getReturnType().getName().startsWith("io.haifa.agent.runtime.core"));
     }
 
+    @Test
+    void sdkStaysFreeOfSpringAndSpringAi() {
+        var classes = new com.tngtech.archunit.core.importer.ClassFileImporter()
+                .withImportOption(com.tngtech.archunit.core.importer.ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
+                .importPackages("io.haifa.agent.sdk");
+
+        com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses()
+                .should()
+                .dependOnClassesThat()
+                .resideInAnyPackage(
+                        "org.springframework..",
+                        "org.springframework.ai..",
+                        "com.alibaba.cloud.ai..",
+                        "io.modelcontextprotocol..")
+                .check(classes);
+    }
+
     private static void assertSafe(Executable executable) {
         Arrays.stream(executable.getParameterTypes()).forEach(type -> assertSafeType(executable, type));
         if (executable instanceof java.lang.reflect.Method method) {

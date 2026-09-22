@@ -3,6 +3,7 @@ package io.haifa.agent.sdk.internal;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.sdk.api.HaifaAgentException;
 import io.haifa.agent.sdk.contribution.ToolPlatformContribution;
+import io.haifa.agent.sdk.contribution.ToolRegistration;
 import io.haifa.agent.sdk.tool.JavaRecordSchemaGenerator;
 import io.haifa.agent.sdk.tool.JavaTool;
 import io.haifa.agent.sdk.tool.JavaToolContext;
@@ -26,40 +27,55 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * Internal adapter that turns per-Tool Java registrations into the unified Tool platform.
+ * Internal adapter that turns Java and Integration Tool registrations into the unified Tool platform.
  *
- * <p>Registration is one pass and one freeze: each {@link JavaTool} is converted into a Tool Core
- * {@link ToolDefinition} plus {@link ToolProvider}, registered on a {@link ToolCatalogBuilder} and
- * frozen once. The SDK does not merge catalogs, does not re-digest frozen bindings and does not
- * multiplex schema validators; catalog composition is the Tool platform's own concern.
+ * <p>Registration is one pass and one freeze: every {@link JavaTool} is converted into a Tool Core
+ * {@link ToolDefinition} plus {@link ToolProvider}, every {@link ToolRegistration} handed over by an
+ * Integration (such as MCP) is registered as it stands, and the single {@link ToolCatalogBuilder} is
+ * frozen exactly once. The SDK does not merge frozen catalogs, does not re-digest frozen bindings and
+ * does not multiplex schema validators; catalog composition is the Tool platform's own concern.
  */
-public final class JavaToolAssembly {
+public final class ToolAssembly {
     private static final String CONCURRENCY_POLICY = "per-run";
     private static final String PROVENANCE = "java-sdk";
 
-    private JavaToolAssembly() {}
+    private ToolAssembly() {}
 
     /**
-     * Registers Java Tools as the Tool platform and returns the aliases those Tools added.
+     * Registers Java and Integration Tools as the Tool platform and returns the aliases they added.
      *
-     * <p>When no Java Tool is registered the supplied platform is returned unchanged; when the host
-     * supplied no platform a Java-only platform is created. A host that already owns a Tool platform
-     * registers its Tools through that platform, so combining both is rejected instead of silently
-     * rewriting the platform's catalog and bindings.
+     * <p>When nothing is registered the supplied platform is returned unchanged; otherwise a single
+     * catalog is built and frozen. A host that already owns a Tool platform registers its Tools
+     * through that platform, so combining both is rejected instead of silently rewriting the
+     * platform's catalog and bindings.
      */
-    public static Prepared prepare(ToolPlatformContribution base, List<? extends JavaTool<?, ?>> javaTools) {
+    public static Prepared prepare(
+            ToolPlatformContribution base,
+            List<? extends JavaTool<?, ?>> javaTools,
+            List<ToolRegistration> registrations) {
         List<JavaTool<?, ?>> tools = List.copyOf(Objects.requireNonNull(javaTools, "javaTools must not be null"));
-        if (tools.isEmpty()) return new Prepared(base, Set.of());
+        List<ToolRegistration> external =
+                List.copyOf(Objects.requireNonNull(registrations, "registrations must not be null"));
+        if (tools.isEmpty() && external.isEmpty()) return new Prepared(base, Set.of());
         if (base != null) {
             throw new HaifaAgentException(
                     "JAVA_TOOL_PLATFORM_UNSUPPORTED",
                     "product.assemble",
                     "assembly",
-                    "Java Tools cannot be combined with an existing Tool platform; register them on that platform");
+                    "SDK Tools cannot be combined with an existing Tool platform; register them on that platform");
         }
 
         ToolCatalogBuilder builder = new ToolCatalogBuilder();
         Set<String> aliases = new LinkedHashSet<>();
+        registerJavaTools(builder, aliases, tools);
+        registerIntegrationTools(builder, aliases, external);
+        DefaultToolCatalog catalog = builder.freeze();
+        return new Prepared(
+                new ToolPlatformContribution(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator()),
+                Set.copyOf(aliases));
+    }
+
+    private static void registerJavaTools(ToolCatalogBuilder builder, Set<String> aliases, List<JavaTool<?, ?>> tools) {
         JavaRecordSchemaGenerator schemas = new JavaRecordSchemaGenerator();
         for (JavaTool<?, ?> tool : tools) {
             Objects.requireNonNull(tool, "Java Tool must not be null");
@@ -104,10 +120,25 @@ public final class JavaToolAssembly {
                     "java-tool:" + spec.name().value() + "@" + spec.version().value(),
                     provider(tool, spec, providerId));
         }
-        DefaultToolCatalog catalog = builder.freeze();
-        return new Prepared(
-                new ToolPlatformContribution(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator()),
-                Set.copyOf(aliases));
+    }
+
+    private static void registerIntegrationTools(
+            ToolCatalogBuilder builder, Set<String> aliases, List<ToolRegistration> registrations) {
+        for (ToolRegistration registration : registrations) {
+            Objects.requireNonNull(registration, "Tool registration must not be null");
+            if (!aliases.add(registration.alias().value())) {
+                throw new HaifaAgentException(
+                        "TOOL_ALIAS_CONFLICT",
+                        "product.assemble",
+                        "assembly",
+                        "Tool alias is contributed more than once; change the Tool name prefix or the Java Tool name");
+            }
+            builder.register(
+                    registration.alias(),
+                    registration.definition(),
+                    registration.providerBindingReference(),
+                    registration.provider());
+        }
     }
 
     private static ToolProviderId providerId(JavaToolSpec<?, ?> spec) {
@@ -170,10 +201,11 @@ public final class JavaToolAssembly {
         return typedProvider((JavaTool<Record, Record>) tool, (JavaToolSpec<Record, Record>) spec, providerId);
     }
 
-    /** Effective Tool platform after Java Tool registration and the aliases those Tools added. */
-    public record Prepared(ToolPlatformContribution platform, Set<String> javaToolAliases) {
+    /** Effective Tool platform after SDK Tool registration and the aliases those Tools added. */
+    public record Prepared(ToolPlatformContribution platform, Set<String> contributedAliases) {
         public Prepared {
-            javaToolAliases = Set.copyOf(Objects.requireNonNull(javaToolAliases, "javaToolAliases must not be null"));
+            contributedAliases =
+                    Set.copyOf(Objects.requireNonNull(contributedAliases, "contributedAliases must not be null"));
         }
     }
 }
