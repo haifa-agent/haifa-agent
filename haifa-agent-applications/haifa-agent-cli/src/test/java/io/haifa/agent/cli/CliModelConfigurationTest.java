@@ -13,6 +13,7 @@ import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -181,6 +182,11 @@ class CliModelConfigurationTest {
         assertThat(result.model().providerId()).isEqualTo("deepseek");
         assertThat(result.model().id()).isEqualTo("deepseek-responses-flash");
         assertThat(result.model().credentialRef()).isEqualTo("model-auth://deepseek/default");
+        assertThat(result.availableModels())
+                .filteredOn(model -> Set.of("aliyun-bailian", "siliconflow", "kimi", "zhipu", "tokenrhythm")
+                        .contains(model.providerId()))
+                .allSatisfy(model ->
+                        assertThat(model.credentialRef()).isEqualTo("model-auth://" + model.providerId() + "/default"));
         assertThat(result.availableModels())
                 .extracting(CliConfiguration.Model::id)
                 .containsExactly(
