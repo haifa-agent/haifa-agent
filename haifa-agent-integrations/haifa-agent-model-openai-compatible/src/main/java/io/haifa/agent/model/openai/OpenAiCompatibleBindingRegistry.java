@@ -214,12 +214,9 @@ final class OpenAiCompatibleBindingRegistry {
 
         // TokenRhythm - reviewed Chat Completions bindings
         for (String model : Set.of(
-                "glm-5",
                 "glm-5.1",
                 "minimax-m2.7",
-                "kimi-k2.5",
                 "kimi-k2.6",
-                "minimax-m2.5",
                 "mimo-v2.5-pro",
                 "qwen3.7-max",
                 "kimi-k2.7-code",
@@ -232,8 +229,12 @@ final class OpenAiCompatibleBindingRegistry {
                 "glm-5.3",
                 "qwen3.7-flash",
                 "qwen3.8-27b",
+                "kimi-k3",
                 "longcat-2.0",
-                "glm-5.3-flash")) {
+                "glm-5.3-flash",
+                "qwen3.8-flash",
+                "deepseek-flash",
+                "glm-5.3-flashx")) {
             register(
                     map,
                     "tokenrhythm",
