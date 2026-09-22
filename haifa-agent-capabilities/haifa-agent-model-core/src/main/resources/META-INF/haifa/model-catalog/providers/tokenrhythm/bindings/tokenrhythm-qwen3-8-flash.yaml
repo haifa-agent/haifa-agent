@@ -1,8 +1,8 @@
 schemaVersion: haifa.model-catalog-binding/v1
-bindingId: tokenrhythm-kimi-k2-5
-version: "2026-09-m3"
-providerModelId: kimi-k2.5
-displayName: Kimi K2.5 via TokenRhythm
+bindingId: tokenrhythm-qwen3-8-flash
+version: "2026-09-m4"
+providerModelId: qwen3.8-flash
+displayName: Qwen3.8 Flash via TokenRhythm
 status: ACTIVE
 apiStyle: openai-chat-completions
 dialect: tokenrhythm-openai-chat
@@ -14,8 +14,8 @@ profile:
   allowedReasoningEfforts: [HIGH]
   maximumReasoningTokens: null
   minimumOutputTokens: 1
-  maximumOutputTokens: 64000
-  contextWindowTokens: 256000
+  maximumOutputTokens: 131072
+  contextWindowTokens: 1000000
   toolReasoningContinuationRequired: false
   nativeStreaming: true
   usageStreaming: true
@@ -25,4 +25,4 @@ profile:
   outputModalities: [TEXT]
   imageInput: null
   status: VERIFIED
-  lastVerifiedOn: "2026-09-05"
+  lastVerifiedOn: "2026-09-22"

@@ -177,6 +177,21 @@ class ModelCatalogYamlLoaderTest {
                         .profile()
                         .contextWindowTokens())
                 .isEqualTo(1_000_000);
+        assertThat(catalog.binding("tokenrhythm-kimi-k3")
+                        .orElseThrow()
+                        .definition()
+                        .providerModelId())
+                .isEqualTo("kimi-k3");
+        assertThat(catalog.binding("tokenrhythm-deepseek-flash")
+                        .orElseThrow()
+                        .profile()
+                        .maximumOutputTokens())
+                .isEqualTo(384_000);
+        assertThat(catalog.binding("tokenrhythm-glm-5-3-flashx")
+                        .orElseThrow()
+                        .profile()
+                        .contextWindowTokens())
+                .isEqualTo(1_048_576);
         assertThat(catalog.binding("gpt-5.6-sol").orElseThrow().definition().capabilities())
                 .contains(ModelCapability.STRUCTURED_OUTPUT);
         assertThat(catalog.binding("gpt-5.6-terra").orElseThrow().definition().capabilities())
