@@ -341,7 +341,7 @@ Run 创建时会冻结实际 Model Binding。
 | Streaming | Assistant Output Stream、Durable Run Event |
 | Java Tool | Typed Java record、自动 Schema、Tool Loop |
 | Structured Output | Java record 作为 Final Output Contract |
-| MCP | MCP Client、Tool Discovery / Import、stdio / HTTP |
+| MCP | MCP Client、Tool Discovery / Import、stdio / HTTP；纯 Java 用 `McpServerSpec` 声明式接入 |
 | Skill | `SKILL.md`、Progressive Disclosure、Resource Read |
 | HITL | Clarification、Approval、ASK / ALLOW / DENY |
 | Persistence | SQLite、Conversation / Run / Interaction State |

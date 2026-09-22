@@ -27,6 +27,15 @@ class McpArchitectureTest {
     }
 
     @Test
+    void mcpClientIntegrationStaysFreeOfSpringAndSpringAi() {
+        noClasses()
+                .should()
+                .dependOnClassesThat()
+                .resideInAnyPackage("org.springframework..", "org.springframework.ai..", "com.alibaba.cloud.ai..")
+                .check(classes);
+    }
+
+    @Test
     void mcpIntegrationDoesNotDependOnRuntimeOrApplicationAndDoesNotLaunchProcesses() {
         noClasses()
                 .should()

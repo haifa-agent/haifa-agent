@@ -1,5 +1,27 @@
 # Changelog
 
+- Pure Java applications now consume remote MCP servers by declaration instead of by assembling the MCP Integration
+  themselves. `McpServerSpec` (named connection, Streamable HTTP endpoint, explicit Tool allowlist, stable
+  `toolNamePrefix`, `readOnly()` governance preset, `required()`/`optional()`, timeouts and environment-backed header
+  credentials) plus `HaifaAgentStarter.builder().mcpServer(...)` replace the previous 100+ lines of
+  `McpServerDefinition`/`McpConnectionManager`/`McpToolDiscoveryService`/`McpToolDefinitionMapper`/`McpToolProvider`
+  wiring; the MCP Integration itself is unchanged and stays the only MCP Runtime. The SDK's `JavaToolAssembly` is
+  renamed to `ToolAssembly` and now registers Java Tools and Integration `ToolRegistration`s on one
+  `ToolCatalogBuilder` with one freeze, so a Tool name contributed twice (MCP ↔ MCP or MCP ↔ Java Tool) fails the build
+  with `TOOL_ALIAS_CONFLICT` instead of merging frozen catalogs; `HaifaAgentBuilder` gains `toolRegistrations`,
+  `managedResource` and `diagnostic`, and `JavaToolAssembly.Prepared.javaToolAliases()` becomes
+  `ToolAssembly.Prepared.contributedAliases()`. There is no allow-all import mode, `readOnly()` is a local trust
+  declaration rather than a remote claim, a required server fails closed while an optional one degrades to no Tools plus
+  a safe diagnostic, and the Agent owns the MCP client lifecycle so `close()` and failed builds both release every
+  connection. This release covers MCP Client / Tool consumption only: Haifa still publishes no MCP Server, Tool,
+  Resource or Prompt, and a future Spring AI MCP Client Adapter is kept to an independent `haifa-agent-spring` seam
+  reading `ToolCallbackProvider` — Core, Runtime, SDK, SDK Starter and the MCP Integration are now held Spring AI free
+  by Maven Enforcer and ArchUnit. `haifa-agent-sdk-starter` consequently depends on `haifa-agent-mcp`, so its banned
+  dependency list narrows from all `io.modelcontextprotocol.sdk` artifacts to the Spring-bound MCP transports. The
+  standalone `examples/haifa-agent-example` build moves to `0.1.1-SNAPSHOT` and adds `PureJavaMcpApplication`, which
+  skips itself with an explanation unless `PARTNER_MCP_URL` names a Streamable HTTP MCP endpoint, so offline
+  verification stays deterministic.
+
 - OpenAI-compatible Chat, OpenAI Responses, Gemini and Anthropic streaming response limits now distinguish local
   transport boundaries: each SSE event is capped at 1 MiB and each raw stream has a fixed 64 MiB final fallback. The
   semantic response limit remains independently configurable and provider token parameters remain the primary output

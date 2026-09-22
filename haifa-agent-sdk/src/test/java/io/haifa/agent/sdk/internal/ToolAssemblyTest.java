@@ -11,6 +11,7 @@ import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.sdk.api.HaifaAgentException;
 import io.haifa.agent.sdk.contribution.ToolPlatformContribution;
+import io.haifa.agent.sdk.contribution.ToolRegistration;
 import io.haifa.agent.sdk.tool.JavaTool;
 import io.haifa.agent.sdk.tool.JavaToolContext;
 import io.haifa.agent.sdk.tool.JavaToolSpec;
@@ -40,17 +41,17 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 
-public class JavaToolAssemblyTest {
+public class ToolAssemblyTest {
 
     @Test
     void registersJavaToolOnceAndPreservesDispatchSequence() {
-        JavaToolAssembly.Prepared prepared = JavaToolAssembly.prepare(null, List.of(new WeatherTool()));
+        ToolAssembly.Prepared prepared = ToolAssembly.prepare(null, List.of(new WeatherTool()), List.of());
         ToolPlatformContribution platform = prepared.platform();
 
         assertThat(platform.catalog().snapshot().bindings())
                 .extracting(binding -> binding.alias().value())
                 .containsExactly("weather_get");
-        assertThat(prepared.javaToolAliases()).containsExactly("weather_get");
+        assertThat(prepared.contributedAliases()).containsExactly("weather_get");
         assertThat(platform.catalog().snapshot().digest())
                 .isEqualTo(platform.catalog()
                         .findByAlias(new ToolAlias("weather_get"))
@@ -117,40 +118,129 @@ public class JavaToolAssemblyTest {
 
     @Test
     void producesTheSameCatalogDigestRegardlessOfJavaToolRegistrationOrder() {
-        JavaToolAssembly.Prepared first = JavaToolAssembly.prepare(null, List.of(new WeatherTool(), new GeocodeTool()));
-        JavaToolAssembly.Prepared second =
-                JavaToolAssembly.prepare(null, List.of(new GeocodeTool(), new WeatherTool()));
+        ToolAssembly.Prepared first =
+                ToolAssembly.prepare(null, List.of(new WeatherTool(), new GeocodeTool()), List.of());
+        ToolAssembly.Prepared second =
+                ToolAssembly.prepare(null, List.of(new GeocodeTool(), new WeatherTool()), List.of());
 
         assertThat(first.platform().catalog().snapshot().digest())
                 .isEqualTo(second.platform().catalog().snapshot().digest());
         assertThat(first.platform().catalog().snapshot().bindings())
                 .extracting(binding -> binding.alias().value())
                 .containsExactly("geocode", "weather_get");
-        assertThat(first.javaToolAliases()).containsExactlyInAnyOrder("weather_get", "geocode");
+        assertThat(first.contributedAliases()).containsExactlyInAnyOrder("weather_get", "geocode");
     }
 
     @Test
     void noJavaToolsReturnsBasePlatformUnchanged() {
         ToolPlatformContribution base = existingPlatform();
 
-        JavaToolAssembly.Prepared prepared = JavaToolAssembly.prepare(base, List.of());
+        ToolAssembly.Prepared prepared = ToolAssembly.prepare(base, List.of(), List.of());
 
         assertThat(prepared.platform()).isSameAs(base);
-        assertThat(prepared.javaToolAliases()).isEmpty();
-        assertThat(JavaToolAssembly.prepare(null, List.of()).platform()).isNull();
+        assertThat(prepared.contributedAliases()).isEmpty();
+        assertThat(ToolAssembly.prepare(null, List.of(), List.of()).platform()).isNull();
     }
 
     @Test
     void rejectsDuplicateJavaToolAliases() {
-        assertThatThrownBy(() -> JavaToolAssembly.prepare(null, List.of(new WeatherTool(), new DuplicateWeatherTool())))
+        assertThatThrownBy(() ->
+                        ToolAssembly.prepare(null, List.of(new WeatherTool(), new DuplicateWeatherTool()), List.of()))
                 .isInstanceOf(HaifaAgentException.class)
                 .extracting("code")
                 .isEqualTo("JAVA_TOOL_ALIAS_CONFLICT");
     }
 
     @Test
+    void registersJavaAndIntegrationToolsInOneCatalogFreeze() {
+        ToolAssembly.Prepared prepared =
+                ToolAssembly.prepare(null, List.of(new WeatherTool()), List.of(integrationTool("remote_search")));
+
+        assertThat(prepared.platform().catalog().snapshot().bindings())
+                .extracting(binding -> binding.alias().value())
+                .containsExactly("remote_search", "weather_get");
+        assertThat(prepared.contributedAliases()).containsExactlyInAnyOrder("weather_get", "remote_search");
+        assertThat(prepared.platform().catalog().snapshot().bindings())
+                .extracting(binding -> binding.catalogDigest())
+                .containsOnly(prepared.platform().catalog().snapshot().digest());
+        prepared.platform()
+                .catalog()
+                .snapshot()
+                .bindings()
+                .forEach(prepared.platform().invoker()::validateBinding);
+    }
+
+    @Test
+    void rejectsAnIntegrationToolThatCollidesWithAJavaTool() {
+        assertThatThrownBy(() ->
+                        ToolAssembly.prepare(null, List.of(new WeatherTool()), List.of(integrationTool("weather_get"))))
+                .isInstanceOf(HaifaAgentException.class)
+                .extracting("code")
+                .isEqualTo("TOOL_ALIAS_CONFLICT");
+    }
+
+    @Test
+    void rejectsTwoIntegrationToolsThatShareOneAlias() {
+        assertThatThrownBy(() -> ToolAssembly.prepare(
+                        null, List.of(), List.of(integrationTool("remote_search"), integrationTool("remote_search"))))
+                .isInstanceOf(HaifaAgentException.class)
+                .extracting("code")
+                .isEqualTo("TOOL_ALIAS_CONFLICT");
+    }
+
+    @Test
+    void registersIntegrationToolsWithoutAnyJavaTool() {
+        ToolAssembly.Prepared prepared = ToolAssembly.prepare(null, List.of(), List.of(integrationTool("remote_only")));
+
+        assertThat(prepared.platform().catalog().snapshot().bindings())
+                .extracting(binding -> binding.alias().value())
+                .containsExactly("remote_only");
+    }
+
+    private static ToolRegistration integrationTool(String alias) {
+        ToolProviderId providerId = new ToolProviderId("mcp." + alias);
+        ToolSchema schema = new ToolSchema(
+                "mcp." + alias,
+                "1.0.0",
+                Map.of("$schema", ToolSchema.DRAFT_2020_12, "type", "object", "additionalProperties", true));
+        ToolDefinition definition = new ToolDefinition(
+                new ToolName(alias),
+                new io.haifa.agent.tool.api.SemanticVersion("1.0.0"),
+                providerId,
+                alias,
+                "Imported " + alias,
+                schema,
+                schema,
+                ToolExecutionMode.REMOTE_PROVIDER,
+                true,
+                Duration.ofSeconds(30),
+                "mcp-server:test",
+                ToolIdempotency.IDEMPOTENT,
+                ToolRisk.LOW,
+                Set.of(io.haifa.agent.tool.api.ToolSideEffect.NETWORK_ACCESS),
+                new ToolResourceRequirements(Set.of(), Set.of("partner.example.com"), Set.of()),
+                List.of(),
+                ToolApprovalRequirement.POLICY,
+                "mcp:test",
+                false,
+                Set.of("mcp", "remote"));
+        ToolProvider provider = new ToolProvider() {
+            @Override
+            public ToolProviderId id() {
+                return providerId;
+            }
+
+            @Override
+            public ToolResult invoke(ToolInvocationRequest request) {
+                return new ToolResult(true, "remote ok", Map.of(), List.of(), List.of(), false);
+            }
+        };
+        return new ToolRegistration(new ToolAlias(alias), definition, "mcp:test:" + alias, provider);
+    }
+
+    @Test
     void rejectsCombiningJavaToolsWithAnExistingToolPlatform() {
-        assertThatThrownBy(() -> JavaToolAssembly.prepare(existingPlatform(), List.of(new WeatherTool())))
+        assertThatThrownBy(() -> ToolAssembly.prepare(existingPlatform(), List.of(new WeatherTool()), List.of()))
                 .isInstanceOf(HaifaAgentException.class)
                 .extracting("code")
                 .isEqualTo("JAVA_TOOL_PLATFORM_UNSUPPORTED");
