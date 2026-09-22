@@ -24,10 +24,11 @@ import io.haifa.agent.sdk.contribution.PolicyPlatformContribution;
 import io.haifa.agent.sdk.contribution.ProductApprovalPromptFormatter;
 import io.haifa.agent.sdk.contribution.SkillPlatformContribution;
 import io.haifa.agent.sdk.contribution.ToolPlatformContribution;
+import io.haifa.agent.sdk.contribution.ToolRegistration;
 import io.haifa.agent.sdk.internal.DefaultConversationService;
-import io.haifa.agent.sdk.internal.JavaToolAssembly;
 import io.haifa.agent.sdk.internal.ProcessLocalPromptDiagnostics;
 import io.haifa.agent.sdk.internal.SafeConversationService;
+import io.haifa.agent.sdk.internal.ToolAssembly;
 import io.haifa.agent.sdk.memory.AgentMemories;
 import io.haifa.agent.sdk.product.ProductProfile;
 import io.haifa.agent.sdk.product.ProductRunProfile;
@@ -60,6 +61,9 @@ public final class HaifaAgentBuilder {
     private ApprovalPlatformContribution approval;
     private CredentialPlatformContribution credentials;
     private final List<JavaTool<?, ?>> javaTools = new ArrayList<>();
+    private final List<ToolRegistration> toolRegistrations = new ArrayList<>();
+    private final List<AutoCloseable> managedResources = new ArrayList<>();
+    private final List<AgentDiagnostic> assemblyDiagnostics = new ArrayList<>();
     private SdkCallerProvider callers = SdkCallerProvider.defaultPublicUser();
     private IdentifierGenerator ids = new UuidV7IdentifierGenerator();
     private TimeProvider time = new SystemTimeProvider();
@@ -238,6 +242,33 @@ public final class HaifaAgentBuilder {
         return this;
     }
 
+    /**
+     * Registers already-reviewed Integration Tools, such as imported MCP Tools, in declaration order.
+     *
+     * <p>They join the same single Tool catalog freeze as Java Tools, so an alias contributed twice
+     * fails the build instead of silently overwriting the earlier Tool.
+     */
+    public HaifaAgentBuilder toolRegistrations(List<ToolRegistration> values) {
+        Objects.requireNonNull(values, "values must not be null")
+                .forEach(value -> toolRegistrations.add(Objects.requireNonNull(value, "value must not be null")));
+        return this;
+    }
+
+    /**
+     * Registers a resource the assembled Agent owns and closes, such as a native MCP client
+     * connection pool. It is also closed when the build itself fails.
+     */
+    public HaifaAgentBuilder managedResource(AutoCloseable value) {
+        managedResources.add(Objects.requireNonNull(value, "value must not be null"));
+        return this;
+    }
+
+    /** Adds one non-secret assembly diagnostic to the built Agent. */
+    public HaifaAgentBuilder diagnostic(AgentDiagnostic value) {
+        assemblyDiagnostics.add(Objects.requireNonNull(value, "value must not be null"));
+        return this;
+    }
+
     public HaifaAgent build() {
         ProductProfile effectiveProfile = Objects.requireNonNull(profile, "a Product Profile must be configured");
         ModelContribution model = requireComponent(this.model, "MODEL_REQUIRED", "a Model must be configured");
@@ -253,10 +284,10 @@ public final class HaifaAgentBuilder {
                     "assembly",
                     "Artifact component is forbidden by the Product Profile policy");
         }
-        JavaToolAssembly.Prepared prepared = JavaToolAssembly.prepare(this.toolPlatform, javaTools);
+        ToolAssembly.Prepared prepared = ToolAssembly.prepare(this.toolPlatform, javaTools, toolRegistrations);
         ToolPlatformContribution tool = prepared.platform();
         Set<String> allowedTools = new LinkedHashSet<>(effectiveProfile.allowedTools());
-        allowedTools.addAll(prepared.javaToolAliases());
+        allowedTools.addAll(prepared.contributedAliases());
         Set<String> effectiveAllowedTools = Set.copyOf(allowedTools);
         validateDeclaredAliases(effectiveAllowedTools, tool, effectiveProfile.allowedSkills(), skillPlatform);
 
@@ -384,11 +415,15 @@ public final class HaifaAgentBuilder {
     }
 
     private List<AgentDiagnostic> diagnostics() {
-        if (!starterDefaultInstructionsInUse) return List.of();
-        return List.of(new AgentDiagnostic(
-                AgentDiagnostic.Severity.WARNING,
-                "DEFAULT_INSTRUCTIONS_IN_USE",
-                "Starter quickstart instructions are in use; configure trusted product instructions explicitly"));
+        List<AgentDiagnostic> diagnostics = new ArrayList<>();
+        if (starterDefaultInstructionsInUse) {
+            diagnostics.add(new AgentDiagnostic(
+                    AgentDiagnostic.Severity.WARNING,
+                    "DEFAULT_INSTRUCTIONS_IN_USE",
+                    "Starter quickstart instructions are in use; configure trusted product instructions explicitly"));
+        }
+        diagnostics.addAll(assemblyDiagnostics);
+        return List.copyOf(diagnostics);
     }
 
     private List<AutoCloseable> collectLifecycle() {
@@ -403,6 +438,7 @@ public final class HaifaAgentBuilder {
         addLifecycle(lifecycle, seen, policy);
         addLifecycle(lifecycle, seen, approval);
         addLifecycle(lifecycle, seen, credentials);
+        managedResources.forEach(resource -> addLifecycle(lifecycle, seen, resource));
         return List.copyOf(lifecycle);
     }
 

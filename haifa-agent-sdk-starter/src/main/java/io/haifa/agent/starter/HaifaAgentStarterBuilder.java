@@ -5,6 +5,8 @@ import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.agent.AgentDefinitionVersion;
 import io.haifa.agent.core.run.AgentRunBudget;
 import io.haifa.agent.core.run.AgentRunLimits;
+import io.haifa.agent.mcp.client.McpClientFactory;
+import io.haifa.agent.mcp.client.SdkMcpClientFactory;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.CredentialRef;
 import io.haifa.agent.model.api.ModelAdapterCoordinate;
@@ -24,6 +26,7 @@ import io.haifa.agent.sdk.api.HaifaAgent;
 import io.haifa.agent.sdk.api.HaifaAgents;
 import io.haifa.agent.sdk.api.ModelImageResolver;
 import io.haifa.agent.sdk.api.SdkCallerProvider;
+import io.haifa.agent.sdk.contribution.CredentialPlatformContribution;
 import io.haifa.agent.sdk.contribution.InMemoryConversationContribution;
 import io.haifa.agent.sdk.contribution.ModelContribution;
 import io.haifa.agent.sdk.contribution.PolicyPlatformContribution;
@@ -69,6 +72,8 @@ public final class HaifaAgentStarterBuilder {
     private Function<String, String> environment = System::getenv;
     private Duration connectTimeout = Duration.ofSeconds(10);
     private final List<JavaTool<?, ?>> tools = new ArrayList<>();
+    private final List<McpServerSpec> mcpServers = new ArrayList<>();
+    private McpClientFactory mcpClientFactory = new SdkMcpClientFactory();
     private final Map<String, ModelRegistration> models = new LinkedHashMap<>();
     private String defaultModelId;
     private ModelImageResolver modelImageResolver = ModelImageResolver.unsupported();
@@ -167,6 +172,32 @@ public final class HaifaAgentStarterBuilder {
     }
 
     /**
+     * Declares one remote MCP server this Agent consumes as an MCP Client.
+     *
+     * <p>The Agent owns the connection: its allowlisted Tools join the same frozen Tool catalog as
+     * Java Tools, and {@link io.haifa.agent.sdk.api.HaifaAgent#close()} releases the MCP connections
+     * and HTTP resources it opened.
+     *
+     * @param value MCP server declaration
+     * @return this builder
+     */
+    public HaifaAgentStarterBuilder mcpServer(McpServerSpec value) {
+        mcpServers.add(Objects.requireNonNull(value, "value must not be null"));
+        return this;
+    }
+
+    /**
+     * Declares remote MCP servers in declaration order.
+     *
+     * @param values MCP server declarations
+     * @return this builder
+     */
+    public HaifaAgentStarterBuilder mcpServers(List<McpServerSpec> values) {
+        Objects.requireNonNull(values, "values must not be null").forEach(this::mcpServer);
+        return this;
+    }
+
+    /**
      * Registers one trusted model adapter and its frozen snapshot. Registering any custom model
      * replaces the built-in DeepSeek catalog. Callers select non-default models by passing the
      * model ID as the trusted conversation {@code runProfileId}.
@@ -222,25 +253,58 @@ public final class HaifaAgentStarterBuilder {
     public HaifaAgent build() {
         ModelBundle model = models.isEmpty() ? deepSeekModel() : configuredModels();
         ProductProfile profile = profile(model.snapshot());
-        var builder = HaifaAgents.builder(profile)
-                .metadata(new AgentMetadata(name))
-                .callerProvider(callers)
-                .model(model.contribution())
-                .persistence(persistenceContribution())
-                .conversation(conversationContribution())
-                .modelImageResolver(modelImageResolver)
-                .tools(tools)
-                .policy(new PolicyPlatformContribution(
-                        PolicyPresets.standardApproval(), new DefaultPolicyDecisionService()));
-        if (defaultInstructions) {
-            builder.starterDefaultInstructionsInUse();
+        NativeMcpToolPlatform mcp = connectMcpServers();
+        try {
+            var builder = HaifaAgents.builder(profile)
+                    .metadata(new AgentMetadata(name))
+                    .callerProvider(callers)
+                    .model(model.contribution())
+                    .persistence(persistenceContribution())
+                    .conversation(conversationContribution())
+                    .modelImageResolver(modelImageResolver)
+                    .tools(tools)
+                    .policy(new PolicyPlatformContribution(
+                            PolicyPresets.standardApproval(), new DefaultPolicyDecisionService()));
+            if (mcp != null) {
+                builder.toolRegistrations(mcp.registrations())
+                        .managedResource(mcp)
+                        .credentials(new CredentialPlatformContribution(mcp.credentials()));
+                mcp.diagnostics().forEach(builder::diagnostic);
+            }
+            if (defaultInstructions) {
+                builder.starterDefaultInstructionsInUse();
+            }
+            models.values().stream().map(this::runProfile).forEach(builder::runProfile);
+            return builder.build();
+        } catch (RuntimeException | Error exception) {
+            closeQuietly(mcp, exception);
+            throw exception;
         }
-        models.values().stream().map(this::runProfile).forEach(builder::runProfile);
-        return builder.build();
+    }
+
+    private NativeMcpToolPlatform connectMcpServers() {
+        if (mcpServers.isEmpty()) return null;
+        var caller = Objects.requireNonNull(callers.current(), "caller provider returned null");
+        return NativeMcpToolPlatform.connect(
+                List.copyOf(mcpServers), caller.tenant(), caller.principal(), environment, mcpClientFactory);
+    }
+
+    private static void closeQuietly(NativeMcpToolPlatform mcp, Throwable original) {
+        if (mcp == null) return;
+        try {
+            mcp.close();
+        } catch (RuntimeException closeFailure) {
+            original.addSuppressed(closeFailure);
+        }
     }
 
     HaifaAgentStarterBuilder environment(Function<String, String> value) {
         environment = Objects.requireNonNull(value, "value must not be null");
+        return this;
+    }
+
+    HaifaAgentStarterBuilder mcpClientFactory(McpClientFactory value) {
+        mcpClientFactory = Objects.requireNonNull(value, "value must not be null");
         return this;
     }
 
