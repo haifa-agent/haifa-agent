@@ -54,7 +54,7 @@ public record SqliteSdkContributions(
         return new BorrowedPersistence(persistence);
     }
 
-    private static SecretKey requireAes256Key(SecretKey key) {
+    static SecretKey requireAes256Key(SecretKey key) {
         Objects.requireNonNull(key, "continuationKey must not be null");
         if (!"AES".equalsIgnoreCase(key.getAlgorithm())) {
             throw new IllegalArgumentException("continuationKey must use AES");
