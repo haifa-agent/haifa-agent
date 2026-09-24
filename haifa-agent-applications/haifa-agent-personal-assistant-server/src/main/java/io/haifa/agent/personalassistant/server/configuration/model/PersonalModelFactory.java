@@ -664,13 +664,9 @@ public final class PersonalModelFactory {
             options.putAll(OpenAiCompatibleDialects.configuredOptions(binding.dialect(), endpoint));
         }
         if (io.haifa.agent.model.openai.responses.OpenAiResponsesDialects.OPENAI_CODEX.equals(binding.dialect())) {
-            options.put("codex_originator", requiredEnvironment("HAIFA_CODEX_ORIGINATOR"));
+            options.put("codex_originator", environmentOrDefault("HAIFA_CODEX_ORIGINATOR", "haifa"));
             options.put(
-                    "codex_user_agent",
-                    java.util.Optional.ofNullable(System.getenv("HAIFA_CODEX_USER_AGENT"))
-                            .map(String::trim)
-                            .filter(value -> !value.isEmpty())
-                            .orElse("haifa-agent-local-compat/1"));
+                    "codex_user_agent", environmentOrDefault("HAIFA_CODEX_USER_AGENT", "haifa-agent-local-compat/1"));
         }
         if (OpenAiCompatibleDialects.DEEPSEEK.equals(binding.dialect())
                 || AnthropicMessagesDialects.DEEPSEEK.equals(binding.dialect())) {
@@ -679,10 +675,9 @@ public final class PersonalModelFactory {
         return Map.copyOf(options);
     }
 
-    private static String requiredEnvironment(String name) {
+    private static String environmentOrDefault(String name, String fallback) {
         String value = System.getenv(name);
-        if (value == null || value.isBlank()) throw new IllegalArgumentException(name + " is required");
-        return value.trim();
+        return value == null || value.isBlank() ? fallback : value.trim();
     }
 
     private static Map<String, Object> invocationOptions(

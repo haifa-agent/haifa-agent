@@ -133,13 +133,19 @@ class RealEnvironmentTest(unittest.TestCase):
         self.assertNotEqual([], proxied)
         self.assertEqual([], unproxied)
 
-    def test_runtime_environment_injects_only_the_data_directory(self) -> None:
+    def test_runtime_environment_injects_the_data_directory_and_trusted_host_opt_in(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             paths = self.temporary_paths(Path(directory))
 
             environment = real_environment.runtime_environment(paths)
 
-        self.assertEqual({"HAIFA_PERSONAL_DATA_DIR": str(paths.data)}, environment)
+        self.assertEqual(
+            {
+                "HAIFA_PERSONAL_DATA_DIR": str(paths.data),
+                "HAIFA_PERSONAL_EXECUTION_TRUSTED_HOST_ENABLED": "true",
+            },
+            environment,
+        )
 
     def test_backend_build_uses_the_repository_unit_test_skip_property(self) -> None:
         self.assertEqual(

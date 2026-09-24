@@ -25,8 +25,9 @@ connection. All products use the system credential store (Windows Credential Man
 must use `openai-codex-responses`, the approved endpoint, and `model-auth://openai-codex/...`.
 
 ChatGPT subscription login is disabled unless local compatibility testing explicitly supplies
-`HAIFA_CODEX_LOCAL_COMPAT_TEST=true`, `HAIFA_CODEX_OAUTH_CLIENT_ID`, and `HAIFA_CODEX_ORIGINATOR`. No Client ID is built
-into the Server, and default tests never contact OpenAI.
+`HAIFA_CODEX_LOCAL_COMPAT_TEST=true`, `HAIFA_CODEX_OAUTH_CLIENT_ID`, and `HAIFA_CODEX_ORIGINATOR`. The Codex inference
+binding reads `HAIFA_CODEX_ORIGINATOR` (default `haifa`, matching the packaged client) and an optional
+`HAIFA_CODEX_USER_AGENT`. No Client ID is built into the Server, and default tests never contact OpenAI.
 
 The model-connections/{providerId}/network-proxy endpoint saves a PA-local, non-secret route preference under the
 configured data directory; it never rewrites the Catalog, product YAML, endpoint, dialect, or credential store. A
