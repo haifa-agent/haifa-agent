@@ -202,13 +202,14 @@ class OpenAiCompatibleModelProfileFactoryTest {
 
     @Test
     void tokenRhythmAdmissionsMatchTheCurrentProviderCatalog() {
-        var catalogModelIds = PackagedModelCatalog.load(getClass().getClassLoader())
-                .provider("tokenrhythm")
-                .orElseThrow()
-                .bindings()
-                .stream()
-                .map(binding -> binding.definition().providerModelId())
-                .collect(Collectors.toUnmodifiableSet());
+        var catalogModelIds =
+                PackagedModelCatalog.load(getClass().getClassLoader())
+                        .provider("tokenrhythm")
+                        .orElseThrow()
+                        .bindings()
+                        .stream()
+                        .map(binding -> binding.definition().providerModelId())
+                        .collect(Collectors.toUnmodifiableSet());
         var admittedModelIds = OpenAiCompatibleBindingRegistry.admissions().stream()
                 .map(OpenAiCompatibleBindingRegistry.AdmittedBinding::key)
                 .filter(key -> key.providerId().equals("tokenrhythm"))
