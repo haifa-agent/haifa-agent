@@ -1,27 +1,15 @@
 package io.haifa.agent.store.sqlite;
 
+import static io.haifa.agent.store.sqlite.SqliteAggregateTestData.NOW;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import io.haifa.agent.core.agent.AgentDefinitionId;
-import io.haifa.agent.core.agent.AgentDefinitionVersion;
 import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.message.AgentMessageId;
 import io.haifa.agent.core.message.MessageRole;
 import io.haifa.agent.core.message.MessageStatus;
 import io.haifa.agent.core.message.MessageVisibility;
-import io.haifa.agent.core.reference.PrincipalRef;
-import io.haifa.agent.core.reference.RunConfigurationSnapshotRef;
-import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRun;
-import io.haifa.agent.core.run.AgentRunBudget;
-import io.haifa.agent.core.run.AgentRunId;
-import io.haifa.agent.core.run.AgentRunLimits;
-import io.haifa.agent.core.run.AgentRunSpec;
-import io.haifa.agent.core.run.AgentRunType;
-import io.haifa.agent.core.session.AgentSession;
-import io.haifa.agent.core.session.AgentSessionId;
-import io.haifa.agent.core.session.SessionScope;
 import io.haifa.agent.model.api.ApiStyleId;
 import io.haifa.agent.model.api.CredentialRef;
 import io.haifa.agent.model.api.ModelCapability;
@@ -29,18 +17,13 @@ import io.haifa.agent.model.api.ModelDefinitionId;
 import io.haifa.agent.model.api.ModelProviderId;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.model.api.SensitiveModelReasoning;
-import io.haifa.agent.runtime.api.RuntimeOverrides;
-import io.haifa.agent.runtime.core.bootstrap.RuntimeConfigurationSnapshot;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationDraft;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationRef;
-import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
-import io.haifa.agent.skill.api.SkillContentDigest;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Clock;
-import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -52,89 +35,76 @@ import org.junit.jupiter.api.io.TempDir;
 
 class SqliteSdkContributionsTest {
     private static final byte[] KEY_BYTES = "0123456789abcdef0123456789abcdef".getBytes(StandardCharsets.UTF_8);
-    private static final SecretKeySpec CONTINUATION_KEY = new SecretKeySpec(KEY_BYTES, "AES");
-    private static final Instant NOW = Instant.parse("2026-09-24T00:00:00Z");
+    private static final SecretKeySpec KEY = new SecretKeySpec(KEY_BYTES, "AES");
+    private static final AgentMessageId MESSAGE_ID = new AgentMessageId("assistant-message");
+    private static final SensitiveModelReasoning REASONING = SensitiveModelReasoning.of("sensitive-reasoning");
+    private static final ResolvedModelSnapshot MODEL = ResolvedModelSnapshot.create(
+            new ModelProviderId("provider"),
+            "1",
+            new ModelDefinitionId("model"),
+            "1",
+            "model",
+            "openai-compatible",
+            "1",
+            new ApiStyleId("openai-chat-completions"),
+            "standard",
+            URI.create("https://example.invalid"),
+            new CredentialRef("env://TEST_API_KEY"),
+            true,
+            Set.of(ModelCapability.TEXT_CHAT),
+            8_192,
+            1_024,
+            Map.of(),
+            Map.of());
 
     @Test
-    void secretKeyFacadeRecoversProtectedContinuationAndRejectsWrongKey(@TempDir Path directory) {
-        Path database = directory.resolve("agent.sqlite");
-        PreparedContinuation prepared;
-
-        SqliteSdkContributions first = SqliteSdkContributions.initializeWithKey(
-                SqliteStoreConfiguration.defaults(database), Clock.systemUTC(), CONTINUATION_KEY);
-        try {
-            prepared = appendContinuation(first.persistence().runtimePersistence());
-        } finally {
-            first.persistence().close();
+    void secretKeyFacadeRecoversContinuationAfterRestartAndRejectsWrongKey(@TempDir Path directory) {
+        SqliteStoreConfiguration configuration = SqliteTestSupport.configuration(directory);
+        AgentRun run;
+        try (SqliteStoreFoundation foundation = SqliteStoreFoundation.initialize(configuration, Clock.systemUTC())) {
+            run = SqliteAggregateTestData.prepareRun(foundation);
+        }
+        try (var persistence = open(configuration, KEY)) {
+            appendContinuation(persistence, run);
         }
 
-        SqliteSdkContributions reopened = SqliteSdkContributions.initializeWithKey(
-                SqliteStoreConfiguration.defaults(database), Clock.systemUTC(), CONTINUATION_KEY);
-        try {
-            assertThat(resolveContinuation(reopened, prepared)).isEqualTo(prepared.reasoning());
-        } finally {
-            reopened.persistence().close();
+        try (var persistence = open(configuration, KEY)) {
+            assertThat(resolve(persistence)).isEqualTo(REASONING);
         }
-
-        SqliteSdkContributions wrongKey = SqliteSdkContributions.initializeWithKey(
-                SqliteStoreConfiguration.defaults(database), Clock.systemUTC(), new SecretKeySpec(new byte[32], "AES"));
-        try {
-            assertThatThrownBy(() -> resolveContinuation(wrongKey, prepared))
+        try (var persistence = open(configuration, new SecretKeySpec(new byte[32], "AES"))) {
+            assertThatThrownBy(() -> resolve(persistence))
                     .isInstanceOf(RuntimeException.class)
                     .hasMessageNotContaining("sensitive-reasoning");
-        } finally {
-            wrongKey.persistence().close();
         }
     }
 
     @Test
-    void copiesKeyMaterialBeforeClearingAnAdversarialEncoding(@TempDir Path directory) {
-        Path database = directory.resolve("agent.sqlite");
-        byte[] mutableEncoding = KEY_BYTES.clone();
-        SqliteSdkContributions first = SqliteSdkContributions.initializeWithKey(
-                SqliteStoreConfiguration.defaults(database), Clock.systemUTC(), new MutableSecretKey(mutableEncoding));
-        PreparedContinuation prepared;
-        try {
-            prepared = appendContinuation(first.persistence().runtimePersistence());
-        } finally {
-            first.persistence().close();
-        }
-        assertThat(mutableEncoding).containsOnly((byte) 0);
+    void rejectsNonAes256KeysBeforeOpeningDatabase(@TempDir Path directory) {
+        SqliteStoreConfiguration configuration = SqliteTestSupport.configuration(directory);
 
-        SqliteSdkContributions reopened = SqliteSdkContributions.initializeWithKey(
-                SqliteStoreConfiguration.defaults(database), Clock.systemUTC(), CONTINUATION_KEY);
-        try {
-            assertThat(resolveContinuation(reopened, prepared)).isEqualTo(prepared.reasoning());
-        } finally {
-            reopened.persistence().close();
-        }
-    }
-
-    @Test
-    void rejectsInvalidAes256KeyBeforeOpeningDatabase(@TempDir Path directory) {
-        Path database = directory.resolve("agent.sqlite");
-
-        assertThatThrownBy(() -> SqliteSdkContributions.initializeWithKey(
-                        SqliteStoreConfiguration.defaults(database),
-                        Clock.systemUTC(),
-                        new SecretKeySpec(new byte[16], "AES")))
+        assertThatThrownBy(() -> open(configuration, new SecretKeySpec(new byte[16], "AES")))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("256-bit AES key");
-        assertThatThrownBy(() -> SqliteSdkContributions.initializeWithKey(
-                        SqliteStoreConfiguration.defaults(database),
-                        Clock.systemUTC(),
-                        new SecretKeySpec(new byte[32], "HmacSHA256")))
+        assertThatThrownBy(() -> open(configuration, new SecretKeySpec(new byte[32], "HmacSHA256")))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("must use AES");
-        assertThat(database).doesNotExist();
+        assertThat(configuration.databasePath()).doesNotExist();
+    }
+
+    @Test
+    void copiesKeyMaterialBeforeClearingAnAdversarialEncoding() {
+        byte[] sharedEncoding = KEY_BYTES.clone();
+
+        SecretKey copy = SqliteSdkContributions.requireAes256Key(new SharedEncodingKey(sharedEncoding));
+
+        assertThat(copy.getEncoded()).isEqualTo(KEY_BYTES);
+        assertThat(sharedEncoding).containsOnly((byte) 0);
     }
 
     @Test
     void borrowedPersistenceDoesNotOwnTheFoundation(@TempDir Path directory) {
         SqliteSdkContributions sqlite = SqliteSdkContributions.initializeWithKey(
-                SqliteStoreConfiguration.defaults(directory.resolve("agent.sqlite")),
-                Clock.systemUTC(),
-                CONTINUATION_KEY);
+                SqliteTestSupport.configuration(directory), Clock.systemUTC(), KEY);
         var borrowed = sqlite.borrowedPersistence();
 
         borrowed.close();
@@ -146,53 +116,24 @@ class SqliteSdkContributionsTest {
                 .hasMessageContaining("closed");
     }
 
-    private static SensitiveModelReasoning resolveContinuation(
-            SqliteSdkContributions sqlite, PreparedContinuation prepared) {
-        return sqlite.persistence()
-                .runtimePersistence()
-                .state()
-                .resolveContinuation(prepared.messageId(), prepared.model(), Set.of("provider-call"));
+    private static SqliteSdkPersistenceContribution open(SqliteStoreConfiguration configuration, SecretKey key) {
+        return SqliteSdkContributions.initializeWithKey(configuration, Clock.systemUTC(), key)
+                .persistence();
     }
 
-    private static PreparedContinuation appendContinuation(RuntimePersistencePorts persistence) {
-        RuntimeConfigurationSnapshot configuration = configuration();
-        persistence.state().saveConfiguration(configuration);
-        AgentSessionId sessionId = new AgentSessionId("session");
-        TenantRef tenant = new TenantRef("tenant");
-        PrincipalRef principal = new PrincipalRef("principal", "user");
-        persistence
-                .sessions()
-                .insert(AgentSession.open(sessionId, tenant, principal, null, SessionScope.USER, NOW, Map.of()));
-        AgentRunId runId = new AgentRunId("run");
-        persistence
-                .runs()
-                .insert(AgentRun.createRoot(
-                        runId,
-                        new AgentRunSpec(
-                                sessionId,
-                                null,
-                                tenant,
-                                principal,
-                                configuration.definitionId(),
-                                configuration.definitionVersion(),
-                                configuration.profileId(),
-                                configuration.profileVersion(),
-                                configuration.runType(),
-                                "objective",
-                                configuration.budget(),
-                                configuration.limits(),
-                                configuration.reference()),
-                        NOW));
+    private static SensitiveModelReasoning resolve(SqliteSdkPersistenceContribution persistence) {
+        return persistence.runtimePersistence().state().resolveContinuation(MESSAGE_ID, MODEL, Set.of("provider-call"));
+    }
 
-        SensitiveModelReasoning reasoning = SensitiveModelReasoning.of("sensitive-reasoning");
-        AgentMessageId messageId = new AgentMessageId("assistant-message");
+    private static void appendContinuation(SqliteSdkPersistenceContribution persistence, AgentRun run) {
         persistence
+                .runtimePersistence()
                 .state()
                 .appendSessionMessageWithContinuation(
                         new SessionMessageDraft(
-                                messageId,
-                                sessionId,
-                                Optional.of(runId),
+                                MESSAGE_ID,
+                                run.sessionId(),
+                                Optional.of(run.id()),
                                 Optional.empty(),
                                 MessageRole.ASSISTANT,
                                 MessageStatus.COMPLETED,
@@ -202,66 +143,24 @@ class SqliteSdkContributionsTest {
                                 NOW.plusSeconds(1)),
                         new ModelContinuationDraft(
                                 new ModelContinuationRef(
-                                        "continuation", "1.0", reasoning.digest(), reasoning.byteLength()),
-                                runId,
-                                sessionId,
+                                        "continuation", "1.0", REASONING.digest(), REASONING.byteLength()),
+                                run.id(),
+                                run.sessionId(),
                                 "model-call",
-                                configuration.model().providerId().value(),
-                                configuration.model().modelId().value(),
-                                configuration.model().configurationDigest(),
+                                MODEL.providerId().value(),
+                                MODEL.modelId().value(),
+                                MODEL.configurationDigest(),
                                 Set.of("provider-call"),
-                                reasoning,
+                                REASONING,
                                 NOW.plusSeconds(1)));
-        return new PreparedContinuation(messageId, configuration.model(), reasoning);
     }
 
-    private static RuntimeConfigurationSnapshot configuration() {
-        ResolvedModelSnapshot model = ResolvedModelSnapshot.create(
-                new ModelProviderId("provider"),
-                "1",
-                new ModelDefinitionId("model"),
-                "1",
-                "model",
-                "openai-compatible",
-                "1",
-                new ApiStyleId("openai-chat-completions"),
-                "standard",
-                URI.create("https://example.invalid"),
-                new CredentialRef("env://TEST_API_KEY"),
-                true,
-                Set.of(ModelCapability.TEXT_CHAT),
-                8_192,
-                1_024,
-                Map.of(),
-                Map.of());
-        return new RuntimeConfigurationSnapshot(
-                new RunConfigurationSnapshotRef("configuration", "sha256:configuration"),
-                new AgentDefinitionId("agent"),
-                new AgentDefinitionVersion(1, 0, 0),
-                "profile",
-                "1",
-                AgentRunType.CHAT,
-                new AgentRunBudget(100, 100, 100, 10, 10, 2, "USD", 100),
-                new AgentRunLimits(10, 2, 1, 60_000, 10_000),
-                List.of(),
-                List.of(),
-                new SkillContentDigest("sha256:" + "0".repeat(64)),
-                "skill-policy",
-                Set.of(),
-                "answer",
-                RuntimeOverrides.NONE,
-                List.of(),
-                model);
-    }
-
-    private record PreparedContinuation(
-            AgentMessageId messageId, ResolvedModelSnapshot model, SensitiveModelReasoning reasoning) {}
-
-    private static final class MutableSecretKey implements SecretKey {
+    /** Returns its backing array instead of a copy, so clearing it would destroy the caller's key. */
+    private static final class SharedEncodingKey implements SecretKey {
         private static final long serialVersionUID = 1L;
         private final byte[] encoding;
 
-        private MutableSecretKey(byte[] encoding) {
+        private SharedEncodingKey(byte[] encoding) {
             this.encoding = encoding;
         }
 
