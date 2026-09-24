@@ -59,6 +59,9 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
 
     public static CompressionPolicy defaultCompressionPolicy() {
         return CompressionPolicy.defaults()
+                // A rejected summary is a quality problem, not a reason to lose the user's Run: compaction falls back
+                // to the deterministic compressor and the Run continues with a lower-fidelity summary.
+                .withDegradedFallback(true)
                 .withDynamicActiveBudget(
                         CODING_AGENT_ACTIVE_HISTORY_BUDGET_PERCENT,
                         CODING_AGENT_MIN_ACTIVE_HISTORY_BUDGET_TOKENS,
@@ -242,7 +245,8 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
         Objects.requireNonNull(builder, "builder must not be null");
         builder.persistence(ports).workerId(workerId);
         CompressionPolicy currentPolicy = builder.compressionPolicy();
-        CompressionPolicy base = currentPolicy != null ? currentPolicy : CompressionPolicy.defaults();
+        // A caller's explicit policy is theirs to keep; only the unset case adopts the product default.
+        CompressionPolicy base = currentPolicy != null ? currentPolicy : defaultCompressionPolicy();
         if (base.activeHistoryBudgetTokens().isEmpty() && base.activeHistoryBudgetPercent() == 0) {
             base = base.withDynamicActiveBudget(
                             CODING_AGENT_ACTIVE_HISTORY_BUDGET_PERCENT,

@@ -1,5 +1,29 @@
 # Changelog
 
+- Coding Agent and Personal Assistant no longer lose a Run when semantic compaction cannot produce an accepted
+  summary. Both product policies now set `allowDeterministicDegradedFallback`, so a rejected or unusable summary
+  degrades to the deterministic compressor and the Run continues with lower-fidelity history instead of failing with
+  `RUNTIME_EXECUTION_FAILED`; `session.compaction-failed` still records the category and the degraded flag. A caller
+  that passes its own `CompressionPolicy` keeps it, and `ProjectPersistenceAssembly.configure` now adopts the full
+  Coding Agent default only when no policy was set. The deterministic acceptance model answers the compaction and
+  Mission Task normalization protocols it had never implemented, and the deep research acceptance test asserts that
+  no Run failed and that no Task fell back to a conservative recovery, so a broken fixture fails loudly instead of
+  hiding behind the new degradation path.
+
+- Personal Assistant persists model continuations in the trusted-local plaintext format instead of AES-GCM, so the
+  product no longer requires a continuation key: `haifa.personal.continuation-key-base64` is removed from
+  `PersonalAssistantProperties` and `application.yml`, and the portable Windows package stops generating and reading
+  `data/continuation-key.env`. Reasoning payloads stay readable at rest and are guarded only by format, binding and
+  content digests. Upgrade action: an existing `data/personal-assistant.sqlite` still holds AES-protected continuation
+  rows that this build cannot reveal, so resolving one fails with `CROSS_MODEL_CONTINUATION_INVALID`; clear the
+  database, or its `model_continuation` rows, before the first start on this build. The IDE-only
+  `PersonalAssistantRealEnvironmentMain` launcher is deleted and `scripts/real_environment.py` collapses to one
+  cross-platform lifecycle with three options (`--rebuild`, `--backend-jar`, `--startup-timeout-seconds`): provider,
+  model and credential facts come from `application.yml` and the model panel, the launcher stays in the foreground so
+  Ctrl+C stops only what it started, and loopback health checks bypass any configured HTTP proxy. The Personal
+  Assistant test profiles now set the `model-max-response-bytes` host setting that has been required since the bounded
+  streaming change, which restores the `slow-tests` Spring contexts.
+
 - Pure Java applications now consume remote MCP servers by declaration instead of by assembling the MCP Integration
   themselves. `McpServerSpec` (named connection, Streamable HTTP endpoint, explicit Tool allowlist, stable
   `toolNamePrefix`, `readOnly()` governance preset, `required()`/`optional()`, timeouts and environment-backed header

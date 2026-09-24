@@ -653,8 +653,18 @@ public final class SemanticCompactionCoordinator {
                 events.append(run.id(), "session.compaction-failed", data, time.now());
                 return CompactionEvaluationOutcome.failed(reason, initialEstimatedTokens, 0L, 0, cacheHitRate, elapsed);
             }
-            log.warn("Semantic compaction failed: category={}, code={}", category, errorCode);
-            boolean degraded = policy.allowDeterministicDegradedFallback() || overflow;
+            boolean capabilityGap = ex instanceof CompactionModelCapabilityException;
+            if (capabilityGap) {
+                log.warn(
+                        "Semantic compaction unavailable for run {}: {}. Degrading to deterministic compaction.",
+                        run.id().value(),
+                        ex.getMessage());
+            } else {
+                log.warn("Semantic compaction failed: category={}, code={}", category, errorCode);
+            }
+            // A capability gap is permanent for the session, so degrade unconditionally instead of failing the run:
+            // the deterministic compressor keeps the session usable until the user switches models.
+            boolean degraded = capabilityGap || policy.allowDeterministicDegradedFallback() || overflow;
             Map<String, Object> data = new LinkedHashMap<>();
             data.put("reason", reason.name());
             data.put("semanticCompactionReason", reason.name());
@@ -698,10 +708,14 @@ public final class SemanticCompactionCoordinator {
     }
 
     private static String failureCategory(Exception exception) {
+        if (exception instanceof CompactionModelCapabilityException) return "MODEL_CAPABILITY";
         return exception instanceof SemanticSummaryValidationException ? "VALIDATION" : "MODEL_OR_RUNTIME";
     }
 
     private static String validationErrorCode(Exception exception) {
+        if (exception instanceof CompactionModelCapabilityException capability) {
+            return capability.missingCapability() + "_UNSUPPORTED";
+        }
         return exception instanceof SemanticSummaryValidationException ? "VALIDATION_REJECTED" : "NONE";
     }
 

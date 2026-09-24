@@ -57,23 +57,22 @@ Agent 的 `runtime.db`，以最新 `runtime_event.occurred_at` 为窗口终点�
 ## 3. Personal Assistant 真实联调环境
 
 `start-real-environment.ps1`（Windows PowerShell）和 `start-real-environment.sh`（macOS/Linux）
-从仓库根目录启动、复用、验证或停止 Personal Assistant 的真实联调环境。两个入口统一调用 `real_environment.py`。
-需要从 IDE 直接运行当前编译结果、避免生成后端 JAR 时，运行测试源码集中的
-`PersonalAssistantRealEnvironmentMain`；该 Main 仍委托同一个 Python 生命周期实现，只把 IDE 当前
-classpath 作为后端启动输入，不复制 Provider 或凭据装配。
+从仓库根目录启动或复用 Personal Assistant 的真实联调环境。两个入口统一调用 `real_environment.py`，
+只负责本机构建与生命周期，不含任何 Provider、模型或凭据知识。凭据与默认模型由
+`application.yml` 与 PA Web 模型连接面板提供。
 运行方法和安全边界见
 [`haifa-agent-personal-assistant-server/REAL_ENVIRONMENT.md`](../haifa-agent-applications/haifa-agent-personal-assistant-server/REAL_ENVIRONMENT.md)。
 
 ```powershell
 .\scripts\start-real-environment.ps1
-.\scripts\start-real-environment.ps1 --default-model-id deepseek-chat-flash
-.\scripts\start-real-environment.ps1 --stop --dry-run
+.\scripts\start-real-environment.ps1 --rebuild
+.\scripts\start-real-environment.ps1 --backend-jar .\haifa-agent-applications\haifa-agent-personal-assistant-server\target\haifa-agent-personal-assistant-server-0.1.0.jar
 ```
 
 ```bash
 ./scripts/start-real-environment.sh
-./scripts/start-real-environment.sh --default-model-id deepseek-chat-flash
-./scripts/start-real-environment.sh --stop --dry-run
+./scripts/start-real-environment.sh --rebuild
+./scripts/start-real-environment.sh --startup-timeout-seconds 300
 ```
 
 ---

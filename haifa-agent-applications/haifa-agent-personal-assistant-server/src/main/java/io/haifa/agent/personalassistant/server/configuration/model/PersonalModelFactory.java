@@ -837,6 +837,26 @@ public final class PersonalModelFactory {
          */
         private static final String MCP_TOOL_ALIAS = "personal_mcp_echo";
 
+        /**
+         * Minimal valid {@code SemanticConversationSummaryV1}. Only {@code criticalContext} is used because it is the
+         * one populated section outside mandatory carry-forward, so the same answer stays valid for every compaction
+         * batch and for repeated compactions within one session.
+         */
+        /** Valid empty result for a normalization prompt whose notes carry no structured evidence. */
+        private static final String EMPTY_RESEARCH_TASK_RESULT =
+                "{\"schemaVersion\":\"pa.research-task-result/v2\",\"taskSummary\":\"The deterministic acceptance"
+                        + " session recorded no usable research evidence for the frozen objective.\",\"queries\":[],"
+                        + "\"findings\":[],\"sources\":[],\"unresolvedQuestions\":[],"
+                        + "\"stopReason\":\"NO_MORE_SAFE_SOURCES\","
+                        + "\"limitsUsed\":{\"searchCalls\":0,\"fetchCalls\":0,\"sources\":0,\"contentBytes\":0}}";
+
+        private static final String COMPACTION_SUMMARY =
+                "{\"schemaVersion\":\"v1\",\"language\":\"en\",\"goals\":[],\"constraints\":[],"
+                        + "\"progress\":{\"completed\":[],\"active\":[],\"blocked\":[]},\"decisions\":[],"
+                        + "\"nextSteps\":[],\"criticalContext\":[{\"stableItemId\":\"CC-deterministic-1\","
+                        + "\"text\":\"Deterministic acceptance profile: earlier turns were compacted.\","
+                        + "\"sourceRefs\":[],\"confidence\":\"INFERRED\"}],\"unresolvedQuestions\":[]}";
+
         private DeterministicAcceptanceModel(String modelId, PersonalShellRuntime shell) {
             this.modelId = modelId;
             this.operatingSystem = shell.operatingSystem();
@@ -858,6 +878,19 @@ public final class PersonalModelFactory {
             String visibleContext = request.messages().stream()
                     .map(io.haifa.agent.model.api.ModelMessage::content)
                     .collect(java.util.stream.Collectors.joining("\n"));
+            // Semantic compaction calls the session model for a structured summary. Without an answer the summary
+            // fails validation and the whole Run fails, so long acceptance sessions never reach their assertions.
+            if (request.structuredOutput()
+                    .filter(requirement -> "SemanticConversationSummaryV1".equals(requirement.responseName()))
+                    .isPresent()) {
+                return response(current, COMPACTION_SUMMARY, List.of(), ModelFinishReason.STOP);
+            }
+            // Mission Task normalization runs as its own Run against this same model. The server finalizes source
+            // identity, fetch facts and fetch counts afterwards, so the deterministic answer is the canonical result
+            // already present in the notes.
+            if (prompt.contains("Convert the completed research notes below")) {
+                return response(current, normalizedResearchNotes(prompt), List.of(), ModelFinishReason.STOP);
+            }
             if (prompt.contains("[mission-research-synthesis]")) {
                 java.util.regex.Matcher ids = java.util.regex.Pattern.compile(
                                 "Real completed Task IDs in result order: \\[([^]]*)]")
@@ -1080,6 +1113,14 @@ public final class PersonalModelFactory {
                     List.of(new ModelToolCall(
                             new ProviderToolCallCorrelationId("personal-call-" + current), alias, arguments)),
                     ModelFinishReason.TOOL_CALLS);
+        }
+
+        /** Returns the canonical task result embedded in the normalization prompt's research notes. */
+        private static String normalizedResearchNotes(String prompt) {
+            int notes = prompt.lastIndexOf("Completed research notes:");
+            int start = notes < 0 ? -1 : prompt.indexOf('{', notes);
+            int end = prompt.lastIndexOf('}');
+            return start < 0 || end <= start ? EMPTY_RESEARCH_TASK_RESULT : prompt.substring(start, end + 1);
         }
 
         private AgentChatResponse tool(long current, String alias, Map<String, Object> arguments) {
