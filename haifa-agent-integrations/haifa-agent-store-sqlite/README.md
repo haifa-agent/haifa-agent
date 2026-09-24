@@ -112,12 +112,6 @@ worker ID 驱动。
 
 ## 初始化与所有权
 
-SDK 产品可通过 `SqliteSdkContributions.initializeWithKey(configuration, clock, continuationKey)` 传入标准
-`SecretKey`，由 SQLite Integration 在内部构造持久化 AES-GCM continuation protector，避免产品装配代码
-依赖 Runtime Core 类型。默认 `persistence()` 仍拥有 Foundation 生命周期；需要让多个短生命周期
-`HaifaAgent` 共享同一 Foundation 时，向 Agent 装配 `borrowedPersistence()`，并由外层 owner 最终关闭
-原始 `persistence()`。关闭 borrowed view 不会关闭数据库。
-
 调用方通过 `SqliteStoreFoundation.initialize(configuration, clock)` 使用唯一完整 Schema 初始化；产品不能
 传入、追加或替换 Migration 集合。需要产品 Store 的 Application 只能通过
 `initializeWithAdditionalMappers` 传入自己拥有的静态 `MapperXml`。附加 Mapper 与内建 Mapper 使用相同的
