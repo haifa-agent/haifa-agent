@@ -11,19 +11,6 @@ rem Ensure logs and data directories exist
 if not exist "logs" mkdir "logs"
 if not exist "data" mkdir "data"
 
-rem Resolve a stable continuation key for persisted state (generate once, then reuse)
-if not defined HAIFA_PERSONAL_CONTINUATION_KEY (
-    if not exist "data\continuation-key.env" (
-        echo Generating a persistent continuation key...
-        powershell -NoProfile -Command "$p='data\continuation-key.env'; $b=New-Object byte[] 32; [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); New-Item -ItemType Directory -Force -Path (Split-Path -Parent $p) | Out-Null; Set-Content -Path $p -Value ('HAIFA_PERSONAL_CONTINUATION_KEY=' + [Convert]::ToBase64String($b)) -Encoding ascii"
-    )
-    for /f "usebackq tokens=1,* delims==" %%a in ("data\continuation-key.env") do set "HAIFA_PERSONAL_CONTINUATION_KEY=%%b"
-)
-if not defined HAIFA_PERSONAL_CONTINUATION_KEY (
-    echo [Error] Unable to resolve HAIFA_PERSONAL_CONTINUATION_KEY.
-    exit /b 1
-)
-
 rem Find Java: prefer bundled JRE, fallback to system java
 set "JAVA_EXE=jre\bin\java.exe"
 if not exist "%JAVA_EXE%" (

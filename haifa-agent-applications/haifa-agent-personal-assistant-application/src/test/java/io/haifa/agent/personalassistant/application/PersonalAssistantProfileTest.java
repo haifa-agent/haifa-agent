@@ -62,6 +62,8 @@ class PersonalAssistantProfileTest {
 
         var policy = PersonalAssistantAssembler.defaultCompressionPolicy();
         assertThat(policy.semanticCompactionEnabled()).isTrue();
+        // A rejected summary degrades to the deterministic compressor instead of failing the user's Run.
+        assertThat(policy.allowDeterministicDegradedFallback()).isTrue();
         assertThat(policy.activeHistoryBudgetPercent()).isEqualTo(25);
         assertThat(policy.minActiveHistoryBudgetTokens()).isEqualTo(48_000L);
         assertThat(policy.maxActiveHistoryBudgetTokens()).isEqualTo(96_000L);
