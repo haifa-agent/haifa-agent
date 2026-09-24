@@ -175,8 +175,11 @@ def ensure_frontend(value: Paths, rebuild: bool, npm: str) -> None:
         run_checked(npm, "run", "build", cwd=value.web, environment=environment)
 
 def runtime_environment(value: Paths) -> dict[str, str]:
-    """Inject only the local runtime directory; provider, model and credential facts live in application.yml."""
-    return {"HAIFA_PERSONAL_DATA_DIR": str(value.data)}
+    """Inject the local runtime directory and confirm the trusted-host boundary; provider and credential facts live in application.yml."""
+    return {
+        "HAIFA_PERSONAL_DATA_DIR": str(value.data),
+        "HAIFA_PERSONAL_EXECUTION_TRUSTED_HOST_ENABLED": "true",
+    }
 
 def start_or_reuse(children: list[subprocess.Popen[bytes]], role: str, port: int, health_uri: str,
                    work_directory: Path, environment: Mapping[str, str], timeout_seconds: int, value: Paths,

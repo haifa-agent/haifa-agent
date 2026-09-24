@@ -18,10 +18,13 @@ loopback `20000` 的 Origin，方案中没有反向代理。
 - Python 3；PowerShell 与 POSIX Shell 入口共用仓库根目录 `scripts/real_environment.py` 中的生命周期实现；
 - 主仓：`D:\workspace\haifa-agent`。
 
-启动器只注入 `HAIFA_PERSONAL_DATA_DIR`。Provider、模型、Endpoint 与凭据引用全部来自
+启动器只注入 `HAIFA_PERSONAL_DATA_DIR` 与 `HAIFA_PERSONAL_EXECUTION_TRUSTED_HOST_ENABLED=true`：前者指向
+本次运行的本地数据目录，后者确认本机联调部署允许启动受控宿主进程（Server 对该开关 fail closed，未确认时
+拒绝启动）。Provider、模型、Endpoint 与凭据引用全部来自
 `haifa-agent-personal-assistant-server/src/main/resources/application.yml`：每个 Provider 通过
 `credential-reference: model-auth://…/default` 从本地凭据库读取凭据，`default-model-id` 决定默认模型。
-脚本不读取任何凭据环境变量，也不校验 Key 前缀。
+脚本不读取任何凭据环境变量，也不校验 Key 前缀。可信 Host 开关只确认部署风险，具体调用仍需 Runtime 的
+exact approval。
 
 ## 2. 配置凭据与默认模型
 
@@ -77,7 +80,8 @@ start-real-environment.ps1|.sh [--rebuild] [--backend-jar <path>] [--startup-tim
 io.haifa.agent.personalassistant.server.PersonalAssistantServerApplication
 ```
 
-只需自行设置 `HAIFA_PERSONAL_DATA_DIR`（例如 `local-tmp/personal-assistant-real/data`）。前端仍由
+需自行设置 `HAIFA_PERSONAL_DATA_DIR`（例如 `local-tmp/personal-assistant-real/data`）和
+`HAIFA_PERSONAL_EXECUTION_TRUSTED_HOST_ENABLED=true`，否则 Server 因可信 Host 未确认而 fail closed。前端仍由
 `npm run dev` 或本脚本承担。IDE 直接运行不执行 Maven `package`、Spring Boot `repackage` 或 JAR staging。
 
 ## 5. 停止与重建

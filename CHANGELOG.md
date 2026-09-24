@@ -1,5 +1,12 @@
 # Changelog
 
+- The Personal Assistant real environment starts again. The catalog migration hardcoded
+  `haifa.personal.execution.trusted-host-enabled: false` and dropped the `HAIFA_PERSONAL_EXECUTION_TRUSTED_HOST_ENABLED`
+  override, so the fail-closed guard rejected every startup; `application.yml` reads the variable again, and
+  `scripts/real_environment.py` opts the loopback launch into the trusted-host boundary. The Codex inference binding also
+  defaults `codex_originator` to `haifa` (overridable with `HAIFA_CODEX_ORIGINATOR`) instead of failing startup when the
+  optional provider ships without an explicit originator, matching the CLI and packaged-client default.
+
 - Coding Agent and Personal Assistant no longer lose a Run when semantic compaction cannot produce an accepted
   summary. Both product policies now set `allowDeterministicDegradedFallback`, so a rejected or unusable summary
   degrades to the deterministic compressor and the Run continues with lower-fidelity history instead of failing with
