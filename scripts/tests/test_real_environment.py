@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import base64
 import contextlib
 import io
-import json
+import os
 import sys
 import tempfile
 import unittest
-import zipfile
+import urllib.request
 from pathlib import Path
 from unittest import mock
 
@@ -17,73 +16,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import real_environment
 
-CONTINUATION_KEY_NAME = "HAIFA_PERSONAL_CONTINUATION_KEY"
+SOURCE = Path(real_environment.__file__).read_text(encoding="utf-8")
 
 
 class RealEnvironmentTest(unittest.TestCase):
-    def test_backend_environment_injects_only_runtime_inputs_not_model_metadata(self) -> None:
-        root = Path("repository")
-        paths = real_environment.Paths(
-            root, root / "server", root / "web", root / "runtime", root / "runtime/data",
-            root / "runtime/logs", root / "runtime/last-start.json", root / "runtime/last-stop.json", root / "mvnw")
-        environment = real_environment.backend_environment(
-            "deepseek-secret", "deepseek-chat-flash", None, "aliyun-secret", "continuation-secret",
-            paths, None, kimi_key="kimi-secret", bigmodel_key="bigmodel-secret",
-            siliconflow_key="siliconflow-secret", tavily_key="tavily-secret")
-        self.assertEqual("deepseek-chat-flash", environment["HAIFA_PERSONAL_DEFAULT_MODEL_ID"])
-        self.assertEqual("deepseek-secret", environment["DEEPSEEK_API_KEY"])
-        self.assertEqual("kimi-secret", environment["KIMI_API_KEY"])
-        self.assertEqual("true", environment["HAIFA_PERSONAL_WEB_SEARCH_ENABLED"])
-        self.assertEqual("tavily", environment["HAIFA_PERSONAL_WEB_SEARCH_PROVIDER_ID"])
-        self.assertEqual("true", environment["HAIFA_PERSONAL_WEB_FETCH_ENABLED"])
-        self.assertEqual("tavily", environment["HAIFA_PERSONAL_WEB_FETCH_PROVIDER_ID"])
-        self.assertFalse(any(name.startswith("HAIFA_PERSONAL_MODELPROVIDERS_") for name in environment))
-        self.assertFalse(any("_MODELS_" in name for name in environment))
-        self.assertFalse(any(name.startswith("HAIFA_PERSONAL_MCP_") for name in environment))
-        self.assertNotIn("HAIFA_PERSONAL_SKILL_ROOT", environment)
-
-    def test_backend_environment_injects_bailian_runtime_configuration(self) -> None:
-        root = Path("repository")
-        paths = real_environment.Paths(
-            root, root / "server", root / "web", root / "runtime", root / "runtime/data",
-            root / "runtime/logs", root / "runtime/last-start.json", root / "runtime/last-stop.json", root / "mvnw")
-        environment = real_environment.backend_environment(
-            "deepseek-secret", "deepseek-chat-flash", None, "aliyun-secret", "continuation-secret",
-            paths, None, bailian=("dashscope-secret", "ws-123", "cn-beijing"))
-        self.assertEqual("dashscope-secret", environment["DASHSCOPE_API_KEY"])
-        self.assertEqual("ws-123", environment["ALIYUN_BAILIAN_WORKSPACE_ID"])
-        self.assertEqual("cn-beijing", environment["ALIYUN_BAILIAN_REGION"])
-        self.assertEqual(
-            "https://ws-123.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
-            environment["HAIFA_PERSONAL_BAILIAN_ENDPOINT"],
+    def temporary_paths(self, root: Path) -> real_environment.Paths:
+        runtime = root / "runtime"
+        return real_environment.Paths(
+            repository=root,
+            server=root / "server",
+            web=root / "web",
+            runtime=runtime,
+            data=runtime / "data",
+            logs=runtime / "logs",
+            backend=runtime / "backend",
+            maven_wrapper=root / "mvnw",
         )
-
-    def test_backend_environment_injects_antigravity_runtime_configuration(self) -> None:
-        root = Path("repository")
-        paths = real_environment.Paths(
-            root, root / "server", root / "web", root / "runtime", root / "runtime/data",
-            root / "runtime/logs", root / "runtime/last-start.json", root / "runtime/last-stop.json", root / "mvnw")
-        environment = real_environment.backend_environment(
-            "deepseek-secret", "deepseek-chat-flash", None, "aliyun-secret", "continuation-secret",
-            paths, None, antigravity=real_environment.AntigravityConfiguration(
-                "https://cloudcode.test/v1", "gemini-test", "http://127.0.0.1:9999"))
-        self.assertEqual("https://cloudcode.test/v1", environment["HAIFA_ANTIGRAVITY_MODEL_ENDPOINT"])
-        self.assertEqual("http://127.0.0.1:9999", environment["HAIFA_ANTIGRAVITY_PROXY_URL"])
-        self.assertEqual("gemini-test", environment["HAIFA_ANTIGRAVITY_MODEL"])
-
-    @staticmethod
-    def write_server_jar(path: Path, payload: bytes = b"application") -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        manifest = (
-            "Manifest-Version: 1.0\r\n"
-            "Main-Class: org.springframework.boot.loader.launch.JarLauncher\r\n"
-            f"Start-Class: {real_environment.EXPECTED_SERVER_START_CLASS}\r\n"
-            "\r\n"
-        )
-        with zipfile.ZipFile(path, "w") as archive:
-            archive.writestr("META-INF/MANIFEST.MF", manifest)
-            archive.writestr("BOOT-INF/classes/application.bin", payload)
-            archive.writestr("BOOT-INF/lib/dependency.jar", b"dependency")
 
     def test_root_scripts_location_resolves_repository_paths(self) -> None:
         repository = Path(__file__).resolve().parents[2]
@@ -96,253 +44,102 @@ class RealEnvironmentTest(unittest.TestCase):
             paths.server,
         )
         self.assertEqual(repository / "haifa-agent-applications/haifa-agent-personal-assistant-web", paths.web)
+        self.assertEqual(repository / "local-tmp/personal-assistant-real", paths.runtime)
+        self.assertEqual(repository / "local-tmp/personal-assistant-real/data", paths.data)
+        self.assertEqual(repository / "local-tmp/personal-assistant-real/logs", paths.logs)
+        self.assertEqual(repository / "local-tmp/personal-assistant-real/backend", paths.backend)
 
-    def test_parser_exposes_no_credential_file_or_external_service_options(self) -> None:
+    def test_parser_exposes_only_the_three_local_lifecycle_options(self) -> None:
+        options = {action.dest for action in real_environment.parser()._actions}
+
+        self.assertEqual({"help", "rebuild", "backend_jar", "startup_timeout_seconds"}, options)
+
         removed_options = (
-            "--deepseek-key-file",
-            "--bailian-key-file",
-            "--kimi-key-file",
-            "--bigmodel-key-file",
-            "--siliconflow-key-file",
-            "--aliyun-iqs-key-file",
-            "--browserless-key-file",
-            "--tavily-key-file",
-            "--utility-mcp-directory",
-            "--utility-mcp-proxy-url",
-            "--utility-mcp-proxy-providers",
-            "--personal-skill-root",
+            "--stop",
+            "--force",
+            "--dry-run",
+            "--default-model-id",
+            "--bailian-region",
+            "--web-search-provider",
+            "--web-fetch-provider",
+            "--trusted-script-manifest",
+            "--backend-launch-mode",
+            "--continuation-key-file",
         )
-
         for option in removed_options:
             with self.subTest(option=option), contextlib.redirect_stderr(io.StringIO()):
                 with self.assertRaises(SystemExit):
                     real_environment.parser().parse_args([option, "value"])
 
-    def test_continuation_key_file_option_defaults_to_the_runtime_directory(self) -> None:
-        with mock.patch.dict(real_environment.os.environ):
-            real_environment.os.environ.pop("HAIFA_PERSONAL_CONTINUATION_KEY_FILE", None)
-            arguments = real_environment.parser().parse_args([])
-
-        self.assertEqual("", arguments.continuation_key_file)
-        self.assertEqual(
-            real_environment.paths().runtime / "continuation-key.env",
-            real_environment.continuation_key_path(real_environment.paths()),
+    def test_script_carries_no_provider_credential_or_native_inspection_knowledge(self) -> None:
+        forbidden = (
+            "DEEPSEEK_API_KEY",
+            "TAVILY_API_KEY",
+            "KIMI_API_KEY",
+            "BIGMODEL_API_KEY",
+            "SILICONFLOW_API_KEY",
+            "BROWSERLESS_TOKEN",
+            "DASHSCOPE_API_KEY",
+            "ALIYUN_IQS_API_KEY",
+            "HAIFA_ANTIGRAVITY",
+            "HAIFA_CODEX_",
+            "HAIFA_PERSONAL_DEFAULT_MODEL_ID",
+            "HAIFA_PERSONAL_WEB_",
+            "HAIFA_PERSONAL_TRUSTED_SCRIPT_MANIFEST",
+            "HAIFA_PERSONAL_CONTINUATION_KEY",
+            "model-auth://",
+            "env://",
+            "deepseek-chat-flash",
+            "netstat",
+            "lsof",
+            "winreg",
+            "icacls",
+            "Stop-Process",
+            "Get-CimInstance",
+            "powershell",
+            "--stop",
+            "--force",
+            "--dry-run",
+            "--backend-launch-mode",
+            "last-start.json",
+            "last-stop.json",
         )
 
-    def test_provider_credentials_are_read_from_the_process_environment(self) -> None:
-        with mock.patch.dict(real_environment.os.environ, {"DEEPSEEK_API_KEY": "deepseek-secret"}):
-            self.assertEqual(
-                "deepseek-secret", real_environment.required_environment_value("DEEPSEEK_API_KEY")
-            )
+        for token in forbidden:
+            with self.subTest(token=token):
+                self.assertNotIn(token, SOURCE)
 
-        with mock.patch.dict(real_environment.os.environ, {}, clear=True):
-            with self.assertRaisesRegex(RuntimeError, "HAIFA_TEST_ABSENT_ENVIRONMENT_VARIABLE"):
-                real_environment.required_environment_value("HAIFA_TEST_ABSENT_ENVIRONMENT_VARIABLE")
-            self.assertIsNone(
-                real_environment.optional_environment_value("HAIFA_TEST_ABSENT_ENVIRONMENT_VARIABLE")
-            )
+    def test_script_stays_within_the_reviewed_size_budget(self) -> None:
+        self.assertLessEqual(len(SOURCE.splitlines()), 260)
 
-    def test_key_file_reads_only_the_expected_env_variable(self) -> None:
+    def test_health_checks_bypass_any_configured_http_proxy(self) -> None:
+        # An empty ProxyHandler keeps build_opener from installing the environment's proxies, so loopback
+        # health checks reach 127.0.0.1 directly even when http_proxy is set for the rest of the shell.
+        self.assertIn("urllib.request.ProxyHandler({})", SOURCE)
+        self.assertNotIn("urlopen", SOURCE)
+
+        with mock.patch.dict(os.environ, {"http_proxy": "http://127.0.0.1:2081"}, clear=False):
+            proxied = [
+                handler
+                for handler in urllib.request.build_opener().handlers
+                if isinstance(handler, urllib.request.ProxyHandler) and handler.proxies
+            ]
+            unproxied = [
+                handler
+                for handler in urllib.request.build_opener(urllib.request.ProxyHandler({})).handlers
+                if isinstance(handler, urllib.request.ProxyHandler) and handler.proxies
+            ]
+
+        self.assertNotEqual([], proxied)
+        self.assertEqual([], unproxied)
+
+    def test_runtime_environment_injects_only_the_data_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            key_file = Path(directory) / "continuation-key.env"
-            key_file.write_text(
-                f"# persisted continuation key\n{CONTINUATION_KEY_NAME}=test-secret\n",
-                encoding="utf-8",
-            )
+            paths = self.temporary_paths(Path(directory))
 
-            secret = real_environment.read_key_file(key_file, CONTINUATION_KEY_NAME, "Continuation")
+            environment = real_environment.runtime_environment(paths)
 
-        self.assertEqual("test-secret", secret)
-
-    def test_key_file_rejects_legacy_raw_secret_format(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            key_file = Path(directory) / "continuation-key.env"
-            key_file.write_text("test-secret\n", encoding="utf-8")
-
-            with self.assertRaisesRegex(RuntimeError, "KEY=VALUE"):
-                real_environment.read_key_file(key_file, CONTINUATION_KEY_NAME, "Continuation")
-
-    def test_key_file_rejects_unknown_duplicate_and_empty_variables(self) -> None:
-        cases = (
-            ("OTHER_API_KEY=test-secret\n", "unexpected variable"),
-            (
-                f"{CONTINUATION_KEY_NAME}=first\n{CONTINUATION_KEY_NAME}=second\n",
-                f"duplicate {CONTINUATION_KEY_NAME}",
-            ),
-            (f"{CONTINUATION_KEY_NAME}=\n", f"{CONTINUATION_KEY_NAME} is empty"),
-        )
-        for content, expected_message in cases:
-            with self.subTest(
-                expected_message=expected_message
-            ), tempfile.TemporaryDirectory() as directory:
-                key_file = Path(directory) / "continuation-key.env"
-                key_file.write_text(content, encoding="utf-8")
-
-                with self.assertRaisesRegex(RuntimeError, expected_message):
-                    real_environment.read_key_file(key_file, CONTINUATION_KEY_NAME, "Continuation")
-
-    def test_continuation_key_is_created_as_an_env_file(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            key_file = Path(directory) / "runtime/continuation-key.env"
-            with mock.patch.object(real_environment, "restrict_secret_file"), mock.patch.object(
-                real_environment.secrets, "token_bytes", return_value=b"a" * 32
-            ):
-                configured = real_environment.continuation_key("", key_file)
-
-            lines = key_file.read_text(encoding="ascii").splitlines()
-
-        self.assertEqual("YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=", configured)
-        self.assertEqual([f"{CONTINUATION_KEY_NAME}={configured}"], lines)
-
-    def test_continuation_key_prefers_the_injected_environment_variable(self) -> None:
-        configured = base64.b64encode(b"b" * 32).decode("ascii")
-        with tempfile.TemporaryDirectory() as directory:
-            key_file = Path(directory) / "continuation-key.env"
-            with mock.patch.dict(real_environment.os.environ, {CONTINUATION_KEY_NAME: configured}):
-                self.assertEqual(configured, real_environment.continuation_key("", key_file))
-
-            self.assertFalse(key_file.exists())
-
-    def test_continuation_key_rejects_material_that_is_not_base64_aes_256(self) -> None:
-        with self.assertRaisesRegex(RuntimeError, "32 bytes"):
-            real_environment.validate_continuation_key(
-                base64.b64encode(b"short").decode("ascii"), "Continuation"
-            )
-        with self.assertRaisesRegex(RuntimeError, "Base64"):
-            real_environment.validate_continuation_key("not-base64!", "Continuation")
-
-    def test_environment_manages_only_the_web_and_backend_services(self) -> None:
-        paths = real_environment.paths()
-
-        self.assertEqual(
-            ["personal-web", "personal-backend"],
-            [definition.role for definition in real_environment.definitions(paths)],
-        )
-        self.assertEqual(
-            [real_environment.FRONTEND_PORT, real_environment.BACKEND_PORT],
-            [definition.port for definition in real_environment.definitions(paths)],
-        )
-
-    def test_bailian_configuration_uses_environment_and_defaults_region(self) -> None:
-        self.assertIsNone(real_environment.optional_bailian_configuration("cn-beijing", environment={}))
-        self.assertIsNone(
-            real_environment.optional_bailian_configuration(
-                "cn-beijing", environment={"DASHSCOPE_API_KEY": "test-secret"}
-            )
-        )
-        self.assertEqual(
-            ("test-secret", "workspace-123", "cn-beijing"),
-            real_environment.optional_bailian_configuration(
-                "cn-beijing",
-                environment={
-                    "DASHSCOPE_API_KEY": "test-secret",
-                    "ALIYUN_BAILIAN_WORKSPACE_ID": "Workspace-123",
-                },
-            ),
-        )
-        self.assertEqual(
-            ("test-secret", "workspace-123", "cn-hangzhou"),
-            real_environment.optional_bailian_configuration(
-                "cn-beijing",
-                environment={
-                    "DASHSCOPE_API_KEY": "test-secret",
-                    "ALIYUN_BAILIAN_WORKSPACE_ID": "Workspace-123",
-                    "ALIYUN_BAILIAN_REGION": "CN-Hangzhou",
-                },
-            ),
-        )
-
-    def test_optional_openai_provider_requires_complete_environment_group(self) -> None:
-        self.assertIsNone(real_environment.optional_openai_environment({}))
-        self.assertIsNone(
-            real_environment.optional_openai_environment({"OPENAI_API_KEY": "openai-secret"})
-        )
-        self.assertEqual(
-            ("http://127.0.0.1:30000/v1", "openai-secret", "gpt-test"),
-            real_environment.optional_openai_environment(
-                {
-                    "OPENAI_BASE_URL": "http://127.0.0.1:30000/v1",
-                    "OPENAI_API_KEY": "openai-secret",
-                    "OPENAI_MODEL_ID": "gpt-test",
-                }
-            ),
-        )
-
-    def test_invalid_mode_combinations_are_rejected(self) -> None:
-        arguments = real_environment.parser().parse_args(["--stop", "--rebuild"])
-        with self.assertRaisesRegex(RuntimeError, "cannot be used together"):
-            real_environment.validate_arguments(arguments)
-
-        arguments = real_environment.parser().parse_args(["--force"])
-        with self.assertRaisesRegex(RuntimeError, "only be used with --stop"):
-            real_environment.validate_arguments(arguments)
-
-    def test_default_model_can_select_a_configured_deepseek_api_style(self) -> None:
-        with mock.patch.dict(real_environment.os.environ):
-            real_environment.os.environ.pop("HAIFA_PERSONAL_DEFAULT_MODEL_ID", None)
-            default_arguments = real_environment.parser().parse_args([])
-        chat_arguments = real_environment.parser().parse_args(
-            ["--default-model-id", "deepseek-chat-flash"]
-        )
-
-        self.assertIsNone(default_arguments.default_model_id)
-        self.assertEqual("deepseek-chat-flash", chat_arguments.default_model_id)
-        self.assertEqual(
-            "deepseek-chat-flash", real_environment.resolve_default_model_id(None, None)
-        )
-
-    def test_default_web_providers_are_tavily(self) -> None:
-        with mock.patch.dict(real_environment.os.environ):
-            real_environment.os.environ.pop("HAIFA_PERSONAL_WEB_SEARCH_PROVIDER", None)
-            real_environment.os.environ.pop("HAIFA_PERSONAL_WEB_FETCH_PROVIDER", None)
-            arguments = real_environment.parser().parse_args([])
-
-        self.assertEqual("tavily", arguments.web_search_provider)
-        self.assertEqual("tavily", arguments.web_fetch_provider)
-
-    def test_backend_launch_mode_defaults_to_jar(self) -> None:
-        with mock.patch.dict(real_environment.os.environ):
-            real_environment.os.environ.pop("HAIFA_PERSONAL_BACKEND_LAUNCH_MODE", None)
-
-            arguments = real_environment.parser().parse_args([])
-
-        self.assertEqual("jar", arguments.backend_launch_mode)
-
-    def test_classpath_backend_launch_uses_current_compiled_classes_without_a_jar(self) -> None:
-        launch = real_environment.backend_launch(
-            "java",
-            "classpath",
-            None,
-            {"HAIFA_PERSONAL_DEV_CLASSPATH": "classes;dependencies"},
-        )
-
-        self.assertEqual("java", launch.command)
-        self.assertEqual((real_environment.EXPECTED_SERVER_START_CLASS,), launch.arguments)
-        self.assertEqual({"CLASSPATH": "classes;dependencies"}, launch.environment)
-
-    def test_classpath_backend_launch_fails_closed_without_an_ide_classpath(self) -> None:
-        with self.assertRaisesRegex(RuntimeError, "HAIFA_PERSONAL_DEV_CLASSPATH"):
-            real_environment.backend_launch("java", "classpath", None, {})
-
-    def test_classpath_backend_launch_rejects_rebuild(self) -> None:
-        arguments = real_environment.parser().parse_args(
-            ["--backend-launch-mode", "classpath", "--rebuild"]
-        )
-
-        with self.assertRaisesRegex(RuntimeError, "does not support --rebuild"):
-            real_environment.validate_arguments(arguments)
-
-    def test_rebuild_port_conflict_message_explains_stop_then_rebuild(self) -> None:
-        arguments = real_environment.parser().parse_args(["--rebuild"])
-        with mock.patch.object(real_environment, "port_open", return_value=True):
-            with self.assertRaises(RuntimeError) as failure:
-                real_environment.start_environment(arguments, real_environment.paths())
-
-        message = str(failure.exception)
-
-        self.assertIn("Stop the running environment first, then rebuild", message)
-        self.assertIn(r".\scripts\start-real-environment.ps1 --stop", message)
-        self.assertIn(r".\scripts\start-real-environment.ps1 --rebuild", message)
+        self.assertEqual({"HAIFA_PERSONAL_DATA_DIR": str(paths.data)}, environment)
 
     def test_backend_build_uses_the_repository_unit_test_skip_property(self) -> None:
         self.assertEqual(
@@ -357,173 +154,161 @@ class RealEnvironmentTest(unittest.TestCase):
             real_environment.backend_build_arguments(True),
         )
         self.assertNotIn("-DskipTests", real_environment.backend_build_arguments(False))
+        self.assertNotIn("clean", real_environment.backend_build_arguments(False))
 
-    def test_backend_runtime_jar_is_content_addressed_and_outside_maven_target(self) -> None:
+    def test_invalid_arguments_are_rejected(self) -> None:
+        for arguments in (["--startup-timeout-seconds", "29"], ["--startup-timeout-seconds", "601"]):
+            with self.subTest(arguments=arguments):
+                with self.assertRaisesRegex(RuntimeError, "30 to 600"):
+                    real_environment.validate_arguments(real_environment.parser().parse_args(arguments))
+
+        with self.assertRaisesRegex(RuntimeError, "cannot be used together"):
+            real_environment.validate_arguments(
+                real_environment.parser().parse_args(["--rebuild", "--backend-jar", "server.jar"])
+            )
+
+    def test_rebuild_port_conflict_message_asks_for_releasing_the_ports(self) -> None:
+        message = real_environment.rebuild_port_conflict_message()
+
+        self.assertIn("ports 20000 and 20001", message)
+        self.assertIn("--rebuild", message)
+        self.assertNotIn("--stop", message)
+
+    def test_resolve_backend_jar_prefers_the_explicit_option_and_rejects_missing_paths(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            paths = real_environment.Paths(
-                repository=root,
-                server=root / "server",
-                web=root / "web",
-                runtime=root / "runtime",
-                data=root / "runtime/data",
-                logs=root / "runtime/logs",
-                state=root / "runtime/last-start.json",
-                stop_state=root / "runtime/last-stop.json",
-                maven_wrapper=root / "mvnw",
-            )
+            paths = self.temporary_paths(root)
+            explicit = root / "built/server.jar"
+            explicit.parent.mkdir(parents=True)
+            explicit.write_bytes(b"explicit")
+            arguments = real_environment.parser().parse_args(["--backend-jar", str(explicit)])
+
+            with mock.patch.object(real_environment, "build_backend") as build:
+                resolved = real_environment.resolve_backend_jar(arguments, paths)
+
+            self.assertEqual(explicit, resolved)
+            build.assert_not_called()
+
+            missing = root / "absent.jar"
+            arguments = real_environment.parser().parse_args(["--backend-jar", str(missing)])
+            with self.assertRaisesRegex(RuntimeError, "--backend-jar is not a readable file"):
+                real_environment.resolve_backend_jar(arguments, paths)
+
+    def test_missing_backend_jar_triggers_a_package_build(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            paths = self.temporary_paths(Path(directory))
+            target = paths.server / "target/haifa-agent-personal-assistant-server-0.1.0.jar"
+            arguments = real_environment.parser().parse_args([])
+
+            def produce(*_args: object, **_kwargs: object) -> None:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(b"built")
+
+            with mock.patch.object(real_environment, "build_backend", side_effect=produce) as build:
+                resolved = real_environment.resolve_backend_jar(arguments, paths)
+
+        self.assertEqual(target, resolved)
+        build.assert_called_once_with(paths, False)
+
+    def test_staging_uses_a_fixed_app_jar_name(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            paths = self.temporary_paths(Path(directory))
             source = paths.server / "target/haifa-agent-personal-assistant-server-0.1.0.jar"
-            self.write_server_jar(source, b"first build")
-
-            first = real_environment.stage_server_jar(source, paths)
-            reused = real_environment.stage_server_jar(source, paths)
-            self.write_server_jar(source, b"second build")
-            second = real_environment.stage_server_jar(source, paths)
-
-            self.assertEqual(first, reused)
-            self.assertNotEqual(first, second)
-            self.assertEqual(paths.runtime / "backend", second.parent)
-            with zipfile.ZipFile(second) as archive:
-                self.assertEqual(b"second build", archive.read("BOOT-INF/classes/application.bin"))
-            self.assertFalse(first.exists())
-
-    def test_non_executable_server_jar_is_rejected_before_staging(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            paths = real_environment.Paths(
-                repository=root,
-                server=root / "server",
-                web=root / "web",
-                runtime=root / "runtime",
-                data=root / "runtime/data",
-                logs=root / "runtime/logs",
-                state=root / "runtime/last-start.json",
-                stop_state=root / "runtime/last-stop.json",
-                maven_wrapper=root / "mvnw",
-            )
-            source = paths.server / "target/haifa-agent-personal-assistant-server-test.jar"
             source.parent.mkdir(parents=True)
-            with zipfile.ZipFile(source, "w") as archive:
-                archive.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\r\n\r\n")
+            source.write_bytes(b"first build")
 
-            self.assertIn("Main-Class", real_environment.server_jar_validation_error(source) or "")
-            with self.assertRaisesRegex(RuntimeError, "Refusing to stage a non-executable"):
-                real_environment.stage_server_jar(source, paths)
+            staged = real_environment.stage_backend_jar(source, paths)
 
-    def test_invalid_existing_server_jar_triggers_package_and_post_build_validation(self) -> None:
+            self.assertEqual(paths.backend / "app.jar", staged)
+            self.assertEqual(b"first build", staged.read_bytes())
+
+            source.write_bytes(b"second build")
+            restaged = real_environment.stage_backend_jar(source, paths)
+
+            self.assertEqual(staged, restaged)
+            self.assertEqual(b"second build", restaged.read_bytes())
+
+    def test_frontend_probes_require_serve_and_dist(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            paths = real_environment.Paths(
-                repository=root,
-                server=root / "server",
-                web=root / "web",
-                runtime=root / "runtime",
-                data=root / "runtime/data",
-                logs=root / "runtime/logs",
-                state=root / "runtime/last-start.json",
-                stop_state=root / "runtime/last-stop.json",
-                maven_wrapper=root / "mvnw",
-            )
-            source = paths.server / "target/haifa-agent-personal-assistant-server-test.jar"
-            source.parent.mkdir(parents=True)
-            source.write_bytes(b"incomplete Maven output")
-
-            def complete_repackage(*_args: object, **_kwargs: object) -> None:
-                self.write_server_jar(source)
-
-            with mock.patch.object(
-                real_environment,
-                "run_checked",
-                side_effect=complete_repackage,
-            ) as build:
-                resolved = real_environment.ensure_executable_server_jar(paths, False)
-
-            self.assertEqual(source, resolved)
-            self.assertIsNone(real_environment.server_jar_validation_error(resolved))
-            build.assert_called_once_with(
-                paths.maven_wrapper,
-                *real_environment.backend_build_arguments(False),
-                cwd=paths.repository,
-            )
-
-    def test_backend_stop_validation_accepts_runtime_and_legacy_target_locations(self) -> None:
-        root = Path("repository")
-        paths = real_environment.Paths(
-            repository=root,
-            server=root / "server",
-            web=root / "web",
-            runtime=root / "runtime",
-            data=root / "runtime/data",
-            logs=root / "runtime/logs",
-            state=root / "runtime/last-start.json",
-            stop_state=root / "runtime/last-stop.json",
-            maven_wrapper=root / "mvnw",
-        )
-
-        backend = next(
-            definition
-            for definition in real_environment.definitions(paths)
-            if definition.role == "personal-backend"
-        )
-
-        self.assertEqual(
-            (
-                str(paths.runtime / "backend"),
-                str(paths.server),
-                real_environment.EXPECTED_SERVER_START_CLASS,
-            ),
-            backend.command_tokens,
-        )
-        with mock.patch.object(
-            real_environment,
-            "process_information",
-            return_value=(backend.process_name, f"java -jar {paths.runtime / 'backend' / 'server.jar'}"),
-        ):
-            real_environment.validate_process(backend, 42)
-        with mock.patch.object(
-            real_environment,
-            "process_information",
-            return_value=(backend.process_name, f"java -jar {paths.server / 'target' / 'server.jar'}"),
-        ):
-            real_environment.validate_process(backend, 43)
-
-    def test_state_is_written_atomically_as_utf8_json(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            target = Path(directory) / "state.json"
-
-            real_environment.atomic_json(target, [{"Role": "personal-backend", "Pid": 42}])
-
-            self.assertEqual(
-                [{"Role": "personal-backend", "Pid": 42}],
-                json.loads(target.read_text(encoding="utf-8")),
-            )
-            self.assertFalse(any(target.parent.glob("*.tmp-*")))
-
-    def test_frontend_dependencies_installed_requires_serve_and_lucide_declarations(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            paths = real_environment.Paths(
-                repository=root,
-                server=root / "server",
-                web=root / "web",
-                runtime=root / "runtime",
-                data=root / "runtime/data",
-                logs=root / "runtime/logs",
-                state=root / "runtime/last-start.json",
-                stop_state=root / "runtime/last-stop.json",
-                maven_wrapper=root / "mvnw",
-            )
+            paths = self.temporary_paths(Path(directory))
             self.assertFalse(real_environment.frontend_dependencies_installed(paths))
+            self.assertFalse(real_environment.frontend_dist_ready(paths))
 
             serve_marker = paths.web / "node_modules/serve/build/main.js"
             serve_marker.parent.mkdir(parents=True, exist_ok=True)
             serve_marker.write_text("console.log('serve');\n", encoding="utf-8")
-            self.assertFalse(real_environment.frontend_dependencies_installed(paths))
+            index = paths.web / "dist/index.html"
+            index.parent.mkdir(parents=True, exist_ok=True)
+            index.write_text("<html></html>\n", encoding="utf-8")
 
-            lucide_marker = paths.web / "node_modules/lucide-react/dist/lucide-react.d.ts"
-            lucide_marker.parent.mkdir(parents=True, exist_ok=True)
-            lucide_marker.write_text("export {};\n", encoding="utf-8")
             self.assertTrue(real_environment.frontend_dependencies_installed(paths))
+            self.assertTrue(real_environment.frontend_dist_ready(paths))
+
+    def test_healthy_services_are_reused_without_starting_processes(self) -> None:
+        arguments = real_environment.parser().parse_args([])
+        with mock.patch.object(real_environment, "required_command", return_value="tool"), mock.patch.object(
+            real_environment, "port_open", return_value=False
+        ), mock.patch.object(real_environment, "http_healthy", return_value=True), mock.patch.object(
+            real_environment, "ensure_frontend"
+        ) as ensure_frontend, mock.patch.object(
+            real_environment, "start_process"
+        ) as start_process, mock.patch.object(
+            real_environment, "supervise"
+        ) as supervise, tempfile.TemporaryDirectory() as directory:
+            real_environment.start_environment(arguments, self.temporary_paths(Path(directory)))
+
+        ensure_frontend.assert_called_once()
+        start_process.assert_not_called()
+        supervise.assert_called_once_with([])
+
+    def test_occupied_but_unhealthy_port_fails_closed_without_stopping_processes(self) -> None:
+        arguments = real_environment.parser().parse_args([])
+        with mock.patch.object(real_environment, "required_command", return_value="tool"), mock.patch.object(
+            real_environment, "port_open", return_value=True
+        ), mock.patch.object(real_environment, "http_healthy", return_value=False), mock.patch.object(
+            real_environment, "start_process"
+        ) as start_process, tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(RuntimeError, "No process was stopped"):
+                real_environment.start_environment(arguments, self.temporary_paths(Path(directory)))
+
+        start_process.assert_not_called()
+
+    def test_rebuild_is_refused_while_the_ports_are_in_use(self) -> None:
+        arguments = real_environment.parser().parse_args(["--rebuild"])
+        with mock.patch.object(real_environment, "port_open", return_value=True), mock.patch.object(
+            real_environment, "required_command", return_value="tool"
+        ), tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(RuntimeError, "ports 20000 and 20001"):
+                real_environment.start_environment(arguments, self.temporary_paths(Path(directory)))
+
+    def test_foreground_launcher_terminates_children_when_interrupted(self) -> None:
+        arguments = real_environment.parser().parse_args([])
+        child = mock.Mock()
+        child.poll.return_value = None
+        with mock.patch.object(real_environment, "required_command", return_value="tool"), mock.patch.object(
+            real_environment, "port_open", return_value=False
+        ), mock.patch.object(real_environment, "http_healthy", return_value=False), mock.patch.object(
+            real_environment, "ensure_frontend"
+        ), mock.patch.object(
+            real_environment, "resolve_backend_jar", return_value=Path("server.jar")
+        ), mock.patch.object(
+            real_environment, "stage_backend_jar", return_value=Path("app.jar")
+        ), mock.patch.object(
+            real_environment, "start_process", return_value=child
+        ), mock.patch.object(
+            real_environment, "wait_for_http"
+        ), mock.patch.object(
+            real_environment, "supervise", side_effect=KeyboardInterrupt
+        ), mock.patch.object(
+            real_environment, "terminate_process"
+        ) as terminate, tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(KeyboardInterrupt):
+                real_environment.start_environment(arguments, self.temporary_paths(Path(directory)))
+
+        self.assertEqual(2, terminate.call_count)
+
+    def test_supervise_returns_immediately_when_it_owns_no_child(self) -> None:
+        real_environment.supervise([])
 
 
 if __name__ == "__main__":

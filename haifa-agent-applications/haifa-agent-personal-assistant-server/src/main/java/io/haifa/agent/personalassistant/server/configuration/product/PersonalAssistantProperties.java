@@ -13,7 +13,6 @@ import org.springframework.boot.context.properties.bind.ConstructorBinding;
 @ConfigurationProperties(prefix = "haifa.personal", ignoreUnknownFields = false)
 public record PersonalAssistantProperties(
         Path dataDirectory,
-        String continuationKeyBase64,
         Caller caller,
         List<ModelProvider> modelProviders,
         String defaultModelId,
@@ -29,9 +28,6 @@ public record PersonalAssistantProperties(
     @ConstructorBinding
     public PersonalAssistantProperties {
         if (dataDirectory == null) throw new IllegalArgumentException("dataDirectory is required");
-        if (continuationKeyBase64 == null || continuationKeyBase64.isBlank()) {
-            throw new IllegalArgumentException("HAIFA_PERSONAL_CONTINUATION_KEY is required");
-        }
         if (caller == null || web == null || mission == null || research == null || mcp == null || execution == null) {
             throw new IllegalArgumentException(
                     "caller, web, mission, research, mcp, and execution configuration are required");

@@ -12,7 +12,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.DriverManager;
 import java.time.Duration;
-import java.util.Base64;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
@@ -206,8 +205,6 @@ class PersonalAssistantWebFluxTest {
     @DynamicPropertySource
     static void properties(DynamicPropertyRegistry registry) {
         registry.add("haifa.personal.data-directory", DATA::toString);
-        registry.add("haifa.personal.continuation-key-base64", () -> Base64.getEncoder()
-                .encodeToString(new byte[32]));
         registry.add("haifa.personal.mcp.mode", () -> "external");
         registry.add("haifa.personal.mcp.endpoint", () -> MCP.endpoint().toString());
         registry.add("haifa.personal.mcp.allowed-tools", () -> "echo");
@@ -522,7 +519,7 @@ class PersonalAssistantWebFluxTest {
         JsonNode operations = get("/v1/admin/missions/operations");
         assertThat(operations.path("dispatcherStatus").asText()).isEqualTo("READY");
         assertThat(operations.path("ready").asBoolean()).isTrue();
-        assertThat(operations.path("schemaVersion").asInt()).isEqualTo(7);
+        assertThat(operations.path("schemaVersion").asInt()).isEqualTo(8);
         assertThat(operations.path("capacityBlockerCode").asText()).isEqualTo("NONE");
         assertThat(operations.path("retentionBoundary").asText()).contains("No automatic");
 
@@ -719,9 +716,15 @@ class PersonalAssistantWebFluxTest {
         assertThat(completed.path("status").asText())
                 .as(completed.toPrettyString() + "\n" + activities.toPrettyString())
                 .isEqualTo("COMPLETED");
-        assertThat(activities.toString())
-                .contains("execution_run", "SCRIPT", expectedScriptLanguage(), expectedArgumentEchoPurpose())
+        // Mode, language and purpose are approval facts and stay in the interaction asserted above; the activity
+        // feed projects only the allowlisted execution outcome and never echoes the approved script back.
+        JsonNode execution = executionActivity(activities);
+        assertThat(execution.path("status").asText()).isEqualTo("SUCCEEDED");
+        assertThat(execution.path("toolDetail").path("processState").asText()).isEqualTo("EXITED");
+        assertThat(execution.path("toolDetail").path("exitCode").asInt()).isZero();
+        assertThat(execution.path("toolDetail").path("outputPreview").asText())
                 .contains("first argument|second'argument");
+        assertThat(activities.toString()).doesNotContain(expectedArgumentEchoScript());
     }
 
     @Test
@@ -756,12 +759,12 @@ class PersonalAssistantWebFluxTest {
         assertThat(completed.path("status").asText())
                 .as(completed.toPrettyString() + "\n" + activities.toPrettyString())
                 .isEqualTo("COMPLETED");
-        assertThat(activities.toString()).contains("execution_run", "COMMAND", "读取当前 PowerShell 版本");
-        assertThat(java.util.stream.StreamSupport.stream(activities.spliterator(), false)
-                        .toList())
-                .anySatisfy(activity -> assertThat(
-                                activity.path("safeResultSummary").asText())
-                        .matches("\\d+\\.\\d+(?:\\.\\d+){0,2}\\s*"));
+        JsonNode execution = executionActivity(activities);
+        assertThat(execution.path("status").asText()).isEqualTo("SUCCEEDED");
+        assertThat(execution.path("toolDetail").path("exitCode").asInt()).isZero();
+        assertThat(execution.path("toolDetail").path("outputPreview").asText())
+                .containsPattern("\\d+\\.\\d+(?:\\.\\d+){0,2}");
+        assertThat(activities.toString()).doesNotContain("$PSVersionTable.PSVersion.ToString()");
     }
 
     @Test
@@ -792,7 +795,11 @@ class PersonalAssistantWebFluxTest {
         assertThat(completed.path("status").asText())
                 .as(completed.toPrettyString() + "\n" + activities.toPrettyString())
                 .isEqualTo("COMPLETED");
-        assertThat(activities.toString()).contains("execution_run", "COMMAND", "Inspect filesystem drive usage");
+        JsonNode execution = executionActivity(activities);
+        assertThat(execution.path("status").asText()).isEqualTo("SUCCEEDED");
+        assertThat(execution.path("toolDetail").path("exitCode").asInt()).isZero();
+        assertThat(execution.path("toolDetail").path("lineCount").asLong()).isPositive();
+        assertThat(activities.toString()).doesNotContain("Get-PSDrive -PSProvider FileSystem");
     }
 
     @Test
@@ -858,7 +865,7 @@ class PersonalAssistantWebFluxTest {
                         "daily-planning",
                         "local-script-execution",
                         "SKILL.md")
-                .doesNotContain("continuation-key-base64", "sessionId", "credentialValue", "resolvedCredential");
+                .doesNotContain("sessionId", "credentialValue", "resolvedCredential");
     }
 
     @Test
@@ -1034,6 +1041,15 @@ class PersonalAssistantWebFluxTest {
 
     private JsonNode awaitTerminal(String runId) throws Exception {
         return awaitStatus(runId, Set.of("COMPLETED", "FAILED", "CANCELLED", "TIMEOUT"));
+    }
+
+    /** The one activity that projects the approved execution, addressed by tool name rather than by list position. */
+    private static JsonNode executionActivity(JsonNode activities) {
+        return java.util.stream.StreamSupport.stream(activities.spliterator(), false)
+                .filter(activity ->
+                        "execution_run".equals(activity.path("displayName").asText()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("no execution_run activity in " + activities.toPrettyString()));
     }
 
     private static String expectedScriptLanguage() {

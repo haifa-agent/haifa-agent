@@ -13,6 +13,7 @@ import io.haifa.agent.core.run.StructuredOutputRequirement;
 import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.ModelCallId;
+import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelFinishReason;
 import io.haifa.agent.model.api.ModelMessage;
 import io.haifa.agent.model.api.ModelMessageRole;
@@ -87,22 +88,28 @@ public final class SummaryModelInvoker {
         }
         if (signal.stopsExecution()) throw new CancellationObservedException(signal);
 
-        // 3. Guard check: model call limit
+        // 3. Guard check: the frozen snapshot must be able to return the structured summary at all
+        if (!binding.configuration().model().capabilities().contains(ModelCapability.STRUCTURED_OUTPUT)) {
+            throw new CompactionModelCapabilityException(
+                    binding.configuration().model().modelId().value(), ModelCapability.STRUCTURED_OUTPUT);
+        }
+
+        // 4. Guard check: model call limit
         if (run.usage().modelCalls() >= run.limits().maxModelCalls()) {
             throw new RuntimeLimitExceededException(
                     "modelCalls", run.limits().maxModelCalls(), run.usage().modelCalls());
         }
 
-        // 4. Hard cap check: physical calls per compaction session
+        // 5. Hard cap check: physical calls per compaction session
         if (physicalCallCount >= policy.maxCompactionPhysicalCalls()) {
             throw new IllegalStateException(
                     "Compaction physical call limit (" + policy.maxCompactionPhysicalCalls() + ") reached");
         }
 
-        // 5. Account for the physical model call in Run usage
+        // 6. Account for the physical model call in Run usage
         transitions.usage(run, new AgentRunUsageDelta(0, 0, 0, 1, 0, 0, 0, 0));
 
-        // 6. Build model request
+        // 7. Build model request
         ModelCallId callId = new ModelCallId(ids.nextValue());
         ModelRequestId requestId = new ModelRequestId(ids.nextValue());
         Map<String, Object> options = new HashMap<>(
@@ -137,10 +144,10 @@ public final class SummaryModelInvoker {
                 options,
                 Optional.of(structuredRequirement));
 
-        // 7. Invoke outside of DB transaction
+        // 8. Invoke outside of DB transaction
         AgentChatResponse response = binding.chatModel().invoke(request);
 
-        // 8. Account for tokens and cost (must record usage even if finishReason != STOP)
+        // 9. Account for tokens and cost (must record usage even if finishReason != STOP)
         if (response.usage() != null) {
             transitions.usage(
                     run,
@@ -155,14 +162,14 @@ public final class SummaryModelInvoker {
                             0));
         }
 
-        // 9. Enforce fail-closed check on finish reason
+        // 10. Enforce fail-closed check on finish reason
         if (response.finishReason() != ModelFinishReason.STOP) {
             throw new SemanticSummaryValidationException(
                     "Model compaction response did not finish with STOP (finishReason=" + response.finishReason() + ")",
                     List.of("UNEXPECTED_FINISH_REASON"));
         }
 
-        // 10. Extract and parse structured output
+        // 11. Extract and parse structured output
         Map<String, Object> outputMap = null;
         if (response.structuredOutput().isPresent()) {
             outputMap = response.structuredOutput().get();

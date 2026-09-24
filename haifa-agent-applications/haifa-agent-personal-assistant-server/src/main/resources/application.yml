@@ -15,7 +15,6 @@ management:
 haifa:
   personal:
     data-directory: ${HAIFA_PERSONAL_DATA_DIR:./data/personal-assistant}
-    continuation-key-base64: ${HAIFA_PERSONAL_CONTINUATION_KEY:}
     caller:
       tenant: ${HAIFA_PERSONAL_TENANT:local}
       principal: ${HAIFA_PERSONAL_PRINCIPAL:public-user}
