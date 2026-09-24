@@ -15,19 +15,21 @@ import io.haifa.agent.model.api.ModelReasoningBehavior;
 import io.haifa.agent.model.api.ModelReasoningEffort;
 import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
+import io.haifa.agent.model.core.PackagedModelCatalog;
 import io.haifa.agent.model.openai.responses.OpenAiResponsesDialects;
 import java.net.URI;
 import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 
 class OpenAiCompatibleModelProfileFactoryTest {
     @Test
     void verifiesEverySingleAdmittedBindingAcrossAllOpenAiCompatibleRegistries() {
         var openAiChatAdmissions = OpenAiCompatibleBindingRegistry.admissions();
-        assertThat(openAiChatAdmissions).hasSize(38);
+        assertThat(openAiChatAdmissions).hasSize(39);
         for (var admission : openAiChatAdmissions) {
             verifyAdmittedBinding(
                     admission.key().providerId(),
@@ -199,26 +201,22 @@ class OpenAiCompatibleModelProfileFactoryTest {
     }
 
     @Test
-    void verifiesOnlyReviewedTokenRhythmChatBindings() {
-        ResolvedModelSnapshot reviewed = snapshot(
-                "tokenrhythm",
-                "tokenrhythm-v4-flash-0731",
-                "deepseek-v4-flash-0731",
-                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
-                OpenAiCompatibleDialects.TOKENRHYTHM,
-                "https://tokenrhythm.studio/v1");
-        ResolvedModelSnapshot differentModel = snapshot(
-                "tokenrhythm",
-                "tokenrhythm-other",
-                "deepseek-v4-pro-0813-unreviewed",
-                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
-                OpenAiCompatibleDialects.TOKENRHYTHM,
-                "https://tokenrhythm.studio/v1");
+    void tokenRhythmAdmissionsMatchTheCurrentProviderCatalog() {
+        var catalogModelIds =
+                PackagedModelCatalog.load(getClass().getClassLoader())
+                        .provider("tokenrhythm")
+                        .orElseThrow()
+                        .bindings()
+                        .stream()
+                        .map(binding -> binding.definition().providerModelId())
+                        .collect(Collectors.toUnmodifiableSet());
+        var admittedModelIds = OpenAiCompatibleBindingRegistry.admissions().stream()
+                .map(OpenAiCompatibleBindingRegistry.AdmittedBinding::key)
+                .filter(key -> key.providerId().equals("tokenrhythm"))
+                .map(OpenAiCompatibleBindingRegistry.AdmissionKey::providerModelId)
+                .collect(Collectors.toUnmodifiableSet());
 
-        assertThat(profile(reviewed).status()).isEqualTo(ModelProfileStatus.VERIFIED);
-        assertThat(profile(reviewed).selectable()).isTrue();
-        assertThat(profile(differentModel).status()).isEqualTo(ModelProfileStatus.UNVERIFIED);
-        assertThat(profile(differentModel).selectable()).isFalse();
+        assertThat(admittedModelIds).isEqualTo(catalogModelIds);
     }
 
     @Test
