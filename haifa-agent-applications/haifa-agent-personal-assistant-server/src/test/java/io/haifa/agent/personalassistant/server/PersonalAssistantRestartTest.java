@@ -26,7 +26,6 @@ import java.sql.DriverManager;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -86,7 +85,7 @@ class PersonalAssistantRestartTest {
             assertThat(completed.mode()).isEqualTo(MissionMode.DEEP_RESEARCH);
             assertThat(completed.selectedSkillId()).contains("deep-research");
             assertThat(completed.selectedSkillBinding()).hasValueSatisfying(binding -> assertThat(binding)
-                    .contains("product", "personal-assistant-bundled@1", "deep-research@2.2.0#sha256:"));
+                    .contains("product", "personal-assistant-bundled@1", "deep-research@2.3.0#sha256:"));
             assertThat(completed.execution().artifacts()).hasSize(5);
             assertThat(completed.execution().sources()).hasSize(2);
             assertThat(completed.execution().finalResult()).hasValueSatisfying(result -> assertThat(result)
@@ -98,6 +97,7 @@ class PersonalAssistantRestartTest {
                     .doesNotContain("# Deterministic research report")
                     .doesNotContain("reveal credentials", "ignore the research brief"));
 
+            assertNoTaskRecoveredFromAFailedRun(data.resolve("personal-assistant.sqlite"), missionId);
             assertPhase6EvidenceTraceAgainstHonestPhase5Baseline(data.resolve("personal-assistant.sqlite"), missionId);
         }
 
@@ -120,6 +120,39 @@ class PersonalAssistantRestartTest {
                     .filteredOn(turn -> turn.text().contains("<!-- haifa-mission-delivery:" + missionId + " -->"))
                     .hasSize(1);
         }
+    }
+
+    /**
+     * A Mission that loses a Run still completes: the Task falls back to a conservative result. That recovery is
+     * correct in production and silent in a test, so the deterministic profile asserts it never happened here.
+     */
+    private static void assertNoTaskRecoveredFromAFailedRun(Path database, String missionId) throws Exception {
+        List<String> failures = new ArrayList<>();
+        List<String> recovered = new ArrayList<>();
+        try (var connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+                var runs = connection.prepareStatement("SELECT run_id,error_payload FROM run WHERE status='FAILED'");
+                var tasks = connection.prepareStatement(
+                        "SELECT ordinal,result_json FROM personal_mission_task WHERE mission_id=? ORDER BY ordinal")) {
+            try (var rows = runs.executeQuery()) {
+                while (rows.next()) {
+                    failures.add(rows.getString("run_id") + " " + rows.getString("error_payload"));
+                }
+            }
+            tasks.setString(1, missionId);
+            try (var rows = tasks.executeQuery()) {
+                while (rows.next()) {
+                    String result = rows.getString("result_json");
+                    if (result != null && result.contains("Structured normalization was unavailable")) {
+                        recovered.add("task " + rows.getInt("ordinal") + ": " + result);
+                    }
+                }
+            }
+        }
+
+        assertThat(failures).as("deterministic Mission Runs must not fail").isEmpty();
+        assertThat(recovered)
+                .as("deterministic Tasks must produce real structured results, not conservative recoveries")
+                .isEmpty();
     }
 
     private static void assertPhase6EvidenceTraceAgainstHonestPhase5Baseline(Path database, String missionId)
@@ -369,7 +402,6 @@ class PersonalAssistantRestartTest {
             "--server.port=" + serverPort,
             "--spring.config.location=classpath:/application-deterministic-model.yml",
             "--haifa.personal.data-directory=" + data,
-            "--haifa.personal.continuation-key-base64=" + Base64.getEncoder().encodeToString(new byte[32]),
             "--haifa.personal.execution.trusted-host-enabled=true",
             "--haifa.personal.mcp.mode=external",
             "--haifa.personal.mcp.endpoint=" + MCP.endpoint(),

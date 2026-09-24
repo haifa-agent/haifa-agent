@@ -187,6 +187,14 @@ class ModelCatalogYamlLoaderTest {
                         .profile()
                         .maximumOutputTokens())
                 .isEqualTo(384_000);
+        // Semantic compaction only runs on models that declare structured output, so every chat binding must keep it.
+        assertThat(catalog.binding("tokenrhythm-deepseek-flash")
+                        .orElseThrow()
+                        .definition()
+                        .capabilities())
+                .contains(ModelCapability.STRUCTURED_OUTPUT);
+        assertThat(catalog.binding("kimi-k3").orElseThrow().definition().capabilities())
+                .contains(ModelCapability.STRUCTURED_OUTPUT);
         assertThat(catalog.binding("tokenrhythm-glm-5-3-flashx")
                         .orElseThrow()
                         .profile()

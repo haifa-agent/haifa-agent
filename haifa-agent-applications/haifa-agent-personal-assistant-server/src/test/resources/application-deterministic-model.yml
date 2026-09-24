@@ -33,12 +33,12 @@ management:
 haifa:
   personal:
     data-directory: ./target/personal-assistant-test
-    continuation-key-base64: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     caller:
       tenant: local
       principal: public-user
       reviewer: public-user
     default-model-id: personal-test
+    model-max-response-bytes: 4194304
     allow-insecure-loopback-model: true
     model-providers:
       - id: personal-local

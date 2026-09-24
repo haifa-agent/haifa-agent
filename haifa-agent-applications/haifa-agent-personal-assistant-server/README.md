@@ -176,22 +176,21 @@ Server 装配期失败。凭据只通过 `env://OPENAI_API_KEY` 解析，不写�
 Responses reasoning 控件当前保持只读。本地中转当前只声明 `TEXT_CHAT`，因此不会出现在 Personal 所需
 `TEXT_CHAT + TOOL_CALLING` 的可选列表中；Snapshot 仍按 `standard` Responses 冻结真实能力边界。
 
-真实环境启动脚本固定发布 `openai-codex` 模型目录，并通过共享的
-`model-auth://openai-codex/default` 读取系统凭据管理器；模型目录与认证就绪状态保持分离。
-浏览器重新登录仍必须显式提供本地兼容测试所需的 OAuth Client 配置。脚本还可选装配
-`aliyun-bailian`、`kimi`、`zhipu` 与 `siliconflow` Provider。百炼完整配置要求 API Key、
-Workspace ID 和 region；Kimi、智谱与硅基流动分别使用 `env://KIMI_API_KEY`、`env://BIGMODEL_API_KEY`、
-`env://SILICONFLOW_API_KEY`。硅基流动只发布已验证的 `deepseek-ai/DeepSeek-V4-Flash` Chat Binding；Endpoint、
-实际 Provider Model ID 与完整 Snapshot 不返回浏览器。检测到可选 Provider 时只扩展目录，默认仍是
-`deepseek-chat-flash`；只有显式传入 `--default-model-id` 才改变默认 Binding。
+`application.yml` 固定发布 `deepseek`、`openai-codex`、`aliyun-bailian`、`siliconflow`、`kimi`、
+`zhipu`、`tokenrhythm` 与 `google-antigravity` Provider 目录，全部通过 `model-auth://…/default`
+读取本地凭据库；模型目录与认证就绪状态保持分离。
+浏览器重新登录仍必须显式提供本地兼容测试所需的 OAuth Client 配置。
+百炼完整配置要求 API Key、Workspace ID 和 region；Kimi、智谱与硅基流动分别使用
+`env://KIMI_API_KEY`、`env://BIGMODEL_API_KEY`、`env://SILICONFLOW_API_KEY`。硅基流动只发布已验证的
+`deepseek-ai/DeepSeek-V4-Flash` Chat Binding；Endpoint、实际 Provider Model ID 与完整 Snapshot 不返回浏览器。
+默认模型由 `default-model-id` 决定，需要切换时修改 `application.yml` 或设置
+`HAIFA_PERSONAL_DEFAULT_MODEL_ID`。
 
-真实环境脚本固定装配独立的 `google-antigravity` Provider，以及 `antigravity-gemini`、
-`antigravity-gemini-3-8-flash`、`antigravity-gemini-3-7-flash` 和
-`antigravity-gemini-3-1-pro-preview` Binding；
+`google-antigravity` Provider 发布 `antigravity-gemini`、`antigravity-gemini-3-8-flash`、
+`antigravity-gemini-3-7-flash` 和 `antigravity-gemini-3-1-pro-preview` Binding；
 `HAIFA_ANTIGRAVITY_LOCAL_COMPAT_TEST=true` 只控制能否发起新的本地兼容 OAuth 登录。该 Binding 使用
-已登录的共享本地认证引用，默认
-访问 Daily Endpoint，并通过 `HAIFA_ANTIGRAVITY_PROXY_URL`（默认 `http://127.0.0.1:2081`）连接；
-`--default-model-id` 可将其中一个 Binding 设为默认模型。登录状态不会再只显示在连接面板而缺少对应模型。
+已登录的共享本地认证引用，默认访问 Daily Endpoint，并通过
+`HAIFA_ANTIGRAVITY_PROXY_URL`（默认 `http://127.0.0.1:2081`）连接。登录状态不会再只显示在连接面板而缺少对应模型。
 
 百炼目录提供 Qwen Chat 与已验证的 Max/Plus Responses；Kimi 只提供官方 API Key Chat；智谱提供通用
 OpenAI Chat，并仅为 GLM-5.2 提供通过 Contract 的 Anthropic Messages 高级连接方式。所有可见状态、
@@ -419,10 +418,10 @@ Search Endpoint 为 `https://api.tavily.com/search`，Fetch Endpoint 为 `https:
 $env:HAIFA_PERSONAL_SKILL_ROOT='D:\agents\hermes-agent\optional-skills\finance'
 ```
 
-启动还必须提供可持久恢复的 32 字节 AES Key（Base64），不得记录该值：
+Provider 凭据与默认模型由 `application.yml` 的 `credential-reference` 与 `default-model-id` 声明，
+运行时从 PA Web 的模型连接面板或 `model-auth` 本地凭据库解析；无需再提供 continuation key。
 
 ```powershell
-$env:HAIFA_PERSONAL_CONTINUATION_KEY='<base64-aes-256-key>'
 java -jar .\target\haifa-agent-personal-assistant-server-0.1.0.jar
 ```
 
@@ -436,39 +435,25 @@ http://127.0.0.1:20001/actuator/health
 Maven 只构建后端 executable JAR，不需要 Node.js/npm，也不读取相邻 Web 目录。前端构建和部署
 命令见 `../haifa-agent-personal-assistant-web/README.md`。
 
-真实 DeepSeek、可选外部 MCP 和独立 Web 的可重复环境搭建方法见
+真实模型与独立 Web 的可重复环境搭建方法见
 [`REAL_ENVIRONMENT.md`](REAL_ENVIRONMENT.md)。PowerShell 与 POSIX Shell 入口都要求 Python 3；两者只负责
-参数兼容和解释器发现，启动、健康检查、状态文件与安全停止逻辑统一由根目录
+参数兼容和解释器发现，构建、健康检查与前台生命周期统一由根目录
 [`scripts/real_environment.py`](../../scripts/real_environment.py) 实现。
-脚本会把构建产物复制到 `local-tmp/personal-assistant-real/backend/` 后再启动，运行中的服务不会锁定
-模块 `target/` 下的 JAR。复制前会验证 Spring Boot Manifest 与 `BOOT-INF`，残缺构建产物自动重新
-`package` 并二次校验；直接执行本节前面的 `java -jar .\target\...` 命令不具备这些保护。
+脚本只注入 `HAIFA_PERSONAL_DATA_DIR` 一项环境变量，把后端 JAR 复制到
+`local-tmp/personal-assistant-real/backend/app.jar` 后再启动，运行中的服务不会锁定模块 `target/` 下的 JAR；
+直接执行本节前面的 `java -jar .\target\...` 命令不具备这些保护。前台运行时 `Ctrl+C` 会终止脚本启动的子进程。
 
-macOS 可直接使用与 Windows PowerShell 版本行为对齐的启动脚本：
+启动器只接受 `--rebuild`、`--backend-jar <path>`、`--startup-timeout-seconds <30..600>` 三个参数；
+不再提供停止、Provider 选择或凭据相关参数。macOS 可直接使用与 Windows PowerShell 版本行为对齐的脚本：
 
 ```bash
 ./scripts/start-real-environment.sh
-
-# 只校验将要停止的 PID、端口和进程身份
-./scripts/start-real-environment.sh \
-  --stop --dry-run
-
-# 停止后重新构建并启动
-./scripts/start-real-environment.sh --stop
 ./scripts/start-real-environment.sh --rebuild
 ```
 
-Provider 凭据只从进程环境读取，脚本不再接受任何 Key 文件参数；只有 Provider 选择、Continuation Key
-文件、仓库路径和超时可通过参数或专用环境变量覆盖。脚本不会把凭据写入参数、状态文件或日志。
-
-默认受信目录包含 DeepSeek、ChatGPT Codex、阿里云百炼、SiliconFlow、Kimi 和智谱；默认模型仍为
-DeepSeek，选择其他 Provider 前必须先完成其对应认证。PowerShell 与 Bash 启动脚本共用同一个配置生成器。
-OpenAI 本机中转是可选 Provider：只有当前进程
-（Windows 也回退到用户环境）同时提供 `OPENAI_BASE_URL`、`OPENAI_API_KEY`、`OPENAI_MODEL_ID` 时才
-装配；三项全部缺失或配置不完整都不阻断以默认模型启动，配置不完整时脚本会输出不含值的警告。
-启用后，本机中转使用 standard dialect 的 OpenAI Responses API，Provider 持有共享 Endpoint、
-CredentialRef 与 `nativeStreaming=true`，Binding 只声明 `style: openai-responses`。该模型当前只声明
-`TEXT_CHAT`，因此不会进入要求 Tool Calling 的 Personal Assistant 可选模型目录。
+Provider 凭据与默认模型来自 `application.yml`：凭据通过 `model-auth://…/default` 或 `env://…` 引用解析，
+首次使用需在 PA Web 的模型连接面板保存一次，或通过 OAuth 登录；`default-model-id` 决定默认 Binding。
+脚本既不读取也不注入任何 Provider Key，更不会把它们写入参数或日志。
 
 ## Process logging
 
@@ -484,9 +469,7 @@ expiry, and revocation facts. It contains no credential or script source:
 
 ```powershell
 $env:HAIFA_PERSONAL_TRUSTED_SCRIPT_MANIFEST='D:\secure-config\trusted-skill-scripts.yml'
-.\scripts\start-real-environment.ps1 `
-  -SkillRoot 'D:\agents\hermes-agent\optional-skills\finance' `
-  -TrustedScriptManifest 'D:\secure-config\trusted-skill-scripts.yml'
+java -jar .\target\haifa-agent-personal-assistant-server-0.1.0.jar
 ```
 
 Package review grants still gate which reviewed Skill packages enter the effective catalog. Script execution
