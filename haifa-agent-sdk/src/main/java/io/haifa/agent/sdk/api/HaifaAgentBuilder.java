@@ -390,7 +390,7 @@ public final class HaifaAgentBuilder {
                     effectiveProfile, runtime, persistence, conversation.conversationStore(), callers, ids, time);
             AtomicBoolean lifecycleClosed = new AtomicBoolean();
             var safeConversations = new SafeConversationService(conversationService, lifecycleClosed);
-            var agentRuns = new AgentRuns(runtime, processPromptDiagnostics);
+            var agentRuns = new AgentRuns(runtime, processPromptDiagnostics, ids, time);
             var agentMemories = memory == null
                     ? Optional.<AgentMemories>empty()
                     : Optional.of(new AgentMemories(
