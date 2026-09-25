@@ -12,6 +12,7 @@ import io.haifa.agent.runtime.api.AgentRunOutputListener;
 import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.AgentRunSnapshot;
 import io.haifa.agent.runtime.api.AgentRunViewSnapshot;
+import io.haifa.agent.runtime.api.ChildRunView;
 import io.haifa.agent.runtime.api.InteractionResponseReceipt;
 import io.haifa.agent.runtime.api.InteractionResponseSubmission;
 import io.haifa.agent.runtime.api.InteractionView;
@@ -80,6 +81,14 @@ public final class AgentRuns {
 
     public Optional<AgentPlanView> plan(AgentRunId runId) {
         return runtime.plan(Objects.requireNonNull(runId, "runId must not be null"));
+    }
+
+    /**
+     * Lists the child runs a parent run delegated through the {@code task} Tool, oldest first. Child sessions are
+     * never Conversations; a child's own events are read with {@link #events} using its run ID.
+     */
+    public List<ChildRunView> children(AgentRunId parentRunId) {
+        return runtime.children(Objects.requireNonNull(parentRunId, "parentRunId must not be null"));
     }
 
     public AgentRunHandle handle(AgentRunId runId) {

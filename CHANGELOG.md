@@ -22,6 +22,30 @@
   intent (target Run and contents), so retrying the same idempotency key with a fresh submission time or Run version
   is a duplicate instead of `IDEMPOTENCY_CONFLICT`, and a retry after settlement reports `APPLIED` or `REJECTED`.
   No SQLite migration is needed; the existing `run_input` `REJECTED` state is now used.
+- Parent runs can delegate to child agents with a Tool Call, mirroring DeerFlow's `task`. When the Product Profile
+  lists `allowedChildAgents`, the Runtime discloses one model-visible `task` Tool (`agent`, `objective`, optional
+  `context` and `expected_output`); every call in a response becomes one ordinary child `AgentRun` in its own
+  ephemeral session, the calls run in parallel within `maxParallelChildren` and a process cap (default 3,
+  `HaifaAgentBuilder.maxConcurrentChildRuns`), and each Tool Result returns after its child is terminal with the child
+  Run ID, Runtime status, bounded summary, the child's own usage and artifact references. When a response mixes `task`
+  with ordinary Tools, the delegations run first and the ordinary Tools then run in model order. The child Run ID is
+  derived from the parent Run ID and the Tool Call ID, so a retried call re-attaches instead of creating a second
+  child; `maxChildRuns` converges through the existing budget-limited completion; each child enforces its own
+  `maxWallTimeMillis`; delegation depth is fixed at one; waiting for children no longer counts as parent idle time but
+  still counts toward the parent's wall time; a child that needs approval keeps the parent waiting and is approved
+  through `pendingInteraction(childRunId)`/`respond`; parent cancel, timeout or recovery terminates its children, and
+  recovery settles unfinished children as interrupted without replay. Children neither recall nor write long-term
+  Memory, and the parent's usage only counts `childRuns`, never child tokens. Public API changes: new
+  `ChildAgentSpec`, `ProductProfile.allowedChildAgents` (the previous ten-argument constructor and `create` keep an
+  empty set) and `withAllowedChildAgents`, `HaifaAgentBuilder.childAgent`, `AgentRuns.children` returning the new
+  `ChildRunView`, `AgentRuntime.children`, and parent events `child.run.started`, `child.run.completed`,
+  `child.run.failed`, `child.run.cancelled` and `child.run.timed-out` carrying `RunEventPayloads.ChildRunLifecycle`.
+  Child sessions never appear in the Conversation list. `AgentInvocationMode` keeps only `ROOT` and `AGENT_AS_TOOL`
+  (`HANDOFF`, `FORK_JOIN`, `SUBGRAPH`, `SCHEDULED` and `EVENT_TRIGGERED` had no producer). Runtime internals:
+  `DelegationPort.executeChild` is replaced by the batch `executeChildren`, `DelegationDecision` now carries every Tool
+  request of the response, `RunStateRepository` gains `children(parentRunId)`, and `ResolvedDefinition` gains a
+  description and an optional child run profile. No Store or relation table is added; SQLite migration V14 adds
+  the `run(parent_run_id, created_at)` index used to list children.
 
 - The Personal Assistant real environment starts again. The catalog migration hardcoded
   `haifa.personal.execution.trusted-host-enabled: false` and dropped the `HAIFA_PERSONAL_EXECUTION_TRUSTED_HOST_ENABLED`
