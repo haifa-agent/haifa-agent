@@ -2,7 +2,7 @@
 
 ## Java
 
-Haifa Agent 0.1.1-SNAPSHOT 面向 Java 21。
+Haifa Agent 0.1.1 面向 Java 21。
 
 ## Build
 

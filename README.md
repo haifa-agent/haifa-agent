@@ -11,7 +11,7 @@
 
 你可以直接使用 Haifa Agent 自带的 **Coding Agent** 和 **Personal Assistant**，也可以通过 **Java SDK** 把 Agent 能力嵌入现有 Java / Spring Boot 应用。
 
-> 当前版本：`0.1.1-SNAPSHOT`
+> 当前版本：`0.1.1`
 >
 > 项目仍处于快速演进阶段，README 和 `docs/` 只描述当前源码已经实现的能力。
 
@@ -189,7 +189,7 @@ Pure Java 项目：
         <dependency>
             <groupId>io.haifa</groupId>
             <artifactId>haifa-agent-bom</artifactId>
-            <version>0.1.1-SNAPSHOT</version>
+            <version>0.1.1</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>
@@ -204,7 +204,7 @@ Pure Java 项目：
 </dependencies>
 ```
 
-当前 `0.1.1-SNAPSHOT` 尚不是正式公共 Release，源码开发阶段可以先从本仓库安装到本地 Maven Repository。
+当前 `0.1.1` 尚不是正式公共 Release，源码开发阶段可以先从本仓库安装到本地 Maven Repository。
 
 [Installation →](docs/get-started/installation.md)
 
