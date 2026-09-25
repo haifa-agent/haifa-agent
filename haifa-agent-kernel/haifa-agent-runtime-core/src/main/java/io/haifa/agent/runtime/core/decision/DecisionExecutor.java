@@ -37,6 +37,7 @@ import io.haifa.agent.runtime.core.control.RunControlRegistry;
 import io.haifa.agent.runtime.core.control.RunControlSignal;
 import io.haifa.agent.runtime.core.delegation.DelegationPort;
 import io.haifa.agent.runtime.core.execution.AgentExecutionFailureException;
+import io.haifa.agent.runtime.core.guard.ModelContinuationLimits;
 import io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException;
 import io.haifa.agent.runtime.core.interaction.InteractionPort;
 import io.haifa.agent.runtime.core.interaction.InteractionRequest;
@@ -74,6 +75,9 @@ public final class DecisionExecutor {
      * satisfy the completion requirements; interpreting that into a product work phase belongs to the product.
      */
     private static final String COMPLETION_PHASE = "COMPLETION";
+
+    /** Completion reason when accepted steer input must reach the model before the Run may finish. */
+    private static final String PENDING_RUN_INPUT = "PENDING_RUN_INPUT";
 
     private final ToolPipeline tools;
     private final CompletionGuard completionGuard;
@@ -344,24 +348,70 @@ public final class DecisionExecutor {
                             readiness.evidenceCodes()));
             return AgentLoopDirective.CONTINUE;
         }
-        transitions.completedWithOutput(
-                run,
-                new AgentRunResult(
-                        decision.outcome(),
-                        decision.summary(),
-                        decision.outputSchemaId(),
-                        decision.outputSchemaVersion(),
-                        decision.structuredOutput(),
-                        decision.artifacts(),
-                        decision.warnings()),
+        AgentRunResult result = new AgentRunResult(
+                decision.outcome(),
                 decision.summary(),
-                messageDraft(
-                        run,
-                        MessageRole.ASSISTANT,
-                        List.of(new TextPart(decision.summary(), "plain")),
-                        MessageVisibility.USER_VISIBLE,
-                        Map.of("final", true)));
-        return AgentLoopDirective.STOP;
+                decision.outputSchemaId(),
+                decision.outputSchemaVersion(),
+                decision.structuredOutput(),
+                decision.artifacts(),
+                decision.warnings());
+        SessionMessageDraft finalMessage = messageDraft(
+                run,
+                MessageRole.ASSISTANT,
+                List.of(new TextPart(decision.summary(), "plain")),
+                MessageVisibility.USER_VISIBLE,
+                Map.of("final", true));
+        if (ModelContinuationLimits.exceeded(run, loopContext.iteration() + 1) != null) {
+            // No further model call is allowed, so pending steer input could never be seen; completing settles it
+            // as rejected instead of trading the model's answer for a budget-limited summary.
+            transitions.completedWithOutput(run, result, decision.summary(), finalMessage);
+            return AgentLoopDirective.STOP;
+        }
+        if (transitions
+                .completedWithOutputUnlessInputPending(run, result, decision.summary(), finalMessage)
+                .isPresent()) {
+            return AgentLoopDirective.STOP;
+        }
+        deferFinalForRunInput(run, decision, loopContext);
+        return AgentLoopDirective.CONTINUE;
+    }
+
+    /**
+     * Keeps the superseded answer in the transcript as an ordinary assistant turn, then lets the loop reach
+     * {@code BEFORE_ITERATION} where the accepted steer input is applied and the model answers again.
+     */
+    private void deferFinalForRunInput(AgentRun run, FinalAnswerDecision decision, AgentLoopContext loopContext) {
+        appendMessage(
+                run,
+                MessageRole.ASSISTANT,
+                decision.summary(),
+                MessageVisibility.USER_VISIBLE,
+                Map.of("completionDeferred", PENDING_RUN_INPUT));
+        events.append(
+                run.id(),
+                "completion.deferred",
+                Map.of(
+                        "phase",
+                        COMPLETION_PHASE,
+                        "status",
+                        "COMPLETION_DEFERRED",
+                        "reasonCode",
+                        PENDING_RUN_INPUT,
+                        "blockerCodes",
+                        List.of(PENDING_RUN_INPUT),
+                        "missingEvidence",
+                        List.of(),
+                        "evidenceCodes",
+                        List.of(),
+                        "attempt",
+                        0,
+                        "remainingPercent",
+                        loopContext
+                                .budgetSnapshot()
+                                .map(value -> value.remainingPercent())
+                                .orElse(0)),
+                time.now());
     }
 
     private static String structuredCorrection(

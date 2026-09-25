@@ -68,6 +68,19 @@ public final class CanonicalRequestDigest {
         return digest.finish();
     }
 
+    /**
+     * Digest of what a steer input asks the Run to see. A caller retrying the same idempotency key naturally mints a
+     * new submission time and may observe a newer Run version, so neither takes part in duplicate detection; the
+     * target Run and the contents do. {@link #runInput} stays the integrity digest of the stored submission.
+     */
+    public static String runInputIntent(RunInputSubmission submission) {
+        Digester digest = new Digester();
+        digest.add("run-input-intent-v1");
+        digest.add(submission.runId().value());
+        addContents(digest, submission.contents());
+        return digest.finish();
+    }
+
     private static void addContents(Digester digest, java.util.List<ContentPart> contents) {
         digest.add(Integer.toString(contents.size()));
         for (ContentPart content : contents) {

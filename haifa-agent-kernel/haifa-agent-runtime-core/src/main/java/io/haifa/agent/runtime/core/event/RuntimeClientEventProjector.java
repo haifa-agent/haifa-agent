@@ -66,6 +66,13 @@ public final class RuntimeClientEventProjector {
                                         requiredText(event.data(), "inputId"),
                                         "APPLIED",
                                         text(event.data(), "applicationPoint", "BEFORE_ITERATION")));
+                    case "run.input.rejected" ->
+                        new Projection(
+                                "run.input.rejected",
+                                new RunEventPayloads.RunInputLifecycle(
+                                        requiredText(event.data(), "inputId"),
+                                        "REJECTED",
+                                        requiredText(event.data(), "reasonCode")));
                     case "model.call.started" -> model("model.call.started", event, "STARTED");
                     case "model.call.succeeded" -> model("model.call.succeeded", event, "SUCCEEDED");
                     case "model.call.failed" -> model("model.call.failed", event, "FAILED");
@@ -142,6 +149,7 @@ public final class RuntimeClientEventProjector {
                 || event.type().equals("interaction.invalidated")
                 || event.type().equals("run.input.accepted")
                 || event.type().equals("run.input.applied")
+                || event.type().equals("run.input.rejected")
                 || (event.type().startsWith("run.") && event.data().containsKey("status"));
     }
 

@@ -478,6 +478,45 @@ class SqliteOperationalAdaptersIT {
                     assertThat(record.attemptId()).contains(attempt.attemptId().value());
                     assertThat(record.iteration()).hasValue(7);
                 });
+
+        RunInputSubmission settled = new RunInputSubmission(
+                new RunInputId("settled-input"),
+                run.id(),
+                OptionalLong.empty(),
+                List.of(new TextPart("steer that the run cannot apply", "plain")),
+                "settled-key",
+                NOW.plusSeconds(6));
+        SqliteStoreFoundation settleStore = SqliteTestSupport.foundation(directory);
+        settleStore.runInputs().accept(settled, "tenant|user|principal", NOW.plusSeconds(6));
+        RunInputSubmission retry = new RunInputSubmission(
+                new RunInputId("settled-input-retry"),
+                run.id(),
+                OptionalLong.of(run.version()),
+                settled.contents(),
+                "settled-key",
+                NOW.plusSeconds(8));
+        assertThat(settleStore.runInputs().findExisting(retry, "tenant|user|principal"))
+                .as("a retry with a fresh submission time is the same input")
+                .get()
+                .satisfies(record -> assertThat(record.submission().inputId()).isEqualTo(settled.inputId()));
+        assertThat(settleStore
+                        .runInputs()
+                        .markRejected(settled.inputId(), "run-cancelled")
+                        .status())
+                .isEqualTo(RunInputReceiptStatus.REJECTED);
+        assertThat(settleStore
+                        .runInputs()
+                        .markRejected(settled.inputId(), "run-failed")
+                        .reasonCode())
+                .contains("run-cancelled");
+        assertThatThrownBy(() -> settleStore.runInputs().markRejected(input.inputId(), "run-cancelled"))
+                .isInstanceOf(IllegalStateException.class);
+        SqliteStoreFoundation afterSettlement = SqliteTestSupport.foundation(directory);
+        assertThat(afterSettlement.runInputs().pending(run.id(), 10)).isEmpty();
+        assertThat(afterSettlement.runInputs().find(settled.inputId())).get().satisfies(record -> {
+            assertThat(record.status()).isEqualTo(RunInputReceiptStatus.REJECTED);
+            assertThat(record.reasonCode()).contains("run-cancelled");
+        });
     }
 
     private static boolean attemptResponse(

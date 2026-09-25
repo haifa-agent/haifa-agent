@@ -62,7 +62,9 @@ import io.haifa.agent.runtime.core.execution.AttemptExecutor;
 import io.haifa.agent.runtime.core.execution.ExecutionOwnershipPort;
 import io.haifa.agent.runtime.core.execution.ExecutionScheduler;
 import io.haifa.agent.runtime.core.idempotency.CanonicalRequestDigest;
+import io.haifa.agent.runtime.core.input.RunInputAcceptance;
 import io.haifa.agent.runtime.core.input.RunInputPort;
+import io.haifa.agent.runtime.core.input.RunInputRecord;
 import io.haifa.agent.runtime.core.interaction.InteractionPort;
 import io.haifa.agent.runtime.core.interaction.InteractionRecord;
 import io.haifa.agent.runtime.core.interaction.InteractionViewProjector;
@@ -554,19 +556,32 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         Objects.requireNonNull(input, "input must not be null");
         AgentRun run = requireRunForContract(input.runId());
         requireContractCaller(run);
-        if (run.status().isTerminal() || run.status() == AgentRunStatus.COMPLETING) {
-            throw new io.haifa.agent.runtime.api.RuntimeContractException(
-                    io.haifa.agent.runtime.api.RuntimeApiErrorCode.RUN_STATE_CONFLICT,
-                    "The run cannot accept steer input in its current state");
-        }
-        if (input.expectedRunVersion().isPresent() && input.expectedRunVersion().getAsLong() != run.version()) {
-            throw new io.haifa.agent.runtime.api.RuntimeContractException(
-                    io.haifa.agent.runtime.api.RuntimeApiErrorCode.RUN_VERSION_CONFLICT,
-                    "The run version is no longer current");
-        }
-        var caller = callers.current();
-        var acceptance = unitOfWork.execute(() -> {
-            var accepted = runInputs.accept(input, callerScope(caller), time.now());
+        String scope = callerScope(callers.current());
+        // A retry reports the bound input's authoritative state, even after the Run stopped.
+        Optional<RunInputRecord> bound = runInputs.findExisting(input, scope);
+        if (bound.isPresent()) return receipt(new RunInputAcceptance(bound.orElseThrow(), false));
+        InputIntake intake = unitOfWork.execute(() -> {
+            Optional<RunInputRecord> raced = runInputs.findExisting(input, scope);
+            if (raced.isPresent()) return new InputIntake(new RunInputAcceptance(raced.orElseThrow(), false), null);
+            // Terminal transitions settle pending input in their own Unit of Work, so the state read here is ordered
+            // against them: input either precedes the final commit (and defers it) or observes a stopped Run.
+            AgentRun current = requireRunForContract(input.runId());
+            if (current.status().isTerminal() || current.status() == AgentRunStatus.COMPLETING) {
+                return new InputIntake(
+                        null,
+                        new io.haifa.agent.runtime.api.RuntimeContractException(
+                                io.haifa.agent.runtime.api.RuntimeApiErrorCode.RUN_STATE_CONFLICT,
+                                "The run cannot accept steer input in its current state"));
+            }
+            if (input.expectedRunVersion().isPresent()
+                    && input.expectedRunVersion().getAsLong() != current.version()) {
+                return new InputIntake(
+                        null,
+                        new io.haifa.agent.runtime.api.RuntimeContractException(
+                                io.haifa.agent.runtime.api.RuntimeApiErrorCode.RUN_VERSION_CONFLICT,
+                                "The run version is no longer current"));
+            }
+            var accepted = runInputs.accept(input, scope, time.now());
             if (accepted.newlyAccepted()) {
                 var event = events.append(
                         run.id(),
@@ -582,15 +597,26 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                         event.data(),
                         event.occurredAt()));
             }
-            return accepted;
+            return new InputIntake(accepted, null);
         });
+        if (intake.refusal() != null) throw intake.refusal();
+        return receipt(intake.acceptance());
+    }
+
+    private static RunInputReceipt receipt(RunInputAcceptance acceptance) {
         RunInputReceiptStatus receiptStatus = acceptance.newlyAccepted()
                 ? RunInputReceiptStatus.ACCEPTED
-                : acceptance.record().status() == RunInputReceiptStatus.APPLIED
-                        ? RunInputReceiptStatus.APPLIED
-                        : RunInputReceiptStatus.DUPLICATE;
+                : switch (acceptance.record().status()) {
+                    case APPLIED -> RunInputReceiptStatus.APPLIED;
+                    case REJECTED -> RunInputReceiptStatus.REJECTED;
+                    case ACCEPTED, DUPLICATE -> RunInputReceiptStatus.DUPLICATE;
+                };
         return acceptance.record().receipt(receiptStatus);
     }
+
+    /** Result of the input Unit of Work; a refusal is returned rather than thrown so the transaction stays clean. */
+    private record InputIntake(
+            RunInputAcceptance acceptance, io.haifa.agent.runtime.api.RuntimeContractException refusal) {}
 
     /**
      * Converges due interactions for one authorized Run. A scheduler may invoke this repeatedly.

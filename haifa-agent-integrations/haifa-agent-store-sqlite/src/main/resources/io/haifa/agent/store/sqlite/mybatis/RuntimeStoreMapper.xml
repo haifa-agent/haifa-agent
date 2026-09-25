@@ -1258,6 +1258,12 @@
         WHERE input_id = #{inputId} AND status = 'ACCEPTED'
     </update>
 
+    <update id="markRunInputRejected">
+        UPDATE run_input
+        SET status = 'REJECTED', reason_code = #{reasonCode}
+        WHERE input_id = #{inputId} AND status = 'ACCEPTED'
+    </update>
+
     <resultMap id="conversationSummaryRow" type="io.haifa.agent.store.sqlite.mybatis.ConversationSummaryRow">
         <constructor>
             <arg column="summary_id" javaType="java.lang.String"/>

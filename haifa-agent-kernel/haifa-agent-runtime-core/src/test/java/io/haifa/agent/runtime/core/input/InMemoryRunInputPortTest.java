@@ -42,6 +42,35 @@ class InMemoryRunInputPortTest {
                 .isEqualTo(RuntimeApiErrorCode.IDEMPOTENCY_CONFLICT);
     }
 
+    @Test
+    void matchesRetriesByIntentAndSettlesRejectedInputOnce() {
+        InMemoryRunInputPort port = new InMemoryRunInputPort();
+        RunInputSubmission input = input("input-1", "key-1", "steer");
+        port.accept(input, "tenant|user|owner", NOW);
+        RunInputSubmission retry = new RunInputSubmission(
+                new RunInputId("input-retry"),
+                input.runId(),
+                OptionalLong.of(7),
+                input.contents(),
+                "key-1",
+                NOW.plusSeconds(9));
+
+        assertThat(port.findExisting(retry, "tenant|user|owner"))
+                .get()
+                .satisfies(record -> assertThat(record.submission().inputId()).isEqualTo(input.inputId()));
+        assertThat(port.findExisting(retry, "tenant|user|other")).isEmpty();
+
+        RunInputRecord rejected = port.markRejected(input.inputId(), "run-cancelled");
+        assertThat(rejected.status()).isEqualTo(RunInputReceiptStatus.REJECTED);
+        assertThat(rejected.reasonCode()).contains("run-cancelled");
+        assertThat(port.markRejected(input.inputId(), "run-failed")).isEqualTo(rejected);
+        assertThat(port.pending(input.runId(), 10)).isEmpty();
+        assertThatThrownBy(() -> port.markApplied(input.inputId(), "attempt-1", 1, NOW))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> port.markRejected(input.inputId(), "Not A Token"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
     private static RunInputSubmission input(String inputId, String key, String text) {
         return new RunInputSubmission(
                 new RunInputId(inputId),

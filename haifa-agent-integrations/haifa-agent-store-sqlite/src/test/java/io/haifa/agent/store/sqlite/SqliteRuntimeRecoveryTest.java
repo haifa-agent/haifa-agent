@@ -308,6 +308,101 @@ class SqliteRuntimeRecoveryTest {
     }
 
     @Test
+    void acceptedSteerSurvivesRestartAndIsAppliedWhenTheSuspendedRunResumes() {
+        AgentRunId runId = suspendedRunWithAcceptedSteer("steer-resume");
+        List<AgentChatRequest> requests = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        try (SqliteStoreFoundation reopened = SqliteTestSupport.foundation(directory)) {
+            assertThat(reopened.runInputs().pending(runId, 10)).singleElement().satisfies(record -> assertThat(
+                            record.status())
+                    .isEqualTo(io.haifa.agent.runtime.api.RunInputReceiptStatus.ACCEPTED));
+            RuntimeInstance processB = runtime(
+                    reopened,
+                    request -> {
+                        requests.add(request);
+                        return finalResponse("resumed with steer");
+                    },
+                    "process-b",
+                    new TestIds("steer-resume-b"));
+            processB.runtime().resume(new ResumeAgentRunRequest("resume-steer", runId, List.of()));
+            processB.scheduler().runAll();
+
+            assertThat(processB.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(requests.getLast().messages())
+                    .anySatisfy(message -> assertThat(message.content()).contains("steer survives restart"));
+            assertThat(reopened.runInputs().find(new io.haifa.agent.runtime.api.RunInputId("steer-resume-input")))
+                    .get()
+                    .satisfies(record -> assertThat(record.status())
+                            .isEqualTo(io.haifa.agent.runtime.api.RunInputReceiptStatus.APPLIED));
+        }
+    }
+
+    @Test
+    void acceptedSteerOfAnInterruptedRunIsRejectedWhenRecoverySettlesIt() {
+        AgentRunId runId = suspendedRunWithAcceptedSteer("steer-recover");
+        try (SqliteStoreFoundation crashed = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance processA =
+                    runtime(crashed, finalModel("not-called"), "process-a", new TestIds("steer-recover-a2"));
+            processA.runtime().resume(new ResumeAgentRunRequest("resume-before-crash", runId, List.of()));
+            AgentRunExecutionAttempt active =
+                    crashed.attempts().activeFor(runId).orElseThrow();
+            long expected = active.version();
+            active.start("process-a", NOW);
+            crashed.attempts().save(active, expected);
+        }
+
+        try (SqliteStoreFoundation recovered = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance processB =
+                    runtime(recovered, finalModel("not-called"), "process-b", new TestIds("steer-recover-b"));
+            processB.runtime().recover(runId);
+            processB.scheduler().runAll();
+
+            assertThat(processB.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.FAILED);
+            assertThat(recovered.runInputs().pending(runId, 10)).isEmpty();
+            var settled = processB.runtime().submitInput(steerInput(runId, "steer-recover"));
+            assertThat(settled.status()).isEqualTo(io.haifa.agent.runtime.api.RunInputReceiptStatus.REJECTED);
+            assertThat(settled.reasonCode()).contains("run-failed");
+            assertThat(processB.ports().events().eventsFor(runId))
+                    .filteredOn(event -> event.type().equals("run.input.rejected"))
+                    .singleElement()
+                    .satisfies(event -> assertThat(event.data()).containsEntry("reasonCode", "run-failed"));
+        }
+    }
+
+    /** Leaves a durable SUSPENDED Run with one accepted, unapplied steer input and closes its process. */
+    private AgentRunId suspendedRunWithAcceptedSteer(String key) {
+        try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
+            AtomicReference<DefaultAgentRuntime> runtimeRef = new AtomicReference<>();
+            AtomicReference<AgentRunId> runRef = new AtomicReference<>();
+            AgentChatModel pausingModel = ignored -> {
+                runtimeRef.get().command(pause(runRef.get()));
+                return finalResponse("checkpoint-before-restart");
+            };
+            RuntimeInstance processA =
+                    runtime(first, pausingModel, "process-a", new TestIds(key + "-a"), builder -> builder);
+            runtimeRef.set(processA.runtime());
+            AgentRunId runId = processA.runtime().start(request(key)).runId();
+            runRef.set(runId);
+            processA.scheduler().runAll();
+            assertThat(processA.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.SUSPENDED);
+
+            assertThat(processA.runtime().submitInput(steerInput(runId, key)).status())
+                    .isEqualTo(io.haifa.agent.runtime.api.RunInputReceiptStatus.ACCEPTED);
+            return runId;
+        }
+    }
+
+    private static io.haifa.agent.runtime.api.RunInputSubmission steerInput(AgentRunId runId, String key) {
+        return new io.haifa.agent.runtime.api.RunInputSubmission(
+                new io.haifa.agent.runtime.api.RunInputId(key + "-input"),
+                runId,
+                java.util.OptionalLong.empty(),
+                List.of(new io.haifa.agent.core.content.TextPart("steer survives restart", "plain")),
+                key,
+                NOW);
+    }
+
+    @Test
     void reopensAttemptAndRestoresItsExactCheckpointWithoutAnInMemorySelection() {
         AgentRunId runId;
         io.haifa.agent.core.checkpoint.CheckpointId selectedId;
