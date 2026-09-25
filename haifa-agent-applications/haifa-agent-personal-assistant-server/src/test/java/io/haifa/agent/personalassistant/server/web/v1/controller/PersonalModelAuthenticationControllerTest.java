@@ -96,6 +96,36 @@ class PersonalModelAuthenticationControllerTest {
     }
 
     @Test
+    void doesNotDuplicateAConfiguredExternalLoginProviderProjection() {
+        LocalModelAuthenticationService service = mock(LocalModelAuthenticationService.class);
+        when(service.connections()).thenReturn(java.util.List.of());
+        when(service.connectionRequired(any())).thenReturn(true);
+        when(service.externalLoginMethods())
+                .thenReturn(java.util.List.of(new ExternalLoginMethodDescriptor(
+                        AntigravityExternalLoginMethod.METHOD_ID,
+                        "Google sign-in (Antigravity)",
+                        java.util.Set.of(ExternalLoginMode.BROWSER),
+                        true,
+                        Optional.empty())));
+
+        WebTestClient.bindToController(new PersonalModelAuthenticationController(
+                        service, new PersonalApiMapper(), () -> java.util.List.of(antigravityProvider())))
+                .build()
+                .get()
+                .uri("/api/v1/model-connections")
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectBody()
+                .jsonPath("$.length()")
+                .isEqualTo(1)
+                .jsonPath("$[0].providerId")
+                .isEqualTo("google-antigravity")
+                .jsonPath("$[0].externalLoginSupported")
+                .isEqualTo(true);
+    }
+
+    @Test
     void projectsConfiguredEnvironmentReadinessWithoutExposingTheVariableNameOrLogout() {
         var store = new WindowsLocalModelAuthStore(new InMemoryWindowsCredentialManagerClient(), new ObjectMapper());
         var provider = new PersonalAssistantProperties.ModelProvider(
