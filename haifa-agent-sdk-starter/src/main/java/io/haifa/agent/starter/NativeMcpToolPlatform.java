@@ -28,9 +28,11 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 /**
@@ -98,7 +100,7 @@ final class NativeMcpToolPlatform implements AutoCloseable {
         Set<String> declaredNames = new LinkedHashSet<>();
         Map<String, McpServerSpec> usable = new LinkedHashMap<>();
         List<McpServerDefinition> definitions = new ArrayList<>();
-        Map<String, String> secrets = new LinkedHashMap<>();
+        Map<String, Supplier<String>> secretSuppliers = new LinkedHashMap<>();
         for (McpServerSpec spec : declared) {
             Objects.requireNonNull(spec, "MCP server spec must not be null");
             if (!declaredNames.add(spec.name())) {
@@ -110,17 +112,30 @@ final class NativeMcpToolPlatform implements AutoCloseable {
                 // Resolve the whole server before recording any of it, so a half-resolved optional
                 // server never leaves a definition behind without its spec and credentials.
                 McpServerDefinition definition = spec.toServerDefinition();
-                Map<String, String> resolved = resolveSecrets(spec, environment);
+                Map<String, Supplier<String>> resolved = resolveSuppliers(spec, environment);
                 definitions.add(definition);
-                secrets.putAll(resolved);
+                secretSuppliers.putAll(resolved);
                 usable.put(spec.name(), spec);
             } catch (RuntimeException exception) {
                 degradeOrFail(spec, diagnostics, "MCP_SERVER_CONFIGURATION_INVALID", exception);
             }
         }
 
-        SecretRedactor redactor = new DefaultSecretRedactor(secrets.values());
-        CredentialBroker broker = new DefaultCredentialBroker(Map.copyOf(secrets), redactor);
+        DefaultSecretRedactor redactor = new DefaultSecretRedactor();
+        CredentialBroker broker = new DefaultCredentialBroker(
+                id -> {
+                    Supplier<String> supplier = secretSuppliers.get(id);
+                    if (supplier == null) {
+                        return Optional.empty();
+                    }
+                    String secret = supplier.get();
+                    if (secret != null && !secret.isBlank()) {
+                        redactor.registerSecret(secret);
+                        return Optional.of(secret);
+                    }
+                    return Optional.empty();
+                },
+                redactor);
         var connections = new McpConnectionManager(definitions, clientFactory);
         if (definitions.isEmpty()) {
             return new NativeMcpToolPlatform(connections, broker, List.of(), diagnostics);
@@ -228,19 +243,28 @@ final class NativeMcpToolPlatform implements AutoCloseable {
         return remoteName + " (" + (codes.isEmpty() ? "not importable" : codes) + ")";
     }
 
-    private static Map<String, String> resolveSecrets(McpServerSpec spec, Function<String, String> environment) {
-        Map<String, String> secrets = new LinkedHashMap<>();
+    private static Map<String, Supplier<String>> resolveSuppliers(
+            McpServerSpec spec, Function<String, String> environment) {
+        Map<String, Supplier<String>> suppliers = new LinkedHashMap<>();
         for (McpServerSpec.HeaderCredential credential : spec.credentials()) {
-            String secret = environment.apply(credential.environmentVariable());
-            if (secret == null || secret.isBlank()) {
+            if (credential.environmentVariable() != null) {
+                String secret = environment.apply(credential.environmentVariable());
+                if (secret == null || secret.isBlank()) {
+                    throw failure(
+                            "MCP_CREDENTIAL_UNAVAILABLE",
+                            "MCP server " + spec.name() + " requires environment variable "
+                                    + credential.environmentVariable());
+                }
+                suppliers.put(credential.credentialId(), () -> secret);
+            } else if (credential.valueSupplier() != null) {
+                suppliers.put(credential.credentialId(), credential.valueSupplier());
+            } else {
                 throw failure(
                         "MCP_CREDENTIAL_UNAVAILABLE",
-                        "MCP server " + spec.name() + " requires environment variable "
-                                + credential.environmentVariable());
+                        "MCP server " + spec.name() + " credential has neither environment variable nor supplier");
             }
-            secrets.put(credential.credentialId(), secret);
         }
-        return secrets;
+        return suppliers;
     }
 
     private static void degradeOrFail(

@@ -15,6 +15,7 @@ import io.haifa.agent.tool.api.ToolSideEffect;
 import java.net.URI;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import org.junit.jupiter.api.Test;
 
@@ -211,6 +212,24 @@ class NativeMcpToolPlatformTest {
                 assertThat(diagnostic.code()).isEqualTo("MCP_CREDENTIAL_UNAVAILABLE");
                 assertThat(diagnostic.safeMessage()).contains("legacy-search");
             });
+        }
+    }
+
+    @Test
+    void supportsDynamicCredentialSupplierAndRefreshesSecret() {
+        var mcp = new FakeMcpServer().serving("enterprise-search", "search_jobs");
+        AtomicReference<String> tokenHolder = new AtomicReference<>("initial-token");
+
+        McpServerSpec dynamicSpec = jobs().bearerToken(tokenHolder::get).readOnly();
+
+        try (var platform = connect(mcp, dynamicSpec)) {
+            assertThat(platform.credentials().requireSecret("mcp:enterprise-search:authorization"))
+                    .isEqualTo("initial-token");
+            assertThat(mcp.authorizationValues()).contains("Authorization: Bearer initial-token");
+
+            tokenHolder.set("refreshed-token");
+            assertThat(platform.credentials().requireSecret("mcp:enterprise-search:authorization"))
+                    .isEqualTo("refreshed-token");
         }
     }
 

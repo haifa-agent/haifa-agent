@@ -63,6 +63,25 @@ class McpCredentialTest {
     }
 
     @Test
+    void rejectsHttpCredentialContainingCrlfCharactersWithoutLeakingSecret() {
+        CredentialRequirement requirement = requirement();
+        McpCredentialInjection injection = new McpCredentialInjection(requirement, "Authorization", "Bearer ");
+        var context = new McpHttpCredentialContext(List.of(injection), "https://utility.example:443");
+        Map<String, String> crlfCredentials = Map.of("utility-token", "secret-token\r\nX-Injected: attack");
+
+        assertThatThrownBy(() -> context.withCredentials(crlfCredentials, () -> {
+                    var builder = HttpRequest.newBuilder(URI.create("https://utility.example/mcp"));
+                    context.customize(
+                            builder, "POST", URI.create("https://utility.example/mcp"), "{}", context.snapshot());
+                    return builder.build();
+                }))
+                .isInstanceOf(SecurityException.class)
+                .hasMessageContaining("MCP HTTP credential header contains illegal characters: Authorization")
+                .hasMessageNotContaining("secret-token")
+                .hasMessageNotContaining("attack");
+    }
+
+    @Test
     void authenticatedDiscoveryResolvesConfiguredCredentials() {
         var base = McpTestFixtures.httpServer(URI.create("http://127.0.0.1:8091/mcp"), Set.of("time_now"));
         var injection = new McpCredentialInjection(requirement(), "Authorization", "Bearer ");

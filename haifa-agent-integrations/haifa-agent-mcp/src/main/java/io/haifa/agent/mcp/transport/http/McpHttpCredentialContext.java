@@ -49,8 +49,8 @@ public final class McpHttpCredentialContext implements McpRequestContext {
         if (!allowedOrigin.equals(origin(uri))) {
             throw new SecurityException("MCP HTTP redirect or request crossed the approved origin");
         }
-        Object value = context.get(CONTEXT_KEY);
-        RequestScope scope = value instanceof RequestScope requestScope
+        Object rawContext = context.get(CONTEXT_KEY);
+        RequestScope scope = rawContext instanceof RequestScope requestScope
                 ? requestScope
                 : new RequestScope(Map.of(), ToolInvocationObserver.noop());
         Map<String, String> credentials = scope.credentials();
@@ -60,7 +60,12 @@ public final class McpHttpCredentialContext implements McpRequestContext {
                 throw new SecurityException("MCP HTTP credential is missing: "
                         + injection.requirement().credentialId());
             }
-            request.header(injection.targetName(), injection.valuePrefix() + secret);
+            String headerValue = injection.valuePrefix() + secret;
+            if (headerValue.indexOf('\r') >= 0 || headerValue.indexOf('\n') >= 0) {
+                throw new SecurityException(
+                        "MCP HTTP credential header contains illegal characters: " + injection.targetName());
+            }
+            request.header(injection.targetName(), headerValue);
         }
         scope.dispatched();
     }
