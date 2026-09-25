@@ -160,6 +160,9 @@ public final class PersonalModelAuthenticationController {
         java.util.Set<String> projected = new java.util.LinkedHashSet<>();
         for (PersonalAssistantProperties.ModelProvider provider : providers.get()) {
             String reference = provider.credentialReference();
+            // A configured provider always owns its credential reference, so the onboarding loop below
+            // must not project a second entry for the same external-login method.
+            projected.add(reference);
             var managed = stored.stream()
                     .filter(connection -> connection.connectionId().value().equals(reference))
                     .findFirst();
