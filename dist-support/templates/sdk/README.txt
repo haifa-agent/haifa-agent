@@ -18,7 +18,7 @@ Haifa Agent SDK Release Bundle
         <dependency>
             <groupId>io.haifa</groupId>
             <artifactId>haifa-agent-bom</artifactId>
-            <version>0.1.0</version>
+            <version>0.1.1</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>
@@ -34,7 +34,7 @@ Haifa Agent SDK Release Bundle
 
 【Gradle 依赖配置】
 dependencies {
-    implementation platform("io.haifa:haifa-agent-bom:0.1.0")
+    implementation platform("io.haifa:haifa-agent-bom:0.1.1")
     implementation "io.haifa:haifa-agent-sdk-starter"
 }
 
