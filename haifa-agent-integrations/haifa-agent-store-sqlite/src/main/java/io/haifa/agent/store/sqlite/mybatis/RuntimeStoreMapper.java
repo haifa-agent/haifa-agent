@@ -220,6 +220,8 @@ public interface RuntimeStoreMapper {
 
     List<RunInputRow> pendingRunInputs(@Param("runId") String runId, @Param("limit") int limit);
 
+    int markRunInputRejected(@Param("inputId") String inputId, @Param("reasonCode") String reasonCode);
+
     int markRunInputApplied(
             @Param("inputId") String inputId,
             @Param("attemptId") String attemptId,

@@ -12,37 +12,19 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
 
 public final class InMemoryRunInputPort implements RunInputPort {
-    private record IdempotencyBinding(String requestDigest, RunInputId inputId) {}
-
     private final Map<RunInputId, RunInputRecord> inputs = new HashMap<>();
-    private final Map<String, IdempotencyBinding> idempotency = new HashMap<>();
+    private final Map<String, RunInputId> idempotency = new HashMap<>();
 
     @Override
     public synchronized RunInputAcceptance accept(
             RunInputSubmission submission, String callerScope, Instant acceptedAt) {
-        String scope = callerScope + "|run-input|" + submission.runId().value() + "|" + submission.idempotencyKey();
-        String requestDigest = CanonicalRequestDigest.runInput(submission);
-        IdempotencyBinding existingBinding = idempotency.get(scope);
-        if (existingBinding != null) {
-            if (!existingBinding.requestDigest().equals(requestDigest)) {
-                throw new RuntimeContractException(
-                        RuntimeApiErrorCode.IDEMPOTENCY_CONFLICT,
-                        "The idempotency key is already bound to a different run input");
-            }
-            return new RunInputAcceptance(inputs.get(existingBinding.inputId()), false);
-        }
-        RunInputRecord existingInput = inputs.get(submission.inputId());
-        if (existingInput != null) {
-            if (!CanonicalRequestDigest.runInput(existingInput.submission()).equals(requestDigest)) {
-                throw new RuntimeContractException(
-                        RuntimeApiErrorCode.IDEMPOTENCY_CONFLICT, "The input id is already bound to different content");
-            }
-            return new RunInputAcceptance(existingInput, false);
-        }
+        Optional<RunInputRecord> existing = findExisting(submission, callerScope);
+        if (existing.isPresent()) return new RunInputAcceptance(existing.orElseThrow(), false);
         RunInputRecord accepted = new RunInputRecord(
                 submission,
                 RunInputReceiptStatus.ACCEPTED,
@@ -52,8 +34,24 @@ public final class InMemoryRunInputPort implements RunInputPort {
                 OptionalInt.empty(),
                 Optional.empty());
         inputs.put(submission.inputId(), accepted);
-        idempotency.put(scope, new IdempotencyBinding(requestDigest, submission.inputId()));
+        idempotency.put(scope(submission, callerScope), submission.inputId());
         return new RunInputAcceptance(accepted, true);
+    }
+
+    @Override
+    public synchronized Optional<RunInputRecord> findExisting(RunInputSubmission submission, String callerScope) {
+        RunInputId boundId = idempotency.get(scope(submission, callerScope));
+        RunInputRecord existing = boundId != null ? inputs.get(boundId) : inputs.get(submission.inputId());
+        if (existing == null) return Optional.empty();
+        if (!CanonicalRequestDigest.runInputIntent(existing.submission())
+                .equals(CanonicalRequestDigest.runInputIntent(submission))) {
+            throw new RuntimeContractException(
+                    RuntimeApiErrorCode.IDEMPOTENCY_CONFLICT,
+                    boundId != null
+                            ? "The idempotency key is already bound to a different run input"
+                            : "The input id is already bound to different content");
+        }
+        return Optional.of(existing);
     }
 
     @Override
@@ -92,5 +90,31 @@ public final class InMemoryRunInputPort implements RunInputPort {
                 Optional.empty());
         inputs.put(inputId, applied);
         return applied;
+    }
+
+    @Override
+    public synchronized RunInputRecord markRejected(RunInputId inputId, String reasonCode) {
+        String reason = RunInputReasonCodes.require(reasonCode);
+        RunInputRecord current = Optional.ofNullable(inputs.get(inputId))
+                .orElseThrow(() -> new IllegalArgumentException("unknown run input"));
+        if (current.status() == RunInputReceiptStatus.REJECTED) return current;
+        if (current.status() != RunInputReceiptStatus.ACCEPTED) {
+            throw new IllegalStateException("only accepted run input can be rejected");
+        }
+        RunInputRecord rejected = new RunInputRecord(
+                current.submission(),
+                RunInputReceiptStatus.REJECTED,
+                current.acceptedAt(),
+                Optional.empty(),
+                Optional.empty(),
+                OptionalInt.empty(),
+                Optional.of(reason));
+        inputs.put(inputId, rejected);
+        return rejected;
+    }
+
+    private static String scope(RunInputSubmission submission, String callerScope) {
+        return Objects.requireNonNull(callerScope, "callerScope must not be null") + "|run-input|"
+                + submission.runId().value() + "|" + submission.idempotencyKey();
     }
 }

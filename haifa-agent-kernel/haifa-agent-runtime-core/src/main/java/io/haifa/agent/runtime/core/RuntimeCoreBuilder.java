@@ -513,8 +513,8 @@ public final class RuntimeCoreBuilder {
                         "Complete the objective using disclosed capabilities.");
         ProfileResolver profileResolver = profiles != null ? profiles : RuntimeCoreBuilder::defaultProfile;
         RunAwaiter awaiter = new RunAwaiter();
-        RunTransitionCoordinator transitions =
-                new RunTransitionCoordinator(runs, state, events, outbox, ids, time, awaiter, unitOfWork);
+        RunTransitionCoordinator transitions = new RunTransitionCoordinator(
+                runs, state, events, outbox, ids, time, awaiter, unitOfWork, configuredRunInputs);
         transitions.addListener(snapshot -> {
             if (snapshot.status().isTerminal()) {
                 modelOutput.markRunTerminal(snapshot.runId());
