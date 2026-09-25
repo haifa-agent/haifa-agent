@@ -69,6 +69,6 @@ Coding Agent 与 Personal Assistant 是具体 Product Assembly。
 
 ## 当前 Non-goals
 
-0.1.1 baseline 不宣称已经提供 Distributed Worker / Control Plane、Graph / Workflow Runtime、Enterprise IAM Product 或强内建 Sandbox。
+0.1.2 baseline 不宣称已经提供 Distributed Worker / Control Plane、Graph / Workflow Runtime、Enterprise IAM Product 或强内建 Sandbox。
 
 详见 [Runtime 与模块边界](runtime-and-module-boundaries.md)。
