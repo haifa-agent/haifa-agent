@@ -3,6 +3,7 @@ providerId: siliconflow
 version: "2026-09-m2"
 displayName: SiliconFlow
 status: ACTIVE
+showOrder: 5
 authenticationMethods: [API_KEY]
 bindings:
   - resource: bindings/siliconflow-deepseek-v4-pro.yaml

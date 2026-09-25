@@ -3,6 +3,7 @@ providerId: openai-codex
 version: "2026-09-m3"
 displayName: ChatGPT Codex
 status: ACTIVE
+showOrder: 10
 authenticationMethods: [EXTERNAL_LOGIN]
 bindings:
   - resource: bindings/gpt-5-6-sol.yaml

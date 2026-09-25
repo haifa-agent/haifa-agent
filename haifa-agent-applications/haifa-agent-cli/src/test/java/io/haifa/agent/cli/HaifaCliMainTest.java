@@ -4,14 +4,25 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.haifa.agent.application.coding.terminal.application.CodingTerminalStartup;
 import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.core.step.AgentStepId;
+import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.runtime.api.AgentRunOutputEvent;
 import io.haifa.agent.runtime.api.AgentRunOutputEventType;
 import io.haifa.agent.runtime.api.AgentRunOutputListener;
+import io.haifa.agent.runtime.core.middleware.RuntimePhase;
+import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
+import io.haifa.agent.runtime.core.trace.RuntimeTraceScope;
+import io.haifa.agent.runtime.core.trace.RuntimeTraceStatus;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.Instant;
+import java.util.Map;
+import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -138,6 +149,45 @@ class HaifaCliMainTest {
     }
 
     @Test
+    void aRunningToolIsReportedAsTheToolAndNotAsAWaitForTheModel() {
+        ByteArrayOutputStream stderr = new ByteArrayOutputStream();
+        AtomicLong nanos = new AtomicLong();
+        CliActivityOutput renderer = new CliActivityOutput(
+                output(), new PrintStream(stderr, true, StandardCharsets.UTF_8), true, false, nanos::get, false);
+
+        renderer.onOutput(event(1, AgentRunOutputEventType.RUN_OUTPUT_STARTED, ""));
+        renderer.onTrace(toolTrace("execution_run", RuntimeTraceStatus.STARTED));
+        nanos.set(java.time.Duration.ofSeconds(930).toNanos());
+        renderer.emitNonTtyStatus();
+        renderer.onTrace(toolTrace("execution_run", RuntimeTraceStatus.SUCCESS));
+        renderer.emitNonTtyStatus();
+        renderer.close();
+
+        assertThat(stderr.toString(StandardCharsets.UTF_8))
+                .contains("[status] Running execution_run... elapsed=930s")
+                .contains("[status] Waiting for model... elapsed=0s");
+    }
+
+    @Test
+    void theStatusReturnsToTheModelOnlyAfterTheLastParallelToolEnds() {
+        ByteArrayOutputStream stderr = new ByteArrayOutputStream();
+        AtomicLong nanos = new AtomicLong();
+        CliActivityOutput renderer = new CliActivityOutput(
+                output(), new PrintStream(stderr, true, StandardCharsets.UTF_8), true, false, nanos::get, false);
+
+        renderer.onOutput(event(1, AgentRunOutputEventType.RUN_OUTPUT_STARTED, ""));
+        renderer.onTrace(toolTrace("file_read", RuntimeTraceStatus.STARTED));
+        renderer.onTrace(toolTrace("execution_run", RuntimeTraceStatus.STARTED));
+        renderer.onTrace(toolTrace("file_read", RuntimeTraceStatus.SUCCESS));
+        renderer.emitNonTtyStatus();
+        renderer.close();
+
+        assertThat(stderr.toString(StandardCharsets.UTF_8))
+                .contains("[status] Running execution_run...")
+                .doesNotContain("[status] Waiting for model... elapsed=0s");
+    }
+
+    @Test
     void explicitAndDefaultTerminalUseTheSameLaunchBoundary() {
         AtomicInteger launches = new AtomicInteger();
         var main = new HaifaCliMain((workspace, configuration, startup, output, trace) -> launches.incrementAndGet());
@@ -213,6 +263,18 @@ class HaifaCliMainTest {
         assertThat(startup.get().prompt()).contains("continue the work");
     }
 
+    @Test
+    void deadlineIsAlwaysReportedToStderrWithTheStableExitCode() {
+        ByteArrayOutputStream error = new ByteArrayOutputStream();
+
+        int exit = HaifaCliMain.reportDeadlineExceeded(
+                Duration.ofSeconds(7), new PrintStream(error, true, StandardCharsets.UTF_8));
+
+        assertThat(exit).isEqualTo(124);
+        assertThat(error.toString(StandardCharsets.UTF_8))
+                .isEqualTo("[DEADLINE_EXCEEDED] Task exceeded the CLI timeout of 7000 ms." + System.lineSeparator());
+    }
+
     private static PrintStream output() {
         return new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8);
     }
@@ -220,5 +282,23 @@ class HaifaCliMainTest {
     private static AgentRunOutputEvent event(long sequence, AgentRunOutputEventType type, String text) {
         return new AgentRunOutputEvent(
                 new AgentRunId("cli-run"), "call-1", "generation-1", 1, sequence, type, text, Instant.EPOCH);
+    }
+
+    private static RuntimeTraceEvent toolTrace(String toolName, RuntimeTraceStatus status) {
+        return new RuntimeTraceEvent(
+                "trace-1",
+                new AgentRunId("cli-run"),
+                Optional.empty(),
+                new AgentSessionId("session-1"),
+                Optional.of(new AgentStepId("step-1")),
+                Optional.of(new ToolCallId("call-1")),
+                Optional.empty(),
+                OptionalInt.of(1),
+                RuntimePhase.BEFORE_DECISION_EXECUTION,
+                status == RuntimeTraceStatus.STARTED ? "tool.execute" : "tool.persisted",
+                RuntimeTraceScope.TOOL_CALL,
+                status,
+                Map.of("toolName", toolName),
+                Instant.EPOCH);
     }
 }

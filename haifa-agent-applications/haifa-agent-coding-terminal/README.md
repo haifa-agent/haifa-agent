@@ -104,12 +104,17 @@ Error、Queued 和 Focus。TrueColor 参考色会按明暗背景自适应；NoCo
   以 `✓`/`✗`/`●` 状态符号开头，随后是 `名称 · 目标` 与完成耗时（如 `✓ file_read · README.md · 0.3s`），
   并把 `ctrl+o expand` 放在同一行；连续折叠项之间不插入空行。失败项在折叠状态额外保留
   最多两行安全原因，展开后才显示既有有界详情和 `Duration … · N lines · X KB` 元数据尾行；
+- 运行中的执行工具通过进程内 transient publisher 增量刷新同一 Tool Call 卡片的
+  `Output (streaming):` 段；每批最多 4 KiB，卡片正文最多保留 16 KiB 尾部，stderr 和 preview
+  丢弃会显式标记；执行侧达到输出上限时使用独立截断标记，避免与预览丢批混淆。该内容不持久化、
+  不 replay，工具终态事件会用权威结果整体替换临时预览；
 - Run 进入终态（completed/failed/cancelled/timeout）时追加一张 Run Summary 卡片，
   标题显示终态与可得耗时（如 `Run completed · 24s`），正文显示终态、稳定错误码及耗时，
   不再从本地 Transcript 反推或累加工具与变更集计数；
 - Approval 使用 Pending 语义，Error 使用 Error 语义；`delivery-*` 与
   `resource-*` Resource 项默认可折叠为一行，认证、历史等关键 Resource 项保持展开可见；
-- Editor/Selector 的当前操作提示使用 Focus 语义。
+- Editor 的当前操作提示使用弱化的 Muted 语义，Selector 仍使用 Focus 语义；普通 Editor 始终保留
+  3 行输入区域，并使用深色背景区分可编辑范围。顶部全局快捷键区保持独立展示。
 
 ### Assistant Markdown
 
@@ -127,7 +132,8 @@ delta，重复 frame 不重新解析；只有权威正文替换或 16 KB 有界�
 - [ ] Mermaid、数学公式与 KaTeX；
 - [ ] GFM 删除线、任务复选框及其他扩展；
 - [ ] OSC 8 可点击链接（当前显示 `label (URL)`）；
-- [ ] Tool 专用预览器、跨 Tool 聚合和批量展开；首版保持每个稳定 Tool Call ID 可独立审计。
+- [ ] Tool 专用结构化预览器、跨 Tool 聚合和批量展开；首版实时输出仍保持每个稳定 Tool Call ID
+  独立、有界地展示。
 
 Editor hint 根据当前事实变化：Idle 显示 `enter send`；活动 Run 显示对应宿主的 Follow-up 与 Interrupt
 快捷键。Windows/Linux 使用 `ctrl+o`、`alt+enter`、`alt+up` 等文本标签；macOS 使用 Apple 标准
@@ -148,7 +154,8 @@ Phase B 的工作流反馈只投影稳定产品 DTO 和 Runtime 事件：
   Result Ref，缺失的 Duration 不伪造。Terminal 不从 Runtime Event 解释 Execution 命令、Workdir、
   Stream、Exit 或输出；这些仅可由拥有 Execution 结果的产品集成另行展示；
 - Runtime Checkpoint 继续持久化并推进事件 Cursor，但作为内部恢复事实不投影到 Transcript；
-- Approval 从 `InteractionView` 显示 Action、Target、Risk、Scope、Network、Reason 与允许动作；
+- Approval 优先从 `InteractionView.approvalPresentation` 渲染结构化展示：动作标题、目的、内容类型与
+  正文、环境要点、默认折叠的技术细节和允许动作；缺少结构化展示时回退到 `safePrompt` 文本。
   `InteractionLifecycle.actionOrReason` 等自由文本不参与 UI 解析。Selector 接管输入期间以及响应回执后，
   原有 editor buffer/cursor 均保持不变；
 - `RunInputLifecycle.ACCEPTED` 将 Steer 放入 Pending，`APPLIED` 后移除；持久 Follow-up 与 Steer
@@ -242,7 +249,7 @@ Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、s
   Transcript 指引展示；Browser Callback 尝试自动打开浏览器，同时始终展示可复制授权 URL 并继续等待本机
   回调，避免系统报告已启动但窗口不可见。认证成功完成（或 API Key 保存成功）后自动触发会话
   reconcile，实时刷新页脚模型连接状态；API Key 输入使用
-  独立单行掩码缓冲区（自适应首次录入与更新覆盖），不进入 Reducer、Session、Transcript、History 或 Completion，凭据安全持久化至原生系统凭据管理器（Windows Credential Manager）；针对百炼（Aliyun Bailian）等带端点元数据的 Provider，提供 3 步向导式交互配置（API Key、Workspace ID、Region）与 `/login api aliyun-bailian <workspaceId> [region]` 命令行快捷路径，回车支持继承既有配置或默认 cn-beijing；
+  独立单行掩码缓冲区（自适应首次录入与更新覆盖），不进入 Reducer、Session、Transcript、History 或 Completion，凭据安全持久化至原生系统凭据管理器（Windows Credential Manager）；针对百炼（Aliyun Bailian）等带端点元数据的 Provider，提供单步掩码输入（API Key、Workspace ID、Region 可在同一行提交）与 `/login api aliyun-bailian <workspaceId> [region]` 命令行快捷路径，首次配置要求真实 Workspace ID，更新既有配置时回车可继承已保存 Workspace，Region 缺省为 cn-beijing；
 - `/trust` 通过标准产品客户端异步展示脱敏的持久 Workspace 授权；
   `/trust revoke <workspaceRef>` 可撤销非初始根，不暴露宿主路径且不阻塞 UI；
 - `/settings`、`/tree`、`/fork`、`/clone` 在没有真实 API 时返回

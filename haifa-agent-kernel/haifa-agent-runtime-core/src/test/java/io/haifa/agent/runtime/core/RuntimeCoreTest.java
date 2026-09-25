@@ -690,6 +690,38 @@ class RuntimeCoreTest {
         assertThat(fixture.runtime.command(command).status()).isEqualTo(RuntimeCommandStatus.ACCEPTED);
         assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
                 .isEqualTo(AgentRunStatus.CANCELLED);
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().terminationReason())
+                .hasValueSatisfying(reason -> assertThat(reason.code()).isEqualTo("USER_CANCELLED"));
+    }
+
+    @Test
+    void deadlineCancellationUsesTimeoutStateAndPersistsItsReasonInEvents() {
+        Fixture fixture = fixture(model(finalDecision("unused")));
+        var accepted = fixture.runtime.start(request("deadline"));
+        RuntimeCommand command = new RuntimeCommand(
+                new RuntimeCommandId("command-deadline"),
+                accepted.runId(),
+                RuntimeCommandType.CANCEL,
+                io.haifa.agent.runtime.api.RunCancellation.deadlineExceeded(Duration.ofSeconds(9))
+                        .arguments(),
+                "deadline-1",
+                Instant.parse("2026-07-21T00:00:00Z"));
+
+        var result = fixture.runtime.command(command);
+
+        assertThat(result.snapshot().status()).isEqualTo(AgentRunStatus.TIMEOUT);
+        assertThat(result.snapshot().terminationReason()).hasValueSatisfying(reason -> {
+            assertThat(reason.code()).isEqualTo("DEADLINE_EXCEEDED");
+            assertThat(reason.description()).contains("9000 ms");
+        });
+        assertThat(fixture.store
+                        .eventsAfter(accepted.runId(), 0, OptionalLong.empty(), 100)
+                        .events())
+                .filteredOn(event -> event.type().equals("run.timeout"))
+                .singleElement()
+                .satisfies(event -> assertThat(event.data())
+                        .containsEntry("terminationReason", "DEADLINE_EXCEEDED")
+                        .containsEntry("terminationDescription", "Run deadline of 9000 ms exceeded"));
     }
 
     @Test
@@ -922,6 +954,15 @@ class RuntimeCoreTest {
                         "model.attempt.scheduled",
                         "model.call.started",
                         "model.call.succeeded");
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .filteredOn(event -> event.type().equals("model.attempt.scheduled"))
+                .allSatisfy(event -> assertThat(event.data())
+                        .containsKeys(
+                                "requestAssemblyElapsedMillis",
+                                "continuationBatchCount",
+                                "continuationRecordCount",
+                                "assemblerToolCallBatchCount")
+                        .doesNotContainKeys("response", "reasoning", "prompt"));
         assertThat(fixture.store.eventsFor(accepted.runId()))
                 .filteredOn(event -> event.type().startsWith("model.call."))
                 .allSatisfy(event -> assertThat(event.data())
@@ -1576,6 +1617,103 @@ class RuntimeCoreTest {
                 .extracting(io.haifa.agent.runtime.core.storage.RuntimeEvent::type)
                 .contains("tool.succeeded")
                 .doesNotContain("tool.failed", "execution.completed", "execution.failed", "execution.cancelled");
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .filteredOn(event -> event.type().equals("tool.succeeded"))
+                .singleElement()
+                .satisfies(event -> assertThat(event.data())
+                        .containsEntry("outputPreview", "Command exited (exit 1)")
+                        .containsEntry("processState", "EXITED")
+                        .containsEntry("exitCode", 1)
+                        .containsEntry("outputPreviewTruncated", false));
+    }
+
+    @Test
+    void boundsLongSuccessfulToolOutputPreviewWhileKeepingOriginalSizeFacts() {
+        ToolRequest request =
+                toolRequest("long-output", "cat", "1.0.0", new ToolArguments("cat.input", "1.0", Map.of()));
+        String longSummary = "line\n".repeat(5_000);
+        Fixture fixture = fixture(
+                model(new ToolCallDecision(List.of(request)), finalDecision("done")),
+                builder -> TestToolPlatform.install(
+                        builder,
+                        "cat",
+                        "1.0.0",
+                        "cat.input",
+                        true,
+                        invocation -> new ToolResult(true, longSummary, Map.of(), List.of(), List.of(), false)));
+
+        var accepted = fixture.runtime.start(request("long-output"));
+        fixture.scheduler.runAll();
+
+        ToolResult authoritative =
+                fixture.store.toolCalls(accepted.runId()).getFirst().result().orElseThrow();
+        long expectedBytes = authoritative.summary().getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+        long expectedLines =
+                authoritative.summary().chars().filter(value -> value == '\n').count() + 1;
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .filteredOn(event -> event.type().equals("tool.succeeded"))
+                .singleElement()
+                .satisfies(event -> {
+                    var data = event.data();
+                    assertThat((String) data.get("outputPreview")).contains("[truncated]");
+                    assertThat(data)
+                            .containsEntry("outputPreviewTruncated", true)
+                            .containsEntry("outputPreviewLineCount", expectedLines)
+                            .containsEntry("outputPreviewByteCount", expectedBytes);
+                });
+    }
+
+    @Test
+    void dropsOutOfRangeOrFractionalExitCodesFromTheAllowlistedToolObservation() {
+        ToolRequest request = toolRequest(
+                "huge-exit", "execution_run", "1.0.0", new ToolArguments("execution.run.input", "1.0", Map.of()));
+        Fixture fixture = fixture(
+                model(new ToolCallDecision(List.of(request)), finalDecision("done")),
+                builder -> TestToolPlatform.install(
+                        builder,
+                        "execution_run",
+                        "1.0.0",
+                        "execution.run.input",
+                        true,
+                        invocation -> new ToolResult(
+                                true,
+                                "Command exited",
+                                Map.of("exitCode", 5_000_000_000L),
+                                List.of(),
+                                List.of(),
+                                false)));
+
+        var accepted = fixture.runtime.start(request("huge-exit"));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .filteredOn(event -> event.type().equals("tool.succeeded"))
+                .singleElement()
+                .satisfies(event -> assertThat(event.data()).doesNotContainKey("exitCode"));
+    }
+
+    @Test
+    void dropsFractionalExitCodesFromTheAllowlistedToolObservation() {
+        ToolRequest request = toolRequest(
+                "fractional-exit", "execution_run", "1.0.0", new ToolArguments("execution.run.input", "1.0", Map.of()));
+        Fixture fixture = fixture(
+                model(new ToolCallDecision(List.of(request)), finalDecision("done")),
+                builder -> TestToolPlatform.install(
+                        builder,
+                        "execution_run",
+                        "1.0.0",
+                        "execution.run.input",
+                        true,
+                        invocation -> new ToolResult(
+                                true, "Command exited", Map.of("exitCode", 1.5), List.of(), List.of(), false)));
+
+        var accepted = fixture.runtime.start(request("fractional-exit"));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .filteredOn(event -> event.type().equals("tool.succeeded"))
+                .singleElement()
+                .satisfies(event -> assertThat(event.data()).doesNotContainKey("exitCode"));
     }
 
     @Test
@@ -2442,7 +2580,8 @@ class RuntimeCoreTest {
                         true,
                         TestToolPlatform.approvalRequired(),
                         request -> new ToolResult(true, "written", Map.of(), List.of(), List.of(), false))
-                .toolApprovalPrompts((binding, call, reauthentication) -> oversizedPrompt));
+                .toolApprovalPrompts((binding, call, reauthentication) ->
+                        io.haifa.agent.runtime.api.ApprovalPrompt.of(oversizedPrompt)));
 
         var accepted = fixture.runtime.start(request("legacy-oversized-approval"));
         fixture.scheduler.runAll();

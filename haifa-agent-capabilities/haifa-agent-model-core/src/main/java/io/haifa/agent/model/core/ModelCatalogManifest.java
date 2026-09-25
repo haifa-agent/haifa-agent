@@ -193,6 +193,7 @@ public final class ModelCatalogManifest {
                 "|",
                 encode(provider.id().value()),
                 encode(provider.version()),
+                encode(String.valueOf(provider.showOrder())),
                 provider.status().name(),
                 methods,
                 bindings);

@@ -6,7 +6,7 @@
     <parent>
         <groupId>io.haifa</groupId>
         <artifactId>haifa-agent-parent</artifactId>
-        <version>0.1.0</version>
+        <version>${revision}</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
     <artifactId>haifa-agent-credential-core</artifactId>

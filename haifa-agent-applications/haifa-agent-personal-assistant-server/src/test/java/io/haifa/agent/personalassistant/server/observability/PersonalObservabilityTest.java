@@ -240,7 +240,8 @@ class PersonalObservabilityTest {
                                     Instant.EPOCH,
                                     SECRET_RESPONSE,
                                     Optional.empty(),
-                                    2)),
+                                    2,
+                                    Optional.empty())),
                             PersonalAssistantApplication.StreamSource.DURABLE,
                             2));
             listener.get()

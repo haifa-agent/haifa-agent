@@ -11,6 +11,7 @@ Builds and packages (release artifacts use a 'v'-prefixed version, e.g. v0.1.0):
 import argparse
 import hashlib
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -33,10 +34,23 @@ def get_pom_version(repo_root: Path) -> str:
         ns = {"m": "http://maven.apache.org/POM/4.0.0"}
         version_elem = root.find("m:version", ns)
         if version_elem is not None and version_elem.text:
-            return version_elem.text.strip()
+            return resolve_version_property(root, version_elem.text.strip(), ns)
     except Exception as exc:
         print(f"[WARN] Failed to parse pom.xml: {exc}")
     return "0.1.0-SNAPSHOT"
+
+
+def resolve_version_property(root: ET.Element, version: str, ns: dict[str, str]) -> str:
+    """Resolve a version placeholder such as `${revision}` from the POM properties."""
+    placeholder = re.fullmatch(r"\$\{([^}]+)\}", version)
+    if placeholder is None:
+        return version
+    properties = root.find("m:properties", ns)
+    value = None if properties is None else properties.find(f"m:{placeholder.group(1)}", ns)
+    if value is not None and value.text and value.text.strip():
+        return value.text.strip()
+    print(f"[WARN] Unresolved version property {version} in pom.xml")
+    return version
 
 
 def artifact_label(version: str) -> str:

@@ -32,15 +32,13 @@ class CodingTerminalInteractionTest {
         assertThat(controller.state().editorBuffer()).isEqualTo("preserved draft");
         assertThat(controller.state().editorCursor()).isEqualTo(9);
         assertThat(controller.state().transcript()).singleElement().satisfies(item -> {
-            assertThat(item.body())
-                    .contains(
-                            "Action: Approval",
-                            "Target: workspace file",
-                            "Risk: On approval: Run tool",
-                            "Network: Not declared by runtime",
-                            "Reason: Allow file change?",
-                            "Allowed: reject / approve");
-            assertThat(item.approvalDetails()).isPresent();
+            assertThat(item.body()).isEqualTo("Allow file change?").doesNotContain("UNSAFE_FREE_TEXT");
+            assertThat(item.approvalDetails()).hasValueSatisfying(details -> {
+                assertThat(details.title()).isEqualTo("Approval");
+                assertThat(details.purpose()).isEqualTo("Run tool");
+                assertThat(details.content()).isEqualTo("Allow file change?");
+                assertThat(details.allowedActions()).containsExactly("reject", "approve");
+            });
         });
         controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
         controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
@@ -51,6 +49,21 @@ class CodingTerminalInteractionTest {
         assertThat(controller.state().editorCursor()).isEqualTo(9);
         assertThat(controller.state().transcript()).singleElement().satisfies(item -> assertThat(item.status())
                 .isEqualTo("RESPONDED"));
+    }
+
+    @Test
+    void ctrlOExpandsThePendingApprovalWithoutResponding() {
+        InteractionView interaction = approval();
+        FakeClient client = new FakeClient(view(Optional.of(interaction)));
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+
+        controller.accept(input(TerminalInput.Kind.TOGGLE_EXPANSION, ""));
+
+        assertThat(controller.state().selector()).isPresent();
+        assertThat(controller.state().transcript()).singleElement().satisfies(item -> assertThat(item.expanded())
+                .isTrue());
+        assertThat(client.respondedActions).isEmpty();
     }
 
     @Test
@@ -176,8 +189,9 @@ class CodingTerminalInteractionTest {
         assertThat(client.reconcileCalls).isZero();
         assertThat(controller.state().selector()).isPresent();
         assertThat(controller.state().transcript()).singleElement().satisfies(item -> {
-            assertThat(item.approvalDetails()).isPresent();
-            assertThat(item.body()).contains("Allowed: reject / approve");
+            assertThat(item.body()).isEqualTo("Allow file change?");
+            assertThat(item.approvalDetails()).hasValueSatisfying(details -> assertThat(details.allowedActions())
+                    .containsExactly("reject", "approve"));
         });
 
         controller.accept(input(TerminalInput.Kind.SUBMIT, ""));

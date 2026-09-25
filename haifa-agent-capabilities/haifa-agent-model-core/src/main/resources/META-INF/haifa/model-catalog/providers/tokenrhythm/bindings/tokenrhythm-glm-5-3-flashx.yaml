@@ -1,12 +1,12 @@
 schemaVersion: haifa.model-catalog-binding/v1
-bindingId: tokenrhythm-minimax-m2-5
-version: "2026-09-m3"
-providerModelId: minimax-m2.5
-displayName: MiniMax M2.5 via TokenRhythm
+bindingId: tokenrhythm-glm-5-3-flashx
+version: "2026-09-m4"
+providerModelId: glm-5.3-flashx
+displayName: GLM-5.3 FlashX via TokenRhythm
 status: ACTIVE
 apiStyle: openai-chat-completions
 dialect: tokenrhythm-openai-chat
-capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
+capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
 profile:
   version: "2.0"
   reasoningBehavior: OPTIONAL
@@ -14,8 +14,8 @@ profile:
   allowedReasoningEfforts: [HIGH]
   maximumReasoningTokens: null
   minimumOutputTokens: 1
-  maximumOutputTokens: 200000
-  contextWindowTokens: 200000
+  maximumOutputTokens: 131072
+  contextWindowTokens: 1048576
   toolReasoningContinuationRequired: false
   nativeStreaming: true
   usageStreaming: true
@@ -25,4 +25,4 @@ profile:
   outputModalities: [TEXT]
   imageInput: null
   status: VERIFIED
-  lastVerifiedOn: "2026-09-05"
+  lastVerifiedOn: "2026-09-22"

@@ -25,7 +25,7 @@ public interface MissionRuntimeAccess {
                 java.util.Optional.of("MISSION_EXECUTION_UNAVAILABLE"));
     }
 
-    default void cancelTask(String runId) {}
+    default void cancelTask(String runId, io.haifa.agent.runtime.api.RunCancellation cancellation) {}
 
     default SynthesisRunResult runSynthesis(MissionSynthesisIntent intent) {
         throw new MissionException("MISSION_SYNTHESIS_UNAVAILABLE", "Mission Synthesis is unavailable");

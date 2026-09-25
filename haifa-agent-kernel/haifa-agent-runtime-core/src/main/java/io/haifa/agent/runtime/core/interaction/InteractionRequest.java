@@ -3,6 +3,7 @@ package io.haifa.agent.runtime.core.interaction;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.runtime.api.ApprovalPresentation;
 import io.haifa.agent.runtime.api.InteractionRequestId;
 import java.time.Instant;
 import java.util.Objects;
@@ -19,7 +20,35 @@ public record InteractionRequest(
         InteractionTarget target,
         Instant createdAt,
         Optional<Instant> expiresAt,
-        InteractionExpirationOutcome expirationOutcome) {
+        InteractionExpirationOutcome expirationOutcome,
+        Optional<ApprovalPresentation> presentation) {
+
+    public InteractionRequest(
+            InteractionRequestId id,
+            AgentRunId runId,
+            TenantRef tenant,
+            PrincipalRef requester,
+            String type,
+            String prompt,
+            boolean approval,
+            InteractionTarget target,
+            Instant createdAt,
+            Optional<Instant> expiresAt,
+            InteractionExpirationOutcome expirationOutcome) {
+        this(
+                id,
+                runId,
+                tenant,
+                requester,
+                type,
+                prompt,
+                approval,
+                target,
+                createdAt,
+                expiresAt,
+                expirationOutcome,
+                Optional.empty());
+    }
 
     public InteractionRequest(
             InteractionRequestId id,
@@ -44,7 +73,8 @@ public record InteractionRequest(
                 target,
                 createdAt,
                 Optional.of(Objects.requireNonNull(expiresAt, "expiresAt must not be null")),
-                expirationOutcome);
+                expirationOutcome,
+                Optional.empty());
     }
 
     public InteractionRequest(
@@ -156,6 +186,7 @@ public record InteractionRequest(
         createdAt = Objects.requireNonNull(createdAt, "createdAt must not be null");
         expiresAt = Objects.requireNonNull(expiresAt, "expiresAt must not be null");
         expirationOutcome = Objects.requireNonNull(expirationOutcome, "expirationOutcome must not be null");
+        presentation = Objects.requireNonNull(presentation, "presentation must not be null");
         if (expiresAt.isPresent() && !expiresAt.orElseThrow().isAfter(createdAt)) {
             throw new IllegalArgumentException("expiresAt must be after createdAt");
         }

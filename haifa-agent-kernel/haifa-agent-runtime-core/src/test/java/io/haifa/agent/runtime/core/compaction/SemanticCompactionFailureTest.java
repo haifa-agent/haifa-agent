@@ -19,6 +19,7 @@ import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.AgentChatResponse;
+import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelFinishReason;
 import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
@@ -40,7 +41,9 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 
 class SemanticCompactionFailureTest {
@@ -159,6 +162,38 @@ class SemanticCompactionFailureTest {
                 });
     }
 
+    @Test
+    void missingStructuredOutputCapabilityDegradesWithoutCallingTheModel() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AtomicInteger ids = new AtomicInteger();
+        IdentifierGenerator generator = () -> "compaction-capability-" + ids.incrementAndGet();
+        CompressionPolicy policy = CompressionPolicy.defaults()
+                .withSemanticCompactionEnabled(true)
+                .withDegradedFallback(false)
+                .withTailTokenBounds(5, 50);
+        SemanticCompactionCoordinator coordinator = coordinator(store, generator, new RunControlRegistry(), policy);
+        AgentRun run = createRun(store);
+        appendTurn(store, run, "u1", "a1", "first user turn", "first assistant reply");
+        appendTurn(store, run, "u2", "a2", "second user turn", "second assistant reply");
+        AtomicInteger modelCalls = new AtomicInteger();
+
+        coordinator.forceCompactOnOverflow(run, 1, bindingWithoutStructuredOutput(store, run, request -> {
+            modelCalls.incrementAndGet();
+            return response();
+        }));
+
+        assertThat(modelCalls).hasValue(0);
+        assertThat(store.latestValid(run.sessionId())).hasValueSatisfying(summary -> assertThat(summary.quality())
+                .isEqualTo(CompactionQuality.DETERMINISTIC_DEGRADED));
+        assertThat(store.eventsFor(run.id()))
+                .filteredOn(event -> event.type().equals("session.compaction-failed"))
+                .singleElement()
+                .satisfies(event -> assertThat(event.data())
+                        .containsEntry("failureCategory", "MODEL_CAPABILITY")
+                        .containsEntry("validationErrorCode", "STRUCTURED_OUTPUT_UNSUPPORTED")
+                        .containsEntry("degraded", true));
+    }
+
     private static SemanticCompactionCoordinator coordinator(
             InMemoryRuntimeStore store,
             IdentifierGenerator ids,
@@ -229,6 +264,35 @@ class SemanticCompactionFailureTest {
     private static FrozenModelBinding binding(InMemoryRuntimeStore store, AgentRun run, AgentChatModel model) {
         return new FrozenModelBinding(
                 store.configuration(run.configurationSnapshot()).orElseThrow(), model, List.of());
+    }
+
+    private static FrozenModelBinding bindingWithoutStructuredOutput(
+            InMemoryRuntimeStore store, AgentRun run, AgentChatModel model) {
+        RuntimeConfigurationSnapshot configuration =
+                store.configuration(run.configurationSnapshot()).orElseThrow();
+        ResolvedModelSnapshot original = configuration.model();
+        Set<ModelCapability> withoutStructuredOutput = original.capabilities().stream()
+                .filter(capability -> capability != ModelCapability.STRUCTURED_OUTPUT)
+                .collect(Collectors.toUnmodifiableSet());
+        ResolvedModelSnapshot downgraded = ResolvedModelSnapshot.create(
+                original.providerId(),
+                original.providerVersion(),
+                original.modelId(),
+                original.modelVersion(),
+                original.providerModelId(),
+                original.adapterType(),
+                original.adapterVersion(),
+                original.apiStyle(),
+                original.dialect(),
+                original.endpoint(),
+                original.credentialRef(),
+                original.nativeStreaming(),
+                withoutStructuredOutput,
+                original.contextWindow(),
+                original.maxOutputTokens(),
+                original.providerOptions(),
+                original.invocationOptions());
+        return new FrozenModelBinding(configuration.withModel(downgraded), model, List.of());
     }
 
     private static FrozenModelBinding bindingWithContextWindow(

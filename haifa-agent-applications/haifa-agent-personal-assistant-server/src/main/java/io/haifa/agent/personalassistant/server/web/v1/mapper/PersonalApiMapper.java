@@ -7,6 +7,7 @@ import io.haifa.agent.personalassistant.application.mission.MissionSnapshot;
 import io.haifa.agent.personalassistant.server.web.v1.dto.PersonalApiDtos;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -290,6 +291,8 @@ public final class PersonalApiMapper {
                 value.output(),
                 value.resultSummary(),
                 value.errorCode(),
+                value.terminationReason(),
+                value.terminationDescription(),
                 value.error()
                         .map(error -> new PersonalApiDtos.ExecutionError(
                                 error.code(),
@@ -339,7 +342,21 @@ public final class PersonalApiMapper {
                 value.occurredAt(),
                 value.safeResultSummary(),
                 value.interactionRef(),
-                value.version());
+                value.version(),
+                value.toolDetail().map(this::toolDetail));
+    }
+
+    private PersonalApiDtos.ActivityToolDetail toolDetail(PersonalAssistantApplication.ToolDetailView value) {
+        return new PersonalApiDtos.ActivityToolDetail(
+                value.outputPreview(),
+                value.truncated(),
+                value.byteCount(),
+                value.lineCount(),
+                value.truncationReason(),
+                value.processState(),
+                value.exitCode(),
+                value.resultRef(),
+                value.outcomeUnknown());
     }
 
     public PersonalApiDtos.Interaction interaction(PersonalAssistantApplication.InteractionViewValue value) {
@@ -356,7 +373,26 @@ public final class PersonalApiMapper {
                 value.inputType(),
                 value.maximumCharacters(),
                 value.createdAt(),
-                value.expiresAt());
+                value.expiresAt(),
+                value.approvalPresentation().map(PersonalApiMapper::approvalPresentation));
+    }
+
+    private static PersonalApiDtos.ApprovalPresentationDto approvalPresentation(
+            PersonalAssistantApplication.ApprovalPresentationValue value) {
+        return new PersonalApiDtos.ApprovalPresentationDto(
+                value.title(),
+                value.purpose(),
+                value.contentType(),
+                value.content(),
+                value.environment().stream()
+                        .map(PersonalApiMapper::approvalFact)
+                        .toList(),
+                value.technical().stream().map(PersonalApiMapper::approvalFact).toList(),
+                value.risk());
+    }
+
+    private static PersonalApiDtos.ApprovalFactDto approvalFact(PersonalAssistantApplication.ApprovalFactValue value) {
+        return new PersonalApiDtos.ApprovalFactDto(value.label(), value.value());
     }
 
     public PersonalApiDtos.InteractionReceipt receipt(PersonalAssistantApplication.InteractionReceipt value) {
@@ -402,6 +438,10 @@ public final class PersonalApiMapper {
                 value.value(),
                 value.activity().map(this::activity),
                 value.source().name().toLowerCase(java.util.Locale.ROOT),
-                value.sequence());
+                value.sequence(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty());
     }
 }

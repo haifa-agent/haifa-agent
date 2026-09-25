@@ -32,6 +32,7 @@ import io.haifa.agent.runtime.core.checkpoint.CheckpointManager;
 import io.haifa.agent.runtime.core.completion.CompletionBlocker;
 import io.haifa.agent.runtime.core.completion.CompletionGuard;
 import io.haifa.agent.runtime.core.control.CancellationObservedException;
+import io.haifa.agent.runtime.core.control.RunControlDirective;
 import io.haifa.agent.runtime.core.control.RunControlRegistry;
 import io.haifa.agent.runtime.core.control.RunControlSignal;
 import io.haifa.agent.runtime.core.delegation.DelegationPort;
@@ -560,6 +561,7 @@ public final class DecisionExecutor {
         var binding = approval.binding();
         String interactionType = approval.reauthentication() ? "tool-reauthentication" : "tool-approval";
         var createdAt = time.now().truncatedTo(java.time.temporal.ChronoUnit.MILLIS);
+        var approvalPrompt = approvalPrompts.format(binding, call, approval.reauthentication());
         unitOfWork.execute(() -> {
             interactions.create(new InteractionRequest(
                     new InteractionRequestId(requestId),
@@ -567,12 +569,14 @@ public final class DecisionExecutor {
                     run.tenant(),
                     run.principal(),
                     interactionType,
-                    approvalPrompts.format(binding, call, approval.reauthentication()),
+                    approvalPrompt.prompt(),
                     true,
                     io.haifa.agent.runtime.core.interaction.ToolApprovalTargets.ordinary(
                             run, call.id(), binding, requestFrom(call), approval.decision()),
                     createdAt,
-                    Optional.empty()));
+                    Optional.empty(),
+                    io.haifa.agent.runtime.core.interaction.InteractionExpirationOutcome.CANCEL_RUN,
+                    approvalPrompt.presentation()));
             checkpoints.capture(
                     run,
                     loopContext.iteration(),
@@ -883,8 +887,11 @@ public final class DecisionExecutor {
     }
 
     private void throwIfStopped(AgentRun run) {
-        RunControlSignal signal = controls.signal(run.id());
-        if (signal.stopsExecution()) throw new CancellationObservedException(signal);
+        RunControlDirective directive = controls.directive(run.id());
+        if (directive.signal() == RunControlSignal.CANCEL || directive.signal() == RunControlSignal.TIMEOUT) {
+            throw new CancellationObservedException(directive);
+        }
+        if (directive.signal().stopsExecution()) throw new CancellationObservedException(directive.signal());
     }
 
     private static String upperSnake(String value) {

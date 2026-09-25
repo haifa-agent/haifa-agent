@@ -157,6 +157,8 @@ class MissionExecutionRecoveryTest {
                 .containsOnly(MissionTaskState.CANCELLED);
         coordinator.tick();
         assertThat(runtime.cancelledRuns).contains(third.runId().orElseThrow());
+        assertThat(runtime.cancellations.get(third.runId().orElseThrow()).type())
+                .isEqualTo(io.haifa.agent.runtime.api.RunCancellation.Type.USER_REQUEST);
         assertThat(store.activeAttempts()).isEmpty();
 
         var unknownCreated = service.create(
@@ -175,6 +177,34 @@ class MissionExecutionRecoveryTest {
                 .extracting(MissionTaskAttempt::state)
                 .isEqualTo(MissionTaskAttemptState.OUTCOME_UNKNOWN);
         assertThat(runtime.uniqueStarts()).isEqualTo(startsAfterUnknown);
+    }
+
+    @Test
+    void missionDeadlineUsesDeadlineCancellationWhileUserCancelRemainsDistinct() {
+        Path database = directory.resolve("deadline-cancellation.sqlite");
+        AtomicInteger ids = new AtomicInteger();
+        FakeRuntime runtime = new FakeRuntime();
+        SqliteMissionStore store = store(database);
+        MissionApplicationService service = service(store, ids);
+        MissionConstraints constraints = new MissionConstraints(8, 4, Optional.of(START.plusSeconds(1)));
+        var created = service.create(new MissionApplicationService.CreateMission(
+                "create-deadline",
+                OWNER,
+                "conversation-deadline",
+                "Stop work at the mission deadline",
+                List.of("bounded"),
+                constraints));
+        service.confirm(change("confirm-deadline", created.missionId(), created.version()));
+
+        coordinator(store, runtime, CLOCK).tick();
+        String runId = store.activeAttempts().getFirst().runId().orElseThrow();
+        coordinator(store, runtime, Clock.fixed(START.plusSeconds(2), ZoneOffset.UTC))
+                .tick();
+
+        assertThat(runtime.cancellations).containsKey(runId);
+        assertThat(runtime.cancellations.get(runId).type())
+                .isEqualTo(io.haifa.agent.runtime.api.RunCancellation.Type.DEADLINE_EXCEEDED);
+        assertThat(runtime.cancellations.get(runId).deadlineAt()).contains(START.plusSeconds(1));
     }
 
     private static void assertSingleBoundAttempt(SqliteMissionStore store, int expectedTaskOrdinal) {
@@ -222,6 +252,7 @@ class MissionExecutionRecoveryTest {
         private final Map<String, TaskRunBinding> bindings = new LinkedHashMap<>();
         private final Map<String, TaskRunObservation> observations = new HashMap<>();
         private final Set<String> cancelledRuns = new java.util.HashSet<>();
+        private final Map<String, io.haifa.agent.runtime.api.RunCancellation> cancellations = new HashMap<>();
 
         @Override
         public PlannerRunResult runPlanner(
@@ -251,8 +282,9 @@ class MissionExecutionRecoveryTest {
         }
 
         @Override
-        public void cancelTask(String runId) {
+        public void cancelTask(String runId, io.haifa.agent.runtime.api.RunCancellation cancellation) {
             cancelledRuns.add(runId);
+            cancellations.put(runId, cancellation);
             observations.put(
                     runId, new TaskRunObservation(runId, TaskRunState.CANCELLED, Optional.empty(), Optional.empty()));
         }

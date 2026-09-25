@@ -23,7 +23,9 @@ public record RuntimeCommand(
         if (expectedRunVersion.isPresent() && expectedRunVersion.getAsLong() < 0) {
             throw new IllegalArgumentException("expectedRunVersion must not be negative");
         }
-        if (!arguments.equals(RuntimeCommandArguments.NONE)) {
+        if (type == RuntimeCommandType.CANCEL) {
+            RunCancellation.from(arguments);
+        } else if (!arguments.equals(RuntimeCommandArguments.NONE)) {
             throw new IllegalArgumentException(type + " does not accept arguments in Runtime API version 1.0");
         }
         idempotencyKey = requireText(idempotencyKey);

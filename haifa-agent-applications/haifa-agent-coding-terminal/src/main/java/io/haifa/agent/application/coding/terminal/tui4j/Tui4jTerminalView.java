@@ -3,6 +3,7 @@ package io.haifa.agent.application.coding.terminal.tui4j;
 import com.williamcallahan.tui4j.ansi.Truncate;
 import com.williamcallahan.tui4j.compat.bubbles.textarea.Textarea;
 import com.williamcallahan.tui4j.compat.bubbles.viewport.Viewport;
+import io.haifa.agent.application.coding.terminal.state.ApprovalDetails;
 import io.haifa.agent.application.coding.terminal.state.PendingMessage;
 import io.haifa.agent.application.coding.terminal.state.TerminalDurations;
 import io.haifa.agent.application.coding.terminal.state.TerminalRecovery;
@@ -72,6 +73,7 @@ final class Tui4jTerminalView {
             "REJECTED",
             "SHELL COMMAND DENIED",
             "TIMEOUT");
+    private static final Set<String> UNKNOWN_STATUSES = Set.of("OUTCOME_UNKNOWN", "UNKNOWN_OUTCOME");
 
     private final Tui4jTerminalTheme theme = new Tui4jTerminalTheme();
     private final IncrementalTerminalMarkdownRenderer markdown = new IncrementalTerminalMarkdownRenderer(theme);
@@ -277,8 +279,9 @@ final class Tui4jTerminalView {
         });
         state.selector()
                 .ifPresentOrElse(
-                        selector -> lines.addAll(selector(selector, compact ? 1 : 4)), () -> lines.add(editor.view()));
-        lines.add(theme.focus(editorHint(state, secureInput, isUpdate, secureInputHint)));
+                        selector -> lines.addAll(selector(selector, compact ? 1 : 4)),
+                        () -> lines.add(theme.editor(editor.view(), Math.max(1, state.columns() - 1), 3)));
+        lines.add(theme.muted(editorHint(state, secureInput, isUpdate, secureInputHint)));
         var footer = state.footer();
         List<String> workspace = new ArrayList<>();
         if (!footer.model().isBlank()) addMeaningful(workspace, "model: " + footer.model());
@@ -311,9 +314,13 @@ final class Tui4jTerminalView {
             String content = rendered.isEmpty() ? title : title + "\n" + indent(rendered);
             return style(item, content);
         }
+        if (item.kind() == TranscriptItem.Kind.APPROVAL
+                && item.approvalDetails().isPresent()) {
+            return style(item, approval(title, item.approvalDetails().orElseThrow(), item.expanded()));
+        }
         if (item.collapsible()) {
             String content = title + theme.muted(" · " + shortcuts.toggleExpansion() + " expand");
-            if (isErrorStatus(item.status())) {
+            if (isErrorStatus(item.status()) || isUnknownStatus(item.status())) {
                 String details = item.body()
                         .lines()
                         .limit(2)
@@ -335,8 +342,50 @@ final class Tui4jTerminalView {
         return style(item, content);
     }
 
+    private String approval(String title, ApprovalDetails details, boolean expanded) {
+        StringBuilder content = new StringBuilder(title);
+        content.append('\n').append("  ").append(sanitize(details.purpose()));
+        content.append('\n').append(theme.muted("  " + sanitize(details.contentType())));
+        List<String> contentLines = details.content().lines().toList();
+        int visibleContentLines = expanded ? contentLines.size() : Math.min(contentLines.size(), 5);
+        content.append('\n')
+                .append(contentLines.stream()
+                        .limit(visibleContentLines)
+                        .map(line -> "    " + sanitize(line))
+                        .collect(Collectors.joining("\n")));
+        if (visibleContentLines < contentLines.size()) {
+            content.append('\n')
+                    .append(theme.muted(
+                            "    …共 " + contentLines.size() + " 行 · " + shortcuts.toggleExpansion() + " 展开"));
+        }
+        if (!details.environment().isEmpty()) {
+            content.append('\n').append("  ").append(theme.muted(facts(details.environment())));
+        }
+        if (!details.technical().isEmpty() || details.risk().isPresent()) {
+            if (expanded) {
+                content.append('\n').append(theme.muted("  技术细节"));
+                details.risk().ifPresent(risk -> content.append('\n').append(theme.muted("    风险: " + sanitize(risk))));
+                details.technical().forEach(fact -> content.append('\n')
+                        .append(theme.muted("    " + sanitize(fact.label() + ": " + fact.value()))));
+            } else {
+                content.append('\n').append(theme.muted("  技术细节（可选） · " + shortcuts.toggleExpansion() + " 展开"));
+            }
+        }
+        if (!details.allowedActions().isEmpty()) {
+            content.append('\n').append(theme.muted("  可用操作: " + String.join(" / ", details.allowedActions())));
+        }
+        return content.toString();
+    }
+
+    private String facts(List<ApprovalDetails.Fact> facts) {
+        return facts.stream()
+                .map(fact -> sanitize(fact.label()) + "：" + sanitize(fact.value()))
+                .collect(Collectors.joining(" · "));
+    }
+
     private static String glyph(String status) {
         String normalized = status.strip().toUpperCase(Locale.ROOT);
+        if (UNKNOWN_STATUSES.contains(normalized)) return "?";
         if (SUCCESS_STATUSES.contains(normalized)) return "✓";
         if (ERROR_STATUSES.contains(normalized)) return "✗";
         return "●";
@@ -359,11 +408,15 @@ final class Tui4jTerminalView {
     }
 
     private boolean isCompactTool(TranscriptItem item) {
-        return item.collapsible() && !isErrorStatus(item.status());
+        return item.collapsible() && !isErrorStatus(item.status()) && !isUnknownStatus(item.status());
     }
 
     private boolean isErrorStatus(String status) {
         return ERROR_STATUSES.contains(status.strip().toUpperCase(Locale.ROOT));
+    }
+
+    private boolean isUnknownStatus(String status) {
+        return UNKNOWN_STATUSES.contains(status.strip().toUpperCase(Locale.ROOT));
     }
 
     private String indent(String value) {
