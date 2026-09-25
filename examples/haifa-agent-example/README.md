@@ -1,6 +1,6 @@
 # Haifa Agent Standalone Consumer Examples
 
-This non-Reactor Maven build consumes installed Haifa Agent `0.1.1` artifacts exactly as an
+This non-Reactor Maven build consumes installed Haifa Agent `0.1.2-SNAPSHOT` artifacts exactly as an
 external application would. It is tracked by the main repository so that it cannot drift out of
 view, but it deliberately does not inherit the main repository parent POM or join its Reactor.
 

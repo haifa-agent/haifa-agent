@@ -2,7 +2,7 @@
 
 ## Java
 
-Haifa Agent 0.1.1 面向 Java 21。
+Haifa Agent 0.1.2-SNAPSHOT 面向 Java 21。
 
 ## Build
 
@@ -12,7 +12,7 @@ Repository Build 应优先使用 Wrapper，使 Contributor 使用预期 Maven �
 
 ## Spring
 
-0.1.1 baseline 在 Spring Adapter / Application Layer 使用 Spring Boot 3.5.x。
+0.1.2 baseline 在 Spring Adapter / Application Layer 使用 Spring Boot 3.5.x。
 
 Pure Java Kernel、Runtime、Capability API 与 SDK 不要求依赖 Spring。
 
