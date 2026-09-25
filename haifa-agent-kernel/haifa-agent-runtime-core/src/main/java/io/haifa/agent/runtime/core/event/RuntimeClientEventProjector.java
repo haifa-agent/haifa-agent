@@ -99,6 +99,11 @@ public final class RuntimeClientEventProjector {
                                 integer(event.data(), "remainingPercent", 0),
                                 integer(event.data(), "attempt", 0));
                     case "loop.budget-snapshot" -> budgetThreshold(event);
+                    case "child.run.started",
+                            "child.run.completed",
+                            "child.run.failed",
+                            "child.run.cancelled",
+                            "child.run.timed-out" -> childRun(event);
                     default -> outputOrLifecycle(event);
                 };
         if (projection == null) return Optional.empty();
@@ -136,7 +141,12 @@ public final class RuntimeClientEventProjector {
                                 "model.attempt.exhausted",
                                 "workspace.change-set.available",
                                 "artifact.available",
-                                "checkpoint.available")
+                                "checkpoint.available",
+                                "child.run.started",
+                                "child.run.completed",
+                                "child.run.failed",
+                                "child.run.cancelled",
+                                "child.run.timed-out")
                         .contains(event.type())
                 || event.type().equals("completion.deferred")
                 || event.type().equals("loop.budget-snapshot")
@@ -263,6 +273,17 @@ public final class RuntimeClientEventProjector {
                         requiredText(event.data(), "title"),
                         requiredText(event.data(), "status"),
                         text(event.data(), "action", "inspect")));
+    }
+
+    private static Projection childRun(RuntimeEvent event) {
+        return new Projection(
+                event.type(),
+                new RunEventPayloads.ChildRunLifecycle(
+                        requiredText(event.data(), "childRunId"),
+                        requiredText(event.data(), "toolCallId"),
+                        requiredText(event.data(), "childAgent"),
+                        requiredText(event.data(), "status"),
+                        text(event.data(), "reasonCode", "NONE")));
     }
 
     private static Projection budgetThreshold(RuntimeEvent event) {

@@ -36,6 +36,8 @@ public final class MemoryContextSource {
     }
 
     public List<ContextItem> select(AgentRun run, FrozenModelBinding model, AgentLoopContext loopContext) {
+        // First-version child runs neither recall nor write long-term Memory; conclusions return to the parent.
+        if (run.parentRunId().isPresent()) return List.of();
         UserTurn turn = latestUserTurn(run);
         return loopContext
                 .memorySelectionFor(turn.messageId())

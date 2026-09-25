@@ -244,6 +244,11 @@
         SELECT <include refid="runColumns"/> FROM run WHERE run_id = #{runId}
     </select>
 
+    <select id="findChildRuns" resultMap="runRow">
+        SELECT <include refid="runColumns"/> FROM run WHERE parent_run_id = #{parentRunId}
+        ORDER BY created_at, run_id
+    </select>
+
     <select id="configurationHash" resultType="java.lang.String">
         SELECT content_hash FROM configuration_snapshot WHERE configuration_ref = #{configurationRef}
     </select>

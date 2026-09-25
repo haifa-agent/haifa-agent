@@ -127,6 +127,9 @@ ON run(session_id, created_at);
 CREATE INDEX idx_run_status_updated
 ON run(status, updated_at);
 
+CREATE INDEX idx_run_parent_created
+    ON run(parent_run_id, created_at);
+
 CREATE TABLE execution_attempt (
     attempt_id TEXT PRIMARY KEY,
     schema_version TEXT NOT NULL,
@@ -1206,6 +1209,7 @@ INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (10, 'h
 INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (11, 'separate_run_limits', 'sha256:ace3fa99a7b762fd58cc6bc9274660effd851d31007b9eea1f24dce9818cf4e2', 0);
 INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (12, 'runtime_applied_command', 'sha256:1d5efbd7ce11075e830de1b696dce06290e6753f5305ab3bf4343c5c33939db2', 0);
 INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (13, 'sdk_conversation_metadata_only', 'sha256:dc19669cfd56953827bd9b72f10c521f7c83eb3ec50cfea8976c941134330082', 0);
+INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (14, 'run_parent_index', 'sha256:6332ac2a2954017a88c1c8b97a0607625d16954deacdaef7e8d6d4fea2b78f7b', 0);
 INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (1000, 'project_product_session', 'sha256:929d869e45117a3e829be4f9b995bc646874583410c6f3572800f264aa4f418b', 0);
 INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (1001, 'coding_session_product_loop', 'sha256:109f86f30032eecb16a6d34ab945ce4fba8573eed8d8391f800d7132f2f06fcf', 0);
 INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (1002, 'coding_session_event_cursor', 'sha256:f566cba113dcf3ab9eb6f0883497e672cf3d02c5d7a3d64e94d5f186ed89c2b6', 0);

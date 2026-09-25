@@ -46,6 +46,11 @@ public interface AgentRuntime {
         throw new UnsupportedOperationException("public plan views are not supported");
     }
 
+    /** Lists the direct child runs delegated by a caller-visible parent run, oldest first. */
+    default List<ChildRunView> children(io.haifa.agent.core.run.AgentRunId parentRunId) {
+        throw new UnsupportedOperationException("child run queries are not supported");
+    }
+
     AgentRunHandle handle(io.haifa.agent.core.run.AgentRunId runId);
 
     void addListener(AgentRunListener listener);

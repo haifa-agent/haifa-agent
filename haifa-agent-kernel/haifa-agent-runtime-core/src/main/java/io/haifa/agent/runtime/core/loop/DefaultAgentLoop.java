@@ -206,8 +206,11 @@ public final class DefaultAgentLoop implements AgentLoop {
                         run, new RunTerminationReason("WALL_TIME_EXCEEDED", "Run wall-time limit exceeded"));
                 return new AgentLoopResult(run.status(), iteration, AgentLoopDirective.STOP);
             }
-            if (Duration.between(run.updatedAt(), time.now()).toMillis()
-                    > run.limits().maxIdleTimeMillis()) {
+            // Waiting for delegated child runs is progress, not idleness; it still counts toward wall time (D2).
+            java.time.Instant idleCheckedAt = time.now();
+            long idleMillis = Duration.between(run.updatedAt(), idleCheckedAt).toMillis()
+                    - progress.childWaitMillis(run.updatedAt(), idleCheckedAt);
+            if (idleMillis > run.limits().maxIdleTimeMillis()) {
                 transitions.timedOut(
                         run, new RunTerminationReason("IDLE_TIME_EXCEEDED", "Run idle-time limit exceeded"));
                 return new AgentLoopResult(run.status(), iteration, AgentLoopDirective.STOP);
@@ -880,8 +883,15 @@ public final class DefaultAgentLoop implements AgentLoop {
                         "toolCalls", run.limits().maxToolCalls(), projectedToolCalls);
             }
         }
-        if (decision instanceof DelegationDecision) {
-            long projectedChildRuns = run.usage().childRuns() + 1;
+        if (decision instanceof DelegationDecision delegation) {
+            long projectedToolCalls =
+                    run.usage().toolCalls() + delegation.tools().size();
+            if (projectedToolCalls > run.limits().maxToolCalls()) {
+                return new RuntimeLimitExceededException(
+                        "toolCalls", run.limits().maxToolCalls(), projectedToolCalls);
+            }
+            long projectedChildRuns =
+                    run.usage().childRuns() + delegation.delegations().size();
             if (projectedChildRuns > run.limits().maxChildRuns()) {
                 return new RuntimeLimitExceededException(
                         "childRuns", run.limits().maxChildRuns(), projectedChildRuns);

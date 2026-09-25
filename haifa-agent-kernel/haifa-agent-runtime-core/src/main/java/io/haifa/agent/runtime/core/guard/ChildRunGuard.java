@@ -2,31 +2,23 @@ package io.haifa.agent.runtime.core.guard;
 
 import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.runtime.core.decision.DelegationDecision;
-import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
+import io.haifa.agent.runtime.core.delegation.DelegationTool;
 import java.util.Objects;
 
-/** Enforces both hierarchy depth and aggregate child-run budget before delegation. */
+/**
+ * Structural defense in depth for delegation decisions.
+ *
+ * <p>The delegation Tool is not disclosed to runs that may not delegate, so reaching this guard with a
+ * delegation from such a run is a protocol violation. Budget limits are converged by the loop, and an
+ * unknown or disallowed child agent is a repairable Tool rejection handled by the decision executor.
+ */
 public final class ChildRunGuard {
-    private final RuntimeStateRepository state;
-
-    public ChildRunGuard(RuntimeStateRepository state) {
-        this.state = Objects.requireNonNull(state);
-    }
-
     public void check(AgentRun run, DelegationDecision decision) {
-        if (decision.childDefinitionId().equals(run.agentDefinitionId())) {
-            throw new IllegalStateException("an agent cannot recursively delegate to itself");
-        }
-        if (run.depth() >= run.limits().maxDepth()) {
+        Objects.requireNonNull(run, "run must not be null");
+        Objects.requireNonNull(decision, "decision must not be null");
+        if (run.depth() >= DelegationTool.MAX_DELEGATION_DEPTH
+                || run.depth() >= run.limits().maxDepth()) {
             throw new IllegalStateException("delegation would exceed child depth limit");
-        }
-        if (run.usage().childRuns() >= run.limits().maxChildRuns()) {
-            throw new IllegalStateException("delegation would exceed child run budget");
-        }
-        var configuration = state.configuration(run.configurationSnapshot())
-                .orElseThrow(() -> new IllegalStateException("run configuration snapshot is unavailable"));
-        if (!configuration.allowedChildAgents().contains(decision.childDefinitionId())) {
-            throw new SecurityException("child agent type is not allowed by the frozen configuration");
         }
     }
 }

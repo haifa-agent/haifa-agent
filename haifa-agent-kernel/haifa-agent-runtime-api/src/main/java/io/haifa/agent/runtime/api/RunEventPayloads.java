@@ -230,6 +230,22 @@ public final class RunEventPayloads {
         }
     }
 
+    /**
+     * Lifecycle of one child run as seen in its parent's event stream. The child's own events are read from the
+     * child run; this projection only correlates the child with the parent's delegation Tool Call.
+     */
+    public record ChildRunLifecycle(
+            String childRunId, String toolCallId, String childAgent, String status, String reasonCode)
+            implements AgentRunEvent.Payload {
+        public ChildRunLifecycle {
+            childRunId = text(childRunId, "childRunId", 256);
+            toolCallId = text(toolCallId, "toolCallId", 256);
+            childAgent = text(childAgent, "childAgent", 128);
+            status = text(status, "status", 64);
+            reasonCode = text(reasonCode, "reasonCode", 128);
+        }
+    }
+
     private static String text(String value, String field, int maximumLength) {
         return InteractionOption.requireText(value, field, maximumLength);
     }
