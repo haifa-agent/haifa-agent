@@ -16,18 +16,24 @@
 ## 仓库与交付边界
 
 - 根仓功能开发必须使用 `feat-` 开头的特性分支，不得直接在 `main` 或 `dev` 上开发；默认向 `dev`
-  发起 Pull Request。
+  发起 Pull Request。`0.1.2-SNAPSHOT` 开发线不设 baseline 分支：每个功能从最新 `origin/dev` 拉 `feat-*`，
+  验证通过后向 `dev` 发起 PR。
 - Git Commit Message 和 GitHub Pull Request 说明必须使用英文。大任务 PR 说明最多 7 条；小修改最多
   2 条，验证结果也计入上限。
 - GitHub 平台操作必须使用 GitHub CLI（`gh`）；本地 Git 和远端分支操作使用 `git`。
 - `docs/` 是主仓公开文档目录，必须与相关代码通过同一分支和 Pull Request 演进；内部设计历史、Prompt、PRD、复盘和未定型方案继续保留在独立私有文档仓 `haifa-agent-internal-docs`，不复制进公开 `docs/`。
 - `private-docs/` 是独立私有文档仓 `haifa-agent-internal-docs`；使用 `git -C private-docs ...` 并遵守其
-  `AGENTS.md`。
+  `AGENTS.md`，直接在其 `main` 上提交并推送，不建特性分支、不走 PR。
 - `test-config/` 是独立私有仓库 `haifa-agent-test-config`；使用 `git -C test-config ...`并遵守其
   `AGENTS.md`，默认在其 `main` 上直接提交并推送。
 - 根仓（含 `docs/`）、`private-docs/` 与 `test-config/` 必须分别检查、暂存、提交和推送；禁止把私有文档或
   私有测试配置混入主仓。
 - 建立git worktree使用父目录统一在../haifa-agent-worktrees/
+- Haifa Agent Super Harness（`../haifa-agent-super-harness`）是独立产品仓，只消费本地 Maven 仓库中的公开
+  JAR/BOM `0.1.2-SNAPSHOT`。为其补 SDK 缺口时，以
+  `private-docs/prompts/038-sdk-012-super-harness-gaps/README.md` 为需求索引，每项按上述 `feat-*` → `dev`
+  流程交付；完成后将公开 JAR/BOM 发布到本地 Maven 仓库，并在 Super Harness 的 `docs/todo.md` 记录 SDK
+  commit、PR 与验证状态。这类 PR 由人工审查合并，智能体不得自行合并。
 
 ## 事实源与任务路由
 
