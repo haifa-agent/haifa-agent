@@ -10,7 +10,6 @@ import io.haifa.agent.memory.api.MemoryCandidatePage;
 import io.haifa.agent.memory.api.MemoryCandidateQuery;
 import io.haifa.agent.memory.api.MemoryCandidateRepository;
 import io.haifa.agent.memory.api.MemoryCandidateStatus;
-import io.haifa.agent.memory.api.MemoryConflict;
 import io.haifa.agent.memory.api.MemoryCursorCodec;
 import io.haifa.agent.memory.api.MemoryId;
 import io.haifa.agent.memory.api.MemoryKind;
@@ -21,7 +20,6 @@ import io.haifa.agent.memory.api.MemoryRef;
 import io.haifa.agent.memory.api.MemoryRepository;
 import io.haifa.agent.memory.api.MemoryScope;
 import io.haifa.agent.memory.api.MemoryStatus;
-import io.haifa.agent.memory.api.MemoryTombstone;
 import io.haifa.agent.memory.api.MemoryVersion;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -30,14 +28,12 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/** Thread-safe in-memory implementation of the candidate, memory, conflict, tombstone, and audit stores. */
+/** Thread-safe in-memory implementation of the candidate, memory, and audit stores. */
 public final class InMemoryMemoryStore
         implements MemoryCandidateRepository, MemoryRepository, MemoryAuditStore, AutoCloseable {
     private final Map<MemoryCandidateId, MemoryCandidate> candidates = new HashMap<>();
     private final Map<MemoryRef, Memory> memories = new HashMap<>();
     private final Map<MemoryId, MemoryVersion> latestVersions = new HashMap<>();
-    private final Map<String, MemoryConflict> conflicts = new HashMap<>();
-    private final List<MemoryTombstone> tombstones = new ArrayList<>();
     private final List<MemoryAuditEvent> auditEvents = new ArrayList<>();
     private final AtomicBoolean closed = new AtomicBoolean();
 
@@ -91,12 +87,6 @@ public final class InMemoryMemoryStore
     }
 
     @Override
-    public synchronized List<MemoryCandidate> allCandidates() {
-        requireOpen();
-        return List.copyOf(candidates.values());
-    }
-
-    @Override
     public synchronized MemoryCandidatePage query(MemoryCandidateQuery query) {
         requireOpen();
         var after = query.after().map(MemoryCursorCodec::decode);
@@ -127,12 +117,6 @@ public final class InMemoryMemoryStore
                                 items.get(items.size() - 1).id().value(),
                                 items.get(items.size() - 1).revision()))
                         : Optional.empty());
-    }
-
-    @Override
-    public synchronized void purgeScope(MemoryScope scope) {
-        requireOpen();
-        candidates.entrySet().removeIf(entry -> entry.getValue().scope().equals(scope));
     }
 
     @Override
@@ -247,39 +231,6 @@ public final class InMemoryMemoryStore
                                 items.get(items.size() - 1).id().value(),
                                 items.get(items.size() - 1).version().value()))
                         : Optional.empty());
-    }
-
-    @Override
-    public synchronized MemoryConflict saveConflict(MemoryConflict conflict) {
-        requireOpen();
-        conflicts.put(conflict.id(), conflict);
-        return conflict;
-    }
-
-    @Override
-    public synchronized Optional<MemoryConflict> conflictFor(MemoryCandidateId candidateId) {
-        requireOpen();
-        return conflicts.values().stream()
-                .filter(conflict -> conflict.candidateId().equals(candidateId))
-                .findFirst();
-    }
-
-    @Override
-    public synchronized List<MemoryConflict> conflicts() {
-        requireOpen();
-        return List.copyOf(conflicts.values());
-    }
-
-    @Override
-    public synchronized void saveTombstone(MemoryTombstone tombstone) {
-        requireOpen();
-        tombstones.add(tombstone);
-    }
-
-    @Override
-    public synchronized List<MemoryTombstone> tombstones() {
-        requireOpen();
-        return List.copyOf(tombstones);
     }
 
     @Override

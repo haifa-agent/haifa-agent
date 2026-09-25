@@ -8,9 +8,9 @@
 - Candidate/Memory 有界游标分页，以及授权优先的 Retriever Port；
 - 只写 Audit/幂等内部端口和可注入事务边界。
 
-本模块仍为纯 Java。Conflict 管理、Expiry、Retention 执行、Purge、Tombstone、Audit 查询和
-Artifact 生产持久化不属于当前实现。
+本模块仍为纯 Java，不提供 Conflict 管理、Expiry、Purge 或 Tombstone 入口；`MemoryRetentionPolicy`
+只随记录保存，不驱动过期执行。Audit 查询和 Artifact 生产持久化不属于当前实现。
 
 Pure Java contracts for governed long-term memory. Candidates, approved immutable memory versions,
-scope, evidence, review, conflicts, retention, purge, and retrieval are intentionally separate from
+scope, evidence, review, retention, and retrieval are intentionally separate from
 conversation summaries and Context assembly.

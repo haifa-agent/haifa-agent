@@ -5,7 +5,6 @@ import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.memory.api.Memory;
 import io.haifa.agent.memory.api.MemoryActor;
 import io.haifa.agent.memory.api.MemoryAuditEvent;
-import io.haifa.agent.memory.api.MemoryAuditSink;
 import io.haifa.agent.memory.api.MemoryAuditStore;
 import io.haifa.agent.memory.api.MemoryCandidate;
 import io.haifa.agent.memory.api.MemoryCandidateDraft;
@@ -14,7 +13,6 @@ import io.haifa.agent.memory.api.MemoryCandidatePage;
 import io.haifa.agent.memory.api.MemoryCandidateQuery;
 import io.haifa.agent.memory.api.MemoryCandidateRepository;
 import io.haifa.agent.memory.api.MemoryCandidateStatus;
-import io.haifa.agent.memory.api.MemoryConflictResolution;
 import io.haifa.agent.memory.api.MemoryDerivedDataInvalidator;
 import io.haifa.agent.memory.api.MemoryEvidenceVerifier;
 import io.haifa.agent.memory.api.MemoryId;
@@ -28,7 +26,6 @@ import io.haifa.agent.memory.api.MemoryScope;
 import io.haifa.agent.memory.api.MemoryService;
 import io.haifa.agent.memory.api.MemorySourceRef;
 import io.haifa.agent.memory.api.MemoryStatus;
-import io.haifa.agent.memory.api.MemoryTombstone;
 import io.haifa.agent.memory.api.MemoryUnitOfWork;
 import io.haifa.agent.memory.api.MemoryVersion;
 import java.nio.ByteBuffer;
@@ -42,7 +39,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Governed candidate-to-memory workflow.
@@ -62,27 +58,6 @@ public final class DefaultMemoryService implements MemoryService {
     private final IdentifierGenerator ids;
     private final TimeProvider time;
     private final MemoryUnitOfWork unitOfWork;
-
-    public DefaultMemoryService(
-            MemoryCandidateRepository candidates,
-            MemoryRepository memories,
-            MemoryPolicy policy,
-            MemoryEvidenceVerifier evidenceVerifier,
-            List<MemoryDerivedDataInvalidator> invalidators,
-            MemoryAuditSink audit,
-            IdentifierGenerator ids,
-            TimeProvider time) {
-        this(
-                candidates,
-                memories,
-                policy,
-                evidenceVerifier,
-                invalidators,
-                audit instanceof MemoryAuditStore store ? store : new LocalAuditStore(audit),
-                ids,
-                time,
-                MemoryUnitOfWork.direct());
-    }
 
     public DefaultMemoryService(
             MemoryCandidateRepository candidates,
@@ -430,38 +405,6 @@ public final class DefaultMemoryService implements MemoryService {
     }
 
     @Override
-    public Memory resolveConflict(
-            String conflictId, MemoryConflictResolution resolution, MemoryActor actor, String idempotencyKey) {
-        throw failure("MEMORY_CONFLICT_MANAGEMENT_DEFERRED");
-    }
-
-    /**
-     * Legacy deferred lifecycle operation retained for source compatibility. The Phase 2 SQLite
-     * provider does not implement expiry state or persistence.
-     */
-    @Override
-    public List<MemoryRef> evaluateExpiry(Instant now) {
-        List<MemoryRef> expired = new ArrayList<>();
-        candidates.allCandidates().stream()
-                .filter(candidate -> candidate.status() == MemoryCandidateStatus.PENDING)
-                .filter(candidate -> candidate
-                        .retention()
-                        .expiresAt()
-                        .map(expiresAt -> !expiresAt.isAfter(now))
-                        .orElse(false))
-                .forEach(candidate -> candidates.save(candidate.expire("candidate retention expired")));
-        memories.allMemories().stream()
-                .filter(memory -> memory.status() == MemoryStatus.ACTIVE && memory.expiredAt(now))
-                .forEach(memory -> {
-                    Memory updated = memories.save(memory.transition(MemoryStatus.EXPIRED, now));
-                    MemoryRef reference = reference(updated);
-                    expired.add(reference);
-                    invalidators.forEach(invalidator -> invalidator.invalidate(reference, "retention expired"));
-                });
-        return List.copyOf(expired);
-    }
-
-    @Override
     public List<MemoryRef> invalidateSource(MemorySourceRef source, String reason, MemoryActor actor) {
         List<MemoryRef> invalidated = new ArrayList<>();
         memories.allMemories().stream()
@@ -476,37 +419,6 @@ public final class DefaultMemoryService implements MemoryService {
                     invalidators.forEach(invalidator -> invalidator.invalidate(reference, reason));
                 });
         return List.copyOf(invalidated);
-    }
-
-    @Override
-    public List<MemoryRef> requestPurge(MemoryScope scope, String reason, MemoryActor actor) {
-        require(policy.canPurge(actor, scope), "MEMORY_UNAVAILABLE");
-        List<MemoryRef> pending = new ArrayList<>();
-        memories.allMemories().stream()
-                .filter(memory -> memory.scope().equals(scope) && memory.status() != MemoryStatus.PURGED)
-                .filter(memory -> memory.status() != MemoryStatus.PURGE_PENDING)
-                .forEach(memory -> {
-                    Memory updated = memories.save(memory.transition(MemoryStatus.PURGE_PENDING, time.now()));
-                    pending.add(reference(updated));
-                });
-        return List.copyOf(pending);
-    }
-
-    @Override
-    public List<MemoryTombstone> executePurge(MemoryScope scope, String reason, MemoryActor actor) {
-        require(policy.canPurge(actor, scope), "MEMORY_UNAVAILABLE");
-        List<MemoryTombstone> purged = new ArrayList<>();
-        memories.allMemories().stream()
-                .filter(memory -> memory.scope().equals(scope) && memory.status() == MemoryStatus.PURGE_PENDING)
-                .forEach(memory -> {
-                    Memory updated = memories.save(memory.transition(MemoryStatus.PURGED, time.now()));
-                    MemoryTombstone tombstone = new MemoryTombstone(
-                            reference(updated), scope, memory.normalizedDigest(), reason, time.now());
-                    memories.saveTombstone(tombstone);
-                    purged.add(tombstone);
-                });
-        candidates.purgeScope(scope);
-        return List.copyOf(purged);
     }
 
     private MemoryCandidate requireCandidate(MemoryCandidateId id, MemoryActor actor) {
@@ -642,34 +554,6 @@ public final class DefaultMemoryService implements MemoryService {
             return "sha256:" + HexFormat.of().formatHex(digest.digest());
         } catch (NoSuchAlgorithmException exception) {
             throw new IllegalStateException("SHA-256 is required", exception);
-        }
-    }
-
-    private static final class LocalAuditStore implements MemoryAuditStore {
-        private record Key(MemoryScope scope, String operation, String keyDigest) {}
-
-        private final MemoryAuditSink delegate;
-        private final Map<Key, MemoryAuditEvent> events = new ConcurrentHashMap<>();
-
-        private LocalAuditStore(MemoryAuditSink delegate) {
-            this.delegate = Objects.requireNonNull(delegate, "delegate must not be null");
-        }
-
-        @Override
-        public Optional<MemoryAuditEvent> findByIdempotency(
-                MemoryScope scope, String operation, String idempotencyKeyDigest) {
-            return Optional.ofNullable(events.get(new Key(scope, operation, idempotencyKeyDigest)));
-        }
-
-        @Override
-        public void record(MemoryAuditEvent event) {
-            event.idempotencyKeyDigest().ifPresent(key -> {
-                MemoryAuditEvent prior = events.putIfAbsent(new Key(event.scope(), event.operation(), key), event);
-                if (prior != null && !prior.requestDigest().equals(event.requestDigest())) {
-                    throw failure("MEMORY_IDEMPOTENCY_CONFLICT");
-                }
-            });
-            delegate.record(event);
         }
     }
 }

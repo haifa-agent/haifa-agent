@@ -24,6 +24,7 @@ import io.haifa.agent.memory.api.MemorySecurityLabel;
 import io.haifa.agent.memory.api.MemorySourceRef;
 import io.haifa.agent.memory.api.MemorySourceType;
 import io.haifa.agent.memory.api.MemoryStatus;
+import io.haifa.agent.memory.api.MemoryUnitOfWork;
 import io.haifa.agent.memory.api.MemoryVisibility;
 import io.haifa.agent.memory.api.TextMemoryContent;
 import java.time.Instant;
@@ -38,7 +39,7 @@ class MemoryGovernanceTest {
     private static final Instant NOW = Instant.parse("2026-07-21T00:00:00Z");
     private static final TenantRef TENANT = new TenantRef("tenant-a");
     private static final PrincipalRef OWNER = new PrincipalRef("user-a", "user");
-    private static final MemoryActor REVIEWER = new MemoryActor(TENANT, OWNER, Set.of("memory:review", "memory:purge"));
+    private static final MemoryActor REVIEWER = new MemoryActor(TENANT, OWNER, Set.of("memory:review"));
 
     @Test
     void candidateAndMemoryAreSeparateAggregatesAndSensitiveDataRequiresReview() {
@@ -142,7 +143,7 @@ class MemoryGovernanceTest {
     }
 
     @Test
-    void retrievalFiltersAuthorizationStatusAndExpiryBeforeDeterministicRankingAndBudget() {
+    void retrievalFiltersAuthorizationAndStatusBeforeDeterministicRankingAndBudget() {
         Fixture fixture = fixture(new DefaultMemoryPolicy());
         MemoryScope user = scope(MemoryScopeType.USER, OWNER.principalId());
         MemoryScope session = scope(MemoryScopeType.SESSION, "session-1");
@@ -162,15 +163,6 @@ class MemoryGovernanceTest {
                 source(MemorySourceType.MESSAGE, "m-maven"),
                 MemoryRetentionPolicy.RETAIN,
                 false));
-        var expiredDraft = draft(
-                "expired",
-                user,
-                "old",
-                "Java legacy",
-                source(MemorySourceType.MESSAGE, "m-old"),
-                new MemoryRetentionPolicy("short", Optional.of(NOW.minusSeconds(1)), false),
-                false);
-        Memory expired = fixture.approve(expiredDraft);
         MemoryScope otherTenant = new MemoryScope(
                 new TenantRef("tenant-b"),
                 new PrincipalRef("user-b", "user"),
@@ -222,16 +214,10 @@ class MemoryGovernanceTest {
             assertThat(result.selectionReason()).isEqualTo("keyword-match");
         });
         assertThat(retrieval.queryDigest()).startsWith("sha256:");
-        fixture.service.evaluateExpiry(NOW);
-        assertThat(fixture.store
-                        .find(expired.id(), expired.version())
-                        .orElseThrow()
-                        .status())
-                .isEqualTo(MemoryStatus.EXPIRED);
     }
 
     @Test
-    void sourceInvalidationExpiryAndTwoStepPurgeStopRetrievalAndLeaveContentFreeTombstones() {
+    void sourceInvalidationStopsRetrievalAndKeepsAuditFreeOfContent() {
         Fixture fixture = fixture(new DefaultMemoryPolicy());
         MemoryScope scope = scope(MemoryScopeType.RUN, "run-1");
         MemorySourceRef source = source(MemorySourceType.MESSAGE, "source-message");
@@ -251,25 +237,6 @@ class MemoryGovernanceTest {
         assertThat(fixture.retriever.retrieve(query(scope, "Project Java")).results())
                 .isEmpty();
 
-        fixture.service.requestPurge(scope, "user clear", REVIEWER);
-        assertThat(fixture.store
-                        .find(active.id(), active.version())
-                        .orElseThrow()
-                        .status())
-                .isEqualTo(MemoryStatus.PURGE_PENDING);
-        assertThat(fixture.retriever.retrieve(query(scope, "Project Java")).results())
-                .isEmpty();
-        var tombstones = fixture.service.executePurge(scope, "user clear", REVIEWER);
-        assertThat(tombstones).singleElement().satisfies(tombstone -> assertThat(tombstone.toString())
-                .doesNotContain("Project uses Java"));
-        assertThat(fixture.store.find(active.id(), active.version()).orElseThrow())
-                .satisfies(memory -> {
-                    assertThat(memory.status()).isEqualTo(MemoryStatus.PURGED);
-                    assertThat(memory.content()).isEmpty();
-                });
-        assertThat(fixture.retriever.retrieve(query(scope, "Project Java")).results())
-                .isEmpty();
-        assertThat(fixture.store.allCandidates()).isEmpty();
         assertThat(fixture.store.auditEvents())
                 .allSatisfy(event -> assertThat(event.toString()).doesNotContain("Project uses Java"));
     }
@@ -340,7 +307,8 @@ class MemoryGovernanceTest {
                 List.of((memory, reason) -> invalidated.add(memory)),
                 store,
                 () -> "memory-test-" + ids.incrementAndGet(),
-                () -> NOW);
+                () -> NOW,
+                MemoryUnitOfWork.direct());
         return new Fixture(store, verifier, service, new DefaultMemoryRetriever(store, policy), invalidated);
     }
 

@@ -1,6 +1,5 @@
 package io.haifa.agent.memory.api;
 
-import java.util.List;
 import java.util.Optional;
 
 public interface MemoryCandidateRepository {
@@ -14,9 +13,5 @@ public interface MemoryCandidateRepository {
 
     Optional<MemoryCandidate> findEquivalentPending(MemoryScope scope, MemoryKind kind, String normalizedDigest);
 
-    List<MemoryCandidate> allCandidates();
-
     MemoryCandidatePage query(MemoryCandidateQuery query);
-
-    void purgeScope(MemoryScope scope);
 }
