@@ -58,6 +58,8 @@ public interface RuntimeStoreMapper {
 
     List<ToolCallRow> toolCallsForRun(@Param("runId") String runId);
 
+    List<ToolCallRow> toolCallsByIds(@Param("toolCallIds") List<String> toolCallIds);
+
     int insertPlan(@Param("row") PlanRow row);
 
     int updatePlan(@Param("row") PlanRow row);
@@ -234,6 +236,11 @@ public interface RuntimeStoreMapper {
 
     int validSummarySourceCount(@Param("sessionId") String sessionId, @Param("messageIds") List<String> messageIds);
 
+    int validSummarySourceRangeCount(
+            @Param("sessionId") String sessionId,
+            @Param("coveredFrom") long coveredFrom,
+            @Param("coveredThrough") long coveredThrough);
+
     int upsertMemorySelection(@Param("row") MemorySelectionRow row);
 
     MemorySelectionRow findMemorySelection(@Param("runId") String runId);
@@ -267,4 +274,6 @@ public interface RuntimeStoreMapper {
     ModelContinuationRow continuationForMessage(@Param("messageId") String messageId);
 
     List<ModelContinuationRow> modelContinuations(@Param("runId") String runId);
+
+    List<ModelContinuationRow> continuationsForMessages(@Param("messageIds") List<String> messageIds);
 }

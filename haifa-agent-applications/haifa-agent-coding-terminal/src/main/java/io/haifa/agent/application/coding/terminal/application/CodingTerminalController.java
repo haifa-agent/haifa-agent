@@ -23,6 +23,7 @@ import io.haifa.agent.application.project.product.coding.client.CodingAuthentica
 import io.haifa.agent.application.project.product.coding.client.CodingSessionClient;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.execution.api.ToolOutputPreviewPublisher;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.InteractionAction;
@@ -63,6 +64,31 @@ public final class CodingTerminalController implements AutoCloseable {
     private static final String ANTIGRAVITY_CONNECTION = "Antigravity subscription";
     private static final String API_KEY_CONNECTION = "Provider API key (secure input)";
 
+    static String providerOptionLabel(String providerId) {
+        return switch (providerId.toLowerCase(java.util.Locale.ROOT)) {
+            case "deepseek" -> "DeepSeek (API key)";
+            case "aliyun-bailian" -> "Aliyun Bailian / 阿里云百炼 (API key)";
+            case "zhipu" -> "Zhipu AI / 智谱 (API key)";
+            case "kimi" -> "Moonshot Kimi / 月之暗面 (API key)";
+            case "siliconflow" -> "SiliconFlow / 硅基流动 (API key)";
+            default -> providerId + " (API key)";
+        };
+    }
+
+    static String parseProviderIdFromOption(String option) {
+        if (option.startsWith("DeepSeek")) return "deepseek";
+        if (option.startsWith("Aliyun Bailian") || option.contains("阿里云百炼")) return "aliyun-bailian";
+        if (option.startsWith("Zhipu") || option.contains("智谱")) return "zhipu";
+        if (option.startsWith("Moonshot") || option.contains("Kimi") || option.contains("月之暗面")) return "kimi";
+        if (option.startsWith("SiliconFlow") || option.contains("硅基流动")) return "siliconflow";
+        if (option.endsWith(" (API key)")) {
+            return option.substring(0, option.length() - " (API key)".length())
+                    .trim()
+                    .toLowerCase(java.util.Locale.ROOT);
+        }
+        return option.toLowerCase(java.util.Locale.ROOT);
+    }
+
     private final ProjectId projectId;
     private final CodingSessionClient client;
     private final CodingAuthenticationClient authentication;
@@ -84,6 +110,9 @@ public final class CodingTerminalController implements AutoCloseable {
     private TerminalUiState state;
     private RunEventSubscription subscription;
     private RunOutputSubscription outputSubscription;
+    private ToolOutputPreviewPublisher.ToolOutputPreviewSubscription previewSubscription;
+    private ToolOutputPreviewPublisher previewPublisher = ToolOutputPreviewPublisher.noop();
+    private AgentRunId previewRunId;
     private io.haifa.agent.core.run.AgentRunId outputRunId;
     private RunOutputCursor outputCursor = RunOutputCursor.BEFORE_FIRST;
     private boolean awaitingNewSessionMessage;
@@ -282,6 +311,10 @@ public final class CodingTerminalController implements AutoCloseable {
         return state;
     }
 
+    public void attachToolOutputPreviewPublisher(ToolOutputPreviewPublisher publisher) {
+        this.previewPublisher = Objects.requireNonNull(publisher, "publisher must not be null");
+    }
+
     /**
      * Starts a normal conversation submission without performing Runtime or storage IO.
      *
@@ -451,8 +484,8 @@ public final class CodingTerminalController implements AutoCloseable {
 
     private void offerAuthenticationOnboarding() {
         if (state.selector().isEmpty() && authentication.connectionRequired()) {
-            apply(new TerminalUiAction.SelectorOpened(
-                    new TerminalSelector("auth-login", "Connect a model to get started", connectionOptions(), 0)));
+            apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
+                    "auth-login", "Connect a model to get started", firstRunConnectionOptions(), 0)));
             apply(new TerminalUiAction.StatusChanged("A model connection is required before the first prompt"));
         }
     }
@@ -662,6 +695,13 @@ public final class CodingTerminalController implements AutoCloseable {
             }
             return;
         }
+        if (input.kind() == TerminalInput.Kind.TOGGLE_EXPANSION) {
+            state.transcript().stream()
+                    .filter(io.haifa.agent.application.coding.terminal.state.TranscriptItem::toggleable)
+                    .reduce((first, second) -> second)
+                    .ifPresent(value -> apply(new TerminalUiAction.ToggleExpanded(value.id())));
+            return;
+        }
         if (state.selector().isPresent()) {
             acceptSelector(input);
             return;
@@ -690,13 +730,6 @@ public final class CodingTerminalController implements AutoCloseable {
         if (input.kind() == TerminalInput.Kind.SELECT_PREVIOUS
                 || input.kind() == TerminalInput.Kind.SELECT_NEXT
                 || input.kind() == TerminalInput.Kind.NAVIGATE_BACK) {
-            return;
-        }
-        if (input.kind() == TerminalInput.Kind.TOGGLE_EXPANSION) {
-            state.transcript().stream()
-                    .filter(io.haifa.agent.application.coding.terminal.state.TranscriptItem::toggleable)
-                    .reduce((first, second) -> second)
-                    .ifPresent(value -> apply(new TerminalUiAction.ToggleExpanded(value.id())));
             return;
         }
         submitText(input.text(), input.kind() == TerminalInput.Kind.FOLLOW_UP);
@@ -1180,7 +1213,20 @@ public final class CodingTerminalController implements AutoCloseable {
             apply(new TerminalUiAction.RunEventReceived(event));
         }
         loaded.view().pendingInteraction().ifPresent(this::openInteractionSelector);
+        replacePreviewSubscription(
+                loaded.view().activeRun().map(value -> value.runId()).orElse(null));
         closeSubscriptionsInBackground(previousSubscription, previousOutputSubscription);
+    }
+
+    private void replacePreviewSubscription(AgentRunId runId) {
+        if (Objects.equals(previewRunId, runId) && previewSubscription != null) return;
+        if (previewSubscription != null) previewSubscription.close();
+        previewSubscription = null;
+        previewRunId = runId;
+        if (runId != null) {
+            previewSubscription = previewPublisher.subscribe(
+                    runId, preview -> pump.offer(new TerminalUiAction.ToolOutputPreviewReceived(preview)));
+        }
     }
 
     private void openRestoreSelector() {
@@ -1287,10 +1333,35 @@ public final class CodingTerminalController implements AutoCloseable {
 
     private List<String> connectionOptions() {
         List<String> options = new java.util.ArrayList<>();
-        if (authentication.codexConnectionSupported()) options.add(CHATGPT_CONNECTION);
-        if (authentication.antigravityConnectionSupported()) options.add(ANTIGRAVITY_CONNECTION);
-        if (authentication.apiKeyConnectionSupported()) options.add(API_KEY_CONNECTION);
+        if (authentication.apiKeyConnectionSupported()) {
+            for (String providerId : authentication.supportedApiKeyProviders()) {
+                options.add(providerOptionLabel(providerId));
+            }
+        }
+        if (authentication.codexConnectionSupported()) {
+            options.add(CHATGPT_CONNECTION);
+        }
+        if (authentication.antigravityConnectionSupported()) {
+            options.add(ANTIGRAVITY_CONNECTION);
+        }
         return List.copyOf(options);
+    }
+
+    private List<String> firstRunConnectionOptions() {
+        if (authentication.apiKeyConnectionSupported()
+                && authentication.supportedApiKeyProviders().stream()
+                        .anyMatch(provider -> provider.equalsIgnoreCase(authentication.apiKeyProviderId()))) {
+            return List.of(providerOptionLabel(authentication.apiKeyProviderId()));
+        }
+        if ("openai-codex".equalsIgnoreCase(authentication.apiKeyProviderId())
+                && authentication.codexConnectionSupported()) {
+            return List.of(CHATGPT_CONNECTION);
+        }
+        if ("google-antigravity".equalsIgnoreCase(authentication.apiKeyProviderId())
+                && authentication.antigravityConnectionSupported()) {
+            return List.of(ANTIGRAVITY_CONNECTION);
+        }
+        return connectionOptions();
     }
 
     private void startCodexDeviceLogin() {
@@ -1360,20 +1431,21 @@ public final class CodingTerminalController implements AutoCloseable {
         if ("aliyun-bailian".equalsIgnoreCase(providerId)) {
             existingBailianWorkspaceId = attributes.get("workspace_id");
             existingBailianRegion = attributes.get("region");
-            if (workspaceId != null) {
-                pendingBailianWorkspaceId = workspaceId;
-                pendingBailianRegion =
-                        region != null ? region : existingBailianRegion != null ? existingBailianRegion : "cn-beijing";
-            }
+            pendingBailianWorkspaceId = workspaceId != null ? workspaceId : existingBailianWorkspaceId;
+            pendingBailianRegion =
+                    region != null ? region : (existingBailianRegion != null ? existingBailianRegion : "cn-beijing");
             bailianStep = BailianConfigStep.API_KEY;
+            String workspaceLabel = pendingBailianWorkspaceId != null ? pendingBailianWorkspaceId : "required";
             if (hasExistingKey) {
-                apply(
-                        new TerminalUiAction.StatusChanged(
-                                "Update API key for aliyun-bailian (existing key found · will overwrite in system credential store) [1/3]"));
+                apply(new TerminalUiAction.StatusChanged(
+                        "Update API key for aliyun-bailian (workspace: " + workspaceLabel
+                                + ", region: " + pendingBailianRegion
+                                + " · press Enter to keep existing)"));
             } else {
-                apply(
-                        new TerminalUiAction.StatusChanged(
-                                "Enter DashScope API key for aliyun-bailian (first-time setup · saved to system credential store) [1/3]"));
+                apply(new TerminalUiAction.StatusChanged(
+                        "Enter DashScope API key for aliyun-bailian (workspace: " + workspaceLabel
+                                + ", region: " + pendingBailianRegion
+                                + " · saved to system credential store)"));
             }
             return;
         }
@@ -1411,46 +1483,22 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     public String secureInputPrompt() {
-        if ("aliyun-bailian".equalsIgnoreCase(pendingApiKeyProvider)) {
-            return switch (bailianStep) {
-                case API_KEY -> secureInputIsUpdate() ? "New key ┃ " : "API key ┃ ";
-                case WORKSPACE_ID -> "Workspace ID ┃ ";
-                case REGION -> "Region ┃ ";
-                case NONE -> "┃ ";
-            };
-        }
         return secureInputIsUpdate() ? "New key ┃ " : "API key ┃ ";
     }
 
     public String secureInputPlaceholder() {
         if ("aliyun-bailian".equalsIgnoreCase(pendingApiKeyProvider)) {
-            return switch (bailianStep) {
-                case API_KEY ->
-                    secureInputIsUpdate()
-                            ? "Paste or enter new API key (Esc to keep existing)"
-                            : "Paste or enter API key";
-                case WORKSPACE_ID ->
-                    existingBailianWorkspaceId != null
-                            ? existingBailianWorkspaceId + " (press Enter to keep existing)"
-                            : "e.g. ws-xxxx";
-                case REGION ->
-                    existingBailianRegion != null
-                            ? existingBailianRegion + " (press Enter to keep existing)"
-                            : "cn-beijing (press Enter to accept default)";
-                case NONE -> "";
-            };
+            String workspace = pendingBailianWorkspaceId != null ? pendingBailianWorkspaceId : "workspace-required";
+            String defaultReg = pendingBailianRegion != null ? pendingBailianRegion : "cn-beijing";
+            return secureInputIsUpdate()
+                    ? "Paste or enter new API key (Esc to keep existing)"
+                    : "Paste or enter API key [workspace] [region] (workspace: " + workspace + ", region default: "
+                            + defaultReg + ")";
         }
         return secureInputIsUpdate() ? "Paste or enter new API key (Esc to keep existing)" : "Paste or enter API key";
     }
 
     public String secureInputHint() {
-        if ("aliyun-bailian".equalsIgnoreCase(pendingApiKeyProvider)) {
-            return switch (bailianStep) {
-                case API_KEY, WORKSPACE_ID -> "enter next · escape cancel";
-                case REGION -> "enter submit · escape cancel";
-                case NONE -> "enter submit · escape cancel";
-            };
-        }
         return secureInputIsUpdate() ? "enter update · escape cancel" : "enter submit · escape cancel";
     }
 
@@ -1494,7 +1542,7 @@ public final class CodingTerminalController implements AutoCloseable {
         }
         pendingApiKeyProvider = null;
         pendingApiKeyIsUpdate = false;
-        char[] owned = java.util.Arrays.copyOf(apiKey, apiKey.length);
+        char[] owned = new String(apiKey).strip().toCharArray();
         java.util.Arrays.fill(apiKey, '\0');
         apply(new TerminalUiAction.StatusChanged("Saving API key for " + providerId));
         try {
@@ -1529,78 +1577,56 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void handleBailianInput(char[] input) {
-        switch (bailianStep) {
-            case API_KEY -> {
-                if (input.length == 0 && !pendingApiKeyIsUpdate) {
-                    java.util.Arrays.fill(input, '\0');
-                    apply(new TerminalUiAction.StatusChanged(
-                            "API key must not be empty · enter DashScope API key for aliyun-bailian [1/3]"));
-                    return;
-                }
-                pendingBailianApiKey = java.util.Arrays.copyOf(input, input.length);
-                java.util.Arrays.fill(input, '\0');
-
-                if (pendingBailianWorkspaceId != null) {
-                    saveBailianCredentials();
-                    return;
-                }
-
-                bailianStep = BailianConfigStep.WORKSPACE_ID;
-                if (existingBailianWorkspaceId != null) {
-                    apply(new TerminalUiAction.StatusChanged(
-                            "Enter Workspace ID (press Enter to keep '" + existingBailianWorkspaceId + "') [2/3]"));
-                } else {
-                    apply(new TerminalUiAction.StatusChanged(
-                            "Enter Aliyun Bailian Workspace ID (e.g. ws-xxxx · required DNS label) [2/3]"));
-                }
-            }
-            case WORKSPACE_ID -> {
-                String text = new String(input).strip();
-                java.util.Arrays.fill(input, '\0');
-                if (text.isEmpty()) {
-                    if (existingBailianWorkspaceId != null) {
-                        pendingBailianWorkspaceId = existingBailianWorkspaceId;
-                    } else {
-                        apply(new TerminalUiAction.StatusChanged(
-                                "Invalid workspace ID: must be lowercase DNS label ([a-z0-9-], 1-63 chars)"));
-                        return;
-                    }
-                } else if (!DNS_LABEL_PATTERN.matcher(text).matches()) {
-                    apply(new TerminalUiAction.StatusChanged(
-                            "Invalid workspace ID: must be lowercase DNS label ([a-z0-9-], 1-63 chars)"));
-                    return;
-                } else {
-                    pendingBailianWorkspaceId = text;
-                }
-
-                bailianStep = BailianConfigStep.REGION;
-                if (existingBailianRegion != null) {
-                    apply(new TerminalUiAction.StatusChanged(
-                            "Enter Region (press Enter to keep '" + existingBailianRegion + "') [3/3]"));
-                } else {
-                    apply(new TerminalUiAction.StatusChanged(
-                            "Enter Aliyun Bailian Region (default: cn-beijing · press Enter to use default) [3/3]"));
-                }
-            }
-            case REGION -> {
-                String text = new String(input).strip();
-                java.util.Arrays.fill(input, '\0');
-                if (text.isEmpty()) {
-                    pendingBailianRegion = existingBailianRegion != null ? existingBailianRegion : "cn-beijing";
-                } else if (!DNS_LABEL_PATTERN.matcher(text).matches()) {
-                    apply(new TerminalUiAction.StatusChanged(
-                            "Invalid region: must be lowercase DNS label ([a-z0-9-], 1-63 chars)"));
-                    return;
-                } else {
-                    pendingBailianRegion = text;
-                }
-                saveBailianCredentials();
-            }
-            case NONE -> {
-                java.util.Arrays.fill(input, '\0');
-                apply(new TerminalUiAction.RecoverableFailure("AUTH_SECURE_INPUT_NOT_REQUESTED"));
-            }
+        String fullText = new String(input).strip();
+        if (fullText.isEmpty() && !pendingApiKeyIsUpdate) {
+            java.util.Arrays.fill(input, '\0');
+            apply(new TerminalUiAction.StatusChanged(
+                    "API key must not be empty · enter DashScope API key for aliyun-bailian"));
+            return;
         }
+
+        String[] parts = fullText.isEmpty() ? new String[0] : fullText.split("\\s+");
+        if (parts.length > 3) {
+            java.util.Arrays.fill(input, '\0');
+            apply(new TerminalUiAction.StatusChanged(
+                    "Too many arguments: expected API key [workspace] [region] for aliyun-bailian"));
+            return;
+        }
+        if (parts.length > 0 && !parts[0].isEmpty()) {
+            pendingBailianApiKey = parts[0].toCharArray();
+        }
+        if (parts.length > 1) {
+            String ws = parts[1].strip();
+            if (!DNS_LABEL_PATTERN.matcher(ws).matches()) {
+                java.util.Arrays.fill(input, '\0');
+                apply(new TerminalUiAction.StatusChanged(
+                        "Invalid workspace ID: must be lowercase DNS label ([a-z0-9-], 1-63 chars)"));
+                return;
+            }
+            pendingBailianWorkspaceId = ws;
+        }
+        if (parts.length > 2) {
+            String reg = parts[2].strip();
+            if (!DNS_LABEL_PATTERN.matcher(reg).matches()) {
+                java.util.Arrays.fill(input, '\0');
+                apply(new TerminalUiAction.StatusChanged(
+                        "Invalid region: must be lowercase DNS label ([a-z0-9-], 1-63 chars)"));
+                return;
+            }
+            pendingBailianRegion = reg;
+        }
+        if (pendingBailianWorkspaceId == null) {
+            java.util.Arrays.fill(input, '\0');
+            apply(new TerminalUiAction.StatusChanged(
+                    "Workspace ID is required for first-time aliyun-bailian setup; enter API key workspace [region]"));
+            return;
+        }
+        java.util.Arrays.fill(input, '\0');
+        if (pendingBailianRegion == null) {
+            pendingBailianRegion = existingBailianRegion != null ? existingBailianRegion : "cn-beijing";
+        }
+
+        saveBailianCredentials();
     }
 
     private void saveBailianCredentials() {
@@ -1608,7 +1634,7 @@ public final class CodingTerminalController implements AutoCloseable {
         char[] key = pendingBailianApiKey != null
                 ? java.util.Arrays.copyOf(pendingBailianApiKey, pendingBailianApiKey.length)
                 : new char[0];
-        String workspaceId = pendingBailianWorkspaceId != null ? pendingBailianWorkspaceId : "default";
+        String workspaceId = pendingBailianWorkspaceId != null ? pendingBailianWorkspaceId : "default-workspace";
         String region = pendingBailianRegion != null ? pendingBailianRegion : "cn-beijing";
         Map<String, String> attributes = Map.of("workspace_id", workspaceId, "region", region);
 
@@ -1825,14 +1851,19 @@ public final class CodingTerminalController implements AutoCloseable {
             case "model-detail" -> selectModelDetailAction(selected);
             case "model-settings" -> selectModelSettingsAction(selected);
             case "auth-login" -> {
-                String option = connectionOptions().get(selected);
+                String option = state.selector().orElseThrow().options().get(selected);
                 apply(new TerminalUiAction.SelectorClosed());
-                if (CHATGPT_CONNECTION.equals(option)) {
+                if (CHATGPT_CONNECTION.equals(option) || "ChatGPT subscription".equals(option)) {
                     openChatGptLoginSelector();
-                } else if (ANTIGRAVITY_CONNECTION.equals(option)) {
+                } else if (ANTIGRAVITY_CONNECTION.equals(option)
+                        || "Antigravity subscription".equals(option)
+                        || "Google Antigravity subscription".equals(option)) {
                     startAntigravityLogin();
-                } else {
+                } else if (API_KEY_CONNECTION.equals(option)) {
                     beginApiKeyInput(authentication.apiKeyProviderId());
+                } else {
+                    String providerId = parseProviderIdFromOption(option);
+                    beginApiKeyInput(providerId);
                 }
             }
             case "auth-chatgpt" -> {
@@ -2451,6 +2482,9 @@ public final class CodingTerminalController implements AutoCloseable {
         closeSubscriptions(subscription, outputSubscription);
         subscription = null;
         outputSubscription = null;
+        if (previewSubscription != null) previewSubscription.close();
+        previewSubscription = null;
+        previewRunId = null;
         if (ownedControlEffects != null) ownedControlEffects.shutdownNow();
         if (ownedEffects != null) ownedEffects.shutdownNow();
         if (ownedMaintenanceEffects != null) ownedMaintenanceEffects.shutdownNow();

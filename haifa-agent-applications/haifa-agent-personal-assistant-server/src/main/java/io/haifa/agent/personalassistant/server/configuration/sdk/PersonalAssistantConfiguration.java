@@ -47,8 +47,8 @@ import io.haifa.agent.personalassistant.server.mission.MissionDispatcher;
 import io.haifa.agent.personalassistant.server.mission.MissionOperationsService;
 import io.haifa.agent.personalassistant.server.mission.RuntimeMissionPlanner;
 import io.haifa.agent.personalassistant.server.mission.SqliteMissionStore;
-import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationProtector;
+import io.haifa.agent.runtime.core.model.continuation.PlaintextModelContinuationProtector;
 import io.haifa.agent.sdk.api.SdkCaller;
 import io.haifa.agent.sdk.contribution.PolicyPlatformContribution;
 import io.haifa.agent.store.sqlite.SqliteSdkProductContributions;
@@ -63,14 +63,12 @@ import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Duration;
-import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.Executors;
-import javax.crypto.spec.SecretKeySpec;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -179,9 +177,7 @@ public class PersonalAssistantConfiguration {
             AntigravityProjectRegistry antigravityProjects,
             ProxySelector personalModelProxySelector) {
         Path dataDirectory = prepare(properties.dataDirectory());
-        byte[] key = decodeKey(properties.continuationKeyBase64());
-        ModelContinuationProtector protector =
-                new AesGcmModelContinuationProtector(new SecretKeySpec(key, "AES"), new SecureRandom());
+        ModelContinuationProtector protector = new PlaintextModelContinuationProtector();
         var sqlite = SqliteSdkProductContributions.initialize(
                 new SqliteStoreConfiguration(
                         dataDirectory.resolve("personal-assistant.sqlite").toAbsolutePath(), 1_250, 4 * 1024 * 1024),
@@ -241,6 +237,7 @@ public class PersonalAssistantConfiguration {
                     ref -> modelAuthentication
                             .findExternalAccountId(ref, CodexExternalLoginMethod.METHOD_ID)
                             .map(CodexAccountIdentity::new),
+                    properties.modelMaxResponseBytes(),
                     personalModelProxySelector);
             var modelPreferences = new SqlitePersonalModelPreferenceStore(
                     dataDirectory.resolve("personal-assistant.sqlite"),
@@ -435,16 +432,6 @@ public class PersonalAssistantConfiguration {
             return path.toRealPath();
         } catch (IOException exception) {
             throw new IllegalStateException("Personal Assistant data directory is unavailable", exception);
-        }
-    }
-
-    private static byte[] decodeKey(String encoded) {
-        try {
-            byte[] key = Base64.getDecoder().decode(encoded);
-            if (key.length != 32) throw new IllegalArgumentException("continuation key must decode to 32 bytes");
-            return key;
-        } catch (IllegalArgumentException exception) {
-            throw new IllegalArgumentException("continuation key must be base64-encoded AES-256 material", exception);
         }
     }
 }

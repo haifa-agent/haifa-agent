@@ -47,14 +47,24 @@ public final class PersonalRunStreamService {
                 });
         if (terminal(initial.status())) return Flux.just(finalEvent(initial, start));
 
-        Flux<ServerSentEvent<PersonalApiDtos.StreamEvent>> committed =
-                Flux.create(sink -> subscribe(runId, start, sink), FluxSink.OverflowStrategy.ERROR);
+        AtomicReference<StreamPosition> currentPosition = new AtomicReference<>(start);
+        AtomicBoolean streamFinished = new AtomicBoolean();
+        Flux<ServerSentEvent<PersonalApiDtos.StreamEvent>> committed = Flux.create(
+                sink -> subscribeCommitted(runId, start, currentPosition, streamFinished, sink),
+                FluxSink.OverflowStrategy.ERROR);
+        Flux<ServerSentEvent<PersonalApiDtos.StreamEvent>> preview =
+                Flux.<ServerSentEvent<PersonalApiDtos.StreamEvent>>create(
+                                sink -> subscribePreview(runId, currentPosition, streamFinished, sink),
+                                FluxSink.OverflowStrategy.LATEST)
+                        .onErrorResume(ignored -> Flux.empty());
         Flux<ServerSentEvent<PersonalApiDtos.StreamEvent>> heartbeat = Flux.interval(Duration.ofSeconds(15))
                 .map(ignored -> ServerSentEvent.<PersonalApiDtos.StreamEvent>builder()
                         .comment("heartbeat")
                         .build());
-        return committed
-                .publish(shared -> Flux.merge(shared, heartbeat.takeUntilOther(shared.ignoreElements())))
+        Flux<ServerSentEvent<PersonalApiDtos.StreamEvent>> active = committed.publish(sharedCommitted ->
+                Flux.merge(sharedCommitted, preview.takeUntilOther(sharedCommitted.ignoreElements())));
+        return active.publish(sharedActive ->
+                        Flux.merge(sharedActive, heartbeat.takeUntilOther(sharedActive.ignoreElements())))
                 .take(Duration.ofMinutes(5));
     }
 
@@ -62,9 +72,12 @@ public final class PersonalRunStreamService {
         return open(runId, Optional.empty());
     }
 
-    private void subscribe(
-            String runId, StreamPosition start, FluxSink<ServerSentEvent<PersonalApiDtos.StreamEvent>> sink) {
-        AtomicBoolean finished = new AtomicBoolean();
+    private void subscribeCommitted(
+            String runId,
+            StreamPosition start,
+            AtomicReference<StreamPosition> currentPosition,
+            AtomicBoolean streamFinished,
+            FluxSink<ServerSentEvent<PersonalApiDtos.StreamEvent>> sink) {
         AtomicReference<PersonalAssistantApplication.StreamSubscription> subscription = new AtomicReference<>();
         Object emissionLock = new Object();
         long[] positions = {start.durableSequence(), start.transientSequence()};
@@ -78,7 +91,7 @@ public final class PersonalRunStreamService {
                 new PersonalAssistantApplication.StreamCursor(start.durableSequence(), start.transientSequence()),
                 event -> {
                     synchronized (emissionLock) {
-                        if (finished.get()) return;
+                        if (streamFinished.get()) return;
                         int sourceIndex = event.source() == PersonalAssistantApplication.StreamSource.DURABLE ? 0 : 1;
                         if (event.sequence() <= positions[sourceIndex]) return;
                         positions[sourceIndex] = event.sequence();
@@ -90,6 +103,7 @@ public final class PersonalRunStreamService {
                             terminalStatus[0] = event.value();
                         }
                         StreamPosition current = new StreamPosition(positions[0], positions[1]);
+                        currentPosition.set(current);
                         String eventId = encode(runId, current);
                         PersonalApiDtos.StreamEvent mapped = withEventId(mapper.stream(event), eventId);
                         sink.next(ServerSentEvent.<PersonalApiDtos.StreamEvent>builder(mapped)
@@ -102,7 +116,7 @@ public final class PersonalRunStreamService {
                                 outputActive[0],
                                 terminalStatus[0],
                                 positions,
-                                finished,
+                                streamFinished,
                                 sink);
                     }
                 });
@@ -112,11 +126,42 @@ public final class PersonalRunStreamService {
             application.run(runId).filter(run -> terminal(run.status())).ifPresent(run -> {
                 terminalStatus[0] = run.status();
             });
-            completeIfTerminal(runId, true, outputActive[0], terminalStatus[0], positions, finished, sink);
-            if (sink.isCancelled() || finished.get()) {
+            completeIfTerminal(runId, true, outputActive[0], terminalStatus[0], positions, streamFinished, sink);
+            if (sink.isCancelled() || streamFinished.get()) {
                 close(subscription.getAndSet(null));
             }
         }
+    }
+
+    private void subscribePreview(
+            String runId,
+            AtomicReference<StreamPosition> currentPosition,
+            AtomicBoolean streamFinished,
+            FluxSink<ServerSentEvent<PersonalApiDtos.StreamEvent>> sink) {
+        AtomicReference<PersonalAssistantApplication.StreamSubscription> subscription = new AtomicReference<>();
+        sink.onDispose(() -> close(subscription.getAndSet(null)));
+        PersonalAssistantApplication.StreamSubscription created = application.subscribeToolOutput(runId, preview -> {
+            if (streamFinished.get() || sink.isCancelled()) return;
+            String eventId = encode(runId, currentPosition.get());
+            PersonalApiDtos.StreamEvent event = new PersonalApiDtos.StreamEvent(
+                    eventId,
+                    "tool.output.preview",
+                    preview.runId().value(),
+                    application.now(),
+                    preview.text(),
+                    Optional.empty(),
+                    "transient",
+                    0,
+                    Optional.of(preview.toolCallId().value()),
+                    Optional.of(preview.channel().name().toLowerCase(java.util.Locale.ROOT)),
+                    Optional.of(preview.outputTruncated()),
+                    Optional.of(preview.previewDropped()));
+            sink.next(ServerSentEvent.<PersonalApiDtos.StreamEvent>builder(event)
+                    .event("tool.output.preview")
+                    .build());
+        });
+        subscription.set(created);
+        if (sink.isCancelled()) close(subscription.getAndSet(null));
     }
 
     private void completeIfTerminal(
@@ -148,7 +193,11 @@ public final class PersonalRunStreamService {
                 event.value(),
                 event.activity(),
                 event.source(),
-                event.sequence());
+                event.sequence(),
+                event.toolCallId(),
+                event.outputChannel(),
+                event.outputTruncated(),
+                event.previewDropped());
     }
 
     private String encode(String runId, StreamPosition position) {

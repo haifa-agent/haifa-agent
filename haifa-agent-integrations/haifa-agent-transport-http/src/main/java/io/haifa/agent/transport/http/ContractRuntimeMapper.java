@@ -254,13 +254,29 @@ public final class ContractRuntimeMapper {
                     value.status(),
                     value.reasonCode(),
                     value.targetSummary(),
-                    value.resultRef());
+                    value.resultRef(),
+                    value.observation().map(ContractRuntimeMapper::toolObservation));
         }
         if (payload instanceof RunEventPayloads.ResourceAvailable value) {
             return new RunEventPayload.ResourceAvailable(
                     value.reference(), value.kind(), value.title(), value.status(), value.action());
         }
         throw new IllegalArgumentException("unsupported public event payload");
+    }
+
+    private static RunEventPayload.ToolObservation toolObservation(RunEventPayloads.ToolObservation value) {
+        io.haifa.agent.runtime.api.display.BoundedText preview =
+                value.outputPreview().orElse(null);
+        return new RunEventPayload.ToolObservation(
+                preview == null ? "" : preview.text(),
+                preview != null && preview.truncated(),
+                preview == null ? 0 : preview.byteCount(),
+                preview == null ? 0 : preview.lineCount(),
+                preview == null
+                        ? ""
+                        : preview.truncationReason().map(Enum::name).orElse(""),
+                value.processState().orElse(""),
+                value.exitCode().orElse(null));
     }
 
     public static IdempotencyKey idempotency(String value) {

@@ -1,6 +1,6 @@
 # Haifa Agent Standalone Consumer Examples
 
-This non-Reactor Maven build consumes installed Haifa Agent `0.1.0` artifacts exactly as an
+This non-Reactor Maven build consumes installed Haifa Agent `0.1.1` artifacts exactly as an
 external application would. It is tracked by the main repository so that it cannot drift out of
 view, but it deliberately does not inherit the main repository parent POM or join its Reactor.
 
@@ -16,6 +16,7 @@ second catalog of SDK teaching snippets.
 | **PureJavaQuickstartApplication** | `pure-java-quickstart` | `HaifaAgentStarter`, `JavaTool`, ReAct Loop | `mvn exec:java -Dexec.mainClass=io.haifa.example.consumer.plain.PureJavaQuickstartApplication` | Single-turn chat with typed weather tool execution |
 | **PureJavaStreamingApplication** | `pure-java-quickstart` | Real-time Streaming, `subscribeOutput`, Token Deltas | `mvn exec:java -Dexec.mainClass=io.haifa.example.consumer.plain.PureJavaStreamingApplication` | Terminal typewriter-style streaming token output |
 | **PureJavaStructuredOutputApplication** | `pure-java-quickstart` | Structured Output, Java Record, Frozen Schema | `mvn exec:java -Dexec.mainClass=io.haifa.example.consumer.plain.PureJavaStructuredOutputApplication` | Type-safe schema validation extracting a Java Record |
+| **PureJavaMcpApplication** | `pure-java-quickstart` | `McpServerSpec`, Native MCP Client, Tool Approval | `mvn exec:java -Dexec.mainClass=io.haifa.example.consumer.plain.PureJavaMcpApplication` | Consumes allowlisted Tools from a remote MCP server; **skips itself unless `PARTNER_MCP_URL` is set** |
 | **PureJavaVisionApplication** | `pure-java-quickstart` | DeepSeek Vision, Direct Image Upload, Multimodal | `mvn exec:java '-Dexec.mainClass=io.haifa.example.consumer.plain.PureJavaVisionApplication'` | Explains the story in an image uploaded directly without external URLs |
 | **SpringBootQuickstartApplication** | `spring-boot-quickstart` | Spring Boot, Tool Beans, REST API, Web SSE | `mvn -pl :haifa-agent-spring-boot-quickstart spring-boot:run` | Web service exposing REST and Server-Sent Events (SSE) |
 
@@ -39,6 +40,34 @@ cd examples/haifa-agent-example
 ```
 
 > **Determinism Guarantee**: All automated tests run 100% offline without contacting external LLM providers or requiring credentials.
+
+> **MCP example**: `PureJavaMcpApplication` needs an MCP server that no build can assume is running, so it
+> skips itself and prints why unless `PARTNER_MCP_URL` names a Streamable HTTP MCP endpoint. Its offline
+> tests still assert the `McpServerSpec` declaration and the empty-allowlist rejection.
+
+---
+
+## 🔌 Running the MCP Example
+
+`PureJavaMcpApplication` is the only example that needs a service outside this repository. Without one it
+prints a skip message and exits, so `mvn verify` and a bare `exec:java` stay deterministic.
+
+Point it at a Streamable HTTP MCP server and set a bearer token when that server requires one:
+
+```bash
+export PARTNER_MCP_URL=https://partner.example.com/mcp
+export PARTNER_MCP_TOKEN=...   # only when the server requires it
+export DEEPSEEK_API_KEY=...
+
+cd examples/haifa-agent-example
+./mvnw -pl :haifa-agent-pure-java-quickstart   exec:java -Dexec.mainClass=io.haifa.example.consumer.plain.PureJavaMcpApplication
+```
+
+The example allows exactly `search_courses`, `search_policies` and `search_jobs` under the `enterprise`
+prefix; edit `ALLOWED_TOOLS` to match the Tool names your server publishes, because a declared Tool the
+server does not offer fails the build by design. Remote MCP Tools reach the network, so the Starter's
+standard approval preset asks before each call — the example approves them itself, which a real
+application must not do without showing the prompt to a person.
 
 ---
 

@@ -28,7 +28,9 @@ class AutonomousDeliveryLadderCaseFilesTest {
             assertNotNull(input, resource + " must be on the test classpath");
             String schema = new String(input.readAllBytes(), StandardCharsets.UTF_8);
 
-            assertTrue(schema.contains("^L[1-6]-0[1-9]$"), "the ladder caseId pattern must be declared");
+            assertTrue(
+                    schema.contains("^(?:L[1-6]|H[1-4][1-3])-0[1-9]$"),
+                    "the caseId pattern must accept both the ladder and the hard-ladder case sets");
             assertTrue(schema.contains("INCOMPLETE_BUDGET"), "the budget status must be declared");
             assertTrue(schema.contains("legacyResult"), "the frozen legacy shape must stay accepted");
         }

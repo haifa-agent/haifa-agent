@@ -23,6 +23,13 @@ export interface CommandState {
   label: string;
 }
 
+export interface ToolOutputPreviewState {
+  text: string;
+  channel: "stdout" | "stderr";
+  outputTruncated: boolean;
+  previewDropped: boolean;
+}
+
 export interface UiState {
   bootstrap: Bootstrap | null;
   conversations: Conversation[];
@@ -31,6 +38,7 @@ export interface UiState {
   turns: Turn[];
   run: Run | null;
   activities: Activity[];
+  toolPreviews: Record<string, ToolOutputPreviewState>;
   interaction: Interaction | null;
   interactionError: string | null;
   memoryCandidates: MemoryCandidate[];

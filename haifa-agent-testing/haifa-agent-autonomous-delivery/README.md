@@ -13,10 +13,15 @@
    - 详细规范请参阅：
      - 本模块 [`AUTONOMOUS_DELIVERY_LADDER_SPEC.md`](AUTONOMOUS_DELIVERY_LADDER_SPEC.md)
      - 架构设计文档 [`docs/prompts/34-testing-architecture-simplification/34-autonomous-delivery-capability-ladder-design.md`](../../docs/prompts/34-testing-architecture-simplification/34-autonomous-delivery-capability-ladder-design.md)
+4. **题集分组（case set）**：资产仓可以同时发布多套题集，Runner 一次只评测其中一套：
+   - `ladder-v1`：现有 23 题的能力阶梯，日常防退化回归用，默认题集；
+   - `hard-v1`：高阶能力探针题集（4 能力维度 × 3 难度档），已发布 4 道 T1 题（`H11-01` `H21-01` `H31-01` `H41-01`），T2/T3 仍在资产仓作者化中，设计见
+     [`34-autonomous-delivery-hard-ladder-design.md`](../../docs/prompts/34-testing-architecture-simplification/34-autonomous-delivery-hard-ladder-design.md)；
+   - 两套题集的成员不重叠，`--cases` 的通配也不会跨题集选中题目，报告与运行记录都带 `caseSet`，结果不会互相污染。
 
 ## 当前状态
 
-23 题已在独立资产仓 [`haifa-agent-autonomous-delivery-assets`](https://github.com/haifa-agent/haifa-agent-autonomous-delivery-assets) 作者化（L1×5、L2×5、L3×4、L4×4、L5×3、L6×2，其中 L6-02 为 Java/Maven 题），当前资产版本 `2026.09.11.2`。每个题目目录 `cases/<caseId>/` 自包含 `case.yaml`（单源元数据）、`prompt.txt`（英文题面）、`base-workspace/`（初始工作区）、`reference/`（参考解）与 `acceptance.py`（工作区之外执行的黑盒验收，输出单行 JSON）；资产仓的 `cases/` 由其 `authoring/` 生成，不手工编辑。
+23 题已在独立资产仓 [`haifa-agent-autonomous-delivery-assets`](https://github.com/haifa-agent/haifa-agent-autonomous-delivery-assets) 作者化（L1×5、L2×5、L3×4、L4×4、L5×3、L6×2，其中 L6-02 为 Java/Maven 题），当前资产版本 `2026.09.20.1`（`ladder-v1` 的 23 题题面、工作区与验收语义不变，仅随共享验收骨架一起更新；另含 `hard-v1` 的 4 道 T1 题）。每个题目目录 `cases/<caseId>/` 自包含 `case.yaml`（单源元数据）、`prompt.txt`（英文题面）、`base-workspace/`（初始工作区）、`reference/`（参考解）与 `acceptance.py`（工作区之外执行的黑盒验收，输出单行 JSON）；资产仓的 `cases/` 由其 `authoring/` 生成，不手工编辑。
 
 验收约定（资产仓 `README.md` 为准）：卫生检查只守护该题承诺的内容（既有测试与受保护文件逐字节不变、改动源文件在可编辑范围与改动预算内），新增测试文件、工具缓存与临时产物不判失败；每个隐藏检查在独立解释器中带独立超时运行；性能检查与本机 O(n) 基准校准而非固定秒数；L3/L4 共用一个带分层约束的中等规模工程，题面不给文件路径。
 
@@ -26,7 +31,7 @@
 python haifa-agent-testing/haifa-agent-autonomous-delivery/tools/fetch_assets.py `
   --cache-dir D:\haifa-agent-cache\autonomous-delivery --print-path
 python haifa-agent-testing/haifa-agent-autonomous-delivery/tools/run_case.py `
-  --assets-dir D:\haifa-agent-cache\autonomous-delivery\assets-34674c775b68d84163f508bf7e6364cad205de93 `
+  --assets-dir D:\haifa-agent-cache\autonomous-delivery\assets-a76587df9f56527d65be5f6e8fbcf5503b473588 `
   --case L1-01 --mode nop
 ```
 
@@ -48,11 +53,19 @@ python -m unittest discover -s haifa-agent-testing/haifa-agent-autonomous-delive
 | --- | --- |
 | `HAIFA_LADDER_ALLOW_REAL_PROVIDER` | 必须为 `true`：评测调用真实 Provider 并产生费用 |
 | `HAIFA_LADDER_AGENT` | Coding Agent 启动器；未设置时自动发现 `~/.haifa-agent/coding/haifa-coding(.cmd)` |
-| 凭据 | 由生效模型推断：`glm-*` → `BIGMODEL_API_KEY`、`kimi-*` → `KIMI_API_KEY` 等；`deepseek`/`gpt-*`/`antigravity` 经系统凭据管理器（Windows Credential Manager 等）认证，体检会检查该 Provider 的连接是否已存在 |
+| 凭据 | 先读生效模型所属 Provider 的约定环境变量：`deepseek` → `DEEPSEEK_API_KEY`、`zhipu`（`glm-*`）→ `BIGMODEL_API_KEY`、`kimi` → `KIMI_API_KEY`、`aliyun-bailian`（`qwen*`）→ `DASHSCOPE_API_KEY`、`siliconflow` → `SILICONFLOW_API_KEY`、`tokenrhythm` → `TK_API_KEY`；未设置时回退到系统凭据管理器（Windows Credential Manager 中 Agent 登录后保存的 `model-auth://<provider>/default`）。`openai-codex`、`google-antigravity` 只有浏览器登录，总是走系统凭据管理器。体检只检查凭据是否存在，不读取凭据值；Runner 会在报告目录写一份 `agent-configuration-<秒数>s.yaml` 交给 Agent，其中只改两处：选中的凭据来源 `credentialRef`（只有引用、没有密钥）与单条命令超时 `execution.maxTimeoutMillis` |
 
-可选：`HAIFA_LADDER_MODEL`、`HAIFA_LADDER_APPROVAL`（默认 `auto`，只接受 `auto` 或 `deny`：评测以关闭的 stdin 运行 Agent，`ask` 会让每次审批被拒，体检阶段直接拒绝）、`HAIFA_LADDER_CASES`、
+可选：`HAIFA_LADDER_MODEL`、`HAIFA_LADDER_APPROVAL`（默认 `auto`，只接受 `auto` 或 `deny`：评测以关闭的 stdin 运行 Agent，`ask` 会让每次审批被拒，体检阶段直接拒绝）、`HAIFA_LADDER_CASE_SET`、`HAIFA_LADDER_CASES`、
 `HAIFA_LADDER_REPEAT`、`HAIFA_LADDER_TIMEOUT_SCALE`、`HAIFA_LADDER_OUTPUT`、`HAIFA_LADDER_CACHE_DIR`、
 `HAIFA_LADDER_ASSETS_DIR`；每个变量都有同名 `--kebab-case` 参数，参数优先。
+
+`--case-set` 默认 `ladder-v1`。`--cases` 只在所选题集内部筛选：`--case-set hard-v1 --cases L1-*` 选不出任何题，
+而不是回退到阶梯题集。`--repeat` 未显式给出时，`ladder-v1` 为 1 次，`hard-v1` 为 3 次——高阶题集标定在能力边界附近，
+单次偶过不作为通过证据，结果按通过率而不是二值读取。
+
+单条命令的超时被压到该题预算的 1/4（不低于 60 秒）：发行包默认允许一条命令跑到产品上限，再被整题剩余时间裁剪，
+于是一条不返回的命令能吃光整题预算，Agent 也收不到"这条命令卡住了"的反馈。压到 1/4 后超时会变成一次明确的失败，
+Agent 还有时间换做法。
 
 `--assets-dir` 指定的目录必须与 `assets.lock.json` 的 manifest 摘要一致，否则体检直接失败：题集不是锁定的那一版，结果无法与基线比较；确实要用未锁定的题集时加 `--allow-unpinned-assets`，体检会以 `UNPINNED` 标注继续。
 
@@ -60,8 +73,11 @@ python -m unittest discover -s haifa-agent-testing/haifa-agent-autonomous-delive
 # 只体检：环境变量、工具链、按锁下载并校验资产、Runner 单测、NOP/oracle 门
 .\haifa-agent-testing\haifa-agent-autonomous-delivery\tools\run-ladder.ps1 check
 
-# 体检通过后评测全部 23 题
+# 体检通过后评测阶梯题集全部 23 题
 .\haifa-agent-testing\haifa-agent-autonomous-delivery\tools\run-ladder.ps1 run
+
+# 评测高阶题集（每题默认重复 3 次，按通过率读结果）
+.\haifa-agent-testing\haifa-agent-autonomous-delivery\tools\run-ladder.ps1 run --case-set hard-v1
 
 # 彩排：用参考解跑通整条链路，不调用模型、不产生费用
 .\haifa-agent-testing\haifa-agent-autonomous-delivery\tools\run-ladder.ps1 run --rehearse --skip-gates
@@ -70,7 +86,7 @@ python -m unittest discover -s haifa-agent-testing/haifa-agent-autonomous-delive
 评测过程中的输出：每题开始时的三维标签与变体、Agent 预算与日志文件名、每 15 秒一次的心跳（已用时间/预算、
 输出行数、最后一行输出）、每题结束时的状态（`PASSED` / `FAILED` / `INCOMPLETE_BUDGET`）、通过的检查数、
 Agent 耗时与退出码、改动的源文件；失败时列出失败检查名及其原因。每题之后打印总进度与累计通过率，
-结束时按 level 汇总，并写出 `ladder-report.json`、`run-records.jsonl` 与每题 Agent 日志；报告的 `mode` 区分 `agent` 与 `rehearse`，彩排结果不会被误读为真实评测；报告与每条运行记录还带`evaluation` 溯源信息（模式、模型、审批模式、题集版本与 manifest 摘要、是否为锁定题集），未锁定题集在汇总和报告里都会标为 `UNPINNED`。未显式指定 `--model` 时，体检与报告会解析发行包配置里的默认模型并记为 `modelSource: agent configuration`，不会留空。验收脚本以剥离了 Provider 凭据的环境运行。
+结束时按 level 汇总（`hard-v1` 的题另按难度档 `T1`/`T2`/`T3` 汇总一次，`level` 即其能力维度 `H1`~`H4`），并写出 `ladder-report.json`、`run-records.jsonl` 与每题 Agent 日志；报告的 `mode` 区分 `agent` 与 `rehearse`，彩排结果不会被误读为真实评测；报告与每条运行记录还带`evaluation` 溯源信息（模式、模型、审批模式、题集名、题集版本与 manifest 摘要、是否为锁定题集），未锁定题集在汇总和报告里都会标为 `UNPINNED`。未显式指定 `--model` 时，体检与报告会解析发行包配置里的默认模型并记为 `modelSource: agent configuration`，不会留空。验收脚本以剥离了 Provider 凭据的环境运行。
 
 ### 资源使用统计
 

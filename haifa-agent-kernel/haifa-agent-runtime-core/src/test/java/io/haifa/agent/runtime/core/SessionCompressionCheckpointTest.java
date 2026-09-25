@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.common.id.IdentifierGenerator;
+import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.context.api.AgentContext;
 import io.haifa.agent.context.budget.ContextWindowBudget;
 import io.haifa.agent.context.compression.CompressionPolicy;
@@ -43,6 +44,7 @@ import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.RuntimeOverrides;
+import io.haifa.agent.runtime.core.context.ActiveContextSnapshots;
 import io.haifa.agent.runtime.core.execution.ManualExecutionScheduler;
 import io.haifa.agent.runtime.core.loop.SessionMessageSource;
 import io.haifa.agent.runtime.core.model.ModelMessageAssembler;
@@ -133,7 +135,7 @@ class SessionCompressionCheckpointTest {
         store.appendSessionMessage(
                 draft("latest-user", run.sessionId(), run.id().value(), MessageRole.USER, "latest"));
 
-        SessionMessageSource source = new SessionMessageSource(
+        SessionMessageSource source = messageSource(
                 store,
                 store,
                 new DeterministicContextCompressor(),
@@ -172,7 +174,7 @@ class SessionCompressionCheckpointTest {
         store.appendSessionMessage(
                 draft("stable-three", run.sessionId(), run.id().value(), MessageRole.USER, "three"));
 
-        SessionMessageSource source = new SessionMessageSource(
+        SessionMessageSource source = messageSource(
                 store,
                 store,
                 new DeterministicContextCompressor(),
@@ -210,7 +212,7 @@ class SessionCompressionCheckpointTest {
         AgentRunId runId = run.id();
         store.appendSessionMessage(draft("prefix-two", session, runId.value(), MessageRole.USER, "two"));
         store.appendSessionMessage(draft("prefix-three", session, runId.value(), MessageRole.USER, "three"));
-        SessionMessageSource source = new SessionMessageSource(
+        SessionMessageSource source = messageSource(
                 store,
                 store,
                 new DeterministicContextCompressor(),
@@ -243,7 +245,7 @@ class SessionCompressionCheckpointTest {
                     "token-message-" + index, run.sessionId(), run.id().value(), MessageRole.USER, "short-" + index));
         }
 
-        SessionMessageSource source = new SessionMessageSource(
+        SessionMessageSource source = messageSource(
                 store,
                 store,
                 new DeterministicContextCompressor(),
@@ -297,7 +299,7 @@ class SessionCompressionCheckpointTest {
             }
         };
         AtomicInteger ids = new AtomicInteger();
-        SessionMessageSource source = new SessionMessageSource(
+        SessionMessageSource source = messageSource(
                 store,
                 store,
                 synchronizedCompressor,
@@ -336,7 +338,7 @@ class SessionCompressionCheckpointTest {
                 NOW));
         store.appendSessionMessage(draft("m-user-after", session, "run-2", MessageRole.USER, "after"));
 
-        SessionMessageSource source = new SessionMessageSource(
+        SessionMessageSource source = messageSource(
                 store,
                 store,
                 new DeterministicContextCompressor(),
@@ -401,7 +403,7 @@ class SessionCompressionCheckpointTest {
                 Map.of(),
                 NOW));
 
-        SessionMessageSource source = new SessionMessageSource(
+        SessionMessageSource source = messageSource(
                 store,
                 store,
                 new DeterministicContextCompressor(),
@@ -444,7 +446,7 @@ class SessionCompressionCheckpointTest {
                 NOW));
         store.appendSessionMessage(draft("m-latest", session, "run-2", MessageRole.USER, "latest"));
 
-        SessionMessageSource source = new SessionMessageSource(
+        SessionMessageSource source = messageSource(
                 store,
                 store,
                 new DeterministicContextCompressor(),
@@ -554,6 +556,15 @@ class SessionCompressionCheckpointTest {
                                 "compacted",
                                 "compactionReason",
                                 "compactionElapsedMillis",
+                                "contextBuildElapsedMillis",
+                                "sessionSelectionElapsedMillis",
+                                "historyRowsRead",
+                                "activeRowsSelected",
+                                "atomicGroupCandidateScans",
+                                "atomicGroupsBuilt",
+                                "sessionToolCallBatchCount",
+                                "summaryRenderCacheHits",
+                                "summaryRenderCacheMisses",
                                 "estimatedSessionTokens",
                                 "sessionTokenBudget",
                                 "summarySourceHash",
@@ -770,7 +781,7 @@ class SessionCompressionCheckpointTest {
                     NOW.plusSeconds(step)));
         }
 
-        SessionMessageSource source = new SessionMessageSource(
+        SessionMessageSource source = messageSource(
                 store,
                 store,
                 new DeterministicContextCompressor(),
@@ -835,7 +846,7 @@ class SessionCompressionCheckpointTest {
                     NOW.plusSeconds(step)));
         }
 
-        SessionMessageSource source = new SessionMessageSource(
+        SessionMessageSource source = messageSource(
                 store,
                 store,
                 new DeterministicContextCompressor(),
@@ -910,7 +921,7 @@ class SessionCompressionCheckpointTest {
                 true);
         store.compareAndSet(invalidSummary, 0);
 
-        SessionMessageSource source = new SessionMessageSource(
+        SessionMessageSource source = messageSource(
                 store,
                 store,
                 new DeterministicContextCompressor(),
@@ -1005,7 +1016,7 @@ class SessionCompressionCheckpointTest {
         store.appendSessionMessage(draft("turn1-user", session, "run-2", MessageRole.USER, "continue"));
 
         // Policy: small retainedTailBudget so candidateSplit lands on turn0-res-2 or turn0-call-2
-        SessionMessageSource source = new SessionMessageSource(
+        SessionMessageSource source = messageSource(
                 store,
                 store,
                 new DeterministicContextCompressor(),
@@ -1031,6 +1042,23 @@ class SessionCompressionCheckpointTest {
                 .toList();
 
         assertThat(tailMessages.getFirst().id()).isEqualTo(new AgentMessageId("turn1-user"));
+    }
+
+    private static SessionMessageSource messageSource(
+            InMemoryRuntimeStore messages,
+            InMemoryRuntimeStore summaries,
+            ContextCompressor compressor,
+            CompressionPolicy policy,
+            IdentifierGenerator ids,
+            TimeProvider time) {
+        return new SessionMessageSource(
+                messages,
+                summaries,
+                compressor,
+                policy,
+                ids,
+                time,
+                new ActiveContextSnapshots(messages, summaries, policy, compressor));
     }
 
     private static DefaultAgentRuntime runtime(

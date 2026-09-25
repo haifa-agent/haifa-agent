@@ -60,6 +60,9 @@ public final class PersonalAssistantAssembler {
     public static CompressionPolicy defaultCompressionPolicy() {
         return CompressionPolicy.defaults()
                 .withSemanticCompactionEnabled(true)
+                // A rejected summary is a quality problem, not a reason to lose the user's Run: compaction falls back
+                // to the deterministic compressor and the Run continues with a lower-fidelity summary.
+                .withDegradedFallback(true)
                 .withDynamicActiveBudget(
                         PERSONAL_ASSISTANT_ACTIVE_HISTORY_BUDGET_PERCENT,
                         PERSONAL_ASSISTANT_MIN_ACTIVE_HISTORY_BUDGET_TOKENS,
@@ -265,7 +268,8 @@ public final class PersonalAssistantAssembler {
                     dependencies.artifact().service(),
                     skills.bindingReferences(),
                     productDigest(profile, dependencies, tools),
-                    new RuntimeFetchEvidenceReader(dependencies.persistence().runtimePersistence()));
+                    new RuntimeFetchEvidenceReader(dependencies.persistence().runtimePersistence()),
+                    dependencies.execution().previewPublisher());
         } catch (RuntimeException | Error exception) {
             try {
                 mcp.close();

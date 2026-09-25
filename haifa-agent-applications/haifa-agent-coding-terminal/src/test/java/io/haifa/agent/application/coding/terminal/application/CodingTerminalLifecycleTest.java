@@ -34,6 +34,11 @@ class CodingTerminalLifecycleTest {
             }
 
             @Override
+            public String apiKeyProviderId() {
+                return "deepseek";
+            }
+
+            @Override
             public List<CodingAuthenticationView> connections() {
                 return List.of();
             }
@@ -67,7 +72,7 @@ class CodingTerminalLifecycleTest {
         assertThat(controller.state().selector()).get().satisfies(selector -> {
             assertThat(selector.kind()).isEqualTo("auth-login");
             assertThat(selector.title()).isEqualTo("Connect a model to get started");
-            assertThat(selector.options()).containsExactly("Provider API key (secure input)");
+            assertThat(selector.options()).containsExactly("DeepSeek (API key)");
         });
     }
 
@@ -137,8 +142,14 @@ class CodingTerminalLifecycleTest {
 
         controller.start(CodingTerminalStartup.empty());
 
-        assertThat(controller.state().selector().orElseThrow().options())
-                .containsExactly("Antigravity subscription", "Provider API key (secure input)");
+        var options = controller.state().selector().orElseThrow().options();
+        assertThat(options).contains("DeepSeek (API key)", "Antigravity subscription");
+        assertThat(options.get(0)).isEqualTo("DeepSeek (API key)");
+        assertThat(options.get(options.size() - 1)).isEqualTo("Antigravity subscription");
+
+        for (int i = 0; i < options.indexOf("Antigravity subscription"); i++) {
+            controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        }
         controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
         controller.drainEvents();
 

@@ -7,7 +7,7 @@
     <parent>
         <groupId>io.haifa.example</groupId>
         <artifactId>haifa-agent-examples</artifactId>
-        <version>0.1.0</version>
+        <version>0.1.1</version>
     </parent>
 
     <artifactId>haifa-agent-pure-java-quickstart</artifactId>

@@ -18,6 +18,7 @@ public record ConversationSummary(
         MessageCursor coveredFrom,
         MessageCursor coveredThrough,
         List<AgentMessageId> sourceMessageIds,
+        long coveredSourceCount,
         String sourceHash,
         List<String> facts,
         List<String> decisions,
@@ -57,6 +58,7 @@ public record ConversationSummary(
                 coveredFrom,
                 coveredThrough,
                 sourceMessageIds,
+                sourceMessageIds == null ? 0L : sourceMessageIds.size(),
                 sourceHash,
                 facts,
                 decisions,
@@ -72,6 +74,50 @@ public record ConversationSummary(
                 CompactionQuality.DETERMINISTIC_DEGRADED);
     }
 
+    /** Compatibility constructor for summaries whose direct sources are also their complete covered range. */
+    public ConversationSummary(
+            SummaryId id,
+            SummaryVersion version,
+            AgentSessionId sessionId,
+            MessageCursor coveredFrom,
+            MessageCursor coveredThrough,
+            List<AgentMessageId> sourceMessageIds,
+            String sourceHash,
+            List<String> facts,
+            List<String> decisions,
+            List<String> openItems,
+            List<ToolCallId> toolOutcomeReferences,
+            int estimatedTokens,
+            Instant createdAt,
+            String policyVersion,
+            String compressorVersion,
+            Set<String> securityLabels,
+            boolean valid,
+            Optional<SemanticConversationSummaryV1> semanticSummary,
+            CompactionQuality quality) {
+        this(
+                id,
+                version,
+                sessionId,
+                coveredFrom,
+                coveredThrough,
+                sourceMessageIds,
+                sourceMessageIds == null ? 0L : sourceMessageIds.size(),
+                sourceHash,
+                facts,
+                decisions,
+                openItems,
+                toolOutcomeReferences,
+                estimatedTokens,
+                createdAt,
+                policyVersion,
+                compressorVersion,
+                securityLabels,
+                valid,
+                semanticSummary,
+                quality);
+    }
+
     public ConversationSummary {
         id = Objects.requireNonNull(id, "id must not be null");
         version = Objects.requireNonNull(version, "version must not be null");
@@ -83,6 +129,9 @@ public record ConversationSummary(
         }
         sourceMessageIds = List.copyOf(Objects.requireNonNull(sourceMessageIds, "sourceMessageIds must not be null"));
         if (sourceMessageIds.isEmpty()) throw new IllegalArgumentException("summary sources must not be empty");
+        if (coveredSourceCount < sourceMessageIds.size()) {
+            throw new IllegalArgumentException("coveredSourceCount must include every direct source");
+        }
         sourceHash = requireText(sourceHash, "sourceHash");
         facts = immutable(facts, "facts");
         decisions = immutable(decisions, "decisions");
@@ -113,6 +162,7 @@ public record ConversationSummary(
                 coveredFrom,
                 coveredThrough,
                 sourceMessageIds,
+                coveredSourceCount,
                 sourceHash,
                 facts,
                 decisions,

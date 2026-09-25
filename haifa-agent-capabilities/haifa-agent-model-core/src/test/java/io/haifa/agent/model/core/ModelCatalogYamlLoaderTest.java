@@ -116,6 +116,16 @@ class ModelCatalogYamlLoaderTest {
                                         Set.of(ModelAuthenticationMethod.EXTERNAL_LOGIN)))
                 .load();
 
+        assertThat(catalog.provider("deepseek").orElseThrow().showOrder()).isEqualTo(1);
+        assertThat(catalog.provider("aliyun-bailian").orElseThrow().showOrder()).isEqualTo(2);
+        assertThat(catalog.provider("zhipu").orElseThrow().showOrder()).isEqualTo(3);
+        assertThat(catalog.provider("kimi").orElseThrow().showOrder()).isEqualTo(4);
+        assertThat(catalog.provider("siliconflow").orElseThrow().showOrder()).isEqualTo(5);
+        assertThat(catalog.provider("tokenrhythm").orElseThrow().showOrder()).isEqualTo(6);
+        assertThat(catalog.provider("openai-codex").orElseThrow().showOrder()).isEqualTo(10);
+        assertThat(catalog.provider("google-antigravity").orElseThrow().showOrder())
+                .isEqualTo(20);
+
         assertThat(catalog.binding("deepseek-chat-pro").orElseThrow().profile().allowedReasoningEfforts())
                 .containsExactlyInAnyOrder(
                         io.haifa.agent.model.api.ModelReasoningEffort.HIGH,
@@ -167,6 +177,29 @@ class ModelCatalogYamlLoaderTest {
                         .profile()
                         .contextWindowTokens())
                 .isEqualTo(1_000_000);
+        assertThat(catalog.binding("tokenrhythm-kimi-k3")
+                        .orElseThrow()
+                        .definition()
+                        .providerModelId())
+                .isEqualTo("kimi-k3");
+        assertThat(catalog.binding("tokenrhythm-deepseek-flash")
+                        .orElseThrow()
+                        .profile()
+                        .maximumOutputTokens())
+                .isEqualTo(384_000);
+        // Semantic compaction only runs on models that declare structured output, so every chat binding must keep it.
+        assertThat(catalog.binding("tokenrhythm-deepseek-flash")
+                        .orElseThrow()
+                        .definition()
+                        .capabilities())
+                .contains(ModelCapability.STRUCTURED_OUTPUT);
+        assertThat(catalog.binding("kimi-k3").orElseThrow().definition().capabilities())
+                .contains(ModelCapability.STRUCTURED_OUTPUT);
+        assertThat(catalog.binding("tokenrhythm-glm-5-3-flashx")
+                        .orElseThrow()
+                        .profile()
+                        .contextWindowTokens())
+                .isEqualTo(1_048_576);
         assertThat(catalog.binding("gpt-5.6-sol").orElseThrow().definition().capabilities())
                 .contains(ModelCapability.STRUCTURED_OUTPUT);
         assertThat(catalog.binding("gpt-5.6-terra").orElseThrow().definition().capabilities())
@@ -255,6 +288,24 @@ class ModelCatalogYamlLoaderTest {
         assertThatIllegalArgumentException()
                 .isThrownBy(() -> loader(resources).load())
                 .withMessageContaining("duplicate binding id");
+    }
+
+    @Test
+    void rejectsInvalidShowOrderInProvider() {
+        Map<String, String> resources = resources();
+        resources.put(
+                "META-INF/haifa/model-catalog/providers/openai/provider.yaml",
+                provider("openai", "openai-chat", "API_KEY").replace("status: ACTIVE", "status: ACTIVE\nshowOrder: 0"));
+
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> loader(resources).load())
+                .withMessageContaining("field must be a positive integer");
+    }
+
+    @Test
+    void defaultsShowOrderToMaxWhenOmittedInProvider() {
+        ModelCatalogManifest catalog = loader(resources()).load();
+        assertThat(catalog.provider("openai").orElseThrow().showOrder()).isEqualTo(Integer.MAX_VALUE);
     }
 
     private static ModelCatalogYamlLoader loader(Map<String, String> resources) {
