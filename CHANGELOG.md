@@ -10,6 +10,18 @@
   (`resolveConflict`) or was rejected by the SQLite store with `MEMORY_DEFERRED_OPERATION`, so SDK and Personal
   Assistant behavior, the SQLite schema and stored payloads are unchanged. `MemoryRetentionPolicy` and the
   `EXPIRED`/`PURGE_PENDING`/`PURGED` status values remain until the Memory record is reshaped.
+- SDK applications can steer an active Run. `AgentRuns.submitInput(RunInputCommand)` returns an SDK-owned
+  `RunInputResult` with `RunInputStatus` (`ACCEPTED`, `DUPLICATE`, `APPLIED`, `REJECTED`); the caller identity still
+  comes only from the SDK caller provider, and the input reaches the model at the next `BEFORE_ITERATION`, never
+  inside Tool execution or model request construction. Accepted input is no longer silently lost when the model
+  finishes first: input acceptance and the final commit now share one Unit of Work, a final answer produced while
+  input is pending is deferred (`completion.deferred` with `PENDING_RUN_INPUT`) until the model has seen it, and any
+  terminal transition, including recovery after a restart, rejects still-pending input with a lower-kebab reason such
+  as `run-cancelled` and a new public `run.input.rejected` event. A Run that is completing or terminal returns
+  `REJECTED` (`run-not-accepting-input`) through the SDK. Runtime behavior change: steer retries are matched by
+  intent (target Run and contents), so retrying the same idempotency key with a fresh submission time or Run version
+  is a duplicate instead of `IDEMPOTENCY_CONFLICT`, and a retry after settlement reports `APPLIED` or `REJECTED`.
+  No SQLite migration is needed; the existing `run_input` `REJECTED` state is now used.
 
 - The Personal Assistant real environment starts again. The catalog migration hardcoded
   `haifa.personal.execution.trusted-host-enabled: false` and dropped the `HAIFA_PERSONAL_EXECUTION_TRUSTED_HOST_ENABLED`

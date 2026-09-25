@@ -178,6 +178,25 @@ SDK Conversation 层只保存 display/index 元数据（display name、时间、
 删除、回收站、Tree/Fork/Clone、Follow-up Queue 和 Retention 不属于该公共边界。SQLite 实现位于
 `haifa-agent-store-sqlite`，SDK 自身不依赖 SQLite；`InMemory` 实现只用于开发和确定性测试。
 
+## Run 输入（Steer）
+
+`agent.runs().submitInput(new RunInputCommand(runId, idempotencyKey, message))` 向当前 Caller 的活动 Run
+提交一段 Steer 文本，返回 SDK 自有的 `RunInputResult`（`inputId`、`RunInputStatus`、接收/应用时间、
+iteration、`reasonCode`）。Caller 身份只来自 `SdkCallerProvider`，命令不携带 tenant/principal；
+其他 Caller 的 Run 表现为 `RUN_NOT_FOUND`。
+
+- 输入在 Run 的下一个 `BEFORE_ITERATION` 生效：正在执行的 Tool（包括等待委托结果的 Tool）返回之后，
+  不在 Tool 执行或模型请求构造中途注入；只进入目标 Run，不广播给 Child。
+- 同一幂等键、同一内容的重试返回 `DUPLICATE`（已应用后返回 `APPLIED`），不会重复应用；内容不同则
+  `IDEMPOTENCY_CONFLICT`。
+- 模型在输入待应用期间给出 Final 时，完成被推迟到模型看过该输入之后；Run 已 `COMPLETING` 或终态时返回
+  `REJECTED` 与 `RunInputResult.RUN_NOT_ACCEPTING_INPUT`；已接收但 Run 在应用前停止（取消、失败、超时、
+  重启后 recover）的输入结算为 `REJECTED`，`reasonCode` 为 `run-cancelled` 等终态原因。
+- 公开事件流以 `inputId` 关联 `run.input.accepted`、`run.input.applied`、`run.input.rejected`，Final
+  被推迟时另有 `completion.deferred`（`PENDING_RUN_INPUT`）。
+
+Steer 不是取消：取消继续使用 `agent.runs().handle(runId).cancel()`。
+
 ## 进程内 Prompt Diagnostics
 
 `agent.runs().promptDiagnostics(runId)` 从 Runtime 实际 `ContextReport` 读取脱敏事实：最终顺序、component

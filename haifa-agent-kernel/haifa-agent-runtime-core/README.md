@@ -117,10 +117,20 @@ Pending Interaction。新的 revision-aware Response 返回稳定收据，按可
 request 和幂等键去重；Approval 继续复用 Policy API 的 Authority/Target verification，不产生
 Decision bearer、Authorization Evidence 或可复用 Grant。
 
-`RunInputPort` 独立保存 Steer 的 `ACCEPTED/APPLIED` 状态。AgentLoop 只在
+`RunInputPort` 独立保存 Steer 的 `ACCEPTED/APPLIED/REJECTED` 状态。AgentLoop 只在
 `BEFORE_ITERATION` safe point 将已接受输入追加为 Session 用户消息，并绑定 Attempt/Iteration，
 不会异步修改正在构造的模型请求或 Tool 参数。内存与 SQLite 均实现该 Port；SQLite 使用条件更新、
 canonical digest 和 Attempt/Iteration 外键实现重启后的 exactly-once state application。
+
+已 `ACCEPTED` 的输入不会静默丢失。`submitInput` 在同一 Unit of Work 中重读 Run 状态并接收输入，
+与终态提交互相串行：模型给出 Final 时若仍有待应用输入，`RunTransitionCoordinator` 不提交完成，
+原回答保留为普通 Assistant 消息并记录 `completion.deferred`（`PENDING_RUN_INPUT`），下一轮
+`BEFORE_ITERATION` 应用输入后模型重新作答；若冻结限额已不允许下一次模型调用，则直接完成。
+任何终态转换（完成、失败、取消、超时，含重启后的 `recover`）都会在同一 Unit of Work、终态事件之前把
+仍待应用的输入结算为 `REJECTED`（`run-completed`、`run-failed`、`run-cancelled`、`run-timeout`），
+并写入 `run.input.rejected`。已进入 `COMPLETING` 或终态的 Run 拒绝新输入（`RUN_STATE_CONFLICT`）；
+同一幂等键的重试按输入意图（目标 Run 与内容，不含提交时间和 expected version）去重，并返回绑定输入
+的权威状态（`DUPLICATE`/`APPLIED`/`REJECTED`）。
 
 `RuntimeEventFeed` 从权威 Journal 按排他 sequence 和固定 head 范围读取；`RuntimeClientEventProjector`
 只输出 P0 typed 白名单，未知内部事件只推进 Cursor。`RuntimeEventSubscriptions` 先注册 Run-scoped
