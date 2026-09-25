@@ -13,9 +13,11 @@ import io.haifa.agent.model.api.ModelInvocationException;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.runtime.core.decision.AgentDecision;
+import io.haifa.agent.runtime.core.decision.DelegationDecision;
 import io.haifa.agent.runtime.core.decision.FinalAnswerDecision;
 import io.haifa.agent.runtime.core.decision.ToolCallDecision;
 import io.haifa.agent.runtime.core.decision.ToolRequest;
+import io.haifa.agent.runtime.core.delegation.DelegationTool;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -49,6 +51,7 @@ public final class AgentChatResponseMapper {
             List<ToolRequest> requests = response.toolCalls().stream()
                     .map(call -> toolRequest(request, call, byName.get(call.name())))
                     .toList();
+            if (requests.stream().anyMatch(DelegationTool::isDelegation)) return new DelegationDecision(requests);
             return new ToolCallDecision(requests);
         }
         if (response.finishReason() == ModelFinishReason.LENGTH) {

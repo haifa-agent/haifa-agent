@@ -15,12 +15,14 @@ import io.haifa.agent.model.api.ModelRequestId;
 import io.haifa.agent.model.api.ModelStreamControl;
 import io.haifa.agent.model.api.ModelStreamEvent;
 import io.haifa.agent.model.api.ModelToolSpecification;
+import io.haifa.agent.runtime.core.bootstrap.DefinitionResolver;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeConfigurationSnapshot;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions;
 import io.haifa.agent.runtime.core.context.ActiveContextSnapshots;
 import io.haifa.agent.runtime.core.control.CancellationObservedException;
 import io.haifa.agent.runtime.core.control.RunControlRegistry;
 import io.haifa.agent.runtime.core.control.RunControlSignal;
+import io.haifa.agent.runtime.core.delegation.DelegationTool;
 import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import io.haifa.agent.tool.api.FrozenToolBinding;
@@ -42,6 +44,7 @@ public final class FrozenModelInvoker {
     private final RunControlRegistry controls;
     private final RuntimeEventAppender events;
     private final TimeProvider time;
+    private final DefinitionResolver childDefinitions;
 
     public FrozenModelInvoker(
             RuntimeStateRepository state,
@@ -67,6 +70,26 @@ public final class FrozenModelInvoker {
             ModelImageResolver imageResolver,
             ModelAudioResolver audioResolver,
             ActiveContextSnapshots activeContexts) {
+        this(state, adapters, ids, output, controls, events, time, imageResolver, audioResolver, activeContexts, null);
+    }
+
+    /**
+     * @param childDefinitions resolves allowed child agents for the Runtime delegation Tool; {@code null} never
+     *     discloses delegation
+     */
+    public FrozenModelInvoker(
+            RuntimeStateRepository state,
+            Map<ModelAdapterKey, AgentChatModel> adapters,
+            IdentifierGenerator ids,
+            RuntimeModelOutputPublisher output,
+            RunControlRegistry controls,
+            RuntimeEventAppender events,
+            TimeProvider time,
+            ModelImageResolver imageResolver,
+            ModelAudioResolver audioResolver,
+            ActiveContextSnapshots activeContexts,
+            DefinitionResolver childDefinitions) {
+        this.childDefinitions = childDefinitions;
         this.state = Objects.requireNonNull(state, "state must not be null");
         this.adapters = Map.copyOf(Objects.requireNonNull(adapters, "adapters must not be null"));
         this.ids = Objects.requireNonNull(ids, "ids must not be null");
@@ -90,10 +113,18 @@ public final class FrozenModelInvoker {
             throw new IllegalStateException(
                     "frozen model adapter is unavailable: " + key.adapterType() + "@" + key.adapterVersion());
         }
-        List<ModelToolSpecification> tools = configuration.toolBindings().stream()
+        List<ModelToolSpecification> tools = new java.util.ArrayList<>(configuration.toolBindings().stream()
                 .map(FrozenModelInvoker::toModelSpecification)
-                .toList();
-        return new FrozenModelBinding(configuration, adapter, tools);
+                .toList());
+        if (childDefinitions != null) {
+            DelegationTool.specification(run, configuration, childDefinitions).ifPresent(delegation -> {
+                if (tools.stream().anyMatch(tool -> tool.name().equals(delegation.name()))) {
+                    throw new IllegalStateException("a frozen tool alias collides with the Runtime delegation tool");
+                }
+                tools.add(delegation);
+            });
+        }
+        return new FrozenModelBinding(configuration, adapter, List.copyOf(tools));
     }
 
     private static ModelToolSpecification toModelSpecification(FrozenToolBinding binding) {

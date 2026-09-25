@@ -18,6 +18,8 @@ public interface RuntimeStoreMapper {
 
     RunRow findRun(@Param("runId") String runId);
 
+    java.util.List<RunRow> findChildRuns(@Param("parentRunId") String parentRunId);
+
     String configurationHash(@Param("configurationRef") String configurationRef);
 
     int insertAttempt(@Param("row") ExecutionAttemptRow row);

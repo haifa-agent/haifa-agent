@@ -12,6 +12,7 @@ import io.haifa.agent.core.step.AgentStepError;
 import io.haifa.agent.core.step.AgentStepResult;
 import io.haifa.agent.core.step.AgentStepStatus;
 import io.haifa.agent.core.tool.ToolCall;
+import io.haifa.agent.runtime.core.delegation.DelegationTool;
 import io.haifa.agent.runtime.core.execution.AgentExecutionFailureException;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
@@ -40,6 +41,8 @@ public final class ToolRecoveryCoordinator {
     public void reconcile(AgentRun run) {
         AgentExecutionFailureException unknown = null;
         for (ToolCall call : state.toolCalls(run.id())) {
+            // A delegation call has no Tool journal: its authoritative outcome is the child Run itself.
+            if (DelegationTool.isDelegation(call)) continue;
             if (!needsProjectionRecovery(run, call) || !tools.hasRecoveryFacts(run, call)) continue;
             try {
                 ToolPipelineOutcome outcome = tools.recover(run, call, 1);

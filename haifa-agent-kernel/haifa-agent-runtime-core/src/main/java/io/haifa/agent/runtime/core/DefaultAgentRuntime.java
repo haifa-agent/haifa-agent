@@ -119,6 +119,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
     private final RuntimeEventFeed eventFeed;
     private final RuntimeEventSubscriptions eventSubscriptions;
     private final InteractionViewProjector interactionViews = new InteractionViewProjector();
+    private final io.haifa.agent.runtime.core.recovery.InterruptedRunSettler settler;
 
     public DefaultAgentRuntime(
             CallerContextProvider callers,
@@ -146,7 +147,9 @@ public final class DefaultAgentRuntime implements AgentRuntime {
             ApprovalVerificationService approvalVerification,
             RunInputPort runInputs,
             RuntimeEventFeed eventFeed,
-            RuntimeEventSubscriptions eventSubscriptions) {
+            RuntimeEventSubscriptions eventSubscriptions,
+            io.haifa.agent.runtime.core.recovery.InterruptedRunSettler settler) {
+        this.settler = Objects.requireNonNull(settler);
         this.callers = Objects.requireNonNull(callers);
         this.bootstrapper = Objects.requireNonNull(bootstrapper);
         this.runs = Objects.requireNonNull(runs);
@@ -793,6 +796,22 @@ public final class DefaultAgentRuntime implements AgentRuntime {
     }
 
     @Override
+    public List<io.haifa.agent.runtime.api.ChildRunView> children(AgentRunId parentRunId) {
+        AgentRun parent = requireRunForContract(Objects.requireNonNull(parentRunId, "parentRunId must not be null"));
+        requireContractCaller(parent);
+        return runs.children(parentRunId).stream()
+                .filter(child -> child.tenant().equals(parent.tenant())
+                        && child.principal().equals(parent.principal()))
+                .map(io.haifa.agent.runtime.api.ChildRunView::from)
+                .toList();
+    }
+
+    /** The assembled delegation boundary; visible to same-package tests only. */
+    DelegationPort delegations() {
+        return delegations;
+    }
+
+    @Override
     public AgentRunHandle handle(AgentRunId runId) {
         if (find(runId).isEmpty()) throw new IllegalArgumentException("unknown or invisible run");
         return new Handle(runId);
@@ -861,55 +880,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
             if (current.status() != AgentRunStatus.RUNNING && current.status() != AgentRunStatus.SUSPENDING) {
                 throw new IllegalStateException("only an interrupted executing run can be settled");
             }
-            long expected = active.version();
-            active.finish(ExecutionAttemptStatus.ABANDONED, time.now(), Optional.empty());
-            attempts.save(active, expected);
-            var error = new io.haifa.agent.core.error.AgentError(
-                    io.haifa.agent.core.error.AgentErrorCode.RUNTIME_EXECUTION_INTERRUPTED,
-                    Map.of("reason", "EXECUTOR_LOST", "automaticResume", false),
-                    ids.nextValue(),
-                    time.now());
-            try {
-                toolRecovery.reconcile(current);
-            } catch (io.haifa.agent.runtime.core.execution.AgentExecutionFailureException unknown) {
-                error = unknown.error();
-            }
-            for (var call : state.toolCalls(runId)) {
-                if (java.util.EnumSet.of(
-                                io.haifa.agent.core.tool.ToolCallStatus.REQUESTED,
-                                io.haifa.agent.core.tool.ToolCallStatus.VALIDATING,
-                                io.haifa.agent.core.tool.ToolCallStatus.POLICY_CHECK,
-                                io.haifa.agent.core.tool.ToolCallStatus.WAITING_APPROVAL,
-                                io.haifa.agent.core.tool.ToolCallStatus.APPROVED,
-                                io.haifa.agent.core.tool.ToolCallStatus.RUNNING)
-                        .contains(call.status())) {
-                    call.cancel(time.now());
-                    state.appendToolCall(call);
-                    state.appendSessionMessage(new SessionMessageDraft(
-                            new AgentMessageId(ids.nextValue()),
-                            current.sessionId(),
-                            Optional.of(runId),
-                            Optional.empty(),
-                            MessageRole.TOOL,
-                            MessageStatus.COMPLETED,
-                            MessageVisibility.AGENT_VISIBLE,
-                            List.of(
-                                    new io.haifa.agent.core.content.ToolResultPart(
-                                            call.id(),
-                                            call.providerCorrelationId(),
-                                            "Execution interrupted before a confirmed result; do not automatically repeat this operation")),
-                            Map.of("interrupted", true),
-                            time.now()));
-                }
-            }
-            for (var step : state.steps(runId)) {
-                if (step.status() == io.haifa.agent.core.step.AgentStepStatus.PENDING
-                        || step.status() == io.haifa.agent.core.step.AgentStepStatus.RUNNING
-                        || step.status() == io.haifa.agent.core.step.AgentStepStatus.WAITING) {
-                    step.cancel(time.now());
-                    state.appendStep(step);
-                }
-            }
+            io.haifa.agent.core.error.AgentError error = settler.settle(current, active);
             delegations.terminateChildren(current);
             return transitions.failed(current, error);
         });
