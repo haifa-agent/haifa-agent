@@ -38,6 +38,23 @@ can use saved conversation facts and observe current conditions. Intentional pau
 resume/respond across restart, retaining caller, frozen binding, exact target and budget checks. Missing or non-latest
 pause state fails closed; normal continuation cannot select an earlier budget.
 
+## Parent-child delegation
+
+`ChildRunCoordinator` is the default `DelegationPort`. A run whose frozen configuration allows child agents, whose
+depth is zero and whose `maxChildRuns` is positive sees the Runtime-owned `task` Tool (`DelegationTool`); the response
+mapper turns any response containing it into one `DelegationDecision` holding every Tool request in model order.
+`DecisionExecutor` records all calls in one assistant message, runs the delegation calls first and in parallel, then
+the ordinary Tools sequentially. Each delegation creates an ordinary child `AgentRun` (`AGENT_AS_TOOL`, own
+ephemeral session and configuration snapshot, parent tenant/principal/project/overrides, Tools = child allowlist ∩
+parent Tools, no child agents) with ID `childRunId(parentRunId, toolCallId)`, so a retried call re-attaches.
+
+The parent thread owns the batch: a request is created only when a `maxParallelChildren` and process slot is free,
+child state is read only from `RunStateRepository` (`children(parentRunId)`), each terminal child becomes the Tool
+Result immediately, and a child exceeding its own `maxWallTimeMillis` is timed out. Stop signals and the parent wall
+time stop the batch: started children receive `PARENT_CANCELLED`, requests that never started are closed, and
+`terminateChildren` settles children whose executor is gone through `InterruptedRunSettler`, the same settlement
+`recover` uses. Child waits are excluded from the idle check but not from wall time. Child runs skip Memory recall.
+
 ## Model-call client events
 
 `FrozenModelInvoker` records each physical model attempt as durable `model.attempt.scheduled` and

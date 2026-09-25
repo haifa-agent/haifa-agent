@@ -197,6 +197,27 @@ iteration、`reasonCode`）。Caller 身份只来自 `SdkCallerProvider`，命�
 
 Steer 不是取消：取消继续使用 `agent.runs().handle(runId).cancel()`。
 
+## 父子委托（Child Agent）
+
+产品用 `ChildAgentSpec`（id、面向父模型的描述、instructions、可选 `ProductRunProfileRef`、Tool 白名单）经
+`HaifaAgentBuilder.childAgent(...)` 注册 Child，并在 `ProductProfile.allowedChildAgents`（或 `withAllowedChildAgents`）
+声明父 Run 可委托的集合。此时 Runtime 向父模型暴露唯一的 `task` Tool；同一响应中的多个 `task` 调用各创建一个普通
+Child Run 并行执行，Tool 在 Child 终态后返回 Child Run ID、Runtime 终态、摘要、Child 自身 Usage 与 Artifact 引用。
+
+- Child 模型：引用的 run profile 的模型；未引用时继承父 Run 冻结的模型、预算与限制。
+- Child 能力 = Child 白名单 ∩ 父 Run 可用 Tool；构建时白名单越界、未注册 Child 或未注册/不可委托的 run profile 以
+  `CHILD_AGENT_TOOL_UNAVAILABLE` / `CHILD_AGENT_UNAVAILABLE` / `CHILD_RUN_PROFILE_UNAVAILABLE` fail closed。
+- 深度固定为 1：Child 看不到 `task`。Child 不召回、不写入长期 Memory。
+- 并发受父 Run `maxParallelChildren` 与进程上限（默认 3，`maxConcurrentChildRuns`）约束，超出部分按顺序排队，
+  排队项在父 Run 停止时直接丢弃；每个 Child 使用自身 profile 的 `maxWallTimeMillis`。
+- 等待 Child 不计入父 Run idle，但计入父 Run wall time。Child 需要审批时父 Run 保持等待，审批目标是 Child Run：
+  `runs().pendingInteraction(childRunId)` / `runs().respond(...)`。
+- 父 Run 取消、超时或恢复会终止其 Child；恢复时未完成 Child 按 interrupted 结算，不自动重放。
+- 查询：`runs().children(parentRunId)` 返回 `ChildRunView`（ID、状态、objective、起止时间、usage）；父事件流包含
+  `child.run.started` 与 `child.run.completed|failed|cancelled|timed-out`，Child 自身事件用 `runs().events(childRunId, ...)`。
+- 父 usage 只记 `childRuns` 计数，不并入 Child token；Child Session 不出现在 Conversation 列表中，只能经父 Run
+  （`children` → `view(childRunId).sessionId()`）找到。
+
 ## 进程内 Prompt Diagnostics
 
 `agent.runs().promptDiagnostics(runId)` 从 Runtime 实际 `ContextReport` 读取脱敏事实：最终顺序、component
