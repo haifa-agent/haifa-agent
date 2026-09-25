@@ -10,7 +10,7 @@ Reactor 版本由根 `pom.xml` 的 `revision` 属性单点定义，全部模块 
 <version>${revision}</version>
 ...
 <properties>
-    <revision>0.1.1-SNAPSHOT</revision>
+    <revision>0.1.1</revision>
 </properties>
 ```
 
