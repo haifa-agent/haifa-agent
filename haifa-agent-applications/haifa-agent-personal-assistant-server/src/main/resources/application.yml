@@ -15,7 +15,6 @@ management:
 haifa:
   personal:
     data-directory: ${HAIFA_PERSONAL_DATA_DIR:./data/personal-assistant}
-    continuation-key-base64: ${HAIFA_PERSONAL_CONTINUATION_KEY:}
     caller:
       tenant: ${HAIFA_PERSONAL_TENANT:local}
       principal: ${HAIFA_PERSONAL_PRINCIPAL:public-user}
@@ -27,9 +26,10 @@ haifa:
       - {id: siliconflow, mode: remote, native-streaming: true, endpoint: https://api.siliconflow.cn/v1, credential-reference: model-auth://siliconflow/default, default-reasoning-mode: ENABLED, allowed-bindings: [siliconflow-deepseek-v4-pro, siliconflow-deepseek-v4-flash, siliconflow-qwen3-vl-32b, siliconflow-qwen3-32b, siliconflow-kimi-k3, siliconflow-kimi-k2-6, siliconflow-glm-5-2, siliconflow-glm-5-1]}
       - {id: kimi, mode: remote, native-streaming: true, endpoint: https://api.moonshot.cn/v1, credential-reference: model-auth://kimi/default, default-reasoning-mode: ENABLED, allowed-bindings: [kimi-k3, kimi-k2.7-code, kimi-k2.6]}
       - {id: zhipu, mode: remote, native-streaming: true, endpoint: https://open.bigmodel.cn/api/paas/v4, credential-reference: model-auth://zhipu/default, default-reasoning-mode: ENABLED, allowed-bindings: [glm-5.3, glm-5.3-flash, glm-5.2, glm-5.1, glm-5, glm-5-turbo]}
-      - {id: tokenrhythm, mode: remote, native-streaming: true, endpoint: https://tokenrhythm.studio/v1, credential-reference: model-auth://tokenrhythm/default, default-reasoning-mode: ENABLED, allowed-bindings: [tokenrhythm-glm-5, tokenrhythm-glm-5-1, tokenrhythm-minimax-m2-7, tokenrhythm-kimi-k2-5, tokenrhythm-kimi-k2-6, tokenrhythm-minimax-m2-5, tokenrhythm-mimo-v2-5-pro, tokenrhythm-qwen3-7-max, tokenrhythm-kimi-k2-7-code, tokenrhythm-glm-5-2, tokenrhythm-qwen3-8-max, tokenrhythm-deepseek-v4-flash-0731, tokenrhythm-seed-2-1-pro, tokenrhythm-seed-2-1-turbo, tokenrhythm-deepseek-v4-pro-0813, tokenrhythm-glm-5-3, tokenrhythm-qwen3-7-flash, tokenrhythm-qwen3-8-27b, tokenrhythm-longcat-2-0, tokenrhythm-glm-5-3-flash]}
+      - {id: tokenrhythm, mode: remote, native-streaming: true, endpoint: https://tokenrhythm.studio/v1, credential-reference: model-auth://tokenrhythm/default, default-reasoning-mode: ENABLED, allowed-bindings: [tokenrhythm-glm-5-1, tokenrhythm-minimax-m2-7, tokenrhythm-kimi-k2-6, tokenrhythm-mimo-v2-5-pro, tokenrhythm-qwen3-7-max, tokenrhythm-kimi-k2-7-code, tokenrhythm-glm-5-2, tokenrhythm-qwen3-8-max, tokenrhythm-deepseek-v4-flash-0731, tokenrhythm-seed-2-1-turbo, tokenrhythm-seed-2-1-pro, tokenrhythm-deepseek-v4-pro-0813, tokenrhythm-glm-5-3, tokenrhythm-qwen3-7-flash, tokenrhythm-qwen3-8-27b, tokenrhythm-kimi-k3, tokenrhythm-longcat-2-0, tokenrhythm-glm-5-3-flash, tokenrhythm-qwen3-8-flash, tokenrhythm-deepseek-flash, tokenrhythm-glm-5-3-flashx]}
       - {id: google-antigravity, mode: remote, native-streaming: true, endpoint: "${HAIFA_ANTIGRAVITY_MODEL_ENDPOINT:https://daily-cloudcode-pa.googleapis.com/v1internal}", proxy: "${HAIFA_ANTIGRAVITY_PROXY_URL:http://127.0.0.1:2081}", credential-reference: model-auth://google-antigravity/default, allowed-bindings: [antigravity-gemini, antigravity-gemini-3-8-flash, antigravity-gemini-3-7-flash, antigravity-gemini-3-1-pro-preview]}
     default-model-id: ${HAIFA_PERSONAL_DEFAULT_MODEL_ID:deepseek-chat-flash}
+    model-max-response-bytes: ${HAIFA_PERSONAL_MODEL_MAX_RESPONSE_BYTES:4194304}
     allow-insecure-loopback-model: ${HAIFA_PERSONAL_ALLOW_INSECURE_LOOPBACK_MODEL:true}
     web:
       search: {enabled: false, provider-id: tavily, endpoint: https://api.tavily.com/search, credential-reference: env://TAVILY_API_KEY, timeout-millis: 30000, maximum-response-bytes: 2097152}
@@ -37,6 +37,6 @@ haifa:
     mission: {planner-mode: runtime, max-tasks: 8, max-dependency-depth: 4, max-acceptance-criteria: 20, global-active-task-runs: 1, max-auto-attempts-per-task: 1, max-wall-clock-millis: 7200000, max-model-tokens: 3000000, max-tool-calls: 360, max-artifacts: 8, max-total-artifact-bytes: 4194304, dispatcher-poll-millis: 500, dispatcher-shutdown-timeout-millis: 20000, recovery-batch-size: 100, db-warning-bytes: 536870912, db-stop-bytes: 1073741824, artifact-warning-bytes: 1073741824, artifact-stop-bytes: 2147483648}
     research: {max-sources: 24, max-source-content-bytes: 262144, max-total-content-bytes: 2097152}
     mcp: {mode: disabled, alias-namespace: personal_mcp, server-id: personal-local, display-name: Personal MCP, required: false}
-    execution: {default-timeout-millis: 15000, maximum-timeout-millis: 30000, maximum-output-bytes: 65536, maximum-output-lines: 1000, trusted-host-enabled: false, python-path: '', power-shell-path: ''}
+    execution: {default-timeout-millis: 15000, maximum-timeout-millis: 30000, maximum-output-bytes: 65536, maximum-output-lines: 1000, trusted-host-enabled: '${HAIFA_PERSONAL_EXECUTION_TRUSTED_HOST_ENABLED:false}', python-path: '', power-shell-path: ''}
     local-skill-root: ''
     trusted-script-manifest: ''

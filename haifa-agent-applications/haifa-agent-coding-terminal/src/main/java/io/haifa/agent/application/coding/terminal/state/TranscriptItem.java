@@ -70,13 +70,13 @@ public record TranscriptItem(
      * and history resource items stay visible because their bodies carry information the user must see.
      */
     public boolean collapsible() {
-        return !expanded && toggleable();
+        return !expanded && kind != Kind.APPROVAL && toggleable();
     }
 
     /** Whether ctrl+o expansion toggling applies to the item, independent of its current expanded state. */
     public boolean toggleable() {
         return switch (kind) {
-            case TOOL, EXECUTION, SUMMARY -> true;
+            case TOOL, EXECUTION, SUMMARY, APPROVAL -> true;
             case RESOURCE -> id.startsWith("delivery-") || id.startsWith("resource-");
             default -> false;
         };

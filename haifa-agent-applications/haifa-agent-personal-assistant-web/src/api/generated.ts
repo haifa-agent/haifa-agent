@@ -298,7 +298,20 @@ export interface Activity {
   occurredAt: string;
   safeResultSummary: string;
   interactionRef?: string | null;
+  toolDetail?: ActivityToolDetail | null;
   version: number;
+}
+
+export interface ActivityToolDetail {
+  outputPreview?: string | null;
+  truncated?: boolean;
+  byteCount?: number;
+  lineCount?: number;
+  truncationReason?: string | null;
+  processState?: string | null;
+  exitCode?: number | null;
+  resultRef?: string | null;
+  outcomeUnknown?: boolean;
 }
 
 export interface Interaction {
@@ -315,6 +328,22 @@ export interface Interaction {
   maximumCharacters: number;
   createdAt: string;
   expiresAt?: string | null;
+  approvalPresentation?: ApprovalPresentation | null;
+}
+
+export interface ApprovalPresentation {
+  title: string;
+  purpose: string;
+  contentType: string;
+  content: string;
+  environment: Array<ApprovalFact>;
+  technical: Array<ApprovalFact>;
+  risk?: string | null;
+}
+
+export interface ApprovalFact {
+  label: string;
+  value: string;
 }
 
 export interface InteractionResponse {
@@ -504,6 +533,10 @@ export interface StreamEvent {
   activity?: Activity | null;
   source: "durable" | "transient" | "snapshot";
   sequence: number;
+  toolCallId?: string;
+  outputChannel?: "stdout" | "stderr";
+  outputTruncated?: boolean;
+  previewDropped?: boolean;
 }
 
 export interface ApiError {

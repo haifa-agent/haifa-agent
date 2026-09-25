@@ -1,10 +1,17 @@
 package io.haifa.example.consumer.plain;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.haifa.agent.starter.HaifaAgentStarter;
+import io.haifa.agent.starter.McpServerRequirement;
+import io.haifa.agent.starter.McpServerSpec;
+import java.net.URI;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledIfEnvironmentVariable;
+import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 
 class PureJavaQuickstartApplicationTest {
     @Test
@@ -71,5 +78,50 @@ class PureJavaQuickstartApplicationTest {
             assertNotNull(agent.diagnostics());
             assertNotNull(agent.runs());
         }
+    }
+
+    @Test
+    void declaresTheMcpServerWithoutConnectingToIt() {
+        var search = McpServerSpec.streamableHttp("enterprise-search", URI.create("https://partner.example.com/mcp"))
+                .allowTools("search_courses", "search_policies", "search_jobs")
+                .toolNamePrefix("enterprise")
+                .readOnly()
+                .required();
+
+        assertEquals("enterprise-search", search.name());
+        assertEquals("enterprise", search.toolNamePrefix());
+        assertEquals(McpServerRequirement.REQUIRED, search.requirement());
+        assertEquals("enterprise_search_jobs", search.localToolName("search_jobs"));
+        assertEquals(3, search.allowedTools().size());
+    }
+
+    @Test
+    void rejectsAnMcpServerDeclaredWithoutAnExplicitToolAllowlist() {
+        assertThrows(
+                io.haifa.agent.sdk.api.HaifaAgentException.class,
+                () -> HaifaAgentStarter.builder()
+                        .credentialEnvironmentVariable("PATH")
+                        .mcpServer(McpServerSpec.streamableHttp(
+                                "enterprise-search", URI.create("https://partner.example.com/mcp")))
+                        .build());
+    }
+
+    @Test
+    @DisabledIfEnvironmentVariable(
+            named = PureJavaMcpApplication.ENDPOINT_ENVIRONMENT_VARIABLE,
+            matches = ".+",
+            disabledReason = "an MCP endpoint is configured, so the example runs for real instead of skipping")
+    void skipsTheMcpExampleWhenNoMcpServerIsConfigured() {
+        assertDoesNotThrow(() -> PureJavaMcpApplication.main(new String[0]));
+    }
+
+    @Test
+    @EnabledIfEnvironmentVariable(
+            named = PureJavaMcpApplication.ENDPOINT_ENVIRONMENT_VARIABLE,
+            matches = ".+",
+            disabledReason = "no MCP server is running; set "
+                    + PureJavaMcpApplication.ENDPOINT_ENVIRONMENT_VARIABLE + " to run the MCP example")
+    void runsTheMcpExampleAgainstTheConfiguredServer() {
+        assertDoesNotThrow(() -> PureJavaMcpApplication.main(new String[0]));
     }
 }

@@ -48,7 +48,8 @@ final class LocalCodingTerminalRunner implements CliTerminalRunner {
                             new TerminalWorkspaceContext(
                                     workspace.toAbsolutePath().normalize().toString(),
                                     LocalGitBranchResolver.resolve(workspace).orElse("")),
-                            agent.authentication())
+                            agent.authentication(),
+                            agent.toolOutputPreviewPublisher())
                     .run();
         }
     }

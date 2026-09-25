@@ -32,20 +32,73 @@ export function UsagePanel({ run }: { run: Run | null }) {
   );
 }
 
+function hasToolDetail(activity: Activity): boolean {
+  const detail = activity.toolDetail;
+  if (!detail) return false;
+  return (
+    detail.outcomeUnknown ||
+    !!detail.outputPreview ||
+    !!detail.resultRef ||
+    detail.processState != null ||
+    detail.exitCode != null
+  );
+}
+
+function ActivityCard({ activity }: { activity: Activity }) {
+  // Expand state is a local UI fact keyed by the stable activity identity; server updates never reset it.
+  const [expanded, setExpanded] = useState(false);
+  const detail = activity.toolDetail;
+  const expandable = hasToolDetail(activity);
+
+  return (
+    <article className={`activity-card ${activity.parentActivityId ? "activity-child" : ""}`}>
+      <div className={`activity-kind kind-${activity.kind.toLowerCase()}`}>
+        <ActivityIcon kind={activity.kind} /><span>{activity.kind}</span><small>{statusLabel(activity.status)}</small>
+      </div>
+      <strong>{activity.displayName}</strong>
+      {activity.safeTargetSummary && <pre className="activity-summary">{activity.safeTargetSummary}</pre>}
+      {activity.safeResultSummary && <pre className="activity-summary safe-result">{activity.safeResultSummary}</pre>}
+      {detail?.outcomeUnknown && <p className="activity-unknown" role="status">结果未知，未自动重放。</p>}
+      {expandable && detail && (
+        <>
+          <button
+            type="button"
+            className="activity-detail-toggle"
+            aria-expanded={expanded}
+            onClick={() => setExpanded((value) => !value)}
+          >
+            {expanded ? "收起工具详情" : "展开工具详情"}
+          </button>
+          {expanded && (
+            <div className="activity-detail">
+              <div className="activity-detail-meta">
+                {detail.processState && <span>进程：{detail.processState}</span>}
+                {detail.exitCode != null && <span>退出码：{detail.exitCode}</span>}
+                {detail.resultRef && <span>结果引用：{detail.resultRef}</span>}
+              </div>
+              {detail.outputPreview && <pre className="activity-output">{detail.outputPreview}</pre>}
+              {detail.outputPreview && (
+                <small className="activity-output-stats">
+                  {detail.truncated ? "已截断" : "未截断"} · {number.format(detail.byteCount ?? 0)} 字节 ·{" "}
+                  {number.format(detail.lineCount ?? 0)} 行
+                  {detail.truncationReason ? ` · ${detail.truncationReason}` : ""}
+                </small>
+              )}
+            </div>
+          )}
+        </>
+      )}
+      {activity.parentActivityId && <small className="activity-relation">关联上级操作</small>}
+      <time>{formatTime(activity.startedAt ?? activity.requestedAt ?? activity.occurredAt)}</time>
+    </article>
+  );
+}
+
 export function ActivityFeed({ activities, emptyText }: { activities: Activity[]; emptyText: string }) {
   return (
     <div className="activity-list">
       {activities.map((activity) => (
-        <article className={`activity-card ${activity.parentActivityId ? "activity-child" : ""}`} key={activity.activityId}>
-          <div className={`activity-kind kind-${activity.kind.toLowerCase()}`}>
-            <ActivityIcon kind={activity.kind} /><span>{activity.kind}</span><small>{statusLabel(activity.status)}</small>
-          </div>
-          <strong>{activity.displayName}</strong>
-          {activity.safeTargetSummary && <pre className="activity-summary">{activity.safeTargetSummary}</pre>}
-          {activity.safeResultSummary && <pre className="activity-summary safe-result">{activity.safeResultSummary}</pre>}
-          {activity.parentActivityId && <small className="activity-relation">关联上级操作</small>}
-          <time>{formatTime(activity.startedAt ?? activity.requestedAt ?? activity.occurredAt)}</time>
-        </article>
+        <ActivityCard activity={activity} key={activity.activityId} />
       ))}
       {!activities.length && <p className="muted">{emptyText}</p>}
     </div>

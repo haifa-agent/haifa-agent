@@ -25,6 +25,7 @@ import io.haifa.agent.execution.api.ExecutionStatus;
 import io.haifa.agent.execution.api.ProcessOutputChunk;
 import io.haifa.agent.execution.api.ResourceUsageSummary;
 import io.haifa.agent.execution.api.SandboxProfileRef;
+import io.haifa.agent.execution.api.ToolOutputPreviewPublisher;
 import io.haifa.agent.execution.api.TrustedExecutionContext;
 import io.haifa.agent.execution.core.command.CredentialEgressGuard;
 import io.haifa.agent.policy.api.PolicyDigest;
@@ -67,6 +68,7 @@ public final class ProjectExecutionToolOperations {
     private final UnaryOperator<String> outputSanitizer;
     private final ExecutionScratchSpaceSpec scratchSpace;
     private final ExecutionWorkspaceTargetResolver workspaceTargets;
+    private final ToolOutputPreviewPublisher previewPublisher;
 
     public ProjectExecutionToolOperations(
             ExecutionBroker broker,
@@ -179,7 +181,8 @@ public final class ProjectExecutionToolOperations {
                 outputObserver,
                 outputSanitizer,
                 scratchSpace,
-                workspaceTargets);
+                workspaceTargets,
+                ToolOutputPreviewPublisher.noop());
     }
 
     public ProjectExecutionToolOperations(
@@ -196,6 +199,38 @@ public final class ProjectExecutionToolOperations {
             UnaryOperator<String> outputSanitizer,
             ExecutionScratchSpaceSpec scratchSpace,
             ExecutionWorkspaceTargetResolver workspaceTargets) {
+        this(
+                broker,
+                identifiers,
+                time,
+                environmentRef,
+                sandboxProfileRef,
+                maximumTimeout,
+                maximumModelOutputBytes,
+                maximumModelOutputLines,
+                maximumProcesses,
+                outputObserver,
+                outputSanitizer,
+                scratchSpace,
+                workspaceTargets,
+                ToolOutputPreviewPublisher.noop());
+    }
+
+    public ProjectExecutionToolOperations(
+            ExecutionBroker broker,
+            IdentifierGenerator identifiers,
+            TimeProvider time,
+            ExecutionEnvironmentRef environmentRef,
+            SandboxProfileRef sandboxProfileRef,
+            Duration maximumTimeout,
+            int maximumModelOutputBytes,
+            int maximumModelOutputLines,
+            Optional<Integer> maximumProcesses,
+            ExecutionOutputObserver outputObserver,
+            UnaryOperator<String> outputSanitizer,
+            ExecutionScratchSpaceSpec scratchSpace,
+            ExecutionWorkspaceTargetResolver workspaceTargets,
+            ToolOutputPreviewPublisher previewPublisher) {
         this.broker = Objects.requireNonNull(broker, "broker must not be null");
         this.identifiers = Objects.requireNonNull(identifiers, "identifiers must not be null");
         this.time = Objects.requireNonNull(time, "time must not be null");
@@ -225,6 +260,11 @@ public final class ProjectExecutionToolOperations {
         this.outputSanitizer = Objects.requireNonNull(outputSanitizer, "outputSanitizer must not be null");
         this.scratchSpace = Objects.requireNonNull(scratchSpace, "scratchSpace must not be null");
         this.workspaceTargets = Objects.requireNonNull(workspaceTargets, "workspaceTargets must not be null");
+        this.previewPublisher = Objects.requireNonNull(previewPublisher, "previewPublisher must not be null");
+    }
+
+    public ToolOutputPreviewPublisher previewPublisher() {
+        return previewPublisher;
     }
 
     public ToolResult execute(ToolInvocationRequest invocation, RunWorkspaceAccess access) {
@@ -281,9 +321,17 @@ public final class ProjectExecutionToolOperations {
                 ExecutionInput.none(),
                 invocationDigest(command, workspaceRef, relativeWorkdir, scratchSpace),
                 scratchSpace);
-        return withToolCallId(
-                invocation,
-                executeRequest(request, invocation.cancellation(), invocation.observer(), command, operationFamily));
+        try (var preview = previewPublisher.open(invocation.runId(), invocation.toolCallId())) {
+            return withToolCallId(
+                    invocation,
+                    executeRequest(
+                            request,
+                            invocation.cancellation(),
+                            invocation.observer(),
+                            command,
+                            operationFamily,
+                            preview));
+        }
     }
 
     /** Read-only reconciliation for a previously dispatched local execution. */
@@ -519,7 +567,9 @@ public final class ProjectExecutionToolOperations {
                 ExecutionInput.none(),
                 ExecutionRequest.digestWithScratch(PolicyDigest.sha256Fields(List.of(command, workdir)), scratchSpace),
                 scratchSpace);
-        return executeRequest(request, () -> false, ToolInvocationObserver.noop(), command, "UNKNOWN");
+        try (var preview = ToolOutputPreviewPublisher.noopSink()) {
+            return executeRequest(request, () -> false, ToolInvocationObserver.noop(), command, "UNKNOWN", preview);
+        }
     }
 
     private ToolResult executeRequest(
@@ -527,7 +577,8 @@ public final class ProjectExecutionToolOperations {
             ToolCancellation cancellationSignal,
             ToolInvocationObserver invocationObserver,
             String command,
-            String operationFamily) {
+            String operationFamily,
+            ToolOutputPreviewPublisher.ToolOutputPreviewSink preview) {
         MergedTailObserver merged = new MergedTailObserver(
                 outputObserver,
                 invocationObserver,
@@ -536,7 +587,8 @@ public final class ProjectExecutionToolOperations {
                 request.id().value(),
                 workingDirectoryDigest(
                         request.workspaceId(),
-                        request.workingDirectory().projectPath().toString()));
+                        request.workingDirectory().projectPath().toString()),
+                preview);
         AtomicBoolean complete = new AtomicBoolean();
         Thread cancellation = Thread.ofVirtual()
                 .name("haifa-execution-cancellation")
@@ -937,6 +989,7 @@ public final class ProjectExecutionToolOperations {
         private final int maximumLines;
         private final String executionId;
         private final String workingDirectoryDigest;
+        private final ToolOutputPreviewPublisher.ToolOutputPreviewSink preview;
         private boolean upstreamTruncated;
 
         private MergedTailObserver(
@@ -946,12 +999,31 @@ public final class ProjectExecutionToolOperations {
                 int maximumLines,
                 String executionId,
                 String workingDirectoryDigest) {
+            this(
+                    delegate,
+                    invocationObserver,
+                    maximumBytes,
+                    maximumLines,
+                    executionId,
+                    workingDirectoryDigest,
+                    ToolOutputPreviewPublisher.noopSink());
+        }
+
+        private MergedTailObserver(
+                ExecutionOutputObserver delegate,
+                ToolInvocationObserver invocationObserver,
+                int maximumBytes,
+                int maximumLines,
+                String executionId,
+                String workingDirectoryDigest,
+                ToolOutputPreviewPublisher.ToolOutputPreviewSink preview) {
             this.delegate = delegate;
             this.invocationObserver = invocationObserver;
             output = new io.haifa.agent.execution.api.BoundedOutputBuffer(maximumBytes);
             this.maximumLines = maximumLines;
             this.executionId = executionId;
             this.workingDirectoryDigest = workingDirectoryDigest;
+            this.preview = preview;
         }
 
         @Override
@@ -989,6 +1061,11 @@ public final class ProjectExecutionToolOperations {
                 // CLI rendering errors cannot remove output from the authoritative Tool result.
             }
             output.write(chunk.bytes());
+            try {
+                preview.onOutput(chunk);
+            } catch (RuntimeException ignored) {
+                // Preview is best-effort and never changes the authoritative result.
+            }
         }
 
         private synchronized String text() {

@@ -1,5 +1,67 @@
 # Changelog
 
+- The Personal Assistant real environment starts again. The catalog migration hardcoded
+  `haifa.personal.execution.trusted-host-enabled: false` and dropped the `HAIFA_PERSONAL_EXECUTION_TRUSTED_HOST_ENABLED`
+  override, so the fail-closed guard rejected every startup; `application.yml` reads the variable again, and
+  `scripts/real_environment.py` opts the loopback launch into the trusted-host boundary. The Codex inference binding also
+  defaults `codex_originator` to `haifa` (overridable with `HAIFA_CODEX_ORIGINATOR`) instead of failing startup when the
+  optional provider ships without an explicit originator, matching the CLI and packaged-client default.
+
+- Coding Agent and Personal Assistant no longer lose a Run when semantic compaction cannot produce an accepted
+  summary. Both product policies now set `allowDeterministicDegradedFallback`, so a rejected or unusable summary
+  degrades to the deterministic compressor and the Run continues with lower-fidelity history instead of failing with
+  `RUNTIME_EXECUTION_FAILED`; `session.compaction-failed` still records the category and the degraded flag. A caller
+  that passes its own `CompressionPolicy` keeps it, and `ProjectPersistenceAssembly.configure` now adopts the full
+  Coding Agent default only when no policy was set. The deterministic acceptance model answers the compaction and
+  Mission Task normalization protocols it had never implemented, and the deep research acceptance test asserts that
+  no Run failed and that no Task fell back to a conservative recovery, so a broken fixture fails loudly instead of
+  hiding behind the new degradation path.
+
+- Personal Assistant persists model continuations in the trusted-local plaintext format instead of AES-GCM, so the
+  product no longer requires a continuation key: `haifa.personal.continuation-key-base64` is removed from
+  `PersonalAssistantProperties` and `application.yml`, and the portable Windows package stops generating and reading
+  `data/continuation-key.env`. Reasoning payloads stay readable at rest and are guarded only by format, binding and
+  content digests. Upgrade action: an existing `data/personal-assistant.sqlite` still holds AES-protected continuation
+  rows that this build cannot reveal, so resolving one fails with `CROSS_MODEL_CONTINUATION_INVALID`; clear the
+  database, or its `model_continuation` rows, before the first start on this build. The IDE-only
+  `PersonalAssistantRealEnvironmentMain` launcher is deleted and `scripts/real_environment.py` collapses to one
+  cross-platform lifecycle with three options (`--rebuild`, `--backend-jar`, `--startup-timeout-seconds`): provider,
+  model and credential facts come from `application.yml` and the model panel, the launcher stays in the foreground so
+  Ctrl+C stops only what it started, and loopback health checks bypass any configured HTTP proxy. The Personal
+  Assistant test profiles now set the `model-max-response-bytes` host setting that has been required since the bounded
+  streaming change, which restores the `slow-tests` Spring contexts.
+
+- Pure Java applications now consume remote MCP servers by declaration instead of by assembling the MCP Integration
+  themselves. `McpServerSpec` (named connection, Streamable HTTP endpoint, explicit Tool allowlist, stable
+  `toolNamePrefix`, `readOnly()` governance preset, `required()`/`optional()`, timeouts and environment-backed header
+  credentials) plus `HaifaAgentStarter.builder().mcpServer(...)` replace the previous 100+ lines of
+  `McpServerDefinition`/`McpConnectionManager`/`McpToolDiscoveryService`/`McpToolDefinitionMapper`/`McpToolProvider`
+  wiring; the MCP Integration itself is unchanged and stays the only MCP Runtime. The SDK's `JavaToolAssembly` is
+  renamed to `ToolAssembly` and now registers Java Tools and Integration `ToolRegistration`s on one
+  `ToolCatalogBuilder` with one freeze, so a Tool name contributed twice (MCP ↔ MCP or MCP ↔ Java Tool) fails the build
+  with `TOOL_ALIAS_CONFLICT` instead of merging frozen catalogs; `HaifaAgentBuilder` gains `toolRegistrations`,
+  `managedResource` and `diagnostic`, and `JavaToolAssembly.Prepared.javaToolAliases()` becomes
+  `ToolAssembly.Prepared.contributedAliases()`. There is no allow-all import mode, `readOnly()` is a local trust
+  declaration rather than a remote claim, a required server fails closed while an optional one degrades to no Tools plus
+  a safe diagnostic, and the Agent owns the MCP client lifecycle so `close()` and failed builds both release every
+  connection. This release covers MCP Client / Tool consumption only: Haifa still publishes no MCP Server, Tool,
+  Resource or Prompt, and a future Spring AI MCP Client Adapter is kept to an independent `haifa-agent-spring` seam
+  reading `ToolCallbackProvider` — Core, Runtime, SDK, SDK Starter and the MCP Integration are now held Spring AI free
+  by Maven Enforcer and ArchUnit. `haifa-agent-sdk-starter` consequently depends on `haifa-agent-mcp`, so its banned
+  dependency list narrows from all `io.modelcontextprotocol.sdk` artifacts to the Spring-bound MCP transports. The
+  standalone `examples/haifa-agent-example` build moves to `0.1.1-SNAPSHOT` and adds `PureJavaMcpApplication`, which
+  skips itself with an explanation unless `PARTNER_MCP_URL` names a Streamable HTTP MCP endpoint, so offline
+  verification stays deterministic.
+
+- OpenAI-compatible Chat, OpenAI Responses, Gemini and Anthropic streaming response limits now distinguish local
+  transport boundaries: each SSE event is capped at 1 MiB and each raw stream has a fixed 64 MiB final fallback. The
+  semantic response limit remains independently configurable and provider token parameters remain the primary output
+  bound. The adapters expose only bounded byte diagnostics, retry at most once before any visible output, and never replay after text or a
+  Tool Call was observed. CLI and Personal Assistant share a validated 1 MiB–32 MiB host setting (4 MiB default) across
+  their model adapters. Runtime cancellation now distinguishes `USER_REQUEST` from `DEADLINE_EXCEEDED` in snapshots,
+  terminal events and storage; CLI deadline expiry writes a stable stderr message and exits with code 124, while
+  Personal Assistant exposes the termination reason and maps Mission deadlines explicitly.
+
 - Coding Terminal 移除应用级鼠标事件接管，恢复宿主终端（Windows Terminal、VS Code Terminal、iTerm2 等）原生文本划词选择与剪贴板复制能力。`Tui4jTerminalIo` 禁用 SGR cell-motion 鼠标上报，保持启动与退出时的防御性 mouse reset；删除 `TerminalScreenCells`、`TerminalTextSelection` 及应用层拖拽高亮/自动滚动/剪贴板传输逻辑；历史内容继续由 `PageUp`/`PageDown` 键盘导航视口。
 
 - Review follow-ups for the SDK reduction baseline. SDK Conversation `submit` now re-checks the conversation revision inside the persistence transaction, so two concurrent submits on the same revision start exactly one Run instead of double-dispatching, and a `submit` replay with a changed request fails closed with `CONVERSATION_IDEMPOTENCY_CONFLICT` instead of silently returning the old Run. Status-filtered conversation lists page through the store until the requested statuses fill the limit, `ConversationStore.changeStatus` drops its dead `expected`/`target` parameters, `SkillPlatformContribution` rejects non-empty `scriptExecutionGrants` instead of silently ignoring them, and `JavaToolSpec` rejects `NETWORK_ACCESS` because Java Tools cannot constrain target hosts. `PersonalAssistantAssembler.productDigest` serializes the Memory/Artifact policies deterministically and folds in the Web provider bindings plus the shell runtime identity, `runtime_applied_command` is now `STRICT` (the V1.0 init artifact is regenerated; upgrade action: rebuild local SQLite databases as V13 already requires, and note that rename/archive commands applied before V13 lose their applied-command de-dup ledger and can re-apply once after upgrade), and the SDK Starter declares its policy dependencies explicitly.

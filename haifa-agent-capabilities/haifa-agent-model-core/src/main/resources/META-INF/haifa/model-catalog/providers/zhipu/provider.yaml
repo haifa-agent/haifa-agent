@@ -3,6 +3,7 @@ providerId: zhipu
 version: "2026-09-m3"
 displayName: Zhipu AI
 status: ACTIVE
+showOrder: 3
 authenticationMethods: [API_KEY]
 bindings:
   - resource: bindings/glm-5-3.yaml

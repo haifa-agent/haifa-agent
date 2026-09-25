@@ -208,6 +208,23 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
+    void ctrlOExpandsTranscriptWhileApprovalSelectorOwnsInput() {
+        var fixture = fixture();
+        fixture.pump.offer(new TerminalUiAction.ShellCompleted("!pwd", "Command exited\nD:/workspace", "EXITED"));
+        fixture.pump.offer(new TerminalUiAction.SelectorOpened(
+                new TerminalSelector("interaction:approval-1", "Approval", List.of("reject", "approve"), 0)));
+        fixture.model.update(new WindowSizeMessage(100, 30));
+
+        assertThat(fixture.controller.state().selector()).isPresent();
+        assertThat(fixture.controller.state().transcript().getLast().expanded()).isTrue();
+
+        fixture.model.update(key(KeyType.keySI));
+
+        assertThat(fixture.controller.state().selector()).isPresent();
+        assertThat(fixture.controller.state().transcript().getLast().expanded()).isFalse();
+    }
+
+    @Test
     void keepsFollowingNewOutputWhenActiveRunLayoutShrinksALongTranscriptViewport() {
         var fixture = fixture();
         fixture.model.init();
@@ -475,13 +492,13 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
-    void keepsApiKeyOutOfAuthoritativeEditorHistoryAndRenderedOutput() {
+    void trimsOuterWhitespaceFromApiKeyBeforeSaving() {
         AtomicReference<char[]> saved = new AtomicReference<>();
         var fixture = fixture(new CapturingAuthenticationClient(saved));
 
         fixture.model.update(new PasteMessage("/login api deepseek"));
         commitPlainEnter(fixture);
-        fixture.model.update(new PasteMessage("private-value\n"));
+        fixture.model.update(new PasteMessage("  private-value  "));
 
         assertThat(fixture.controller.secureInputRequested()).isTrue();
         assertThat(fixture.controller.secureInputIsUpdate()).isFalse();
@@ -492,13 +509,12 @@ class Tui4jCodingTerminalModelTest {
                 .doesNotContain("private-value", "stored as plaintext", "enter send")
                 .contains("API key ┃ •••••••••••••", "enter submit · escape cancel");
 
-        fixture.model.update(key(KeyType.keyBS));
         fixture.model.update(key(KeyType.keyCR));
 
         assertThat(fixture.controller.secureInputRequested()).isFalse();
-        assertThat(saved.get()).containsExactly("private-valu".toCharArray());
+        assertThat(saved.get()).containsExactly("private-value".toCharArray());
         assertThat(fixture.controller.state().status()).isEqualTo("API key connected for deepseek account");
-        assertThat(fixture.model.view()).doesNotContain("private-value", "private-valu");
+        assertThat(fixture.model.view()).doesNotContain("private-value");
     }
 
     @Test
@@ -546,7 +562,7 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
-    void guidesUserThroughAliyunBailianMultiStepWizard() {
+    void requiresWorkspaceForFirstAliyunBailianSetup() {
         AtomicReference<char[]> saved = new AtomicReference<>();
         AtomicReference<Map<String, String>> savedAttrs = new AtomicReference<>();
         var fixture = fixture(new CapturingAuthenticationClient(saved, savedAttrs, List.of(), Map.of()));
@@ -554,48 +570,53 @@ class Tui4jCodingTerminalModelTest {
         fixture.model.update(new PasteMessage("/login api aliyun-bailian"));
         commitPlainEnter(fixture);
 
-        // Step 1: API Key (masked)
+        // API Key input (masked); workspace is required on first setup.
         assertThat(fixture.controller.secureInputRequested()).isTrue();
         assertThat(fixture.controller.secureInputIsMasked()).isTrue();
         assertThat(fixture.controller.secureInputPrompt()).isEqualTo("API key ┃ ");
         assertThat(fixture.controller.state().status())
-                .contains(
-                        "Enter DashScope API key for aliyun-bailian (first-time setup · saved to system credential store) [1/3]");
-        assertThat(fixture.model.view()).contains("API key ┃ ", "enter next · escape cancel");
+                .contains("Enter DashScope API key for aliyun-bailian (workspace: required, region: cn-beijing");
+        assertThat(fixture.model.view()).contains("API key ┃ ", "enter submit · escape cancel");
 
         fixture.model.update(new PasteMessage("sk-bailian-test-key"));
         fixture.model.update(key(KeyType.keyCR));
 
-        // Step 2: Workspace ID (unmasked text)
         assertThat(fixture.controller.secureInputRequested()).isTrue();
-        assertThat(fixture.controller.secureInputIsMasked()).isFalse();
-        assertThat(fixture.controller.secureInputPrompt()).isEqualTo("Workspace ID ┃ ");
         assertThat(fixture.controller.state().status())
-                .contains("Enter Aliyun Bailian Workspace ID (e.g. ws-xxxx · required DNS label) [2/3]");
+                .contains("Workspace ID is required for first-time aliyun-bailian setup");
+        assertThat(saved.get()).isNull();
+        assertThat(savedAttrs.get()).isNull();
 
-        fixture.model.update(new PasteMessage("ws-prod-123"));
-        assertThat(fixture.model.view()).contains("ws-prod-123");
+        fixture.model.update(new PasteMessage("sk-bailian-test-key ws-default-01"));
         fixture.model.update(key(KeyType.keyCR));
 
-        // Step 3: Region (unmasked text, default cn-beijing)
-        assertThat(fixture.controller.secureInputRequested()).isTrue();
-        assertThat(fixture.controller.secureInputIsMasked()).isFalse();
-        assertThat(fixture.controller.secureInputPrompt()).isEqualTo("Region ┃ ");
-        assertThat(fixture.controller.state().status())
-                .contains("Enter Aliyun Bailian Region (default: cn-beijing · press Enter to use default) [3/3]");
-
-        // Accept default by pressing Enter directly
-        fixture.model.update(key(KeyType.keyCR));
-
-        // Finished!
         assertThat(fixture.controller.secureInputRequested()).isFalse();
         assertThat(saved.get()).containsExactly("sk-bailian-test-key".toCharArray());
         assertThat(savedAttrs.get())
-                .containsEntry("workspace_id", "ws-prod-123")
+                .containsEntry("workspace_id", "ws-default-01")
                 .containsEntry("region", "cn-beijing");
         assertThat(fixture.controller.state().status())
                 .contains(
-                        "API key and endpoint connected for aliyun-bailian (workspace: ws-prod-123, region: cn-beijing)");
+                        "API key and endpoint connected for aliyun-bailian (workspace: ws-default-01, region: cn-beijing)");
+    }
+
+    @Test
+    void configuresAliyunBailianInSingleStepWithCustomWorkspaceAndRegion() {
+        AtomicReference<char[]> saved = new AtomicReference<>();
+        AtomicReference<Map<String, String>> savedAttrs = new AtomicReference<>();
+        var fixture = fixture(new CapturingAuthenticationClient(saved, savedAttrs, List.of(), Map.of()));
+
+        fixture.model.update(new PasteMessage("/login api aliyun-bailian"));
+        commitPlainEnter(fixture);
+
+        fixture.model.update(new PasteMessage("sk-bailian-custom-key ws-custom-88 cn-shanghai"));
+        fixture.model.update(key(KeyType.keyCR));
+
+        assertThat(fixture.controller.secureInputRequested()).isFalse();
+        assertThat(saved.get()).containsExactly("sk-bailian-custom-key".toCharArray());
+        assertThat(savedAttrs.get())
+                .containsEntry("workspace_id", "ws-custom-88")
+                .containsEntry("region", "cn-shanghai");
     }
 
     @Test
@@ -623,7 +644,7 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
-    void rejectsInvalidWorkspaceIdInWizard() {
+    void rejectsInvalidWorkspaceIdInSingleStep() {
         AtomicReference<char[]> saved = new AtomicReference<>();
         AtomicReference<Map<String, String>> savedAttrs = new AtomicReference<>();
         var fixture = fixture(new CapturingAuthenticationClient(saved, savedAttrs, List.of(), Map.of()));
@@ -631,40 +652,48 @@ class Tui4jCodingTerminalModelTest {
         fixture.model.update(new PasteMessage("/login api aliyun-bailian"));
         commitPlainEnter(fixture);
 
-        // Step 1: API Key
-        fixture.model.update(new PasteMessage("sk-test-key"));
+        // Invalid workspace ID in single step
+        fixture.model.update(new PasteMessage("sk-test-key INVALID_WS"));
         fixture.model.update(key(KeyType.keyCR));
 
-        // Step 2: Invalid workspace ID (uppercase / invalid chars)
-        fixture.model.update(new PasteMessage("INVALID_WS"));
-        fixture.model.update(key(KeyType.keyCR));
-
-        // Validation error shown, still in workspace step
+        // Validation error shown, still in secure input
         assertThat(fixture.controller.secureInputRequested()).isTrue();
-        assertThat(fixture.controller.bailianConfigStep())
-                .isEqualTo(CodingTerminalController.BailianConfigStep.WORKSPACE_ID);
         assertThat(fixture.controller.state().status())
                 .contains("Invalid workspace ID: must be lowercase DNS label ([a-z0-9-], 1-63 chars)");
 
-        // Now enter valid workspace ID
-        fixture.model.update(new PasteMessage("ws-valid-1"));
+        // Now enter valid
+        fixture.model.update(new PasteMessage("sk-test-key ws-valid-1"));
         fixture.model.update(key(KeyType.keyCR));
 
-        // Advanced to Region
-        assertThat(fixture.controller.bailianConfigStep()).isEqualTo(CodingTerminalController.BailianConfigStep.REGION);
+        assertThat(fixture.controller.secureInputRequested()).isFalse();
+        assertThat(savedAttrs.get()).containsEntry("workspace_id", "ws-valid-1");
     }
 
     @Test
-    void cancelsAliyunBailianWizardOnEscape() {
+    void rejectsExtraAliyunBailianArgumentsInsteadOfIgnoringThem() {
+        AtomicReference<char[]> saved = new AtomicReference<>();
+        AtomicReference<Map<String, String>> savedAttrs = new AtomicReference<>();
+        var fixture = fixture(new CapturingAuthenticationClient(saved, savedAttrs, List.of(), Map.of()));
+
+        fixture.model.update(new PasteMessage("/login api aliyun-bailian"));
+        commitPlainEnter(fixture);
+        fixture.model.update(new PasteMessage("sk-test-key ws-valid-1 cn-beijing unexpected"));
+        fixture.model.update(key(KeyType.keyCR));
+
+        assertThat(fixture.controller.secureInputRequested()).isTrue();
+        assertThat(fixture.controller.state().status())
+                .contains("Too many arguments: expected API key [workspace] [region] for aliyun-bailian");
+        assertThat(saved.get()).isNull();
+        assertThat(savedAttrs.get()).isNull();
+    }
+
+    @Test
+    void cancelsAliyunBailianOnEscape() {
         var fixture = fixture();
 
         fixture.model.update(new PasteMessage("/login api aliyun-bailian"));
         commitPlainEnter(fixture);
 
-        fixture.model.update(new PasteMessage("sk-some-key"));
-        fixture.model.update(key(KeyType.keyCR));
-
-        // At workspace ID step, press ESC
         assertThat(fixture.controller.secureInputRequested()).isTrue();
         fixture.model.update(key(KeyType.keyESC));
 
@@ -714,27 +743,16 @@ class Tui4jCodingTerminalModelTest {
         fixture.model.update(new PasteMessage("/login api aliyun-bailian"));
         commitPlainEnter(fixture);
 
-        // Step 1: Update API Key -> press Enter directly to keep existing key
+        // Update API Key -> press Enter directly to keep existing key & attributes
         assertThat(fixture.controller.secureInputIsUpdate()).isTrue();
         assertThat(fixture.controller.secureInputPrompt()).isEqualTo("New key ┃ ");
         fixture.model.update(key(KeyType.keyCR));
 
-        // Step 2: Workspace ID -> press Enter directly to keep existing workspace
-        assertThat(fixture.controller.bailianConfigStep())
-                .isEqualTo(CodingTerminalController.BailianConfigStep.WORKSPACE_ID);
-        assertThat(fixture.controller.secureInputPlaceholder()).contains("ws-existing-01");
-        fixture.model.update(key(KeyType.keyCR));
-
-        // Step 3: Region -> change region to cn-hangzhou
-        assertThat(fixture.controller.bailianConfigStep()).isEqualTo(CodingTerminalController.BailianConfigStep.REGION);
-        fixture.model.update(new PasteMessage("cn-hangzhou"));
-        fixture.model.update(key(KeyType.keyCR));
-
-        // Saved!
+        // Saved in single step!
         assertThat(fixture.controller.secureInputRequested()).isFalse();
         assertThat(savedAttrs.get())
                 .containsEntry("workspace_id", "ws-existing-01")
-                .containsEntry("region", "cn-hangzhou");
+                .containsEntry("region", "cn-beijing");
     }
 
     @Test

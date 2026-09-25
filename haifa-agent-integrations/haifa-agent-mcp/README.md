@@ -30,6 +30,13 @@ HTTP 401/403 不会把 SDK request snapshot 或凭据带入对外异常：未配
 
 `McpServerDefinition.create(...)` 生成内容寻址的不可变 server binding。HTTP 使用 `StreamableHttpDefinition`，stdio 使用只包含逻辑 executable、固定 argv、逻辑 cwd 和 env allowlist 的 `StdioDefinition`。应用层按 server 注册 `McpToolProvider`，再用 `McpToolCatalogContribution` 把已审查候选加入现有 `ToolCatalogBuilder`。
 
+纯 Java 应用不需要直接使用这些类型：`haifa-agent-sdk-starter` 的 `McpServerSpec` 是薄的公共
+MCP Client 声明层，`NativeMcpToolPlatform` 在 Starter 内部完成 connect / discover / 本地审查，并把结果
+作为 `ToolRegistration` 交给 SDK 的单次 Tool Catalog freeze。本模块仍是唯一的 MCP Runtime；Starter 不
+新增第二套连接、发现或协议实现。Spring AI MCP Client 未来只能以独立 Adapter 形式从
+`ToolCallbackProvider` 方向接入 `haifa-agent-spring`，本模块与 Core / Runtime / SDK / Starter 一样由
+Enforcer 与 ArchUnit 约束为 Spring AI free。
+
 远端发现不等于启用。Tool 必须同时通过本地 allowlist/denylist、本地下划线名称唯一性、风险元数据和 Schema import diagnostic；不可信 MCP annotations 不能降低本地策略。外部远端名保留在 MCP binding snapshot 中用于协议调用；本地名称不做字符转换，不能与 namespace 直接组成合法下划线名称时拒绝导入。
 
 ## 测试

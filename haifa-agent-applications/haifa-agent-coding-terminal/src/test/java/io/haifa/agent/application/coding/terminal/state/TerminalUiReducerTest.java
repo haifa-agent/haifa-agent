@@ -15,10 +15,14 @@ import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.session.AgentSessionStatus;
+import io.haifa.agent.core.tool.ToolCallId;
+import io.haifa.agent.execution.api.ExecutionOutputChannel;
+import io.haifa.agent.execution.api.ToolOutputPreview;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.AgentRunOutputEvent;
 import io.haifa.agent.runtime.api.AgentRunOutputEventType;
+import io.haifa.agent.runtime.api.ApprovalPresentation;
 import io.haifa.agent.runtime.api.InteractionAction;
 import io.haifa.agent.runtime.api.InteractionConsequenceView;
 import io.haifa.agent.runtime.api.InteractionInputContract;
@@ -30,6 +34,8 @@ import io.haifa.agent.runtime.api.InteractionTargetView;
 import io.haifa.agent.runtime.api.InteractionView;
 import io.haifa.agent.runtime.api.RunEventCursor;
 import io.haifa.agent.runtime.api.RunEventPayloads;
+import io.haifa.agent.runtime.api.display.BoundedText;
+import io.haifa.agent.runtime.api.display.ToolDisplayBudget;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -214,6 +220,92 @@ class TerminalUiReducerTest {
                     assertThat(item.title()).isEqualTo("workspace.write · src/App.java");
                     assertThat(item.body()).contains("Target: src/App.java", "Result: artifact:tool-1");
                 });
+    }
+
+    @Test
+    void ignoresLatePreviewAfterAuthoritativeToolCompletion() {
+        TerminalUiState runStarted = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(
+                        event(1, "run-started", new RunEventPayloads.RunLifecycle("STARTED", 1, "NONE"))));
+        TerminalUiState requested = reducer.reduce(
+                runStarted,
+                new TerminalUiAction.RunEventReceived(event(
+                        2,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1", "execution_run", "STARTED", "NONE", "echo hi", ""))));
+        TerminalUiState stdoutPreviewed = reducer.reduce(
+                requested,
+                new TerminalUiAction.ToolOutputPreviewReceived(new ToolOutputPreview(
+                        new AgentRunId("run-1"),
+                        new ToolCallId("tool-1"),
+                        ExecutionOutputChannel.STDOUT,
+                        "live output",
+                        false,
+                        false)));
+        TerminalUiState stderrPreviewed = reducer.reduce(
+                stdoutPreviewed,
+                new TerminalUiAction.ToolOutputPreviewReceived(new ToolOutputPreview(
+                        new AgentRunId("run-1"),
+                        new ToolCallId("tool-1"),
+                        ExecutionOutputChannel.STDERR,
+                        "warning",
+                        true,
+                        false)));
+        TerminalUiState repeatedStderr = reducer.reduce(
+                stderrPreviewed,
+                new TerminalUiAction.ToolOutputPreviewReceived(new ToolOutputPreview(
+                        new AgentRunId("run-1"),
+                        new ToolCallId("tool-1"),
+                        ExecutionOutputChannel.STDERR,
+                        "warning again",
+                        false,
+                        false)));
+        TerminalUiState previewed = reducer.reduce(
+                repeatedStderr,
+                new TerminalUiAction.ToolOutputPreviewReceived(new ToolOutputPreview(
+                        new AgentRunId("run-1"),
+                        new ToolCallId("tool-1"),
+                        ExecutionOutputChannel.STDOUT,
+                        "resumed",
+                        false,
+                        true)));
+        TerminalUiState completed = reducer.reduce(
+                previewed,
+                new TerminalUiAction.RunEventReceived(event(
+                        3,
+                        "event-2",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1", "execution_run", "SUCCEEDED", "NONE", "echo hi", "final result"))));
+        TerminalUiState latePreview = reducer.reduce(
+                completed,
+                new TerminalUiAction.ToolOutputPreviewReceived(new ToolOutputPreview(
+                        new AgentRunId("run-1"),
+                        new ToolCallId("tool-1"),
+                        ExecutionOutputChannel.STDOUT,
+                        "late output",
+                        false,
+                        false)));
+
+        assertThat(previewed.transcript())
+                .filteredOn(item -> item.id().equals("tool-tool-1"))
+                .singleElement()
+                .satisfies(item -> assertThat(item.body())
+                        .contains(
+                                "Target: echo hi\nOutput (streaming):\n",
+                                "live output",
+                                "[stderr]\nwarning",
+                                "warning again",
+                                "[stdout]\nresumed",
+                                "[execution output truncated]",
+                                "[preview output dropped]"))
+                .satisfies(item -> assertThat(item.body()).containsOnlyOnce("[stderr]\n"));
+        assertThat(latePreview.transcript())
+                .filteredOn(item -> item.id().equals("tool-tool-1"))
+                .singleElement()
+                .satisfies(item ->
+                        assertThat(item.body()).contains("Result: final result").doesNotContain("late output"));
     }
 
     @Test
@@ -443,6 +535,158 @@ class TerminalUiReducerTest {
     }
 
     @Test
+    void preservesUnknownToolOutcomeWithoutProjectingSuccessOrFailure() {
+        TerminalUiState started = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1", "execution_run", "STARTED", "NONE", "rm -rf build", ""),
+                        Instant.parse("2026-07-27T00:00:01Z"))));
+        TerminalUiState unknown = reducer.reduce(
+                started,
+                new TerminalUiAction.RunEventReceived(event(
+                        2,
+                        "event-2",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1",
+                                "execution_run",
+                                "OUTCOME_UNKNOWN",
+                                "AUTOMATIC_REPLAY_FORBIDDEN",
+                                "rm -rf build",
+                                "asset-1"),
+                        Instant.parse("2026-07-27T00:00:02Z"))));
+
+        assertThat(unknown.transcript()).singleElement().satisfies(item -> {
+            assertThat(item.status()).isEqualTo("OUTCOME_UNKNOWN");
+            assertThat(item.durationMillis()).contains(1000L);
+            assertThat(item.body())
+                    .contains(
+                            "Outcome: UNKNOWN",
+                            "Reason: AUTOMATIC_REPLAY_FORBIDDEN",
+                            "Next: Inspect authoritative local or remote state before deciding whether another command is safe.",
+                            "Result: asset-1");
+        });
+        assertThat(unknown.status()).isEqualTo("THINKING");
+    }
+
+    @Test
+    void rendersAuthoritativeFailureWithUnknownOutcomeReasonAsUnknownNotFailure() {
+        TerminalUiState failed = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1",
+                                "execution_run",
+                                "FAILED",
+                                "TOOL_OUTCOME_UNKNOWN",
+                                "rm -rf build",
+                                "asset-1"))));
+
+        assertThat(failed.transcript()).singleElement().satisfies(item -> {
+            assertThat(item.status()).isEqualTo("OUTCOME_UNKNOWN");
+            assertThat(item.body())
+                    .contains(
+                            "Outcome: UNKNOWN",
+                            "Status: FAILED",
+                            "Reason: TOOL_OUTCOME_UNKNOWN",
+                            "Next: Inspect authoritative local or remote state before deciding whether another command is safe.",
+                            "Result: asset-1");
+        });
+    }
+
+    @Test
+    void rendersTimedOutToolObservationWithBoundedTruncatedOutput() {
+        String longOutput = "line\n".repeat(500);
+
+        TerminalUiState state = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1",
+                                "execution_run",
+                                "TIMEOUT",
+                                "WALL_TIME_EXCEEDED",
+                                "long run",
+                                "asset-1",
+                                Optional.of(new RunEventPayloads.ToolObservation(
+                                        Optional.of(BoundedText.of(longOutput, new ToolDisplayBudget(16 * 1_024, 8))),
+                                        Optional.of("KILLED"),
+                                        Optional.of(137)))))));
+
+        assertThat(state.transcript()).singleElement().satisfies(item -> {
+            assertThat(item.status()).isEqualTo("TIMEOUT");
+            assertThat(item.durationMillis()).isPresent();
+            assertThat(item.body())
+                    .contains(
+                            "Target: long run",
+                            "Reason: WALL_TIME_EXCEEDED",
+                            "Output (truncated):",
+                            "Output truncated · 2500 bytes · 501 lines",
+                            "Result: asset-1")
+                    .doesNotContain("Outcome: UNKNOWN");
+        });
+    }
+
+    @Test
+    void boundsLongToolTargetWithoutSplittingSurrogatePairs() {
+        String target = "x".repeat(300) + "😀tail";
+
+        TerminalUiState state = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1", "workspace.read", "SUCCEEDED", "NONE", target, "asset-1"))));
+
+        assertThat(state.transcript()).singleElement().satisfies(item -> {
+            assertThat(item.body()).contains("Target: " + "x".repeat(255) + "…");
+            assertThat(item.body()).doesNotContain("😀");
+        });
+    }
+
+    @Test
+    void replayedToolEventDoesNotRollBackNewerObservation() {
+        TerminalUiState started = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1", "execution_run", "STARTED", "NONE", "git status", ""),
+                        Instant.parse("2026-07-27T00:00:01Z"))));
+        AgentRunEvent succeededEvent = event(
+                2,
+                "event-2",
+                new RunEventPayloads.ToolLifecycle(
+                        "tool-1",
+                        "execution_run",
+                        "SUCCEEDED",
+                        "NONE",
+                        "git status",
+                        "asset-1",
+                        Optional.of(new RunEventPayloads.ToolObservation(
+                                Optional.of(BoundedText.of("done", new ToolDisplayBudget(1_024, 20))),
+                                Optional.of("EXITED"),
+                                Optional.of(0)))),
+                Instant.parse("2026-07-27T00:00:02Z"));
+        TerminalUiState succeeded = reducer.reduce(started, new TerminalUiAction.RunEventReceived(succeededEvent));
+        TerminalUiState replayed = reducer.reduce(succeeded, new TerminalUiAction.RunEventReceived(succeededEvent));
+
+        assertThat(replayed).isSameAs(succeeded);
+        assertThat(succeeded.transcript()).singleElement().satisfies(item -> {
+            assertThat(item.status()).isEqualTo("SUCCEEDED");
+            assertThat(item.body()).contains("Output:", "done", "Result: asset-1");
+        });
+    }
+
+    @Test
     void doesNotRepeatTheToolNameWhenItsSafeTargetSummaryMatches() {
         TerminalUiState state = reducer.reduce(
                 TerminalUiState.initial(120, 40),
@@ -489,20 +733,55 @@ class TerminalUiReducerTest {
                                 "interaction-1", "APPROVAL", "PENDING", "UNSAFE_FREE_TEXT"))));
 
         assertThat(updated.transcript()).singleElement().satisfies(item -> {
-            assertThat(item.body())
-                    .contains(
-                            "Action: Write workspace file",
-                            "Target: src/App.java",
-                            "Risk: On approval: Write file",
-                            "Scope: tool · workspace.write",
-                            "Network: Not declared by runtime",
-                            "Reason: Allow this change?",
-                            "Allowed: reject / approve")
-                    .doesNotContain("UNSAFE_FREE_TEXT");
-            assertThat(item.approvalDetails()).isPresent();
+            assertThat(item.title()).isEqualTo("Approval · Write workspace file");
+            assertThat(item.body()).isEqualTo("Allow this change?").doesNotContain("UNSAFE_FREE_TEXT");
+            assertThat(item.approvalDetails()).hasValueSatisfying(details -> {
+                assertThat(details.title()).isEqualTo("Write workspace file");
+                assertThat(details.purpose()).isEqualTo("Write file");
+                assertThat(details.content()).isEqualTo("Allow this change?");
+                assertThat(details.technical()).isEmpty();
+                assertThat(details.allowedActions()).containsExactly("reject", "approve");
+            });
             assertThat(item.status()).isEqualTo("PENDING");
         });
         assertThat(updated.status()).isEqualTo("WAITING FOR APPROVAL");
+    }
+
+    @Test
+    void approvalPresentationIsProjectedIntoStructuredDetails() {
+        TerminalUiState presented = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.InteractionPresented(interactionWithPresentation()));
+
+        assertThat(presented.transcript()).singleElement().satisfies(item -> {
+            assertThat(item.title()).isEqualTo("Approval · 执行 PowerShell 命令");
+            assertThat(item.body()).isEqualTo("Start-Sleep -Seconds 4");
+            assertThat(item.approvalDetails()).hasValueSatisfying(details -> {
+                assertThat(details.contentType()).isEqualTo("PowerShell");
+                assertThat(details.environment()).singleElement().satisfies(fact -> assertThat(fact.value())
+                        .isEqualTo("本机环境"));
+                assertThat(details.technical()).singleElement().satisfies(fact -> assertThat(fact.value())
+                        .isEqualTo("digest-123"));
+                assertThat(details.risk()).contains("HIGH");
+            });
+        });
+    }
+
+    @Test
+    void approvalPresentationPreservesExpandedDetailsWhenRePresented() {
+        TerminalUiState presented = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.InteractionPresented(interactionWithPresentation()));
+        TerminalUiState toggled =
+                reducer.reduce(presented, new TerminalUiAction.ToggleExpanded("interaction-interaction-presentation"));
+        assertThat(toggled.transcript()).singleElement().satisfies(item -> assertThat(item.expanded())
+                .isTrue());
+
+        TerminalUiState represented =
+                reducer.reduce(toggled, new TerminalUiAction.InteractionPresented(interactionWithPresentation()));
+
+        assertThat(represented.transcript()).singleElement().satisfies(item -> assertThat(item.expanded())
+                .isTrue());
     }
 
     @Test
@@ -665,6 +944,39 @@ class TerminalUiReducerTest {
         assertThat(TerminalRecovery.fromCode("TERMINAL_FAILURE").category())
                 .isEqualTo(TerminalRecovery.Category.TERMINAL_FAILURE);
         assertThat(TerminalRecovery.fromCode("UNKNOWN_SAFE_CODE").action()).contains("draft is preserved");
+    }
+
+    private static InteractionView interactionWithPresentation() {
+        return new InteractionView(
+                new InteractionRequestId("interaction-presentation"),
+                new AgentRunId("run-1"),
+                new AgentSessionId("session-1"),
+                0,
+                InteractionKind.APPROVAL,
+                InteractionState.PENDING,
+                "Approval required",
+                "Mode: SCRIPT\nRisks: HIGH",
+                List.of(InteractionAction.REJECT, InteractionAction.APPROVE),
+                InteractionInputContract.NONE,
+                new InteractionTargetView(
+                        "tool",
+                        "execution_run",
+                        Optional.empty(),
+                        Optional.empty(),
+                        "Approval required for execution_run"),
+                new InteractionRequesterView("agent", "Personal Assistant"),
+                Instant.parse("2026-07-27T00:00:00Z"),
+                Optional.of(Instant.parse("2026-07-27T00:01:00Z")),
+                new InteractionConsequenceView(
+                        "Runtime will revalidate the target before continuing", "The action will not run", "Expire"),
+                Optional.of(new ApprovalPresentation(
+                        "执行 PowerShell 命令",
+                        "为了观察终端工具调用的实际效果。",
+                        "PowerShell",
+                        "Start-Sleep -Seconds 4",
+                        List.of(new ApprovalPresentation.Fact("执行位置", "本机环境")),
+                        List.of(new ApprovalPresentation.Fact("调用摘要", "digest-123")),
+                        Optional.of("HIGH"))));
     }
 
     private static InteractionView interaction() {

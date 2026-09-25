@@ -1,12 +1,12 @@
 schemaVersion: haifa.model-catalog-binding/v1
-bindingId: tokenrhythm-glm-5
-version: "2026-09-m3"
-providerModelId: glm-5
-displayName: GLM-5 via TokenRhythm
+bindingId: tokenrhythm-kimi-k3
+version: "2026-09-m4"
+providerModelId: kimi-k3
+displayName: Kimi K3 via TokenRhythm
 status: ACTIVE
 apiStyle: openai-chat-completions
 dialect: tokenrhythm-openai-chat
-capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
+capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
 profile:
   version: "2.0"
   reasoningBehavior: OPTIONAL
@@ -14,8 +14,8 @@ profile:
   allowedReasoningEfforts: [HIGH]
   maximumReasoningTokens: null
   minimumOutputTokens: 1
-  maximumOutputTokens: 128000
-  contextWindowTokens: 1000000
+  maximumOutputTokens: 1048576
+  contextWindowTokens: 1048576
   toolReasoningContinuationRequired: false
   nativeStreaming: true
   usageStreaming: true
@@ -25,4 +25,4 @@ profile:
   outputModalities: [TEXT]
   imageInput: null
   status: VERIFIED
-  lastVerifiedOn: "2026-09-05"
+  lastVerifiedOn: "2026-09-22"

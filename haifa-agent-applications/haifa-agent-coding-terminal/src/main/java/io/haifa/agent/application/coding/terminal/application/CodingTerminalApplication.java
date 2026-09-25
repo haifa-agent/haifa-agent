@@ -9,6 +9,7 @@ import io.haifa.agent.application.coding.terminal.tui4j.Tui4jTerminalIo;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationClient;
 import io.haifa.agent.application.project.product.coding.client.CodingSessionClient;
 import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.execution.api.ToolOutputPreviewPublisher;
 import io.haifa.agent.project.domain.ProjectId;
 import java.util.Objects;
 import java.util.Optional;
@@ -25,6 +26,7 @@ public final class CodingTerminalApplication {
     private final CodingTerminalStartup startup;
     private final Tui4jTerminalIo terminalIo;
     private final TerminalWorkspaceContext workspace;
+    private final ToolOutputPreviewPublisher previewPublisher;
 
     public CodingTerminalApplication(
             ProjectId projectId, CodingSessionClient client, Optional<AgentSessionId> resumeSession) {
@@ -88,12 +90,24 @@ public final class CodingTerminalApplication {
             Tui4jTerminalIo terminalIo,
             TerminalWorkspaceContext workspace,
             CodingAuthenticationClient authentication) {
+        this(projectId, client, startup, terminalIo, workspace, authentication, ToolOutputPreviewPublisher.noop());
+    }
+
+    public CodingTerminalApplication(
+            ProjectId projectId,
+            CodingSessionClient client,
+            CodingTerminalStartup startup,
+            Tui4jTerminalIo terminalIo,
+            TerminalWorkspaceContext workspace,
+            CodingAuthenticationClient authentication,
+            ToolOutputPreviewPublisher previewPublisher) {
         this.projectId = Objects.requireNonNull(projectId, "projectId must not be null");
         this.client = Objects.requireNonNull(client, "client must not be null");
         this.authentication = Objects.requireNonNull(authentication, "authentication must not be null");
         this.startup = Objects.requireNonNull(startup, "startup must not be null");
         this.terminalIo = Objects.requireNonNull(terminalIo, "terminalIo must not be null");
         this.workspace = Objects.requireNonNull(workspace, "workspace must not be null");
+        this.previewPublisher = Objects.requireNonNull(previewPublisher, "previewPublisher must not be null");
     }
 
     public void run() {
@@ -105,6 +119,7 @@ public final class CodingTerminalApplication {
                 pump,
                 new TerminalUiReducer(),
                 TerminalUiState.initial(DEFAULT_COLUMNS, DEFAULT_ROWS, workspace));
+        controller.attachToolOutputPreviewPublisher(previewPublisher);
         try (controller) {
             controller.start(startup);
             new Tui4jCodingTerminal(controller, pump, terminalIo).run();

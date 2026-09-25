@@ -6,7 +6,7 @@
 recognizes only exact 4-tuple `(providerId, providerModelId, apiStyle, dialect)` combinations registered in
 the respective protocol registries:
 - `OpenAiCompatibleBindingRegistry`: Chat completions for DeepSeek (`deepseek-v4-flash`, `deepseek-v4-pro`),
-  the reviewed SiliconFlow DeepSeek V4 Flash Chat binding, TokenRhythm DeepSeek V4 Flash Chat binding, selected Bailian Qwen bindings,
+  the reviewed SiliconFlow DeepSeek V4 Flash Chat binding, reviewed TokenRhythm catalog bindings, selected Bailian Qwen bindings,
   Kimi K3/K2.7/K2.6, selected Zhipu GLM bindings, and the `personal-local` test fixture.
 - `OpenAiResponsesBindingRegistry`: Responses bindings for DeepSeek, Bailian Qwen Max/Plus, and OpenAI Codex (`gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.3-codex-spark`).
 
@@ -196,13 +196,19 @@ monotonically cumulative usage snapshots, rejects any token field decrease as `n
 publishes exactly one final `UsageReported` event after `[DONE]`. The first release accepts only
 `https://api.siliconflow.cn/v1`; insecure HTTP remains restricted to explicitly enabled loopback stubs.
 
-The parser bounds each raw SSE event to 1 MiB before UTF-8 decoding. The configured response limit applies to
+The parser bounds each raw SSE event to 1 MiB before UTF-8 decoding and caps the complete raw SSE stream at a fixed
+64 MiB emergency limit. The configured response limit applies to
 decoded semantic UTF-8 bytes only: content, reasoning, each tool name once, and tool-argument deltas. SSE/JSON
 envelopes and usage metadata do not consume that semantic budget. Responses `*.done` values are cumulative; when
 incremental deltas already exist they must preserve that prefix, and only an unobserved suffix is counted. A `*.done`
 suffix is also emitted as a delta; terminal-response fallback retains its existing bridge behavior. Semantic or transport limit
 failures use non-retryable `OUTPUT_LIMIT_EXCEEDED`; consumer cancellation closes the response body and maps to
 standard `CANCELLED`.
+
+For the generic Chat Completions adapter, `AgentChatRequest.maxOutputTokens` is sent as `max_tokens` by default;
+native OpenAI's current Chat API names the equivalent field `max_completion_tokens`. The Ark dialect can send
+`max_completion_tokens` when its `token_limit_parameter` option selects that provider field. Responses bindings send
+`max_output_tokens` by default; the Codex Responses dialect intentionally omits it, and DeepSeek Responses keeps it.
 
 使用 Java 21 `HttpClient` 与 Jackson 实现 OpenAI Chat Completions 协议适配器。
 

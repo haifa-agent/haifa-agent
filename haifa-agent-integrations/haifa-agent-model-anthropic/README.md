@@ -2,6 +2,10 @@
 
 `haifa-agent-model-anthropic` 是 Haifa Agent 的 Anthropic Messages (`/v1/messages`) 协议独立适配器模块。它负责 Anthropic 协议下的请求构建、Content Block 映射、Named SSE 事件聚合、流式 Token Usage 提取、Thinking Continuation 状态维护以及方言治理。
 
+`AgentChatRequest.maxOutputTokens` 映射为 Anthropic Messages 的 `max_tokens`。流式响应仍以 Provider 的
+`message_delta` / `message_stop` 作为协议终止信号；Haifa 额外限制单个 SSE Event 为 1 MiB、整个原始
+Stream 为固定 64 MiB，后者只是本地传输兜底，不代表 Anthropic 公布了整个 Stream 的字节上限。
+
 ## 模块定位与架构边界
 
 - **协议专属**：仅承载 Anthropic Messages 协议及厂商特化修饰（Vendor Quirks）；与 `haifa-agent-model-openai-compatible` 及 `haifa-agent-google-gemini` 保持完全正交与独立，无任何相互依赖。

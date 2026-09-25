@@ -5,6 +5,8 @@ import io.haifa.agent.application.project.product.coding.CodingModelState;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationProgressView;
 import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.execution.api.ExecutionOutputChannel;
+import io.haifa.agent.execution.api.ToolOutputPreview;
 import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.AgentRunOutputEvent;
 import io.haifa.agent.runtime.api.AgentRunOutputEventType;
@@ -19,6 +21,11 @@ import java.util.Set;
 /** Deterministic, side-effect-free projection of product and committed Runtime facts. */
 public final class TerminalUiReducer {
     private static final int MAX_TRANSCRIPT_TITLE_LENGTH = 256;
+    private static final int MAX_TOOL_TARGET_LENGTH = 256;
+    private static final String OUTCOME_UNKNOWN_STATUS = "OUTCOME_UNKNOWN";
+    private static final String TOOL_OUTCOME_UNKNOWN_CODE = "TOOL_OUTCOME_UNKNOWN";
+    private static final String OUTCOME_UNKNOWN_NEXT_ACTION =
+            "Inspect authoritative local or remote state before deciding whether another command is safe.";
     private static final Set<String> TERMINAL_RUN_STATUSES = Set.of("COMPLETED", "FAILED", "CANCELLED", "TIMEOUT");
     private static final Set<String> AUTHENTICATION_PROGRESS_STATUSES =
             Set.of("STARTING", "WAITING_USER", "EXCHANGING", "STORING");
@@ -280,15 +287,18 @@ public final class TerminalUiReducer {
             var interaction = presented.interaction();
             var details = ApprovalDetails.from(interaction);
             List<TranscriptItem> items = new ArrayList<>(state.transcript());
+            String id = "interaction-" + interaction.requestId().value();
+            int existing = index(items, id);
+            boolean expanded = existing >= 0 && items.get(existing).expanded();
             upsert(
                     items,
                     new TranscriptItem(
-                            "interaction-" + interaction.requestId().value(),
+                            id,
                             TranscriptItem.Kind.APPROVAL,
-                            "Approval · " + interaction.title(),
-                            details.render(),
+                            "Approval · " + details.title(),
+                            details.content(),
                             interaction.state().name(),
-                            true,
+                            expanded,
                             Optional.of(details)));
             return copyWithTranscript(state, List.copyOf(items));
         }
@@ -309,6 +319,19 @@ public final class TerminalUiReducer {
         }
         if (action instanceof TerminalUiAction.RunOutputReceived received) {
             return output(state, received.event());
+        }
+        if (action instanceof TerminalUiAction.ToolOutputPreviewReceived received) {
+            var preview = received.preview();
+            if (state.currentRunId().filter(preview.runId()::equals).isEmpty()) return state;
+            String id = "tool-" + preview.toolCallId().value();
+            int existing = index(state.transcript(), id);
+            if (existing < 0 || (preview.text().isEmpty() && !preview.outputTruncated() && !preview.previewDropped()))
+                return state;
+            List<TranscriptItem> items = new ArrayList<>(state.transcript());
+            TranscriptItem current = items.get(existing);
+            if (terminalToolStatus(current.status())) return state;
+            items.set(existing, appendToolPreview(current, preview));
+            return copyWithTranscript(state, List.copyOf(items));
         }
         if (action instanceof TerminalUiAction.UserMessageCommitted committed) {
             var items = new ArrayList<>(state.transcript());
@@ -451,6 +474,31 @@ public final class TerminalUiReducer {
         throw new IllegalArgumentException("Unsupported Terminal UI action");
     }
 
+    private static TranscriptItem appendToolPreview(TranscriptItem current, ToolOutputPreview preview) {
+        final String heading = "\nOutput (streaming):\n";
+        int headingIndex = current.body().indexOf(heading);
+        String prefix = headingIndex >= 0
+                ? current.body().substring(0, headingIndex + heading.length())
+                : current.body() + heading;
+        String previous = headingIndex >= 0 ? current.body().substring(headingIndex + heading.length()) : "";
+        String channel = previewChannelMarker(previous, preview.channel());
+        String outputTruncated = preview.outputTruncated() ? "\n[execution output truncated]\n" : "";
+        String previewDropped = preview.previewDropped() ? "\n[preview output dropped]\n" : "";
+        String output = previous + channel + preview.text() + outputTruncated + previewDropped;
+        int maximumOutput = Math.max(0, 16_384 - prefix.length());
+        if (output.length() > maximumOutput) output = output.substring(output.length() - maximumOutput);
+        return current.withStatus(current.status(), prefix + output);
+    }
+
+    private static String previewChannelMarker(String previous, ExecutionOutputChannel channel) {
+        if (previous.isEmpty()) return channel == ExecutionOutputChannel.STDERR ? "[stderr]\n" : "";
+        int stdoutMarker = previous.lastIndexOf("[stdout]\n");
+        int stderrMarker = previous.lastIndexOf("[stderr]\n");
+        ExecutionOutputChannel previousChannel =
+                stderrMarker > stdoutMarker ? ExecutionOutputChannel.STDERR : ExecutionOutputChannel.STDOUT;
+        return previousChannel == channel ? "" : "\n[" + channel.name().toLowerCase(Locale.ROOT) + "]\n";
+    }
+
     private TerminalUiState event(TerminalUiState state, AgentRunEvent event) {
         if (state.seenEventIds().contains(event.eventId())) return state;
         if (state.currentRunId().isPresent()
@@ -540,11 +588,12 @@ public final class TerminalUiReducer {
             }
         } else if (event.payload() instanceof RunEventPayloads.ToolLifecycle payload) {
             String id = "tool-" + payload.toolCallId();
+            String projectedStatus = displayStatus(payload);
             int existing = index(items, id);
             Optional<Long> startedAt = existing >= 0 ? items.get(existing).startedAtEpochMillis() : Optional.empty();
             if (startedAt.isEmpty()) startedAt = Optional.of(event.occurredAt().toEpochMilli());
             Optional<Long> duration = existing >= 0 ? items.get(existing).durationMillis() : Optional.empty();
-            if (terminalToolStatus(payload.status())) {
+            if (terminalToolStatus(projectedStatus)) {
                 duration = Optional.of(Math.max(0, event.occurredAt().toEpochMilli() - startedAt.orElseThrow()));
             }
             upsert(
@@ -554,7 +603,7 @@ public final class TerminalUiReducer {
                             TranscriptItem.Kind.TOOL,
                             toolTitle(payload),
                             toolBody(payload),
-                            payload.status(),
+                            projectedStatus,
                             false,
                             Optional.empty(),
                             startedAt,
@@ -575,17 +624,13 @@ public final class TerminalUiReducer {
             int existing = index(items, id);
             Optional<ApprovalDetails> details =
                     existing < 0 ? Optional.empty() : items.get(existing).approvalDetails();
-            String body = details.map(ApprovalDetails::render).orElse("Structured approval details are loading.");
+            boolean expanded = existing >= 0 && items.get(existing).expanded();
+            String title = details.map(value -> "Approval · " + value.title()).orElse("Approval · " + payload.kind());
+            String body = details.map(ApprovalDetails::content).orElse("Structured approval details are loading.");
             upsert(
                     items,
                     new TranscriptItem(
-                            id,
-                            TranscriptItem.Kind.APPROVAL,
-                            "Approval · " + payload.kind(),
-                            body,
-                            payload.state(),
-                            true,
-                            details));
+                            id, TranscriptItem.Kind.APPROVAL, title, body, payload.state(), expanded, details));
         } else if (event.payload() instanceof RunEventPayloads.RunLifecycle payload
                 && "FAILED".equals(payload.status())) {
             String message = payload.errorMessage().orElse("Agent execution failed");
@@ -694,7 +739,7 @@ public final class TerminalUiReducer {
     private static String toolActivityStatus(String status, String fallback) {
         return switch (status) {
             case "STARTED", "RUNNING", "WAITING", "APPROVED" -> "WORKING";
-            case "SUCCEEDED", "COMPLETED", "FAILED", "DENIED", "CANCELLED", "TIMEOUT" -> "THINKING";
+            case "SUCCEEDED", "COMPLETED", "FAILED", "DENIED", "CANCELLED", "TIMEOUT", "OUTCOME_UNKNOWN" -> "THINKING";
             default -> fallback;
         };
     }
@@ -716,7 +761,7 @@ public final class TerminalUiReducer {
     }
 
     private static boolean terminalToolStatus(String status) {
-        return Set.of("SUCCEEDED", "COMPLETED", "FAILED", "DENIED", "CANCELLED", "TIMEOUT")
+        return Set.of("SUCCEEDED", "COMPLETED", "FAILED", "DENIED", "CANCELLED", "TIMEOUT", "OUTCOME_UNKNOWN")
                 .contains(status);
     }
 
@@ -810,16 +855,71 @@ public final class TerminalUiReducer {
         return -1;
     }
 
-    private static String toolBody(RunEventPayloads.ToolLifecycle payload) {
+    private static String toolBody(RunEventPayloads.ToolLifecycle lifecycle) {
         List<String> lines = new ArrayList<>();
-        lines.add("Target: " + payload.targetSummary());
-        if (!payload.reasonCode().isBlank() && !"NONE".equals(payload.reasonCode())) {
-            lines.add("Reason: " + payload.reasonCode());
-            String nextAction = nextAction(payload.reasonCode());
-            if (!nextAction.isBlank()) lines.add("Next: " + nextAction);
+        String target = boundedTarget(lifecycle.targetSummary());
+        if (!target.isBlank()) lines.add("Target: " + target);
+        Optional<String> reasonCode = normalizedReasonCode(lifecycle.reasonCode());
+        if (isOutcomeUnknown(lifecycle.status(), lifecycle.reasonCode())) {
+            lines.add("Outcome: UNKNOWN");
+            if (!OUTCOME_UNKNOWN_STATUS.equalsIgnoreCase(lifecycle.status())) {
+                lines.add("Status: " + lifecycle.status());
+            }
+            reasonCode.ifPresent(reason -> lines.add("Reason: " + reason));
+            lines.add("Next: " + OUTCOME_UNKNOWN_NEXT_ACTION);
+        } else {
+            reasonCode.ifPresent(reason -> {
+                lines.add("Reason: " + reason);
+                String nextAction = nextAction(reason);
+                if (!nextAction.isBlank()) lines.add("Next: " + nextAction);
+            });
         }
-        if (!payload.resultRef().isBlank()) lines.add("Result: " + payload.resultRef());
+        lifecycle
+                .observation()
+                .flatMap(RunEventPayloads.ToolObservation::outputPreview)
+                .ifPresent(preview -> {
+                    lines.add("Output" + (preview.truncated() ? " (truncated)" : "") + ":");
+                    lines.add(preview.text());
+                    if (preview.truncated()) {
+                        lines.add("Output truncated · " + preview.byteCount() + " bytes · " + preview.lineCount()
+                                + " lines");
+                    }
+                });
+        String resultRef =
+                lifecycle.resultRef() == null ? "" : lifecycle.resultRef().strip();
+        if (!resultRef.isBlank()) lines.add("Result: " + resultRef);
         return String.join("\n", lines);
+    }
+
+    private static boolean isOutcomeUnknown(String status, String reasonCode) {
+        return OUTCOME_UNKNOWN_STATUS.equalsIgnoreCase(status)
+                || TOOL_OUTCOME_UNKNOWN_CODE.equalsIgnoreCase(reasonCode);
+    }
+
+    private static String displayStatus(RunEventPayloads.ToolLifecycle lifecycle) {
+        return isOutcomeUnknown(lifecycle.status(), lifecycle.reasonCode())
+                ? OUTCOME_UNKNOWN_STATUS
+                : lifecycle.status();
+    }
+
+    private static Optional<String> normalizedReasonCode(String reasonCode) {
+        if (reasonCode == null) return Optional.empty();
+        String normalized = reasonCode.strip();
+        if (normalized.isEmpty() || "NONE".equalsIgnoreCase(normalized)) return Optional.empty();
+        return Optional.of(normalized);
+    }
+
+    private static String boundedTarget(String value) {
+        String target = value == null ? "" : value.strip();
+        if (target.length() <= MAX_TOOL_TARGET_LENGTH) return target;
+        int end = MAX_TOOL_TARGET_LENGTH - 1;
+        if (end > 0
+                && end < target.length()
+                && Character.isLowSurrogate(target.charAt(end))
+                && Character.isHighSurrogate(target.charAt(end - 1))) {
+            end--;
+        }
+        return target.substring(0, end) + "…";
     }
 
     private static String nextAction(String reasonCode) {
@@ -878,12 +978,13 @@ public final class TerminalUiReducer {
         return stage + "Reason: " + code + "\nNext: " + next;
     }
 
-    private static String toolTitle(RunEventPayloads.ToolLifecycle payload) {
-        String target = payload.targetSummary().strip();
-        if (target.isBlank() || target.equalsIgnoreCase(payload.displayName())) {
-            return payload.displayName();
+    private static String toolTitle(RunEventPayloads.ToolLifecycle lifecycle) {
+        String toolName = lifecycle.displayName();
+        String target = boundedTarget(lifecycle.targetSummary());
+        if (target.isBlank() || target.equalsIgnoreCase(toolName)) {
+            return toolName;
         }
-        String prefix = payload.displayName() + " · ";
+        String prefix = toolName + " · ";
         int available = MAX_TRANSCRIPT_TITLE_LENGTH - prefix.length();
         if (target.length() <= available) return prefix + target;
         int end = Math.max(0, available - 1);

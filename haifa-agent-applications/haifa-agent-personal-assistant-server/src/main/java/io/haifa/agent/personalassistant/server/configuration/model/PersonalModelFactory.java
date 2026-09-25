@@ -73,6 +73,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /** Creates either the production remote adapter or an explicitly enabled deterministic acceptance model. */
 public final class PersonalModelFactory {
+    private static final int DEFAULT_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
     private static final ModelCatalogManifest PACKAGED_CATALOG =
             PackagedModelCatalog.load(PersonalModelFactory.class.getClassLoader());
 
@@ -168,11 +169,38 @@ public final class PersonalModelFactory {
             AntigravityCloudCodeProjectResolver trustedProjectResolver,
             CodexAccountIdentityResolver codexAccountResolver,
             ProxySelector proxySelector) {
+        return createPlatform(
+                configured,
+                defaultModelId,
+                allowInsecureLoopbackModel,
+                mapper,
+                shell,
+                credentials,
+                trustedProjectResolver,
+                codexAccountResolver,
+                DEFAULT_MAX_RESPONSE_BYTES,
+                proxySelector);
+    }
+
+    public static Platform createPlatform(
+            List<PersonalAssistantProperties.ModelProvider> configured,
+            String defaultModelId,
+            boolean allowInsecureLoopbackModel,
+            ObjectMapper mapper,
+            PersonalShellRuntime shell,
+            CredentialResolver credentials,
+            AntigravityCloudCodeProjectResolver trustedProjectResolver,
+            CodexAccountIdentityResolver codexAccountResolver,
+            int maxResponseBytes,
+            ProxySelector proxySelector) {
         List<PersonalAssistantProperties.ModelProvider> configuredProviders = List.copyOf(configured);
         boolean catalogDeployment = isCatalogDeployment(configuredProviders);
         List<PersonalAssistantProperties.ModelProvider> providers = catalogized(configuredProviders);
         java.util.Objects.requireNonNull(credentials, "credentials must not be null");
         java.util.Objects.requireNonNull(proxySelector, "proxySelector must not be null");
+        if (maxResponseBytes < 1024 * 1024 || maxResponseBytes > 32 * 1024 * 1024) {
+            throw new IllegalArgumentException("maxResponseBytes must be between 1048576 and 33554432");
+        }
         if (providers.isEmpty()) throw new IllegalArgumentException("at least one Personal model provider is required");
         validateEndpoints(providers, allowInsecureLoopbackModel);
         boolean deterministic = providers.stream().anyMatch(value -> "deterministic".equals(value.mode()));
@@ -209,6 +237,7 @@ public final class PersonalModelFactory {
                 credentials,
                 trustedProjectResolver,
                 codexAccountResolver,
+                maxResponseBytes,
                 proxySelector);
         ModelContribution contribution = new ModelContribution(adapters, snapshot, snapshots);
         TenantRef tenant = new TenantRef("personal-product");
@@ -635,13 +664,9 @@ public final class PersonalModelFactory {
             options.putAll(OpenAiCompatibleDialects.configuredOptions(binding.dialect(), endpoint));
         }
         if (io.haifa.agent.model.openai.responses.OpenAiResponsesDialects.OPENAI_CODEX.equals(binding.dialect())) {
-            options.put("codex_originator", requiredEnvironment("HAIFA_CODEX_ORIGINATOR"));
+            options.put("codex_originator", environmentOrDefault("HAIFA_CODEX_ORIGINATOR", "haifa"));
             options.put(
-                    "codex_user_agent",
-                    java.util.Optional.ofNullable(System.getenv("HAIFA_CODEX_USER_AGENT"))
-                            .map(String::trim)
-                            .filter(value -> !value.isEmpty())
-                            .orElse("haifa-agent-local-compat/1"));
+                    "codex_user_agent", environmentOrDefault("HAIFA_CODEX_USER_AGENT", "haifa-agent-local-compat/1"));
         }
         if (OpenAiCompatibleDialects.DEEPSEEK.equals(binding.dialect())
                 || AnthropicMessagesDialects.DEEPSEEK.equals(binding.dialect())) {
@@ -650,10 +675,9 @@ public final class PersonalModelFactory {
         return Map.copyOf(options);
     }
 
-    private static String requiredEnvironment(String name) {
+    private static String environmentOrDefault(String name, String fallback) {
         String value = System.getenv(name);
-        if (value == null || value.isBlank()) throw new IllegalArgumentException(name + " is required");
-        return value.trim();
+        return value == null || value.isBlank() ? fallback : value.trim();
     }
 
     private static Map<String, Object> invocationOptions(
@@ -710,6 +734,7 @@ public final class PersonalModelFactory {
             CredentialResolver credentials,
             AntigravityCloudCodeProjectResolver trustedProjectResolver,
             CodexAccountIdentityResolver codexAccountResolver,
+            int maxResponseBytes,
             ProxySelector proxySelector) {
         if (deterministic) {
             AgentChatModel model = new LoggingAgentChatModel(
@@ -733,25 +758,25 @@ public final class PersonalModelFactory {
                                     mapper,
                                     credentials,
                                     allowInsecureLoopbackModel,
-                                    4 * 1024 * 1024);
+                                    maxResponseBytes);
                         case ModelApiStyles.OPENAI_RESPONSES_ADAPTER ->
                             new OpenAiResponsesModel(
                                     http,
                                     mapper,
                                     credentials,
                                     allowInsecureLoopbackModel,
-                                    4 * 1024 * 1024,
+                                    maxResponseBytes,
                                     codexAccountResolver);
                         case ModelApiStyles.ANTHROPIC_MESSAGES_ADAPTER ->
                             new AnthropicMessagesModel(
-                                    http, mapper, credentials, allowInsecureLoopbackModel, 4 * 1024 * 1024);
+                                    http, mapper, credentials, allowInsecureLoopbackModel, maxResponseBytes);
                         case ModelApiStyles.GOOGLE_GEMINI_ADAPTER ->
                             new GeminiGenerateContentModel(
                                     http,
                                     mapper,
                                     credentials,
                                     allowInsecureLoopbackModel,
-                                    4 * 1024 * 1024,
+                                    maxResponseBytes,
                                     false,
                                     trustedProjectResolver);
                         default ->
@@ -807,6 +832,26 @@ public final class PersonalModelFactory {
          */
         private static final String MCP_TOOL_ALIAS = "personal_mcp_echo";
 
+        /**
+         * Minimal valid {@code SemanticConversationSummaryV1}. Only {@code criticalContext} is used because it is the
+         * one populated section outside mandatory carry-forward, so the same answer stays valid for every compaction
+         * batch and for repeated compactions within one session.
+         */
+        /** Valid empty result for a normalization prompt whose notes carry no structured evidence. */
+        private static final String EMPTY_RESEARCH_TASK_RESULT =
+                "{\"schemaVersion\":\"pa.research-task-result/v2\",\"taskSummary\":\"The deterministic acceptance"
+                        + " session recorded no usable research evidence for the frozen objective.\",\"queries\":[],"
+                        + "\"findings\":[],\"sources\":[],\"unresolvedQuestions\":[],"
+                        + "\"stopReason\":\"NO_MORE_SAFE_SOURCES\","
+                        + "\"limitsUsed\":{\"searchCalls\":0,\"fetchCalls\":0,\"sources\":0,\"contentBytes\":0}}";
+
+        private static final String COMPACTION_SUMMARY =
+                "{\"schemaVersion\":\"v1\",\"language\":\"en\",\"goals\":[],\"constraints\":[],"
+                        + "\"progress\":{\"completed\":[],\"active\":[],\"blocked\":[]},\"decisions\":[],"
+                        + "\"nextSteps\":[],\"criticalContext\":[{\"stableItemId\":\"CC-deterministic-1\","
+                        + "\"text\":\"Deterministic acceptance profile: earlier turns were compacted.\","
+                        + "\"sourceRefs\":[],\"confidence\":\"INFERRED\"}],\"unresolvedQuestions\":[]}";
+
         private DeterministicAcceptanceModel(String modelId, PersonalShellRuntime shell) {
             this.modelId = modelId;
             this.operatingSystem = shell.operatingSystem();
@@ -828,6 +873,19 @@ public final class PersonalModelFactory {
             String visibleContext = request.messages().stream()
                     .map(io.haifa.agent.model.api.ModelMessage::content)
                     .collect(java.util.stream.Collectors.joining("\n"));
+            // Semantic compaction calls the session model for a structured summary. Without an answer the summary
+            // fails validation and the whole Run fails, so long acceptance sessions never reach their assertions.
+            if (request.structuredOutput()
+                    .filter(requirement -> "SemanticConversationSummaryV1".equals(requirement.responseName()))
+                    .isPresent()) {
+                return response(current, COMPACTION_SUMMARY, List.of(), ModelFinishReason.STOP);
+            }
+            // Mission Task normalization runs as its own Run against this same model. The server finalizes source
+            // identity, fetch facts and fetch counts afterwards, so the deterministic answer is the canonical result
+            // already present in the notes.
+            if (prompt.contains("Convert the completed research notes below")) {
+                return response(current, normalizedResearchNotes(prompt), List.of(), ModelFinishReason.STOP);
+            }
             if (prompt.contains("[mission-research-synthesis]")) {
                 java.util.regex.Matcher ids = java.util.regex.Pattern.compile(
                                 "Real completed Task IDs in result order: \\[([^]]*)]")
@@ -1050,6 +1108,14 @@ public final class PersonalModelFactory {
                     List.of(new ModelToolCall(
                             new ProviderToolCallCorrelationId("personal-call-" + current), alias, arguments)),
                     ModelFinishReason.TOOL_CALLS);
+        }
+
+        /** Returns the canonical task result embedded in the normalization prompt's research notes. */
+        private static String normalizedResearchNotes(String prompt) {
+            int notes = prompt.lastIndexOf("Completed research notes:");
+            int start = notes < 0 ? -1 : prompt.indexOf('{', notes);
+            int end = prompt.lastIndexOf('}');
+            return start < 0 || end <= start ? EMPTY_RESEARCH_TASK_RESULT : prompt.substring(start, end + 1);
         }
 
         private AgentChatResponse tool(long current, String alias, Map<String, Object> arguments) {

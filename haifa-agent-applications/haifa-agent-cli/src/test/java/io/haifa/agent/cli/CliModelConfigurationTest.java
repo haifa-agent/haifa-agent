@@ -13,6 +13,7 @@ import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -25,6 +26,7 @@ class CliModelConfigurationTest {
                 """
                     models:
                       default: codex
+                      maxResponseBytes: 8388608
                       providers:
                         - id: openai-codex
                           displayName: ChatGPT Codex
@@ -52,6 +54,7 @@ class CliModelConfigurationTest {
 
         assertThat(result.model().dialect()).isEqualTo("openai-codex-responses");
         assertThat(result.model().credentialRef()).isEqualTo("model-auth://openai-codex/default");
+        assertThat(result.modelMaxResponseBytes()).isEqualTo(8 * 1024 * 1024);
         assertThat(snapshot.endpoint()).hasToString("https://chatgpt.com/backend-api/codex");
         assertThat(snapshot.providerOptions())
                 .containsEntry("codex_originator", "haifa")
@@ -180,6 +183,11 @@ class CliModelConfigurationTest {
         assertThat(result.model().id()).isEqualTo("deepseek-responses-flash");
         assertThat(result.model().credentialRef()).isEqualTo("model-auth://deepseek/default");
         assertThat(result.availableModels())
+                .filteredOn(model -> Set.of("aliyun-bailian", "siliconflow", "kimi", "zhipu", "tokenrhythm")
+                        .contains(model.providerId()))
+                .allSatisfy(model ->
+                        assertThat(model.credentialRef()).isEqualTo("model-auth://" + model.providerId() + "/default"));
+        assertThat(result.availableModels())
                 .extracting(CliConfiguration.Model::id)
                 .containsExactly(
                         "deepseek-chat-pro",
@@ -214,26 +222,27 @@ class CliModelConfigurationTest {
                         "glm-5.1",
                         "glm-5",
                         "glm-5-turbo",
-                        "tokenrhythm-glm-5",
                         "tokenrhythm-glm-5-1",
                         "tokenrhythm-minimax-m2-7",
-                        "tokenrhythm-kimi-k2-5",
                         "tokenrhythm-kimi-k2-6",
-                        "tokenrhythm-minimax-m2-5",
                         "tokenrhythm-mimo-v2-5-pro",
                         "tokenrhythm-qwen3-7-max",
                         "tokenrhythm-kimi-k2-7-code",
                         "tokenrhythm-glm-5-2",
                         "tokenrhythm-qwen3-8-max",
                         "tokenrhythm-deepseek-v4-flash-0731",
-                        "tokenrhythm-seed-2-1-pro",
                         "tokenrhythm-seed-2-1-turbo",
+                        "tokenrhythm-seed-2-1-pro",
                         "tokenrhythm-deepseek-v4-pro-0813",
                         "tokenrhythm-glm-5-3",
                         "tokenrhythm-qwen3-7-flash",
                         "tokenrhythm-qwen3-8-27b",
+                        "tokenrhythm-kimi-k3",
                         "tokenrhythm-longcat-2-0",
-                        "tokenrhythm-glm-5-3-flash");
+                        "tokenrhythm-glm-5-3-flash",
+                        "tokenrhythm-qwen3-8-flash",
+                        "tokenrhythm-deepseek-flash",
+                        "tokenrhythm-glm-5-3-flashx");
         assertThat(result.availableModels())
                 .filteredOn(model -> model.id().equals("gpt-5.6-sol"))
                 .singleElement()
@@ -710,6 +719,40 @@ class CliModelConfigurationTest {
                         .load(CliArguments.parse(new String[] {"--config", configuration.toString()}), Path.of(".")))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("models.providers");
+    }
+
+    @Test
+    void validatesModelResponseByteBoundaries() {
+        assertThat(withModelMaxResponseBytes(1024 * 1024).modelMaxResponseBytes())
+                .isEqualTo(1024 * 1024);
+        assertThat(withModelMaxResponseBytes(32 * 1024 * 1024).modelMaxResponseBytes())
+                .isEqualTo(32 * 1024 * 1024);
+        assertThatThrownBy(() -> withModelMaxResponseBytes(1024 * 1024 - 1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("models.maxResponseBytes");
+        assertThatThrownBy(() -> withModelMaxResponseBytes(32 * 1024 * 1024 + 1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("models.maxResponseBytes");
+    }
+
+    private static CliConfiguration withModelMaxResponseBytes(int value) {
+        CliConfiguration defaults = CliConfiguration.defaults();
+        return new CliConfiguration(
+                defaults.model(),
+                defaults.availableModels(),
+                defaults.enabledTools(),
+                defaults.mcpServers(),
+                defaults.web(),
+                defaults.skills(),
+                defaults.execution(),
+                defaults.approval(),
+                defaults.approvalThreshold(),
+                defaults.timeout(),
+                defaults.maxIterations(),
+                defaults.maxModelCalls(),
+                defaults.maxToolCalls(),
+                defaults.persistence(),
+                value);
     }
 
     @Test

@@ -3,6 +3,7 @@ providerId: google-antigravity
 version: "2026-09-m1"
 displayName: Google Antigravity Direct
 status: ACTIVE
+showOrder: 20
 authenticationMethods: [EXTERNAL_LOGIN]
 bindings:
   - resource: bindings/antigravity-gemini.yaml

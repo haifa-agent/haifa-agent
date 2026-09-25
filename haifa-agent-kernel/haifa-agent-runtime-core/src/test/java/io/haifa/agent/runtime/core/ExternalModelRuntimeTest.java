@@ -83,7 +83,8 @@ class ExternalModelRuntimeTest {
                         List.of(new ModelToolCall(
                                 new ProviderToolCallCorrelationId("provider-call-1"), "echo", Map.of("text", "hello"))),
                         ModelFinishReason.TOOL_CALLS,
-                        ModelUsage.unpriced(10, 3),
+                        // 8 of the 10 input tokens were served from the provider's prompt cache.
+                        new ModelUsage(10, 3, 8, 2, 0, false, 0),
                         "fp-test",
                         Map.of(),
                         Optional.of(SensitiveModelReasoning.of("private tool reasoning")));
@@ -111,7 +112,7 @@ class ExternalModelRuntimeTest {
                     "done",
                     List.of(),
                     ModelFinishReason.STOP,
-                    ModelUsage.unpriced(15, 4),
+                    new ModelUsage(15, 4, 12, 3, 0, false, 0),
                     "fp-test",
                     Map.of());
         };
@@ -191,6 +192,9 @@ class ExternalModelRuntimeTest {
                 .isEqualTo(25);
         assertThat(store.find(accepted.runId()).orElseThrow().usage().outputTokens())
                 .isEqualTo(7);
+        // The provider's cache hits reach the run usage; recording 0 here made every report read 0%.
+        assertThat(store.find(accepted.runId()).orElseThrow().usage().cachedInputTokens())
+                .isEqualTo(20);
         assertThat(store.messages(accepted.runId()).stream().flatMap(message -> message.contents().stream()))
                 .anyMatch(ToolCallPart.class::isInstance)
                 .anyMatch(ToolResultPart.class::isInstance);

@@ -92,6 +92,7 @@ action in the transcript, while safe application logs contain the Attempt ID, st
 ```yaml
 models:
   default: gpt-5.6-sol
+  maxResponseBytes: 4194304 # 1 MiB..32 MiB; applies to every configured model adapter
   providers:
     - id: openai-codex
       displayName: ChatGPT Codex
@@ -180,7 +181,7 @@ haifa-coding resume --last "继续前面的工作"
 
 把 `PATH` 配置写入 `~/.zshrc` 或 `~/.bashrc` 后可长期使用。`haifa-coding` 不切换目录，且 Java
 入口未收到 `--workspace` 时默认使用进程当前目录，所以从哪个项目目录发起，该目录就是 Workspace。
-发行配置只使用 `model-auth://deepseek/default` 引用，不包含密钥；首次启动通过掩码输入保存 API Key，默认保持
+发行配置中的模型 Provider 统一使用 `model-auth://<provider>/default` 引用，不包含密钥；首次启动通过掩码输入保存 API Key，默认保持
 `approval=ask`、`host-guarded + network allow + shell auto`，并启用
 `SQLITE_WITH_JSONL + protection=NONE`。SQLite 是 Session、Run、Tool Journal、Interaction、授权目录
 等恢复状态的唯一事实源；Policy RuleSet 由产品配置提供，Decision 只瞬态求值，不作为
@@ -729,6 +730,7 @@ Runtime 和 Coding 产品不判断退出码的业务含义，也不将非零退�
 one-shot 模式将 answer delta 保持在 stdout，将活动提示保持在 stderr。TTY 从等待模型起立即显示单行
 `Waiting/Thinking` 状态；非 TTY 在 30 秒后首次提示并每 60 秒重复。reasoning 活动事件不带内容，第一段
 answer 输出前会清理 TTY 状态；`--quiet` 只关闭这些状态，不影响 answer、错误或 Trace。
+`execution.shell` 支持 `auto`、`bash` 和 `powershell`。自定义 Shell 必须通过本地配置中的绝对 `shellPath` 提供，不能来自 Tool 参数。环境配置只保存允许继承的名称；Host Guarded 统一由公共解析器提供真实 OS 用户 HOME 与三端最小命令环境，Local Native 输入不携带宿主 HOME/AppData/XDG/TMP。两种模式都拒绝 API Key、`*_TOKEN`、`*_SECRET`、云凭据、代理凭据，以及 `PYTHONHOME`、`PYTHONPATH`、`PYTHONUSERBASE`、`VIRTUAL_ENV`、`CONDA_PREFIX`、`NODE_PATH` 等解释器边界变量。命令输出实时脱敏展示，最终模型结果默认限制为首尾合计 2000 行且最多 50KB，中段带明确省略标记；较大分通道输出通过 Output Ref 访问。探索性 `INSPECT` 达到预算后会停止进程树并要求收窄查询，其他命令继续排空到进程结束。CLI timeout 会发送带 `DEADLINE_EXCEEDED` 原因的 Runtime 终止请求、稳定输出错误前缀并返回退出码 `124`；Ctrl+C 与 Terminal 用户中止发送 `USER_REQUEST`，两者都会有界等待 Broker 收敛进程树。
 
 CLI 在冻结 Definition 时把可信配置解析后的 Shell 显示名加入模型指令，要求 `execution_run` 只生成该
 Shell 支持的命令语法，避免在 Windows PowerShell 中混入 POSIX 命令；Shell 的实际路径、审批、能力与

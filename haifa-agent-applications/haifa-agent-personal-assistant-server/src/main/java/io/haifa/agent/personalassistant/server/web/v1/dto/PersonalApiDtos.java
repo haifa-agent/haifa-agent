@@ -363,9 +363,39 @@ public final class PersonalApiDtos {
             Optional<String> output,
             Optional<String> resultSummary,
             Optional<String> errorCode,
+            Optional<String> terminationReason,
+            Optional<String> terminationDescription,
             Optional<ExecutionError> error,
             Optional<Plan> plan,
-            Usage usage) {}
+            Usage usage) {
+        public Run(
+                String id,
+                String conversationId,
+                String status,
+                long version,
+                Instant updatedAt,
+                Optional<String> output,
+                Optional<String> resultSummary,
+                Optional<String> errorCode,
+                Optional<ExecutionError> error,
+                Optional<Plan> plan,
+                Usage usage) {
+            this(
+                    id,
+                    conversationId,
+                    status,
+                    version,
+                    updatedAt,
+                    output,
+                    resultSummary,
+                    errorCode,
+                    Optional.empty(),
+                    Optional.empty(),
+                    error,
+                    plan,
+                    usage);
+        }
+    }
 
     public record Plan(String id, String objective, List<Todo> items, long revision, Instant updatedAt) {}
 
@@ -376,6 +406,21 @@ public final class PersonalApiDtos {
             String status,
             Optional<Instant> startedAt,
             Optional<Instant> completedAt) {}
+
+    /**
+     * Bounded, display-only tool detail. It excludes raw arguments, provider payloads and full output; the
+     * authoritative result remains in the asset chain referenced by {@code resultRef}.
+     */
+    public record ActivityToolDetail(
+            Optional<String> outputPreview,
+            boolean truncated,
+            long byteCount,
+            long lineCount,
+            Optional<String> truncationReason,
+            Optional<String> processState,
+            Optional<Integer> exitCode,
+            Optional<String> resultRef,
+            boolean outcomeUnknown) {}
 
     public record Activity(
             String activityId,
@@ -392,7 +437,8 @@ public final class PersonalApiDtos {
             Instant occurredAt,
             String safeResultSummary,
             Optional<String> interactionRef,
-            long version) {}
+            long version,
+            Optional<ActivityToolDetail> toolDetail) {}
 
     public record Interaction(
             String id,
@@ -407,7 +453,19 @@ public final class PersonalApiDtos {
             String inputType,
             int maximumCharacters,
             Instant createdAt,
-            Optional<Instant> expiresAt) {}
+            Optional<Instant> expiresAt,
+            Optional<ApprovalPresentationDto> approvalPresentation) {}
+
+    public record ApprovalFactDto(String label, String value) {}
+
+    public record ApprovalPresentationDto(
+            String title,
+            String purpose,
+            String contentType,
+            String content,
+            List<ApprovalFactDto> environment,
+            List<ApprovalFactDto> technical,
+            Optional<String> risk) {}
 
     public record InteractionResponse(String action, String text) {}
 
@@ -451,7 +509,35 @@ public final class PersonalApiDtos {
             String value,
             Optional<Activity> activity,
             String source,
-            long sequence) {}
+            long sequence,
+            Optional<String> toolCallId,
+            Optional<String> outputChannel,
+            Optional<Boolean> outputTruncated,
+            Optional<Boolean> previewDropped) {
+        public StreamEvent(
+                String eventId,
+                String type,
+                String runId,
+                Instant occurredAt,
+                String value,
+                Optional<Activity> activity,
+                String source,
+                long sequence) {
+            this(
+                    eventId,
+                    type,
+                    runId,
+                    occurredAt,
+                    value,
+                    activity,
+                    source,
+                    sequence,
+                    Optional.empty(),
+                    Optional.empty(),
+                    Optional.empty(),
+                    Optional.empty());
+        }
+    }
 
     public record Error(String code, String message, String correlationId, String diagnosticId, List<String> actions) {
         public Error(String code, String message, String correlationId) {
