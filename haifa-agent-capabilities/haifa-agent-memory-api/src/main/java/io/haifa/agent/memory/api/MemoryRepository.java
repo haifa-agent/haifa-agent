@@ -21,14 +21,4 @@ public interface MemoryRepository {
     List<Memory> searchAuthorizedActive(MemoryQuery query, int fetchLimit);
 
     MemoryPage query(MemoryRecordQuery query);
-
-    MemoryConflict saveConflict(MemoryConflict conflict);
-
-    Optional<MemoryConflict> conflictFor(MemoryCandidateId candidateId);
-
-    List<MemoryConflict> conflicts();
-
-    void saveTombstone(MemoryTombstone tombstone);
-
-    List<MemoryTombstone> tombstones();
 }

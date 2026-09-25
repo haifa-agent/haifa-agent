@@ -89,8 +89,8 @@ V6 只新增 `memory_candidate`、`memory_record` 和 `memory_audit_event`。Can
 Actor、摘要和安全属性，不保存 Memory 正文，且不提供公共查询 API。
 
 `SqliteSdkProductContributions` 共享同一 Foundation 装配 Persistence、Conversation 与生产 Memory。
-权威证据校验同时核对来源 ID、持久化内容摘要、Tenant、Principal 和 Scope。Conflict 管理、
-Expiry/Purge/Tombstone/Audit 查询均 fail closed，未在 V6 建表。
+权威证据校验同时核对来源 ID、持久化内容摘要、Tenant、Principal 和 Scope。全量扫描 `allMemories`
+以 `MEMORY_DEFERRED_OPERATION` fail closed，因此来源失效 `invalidateSource` 在 SQLite 上不可用。
 Project Application/CLI 已可显式选择本模块；Runtime 的进程重启恢复由注入的 Port 与每次启动唯一
 worker ID 驱动。
 

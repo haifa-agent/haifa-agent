@@ -16,6 +16,7 @@ import io.haifa.agent.memory.api.MemoryScopeType;
 import io.haifa.agent.memory.api.MemorySourceRef;
 import io.haifa.agent.memory.api.MemorySourceType;
 import io.haifa.agent.memory.api.MemoryStatus;
+import io.haifa.agent.memory.api.MemoryUnitOfWork;
 import io.haifa.agent.memory.api.MemoryVisibility;
 import io.haifa.agent.memory.api.TextMemoryContent;
 import io.haifa.agent.memory.core.DefaultMemoryPolicy;
@@ -63,7 +64,8 @@ class MemoryRuntimeIntegrationTest {
                 List.of(),
                 memories,
                 () -> "governed-memory-" + memoryIds.incrementAndGet(),
-                () -> NOW);
+                () -> NOW,
+                MemoryUnitOfWork.direct());
         DefaultMemoryRetriever retriever = new DefaultMemoryRetriever(memories, policy);
         InMemoryRuntimeStore runtimeStore = new InMemoryRuntimeStore();
         ManualExecutionScheduler scheduler = new ManualExecutionScheduler();

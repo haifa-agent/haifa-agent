@@ -1,5 +1,16 @@
 # Changelog
 
+- Memory drops governance entry points that no product called. Removed public types: `MemoryConflict`,
+  `MemoryConflictResolution`, `MemoryTombstone` and `MemoryAuditSink` (`MemoryAuditStore` now declares `record`
+  itself). Removed methods: `MemoryService.resolveConflict`, `evaluateExpiry`, `requestPurge` and `executePurge`;
+  `MemoryRepository.saveConflict`, `conflictFor`, `conflicts`, `saveTombstone` and `tombstones`;
+  `MemoryCandidateRepository.allCandidates` and `purgeScope`; `MemoryPolicy.canPurge`; `Memory.transition` and
+  `Memory.expiredAt`; `MemoryCandidate.expire`; and the `DefaultMemoryService` constructor that took a bare sink
+  (pass a `MemoryAuditStore` and a `MemoryUnitOfWork`). Every removed operation either always failed
+  (`resolveConflict`) or was rejected by the SQLite store with `MEMORY_DEFERRED_OPERATION`, so SDK and Personal
+  Assistant behavior, the SQLite schema and stored payloads are unchanged. `MemoryRetentionPolicy` and the
+  `EXPIRED`/`PURGE_PENDING`/`PURGED` status values remain until the Memory record is reshaped.
+
 - The Personal Assistant real environment starts again. The catalog migration hardcoded
   `haifa.personal.execution.trusted-host-enabled: false` and dropped the `HAIFA_PERSONAL_EXECUTION_TRUSTED_HOST_ENABLED`
   override, so the fail-closed guard rejected every startup; `application.yml` reads the variable again, and

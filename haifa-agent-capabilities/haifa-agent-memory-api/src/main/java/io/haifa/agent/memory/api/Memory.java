@@ -92,40 +92,6 @@ public record Memory(
                 updatedAt);
     }
 
-    public Memory transition(MemoryStatus target, Instant at) {
-        Objects.requireNonNull(target);
-        boolean allowed =
-                switch (status) {
-                    case ACTIVE ->
-                        target == MemoryStatus.SUPERSEDED
-                                || target == MemoryStatus.INVALIDATED
-                                || target == MemoryStatus.EXPIRED
-                                || target == MemoryStatus.PURGE_PENDING;
-                    case SUPERSEDED, INVALIDATED, EXPIRED -> target == MemoryStatus.PURGE_PENDING;
-                    case PURGE_PENDING -> target == MemoryStatus.PURGED;
-                    case PURGED -> false;
-                };
-        if (!allowed) throw new IllegalStateException("invalid memory transition: " + status + " -> " + target);
-        return new Memory(
-                id,
-                version,
-                scope,
-                kind,
-                subjectKey,
-                target == MemoryStatus.PURGED ? Optional.empty() : content,
-                target == MemoryStatus.PURGED ? List.of() : sources,
-                target == MemoryStatus.PURGED ? List.of() : evidence,
-                target,
-                target == MemoryStatus.PURGED ? Set.of() : securityLabels,
-                normalizedDigest,
-                previousVersion,
-                target == MemoryStatus.INVALIDATED ? Optional.of("SOURCE_INVALIDATED") : invalidationReason,
-                Optional.empty(),
-                retention,
-                createdAt,
-                Objects.requireNonNull(at));
-    }
-
     public Memory invalidate(String reason, Optional<MemoryRef> replacement, Instant at) {
         if (status == MemoryStatus.INVALIDATED) {
             if (invalidationReason.equals(Optional.of(MemoryValues.text(reason, "reason", 128)))
@@ -155,9 +121,5 @@ public record Memory(
                 retention,
                 createdAt,
                 Objects.requireNonNull(at));
-    }
-
-    public boolean expiredAt(Instant now) {
-        return retention.expiresAt().map(expires -> !expires.isAfter(now)).orElse(false);
     }
 }

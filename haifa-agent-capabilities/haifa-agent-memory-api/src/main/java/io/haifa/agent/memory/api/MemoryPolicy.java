@@ -9,7 +9,5 @@ public interface MemoryPolicy {
 
     boolean canReview(MemoryActor actor, MemoryScope scope);
 
-    boolean canPurge(MemoryActor actor, MemoryScope scope);
-
     boolean canRead(MemoryQuery query, Memory memory);
 }

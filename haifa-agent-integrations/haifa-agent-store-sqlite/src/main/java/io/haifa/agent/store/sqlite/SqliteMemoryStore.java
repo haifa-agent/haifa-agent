@@ -9,7 +9,6 @@ import io.haifa.agent.memory.api.MemoryCandidateId;
 import io.haifa.agent.memory.api.MemoryCandidatePage;
 import io.haifa.agent.memory.api.MemoryCandidateQuery;
 import io.haifa.agent.memory.api.MemoryCandidateRepository;
-import io.haifa.agent.memory.api.MemoryConflict;
 import io.haifa.agent.memory.api.MemoryCursorCodec;
 import io.haifa.agent.memory.api.MemoryId;
 import io.haifa.agent.memory.api.MemoryKind;
@@ -22,7 +21,6 @@ import io.haifa.agent.memory.api.MemoryRepository;
 import io.haifa.agent.memory.api.MemoryScope;
 import io.haifa.agent.memory.api.MemorySecurityLabel;
 import io.haifa.agent.memory.api.MemoryStatus;
-import io.haifa.agent.memory.api.MemoryTombstone;
 import io.haifa.agent.memory.api.MemoryVersion;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -138,11 +136,6 @@ public final class SqliteMemoryStore implements MemoryCandidateRepository, Memor
     }
 
     @Override
-    public List<MemoryCandidate> allCandidates() {
-        throw deferred();
-    }
-
-    @Override
     public MemoryCandidatePage query(MemoryCandidateQuery query) {
         return execute(() -> {
             var cursor = query.after().map(MemoryCursorCodec::decode);
@@ -183,11 +176,6 @@ public final class SqliteMemoryStore implements MemoryCandidateRepository, Memor
             }
             return candidatePage(values, query.limit());
         });
-    }
-
-    @Override
-    public void purgeScope(MemoryScope scope) {
-        throw deferred();
     }
 
     @Override
@@ -370,31 +358,6 @@ public final class SqliteMemoryStore implements MemoryCandidateRepository, Memor
             }
             return memoryPage(values, query.limit());
         });
-    }
-
-    @Override
-    public MemoryConflict saveConflict(MemoryConflict conflict) {
-        throw deferred();
-    }
-
-    @Override
-    public Optional<MemoryConflict> conflictFor(MemoryCandidateId candidateId) {
-        throw deferred();
-    }
-
-    @Override
-    public List<MemoryConflict> conflicts() {
-        throw deferred();
-    }
-
-    @Override
-    public void saveTombstone(MemoryTombstone tombstone) {
-        throw deferred();
-    }
-
-    @Override
-    public List<MemoryTombstone> tombstones() {
-        throw deferred();
     }
 
     @Override

@@ -75,13 +75,6 @@ public final class DefaultMemoryPolicy implements MemoryPolicy {
     }
 
     @Override
-    public boolean canPurge(MemoryActor actor, MemoryScope scope) {
-        return owns(actor, scope)
-                && (actor.permissions().contains("memory:purge")
-                        || actor.permissions().contains("memory:admin"));
-    }
-
-    @Override
     public boolean canRead(MemoryQuery query, io.haifa.agent.memory.api.Memory memory) {
         return memory.scope().tenant().equals(query.tenant())
                 && memory.scope().owner().equals(query.owner())

@@ -148,27 +148,6 @@ public record MemoryCandidate(
         return reject(reason, updatedAt);
     }
 
-    public MemoryCandidate expire(String reason) {
-        if (status == MemoryCandidateStatus.EXPIRED) return this;
-        if (status != MemoryCandidateStatus.PENDING) throw new IllegalStateException("candidate is not pending");
-        return copy(
-                MemoryCandidateStatus.EXPIRED,
-                subjectKey,
-                content,
-                sources,
-                evidence,
-                securityLabels,
-                normalizedDigest,
-                policyVersion,
-                retention,
-                replacesMemoryRef,
-                conflictingMemoryRef,
-                Optional.empty(),
-                Optional.of(MemoryValues.text(reason, "reason", 512)),
-                updatedAt,
-                revision + 1);
-    }
-
     public MemoryCandidate revise(
             String revisedSubjectKey,
             MemoryContent revisedContent,

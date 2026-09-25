@@ -183,9 +183,9 @@ Tool Pipeline 只接受 `PublicToolPolicy` 产生的瞬态 `PolicyDecision`；�
 ## Memory default assembly
 
 Runtime 只在未配置 `MemoryRetriever` 时创建默认的内存 Store、Policy 和 Retriever；配置自定义
-Retriever 时不会创建这些默认对象。`MemoryAuditSink` 属于 Memory Service 自身的写入审计边界，
-不是 Runtime Builder 的装配输入。配置 `MemoryService` 时，消息 redaction 仍会使其来源的 Memory
-失效。
+Retriever 时不会创建这些默认对象。`MemoryAuditStore` 属于 Memory Service 自身的写入审计与幂等
+边界，不是 Runtime Builder 的装配输入。配置 `MemoryService` 时，消息 redaction 会调用
+`invalidateSource` 使其来源的 Memory 失效；生产 SQLite Memory 尚不支持该全量扫描。
 
 ## Provider continuation
 
