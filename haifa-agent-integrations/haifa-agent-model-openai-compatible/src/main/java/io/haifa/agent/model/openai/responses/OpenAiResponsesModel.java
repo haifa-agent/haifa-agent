@@ -52,6 +52,7 @@ public final class OpenAiResponsesModel implements AgentChatModel {
     private static final int DEFAULT_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
     private static final int MAX_EVENTS = 100_000;
     private static final int MAX_EVENT_BYTES = 1024 * 1024;
+    private static final int MAX_TOTAL_STREAM_BYTES = 64 * 1024 * 1024;
 
     private final HttpClient http;
     private final ObjectMapper json;
@@ -661,10 +662,16 @@ public final class OpenAiResponsesModel implements AgentChatModel {
         try (Utf8SseLineReader reader = new Utf8SseLineReader(stream)) {
             StringBuilder data = new StringBuilder();
             int eventBytes = 0;
+            long totalBytes = 0;
             Utf8SseLineReader.Line decoded;
             while ((decoded = reader.readLine(MAX_EVENT_BYTES)) != null) {
                 String line = decoded.value();
-                eventBytes = Math.addExact(eventBytes, decoded.transportBytes());
+                int transportBytes = decoded.transportBytes();
+                totalBytes = Math.addExact(totalBytes, transportBytes);
+                if (totalBytes > MAX_TOTAL_STREAM_BYTES) {
+                    throw transportStreamLimit(request);
+                }
+                eventBytes = Math.addExact(eventBytes, transportBytes);
                 if (eventBytes > MAX_EVENT_BYTES) throw transportEventLimit(request, null);
                 if (line.isEmpty()) {
                     if (!data.isEmpty()) {
@@ -1137,6 +1144,17 @@ public final class OpenAiResponsesModel implements AgentChatModel {
                 "transport_event_limit_exceeded",
                 "provider SSE event exceeds the transport safety limit",
                 cause);
+    }
+
+    private static ModelInvocationException transportStreamLimit(AgentChatRequest request) {
+        return failure(
+                request,
+                ModelErrorCategory.OUTPUT_LIMIT_EXCEEDED,
+                false,
+                200,
+                "transport_stream_limit_exceeded",
+                "provider stream exceeds Haifa's fixed 64 MiB total transport safety limit",
+                null);
     }
 
     private static ModelInvocationException emptyResponse(AgentChatRequest request, String message) {

@@ -99,13 +99,23 @@ public final class HaifaCliMain {
                     terminalRunner.run(workspace, configuration, startup, output, trace);
                     return 0;
                 }
+                // The status line also follows tool execution, so that a long tool call is not
+                // reported as a wait for the model.
+                java.util.concurrent.atomic.AtomicReference<CliActivityOutput> activity =
+                        new java.util.concurrent.atomic.AtomicReference<>();
+                java.util.function.Consumer<io.haifa.agent.runtime.core.trace.RuntimeTraceEvent> traces = event -> {
+                    trace.accept(event);
+                    CliActivityOutput renderer = activity.get();
+                    if (renderer != null) renderer.onTrace(event);
+                };
                 try (StandaloneCodingAgent standalone =
-                        StandaloneCodingAgents.open(workspace, configuration, output, trace)) {
+                        StandaloneCodingAgents.open(workspace, configuration, output, traces)) {
                     LocalCodingAgent agent = standalone.localAgent();
                     java.util.concurrent.atomic.AtomicReference<AgentRunOutputListener> outputListener =
                             new java.util.concurrent.atomic.AtomicReference<>();
                     CliActivityOutput activityOutput = CliActivityOutput.attach(
                             outputListener::set, output, error, !parsed.quiet(), System.console() != null);
+                    activity.set(activityOutput);
                     if (parsed.verbose()) output.println("Submitting coding task in " + workspace.getFileName());
                     if (parsed.verbose()) output.println(LocalCodingAgent.reasoningSummary(configuration));
                     var accepted = agent.start(parsed.message().orElseThrow());
@@ -129,8 +139,11 @@ public final class HaifaCliMain {
                         activityOutput.close();
                         removeShutdownHook(shutdownHook);
                     }
-                    if (!completed.status().isTerminal()) {
-                        agent.timeout(accepted.runId());
+                    boolean deadlineExceeded = !completed.status().isTerminal();
+                    if (deadlineExceeded) {
+                        agent.cancel(
+                                accepted.runId(),
+                                io.haifa.agent.runtime.api.RunCancellation.deadlineExceeded(configuration.timeout()));
                         completed = awaitTerminal(agent, accepted.runId(), Duration.ofSeconds(3));
                     }
                     if (!activityOutput.streamed().get()) completed.output().ifPresent(output::println);
@@ -140,10 +153,8 @@ public final class HaifaCliMain {
                             && completed.status() == io.haifa.agent.core.run.AgentRunStatus.COMPLETED) {
                         return 0;
                     }
-                    if (completed.status() == AgentRunStatus.TIMEOUT
-                            || !completed.status().isTerminal()) {
-                        error.println("Task exceeded the CLI timeout of " + configuration.timeout() + ".");
-                        return 124;
+                    if (deadlineExceeded || completed.status() == AgentRunStatus.TIMEOUT) {
+                        return reportDeadlineExceeded(configuration.timeout(), error);
                     }
                     completed.error().ifPresent(value -> {
                         LOGGER.log(
@@ -190,6 +201,11 @@ public final class HaifaCliMain {
 
     static AtomicBoolean attachStreamingOutput(Consumer<AgentRunOutputListener> registrar, PrintStream output) {
         return CliActivityOutput.attach(registrar, output, output, false, false).streamed();
+    }
+
+    static int reportDeadlineExceeded(Duration timeout, PrintStream error) {
+        error.println("[DEADLINE_EXCEEDED] Task exceeded the CLI timeout of " + timeout.toMillis() + " ms.");
+        return 124;
     }
 
     private static io.haifa.agent.runtime.api.AgentRunSnapshot await(

@@ -1,5 +1,6 @@
 package io.haifa.agent.runtime.api;
 
+import io.haifa.agent.runtime.api.display.BoundedText;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -124,14 +125,40 @@ public final class RunEventPayloads {
         }
     }
 
+    /**
+     * Bounded, display-only observation of one tool execution. It carries a copy of already existing typed
+     * result facts as a convenience for display projections; it never replaces the authoritative Tool Result,
+     * never carries raw arguments, provider payloads or full output, and never exposes an arbitrary map.
+     */
+    public record ToolObservation(
+            Optional<BoundedText> outputPreview, Optional<String> processState, Optional<Integer> exitCode) {
+        public ToolObservation {
+            outputPreview = Objects.requireNonNull(outputPreview, "outputPreview must not be null");
+            processState = optional(processState, "processState", 64);
+            exitCode = Objects.requireNonNull(exitCode, "exitCode must not be null");
+        }
+    }
+
     public record ToolLifecycle(
             String toolCallId,
             String displayName,
             String status,
             String reasonCode,
             String targetSummary,
-            String resultRef)
+            String resultRef,
+            Optional<ToolObservation> observation)
             implements AgentRunEvent.Payload {
+        /** Backward-compatible constructor for producers that carry no bounded observation. */
+        public ToolLifecycle(
+                String toolCallId,
+                String displayName,
+                String status,
+                String reasonCode,
+                String targetSummary,
+                String resultRef) {
+            this(toolCallId, displayName, status, reasonCode, targetSummary, resultRef, Optional.empty());
+        }
+
         public ToolLifecycle {
             toolCallId = text(toolCallId, "toolCallId", 256);
             displayName = text(displayName, "displayName", 128);
@@ -139,6 +166,7 @@ public final class RunEventPayloads {
             reasonCode = text(reasonCode, "reasonCode", 128);
             targetSummary = optionalText(targetSummary, "targetSummary", 512);
             resultRef = optionalText(resultRef, "resultRef", 512);
+            observation = Objects.requireNonNull(observation, "observation must not be null");
         }
     }
 

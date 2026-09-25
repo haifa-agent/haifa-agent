@@ -26,6 +26,7 @@ import io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt;
 import io.haifa.agent.runtime.core.checkpoint.CheckpointManager;
 import io.haifa.agent.runtime.core.compaction.CompactionEvaluationOutcome;
 import io.haifa.agent.runtime.core.compaction.SemanticCompactionCoordinator;
+import io.haifa.agent.runtime.core.context.ActiveContextWindowLimitException;
 import io.haifa.agent.runtime.core.control.CancellationObservedException;
 import io.haifa.agent.runtime.core.control.RunControlRegistry;
 import io.haifa.agent.runtime.core.control.RunControlSignal;
@@ -290,11 +291,17 @@ public final class DefaultAgentLoop implements AgentLoop {
             FrozenModelBinding model = models.bind(run);
             CompactionEvaluationOutcome preBuildOutcome = CompactionEvaluationOutcome.NONE;
             if (compactionCoordinator != null) {
-                preBuildOutcome = compactionCoordinator.evaluateAndCompactIfNeeded(run, progress.iteration(), model);
+                preBuildOutcome = evaluateCompaction(run, progress, model);
             }
             ContextBuildExecution buildExecution = buildContext(run, progress, model, preBuildOutcome);
             RuntimeContextBuildResult built = buildExecution.built();
             CompactionEvaluationOutcome compactionOutcome = buildExecution.outcome();
+            Object rawPreparationMetrics =
+                    built.middlewareContext().attributes().get(ContextPreparationMetrics.MIDDLEWARE_ATTRIBUTE);
+            ContextPreparationMetrics preparationMetrics =
+                    rawPreparationMetrics instanceof ContextPreparationMetrics metrics
+                            ? metrics
+                            : ContextPreparationMetrics.NONE;
             recordPromptDiagnostics(built);
             recordTrace(new RuntimeTraceEvent(
                     traceContext.traceId(),
@@ -371,6 +378,17 @@ public final class DefaultAgentLoop implements AgentLoop {
                             Map.entry(
                                     "compactionElapsedMillis",
                                     built.sessionSelection().compactionElapsedMillis()),
+                            Map.entry("contextBuildElapsedMillis", preparationMetrics.contextBuildElapsedMillis()),
+                            Map.entry(
+                                    "sessionSelectionElapsedMillis",
+                                    preparationMetrics.sessionSelectionElapsedMillis()),
+                            Map.entry("historyRowsRead", preparationMetrics.historyRowsRead()),
+                            Map.entry("activeRowsSelected", preparationMetrics.activeRowsSelected()),
+                            Map.entry("atomicGroupCandidateScans", preparationMetrics.atomicGroupCandidateScans()),
+                            Map.entry("atomicGroupsBuilt", preparationMetrics.atomicGroupsBuilt()),
+                            Map.entry("sessionToolCallBatchCount", preparationMetrics.toolCallBatchCount()),
+                            Map.entry("summaryRenderCacheHits", preparationMetrics.summaryRenderCacheHits()),
+                            Map.entry("summaryRenderCacheMisses", preparationMetrics.summaryRenderCacheMisses()),
                             Map.entry(
                                     "estimatedSessionTokens",
                                     built.sessionSelection().estimatedSessionTokens()),
@@ -402,6 +420,30 @@ public final class DefaultAgentLoop implements AgentLoop {
                                                     + component.version())
                                             .toList())),
                     time.now()));
+            events.append(
+                    run.id(),
+                    "context.prepared",
+                    Map.<String, Object>ofEntries(
+                            Map.entry("iteration", progress.iteration()),
+                            Map.entry("contextBuildElapsedMillis", preparationMetrics.contextBuildElapsedMillis()),
+                            Map.entry(
+                                    "sessionSelectionElapsedMillis",
+                                    preparationMetrics.sessionSelectionElapsedMillis()),
+                            Map.entry("historyRowsRead", preparationMetrics.historyRowsRead()),
+                            Map.entry("activeRowsSelected", preparationMetrics.activeRowsSelected()),
+                            Map.entry("atomicGroupCandidateScans", preparationMetrics.atomicGroupCandidateScans()),
+                            Map.entry("atomicGroupsBuilt", preparationMetrics.atomicGroupsBuilt()),
+                            Map.entry("sessionToolCallBatchCount", preparationMetrics.toolCallBatchCount()),
+                            Map.entry("sessionContinuationBatchCount", preparationMetrics.continuationBatchCount()),
+                            Map.entry("sessionContinuationRecordCount", preparationMetrics.continuationRecordCount()),
+                            Map.entry("snapshotHit", preparationMetrics.snapshotHits() > 0),
+                            Map.entry("snapshotHits", preparationMetrics.snapshotHits()),
+                            Map.entry("snapshotRebuildReason", preparationMetrics.snapshotRebuildReason()),
+                            Map.entry("snapshotDeltaRows", preparationMetrics.snapshotDeltaRows()),
+                            Map.entry("snapshotEstimatedTokens", preparationMetrics.snapshotEstimatedTokens()),
+                            Map.entry("snapshotCharacters", preparationMetrics.snapshotCharacters()),
+                            Map.entry("snapshotPayloadBytes", preparationMetrics.snapshotPayloadBytes())),
+                    time.now());
             RuntimeContextBuildResult[] builtRef = {built};
             RuntimeMiddlewareContext[] middlewareContextRef = {built.middlewareContext()};
             RuntimeMiddlewareContext middlewareContext = middlewareContextRef[0];
@@ -540,7 +582,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                         new AgentRunUsageDelta(
                                 response.inputTokens(),
                                 response.outputTokens(),
-                                0,
+                                response.cachedInputTokens(),
                                 0,
                                 0,
                                 0,
@@ -674,14 +716,15 @@ public final class DefaultAgentLoop implements AgentLoop {
     }
 
     private boolean applyControl(AgentRun run, AgentLoopContext progress, SafePoint safePoint, int completedIteration) {
-        RunControlSignal signal = controls.signal(run.id());
+        var directive = controls.directive(run.id());
+        RunControlSignal signal = directive.signal();
         if (signal == RunControlSignal.CANCEL) {
-            transitions.cancelled(run, new RunTerminationReason("USER_CANCELLED", "Cancellation requested"));
+            transitions.cancelled(run, directive.terminationReason().orElseThrow());
             controls.clear(run.id());
             return true;
         }
         if (signal == RunControlSignal.TIMEOUT) {
-            transitions.timedOut(run, new RunTerminationReason("WALL_TIME_EXCEEDED", "Run wall-time limit exceeded"));
+            transitions.timedOut(run, directive.terminationReason().orElseThrow());
             controls.clear(run.id());
             return true;
         }
@@ -908,7 +951,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                     new AgentRunUsageDelta(
                             synthesis.inputTokens(),
                             synthesis.outputTokens(),
-                            0,
+                            synthesis.cachedInputTokens(),
                             0,
                             0,
                             0,
@@ -941,6 +984,9 @@ public final class DefaultAgentLoop implements AgentLoop {
 
     private void checkModelRetryControl(AgentRun run) {
         RunControlSignal signal = controls.signal(run.id());
+        if (signal == RunControlSignal.CANCEL || signal == RunControlSignal.TIMEOUT) {
+            throw new CancellationObservedException(controls.directive(run.id()));
+        }
         if (signal.stopsExecution()) throw new CancellationObservedException(signal);
         long elapsed = run.activeElapsedMillis(time.now());
         if (elapsed >= run.limits().maxWallTimeMillis()) {
@@ -983,6 +1029,12 @@ public final class DefaultAgentLoop implements AgentLoop {
                     data.put("providerCode", modelFailure.providerCode());
                     data.put("retryable", modelFailure.retryable());
                     data.put("outputObserved", modelFailure.outputObserved());
+                    modelFailure.responseLimit().ifPresent(limit -> {
+                        data.put("limitKind", limit.limitKind().name());
+                        data.put("limitBytes", limit.limitBytes());
+                        data.put("observedBytes", limit.observedBytes());
+                        data.put("attempt", limit.attempt());
+                    });
                     failureCategory = modelFailure.category().name();
                     retryable = modelFailure.retryable();
                 } else {
@@ -1049,6 +1101,12 @@ public final class DefaultAgentLoop implements AgentLoop {
             details.put("retryDecision", modelError.retryDecision());
             modelError.providerRequestId().ifPresent(id -> details.put("providerRequestId", id));
             details.put("providerMessage", modelError.getMessage());
+            modelError.responseLimit().ifPresent(limit -> {
+                details.put("limitKind", limit.limitKind().name());
+                details.put("limitBytes", limit.limitBytes());
+                details.put("observedBytes", limit.observedBytes());
+                details.put("attempt", limit.attempt());
+            });
         }
         return Map.copyOf(details);
     }
@@ -1078,7 +1136,9 @@ public final class DefaultAgentLoop implements AgentLoop {
             CompactionEvaluationOutcome initialOutcome) {
         try {
             return new ContextBuildExecution(contextBuilder.build(run, progress, model), initialOutcome);
-        } catch (LocalContextOverflowException overflow) {
+        } catch (LocalContextOverflowException
+                | ActiveContextCompactionRequiredException
+                | ActiveContextWindowLimitException overflow) {
             progress.recordForcedContextRebuild();
             CompactionEvaluationOutcome overflowOutcome = initialOutcome;
             if (compactionCoordinator != null) {
@@ -1086,9 +1146,25 @@ public final class DefaultAgentLoop implements AgentLoop {
             }
             try {
                 return new ContextBuildExecution(contextBuilder.build(run, progress, model), overflowOutcome);
-            } catch (LocalContextOverflowException exhausted) {
+            } catch (LocalContextOverflowException
+                    | ActiveContextCompactionRequiredException
+                    | ActiveContextWindowLimitException exhausted) {
                 throw new ContextRebuildExhaustedException(
-                        "local context remained too long after the single forced rebuild");
+                        "active context remained too long after the single forced rebuild");
+            }
+        }
+    }
+
+    private CompactionEvaluationOutcome evaluateCompaction(
+            AgentRun run, AgentLoopContext progress, FrozenModelBinding model) {
+        try {
+            return compactionCoordinator.evaluateAndCompactIfNeeded(run, progress.iteration(), model);
+        } catch (ActiveContextWindowLimitException overflow) {
+            try {
+                return compactionCoordinator.forceCompactOnOverflow(run, progress.iteration(), model);
+            } catch (ActiveContextWindowLimitException exhausted) {
+                throw new ContextRebuildExhaustedException(
+                        "active context could not be compacted within its hard projection limits");
             }
         }
     }
@@ -1117,6 +1193,12 @@ public final class DefaultAgentLoop implements AgentLoop {
             attributes.put("retryDecision", modelError.retryDecision());
             modelError.providerRequestId().ifPresent(id -> attributes.put("providerRequestId", id));
             attributes.put("providerMessage", modelError.getMessage());
+            modelError.responseLimit().ifPresent(limit -> {
+                attributes.put("limitKind", limit.limitKind().name());
+                attributes.put("limitBytes", limit.limitBytes());
+                attributes.put("observedBytes", limit.observedBytes());
+                attributes.put("attempt", limit.attempt());
+            });
         }
         return Map.copyOf(attributes);
     }

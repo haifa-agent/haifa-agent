@@ -2,6 +2,23 @@
 
 该聚合区域包含依赖管理和构建治理支持，不承载产品业务代码。
 
+## 版本变量
+
+Reactor 版本由根 `pom.xml` 的 `revision` 属性单点定义，全部模块 POM 通过 `${revision}` 引用：
+
+```xml
+<version>${revision}</version>
+...
+<properties>
+    <revision>0.1.1</revision>
+</properties>
+```
+
+升级版本只修改该属性；临时构建或验证可用 `-Drevision=0.2.0` 覆盖。`install`/`deploy` 由
+`flatten-maven-plugin`（`flattenMode=resolveCiFriendliesOnly`）把 `${revision}` 解析为具体版本后写入
+模块目录下被 Git 忽略的 `.flattened-pom.xml`，再以该文件安装或部署，消费者不会读到 `${revision}`
+字面量。
+
 ## 分层 Maven 入口
 
 本地开发使用 `scripts/invoke-haifa-maven.ps1` 或 `scripts/invoke-haifa-maven.sh`。入口不会改变 Maven

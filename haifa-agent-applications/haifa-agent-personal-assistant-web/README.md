@@ -141,7 +141,8 @@ JAR 的构建或静态资源打包。
 - Tool、Skill、MCP 的安全 Activity 投影，不展示原始参数、结果、路径或协议 JSON；
 - Memory Candidate 确认/拒绝、Memory 查看/停用；
 - 最终 Run 的后端权威 Token Usage；
-- 命令/脚本 exact approval 的完整可读正文、调用摘要和高风险警示；
+- 命令/脚本 exact approval 的结构化审批卡：动作标题、目的、可读正文、环境要点、默认折叠的技术细节与
+  允许动作；缺少结构化展示时回退到 `safePrompt`；
 - 执行 REQUESTED / STARTED / SUCCEEDED / FAILED / TIMED_OUT 安全活动及有界结果摘要；
 - 桌面三栏布局和移动端互斥抽屉。
 
@@ -207,6 +208,12 @@ Turns 中的权威 `session_message` 替换草稿。客户端重连发送复合 
 transient cursor。`run.status` 只刷新 Run，`interaction.status` 只刷新 Interaction；带有安全 Activity
 投影的 `activity.committed` 直接合并到本地状态，缺少投影时才重取 Activities。Interaction 请求使用
 generation 门禁丢弃旧响应，审批卡片不会等待 Activities，也不会被较早返回的空响应覆盖。
+
+`tool.output.preview` 是独立的非 replay 临时帧，不参与 durable/transient sequence 去重，也不更新浏览器
+保存的 `Last-Event-ID`。页面按 `toolCallId` 合并到对话区当前“工具活动”卡片下方的实时输出区域，按
+16 KiB/200 行保留最新尾部，并仅在用户原本位于底部时自动跟随；终态 Activity 或 `run.final` 到达后
+立即清除临时内容，以最终安全 Activity 结果为准。执行输出截断与 preview 链路丢批使用不同提示，
+避免把 broker 输出上限误报为实时预览丢失。
 
 When a Run is waiting for approval or interaction and its interaction snapshot cannot be loaded, the page displays
 an explicit blocking error instead of silently hiding the approval controls.

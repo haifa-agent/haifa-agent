@@ -15,6 +15,9 @@ import io.haifa.agent.credential.api.CredentialBroker;
 import io.haifa.agent.policy.api.ApprovalTargetRef;
 import io.haifa.agent.policy.api.PolicyDecision;
 import io.haifa.agent.policy.api.PolicyEffect;
+import io.haifa.agent.runtime.api.RunEventPayloads;
+import io.haifa.agent.runtime.api.display.BoundedText;
+import io.haifa.agent.runtime.api.display.ToolDisplayBudget;
 import io.haifa.agent.runtime.core.control.CancellationObservedException;
 import io.haifa.agent.runtime.core.control.RunControlRegistry;
 import io.haifa.agent.runtime.core.control.RunControlSignal;
@@ -48,6 +51,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.OptionalInt;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -55,6 +59,7 @@ import org.slf4j.LoggerFactory;
 /** Sequential validate-authorize-policy-approve-execute-persist tool pipeline. */
 public final class ToolPipeline {
     private static final Logger LOGGER = LoggerFactory.getLogger(ToolPipeline.class);
+    private static final ToolDisplayBudget TOOL_DISPLAY_BUDGET = ToolDisplayBudget.defaultOutput();
     private final ToolInvoker invoker;
     private final ToolSchemaValidator schemaValidator;
     private final CapabilityAuthorizer capabilityAuthorizer;
@@ -777,7 +782,8 @@ public final class ToolPipeline {
                     result.successful() ? "tool.succeeded" : "tool.failed",
                     result.successful() ? "SUCCEEDED" : "FAILED",
                     result.successful() ? "NONE" : stableResultFailureCode(result),
-                    result.assets().isEmpty() ? "" : result.assets().getFirst().assetId());
+                    result.assets().isEmpty() ? "" : result.assets().getFirst().assetId(),
+                    result);
             result.artifacts()
                     .forEach(reference ->
                             appendResource(run, reference.artifactId(), "artifact", "Published artifact", "AVAILABLE"));
@@ -815,23 +821,71 @@ public final class ToolPipeline {
 
     private void appendToolEvent(
             AgentRun run, ToolCall call, String type, String status, String reasonCode, String resultRef) {
-        events.append(
-                run.id(),
-                type,
-                java.util.Map.of(
-                        "toolCallId",
-                        call.id().value(),
-                        "displayName",
-                        call.toolName(),
-                        "status",
-                        status,
-                        "reasonCode",
-                        reasonCode,
-                        "targetSummary",
-                        call.toolName(),
-                        "resultRef",
-                        resultRef),
-                time.now());
+        appendToolEvent(run, call, type, status, reasonCode, resultRef, null);
+    }
+
+    /**
+     * Appends one tool lifecycle fact with an optional bounded display observation. When an authoritative
+     * {@link ToolResult} is present, already typed facts are copied into the event as a bounded preview and
+     * allowlisted execution metadata; the authoritative result and its assets stay untouched.
+     */
+    private void appendToolEvent(
+            AgentRun run,
+            ToolCall call,
+            String type,
+            String status,
+            String reasonCode,
+            String resultRef,
+            ToolResult result) {
+        var data = new java.util.LinkedHashMap<String, Object>();
+        data.put("toolCallId", call.id().value());
+        data.put("displayName", call.toolName());
+        data.put("status", status);
+        data.put("reasonCode", reasonCode);
+        data.put("targetSummary", call.toolName());
+        data.put("resultRef", resultRef);
+        boundedObservation(result).ifPresent(observation -> {
+            observation.outputPreview().ifPresent(preview -> {
+                data.put("outputPreview", preview.text());
+                data.put("outputPreviewTruncated", preview.truncated());
+                data.put("outputPreviewByteCount", preview.byteCount());
+                data.put("outputPreviewLineCount", preview.lineCount());
+                preview.truncationReason()
+                        .ifPresent(reason -> data.put("outputPreviewTruncationReason", reason.name()));
+            });
+            observation.processState().ifPresent(value -> data.put("processState", value));
+            observation.exitCode().ifPresent(value -> data.put("exitCode", value));
+        });
+        events.append(run.id(), type, java.util.Map.copyOf(data), time.now());
+    }
+
+    /** Copies only already typed result facts into a bounded observation; provider payloads are never read. */
+    private static Optional<RunEventPayloads.ToolObservation> boundedObservation(ToolResult result) {
+        if (result == null) return Optional.empty();
+        BoundedText preview = BoundedText.of(result.summary(), TOOL_DISPLAY_BUDGET);
+        Optional<String> processState =
+                allowlistedProcessState(result.structuredData().get("processState"));
+        Optional<Integer> exitCode = allowlistedExitCode(result.structuredData().get("exitCode"));
+        return Optional.of(new RunEventPayloads.ToolObservation(Optional.of(preview), processState, exitCode));
+    }
+
+    private static Optional<String> allowlistedProcessState(Object value) {
+        return value instanceof String text && text.matches("[A-Z][A-Z0-9_]{0,63}")
+                ? Optional.of(text)
+                : Optional.empty();
+    }
+
+    private static Optional<Integer> allowlistedExitCode(Object value) {
+        if (!(value instanceof Number number)) return Optional.empty();
+        double numeric = number.doubleValue();
+        long integral = number.longValue();
+        if (!Double.isFinite(numeric)
+                || numeric != Math.rint(numeric)
+                || integral < Integer.MIN_VALUE
+                || integral > Integer.MAX_VALUE) {
+            return Optional.empty();
+        }
+        return Optional.of((int) integral);
     }
 
     private static Map<String, Object> failureAttributes(String toolName, ToolResult result) {
@@ -946,6 +1000,9 @@ public final class ToolPipeline {
 
     private void checkCancellation(AgentRun run) {
         RunControlSignal signal = controls.signal(run.id());
+        if (signal == RunControlSignal.CANCEL || signal == RunControlSignal.TIMEOUT) {
+            throw new CancellationObservedException(controls.directive(run.id()));
+        }
         if (signal.stopsExecution()) throw new CancellationObservedException(signal);
     }
 }

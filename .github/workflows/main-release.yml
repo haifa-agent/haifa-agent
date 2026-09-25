@@ -79,7 +79,9 @@ jobs:
             - name: Standalone Java and Spring example applications
               run: examples/haifa-agent-example/mvnw -f examples/haifa-agent-example/pom.xml clean verify
             - name: CLI entrypoint smoke
-              run: java -jar haifa-agent-applications/haifa-agent-cli/target/haifa-agent-cli-0.1.0.jar --help
+              run: |
+                  version=$(sed -n 's/.*<revision>\(.*\)<\/revision>.*/\1/p' pom.xml | head -n1)
+                  java -jar "haifa-agent-applications/haifa-agent-cli/target/haifa-agent-cli-${version}.jar" --help
 
     release-gate:
         name: Release gate

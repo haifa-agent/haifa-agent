@@ -4,6 +4,7 @@ import io.haifa.agent.execution.api.ExecutionEnvironmentRef;
 import io.haifa.agent.execution.api.ExecutionOutputObserver;
 import io.haifa.agent.execution.api.ExecutionScratchSpaceSpec;
 import io.haifa.agent.execution.api.SandboxProfileRef;
+import io.haifa.agent.execution.api.ToolOutputPreviewPublisher;
 import io.haifa.agent.policy.api.PolicyDigest;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -23,7 +24,8 @@ public record ExecutionToolConfiguration(
         ScriptRuntimeResolver runtimes,
         ExecutionOutputObserver outputObserver,
         UnaryOperator<String> outputSanitizer,
-        ExecutionScratchSpaceSpec scratchSpace) {
+        ExecutionScratchSpaceSpec scratchSpace,
+        ToolOutputPreviewPublisher previewPublisher) {
     public ExecutionToolConfiguration(
             ExecutionEnvironmentRef environmentRef,
             SandboxProfileRef sandboxProfileRef,
@@ -49,7 +51,38 @@ public record ExecutionToolConfiguration(
                 runtimes,
                 outputObserver,
                 outputSanitizer,
-                scratchSpace);
+                scratchSpace,
+                ToolOutputPreviewPublisher.noop());
+    }
+
+    public ExecutionToolConfiguration(
+            ExecutionEnvironmentRef environmentRef,
+            SandboxProfileRef sandboxProfileRef,
+            Duration defaultTimeout,
+            Duration maximumTimeout,
+            int maximumOutputBytes,
+            int maximumOutputLines,
+            int maximumProcesses,
+            boolean workingDirectoryAllowed,
+            ScriptRuntimeResolver runtimes,
+            ExecutionOutputObserver outputObserver,
+            UnaryOperator<String> outputSanitizer,
+            ExecutionScratchSpaceSpec scratchSpace,
+            ToolOutputPreviewPublisher previewPublisher) {
+        this(
+                environmentRef,
+                sandboxProfileRef,
+                defaultTimeout,
+                maximumTimeout,
+                maximumOutputBytes,
+                maximumOutputLines,
+                Optional.of(maximumProcesses),
+                workingDirectoryAllowed,
+                runtimes,
+                outputObserver,
+                outputSanitizer,
+                scratchSpace,
+                previewPublisher);
     }
 
     public ExecutionToolConfiguration(
@@ -76,7 +109,8 @@ public record ExecutionToolConfiguration(
                 runtimes,
                 outputObserver,
                 outputSanitizer,
-                ExecutionScratchSpaceSpec.none());
+                ExecutionScratchSpaceSpec.none(),
+                ToolOutputPreviewPublisher.noop());
     }
 
     public ExecutionToolConfiguration(
@@ -102,7 +136,8 @@ public record ExecutionToolConfiguration(
                 runtimes,
                 outputObserver,
                 outputSanitizer,
-                ExecutionScratchSpaceSpec.none());
+                ExecutionScratchSpaceSpec.none(),
+                ToolOutputPreviewPublisher.noop());
     }
 
     public ExecutionToolConfiguration {
@@ -130,6 +165,7 @@ public record ExecutionToolConfiguration(
         Objects.requireNonNull(outputObserver, "outputObserver must not be null");
         Objects.requireNonNull(outputSanitizer, "outputSanitizer must not be null");
         Objects.requireNonNull(scratchSpace, "scratchSpace must not be null");
+        Objects.requireNonNull(previewPublisher, "previewPublisher must not be null");
     }
 
     public String identityDigest() {

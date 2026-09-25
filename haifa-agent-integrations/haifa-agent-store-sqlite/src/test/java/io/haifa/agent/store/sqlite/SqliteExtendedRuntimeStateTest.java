@@ -90,6 +90,24 @@ class SqliteExtendedRuntimeStateTest {
     private static final byte[] KEY = "0123456789abcdef0123456789abcdef".getBytes(StandardCharsets.UTF_8);
 
     @Test
+    void activeWindowLookupsChunkMoreThanSqlitesParameterLimit(@TempDir java.nio.file.Path directory) {
+        try (SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory)) {
+            var run = SqliteAggregateTestData.prepareRun(foundation);
+            var state = foundation.runtimeState(protector(KEY));
+            Set<ToolCallId> toolIds = java.util.stream.IntStream.range(0, 1_201)
+                    .mapToObj(index -> new ToolCallId("missing-tool-" + index))
+                    .collect(java.util.stream.Collectors.toSet());
+            Set<AgentMessageId> messageIds = java.util.stream.IntStream.range(0, 1_201)
+                    .mapToObj(index -> new AgentMessageId("missing-message-" + index))
+                    .collect(java.util.stream.Collectors.toSet());
+
+            assertThat(state.toolCallsByIds(Map.of(run.id(), toolIds))).isEmpty();
+            assertThat(state.continuationsForMessages(Map.of(run.id(), messageIds)))
+                    .isEmpty();
+        }
+    }
+
+    @Test
     void configurationSummaryMemoryAssetAndContinuationSurviveReopen(@TempDir java.nio.file.Path directory)
             throws Exception {
         SqliteStoreFoundation first = SqliteTestSupport.foundation(directory);

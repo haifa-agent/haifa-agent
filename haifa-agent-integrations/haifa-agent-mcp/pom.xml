@@ -6,7 +6,7 @@
     <parent>
         <groupId>io.haifa</groupId>
         <artifactId>haifa-agent-parent</artifactId>
-        <version>0.1.0</version>
+        <version>${revision}</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
@@ -39,6 +39,18 @@
         <dependency>
             <groupId>io.modelcontextprotocol.sdk</groupId>
             <artifactId>mcp-json-jackson2</artifactId>
+            <!--
+                json-schema-validator reads YAML schema documents through a lazily initialized mapper.
+                MCP only exchanges JSON, so the YAML branch is never reached; excluding it keeps the
+                snakeyaml chain out of every consumer, including the Spring Boot modules whose managed
+                snakeyaml lags the one jackson-dataformat-yaml declares.
+            -->
+            <exclusions>
+                <exclusion>
+                    <groupId>com.fasterxml.jackson.dataformat</groupId>
+                    <artifactId>jackson-dataformat-yaml</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
@@ -109,6 +121,8 @@
                                         <exclude>io.modelcontextprotocol.sdk:mcp-json-jackson3</exclude>
                                         <exclude>org.springframework:*</exclude>
                                         <exclude>org.springframework.boot:*</exclude>
+                                        <exclude>org.springframework.ai:*</exclude>
+                                        <exclude>com.alibaba.cloud.ai:*</exclude>
                                     </excludes>
                                     <searchTransitive>true</searchTransitive>
                                 </bannedDependencies>

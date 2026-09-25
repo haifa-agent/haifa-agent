@@ -65,6 +65,70 @@ class PersonalApiMapperModelProjectionTest {
         assertThat(gone.available()).isFalse();
     }
 
+    @Test
+    void mapsStructuredApprovalPresentationWithoutChangingApprovalIdentity() {
+        PersonalAssistantApplication.InteractionViewValue interaction =
+                new PersonalAssistantApplication.InteractionViewValue(
+                        "interaction-1",
+                        "run-1",
+                        "conversation-1",
+                        3L,
+                        "approval",
+                        "PENDING",
+                        "Approval required",
+                        "Mode: SCRIPT\nRisks: HIGH",
+                        List.of("reject", "approve"),
+                        "NONE",
+                        0,
+                        java.time.Instant.parse("2026-07-28T01:00:00Z"),
+                        Optional.of(java.time.Instant.parse("2026-07-28T02:00:00Z")),
+                        Optional.of(new PersonalAssistantApplication.ApprovalPresentationValue(
+                                "执行 PowerShell 命令",
+                                "为了观察终端工具调用的实际效果。",
+                                "PowerShell",
+                                "Start-Sleep -Seconds 4",
+                                List.of(new PersonalAssistantApplication.ApprovalFactValue("执行位置", "本机环境")),
+                                List.of(new PersonalAssistantApplication.ApprovalFactValue("调用摘要", "digest-123")),
+                                Optional.of("HIGH"))));
+
+        PersonalApiDtos.Interaction dto = mapper.interaction(interaction);
+
+        assertThat(dto.safePrompt()).contains("Risks: HIGH");
+        assertThat(dto.allowedActions()).containsExactly("reject", "approve");
+        assertThat(dto.approvalPresentation()).hasValueSatisfying(presentation -> {
+            assertThat(presentation.title()).isEqualTo("执行 PowerShell 命令");
+            assertThat(presentation.contentType()).isEqualTo("PowerShell");
+            assertThat(presentation.content()).isEqualTo("Start-Sleep -Seconds 4");
+            assertThat(presentation.environment()).singleElement().satisfies(fact -> assertThat(fact.value())
+                    .isEqualTo("本机环境"));
+            assertThat(presentation.technical()).singleElement().satisfies(fact -> assertThat(fact.value())
+                    .isEqualTo("digest-123"));
+            assertThat(presentation.risk()).contains("HIGH");
+        });
+    }
+
+    @Test
+    void omitsApprovalPresentationForUnstructuredInteractions() {
+        PersonalAssistantApplication.InteractionViewValue interaction =
+                new PersonalAssistantApplication.InteractionViewValue(
+                        "interaction-2",
+                        "run-2",
+                        "conversation-1",
+                        1L,
+                        "clarification",
+                        "PENDING",
+                        "Input required",
+                        "Which file?",
+                        List.of("submit"),
+                        "TEXT",
+                        200,
+                        java.time.Instant.parse("2026-07-28T01:00:00Z"),
+                        Optional.empty(),
+                        Optional.empty());
+
+        assertThat(mapper.interaction(interaction).approvalPresentation()).isEmpty();
+    }
+
     private static PersonalAssistantApplication.ModelSelectionView view(
             PersonalSelectionCompatibility compatibility, boolean available) {
         return new PersonalAssistantApplication.ModelSelectionView(

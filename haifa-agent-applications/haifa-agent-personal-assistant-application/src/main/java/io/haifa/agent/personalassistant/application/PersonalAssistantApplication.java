@@ -9,6 +9,8 @@ import io.haifa.agent.core.content.StoredImageContentPart;
 import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.execution.api.ToolOutputPreview;
+import io.haifa.agent.execution.api.ToolOutputPreviewPublisher;
 import io.haifa.agent.memory.api.MemoryCandidateId;
 import io.haifa.agent.memory.api.MemoryCandidateStatus;
 import io.haifa.agent.memory.api.MemoryId;
@@ -26,6 +28,7 @@ import io.haifa.agent.personalassistant.application.research.ResearchFetchEviden
 import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.AgentRunOutputEvent;
 import io.haifa.agent.runtime.api.AgentRunOutputEventType;
+import io.haifa.agent.runtime.api.ApprovalPresentation;
 import io.haifa.agent.runtime.api.InteractionAction;
 import io.haifa.agent.runtime.api.InteractionResponseId;
 import io.haifa.agent.runtime.api.InteractionResponseSubmission;
@@ -62,6 +65,7 @@ import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.function.Consumer;
 
 /** Pure-Java product use cases over the Phase 20 SDK and public Runtime views. */
 public final class PersonalAssistantApplication implements AutoCloseable {
@@ -78,6 +82,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     private final Map<String, String> skillBindingReferences;
     private final String productDigest;
     private final ResearchFetchEvidenceReader fetchEvidenceReader;
+    private final ToolOutputPreviewPublisher previewPublisher;
     private final ConcurrentMap<String, List<String>> recommendedQuestions = new ConcurrentHashMap<>();
 
     public PersonalAssistantApplication(
@@ -130,7 +135,8 @@ public final class PersonalAssistantApplication implements AutoCloseable {
                 skillBindingReferences,
                 agent.profile().productId().value() + "@"
                         + agent.profile().productVersion().value(),
-                fetchEvidenceReader);
+                fetchEvidenceReader,
+                ToolOutputPreviewPublisher.noop());
     }
 
     public PersonalAssistantApplication(
@@ -146,6 +152,36 @@ public final class PersonalAssistantApplication implements AutoCloseable {
             Map<String, String> skillBindingReferences,
             String productDigest,
             ResearchFetchEvidenceReader fetchEvidenceReader) {
+        this(
+                agent,
+                mcp,
+                clock,
+                capabilities,
+                models,
+                modelPreferences,
+                questionRecommender,
+                missionRuntime,
+                artifacts,
+                skillBindingReferences,
+                productDigest,
+                fetchEvidenceReader,
+                ToolOutputPreviewPublisher.noop());
+    }
+
+    public PersonalAssistantApplication(
+            HaifaAgent agent,
+            PersonalMcpPlatform mcp,
+            Clock clock,
+            PersonalCapabilityRegistry capabilities,
+            PersonalModelCatalog models,
+            PersonalModelPreferenceStore modelPreferences,
+            PersonalQuestionRecommender questionRecommender,
+            MissionRuntimeAccess missionRuntime,
+            ArtifactService artifacts,
+            Map<String, String> skillBindingReferences,
+            String productDigest,
+            ResearchFetchEvidenceReader fetchEvidenceReader,
+            ToolOutputPreviewPublisher previewPublisher) {
         this.agent = Objects.requireNonNull(agent);
         this.mcp = Objects.requireNonNull(mcp);
         this.clock = Objects.requireNonNull(clock);
@@ -158,6 +194,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
         this.skillBindingReferences = Map.copyOf(skillBindingReferences);
         this.productDigest = Objects.requireNonNull(productDigest, "productDigest must not be null");
         this.fetchEvidenceReader = Objects.requireNonNull(fetchEvidenceReader, "fetchEvidenceReader must not be null");
+        this.previewPublisher = Objects.requireNonNull(previewPublisher, "previewPublisher must not be null");
         this.mcpToolAliases = mcp.aliases();
     }
 
@@ -171,6 +208,16 @@ public final class PersonalAssistantApplication implements AutoCloseable {
 
     public ResearchFetchEvidenceReader fetchEvidenceReader() {
         return fetchEvidenceReader;
+    }
+
+    public Instant now() {
+        return clock.instant();
+    }
+
+    public StreamSubscription subscribeToolOutput(String runId, Consumer<ToolOutputPreview> listener) {
+        ToolOutputPreviewPublisher.ToolOutputPreviewSubscription subscription = previewPublisher.subscribe(
+                new AgentRunId(runId), Objects.requireNonNull(listener, "listener must not be null"));
+        return subscription::close;
     }
 
     public Optional<String> skillBindingReference(String alias) {
@@ -418,6 +465,8 @@ public final class PersonalAssistantApplication implements AutoCloseable {
                     snapshot.output(),
                     snapshot.result().map(result -> result.summary()),
                     snapshot.error().map(error -> error.code().wireCode()),
+                    snapshot.terminationReason().map(reason -> reason.code()),
+                    snapshot.terminationReason().map(reason -> reason.description()),
                     snapshot.error()
                             .map(error -> new ExecutionErrorView(
                                     error.code().wireCode(),
@@ -445,7 +494,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     public RunView cancel(String runId) {
         return run(agent.runs()
                         .handle(new AgentRunId(runId))
-                        .cancel()
+                        .cancel(io.haifa.agent.runtime.api.RunCancellation.userRequest())
                         .snapshot()
                         .runId()
                         .value())
@@ -870,7 +919,27 @@ public final class PersonalAssistantApplication implements AutoCloseable {
                 value.inputContract().type().value(),
                 value.inputContract().maximumCharacters(),
                 value.createdAt(),
-                value.expiresAt());
+                value.expiresAt(),
+                value.approvalPresentation().map(PersonalAssistantApplication::approvalPresentation));
+    }
+
+    private static ApprovalPresentationValue approvalPresentation(ApprovalPresentation value) {
+        return new ApprovalPresentationValue(
+                value.title(),
+                value.purpose(),
+                value.contentType(),
+                value.content(),
+                value.environment().stream()
+                        .map(PersonalAssistantApplication::approvalFact)
+                        .toList(),
+                value.technical().stream()
+                        .map(PersonalAssistantApplication::approvalFact)
+                        .toList(),
+                value.risk());
+    }
+
+    private static ApprovalFactValue approvalFact(ApprovalPresentation.Fact fact) {
+        return new ApprovalFactValue(fact.label(), fact.value());
     }
 
     private Optional<ActivityView> activity(AgentRunEvent event) {
@@ -890,37 +959,71 @@ public final class PersonalAssistantApplication implements AutoCloseable {
                     event.occurredAt(),
                     safeResult(model),
                     Optional.empty(),
-                    event.sequence()));
+                    event.sequence(),
+                    Optional.empty()));
         }
         if (!(event.payload() instanceof RunEventPayloads.ToolLifecycle tool)) return Optional.empty();
-        ActivityKind kind =
-                Set.of(PersonalAssistantProfile.SKILL_LOAD_ALIAS, PersonalAssistantProfile.SKILL_RESOURCE_ALIAS)
-                                        .contains(tool.displayName())
-                                || tool.displayName().startsWith("skill.")
-                        ? ActivityKind.SKILL
-                        : mcpToolAliases.contains(tool.displayName())
-                                        || tool.displayName().startsWith("mcp.")
-                                ? ActivityKind.MCP
-                                : ActivityKind.TOOL;
-        return Optional.of(new ActivityView(
+        return Optional.of(toolActivity(
+                event.eventId(), event.runId().value(), event.occurredAt(), event.sequence(), toolKind(tool), tool));
+    }
+
+    private ActivityKind toolKind(RunEventPayloads.ToolLifecycle tool) {
+        return Set.of(PersonalAssistantProfile.SKILL_LOAD_ALIAS, PersonalAssistantProfile.SKILL_RESOURCE_ALIAS)
+                                .contains(tool.displayName())
+                        || tool.displayName().startsWith("skill.")
+                ? ActivityKind.SKILL
+                : mcpToolAliases.contains(tool.displayName())
+                                || tool.displayName().startsWith("mcp.")
+                        ? ActivityKind.MCP
+                        : ActivityKind.TOOL;
+    }
+
+    /** Maps one authoritative tool lifecycle fact into the PA activity read model. */
+    static ActivityView toolActivity(
+            String eventId,
+            String runId,
+            Instant occurredAt,
+            long sequence,
+            ActivityKind kind,
+            RunEventPayloads.ToolLifecycle tool) {
+        return new ActivityView(
                 "tool:" + tool.toolCallId(),
-                event.eventId(),
+                eventId,
                 Optional.empty(),
-                event.runId().value(),
+                runId,
                 kind,
                 tool.displayName(),
                 tool.targetSummary(),
                 tool.status(),
-                "REQUESTED".equals(tool.status()) ? Optional.of(event.occurredAt()) : Optional.empty(),
-                "STARTED".equals(tool.status()) ? Optional.of(event.occurredAt()) : Optional.empty(),
-                terminal(tool.status()) ? Optional.of(event.occurredAt()) : Optional.empty(),
-                event.occurredAt(),
+                "REQUESTED".equals(tool.status()) ? Optional.of(occurredAt) : Optional.empty(),
+                "STARTED".equals(tool.status()) ? Optional.of(occurredAt) : Optional.empty(),
+                terminal(tool.status()) ? Optional.of(occurredAt) : Optional.empty(),
+                occurredAt,
                 safeResult(tool),
                 Optional.empty(),
-                event.sequence()));
+                sequence,
+                toolDetail(tool));
     }
 
-    private static ActivityView mergeActivity(ActivityView previous, ActivityView next) {
+    private static Optional<ToolDetailView> toolDetail(RunEventPayloads.ToolLifecycle tool) {
+        var observation = tool.observation();
+        boolean outcomeUnknown = unknownOutcome(tool.status(), tool.reasonCode());
+        Optional<String> resultRef = tool.resultRef().isBlank() ? Optional.empty() : Optional.of(tool.resultRef());
+        if (observation.isEmpty() && !outcomeUnknown && resultRef.isEmpty()) return Optional.empty();
+        var preview = observation.flatMap(RunEventPayloads.ToolObservation::outputPreview);
+        return Optional.of(new ToolDetailView(
+                preview.map(value -> value.text()),
+                preview.map(value -> value.truncated()).orElse(false),
+                preview.map(value -> value.byteCount()).orElse(0L),
+                preview.map(value -> value.lineCount()).orElse(0L),
+                preview.flatMap(value -> value.truncationReason()).map(Enum::name),
+                observation.flatMap(RunEventPayloads.ToolObservation::processState),
+                observation.flatMap(RunEventPayloads.ToolObservation::exitCode),
+                resultRef,
+                outcomeUnknown));
+    }
+
+    static ActivityView mergeActivity(ActivityView previous, ActivityView next) {
         if (next.version() < previous.version()) return previous;
         return new ActivityView(
                 next.activityId(),
@@ -937,7 +1040,8 @@ public final class PersonalAssistantApplication implements AutoCloseable {
                 next.occurredAt(),
                 prefer(next.safeResultSummary(), previous.safeResultSummary()),
                 next.interactionRef().or(() -> previous.interactionRef()),
-                next.version());
+                next.version(),
+                next.toolDetail().or(() -> previous.toolDetail()));
     }
 
     private static Instant activitySortTime(ActivityView activity) {
@@ -974,9 +1078,22 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     }
 
     private static String safeResult(RunEventPayloads.ToolLifecycle tool) {
+        if (unknownOutcome(tool.status(), tool.reasonCode())) {
+            return tool.reasonCode().isBlank() ? "Outcome unknown" : tool.reasonCode();
+        }
         if ("SUCCEEDED".equals(tool.status())) return "Completed";
-        if ("FAILED".equals(tool.status()) || "CANCELLED".equals(tool.status())) return tool.reasonCode();
+        if ("FAILED".equals(tool.status())
+                || "DENIED".equals(tool.status())
+                || "CANCELLED".equals(tool.status())
+                || "TIMEOUT".equals(tool.status())) return tool.reasonCode();
         return "";
+    }
+
+    /** Unknown side-effecting outcomes are never projected as a successful result. */
+    private static boolean unknownOutcome(String status, String reasonCode) {
+        return "OUTCOME_UNKNOWN".equalsIgnoreCase(status)
+                || "UNKNOWN_OUTCOME".equalsIgnoreCase(status)
+                || "TOOL_OUTCOME_UNKNOWN".equalsIgnoreCase(reasonCode);
     }
 
     private static String safeResult(RunEventPayloads.ModelLifecycle model) {
@@ -988,7 +1105,8 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     }
 
     private static boolean terminal(String status) {
-        return Set.of("SUCCEEDED", "FAILED", "CANCELLED").contains(status);
+        return Set.of("SUCCEEDED", "FAILED", "DENIED", "CANCELLED", "TIMEOUT", "OUTCOME_UNKNOWN")
+                .contains(status);
     }
 
     private StreamEvent streamEvent(AgentRunEvent event) {
@@ -1126,9 +1244,39 @@ public final class PersonalAssistantApplication implements AutoCloseable {
             Optional<String> output,
             Optional<String> resultSummary,
             Optional<String> errorCode,
+            Optional<String> terminationReason,
+            Optional<String> terminationDescription,
             Optional<ExecutionErrorView> error,
             Optional<PlanView> plan,
-            UsageView usage) {}
+            UsageView usage) {
+        public RunView(
+                String id,
+                String conversationId,
+                String status,
+                long version,
+                Instant updatedAt,
+                Optional<String> output,
+                Optional<String> resultSummary,
+                Optional<String> errorCode,
+                Optional<ExecutionErrorView> error,
+                Optional<PlanView> plan,
+                UsageView usage) {
+            this(
+                    id,
+                    conversationId,
+                    status,
+                    version,
+                    updatedAt,
+                    output,
+                    resultSummary,
+                    errorCode,
+                    Optional.empty(),
+                    Optional.empty(),
+                    error,
+                    plan,
+                    usage);
+        }
+    }
 
     public record PlanView(String id, String objective, List<TodoView> items, long revision, Instant updatedAt) {}
 
@@ -1153,7 +1301,19 @@ public final class PersonalAssistantApplication implements AutoCloseable {
             String inputType,
             int maximumCharacters,
             Instant createdAt,
-            Optional<Instant> expiresAt) {}
+            Optional<Instant> expiresAt,
+            Optional<ApprovalPresentationValue> approvalPresentation) {}
+
+    public record ApprovalFactValue(String label, String value) {}
+
+    public record ApprovalPresentationValue(
+            String title,
+            String purpose,
+            String contentType,
+            String content,
+            List<ApprovalFactValue> environment,
+            List<ApprovalFactValue> technical,
+            Optional<String> risk) {}
 
     public record InteractionReceipt(
             String responseId,
@@ -1171,6 +1331,21 @@ public final class PersonalAssistantApplication implements AutoCloseable {
         MCP
     }
 
+    /**
+     * Bounded, display-only tool detail derived from the Runtime observation. It never carries raw
+     * arguments, provider payloads or full output, and the authoritative result still lives in the asset chain.
+     */
+    public record ToolDetailView(
+            Optional<String> outputPreview,
+            boolean truncated,
+            long byteCount,
+            long lineCount,
+            Optional<String> truncationReason,
+            Optional<String> processState,
+            Optional<Integer> exitCode,
+            Optional<String> resultRef,
+            boolean outcomeUnknown) {}
+
     public record ActivityView(
             String activityId,
             String eventId,
@@ -1186,7 +1361,8 @@ public final class PersonalAssistantApplication implements AutoCloseable {
             Instant occurredAt,
             String safeResultSummary,
             Optional<String> interactionRef,
-            long version) {}
+            long version,
+            Optional<ToolDetailView> toolDetail) {}
 
     public record MemoryCandidateView(
             String id,

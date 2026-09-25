@@ -3,6 +3,7 @@ providerId: kimi
 version: "2026-09-m2"
 displayName: Moonshot Kimi
 status: ACTIVE
+showOrder: 4
 authenticationMethods: [API_KEY]
 bindings:
   - resource: bindings/kimi-k3.yaml

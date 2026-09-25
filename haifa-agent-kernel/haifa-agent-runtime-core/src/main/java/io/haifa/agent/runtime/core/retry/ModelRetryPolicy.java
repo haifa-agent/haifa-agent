@@ -77,6 +77,7 @@ public record ModelRetryPolicy(
     }
 
     public int maxAttempts(RuntimeException error) {
+        if (isStreamResponseTooLarge(error)) return Math.min(2, policy.maxAttempts());
         return isEmptyResponse(error) ? policy.maxAttempts() : nonEmptyMaxAttempts;
     }
 
@@ -87,6 +88,12 @@ public record ModelRetryPolicy(
     private static boolean isEmptyResponse(RuntimeException error) {
         return error instanceof ModelInvocationException modelError
                 && modelError.category() == ModelErrorCategory.EMPTY_RESPONSE;
+    }
+
+    private static boolean isStreamResponseTooLarge(RuntimeException error) {
+        return error instanceof ModelInvocationException modelError
+                && modelError.category() == ModelErrorCategory.MALFORMED_RESPONSE
+                && "stream_response_too_large".equals(modelError.providerCode());
     }
 
     private boolean isRetryable(RuntimeException error) {

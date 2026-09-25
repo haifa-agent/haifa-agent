@@ -23,7 +23,43 @@ public record InteractionView(
         InteractionRequesterView requester,
         Instant createdAt,
         Optional<Instant> expiresAt,
-        InteractionConsequenceView consequences) {
+        InteractionConsequenceView consequences,
+        Optional<ApprovalPresentation> approvalPresentation) {
+    public InteractionView(
+            InteractionRequestId requestId,
+            AgentRunId runId,
+            AgentSessionId sessionId,
+            long revision,
+            InteractionKind kind,
+            InteractionState state,
+            String title,
+            String safePrompt,
+            List<InteractionAction> allowedActions,
+            InteractionInputContract inputContract,
+            InteractionTargetView target,
+            InteractionRequesterView requester,
+            Instant createdAt,
+            Optional<Instant> expiresAt,
+            InteractionConsequenceView consequences) {
+        this(
+                requestId,
+                runId,
+                sessionId,
+                revision,
+                kind,
+                state,
+                title,
+                safePrompt,
+                allowedActions,
+                inputContract,
+                target,
+                requester,
+                createdAt,
+                expiresAt,
+                consequences,
+                Optional.empty());
+    }
+
     public InteractionView(
             InteractionRequestId requestId,
             AgentRunId runId,
@@ -55,7 +91,8 @@ public record InteractionView(
                 requester,
                 createdAt,
                 Optional.of(Objects.requireNonNull(expiresAt, "expiresAt must not be null")),
-                consequences);
+                consequences,
+                Optional.empty());
     }
 
     public InteractionView {
@@ -77,6 +114,7 @@ public record InteractionView(
         createdAt = Objects.requireNonNull(createdAt, "createdAt must not be null");
         expiresAt = Objects.requireNonNull(expiresAt, "expiresAt must not be null");
         consequences = Objects.requireNonNull(consequences, "consequences must not be null");
+        approvalPresentation = Objects.requireNonNull(approvalPresentation, "approvalPresentation must not be null");
         if (expiresAt.isPresent() && !expiresAt.orElseThrow().isAfter(createdAt)) {
             throw new IllegalArgumentException("expiresAt must be after createdAt");
         }

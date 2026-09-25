@@ -19,6 +19,8 @@ import io.haifa.agent.model.api.ModelInvocationException;
 import io.haifa.agent.model.api.ModelMessage;
 import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelProviderDefinition;
+import io.haifa.agent.model.api.ModelResponseLimitDetails;
+import io.haifa.agent.model.api.ModelResponseLimitKind;
 import io.haifa.agent.model.api.ModelStreamControl;
 import io.haifa.agent.model.api.ModelStreamEvent;
 import io.haifa.agent.model.api.ModelStreamSink;
@@ -48,6 +50,7 @@ import java.util.Objects;
 /** Bounded synchronous and SSE OpenAI Chat Completions adapter. */
 public final class OpenAiCompatibleChatModel implements AgentChatModel {
     private static final int MAX_TRANSPORT_EVENT_BYTES = 1024 * 1024;
+    private static final int MAX_TOTAL_STREAM_BYTES = 64 * 1024 * 1024;
     private static final int DEFAULT_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
     private final String adapterType;
     private final String adapterVersion;
@@ -56,6 +59,7 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
     private final CredentialResolver credentials;
     private final boolean allowInsecureHttp;
     private final int maxResponseBytes;
+    private final int maxTotalStreamBytes;
 
     public OpenAiCompatibleChatModel(
             ModelProviderDefinition provider, HttpClient http, ObjectMapper json, CredentialResolver credentials) {
@@ -73,6 +77,26 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
         validateProviderDefinition(provider, allowInsecureHttp);
     }
 
+    OpenAiCompatibleChatModel(
+            ModelProviderDefinition provider,
+            HttpClient http,
+            ObjectMapper json,
+            CredentialResolver credentials,
+            boolean allowInsecureHttp,
+            int maxResponseBytes,
+            int maxTotalStreamBytes) {
+        this(
+                requireAdapterType(provider),
+                "1.0.0",
+                http,
+                json,
+                credentials,
+                allowInsecureHttp,
+                maxResponseBytes,
+                maxTotalStreamBytes);
+        validateProviderDefinition(provider, allowInsecureHttp);
+    }
+
     public OpenAiCompatibleChatModel(
             String adapterType,
             String adapterVersion,
@@ -81,6 +105,26 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
             CredentialResolver credentials,
             boolean allowInsecureHttp,
             int maxResponseBytes) {
+        this(
+                adapterType,
+                adapterVersion,
+                http,
+                json,
+                credentials,
+                allowInsecureHttp,
+                maxResponseBytes,
+                MAX_TOTAL_STREAM_BYTES);
+    }
+
+    OpenAiCompatibleChatModel(
+            String adapterType,
+            String adapterVersion,
+            HttpClient http,
+            ObjectMapper json,
+            CredentialResolver credentials,
+            boolean allowInsecureHttp,
+            int maxResponseBytes,
+            int maxTotalStreamBytes) {
         this.adapterType = requireText(adapterType, "adapterType");
         this.adapterVersion = requireText(adapterVersion, "adapterVersion");
         this.http = Objects.requireNonNull(http, "http must not be null");
@@ -88,7 +132,9 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
         this.credentials = Objects.requireNonNull(credentials, "credentials must not be null");
         this.allowInsecureHttp = allowInsecureHttp;
         if (maxResponseBytes < 1) throw new IllegalArgumentException("maxResponseBytes must be positive");
+        if (maxTotalStreamBytes < 1) throw new IllegalArgumentException("maxTotalStreamBytes must be positive");
         this.maxResponseBytes = maxResponseBytes;
+        this.maxTotalStreamBytes = maxTotalStreamBytes;
     }
 
     @Override
@@ -407,6 +453,7 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
         long[] eventIndex = {1};
         emit(request, sink, new ModelStreamEvent.Started(request.callId(), eventIndex[0]++));
         StreamAccumulator accumulator = new StreamAccumulator(request);
+        long totalBytes = 0;
         int eventBytes = 0;
         StringBuilder data = new StringBuilder();
         boolean done = false;
@@ -414,22 +461,22 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
             Utf8SseLineReader.Line decoded;
             while ((decoded = reader.readLine(MAX_TRANSPORT_EVENT_BYTES)) != null) {
                 String line = decoded.value();
-                eventBytes = Math.addExact(eventBytes, decoded.transportBytes());
-                if (eventBytes > MAX_TRANSPORT_EVENT_BYTES) {
-                    throw failure(
-                            request,
-                            ModelErrorCategory.OUTPUT_LIMIT_EXCEEDED,
-                            false,
-                            200,
-                            "transport_event_limit_exceeded",
-                            "provider SSE event exceeds the transport safety limit",
-                            null);
+                int lineBytes = decoded.transportBytes();
+                totalBytes = Math.addExact(totalBytes, lineBytes);
+                eventBytes = Math.addExact(eventBytes, lineBytes);
+                int eventLimit = MAX_TRANSPORT_EVENT_BYTES;
+                if (eventBytes > eventLimit) {
+                    throw responseLimitFailure(request, ModelResponseLimitKind.SINGLE_EVENT, eventLimit, eventBytes);
                 }
                 if (line.isEmpty()) {
                     if (!data.isEmpty()) {
                         done = dispatchStreamEvent(request, data.toString(), accumulator, sink, eventIndex);
                         data.setLength(0);
                         if (done) break;
+                    }
+                    if (totalBytes > maxTotalStreamBytes) {
+                        throw responseLimitFailure(
+                                request, ModelResponseLimitKind.TOTAL_STREAM, maxTotalStreamBytes, totalBytes);
                     }
                     eventBytes = 0;
                     continue;
@@ -443,17 +490,14 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                 }
             }
         } catch (Utf8SseLineReader.LineLimitExceededException exception) {
-            throw failure(
-                    request,
-                    ModelErrorCategory.OUTPUT_LIMIT_EXCEEDED,
-                    false,
-                    200,
-                    "transport_event_limit_exceeded",
-                    "provider SSE event exceeds the transport safety limit",
-                    exception);
+            throw responseLimitFailure(
+                    request, ModelResponseLimitKind.SINGLE_EVENT, exception.limit(), exception.limit() + 1L);
         }
         if (!done && !data.isEmpty()) {
             done = dispatchStreamEvent(request, data.toString(), accumulator, sink, eventIndex);
+        }
+        if (totalBytes > maxTotalStreamBytes) {
+            throw responseLimitFailure(request, ModelResponseLimitKind.TOTAL_STREAM, maxTotalStreamBytes, totalBytes);
         }
         if (!done) {
             throw failure(
@@ -1296,5 +1340,24 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                 retryAfter,
                 outputObserved,
                 providerRequestId);
+    }
+
+    private ModelInvocationException responseLimitFailure(
+            AgentChatRequest request, ModelResponseLimitKind kind, long limitBytes, long observedBytes) {
+        String message = kind == ModelResponseLimitKind.TOTAL_STREAM
+                ? "provider stream exceeds Haifa's fixed 64 MiB total transport safety limit"
+                : "provider stream event exceeds Haifa's fixed 1 MiB transport safety limit";
+        return new ModelInvocationException(
+                ModelErrorCategory.MALFORMED_RESPONSE,
+                true,
+                200,
+                "stream_response_too_large",
+                request.callId(),
+                message,
+                null,
+                null,
+                false,
+                null,
+                new ModelResponseLimitDetails(kind, limitBytes, observedBytes, request.attempt()));
     }
 }

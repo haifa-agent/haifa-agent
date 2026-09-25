@@ -12,6 +12,7 @@ public record ModelInvocationResult(
         AgentDecision decision,
         long inputTokens,
         long outputTokens,
+        long cachedInputTokens,
         boolean costKnown,
         long costMinorUnits,
         Map<String, Object> metadata,
@@ -21,8 +22,11 @@ public record ModelInvocationResult(
         Optional<SensitiveModelReasoning> reasoning) {
     public ModelInvocationResult {
         decision = Objects.requireNonNull(decision, "decision must not be null");
-        if (inputTokens < 0 || outputTokens < 0 || costMinorUnits < 0) {
+        if (inputTokens < 0 || outputTokens < 0 || cachedInputTokens < 0 || costMinorUnits < 0) {
             throw new IllegalArgumentException("model usage must not be negative");
+        }
+        if (cachedInputTokens > inputTokens) {
+            throw new IllegalArgumentException("cached input tokens must not exceed the input tokens");
         }
         if (!costKnown && costMinorUnits != 0) {
             throw new IllegalArgumentException("unknown model cost must not have a value");

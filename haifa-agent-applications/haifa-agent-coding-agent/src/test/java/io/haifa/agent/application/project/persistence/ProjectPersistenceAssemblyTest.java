@@ -1115,6 +1115,22 @@ class ProjectPersistenceAssemblyTest {
             assertThat(policy.minTailTokens()).isEqualTo(ProjectPersistenceAssembly.CODING_AGENT_MIN_TAIL_TOKENS);
             assertThat(policy.maxTailTokens()).isEqualTo(ProjectPersistenceAssembly.CODING_AGENT_MAX_TAIL_TOKENS);
             assertThat(policy.activeHistoryBudgetTokens()).isEmpty();
+            // A rejected summary degrades to the deterministic compressor instead of failing the user's Run.
+            assertThat(policy.allowDeterministicDegradedFallback()).isTrue();
+        }
+    }
+
+    @Test
+    void configureKeepsACallerPolicyThatDeclinesTheDegradedFallback() {
+        try (ProjectPersistenceAssembly assembly = ProjectPersistenceAssembly.open(
+                ProjectPersistenceConfiguration.memory(), CLOCK, new TestIds("budget-strict"), null)) {
+            RuntimeCoreBuilder builder = new RuntimeCoreBuilder();
+            builder.compressionPolicy(CompressionPolicy.defaults().withDegradedFallback(false));
+
+            assembly.configure(builder);
+
+            assertThat(builder.compressionPolicy().allowDeterministicDegradedFallback())
+                    .isFalse();
         }
     }
 
