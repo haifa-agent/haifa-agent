@@ -1,6 +1,6 @@
 # 安装
 
-Haifa Agent 当前面向 Java 21。feat-0.1.1-baseline 这条开发线的仓库版本为 0.1.1。
+Haifa Agent 当前面向 Java 21。仓库当前开发线版本为 0.1.2-SNAPSHOT。
 
 Snapshot 坐标并不代表对应制品已经发布到公共 Maven Repository。直接从源码使用时，请优先使用仓库自带的 Maven Wrapper。
 
@@ -45,7 +45,7 @@ Set-Location haifa-agent
         <dependency>
             <groupId>io.haifa</groupId>
             <artifactId>haifa-agent-bom</artifactId>
-            <version>0.1.1</version>
+            <version>0.1.2-SNAPSHOT</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>
@@ -70,7 +70,7 @@ Spring 应用应导入 Spring BOM，并使用 Spring Boot Starter，而不是再
         <dependency>
             <groupId>io.haifa</groupId>
             <artifactId>haifa-agent-spring-bom</artifactId>
-            <version>0.1.1</version>
+            <version>0.1.2-SNAPSHOT</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>

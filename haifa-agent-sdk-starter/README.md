@@ -108,7 +108,7 @@ Starter 的 `standardApproval()` preset 对任何带 NETWORK_ACCESS 的 Tool 都
 调用会产生一次 Interaction。宿主用 `agent.runs().pendingInteraction(runId)` 和
 `agent.runs().respond(...)` 响应；需要无人值守时应通过 `haifa-agent-sdk` 显式装配自己的 Policy 规则。
 
-0.1.1 Native MCP Client 只提供 Streamable HTTP；stdio 需要 Execution Broker，暂不在 Starter 公开。
+0.1.2-SNAPSHOT Native MCP Client 只提供 Streamable HTTP；stdio 需要 Execution Broker，暂不在 Starter 公开。
 
 默认 instructions 只是 Quickstart fallback；使用它时 `agent.diagnostics()` 包含
 `DEFAULT_INSTRUCTIONS_IN_USE`，显式调用 `instructions(...)` 后该诊断消失。`name` 仅用于展示和

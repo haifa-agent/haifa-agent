@@ -3,7 +3,7 @@
 [![Feature PR Fast](https://github.com/haifa-agent/haifa-agent/actions/workflows/feature-pr-fast.yml/badge.svg?branch=dev)](https://github.com/haifa-agent/haifa-agent/actions/workflows/feature-pr-fast.yml)
 ![Java 21](https://img.shields.io/badge/Java-21-ED8B00?logo=openjdk&logoColor=white)
 ![Spring Boot 3.5](https://img.shields.io/badge/Spring%20Boot-3.5-6DB33F?logo=springboot&logoColor=white)
-![Version](https://img.shields.io/badge/version-0.1.1--SNAPSHOT-blue)
+![Version](https://img.shields.io/badge/version-0.1.2--SNAPSHOT-blue)
 
 **Java / Spring 生态的 Agent Runtime、SDK 与本地 Agent 应用。**
 
@@ -11,7 +11,7 @@
 
 你可以直接使用 Haifa Agent 自带的 **Coding Agent** 和 **Personal Assistant**，也可以通过 **Java SDK** 把 Agent 能力嵌入现有 Java / Spring Boot 应用。
 
-> 当前版本：`0.1.1`
+> 当前版本：`0.1.2-SNAPSHOT`
 >
 > 项目仍处于快速演进阶段，README 和 `docs/` 只描述当前源码已经实现的能力。
 
@@ -189,7 +189,7 @@ Pure Java 项目：
         <dependency>
             <groupId>io.haifa</groupId>
             <artifactId>haifa-agent-bom</artifactId>
-            <version>0.1.1</version>
+            <version>0.1.2-SNAPSHOT</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>
@@ -204,7 +204,7 @@ Pure Java 项目：
 </dependencies>
 ```
 
-当前 `0.1.1` 尚不是正式公共 Release，源码开发阶段可以先从本仓库安装到本地 Maven Repository。
+当前 `0.1.2-SNAPSHOT` 尚不是正式公共 Release，源码开发阶段可以先从本仓库安装到本地 Maven Repository。
 
 [Installation →](docs/get-started/installation.md)
 
@@ -513,7 +513,7 @@ Haifa Agent 当前重点面向：
 
 > **单机 / 本地可信环境中的 Java Agent Runtime 与产品开发。**
 
-`0.1.1` 暂不提供：
+`0.1.2-SNAPSHOT` 暂不提供：
 
 - Distributed Worker / Control Plane
 - Graph / Workflow Runtime
