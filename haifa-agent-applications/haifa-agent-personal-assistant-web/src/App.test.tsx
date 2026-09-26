@@ -1929,17 +1929,10 @@ describe("Personal Assistant application", () => {
     const editor = await screen.findByRole("dialog", { name: "编辑记忆" });
     fireEvent.change(within(editor).getByLabelText("记忆内容"), { target: { value: "回答保持简洁并给出要点。" } });
     fireEvent.click(within(editor).getByRole("button", { name: "确认" }));
-    await waitFor(() => expect(api.updateMemory).toHaveBeenCalledWith(
-      memory,
-      "回答保持简洁并给出要点。",
-      expect.objectContaining({ idempotencyKey: expect.any(String) }),
-    ));
+    await waitFor(() => expect(api.updateMemory).toHaveBeenCalledWith(memory, "回答保持简洁并给出要点。"));
 
     fireEvent.click(within(screen.getByRole("dialog", { name: "记忆管理" })).getByRole("button", { name: "删除" }));
-    await waitFor(() => expect(api.deleteMemory).toHaveBeenCalledWith(
-      memory,
-      expect.objectContaining({ idempotencyKey: expect.any(String) }),
-    ));
+    await waitFor(() => expect(api.deleteMemory).toHaveBeenCalledWith(memory));
 
     fireEvent.click(within(screen.getByRole("dialog", { name: "记忆管理" })).getByRole("button", { name: "全部清空" }));
     expect(api.clearMemories).not.toHaveBeenCalled();

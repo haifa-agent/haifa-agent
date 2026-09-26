@@ -50,23 +50,22 @@ public final class DefaultMemoryService implements MemoryService {
         Objects.requireNonNull(content, "content must not be null");
         Memory current = requireOwned(id, actor);
         SensitiveMemoryFilter.requireSafe(content);
-        // Identical content is not a change, and a retried update whose first attempt already committed returns
-        // the current state instead of failing.
-        if (current.sameContent(content)) return current;
+        if (alreadyApplied(current, expectedRevision, content)) return current;
         Optional<Memory> updated = repository.update(id, expectedRevision, content, now());
         if (updated.isPresent()) return updated.orElseThrow();
         Memory latest = requireOwned(id, actor);
-        if (latest.sameContent(content)) return latest;
+        if (alreadyApplied(latest, expectedRevision, content)) return latest;
         throw new MemoryOperationException(REVISION_STALE);
     }
 
     @Override
     public void delete(MemoryId id, long expectedRevision, MemoryActor actor) {
         Objects.requireNonNull(id, "id must not be null");
-        requireOwned(id, actor);
-        if (!repository.delete(id, expectedRevision, now())) {
-            throw new MemoryOperationException(repository.find(id).isPresent() ? REVISION_STALE : UNAVAILABLE);
-        }
+        Optional<Memory> live = find(id, actor);
+        if (live.isPresent() && repository.delete(id, expectedRevision, now())) return;
+        // A retried delete whose first attempt already committed finds the tombstone that attempt left behind.
+        if (repository.deletedFrom(id, expectedRevision).filter(actor::owns).isPresent()) return;
+        throw new MemoryOperationException(find(id, actor).isPresent() ? REVISION_STALE : UNAVAILABLE);
     }
 
     @Override
@@ -87,6 +86,15 @@ public final class DefaultMemoryService implements MemoryService {
     public int clear(MemoryScope scope, MemoryActor actor) {
         requireOwner(actor, Objects.requireNonNull(scope, "scope must not be null"));
         return repository.clear(scope, now());
+    }
+
+    /**
+     * Identical content at the expected revision is not a change; identical content exactly one revision later is the
+     * retry of an update whose first attempt already committed. Anything else is left to the compare-and-set.
+     */
+    private static boolean alreadyApplied(Memory memory, long expectedRevision, String content) {
+        return memory.sameContent(content)
+                && (memory.revision() == expectedRevision || memory.revision() == expectedRevision + 1);
     }
 
     private Memory requireOwned(MemoryId id, MemoryActor actor) {

@@ -2334,10 +2334,9 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     });
   };
 
-  const memoryCommand = (label: string, operation: (key: string) => Promise<unknown>) => {
-    const key = crypto.randomUUID();
+  const memoryCommand = (label: string, operation: () => Promise<unknown>) => {
     void execute(label, async () => {
-      await operation(key);
+      await operation();
       await loadMemories();
     });
   };
@@ -3080,8 +3079,8 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
           pending={Boolean(state.pending)}
           onClose={closeMemory}
           onEdit={(memory) => setMemoryEditTarget(memory)}
-          onDelete={(memory) => memoryCommand("删除记忆", (key) => client.deleteMemory(memory, { idempotencyKey: key }))}
-          onClear={() => memoryCommand("清空记忆", (key) => client.clearMemories({ idempotencyKey: key }))}
+          onDelete={(memory) => memoryCommand("删除记忆", () => client.deleteMemory(memory))}
+          onClear={() => memoryCommand("清空记忆", () => client.clearMemories())}
         />
       )}
       {missionOpen && (
@@ -3121,7 +3120,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
           onClose={() => setMemoryEditTarget(null)}
           onSubmit={(content) => {
             const memory = memoryEditTarget;
-            memoryCommand("编辑记忆", (key) => client.updateMemory(memory, content, { idempotencyKey: key }));
+            memoryCommand("编辑记忆", () => client.updateMemory(memory, content));
             setMemoryEditTarget(null);
           }}
         />

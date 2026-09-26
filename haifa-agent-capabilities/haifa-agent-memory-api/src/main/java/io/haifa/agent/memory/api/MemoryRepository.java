@@ -24,6 +24,12 @@ public interface MemoryRepository {
     /** Returns false when the memory is missing, deleted, or not at {@code expectedRevision}. */
     boolean delete(MemoryId id, long expectedRevision, Instant now);
 
+    /**
+     * Scope of the tombstone left when a delete consumed {@code expectedRevision} of {@code id}; empty when the
+     * memory is live, cleared, revived, or was deleted from another revision. Lets a retried delete succeed by intent.
+     */
+    Optional<MemoryScope> deletedFrom(MemoryId id, long expectedRevision);
+
     MemoryPage list(MemoryQuery query);
 
     int clear(MemoryScope scope, Instant now);

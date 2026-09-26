@@ -38,11 +38,20 @@ public final class SqliteMemoryStore implements MemoryRepository {
             + "subject_key,content,source_type,source_id,revision,created_at,updated_at,deleted_at";
     private static final String SCOPE_MATCH =
             "tenant_id=? AND owner_id=? AND owner_type=? AND scope_type=? AND target_id=?";
+    private static final int TEXT_SCAN_BATCH = 256;
 
     private final SqliteRuntimeUnitOfWork unitOfWork;
+    private final int textScanBatch;
 
     public SqliteMemoryStore(SqliteRuntimeUnitOfWork unitOfWork) {
+        this(unitOfWork, TEXT_SCAN_BATCH);
+    }
+
+    /** Test seam: a small text scan batch exercises multi-batch pagination without thousands of rows. */
+    SqliteMemoryStore(SqliteRuntimeUnitOfWork unitOfWork, int textScanBatch) {
         this.unitOfWork = Objects.requireNonNull(unitOfWork, "unitOfWork must not be null");
+        if (textScanBatch < 1) throw new IllegalArgumentException("textScanBatch must be positive");
+        this.textScanBatch = textScanBatch;
     }
 
     @Override
@@ -131,44 +140,74 @@ public final class SqliteMemoryStore implements MemoryRepository {
     }
 
     @Override
+    public Optional<MemoryScope> deletedFrom(MemoryId id, long expectedRevision) {
+        return read(() -> selectOne(
+                        "SELECT " + COLUMNS
+                                + " FROM memory_record WHERE memory_id=? AND revision=? AND deleted_at IS NOT NULL",
+                        (statement, index) -> {
+                            statement.setString(index, id.value());
+                            statement.setLong(index + 1, expectedRevision + 1);
+                        })
+                .map(Row::scope));
+    }
+
+    /**
+     * The text match is case-insensitive under Java {@code Locale.ROOT} folding, which SQLite {@code lower()} (ASCII
+     * only) cannot reproduce, and no SQL prefilter is safe either ({@code U+212A} folds to ASCII {@code k}). Rows are
+     * therefore read newest first in bounded keyset batches and matched in Java until one row past the page is found
+     * or the scope is exhausted; kind and cursor stay in SQL.
+     */
+    @Override
     public MemoryPage list(MemoryQuery query) {
         return read(() -> {
-            var cursor = query.after().map(MemoryCursorCodec::decode);
-            List<String> kinds = query.kinds().stream().map(Enum::name).sorted().toList();
-            String sql = "SELECT " + COLUMNS + " FROM memory_record WHERE " + SCOPE_MATCH + " AND deleted_at IS NULL"
-                    + (kinds.isEmpty()
-                            ? ""
-                            : " AND kind IN (" + String.join(",", Collections.nCopies(kinds.size(), "?")) + ")")
-                    + (query.text().isEmpty()
-                            ? ""
-                            : " AND instr(lower(subject_key || char(10) || content), lower(?)) > 0")
-                    + (cursor.isEmpty() ? "" : " AND (updated_at < ? OR (updated_at = ? AND memory_id < ?))")
-                    + " ORDER BY updated_at DESC, memory_id DESC LIMIT ?";
-            List<Memory> values = selectMany(sql, (statement, index) -> {
-                int next = bindScope(statement, index, query.scope());
-                for (String kind : kinds) statement.setString(next++, kind);
-                if (query.text().isPresent())
-                    statement.setString(next++, query.text().orElseThrow());
-                if (cursor.isPresent()) {
-                    long after = cursor.orElseThrow().updatedAt().toEpochMilli();
-                    statement.setLong(next++, after);
-                    statement.setLong(next++, after);
-                    statement.setString(next++, cursor.orElseThrow().logicalId());
+            Optional<MemoryCursorCodec.Position> position = query.after().map(MemoryCursorCodec::decode);
+            int wanted = query.limit() + 1;
+            int batch = query.text().isEmpty() ? wanted : Math.max(wanted, textScanBatch);
+            List<Memory> matches = new ArrayList<>();
+            while (matches.size() < wanted) {
+                List<Memory> rows = listBatch(query, position, batch);
+                for (Memory row : rows) {
+                    if (!query.matches(row)) continue;
+                    matches.add(row);
+                    if (matches.size() == wanted) break;
                 }
-                statement.setInt(next, query.limit() + 1);
-            });
-            // SQLite lower() folds ASCII only; re-apply the portable filter so both stores agree.
-            List<Memory> matching = values.stream().filter(query::matches).toList();
-            boolean more = values.size() > query.limit();
-            List<Memory> page = matching.stream().limit(query.limit()).toList();
+                if (rows.size() < batch) break;
+                Memory last = rows.getLast();
+                position = Optional.of(new MemoryCursorCodec.Position(
+                        last.updatedAt(), last.id().value(), last.revision()));
+            }
+            boolean more = matches.size() > query.limit();
+            List<Memory> page = more ? matches.subList(0, query.limit()) : matches;
             return new MemoryPage(
                     page,
-                    more && !page.isEmpty()
+                    more
                             ? Optional.of(MemoryCursorCodec.encode(
-                                    page.get(page.size() - 1).updatedAt(),
-                                    page.get(page.size() - 1).id().value(),
-                                    page.get(page.size() - 1).revision()))
+                                    page.getLast().updatedAt(),
+                                    page.getLast().id().value(),
+                                    page.getLast().revision()))
                             : Optional.empty());
+        });
+    }
+
+    private List<Memory> listBatch(MemoryQuery query, Optional<MemoryCursorCodec.Position> after, int batch)
+            throws SQLException {
+        List<String> kinds = query.kinds().stream().map(Enum::name).sorted().toList();
+        String sql = "SELECT " + COLUMNS + " FROM memory_record WHERE " + SCOPE_MATCH + " AND deleted_at IS NULL"
+                + (kinds.isEmpty()
+                        ? ""
+                        : " AND kind IN (" + String.join(",", Collections.nCopies(kinds.size(), "?")) + ")")
+                + (after.isEmpty() ? "" : " AND (updated_at < ? OR (updated_at = ? AND memory_id < ?))")
+                + " ORDER BY updated_at DESC, memory_id DESC LIMIT ?";
+        return selectMany(sql, (statement, index) -> {
+            int next = bindScope(statement, index, query.scope());
+            for (String kind : kinds) statement.setString(next++, kind);
+            if (after.isPresent()) {
+                long millis = after.orElseThrow().updatedAt().toEpochMilli();
+                statement.setLong(next++, millis);
+                statement.setLong(next++, millis);
+                statement.setString(next++, after.orElseThrow().logicalId());
+            }
+            statement.setInt(next, batch);
         });
     }
 

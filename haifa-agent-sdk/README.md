@@ -270,8 +270,9 @@ Run Event Feed 使用 `ModelAttemptLifecycle` 暴露逻辑请求、Attempt、等
 - `HaifaAgentException` 及 `ConversationException` 对外只暴露安全的 `code`、`operation` 和
   `correlation`。Conversation Adapter、SQLite/Runtime 底层异常和输入正文不会进入公共错误消息。
 - `HaifaAgent.memories()` 暴露直接 CRUD：`put`（同 scope/kind/subject 替换，重复内容不增加 revision）、
-  `update(id, expectedRevision, content)`、`delete(id, expectedRevision)`、`find`、`list`（可选有界大小写不敏感文本匹配）
-  和按 scope `clear`。`MemoryScopeSpec` 只选择 `USER`/`AGENT`/`SESSION` 桶，不携带 Tenant 或 Owner，二者恒取自可信
+  `update(id, expectedRevision, content)`、`delete(id, expectedRevision)`、`find`、`list`（可选有界、按 `Locale.ROOT`
+  折叠的 Unicode 大小写不敏感文本匹配）和按 scope `clear`。响应丢失后以同一 revision（更新还需同一内容）重试会成功，
+  `clear` 重试返回 0，无需幂等键。`MemoryScopeSpec` 只选择 `USER`/`AGENT`/`SESSION` 桶，不携带 Tenant 或 Owner，二者恒取自可信
   `SdkCaller`；`AGENT` 桶以 Agent Definition id 为目标，Runtime 召回时使用 Run 的 Agent Definition id。凭据、支付和精确
   证件号内容以 `MEMORY_CONTENT_SENSITIVE` 拒绝写入。异步捕获应在 `PutMemoryCommand.observedAt` 传入来源观察时间，
   使清空或删除之前观察到的迟到写入以 `MEMORY_WRITE_STALE` 被拒绝。

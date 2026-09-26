@@ -90,6 +90,14 @@ public final class InMemoryMemoryStore implements MemoryRepository, AutoCloseabl
     }
 
     @Override
+    public synchronized Optional<MemoryScope> deletedFrom(MemoryId id, long expectedRevision) {
+        requireOpen();
+        return Optional.ofNullable(rows.get(Objects.requireNonNull(id, "id must not be null")))
+                .filter(row -> row.deletedAt != null && row.revision == expectedRevision + 1)
+                .map(row -> row.scope);
+    }
+
+    @Override
     public synchronized MemoryPage list(MemoryQuery query) {
         requireOpen();
         var after = query.after().map(MemoryCursorCodec::decode);
