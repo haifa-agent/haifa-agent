@@ -250,6 +250,60 @@ class DirectMemoryCrudTest {
     }
 
     @Test
+    void zeroScoreQueryRecallsMemoriesUpToCapacity() {
+        service.put(fact(USER, "city", "Lives in Hangzhou"), ACTOR);
+        service.put(fact(USER, "theme", "Prefers dark mode"), ACTOR);
+        service.put(fact(USER, "lang", "Speaks Mandarin and English"), ACTOR);
+
+        // Query has terms that match none of the memories; score is 0 for all of them
+        List<MemorySnippet> snippets = retriever
+                .contextFor(request("agent", "what is the weather today", 10_000))
+                .snippets();
+        assertThat(snippets).hasSize(3);
+        assertThat(texts(snippets))
+                .containsExactlyInAnyOrder("Lives in Hangzhou", "Prefers dark mode", "Speaks Mandarin and English");
+    }
+
+    @Test
+    void relevanceTakesPriorityAndRecencyFillsRemainingSlots() {
+        for (int index = 0; index < 20; index++) {
+            service.put(fact(USER, "note-" + index, "general background note " + index), ACTOR);
+        }
+        service.put(fact(USER, "framework", "User loves React and Redux"), ACTOR);
+        service.put(fact(USER, "ui", "User maintains React components"), ACTOR);
+
+        List<MemorySnippet> snippets = retriever
+                .contextFor(request("agent", "tell me about react", 100_000))
+                .snippets();
+        assertThat(snippets).hasSize(DefaultMemoryRetriever.MAX_ITEMS);
+        assertThat(texts(snippets)).contains("User loves React and Redux", "User maintains React components");
+    }
+
+    @Test
+    void promptCacheOrderingIsDeterministicAcrossDifferentQueries() {
+        service.put(fact(USER, "city", "Lives in Hangzhou"), ACTOR);
+        service.put(fact(USER, "theme", "Prefers dark mode"), ACTOR);
+        service.put(fact(USER, "food", "Likes ramen and dumplings"), ACTOR);
+
+        List<MemoryId> orderFromThemeQuery =
+                retriever.contextFor(request("agent", "dark mode settings", 10_000)).snippets().stream()
+                        .map(MemorySnippet::id)
+                        .toList();
+        List<MemoryId> orderFromCityQuery =
+                retriever.contextFor(request("agent", "hangzhou travel guide", 10_000)).snippets().stream()
+                        .map(MemorySnippet::id)
+                        .toList();
+        List<MemoryId> orderFromUnrelatedQuery =
+                retriever.contextFor(request("agent", "quantum computing physics", 10_000)).snippets().stream()
+                        .map(MemorySnippet::id)
+                        .toList();
+
+        assertThat(orderFromThemeQuery).hasSize(3);
+        assertThat(orderFromThemeQuery).isEqualTo(orderFromCityQuery);
+        assertThat(orderFromThemeQuery).isEqualTo(orderFromUnrelatedQuery);
+    }
+
+    @Test
     void sensitiveContentIsRejectedBeforeAnyWrite() {
         for (String secret : List.of(
                 "my password is hunter2",

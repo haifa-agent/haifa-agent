@@ -7,7 +7,7 @@ organized by learning depth:
 | --- | --- |
 | `io.haifa.example.sdk.basic` | Real-provider Hello World, multi-turn Conversation, and Agent reuse/lifecycle |
 | `io.haifa.example.sdk.intermediate` | Typed and multi-Tool loops, schema-validated record output, typed model configuration, Prompt Diagnostics, complex record schemas, Starter customization, and multi-model selection |
-| `io.haifa.example.sdk.advanced` | Safe errors, Conversation management, Runtime observation/control, trusted host diagnostics, and SQLite reference assembly |
+| `io.haifa.example.sdk.advanced` | Safe errors, Conversation management, Runtime observation/control, trusted host diagnostics, SQLite reference assembly, and Enterprise Memory applications (Finance compliance & E-commerce operations) |
 
 Every example is network-free unless its Javadoc explicitly opts into a real provider. Only
 `basic.HelloHaifa` requires `DEEPSEEK_API_KEY`.

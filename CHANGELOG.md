@@ -1,5 +1,9 @@
 # Changelog
 
+- `DefaultMemoryRetriever` refines recall by removing the zero-score candidate filter: memories matching query terms
+  take priority, and remaining slots are filled by recency up to `MAX_ITEMS` (increased from 8 to 16) within the token
+  budget. Selected snippets are stably ordered by creation timestamp and ID to maximize LLM prompt cache hit rates.
+
 - Memory collapses to direct CRUD with an `AGENT` scope; the candidate/approval path is removed with no compatibility
   layer. `MemoryService` is now `put` / `update(id, expectedRevision, content)` / `delete(id, expectedRevision)` /
   `find` / `list(MemoryQuery)` / `clear(scope)`, bounded by a trusted `MemoryActor(tenant, principal)`; `put` replaces
