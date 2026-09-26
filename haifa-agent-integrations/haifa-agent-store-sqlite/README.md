@@ -89,8 +89,10 @@ scope/target、kind、subject、正文、可选 `source_type/source_id`、revisi
 `memory_scope_clear`（每个 scope 的清空水位线）。迁移前若旧表仍有 ACTIVE Memory 或 PENDING Candidate，
 V15 以 `v15_memory_tables_must_not_hold_live_rows` 约束失败并回滚，不静默丢弃数据。正文以明文 TEXT
 保存；数据库、WAL/SHM 与备份因此都可能包含 Memory 明文，必须沿用本模块的主机权限和备份保护。删除只保留
-身份、revision 与 `deleted_at` 并抹去正文，用于拒绝删除前观察到的迟到写入；按 scope 清空物理删除行并记录
-水位线。
+身份、revision 与 `deleted_at` 并抹去正文，用于拒绝删除前观察到的迟到写入并识别同 revision 的删除重试；按 scope
+清空物理删除行并记录水位线。文本查询不在 SQL 中做大小写折叠（SQLite `lower()` 只折叠 ASCII），而是按
+`updated_at`/`memory_id` keyset 分批（每批至少 256 行）读取候选并在 Java 中以 `Locale.ROOT` 过滤，直到凑够一页加一条
+或扫描完 scope，语义与 `InMemoryMemoryStore` 一致。
 
 `SqliteSdkProductContributions` 共享同一 Foundation 装配 Persistence、Conversation 与生产 Memory；
 `SqliteSdkContributions.memory(policy)` 在同一 SQLite 文件上提供同样的 Memory 组件，生命周期仍归

@@ -35,6 +35,18 @@
   /memory/{memoryId}` (If-Match revision) and `POST /memory/clear`, and its Memory dialog drops the pending-candidate
   column in favour of edit, delete and clear on the active memories.
 
+- Memory mutations are idempotent by intent instead of by key. Personal Assistant `PATCH /memory/{memoryId}`,
+  `DELETE /memory/{memoryId}` and `POST /memory/clear` no longer take an `Idempotency-Key` (it was only
+  format-checked, so a retried delete returned 404); the web client stops sending it. Retrying an update with the same
+  If-Match revision and content after the first attempt committed returns the current memory and ETag, retrying a
+  delete with the same revision returns 204, and a retried clear reports `deleted: 0`; any other stale revision still
+  returns 409 (404 for a deleted memory). `DefaultMemoryService` applies these rules for every caller, identical
+  content now only counts as already applied at the expected revision or the one after it, and
+  `MemoryRepository` gains `deletedFrom(id, expectedRevision)` to recognise the tombstone a delete left behind.
+  `SqliteMemoryStore` text queries now fold case like the in-memory store (`Locale.ROOT`, including `Ä/ä` and
+  `Σ/σ`) by scanning candidate rows in bounded keyset batches and matching in Java, instead of the ASCII-only SQLite
+  `lower()` that silently dropped non-ASCII matches.
+
 - Memory drops governance entry points that no product called. Removed public types: `MemoryConflict`,
   `MemoryConflictResolution`, `MemoryTombstone` and `MemoryAuditSink` (`MemoryAuditStore` now declares `record`
   itself). Removed methods: `MemoryService.resolveConflict`, `evaluateExpiry`, `requestPurge` and `executePurge`;

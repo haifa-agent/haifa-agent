@@ -310,26 +310,28 @@
     "/api/v1/memory/{memoryId}": {
       "patch": {
         "operationId": "updateMemory",
+        "description": "Compare-and-set update without Idempotency-Key. Retrying with the same If-Match revision and content after the first attempt committed returns the current memory; other stale revisions return 409.",
         "parameters": [
           {"name": "memoryId", "in": "path", "required": true, "schema": {"type": "string"}},
-          {"$ref": "#/components/parameters/IfMatch"},
-          {"$ref": "#/components/parameters/IdempotencyKey"}
+          {"$ref": "#/components/parameters/IfMatch"}
         ],
         "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/UpdateMemory"}}}},
         "responses": {
           "200": {"description": "Updated memory", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Memory"}}}},
+          "404": {"$ref": "#/components/responses/Error"},
           "409": {"$ref": "#/components/responses/Error"}
         }
       },
       "delete": {
         "operationId": "deleteMemory",
+        "description": "Compare-and-set delete without Idempotency-Key. Retrying with the same If-Match revision after the first attempt committed returns 204; other revisions of a deleted memory return 404.",
         "parameters": [
           {"name": "memoryId", "in": "path", "required": true, "schema": {"type": "string"}},
-          {"$ref": "#/components/parameters/IfMatch"},
-          {"$ref": "#/components/parameters/IdempotencyKey"}
+          {"$ref": "#/components/parameters/IfMatch"}
         ],
         "responses": {
           "204": {"description": "Deleted"},
+          "404": {"$ref": "#/components/responses/Error"},
           "409": {"$ref": "#/components/responses/Error"}
         }
       }
@@ -337,7 +339,7 @@
     "/api/v1/memory/clear": {
       "post": {
         "operationId": "clearMemories",
-        "parameters": [{"$ref": "#/components/parameters/IdempotencyKey"}],
+        "description": "Deletes every user memory without Idempotency-Key. Clearing is idempotent in state; a retry reports deleted = 0.",
         "responses": {"200": {"description": "Cleared user memories", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ClearedMemories"}}}}}
       }
     },

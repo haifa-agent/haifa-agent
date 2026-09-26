@@ -109,6 +109,18 @@ class PersonalAssistantWebFluxTest {
                 .isEqualTo(2)
                 .jsonPath("$.content")
                 .isEqualTo("Uses VS Code");
+        // The first response was lost: the same revision and content is recognised as the committed intent.
+        memoryCommand(web.patch().uri("/api/v1/memory/{id}", id), 1)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"content\":\"Uses VS Code\"}")
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectHeader()
+                .valueEquals("ETag", "\"2\"")
+                .expectBody()
+                .jsonPath("$.revision")
+                .isEqualTo(2);
         memoryCommand(web.patch().uri("/api/v1/memory/{id}", id), 1)
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("{\"content\":\"Uses Vim\"}")
@@ -119,11 +131,19 @@ class PersonalAssistantWebFluxTest {
                 .jsonPath("$.code")
                 .isEqualTo("MEMORY_REVISION_STALE");
 
+        memoryCommand(web.delete().uri("/api/v1/memory/{id}", id), 1)
+                .exchange()
+                .expectStatus()
+                .isEqualTo(409);
         memoryCommand(web.delete().uri("/api/v1/memory/{id}", id), 2)
                 .exchange()
                 .expectStatus()
                 .isNoContent();
         assertThat(get("/api/v1/memory")).isEmpty();
+        memoryCommand(web.delete().uri("/api/v1/memory/{id}", id), 2)
+                .exchange()
+                .expectStatus()
+                .isNoContent();
         memoryCommand(web.delete().uri("/api/v1/memory/{id}", id), 3)
                 .exchange()
                 .expectStatus()
@@ -131,8 +151,11 @@ class PersonalAssistantWebFluxTest {
 
         seedMemory("city", "Lives in Hangzhou");
         seedMemory("drink", "Likes green tea");
-        assertThat(post("/api/v1/memory/clear", "{}").path("deleted").asInt()).isEqualTo(2);
+        assertThat(clearMemories().path("deleted").asInt()).isEqualTo(2);
         assertThat(get("/api/v1/memory")).isEmpty();
+        assertThat(clearMemories().path("deleted").asInt())
+                .as("a retried clear keeps the memories cleared and reports nothing new")
+                .isZero();
         web.get().uri("/api/v1/memory/candidates").exchange().expectStatus().is4xxClientError();
     }
 
@@ -1079,18 +1102,30 @@ class PersonalAssistantWebFluxTest {
         return mapper.readTree(body);
     }
 
+    // Memory mutations carry no Idempotency-Key; the If-Match revision is the retry identity.
     private WebTestClient.RequestHeadersSpec<?> memoryCommand(
             WebTestClient.RequestHeadersSpec<?> request, long revision) {
-        return request.header("X-Haifa-CSRF", "1")
-                .header("Idempotency-Key", "memory-" + IDS.incrementAndGet())
-                .header("If-Match", '"' + Long.toString(revision) + '"');
+        return request.header("X-Haifa-CSRF", "1").header("If-Match", '"' + Long.toString(revision) + '"');
     }
 
     private WebTestClient.RequestBodySpec memoryCommand(WebTestClient.RequestBodySpec request, long revision) {
-        request.header("X-Haifa-CSRF", "1")
-                .header("Idempotency-Key", "memory-" + IDS.incrementAndGet())
-                .header("If-Match", '"' + Long.toString(revision) + '"');
+        request.header("X-Haifa-CSRF", "1").header("If-Match", '"' + Long.toString(revision) + '"');
         return request;
+    }
+
+    private JsonNode clearMemories() throws Exception {
+        byte[] body = web.post()
+                .uri("/api/v1/memory/clear")
+                .header("X-Haifa-CSRF", "1")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{}")
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectBody()
+                .returnResult()
+                .getResponseBody();
+        return mapper.readTree(body);
     }
 
     private void seedMemory(String subject, String content) {

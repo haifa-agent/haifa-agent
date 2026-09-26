@@ -63,6 +63,10 @@ public final class AgentMemories {
         });
     }
 
+    /**
+     * Compare-and-set content update. Retrying with the same revision and content after a lost response returns the
+     * current memory; any other stale revision is {@code MEMORY_REVISION_STALE}.
+     */
     public Memory update(MemoryId id, long expectedRevision, String content) {
         return execute("memory.update", () -> {
             validateContent(Objects.requireNonNull(content, "content must not be null"));
@@ -71,6 +75,10 @@ public final class AgentMemories {
         });
     }
 
+    /**
+     * Compare-and-set delete. Retrying with the same revision after a lost response succeeds; other revisions of a
+     * deleted memory are {@code MEMORY_UNAVAILABLE}.
+     */
     public void delete(MemoryId id, long expectedRevision) {
         execute("memory.delete", () -> {
             delegate.delete(Objects.requireNonNull(id, "id must not be null"), expectedRevision, actor(caller()));
@@ -94,7 +102,10 @@ public final class AgentMemories {
         });
     }
 
-    /** Deletes every memory in the bucket; writes observed before the clear are refused afterwards. */
+    /**
+     * Deletes every memory in the bucket; writes observed before the clear are refused afterwards. A retried clear
+     * leaves the bucket empty and reports only what it deleted itself, usually {@code 0}.
+     */
     public int clear(MemoryScopeSpec scope) {
         return execute("memory.clear", () -> {
             SdkCaller caller = caller();

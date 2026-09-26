@@ -355,31 +355,26 @@ public final class PersonalAssistantController {
         return application.memories(bounded(limit)).stream().map(mapper::memory).toList();
     }
 
+    // Memory mutations take no Idempotency-Key: the If-Match revision already identifies the intent, so a retried
+    // update or delete whose first response was lost succeeds, and a retried clear reports deleted = 0.
     @PatchMapping("/memory/{memoryId}")
     ResponseEntity<PersonalApiDtos.Memory> updateMemory(
             @PathVariable String memoryId,
             @RequestHeader("If-Match") String ifMatch,
-            @RequestHeader("Idempotency-Key") String idempotencyKey,
             @RequestBody PersonalApiDtos.UpdateMemory request) {
-        key(idempotencyKey);
         var body = mapper.memory(
                 application.updateMemory(memoryId, revision(ifMatch), text(request.content(), "content")));
         return ResponseEntity.ok().eTag(Long.toString(body.revision())).body(body);
     }
 
     @DeleteMapping("/memory/{memoryId}")
-    ResponseEntity<Void> deleteMemory(
-            @PathVariable String memoryId,
-            @RequestHeader("If-Match") String ifMatch,
-            @RequestHeader("Idempotency-Key") String idempotencyKey) {
-        key(idempotencyKey);
+    ResponseEntity<Void> deleteMemory(@PathVariable String memoryId, @RequestHeader("If-Match") String ifMatch) {
         application.deleteMemory(memoryId, revision(ifMatch));
         return ResponseEntity.noContent().build();
     }
 
     @PostMapping("/memory/clear")
-    PersonalApiDtos.ClearedMemories clearMemories(@RequestHeader("Idempotency-Key") String idempotencyKey) {
-        key(idempotencyKey);
+    PersonalApiDtos.ClearedMemories clearMemories() {
         return new PersonalApiDtos.ClearedMemories(application.clearMemories());
     }
 

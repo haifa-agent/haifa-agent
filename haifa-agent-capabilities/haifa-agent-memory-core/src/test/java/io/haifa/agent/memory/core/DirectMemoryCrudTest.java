@@ -9,9 +9,12 @@ import io.haifa.agent.memory.api.Memory;
 import io.haifa.agent.memory.api.MemoryActor;
 import io.haifa.agent.memory.api.MemoryContextRequest;
 import io.haifa.agent.memory.api.MemoryDraft;
+import io.haifa.agent.memory.api.MemoryId;
 import io.haifa.agent.memory.api.MemoryKind;
 import io.haifa.agent.memory.api.MemoryOperationException;
+import io.haifa.agent.memory.api.MemoryPage;
 import io.haifa.agent.memory.api.MemoryQuery;
+import io.haifa.agent.memory.api.MemoryRepository;
 import io.haifa.agent.memory.api.MemoryRetriever;
 import io.haifa.agent.memory.api.MemoryScope;
 import io.haifa.agent.memory.api.MemoryScopeType;
@@ -61,6 +64,76 @@ class DirectMemoryCrudTest {
         assertThat(service.list(MemoryQuery.all(USER, 10), ACTOR).items()).isEmpty();
         assertCode(() -> service.delete(created.id(), 3, ACTOR), "MEMORY_UNAVAILABLE");
         assertCode(() -> service.update(created.id(), 3, "again", ACTOR), "MEMORY_UNAVAILABLE");
+    }
+
+    @Test
+    void retriedMutationsSucceedByIntentWhileOtherRevisionsStillConflict() {
+        Memory created = service.put(fact(USER, "editor", "Uses IntelliJ"), ACTOR);
+        Memory updated = service.update(created.id(), 1, "Uses VS Code", ACTOR);
+        assertThat(service.update(created.id(), 1, " Uses  VS Code ", ACTOR))
+                .as("retry with the same revision and content returns the committed state")
+                .isEqualTo(updated);
+        assertThat(service.update(created.id(), 2, "Uses VS Code", ACTOR))
+                .as("identical content at the current revision is not a change")
+                .isEqualTo(updated);
+        assertCode(() -> service.update(created.id(), 1, "Uses Vim", ACTOR), "MEMORY_REVISION_STALE");
+        Memory third = service.update(created.id(), 2, "Uses Vim", ACTOR);
+        assertThat(third.revision()).isEqualTo(3);
+        // Identical content two revisions later is not this caller's retry.
+        assertCode(() -> service.update(created.id(), 1, "Uses Vim", ACTOR), "MEMORY_REVISION_STALE");
+
+        service.delete(created.id(), 3, ACTOR);
+        service.delete(created.id(), 3, ACTOR);
+        assertCode(() -> service.delete(created.id(), 2, ACTOR), "MEMORY_UNAVAILABLE");
+        assertCode(() -> service.delete(created.id(), 4, ACTOR), "MEMORY_UNAVAILABLE");
+        assertCode(() -> service.delete(created.id(), 3, new MemoryActor(TENANT, OTHER)), "MEMORY_UNAVAILABLE");
+        assertCode(() -> service.update(created.id(), 3, "Uses Vim", ACTOR), "MEMORY_UNAVAILABLE");
+
+        Memory revived = service.put(fact(USER, "editor", "Uses Emacs"), ACTOR);
+        assertThat(revived.id()).isEqualTo(created.id());
+        assertCode(() -> service.delete(created.id(), 3, ACTOR), "MEMORY_REVISION_STALE");
+
+        assertThat(service.clear(USER, ACTOR)).isEqualTo(1);
+        assertThat(service.clear(USER, ACTOR))
+                .as("a retried clear keeps the scope empty")
+                .isZero();
+        assertCode(() -> service.delete(created.id(), revived.revision(), ACTOR), "MEMORY_UNAVAILABLE");
+    }
+
+    @Test
+    void mutationsWhoseResponseWasLostCanBeRetriedWithTheSameRevision() {
+        LosingResponses lossy = new LosingResponses(store);
+        DefaultMemoryService unreliable = new DefaultMemoryService(
+                lossy, () -> "memory-" + ids.incrementAndGet(), () -> Instant.ofEpochMilli(clock.addAndGet(10)));
+        Memory created = unreliable.put(fact(USER, "city", "Lives in Hangzhou"), ACTOR);
+
+        lossy.loseNextResponse();
+        assertThatThrownBy(() -> unreliable.update(created.id(), 1, "Lives in Shanghai", ACTOR))
+                .hasMessage("response lost");
+        Memory retried = unreliable.update(created.id(), 1, "Lives in Shanghai", ACTOR);
+        assertThat(retried.revision()).isEqualTo(2);
+        assertThat(retried.content()).isEqualTo("Lives in Shanghai");
+
+        lossy.loseNextResponse();
+        assertThatThrownBy(() -> unreliable.delete(created.id(), 2, ACTOR)).hasMessage("response lost");
+        unreliable.delete(created.id(), 2, ACTOR);
+        assertThat(unreliable.find(created.id(), ACTOR)).isEmpty();
+        assertThat(unreliable.list(MemoryQuery.all(USER, 10), ACTOR).items()).isEmpty();
+    }
+
+    @Test
+    void textMatchFoldsUnicodeCase() {
+        service.put(fact(USER, "fruit", "Äpfel und Birnen"), ACTOR);
+        service.put(fact(USER, "friend", "ΣΟΦΙΑ drinks tea"), ACTOR);
+        service.put(fact(USER, "drink", "用户喜欢喝绿茶"), ACTOR);
+        service.put(fact(USER, "physics", "Kelvin is the unit of temperature"), ACTOR);
+
+        assertThat(matching("äpfel")).containsExactly("Äpfel und Birnen");
+        assertThat(matching("ÄPFEL")).containsExactly("Äpfel und Birnen");
+        assertThat(matching("σοφια")).containsExactly("ΣΟΦΙΑ drinks tea");
+        assertThat(matching("绿茶")).containsExactly("用户喜欢喝绿茶");
+        assertThat(matching("kelvin")).containsExactly("Kelvin is the unit of temperature");
+        assertThat(matching("kiwi")).isEmpty();
     }
 
     @Test
@@ -244,6 +317,11 @@ class DirectMemoryCrudTest {
         assertThat(second.nextCursor()).isEmpty();
     }
 
+    private List<String> matching(String text) {
+        return contents(service.list(new MemoryQuery(USER, Set.of(), Optional.of(text), Optional.empty(), 10), ACTOR)
+                .items());
+    }
+
     private List<MemorySnippet> recall(String agentId, String query) {
         return retriever.contextFor(request(agentId, query, 4_000)).snippets();
     }
@@ -273,5 +351,65 @@ class DirectMemoryCrudTest {
                 .isInstanceOf(MemoryOperationException.class)
                 .extracting(error -> ((MemoryOperationException) error).code())
                 .isEqualTo(code);
+    }
+
+    /** Commits the next update or delete and then fails, as when the response is lost on the way to the caller. */
+    private static final class LosingResponses implements MemoryRepository {
+        private final MemoryRepository delegate;
+        private boolean loseNext;
+
+        private LosingResponses(MemoryRepository delegate) {
+            this.delegate = delegate;
+        }
+
+        void loseNextResponse() {
+            loseNext = true;
+        }
+
+        @Override
+        public Memory upsert(MemoryDraft draft, MemoryId newId, Instant now) {
+            return delegate.upsert(draft, newId, now);
+        }
+
+        @Override
+        public Optional<Memory> find(MemoryId id) {
+            return delegate.find(id);
+        }
+
+        @Override
+        public Optional<Memory> update(MemoryId id, long expectedRevision, String content, Instant now) {
+            return lost(delegate.update(id, expectedRevision, content, now));
+        }
+
+        @Override
+        public boolean delete(MemoryId id, long expectedRevision, Instant now) {
+            return lost(delegate.delete(id, expectedRevision, now));
+        }
+
+        @Override
+        public Optional<MemoryScope> deletedFrom(MemoryId id, long expectedRevision) {
+            return delegate.deletedFrom(id, expectedRevision);
+        }
+
+        @Override
+        public MemoryPage list(MemoryQuery query) {
+            return delegate.list(query);
+        }
+
+        @Override
+        public int clear(MemoryScope scope, Instant now) {
+            return delegate.clear(scope, now);
+        }
+
+        @Override
+        public List<Memory> recent(List<MemoryScope> scopes, int limit) {
+            return delegate.recent(scopes, limit);
+        }
+
+        private <T> T lost(T committed) {
+            if (!loseNext) return committed;
+            loseNext = false;
+            throw new IllegalStateException("response lost");
+        }
     }
 }
