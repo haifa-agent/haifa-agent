@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
 import io.haifa.example.sdk.advanced.AssemblyDiagnosticsExample;
 import io.haifa.example.sdk.advanced.ConversationManagementExample;
+import io.haifa.example.sdk.advanced.EnterpriseMemoryApplicationExample;
 import io.haifa.example.sdk.advanced.IdempotencyAndRevisionExample;
 import io.haifa.example.sdk.advanced.RunEventJournalExample;
 import io.haifa.example.sdk.advanced.RunOutputStreamingExample;
@@ -43,5 +44,6 @@ class ExampleTierSmokeTest {
         assertDoesNotThrow(() -> RunQueryControlExample.main(new String[0]));
         assertDoesNotThrow(() -> RunEventJournalExample.main(new String[0]));
         assertDoesNotThrow(() -> TrustedCallerExample.main(new String[0]));
+        assertDoesNotThrow(() -> EnterpriseMemoryApplicationExample.main(new String[0]));
     }
 }
