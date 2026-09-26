@@ -29,6 +29,10 @@ HTTP 框架接入的请求、响应和 SSE 会话对象。
 - Problem Details 只返回稳定错误码、服务端 correlation ID 和安全详情，不返回堆栈、SQL、
   主机路径、授权规则或敏感输入。
 - 无自动截止时间的 Interaction 响应省略 `expiresAt`；Transport 不生成默认期限。
+- 0.1.2 不支持最小父子委托（Agent-as-Tool）的 Child 生命周期事件：`child.run.started|completed|failed|cancelled|timed-out`
+  （`RunEventPayloads.ChildRunLifecycle`）没有 Contract 映射，`ContractRuntimeMapper` 按不支持的公开事件载荷拒绝。
+  需要这些事件的宿主应通过 SDK 的 `runs().events(...)` / `runs().children(...)` 读取，不要经 HTTP Event Page 或 SSE
+  暴露发起委托的父 Run。
 
 Run 查询 JSON 中的 `error` 是 `AgentExecutionErrorView`；它与 HTTP Problem 的
 `RuntimeApiErrorCode` 分离。HTTP 状态只表达本次请求结果，不会把已持久化的 Model、Tool 或预算

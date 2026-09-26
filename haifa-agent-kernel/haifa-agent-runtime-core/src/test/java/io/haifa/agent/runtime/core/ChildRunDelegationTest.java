@@ -5,6 +5,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.agent.AgentDefinitionVersion;
+import io.haifa.agent.core.content.ContentPart;
+import io.haifa.agent.core.content.ImageUrlContentPart;
+import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.error.AgentErrorCode;
 import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.core.run.AgentRunBudget;
@@ -24,14 +27,21 @@ import io.haifa.agent.memory.api.MemoryRetriever;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.AgentChatResponse;
+import io.haifa.agent.model.api.EffectiveModelParameters;
+import io.haifa.agent.model.api.ImageInputProfile;
+import io.haifa.agent.model.api.ImageUrlPart;
+import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelErrorCategory;
 import io.haifa.agent.model.api.ModelFinishReason;
+import io.haifa.agent.model.api.ModelImageSource;
 import io.haifa.agent.model.api.ModelInvocationException;
 import io.haifa.agent.model.api.ModelMessage;
 import io.haifa.agent.model.api.ModelMessageRole;
+import io.haifa.agent.model.api.ModelReasoningPolicy;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.model.api.ModelUsage;
+import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.AgentRunSnapshot;
 import io.haifa.agent.runtime.api.ChildRunView;
@@ -42,19 +52,24 @@ import io.haifa.agent.runtime.api.RunCancellation;
 import io.haifa.agent.runtime.api.RunEventCursor;
 import io.haifa.agent.runtime.api.RunEventPayloads;
 import io.haifa.agent.runtime.api.RuntimeOverrides;
+import io.haifa.agent.runtime.core.attempt.ExecutionAttemptStatus;
+import io.haifa.agent.runtime.core.bootstrap.DefaultResolvedModelSnapshots;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedDefinition;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
 import io.haifa.agent.runtime.core.delegation.ChildRunCoordinator;
 import io.haifa.agent.runtime.core.delegation.DelegationPort;
 import io.haifa.agent.runtime.core.delegation.DelegationTool;
+import io.haifa.agent.runtime.core.execution.ExecutionScheduler;
 import io.haifa.agent.runtime.core.execution.LocalExecutionScheduler;
 import io.haifa.agent.runtime.core.retry.RetryPolicy;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
 import io.haifa.agent.runtime.core.tool.PublicToolPolicy;
+import java.net.URI;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -62,6 +77,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -589,6 +605,238 @@ class ChildRunDelegationTest {
         assertThat(delegationCalls(fixture, started.runId()))
                 .extracting(ToolCall::status)
                 .containsExactlyInAnyOrder(ToolCallStatus.COMPLETED, ToolCallStatus.CANCELLED);
+        // Recovery settles the lost child through its own terminal transition, which projects the parent event.
+        assertThat(childTerminalEvents(
+                        fixture, started.runId(), children.get("fast").id()))
+                .containsExactly("child.run.completed:COMPLETED");
+        assertThat(childTerminalEvents(
+                        fixture, started.runId(), children.get("slow").id()))
+                .containsExactly("child.run.failed:FAILED");
+    }
+
+    @Test
+    void processSlotsStayTakenAfterParentCancelUntilTheChildTasksActuallyEnd() throws Exception {
+        CountDownLatch heldChildrenStarted = new CountDownLatch(2);
+        CountDownLatch releaseHeldChildren = new CountDownLatch(1);
+        AtomicInteger executing = new AtomicInteger();
+        AtomicInteger maximum = new AtomicInteger();
+        AtomicBoolean laterChildStarted = new AtomicBoolean();
+        Fixture fixture =
+                fixture(Options.defaults().customize(builder -> builder.maxConcurrentChildRuns(2)), request -> {
+                    if (isParent(request)) {
+                        if (hasToolResults(request)) return answer("parent done", 1);
+                        return brief(request).equals("objective hold")
+                                ? taskCalls("researcher", "held-1", "researcher", "held-2")
+                                : taskCalls("researcher", "later");
+                    }
+                    maximum.accumulateAndGet(executing.incrementAndGet(), Math::max);
+                    try {
+                        if (brief(request).equals("later")) {
+                            laterChildStarted.set(true);
+                            return answer("later finding", 1);
+                        }
+                        heldChildrenStarted.countDown();
+                        awaitIgnoringInterrupts(releaseHeldChildren);
+                        return answer("held finding", 1);
+                    } finally {
+                        executing.decrementAndGet();
+                    }
+                });
+        AgentRunSnapshot hold = fixture.start("hold");
+        assertThat(heldChildrenStarted.await(10, TimeUnit.SECONDS)).isTrue();
+
+        fixture.runtime.handle(hold.runId()).cancel(RunCancellation.userRequest());
+        AgentRunSnapshot cancelled =
+                fixture.runtime.handle(hold.runId()).awaitCompletion(AWAIT).orElseThrow();
+        assertThat(cancelled.status()).isEqualTo(AgentRunStatus.CANCELLED);
+        // The parent stopped observing, but both child tasks are still inside their model call.
+        assertThat(fixture.runtime.children(hold.runId()))
+                .hasSize(2)
+                .allSatisfy(child -> assertThat(child.status().isTerminal()).isFalse());
+
+        AgentRunSnapshot later = fixture.start("later");
+        sleep(1_000);
+        assertThat(laterChildStarted).isFalse();
+        assertThat(fixture.runtime.children(later.runId())).isEmpty();
+
+        releaseHeldChildren.countDown();
+        AgentRunSnapshot completed =
+                fixture.runtime.handle(later.runId()).awaitCompletion(AWAIT).orElseThrow();
+
+        assertThat(completed.status()).isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(laterChildStarted).isTrue();
+        assertThat(maximum.get()).isLessThanOrEqualTo(2);
+        List<ChildRunView> heldChildren = fixture.runtime.children(hold.runId());
+        assertThat(heldChildren).allSatisfy(child -> {
+            AgentRun run = fixture.store.find(child.runId()).orElseThrow();
+            assertThat(run.status()).isEqualTo(AgentRunStatus.CANCELLED);
+            assertThat(run.terminationReason().orElseThrow().code()).isEqualTo("PARENT_CANCELLED");
+        });
+    }
+
+    @Test
+    void childEndingAfterItsParentStoppedStillProjectsExactlyOneTerminalEventToTheParent() throws Exception {
+        CountDownLatch childStarted = new CountDownLatch(1);
+        CountDownLatch releaseChild = new CountDownLatch(1);
+        Fixture fixture = fixture(Options.defaults(), request -> {
+            if (isParent(request)) return taskCalls("researcher", "outlives parent");
+            childStarted.countDown();
+            awaitIgnoringInterrupts(releaseChild);
+            return answer("late finding", 1);
+        });
+        AgentRunSnapshot started = fixture.start("late-child");
+        assertThat(childStarted.await(10, TimeUnit.SECONDS)).isTrue();
+
+        fixture.runtime.handle(started.runId()).cancel(RunCancellation.userRequest());
+        AgentRunSnapshot parent =
+                fixture.runtime.handle(started.runId()).awaitCompletion(AWAIT).orElseThrow();
+        assertThat(parent.status()).isEqualTo(AgentRunStatus.CANCELLED);
+        AgentRunId child = fixture.runtime.children(parent.runId()).getFirst().runId();
+        assertThat(childTerminalEvents(fixture, parent.runId(), child)).isEmpty();
+
+        releaseChild.countDown();
+        eventually(() -> fixture.store.find(child).orElseThrow().status().isTerminal());
+
+        AgentRunStatus childStatus =
+                fixture.runtime.children(parent.runId()).getFirst().status();
+        assertThat(childStatus).isEqualTo(AgentRunStatus.CANCELLED);
+        assertThat(childTerminalEvents(fixture, parent.runId(), child)).containsExactly(terminalEventType(childStatus));
+        var lifecycle =
+                fixture.runtime.events(parent.runId(), RunEventCursor.beforeFirst(parent.runId()), 500).items().stream()
+                        .filter(event -> event.eventType().equals("child.run.cancelled"))
+                        .map(event -> (RunEventPayloads.ChildRunLifecycle) event.payload())
+                        .findFirst()
+                        .orElseThrow();
+        assertThat(lifecycle.toolCallId())
+                .isEqualTo(
+                        delegationCalls(fixture, parent.runId()).getFirst().id().value());
+        assertThat(lifecycle.reasonCode()).isEqualTo("PARENT_CANCELLED");
+    }
+
+    @Test
+    void schedulerRejectionSettlesTheChildInsteadOfLeavingItQueued() throws Exception {
+        LocalExecutionScheduler local = new LocalExecutionScheduler();
+        closeables.add(local);
+        AtomicInteger childSubmissions = new AtomicInteger();
+        ExecutionScheduler rejectingFirstChild = new ExecutionScheduler() {
+            @Override
+            public void submit(AgentRunId runId, Runnable task) {
+                if (runId.value().startsWith("child-run-") && childSubmissions.getAndIncrement() == 0) {
+                    throw new RejectedExecutionException("scheduler is full");
+                }
+                local.submit(runId, task);
+            }
+
+            @Override
+            public void cancel(AgentRunId runId) {
+                local.cancel(runId);
+            }
+        };
+        List<AgentChatRequest> parentRequests = new CopyOnWriteArrayList<>();
+        Fixture fixture = fixture(
+                Options.defaults().customize(builder -> builder.scheduler(rejectingFirstChild)
+                        .maxConcurrentChildRuns(1)),
+                request -> {
+                    if (isParent(request)) {
+                        parentRequests.add(request);
+                        return hasToolResults(request)
+                                ? answer("handled the refusal", 1)
+                                : taskCalls("researcher", "refused", "researcher", "accepted");
+                    }
+                    return answer("accepted finding", 1);
+                });
+
+        AgentRunSnapshot parent = fixture.startAndAwait("rejected");
+
+        assertThat(parent.status()).isEqualTo(AgentRunStatus.COMPLETED);
+        Map<String, ChildRunView> children = new ConcurrentHashMap<>();
+        fixture.runtime.children(parent.runId()).forEach(child -> children.put(child.objective(), child));
+        assertThat(children).hasSize(2);
+        assertThat(children.values())
+                .allSatisfy(child -> assertThat(child.status().isTerminal()).isTrue());
+        AgentRunId refused = children.get("refused").runId();
+        AgentRun refusedRun = fixture.store.find(refused).orElseThrow();
+        assertThat(refusedRun.status()).isEqualTo(AgentRunStatus.FAILED);
+        assertThat(refusedRun.error().orElseThrow().code()).isEqualTo(AgentErrorCode.RUNTIME_EXECUTION_FAILED);
+        assertThat(fixture.store.activeFor(refused)).isEmpty();
+        assertThat(fixture.store.attemptsFor(refused)).singleElement().satisfies(attempt -> assertThat(attempt.status())
+                .isEqualTo(ExecutionAttemptStatus.FAILED));
+        // The only process slot came back, so the second child still ran.
+        assertThat(children.get("accepted").status()).isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(toolResults(parentRequests.getLast()))
+                .anyMatch(text -> text.contains("failed (RUNTIME_EXECUTION_FAILED)"));
+        assertThat(childTerminalEvents(fixture, parent.runId(), refused)).containsExactly("child.run.failed:FAILED");
+        assertThat(childTerminalEvents(
+                        fixture, parent.runId(), children.get("accepted").runId()))
+                .containsExactly("child.run.completed:COMPLETED");
+    }
+
+    @Test
+    void childInheritsTheParentsReferenceInputsButNotItsFreeText() throws Exception {
+        URI plan = URI.create("https://images.example.com/floor-plan.png");
+        List<AgentChatRequest> childRequests = new CopyOnWriteArrayList<>();
+        ResolvedModelSnapshot text = DefaultResolvedModelSnapshots.deepSeekV4Pro();
+        EnumSet<ModelCapability> capabilities = EnumSet.copyOf(text.capabilities());
+        capabilities.add(ModelCapability.IMAGE_URL_INPUT);
+        ResolvedModelSnapshot base = ResolvedModelSnapshot.create(
+                text.providerId(),
+                text.providerVersion(),
+                text.modelId(),
+                text.modelVersion(),
+                text.providerModelId(),
+                text.adapterType(),
+                text.adapterVersion(),
+                text.apiStyle(),
+                text.dialect(),
+                text.endpoint(),
+                text.credentialRef(),
+                text.nativeStreaming(),
+                capabilities,
+                text.contextWindow(),
+                8_192,
+                Map.of(),
+                Map.of());
+        ResolvedModelSnapshot visionModel = base.withEffectiveParameters(new EffectiveModelParameters(
+                base.modelId(),
+                "2.0",
+                "sha256:" + "a".repeat(64),
+                ModelReasoningPolicy.disabled(),
+                4096,
+                Optional.of(ImageInputProfile.standard(Set.of(ModelImageSource.URL), false))));
+        Options options = Options.defaults();
+        Fixture fixture = fixture(
+                options.customize(builder -> builder.profiles((id, overrides) -> new ResolvedProfile(
+                        id,
+                        "1.0.0",
+                        AgentRunType.CHAT,
+                        new AgentRunBudget(1_000_000, 1_000_000, 1_000_000, 32, 32, 8, "USD", 1_000_000),
+                        id.equals("child-profile") ? options.childLimits() : options.parentLimits(),
+                        visionModel))),
+                request -> {
+                    if (isParent(request)) {
+                        return hasToolResults(request)
+                                ? answer("done", 1)
+                                : taskCalls("researcher", "describe the plan");
+                    }
+                    childRequests.add(request);
+                    return answer("a floor plan", 1);
+                });
+
+        AgentRunSnapshot parent = fixture.start(
+                "attachments", List.of(new ImageUrlContentPart(plan), new TextPart("private parent note", "plain")));
+        parent = fixture.runtime.handle(parent.runId()).awaitCompletion(AWAIT).orElseThrow();
+
+        assertThat(parent.status()).isEqualTo(AgentRunStatus.COMPLETED);
+        ModelMessage childUser = childRequests.getFirst().messages().stream()
+                .filter(message -> message.role() == ModelMessageRole.USER)
+                .findFirst()
+                .orElseThrow();
+        assertThat(childUser.images()).containsExactly(new ImageUrlPart(plan));
+        assertThat(childUser.content()).contains("describe the plan").doesNotContain("private parent note");
+        AgentRunId child = fixture.runtime.children(parent.runId()).getFirst().runId();
+        assertThat(fixture.store.messages(child).getFirst().contents())
+                .filteredOn(part -> !(part instanceof TextPart))
+                .containsExactly(new ImageUrlContentPart(plan));
     }
 
     // ---------------------------------------------------------------------------------------------------------
@@ -738,6 +986,39 @@ class ChildRunDelegationTest {
         }
     }
 
+    /** Waits like a model call that ignores interruption, so the child task outlives the parent's stop. */
+    private static void awaitIgnoringInterrupts(CountDownLatch latch) {
+        long deadline = System.nanoTime() + AWAIT.toNanos();
+        while (latch.getCount() > 0 && System.nanoTime() < deadline) {
+            try {
+                latch.await(50, TimeUnit.MILLISECONDS);
+            } catch (InterruptedException ignored) {
+                // Deliberately keeps running after the parent's cancellation interrupts this child.
+            }
+        }
+    }
+
+    private static List<String> childTerminalEvents(Fixture fixture, AgentRunId parent, AgentRunId child) {
+        return fixture.runtime.events(parent, RunEventCursor.beforeFirst(parent), 500).items().stream()
+                .filter(event -> event.eventType().startsWith("child.run.")
+                        && !event.eventType().equals("child.run.started"))
+                .filter(event -> ((RunEventPayloads.ChildRunLifecycle) event.payload())
+                        .childRunId()
+                        .equals(child.value()))
+                .map(event -> event.eventType() + ":" + ((RunEventPayloads.ChildRunLifecycle) event.payload()).status())
+                .toList();
+    }
+
+    private static String terminalEventType(AgentRunStatus status) {
+        return switch (status) {
+            case COMPLETED -> "child.run.completed:COMPLETED";
+            case FAILED -> "child.run.failed:FAILED";
+            case CANCELLED -> "child.run.cancelled:CANCELLED";
+            case TIMEOUT -> "child.run.timed-out:TIMEOUT";
+            default -> throw new AssertionError("not terminal: " + status);
+        };
+    }
+
     private static void eventually(BooleanSupplier condition) throws InterruptedException {
         long deadline = System.nanoTime() + AWAIT.toNanos();
         while (!condition.getAsBoolean()) {
@@ -748,6 +1029,10 @@ class ChildRunDelegationTest {
 
     private record Fixture(DefaultAgentRuntime runtime, InMemoryRuntimeStore store) {
         AgentRunSnapshot start(String key) {
+            return start(key, List.of());
+        }
+
+        AgentRunSnapshot start(String key, List<ContentPart> inputs) {
             return runtime.start(new AgentRunRequest(
                     key,
                     LEAD,
@@ -756,7 +1041,7 @@ class ChildRunDelegationTest {
                     new AgentSessionId("session-" + key),
                     Optional.empty(),
                     "objective " + key,
-                    List.of(),
+                    inputs,
                     RuntimeOverrides.NONE));
         }
 
