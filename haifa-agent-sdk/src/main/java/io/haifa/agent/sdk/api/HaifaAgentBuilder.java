@@ -413,7 +413,7 @@ public final class HaifaAgentBuilder {
             }
             runtimeBuilder.publicToolPolicyDecorator(publicToolPolicyDecorator);
             if (memory != null) {
-                runtimeBuilder.memory(memory.service(), memory.retriever());
+                runtimeBuilder.memory(memory.retriever());
             }
             // No implicit policy: a tool platform without an explicit product policy fails closed in
             // RuntimeCoreBuilder instead of inheriting rules from the SDK assembly layer.
@@ -439,7 +439,7 @@ public final class HaifaAgentBuilder {
             var agentMemories = memory == null
                     ? Optional.<AgentMemories>empty()
                     : Optional.of(new AgentMemories(
-                            memory.service(), memory.policy(), callers, safeConversations, agentRuns, lifecycleClosed));
+                            memory.service(), memory.policy(), callers, safeConversations, lifecycleClosed));
             return new HaifaAgent(
                     effectiveProfile,
                     metadata,

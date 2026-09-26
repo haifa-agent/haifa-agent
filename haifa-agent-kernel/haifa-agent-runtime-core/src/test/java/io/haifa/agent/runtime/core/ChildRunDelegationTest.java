@@ -20,7 +20,6 @@ import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.core.tool.ToolCallStatus;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.memory.api.MemoryContext;
-import io.haifa.agent.memory.api.MemoryContextRequest;
 import io.haifa.agent.memory.api.MemoryRetriever;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.AgentChatRequest;
@@ -333,27 +332,9 @@ class ChildRunDelegationTest {
     @Test
     void childRunsNeitherRecallNorWriteLongTermMemory() throws Exception {
         List<String> recalledRuns = new CopyOnWriteArrayList<>();
-        MemoryRetriever recording = new MemoryRetriever() {
-            @Override
-            public io.haifa.agent.memory.api.MemoryRetrieval retrieve(io.haifa.agent.memory.api.MemoryQuery query) {
-                throw new AssertionError("unused");
-            }
-
-            @Override
-            public MemoryContext contextFor(MemoryContextRequest request) {
-                recalledRuns.add(request.runId());
-                return new MemoryContext(List.of(), "test-policy", "test-digest");
-            }
-
-            @Override
-            public Optional<io.haifa.agent.memory.api.Memory> findAuthorized(
-                    io.haifa.agent.memory.api.MemoryId id,
-                    io.haifa.agent.memory.api.MemoryVersion version,
-                    io.haifa.agent.core.reference.TenantRef tenant,
-                    io.haifa.agent.core.reference.PrincipalRef owner,
-                    Instant now) {
-                return Optional.empty();
-            }
+        MemoryRetriever recording = request -> {
+            recalledRuns.add(request.runId());
+            return new MemoryContext(List.of(), "test-policy", "test-digest");
         };
         Fixture fixture = fixture(Options.defaults().customize(builder -> builder.memory(recording)), request -> {
             if (isParent(request)) {
