@@ -6,7 +6,7 @@ Memory 与 Artifact。Action Policy rules 及 evaluator contribution 由产品�
 `SqliteDurableReferenceAssemblyExample`；示例模块不是发布制品或 Stable API。
 
 `HaifaAgentStoreMigrations` 是 CA、PA 与显式 SQLite SDK 唯一的物理 Schema registry。它统一注册
-V1、V2、V4～V13 与 V1000～V1007；V3 legacy Policy family 和独立 V1008 已从 clean baseline 删除。
+V1、V2、V4～V13、V15 与 V1000～V1007；V3 legacy Policy family 和独立 V1008 已从 clean baseline 删除。
 同目录下唯一 `haifa-agent-v1.0-init.sql` 由 `build-support/scripts/generate_haifa_agent_v1_schema.py`
 从该 registry 实际注册资源生成，`--check` 用于 byte-for-byte 门禁。
 
@@ -83,14 +83,20 @@ V3 及其 Snapshot、Decision、Evidence、Grant、Project Trust 和 approval me
 本模块提供纯 Java 的 SQLite/MyBatis Store。当前已完成受控数据库配置、统一 Migration、
 版本化 Codec、线程绑定 UoW，以及 `RuntimePersistencePorts` 所需的全部 SQLite 业务适配器。
 
-V6 只新增 `memory_candidate`、`memory_record` 和 `memory_audit_event`。Candidate/Memory 正文以
-显式 schema version、payload type、SHA-256 和明文 JSON BLOB 保存；数据库、WAL/SHM 与备份因此
-都可能包含 Memory 明文，必须沿用本模块的主机权限和备份保护。Audit 只保存操作、引用、可信
-Actor、摘要和安全属性，不保存 Memory 正文，且不提供公共查询 API。
+V15 以 clean cut 取代 V6 的 Candidate/Audit 结构：删除 `memory_candidate`、`memory_audit_event` 和旧
+`memory_record`，清空只保存引用的派生表 `memory_selection`，新建单一权威 `memory_record`（tenant/owner/
+scope/target、kind、subject、正文、可选 `source_type/source_id`、revision、created/updated/deleted 时间）与
+`memory_scope_clear`（每个 scope 的清空水位线）。迁移前若旧表仍有 ACTIVE Memory 或 PENDING Candidate，
+V15 以 `v15_memory_tables_must_not_hold_live_rows` 约束失败并回滚，不静默丢弃数据。正文以明文 TEXT
+保存；数据库、WAL/SHM 与备份因此都可能包含 Memory 明文，必须沿用本模块的主机权限和备份保护。删除只保留
+身份、revision 与 `deleted_at` 并抹去正文，用于拒绝删除前观察到的迟到写入并识别同 revision 的删除重试；按 scope
+清空物理删除行并记录水位线。文本查询不在 SQL 中做大小写折叠（SQLite `lower()` 只折叠 ASCII），而是按
+`updated_at`/`memory_id` keyset 分批（每批至少 256 行）读取候选并在 Java 中以 `Locale.ROOT` 过滤，直到凑够一页加一条
+或扫描完 scope，语义与 `InMemoryMemoryStore` 一致。
 
-`SqliteSdkProductContributions` 共享同一 Foundation 装配 Persistence、Conversation 与生产 Memory。
-权威证据校验同时核对来源 ID、持久化内容摘要、Tenant、Principal 和 Scope。Conflict 管理、
-Expiry/Purge/Tombstone/Audit 查询均 fail closed，未在 V6 建表。
+`SqliteSdkProductContributions` 共享同一 Foundation 装配 Persistence、Conversation 与生产 Memory；
+`SqliteSdkContributions.memory(policy)` 在同一 SQLite 文件上提供同样的 Memory 组件，生命周期仍归
+`persistence()` 所有。
 Project Application/CLI 已可显式选择本模块；Runtime 的进程重启恢复由注入的 Port 与每次启动唯一
 worker ID 驱动。
 

@@ -12,18 +12,9 @@ import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunBudget;
 import io.haifa.agent.core.run.AgentRunLimits;
-import io.haifa.agent.core.run.AgentRunOutcome;
-import io.haifa.agent.core.run.AgentRunResult;
 import io.haifa.agent.core.run.AgentRunType;
 import io.haifa.agent.credential.api.CredentialBroker;
-import io.haifa.agent.memory.api.MemoryActor;
 import io.haifa.agent.memory.api.MemoryRetriever;
-import io.haifa.agent.memory.api.MemoryService;
-import io.haifa.agent.memory.api.MemorySourceRef;
-import io.haifa.agent.memory.api.MemorySourceType;
-import io.haifa.agent.memory.core.DefaultMemoryPolicy;
-import io.haifa.agent.memory.core.DefaultMemoryRetriever;
-import io.haifa.agent.memory.core.InMemoryMemoryStore;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.policy.api.ApprovalMode;
 import io.haifa.agent.policy.api.ApprovalVerification;
@@ -57,6 +48,7 @@ import io.haifa.agent.runtime.core.control.RunControlRegistry;
 import io.haifa.agent.runtime.core.control.RunControlService;
 import io.haifa.agent.runtime.core.decision.DecisionExecutor;
 import io.haifa.agent.runtime.core.decision.DefaultDecisionValidator;
+import io.haifa.agent.runtime.core.delegation.ChildRunCoordinator;
 import io.haifa.agent.runtime.core.delegation.DelegationPort;
 import io.haifa.agent.runtime.core.event.NotifyingRuntimeEventAppender;
 import io.haifa.agent.runtime.core.event.RuntimeClientEventProjector;
@@ -145,14 +137,8 @@ public final class RuntimeCoreBuilder {
     private DefinitionResolver definitions;
     private ProfileResolver profiles;
     private ConfigurationSnapshotFactory snapshots;
-    private DelegationPort delegations = (parent, decision) -> new AgentRunResult(
-            AgentRunOutcome.INSUFFICIENT_INFORMATION,
-            "No delegation adapter configured",
-            "delegation-result",
-            "1.0",
-            Map.of(),
-            List.of(),
-            List.of("delegation adapter unavailable"));
+    private DelegationPort delegations;
+    private int maxConcurrentChildRuns = ChildRunCoordinator.DEFAULT_MAX_CONCURRENT_CHILD_RUNS;
     private final Map<ModelAdapterKey, AgentChatModel> chatModels = new LinkedHashMap<>();
     private ToolCatalog toolCatalog = ToolCatalog.empty();
     private SkillCatalog skillCatalog = SkillCatalog.empty();
@@ -200,7 +186,6 @@ public final class RuntimeCoreBuilder {
     private String workerId = "local-runtime-" + ids.nextValue();
     private ExecutionOwnershipPort ownership;
     private MemoryRetriever memoryRetriever;
-    private MemoryService memoryService;
     private ModelImageResolver modelImageResolver = ModelImageResolver.unsupported();
     private ModelAudioResolver modelAudioResolver = ModelAudioResolver.unsupported();
 
@@ -294,8 +279,19 @@ public final class RuntimeCoreBuilder {
         return this;
     }
 
+    /**
+     * Replaces the process-local child run coordinator. Without an override, delegation Tool Calls create
+     * ordinary child runs executed by this Runtime.
+     */
     public RuntimeCoreBuilder delegations(DelegationPort value) {
-        delegations = value;
+        delegations = Objects.requireNonNull(value, "value must not be null");
+        return this;
+    }
+
+    /** Process-wide cap on concurrently started child runs across all parents (default 3). */
+    public RuntimeCoreBuilder maxConcurrentChildRuns(int value) {
+        if (value < 1) throw new IllegalArgumentException("maxConcurrentChildRuns must be positive");
+        maxConcurrentChildRuns = value;
         return this;
     }
 
@@ -441,11 +437,6 @@ public final class RuntimeCoreBuilder {
         return this;
     }
 
-    public RuntimeCoreBuilder memory(MemoryService service, MemoryRetriever retriever) {
-        memoryService = Objects.requireNonNull(service);
-        return memory(retriever);
-    }
-
     public DefaultAgentRuntime build() {
         if (chatModels.isEmpty()) throw new NullPointerException("a versioned Model API adapter must be configured");
         if (!toolCatalog.snapshot().bindings().isEmpty() && !toolPlatformConfigured) {
@@ -475,31 +466,7 @@ public final class RuntimeCoreBuilder {
         ExecutionOwnershipPort configuredOwnership =
                 ownership != null ? ownership : ExecutionOwnershipPort.local(workerId);
         RuntimeModelOutputPublisher modelOutput = new RuntimeModelOutputPublisher(time);
-        FrozenModelInvoker models = new FrozenModelInvoker(
-                state,
-                chatModels,
-                ids,
-                modelOutput,
-                controls,
-                events,
-                time,
-                modelImageResolver,
-                modelAudioResolver,
-                activeContexts);
-        MemoryRetriever configuredMemoryRetriever = memoryRetriever;
-        if (configuredMemoryRetriever == null) {
-            InMemoryMemoryStore defaultMemoryStore = new InMemoryMemoryStore();
-            configuredMemoryRetriever = new DefaultMemoryRetriever(defaultMemoryStore, new DefaultMemoryPolicy());
-        }
-        if (memoryService != null) {
-            messageRedactions.register(message -> message.runId()
-                    .flatMap(runs::find)
-                    .ifPresent(run -> memoryService.invalidateSource(
-                            new MemorySourceRef(
-                                    MemorySourceType.MESSAGE, message.id().value(), java.util.Optional.empty()),
-                            "source message redacted",
-                            new MemoryActor(run.tenant(), run.principal(), Set.of("memory:review")))));
-        }
+        MemoryRetriever configuredMemoryRetriever = memoryRetriever == null ? MemoryRetriever.none() : memoryRetriever;
         Set<String> toolNames = toolCatalog.snapshot().bindings().stream()
                 .map(binding -> binding.alias().value())
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
@@ -512,9 +479,21 @@ public final class RuntimeCoreBuilder {
                         Set.of(),
                         "Complete the objective using disclosed capabilities.");
         ProfileResolver profileResolver = profiles != null ? profiles : RuntimeCoreBuilder::defaultProfile;
+        FrozenModelInvoker models = new FrozenModelInvoker(
+                state,
+                chatModels,
+                ids,
+                modelOutput,
+                controls,
+                events,
+                time,
+                modelImageResolver,
+                modelAudioResolver,
+                activeContexts,
+                definitionResolver);
         RunAwaiter awaiter = new RunAwaiter();
-        RunTransitionCoordinator transitions =
-                new RunTransitionCoordinator(runs, state, events, outbox, ids, time, awaiter, unitOfWork);
+        RunTransitionCoordinator transitions = new RunTransitionCoordinator(
+                runs, state, events, outbox, ids, time, awaiter, unitOfWork, configuredRunInputs);
         transitions.addListener(snapshot -> {
             if (snapshot.status().isTerminal()) {
                 modelOutput.markRunTerminal(snapshot.runId());
@@ -575,15 +554,52 @@ public final class RuntimeCoreBuilder {
         OutputContractValidator productOutputContract = outputContract;
         OutputContractValidator combinedOutputContract = (run, decision) ->
                 configuredOutputContract.isValid(run, decision) && productOutputContract.isValid(run, decision);
+        var toolRecovery = new io.haifa.agent.runtime.core.loop.ToolRecoveryCoordinator(state, pipeline, ids, time);
+        ConfigurationSnapshotFactory configuredSnapshots = snapshots != null
+                ? snapshots
+                : new ContentAddressedSnapshotFactory(toolCatalog.snapshot(), skillCatalog.snapshot(), skillTrust);
+        RunBootstrapper bootstrapper =
+                new RunBootstrapper(definitionResolver, profileResolver, access, configuredSnapshots, ids, time);
+        var settler = new io.haifa.agent.runtime.core.recovery.InterruptedRunSettler(
+                attempts, state, toolRecovery, ids, time);
+        ChildRunCoordinator childRuns = null;
+        DelegationPort configuredDelegations = delegations;
+        if (configuredDelegations == null) {
+            childRuns = new ChildRunCoordinator(
+                    runs,
+                    persistence.sessions(),
+                    attempts,
+                    state,
+                    unitOfWork,
+                    transitions,
+                    events,
+                    outbox,
+                    controls,
+                    scheduler,
+                    bootstrapper,
+                    definitionResolver,
+                    profileResolver,
+                    configuredOwnership,
+                    settler,
+                    ids,
+                    time,
+                    maxConcurrentChildRuns);
+            ChildRunCoordinator coordinator = childRuns;
+            transitions.addListener(coordinator::onRunChanged);
+            transitions.projectTerminalRunsWith(coordinator::projectTerminal);
+            configuredDelegations = childRuns;
+        }
+        // Resumed children must run under the slot their first execution took, so the Runtime submits through it.
+        ExecutionScheduler runtimeScheduler = childRuns != null ? childRuns.scheduler() : scheduler;
         DefaultCompletionGuard completion = new DefaultCompletionGuard(
-                state, pipeline, interactions, delegations, combinedOutputContract, completionPolicy);
+                state, pipeline, interactions, configuredDelegations, combinedOutputContract, completionPolicy);
         CheckpointManager checkpoints =
                 new CheckpointManager(checkpointsRepository, new CheckpointSnapshotBuilder(ids, time), time, events);
         DecisionExecutor decisionExecutor = new DecisionExecutor(
                 pipeline,
                 completion,
                 interactions,
-                delegations,
+                configuredDelegations,
                 state,
                 transitions,
                 ids,
@@ -599,7 +615,7 @@ public final class RuntimeCoreBuilder {
                 interactions, checkpointsRepository, transitions, state, access, toolInvoker, skillContentLoader);
         var sessionMessageSource = new SessionMessageSource(
                 state, summaries, compressor, effectiveCompressionPolicy, ids, time, activeContexts);
-        var memoryContextSource = new MemoryContextSource(configuredMemoryRetriever, state, time);
+        var memoryContextSource = new MemoryContextSource(configuredMemoryRetriever, state);
         RunInputApplier runInputApplier =
                 new RunInputApplier(configuredRunInputs, state, events, outbox, unitOfWork, ids, time);
         var compactionTriggerEvaluator = new CompactionTriggerEvaluator(effectiveCompressionPolicy);
@@ -616,14 +632,13 @@ public final class RuntimeCoreBuilder {
                 events,
                 new ModelMessageProjectionPlanner(state),
                 activeContexts);
-        var toolRecovery = new io.haifa.agent.runtime.core.loop.ToolRecoveryCoordinator(state, pipeline, ids, time);
         AgentLoop loop = new DefaultAgentLoop(
                 controls,
                 List.of(new BudgetGuard(), new IterationGuard()),
                 new DefaultRuntimeContextBuilder(
                         state, middleware, sessionMessageSource, memoryContextSource, skillContentLoader),
                 models,
-                new DefaultDecisionValidator(new DuplicateToolCallGuard(), new ChildRunGuard(state)),
+                new DefaultDecisionValidator(new DuplicateToolCallGuard(), new ChildRunGuard()),
                 decisionExecutor,
                 checkpoints,
                 transitions,
@@ -642,11 +657,7 @@ public final class RuntimeCoreBuilder {
                 compactionCoordinator);
         AttemptExecutor attemptExecutor = new AttemptExecutor(
                 attempts, loop, transitions, time, workerId, trace, traceIds, ids, failureDiagnostics);
-        ConfigurationSnapshotFactory configuredSnapshots = snapshots != null
-                ? snapshots
-                : new ContentAddressedSnapshotFactory(toolCatalog.snapshot(), skillCatalog.snapshot(), skillTrust);
-        RunBootstrapper bootstrapper =
-                new RunBootstrapper(definitionResolver, profileResolver, access, configuredSnapshots, ids, time);
+        if (childRuns != null) childRuns.bind(attemptExecutor);
         return new DefaultAgentRuntime(
                 callers,
                 bootstrapper,
@@ -660,10 +671,10 @@ public final class RuntimeCoreBuilder {
                 transitions,
                 controlService,
                 interactions,
-                delegations,
+                configuredDelegations,
                 attemptExecutor,
                 toolRecovery,
-                scheduler,
+                runtimeScheduler,
                 ids,
                 time,
                 awaiter,
@@ -673,7 +684,8 @@ public final class RuntimeCoreBuilder {
                 approvalVerification,
                 configuredRunInputs,
                 eventFeed,
-                eventSubscriptions);
+                eventSubscriptions,
+                settler);
     }
 
     private static ResolvedProfile defaultProfile(String id, io.haifa.agent.runtime.api.RuntimeOverrides overrides) {

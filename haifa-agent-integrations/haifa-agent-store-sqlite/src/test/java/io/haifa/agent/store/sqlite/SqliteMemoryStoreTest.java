@@ -7,283 +7,293 @@ import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.memory.api.Memory;
 import io.haifa.agent.memory.api.MemoryActor;
-import io.haifa.agent.memory.api.MemoryAuditEvent;
-import io.haifa.agent.memory.api.MemoryCandidate;
-import io.haifa.agent.memory.api.MemoryCandidateId;
-import io.haifa.agent.memory.api.MemoryCandidateQuery;
-import io.haifa.agent.memory.api.MemoryCandidateStatus;
-import io.haifa.agent.memory.api.MemoryEvidenceRef;
-import io.haifa.agent.memory.api.MemoryId;
+import io.haifa.agent.memory.api.MemoryContextRequest;
+import io.haifa.agent.memory.api.MemoryDraft;
 import io.haifa.agent.memory.api.MemoryKind;
 import io.haifa.agent.memory.api.MemoryOperationException;
-import io.haifa.agent.memory.api.MemoryRecordQuery;
-import io.haifa.agent.memory.api.MemoryRef;
-import io.haifa.agent.memory.api.MemoryRetentionPolicy;
+import io.haifa.agent.memory.api.MemoryQuery;
+import io.haifa.agent.memory.api.MemoryRepository;
 import io.haifa.agent.memory.api.MemoryScope;
-import io.haifa.agent.memory.api.MemoryScopeType;
-import io.haifa.agent.memory.api.MemorySecurityLabel;
+import io.haifa.agent.memory.api.MemorySnippet;
 import io.haifa.agent.memory.api.MemorySourceRef;
 import io.haifa.agent.memory.api.MemorySourceType;
-import io.haifa.agent.memory.api.MemoryStatus;
-import io.haifa.agent.memory.api.MemoryVersion;
-import io.haifa.agent.memory.api.MemoryVisibility;
-import io.haifa.agent.memory.api.TextMemoryContent;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
+import io.haifa.agent.memory.core.DefaultMemoryRetriever;
+import io.haifa.agent.memory.core.DefaultMemoryService;
+import io.haifa.agent.memory.core.InMemoryMemoryStore;
 import java.nio.file.Path;
-import java.sql.PreparedStatement;
+import java.sql.Connection;
 import java.sql.ResultSet;
+import java.sql.Statement;
 import java.time.Instant;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class SqliteMemoryStoreTest {
+    private static final TenantRef TENANT = new TenantRef("tenant-a");
+    private static final PrincipalRef OWNER = new PrincipalRef("user-a", "user");
+    private static final MemoryActor ACTOR = new MemoryActor(TENANT, OWNER);
+    private static final MemoryScope USER = MemoryScope.user(TENANT, OWNER);
+    private static final MemoryScope AGENT = MemoryScope.agent(TENANT, OWNER, "research-agent");
+
     @TempDir
     Path directory;
 
+    private final AtomicLong clock = new AtomicLong(SqliteTestSupport.NOW.toEpochMilli());
+    private final AtomicInteger ids = new AtomicInteger();
+
     @Test
-    void persistsCandidateAndReplacementAcrossRestartAndAuthorizesBeforeReading() {
-        MemoryScope scope = new MemoryScope(
-                new TenantRef("tenant-a"),
-                new PrincipalRef("user-a", "user"),
-                MemoryScopeType.USER,
-                "user-a",
-                MemoryVisibility.OWNER_ONLY,
-                Set.of());
-        MemorySourceRef source = new MemorySourceRef(MemorySourceType.MESSAGE, "message-a", Optional.empty());
-        MemoryEvidenceRef evidence = new MemoryEvidenceRef(source, "sha256:evidence");
-        MemoryCandidate pending = new MemoryCandidate(
-                new MemoryCandidateId("candidate-a"),
-                "sha256:request",
-                scope,
-                MemoryKind.PREFERENCE,
-                "language",
-                new TextMemoryContent("Java"),
-                List.of(source),
-                List.of(evidence),
-                MemoryCandidateStatus.PENDING,
-                Set.of(MemorySecurityLabel.CONFIDENTIAL),
-                "sha256:content",
-                "policy-v1",
-                MemoryRetentionPolicy.RETAIN,
-                SqliteTestSupport.NOW,
-                SqliteTestSupport.NOW,
-                0,
-                Optional.empty(),
-                Optional.empty(),
-                Optional.empty(),
-                Optional.empty());
-        Memory first = memory(scope, 1, "Java", Optional.empty());
-        Memory second = memory(scope, 2, "Kotlin", Optional.of(new MemoryRef(first.id(), first.version())));
-        MemoryCandidate otherPending = new MemoryCandidate(
-                new MemoryCandidateId("candidate-b"),
-                "sha256:request-b",
-                scope,
-                MemoryKind.PREFERENCE,
-                "timezone",
-                new TextMemoryContent("UTC"),
-                List.of(source),
-                List.of(evidence),
-                MemoryCandidateStatus.PENDING,
-                Set.of(),
-                "sha256:other-content",
-                "policy-v1",
-                MemoryRetentionPolicy.RETAIN,
-                SqliteTestSupport.NOW,
-                SqliteTestSupport.NOW,
-                0,
-                Optional.empty(),
-                Optional.empty(),
-                Optional.empty(),
-                Optional.empty());
-
+    void directCrudSurvivesRestartAndDeletedContentIsErased() throws Exception {
+        Memory kept;
+        Memory deleted;
         try (SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory)) {
-            SqliteMemoryStore store = new SqliteMemoryStore(foundation.unitOfWork());
-            store.save(pending);
-            store.save(otherPending);
-            assertThat(store.findEquivalentPending(scope, MemoryKind.PREFERENCE, pending.normalizedDigest()))
-                    .contains(pending);
-            assertThat(store.findEquivalentPending(scope, MemoryKind.PREFERENCE, otherPending.normalizedDigest()))
-                    .contains(otherPending);
-            store.save(first);
-            foundation.unitOfWork().execute(() -> {
-                store.save(first.invalidate(
-                        "REPLACED", Optional.of(new MemoryRef(second.id(), second.version())), SqliteTestSupport.NOW));
-                store.save(second);
-                store.save(pending.approve(new MemoryRef(second.id(), second.version()), SqliteTestSupport.NOW));
-                return null;
-            });
-        }
-
-        try (SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory)) {
-            SqliteMemoryStore store = new SqliteMemoryStore(foundation.unitOfWork());
-            assertThat(store.find(first.id(), first.version()).orElseThrow().status())
-                    .isEqualTo(MemoryStatus.INVALIDATED);
-            assertThat(store.latest(first.id())
-                            .orElseThrow()
-                            .content()
-                            .orElseThrow()
-                            .boundedText())
-                    .isEqualTo("Kotlin");
-            assertThat(store.find(new MemoryCandidateId("candidate-a"))
-                            .orElseThrow()
+            DefaultMemoryService service = service(foundation);
+            kept = service.put(
+                    new MemoryDraft(
+                            USER,
+                            MemoryKind.PREFERENCE,
+                            "language",
+                            "Prefers Java",
+                            Optional.of(new MemorySourceRef(MemorySourceType.MESSAGE, "message-1")),
+                            Optional.empty()),
+                    ACTOR);
+            kept = service.update(kept.id(), 1, "Prefers Kotlin", ACTOR);
+            assertThat(service.put(MemoryDraft.of(USER, MemoryKind.PREFERENCE, "language", "Prefers Kotlin"), ACTOR)
                             .revision())
-                    .isEqualTo(1);
-            assertThat(store.query(new MemoryCandidateQuery(
-                                    scope,
-                                    Set.of(MemoryCandidateStatus.APPROVED),
-                                    Set.of(MemoryKind.PREFERENCE),
-                                    Optional.empty(),
-                                    Optional.empty(),
-                                    1))
-                            .items())
-                    .containsExactly(
-                            store.find(new MemoryCandidateId("candidate-a")).orElseThrow());
-            assertThat(store.query(new MemoryRecordQuery(
-                                    scope,
-                                    Set.of(MemoryStatus.ACTIVE),
-                                    Set.of(MemoryKind.PREFERENCE),
-                                    Optional.empty(),
-                                    Optional.empty(),
-                                    1))
-                            .items())
-                    .containsExactly(second);
-            assertThat(store.findAuthorized(
-                            first.id(),
-                            second.version(),
-                            new MemoryActor(
-                                    new TenantRef("tenant-b"),
-                                    new PrincipalRef("user-b", "user"),
-                                    Set.of("memory:read"))))
-                    .isEmpty();
-            assertThatThrownBy(store::allMemories)
+                    .as("duplicate put keeps the revision")
+                    .isEqualTo(2);
+            deleted = service.put(fact(USER, "temporary", "Temporary fact to delete"), ACTOR);
+            service.delete(deleted.id(), deleted.revision(), ACTOR);
+            assertThatThrownBy(() -> service.update(kept(service).id(), 1, "Prefers Rust", ACTOR))
                     .isInstanceOf(MemoryOperationException.class)
-                    .hasMessage("MEMORY_DEFERRED_OPERATION");
+                    .extracting(error -> ((MemoryOperationException) error).code())
+                    .isEqualTo("MEMORY_REVISION_STALE");
         }
 
-        assertThat(new String(readDatabase(), StandardCharsets.UTF_8)).contains("Kotlin");
-    }
-
-    @Test
-    void rollsBackReplacementAndKeepsAuditFreeOfMemoryContent() {
-        MemoryScope scope = new MemoryScope(
-                new TenantRef("tenant-a"),
-                new PrincipalRef("user-a", "user"),
-                MemoryScopeType.USER,
-                "user-a",
-                MemoryVisibility.OWNER_ONLY,
-                Set.of());
-        Memory first = memory(scope, 1, "Java", Optional.empty());
-        Memory second = memory(scope, 2, "Kotlin", Optional.of(new MemoryRef(first.id(), first.version())));
-
-        try (SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory)) {
-            SqliteMemoryStore store = new SqliteMemoryStore(
-                    foundation.unitOfWork(),
-                    SqliteTestSupport.configuration(directory).maximumPayloadBytes());
-            store.save(first);
-            store.record(new MemoryAuditEvent(
-                    "memory.created",
-                    Optional.empty(),
-                    Optional.of(new MemoryRef(first.id(), first.version())),
-                    scope,
-                    "user-a",
-                    Map.of("contentDigest", "sha256:java"),
-                    SqliteTestSupport.NOW));
-
-            assertThatThrownBy(() -> foundation.unitOfWork().execute(() -> {
-                        store.save(first.invalidate(
-                                "REPLACED",
-                                Optional.of(new MemoryRef(second.id(), second.version())),
-                                SqliteTestSupport.NOW));
-                        throw new IllegalStateException("injected-before-new-version");
-                    }))
-                    .isInstanceOf(SqliteStoreException.class)
-                    .hasRootCauseMessage("injected-before-new-version");
-
-            assertThat(store.find(first.id(), first.version()).orElseThrow().status())
-                    .isEqualTo(MemoryStatus.ACTIVE);
-            assertThat(store.find(second.id(), second.version())).isEmpty();
-            assertThat(auditPayloads(foundation)).singleElement().satisfies(payload -> assertThat(payload)
-                    .contains("sha256:java")
-                    .doesNotContain("Java")
-                    .doesNotContain("Kotlin"));
-        }
-    }
-
-    @Test
-    void memoryPayloadTimestampUsesMillisecondPrecision() {
-        MemoryScope scope = new MemoryScope(
-                new TenantRef("tenant-a"),
-                new PrincipalRef("user-a", "user"),
-                MemoryScopeType.USER,
-                "user-a",
-                MemoryVisibility.OWNER_ONLY,
-                Set.of());
-        Instant precise = SqliteTestSupport.NOW.plusNanos(456_789);
-        Memory memory = memory(scope, 1, "Java", Optional.empty(), precise);
-        SqliteMemoryPayloadCodec codec = new SqliteMemoryPayloadCodec();
-
-        byte[] encoded = codec.encodeMemory(memory);
-        Memory decoded =
-                codec.decodeMemory(memory.id().value(), memory.version().value(), encoded);
-
-        assertThat(new String(encoded, StandardCharsets.UTF_8)).doesNotContain("456789");
-        assertThat(decoded.createdAt()).isEqualTo(SqliteTestSupport.NOW);
-        assertThat(decoded.updatedAt()).isEqualTo(SqliteTestSupport.NOW);
-    }
-
-    private byte[] readDatabase() {
-        try {
-            return Files.readAllBytes(SqliteTestSupport.configuration(directory).databasePath());
-        } catch (java.io.IOException exception) {
-            throw new IllegalStateException(exception);
-        }
-    }
-
-    private static List<String> auditPayloads(SqliteStoreFoundation foundation) {
-        return foundation.unitOfWork().execute(() -> {
-            try (PreparedStatement statement = foundation
-                            .unitOfWork()
-                            .currentConnection()
-                            .prepareStatement("SELECT safe_attributes_json FROM memory_audit_event");
-                    ResultSet rows = statement.executeQuery()) {
-                List<String> values = new java.util.ArrayList<>();
-                while (rows.next()) values.add(rows.getString(1));
-                return values;
-            } catch (java.sql.SQLException exception) {
-                throw new IllegalStateException(exception);
+        try (SqliteStoreFoundation reopened = SqliteTestSupport.foundation(directory)) {
+            DefaultMemoryService service = service(reopened);
+            Memory reloaded = service.find(kept.id(), ACTOR).orElseThrow();
+            assertThat(reloaded).isEqualTo(kept);
+            assertThat(reloaded.source()).contains(new MemorySourceRef(MemorySourceType.MESSAGE, "message-1"));
+            assertThat(service.find(deleted.id(), ACTOR)).isEmpty();
+            assertThat(service.list(MemoryQuery.all(USER, 10), ACTOR).items()).containsExactly(kept);
+            try (Connection connection = reopened.connections().openConnection()) {
+                assertThat(queryLong(
+                                connection,
+                                "SELECT COUNT(*) FROM memory_record WHERE memory_id='"
+                                        + deleted.id().value() + "' AND content IS NULL AND deleted_at IS NOT NULL"))
+                        .isEqualTo(1);
             }
+        }
+    }
+
+    @Test
+    void clearWatermarkSurvivesRestartAndRejectsLateWrites() {
+        Instant beforeClear;
+        try (SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory)) {
+            DefaultMemoryService service = service(foundation);
+            service.put(fact(AGENT, "style", "Cites sources in footnotes"), ACTOR);
+            service.put(fact(USER, "city", "Lives in Hangzhou"), ACTOR);
+            beforeClear = Instant.ofEpochMilli(clock.get());
+            assertThat(service.clear(AGENT, ACTOR)).isEqualTo(1);
+        }
+        try (SqliteStoreFoundation reopened = SqliteTestSupport.foundation(directory)) {
+            DefaultMemoryService service = service(reopened);
+            assertThatThrownBy(() -> service.put(
+                            new MemoryDraft(
+                                    AGENT,
+                                    MemoryKind.FACT,
+                                    "style",
+                                    "Cites sources in footnotes",
+                                    Optional.empty(),
+                                    Optional.of(beforeClear)),
+                            ACTOR))
+                    .isInstanceOf(MemoryOperationException.class)
+                    .extracting(error -> ((MemoryOperationException) error).code())
+                    .isEqualTo("MEMORY_WRITE_STALE");
+            assertThat(service.list(MemoryQuery.all(AGENT, 10), ACTOR).items()).isEmpty();
+            assertThat(service.list(MemoryQuery.all(USER, 10), ACTOR).items()).hasSize(1);
+
+            DefaultMemoryRetriever retriever = new DefaultMemoryRetriever(new SqliteMemoryStore(reopened.unitOfWork()));
+            List<MemorySnippet> snippets = retriever
+                    .contextFor(new MemoryContextRequest(
+                            TENANT, OWNER, "run-1", "session-1", "research-agent", "footnotes hangzhou", 1_000))
+                    .snippets();
+            assertThat(snippets).extracting(MemorySnippet::text).containsExactly("Lives in Hangzhou");
+        }
+    }
+
+    @Test
+    void listFiltersByTextAndKindInsideOneOwnerScope() {
+        try (SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory)) {
+            DefaultMemoryService service = service(foundation);
+            service.put(fact(USER, "drink", "Likes Green Tea"), ACTOR);
+            service.put(MemoryDraft.of(USER, MemoryKind.PREFERENCE, "tone", "Prefers concise answers"), ACTOR);
+            service.put(fact(AGENT, "drink", "Agent note about tea"), ACTOR);
+            MemoryActor other = new MemoryActor(TENANT, new PrincipalRef("user-b", "user"));
+
+            assertThat(service.list(
+                                    new MemoryQuery(USER, Set.of(), Optional.of("green tea"), Optional.empty(), 10),
+                                    ACTOR)
+                            .items())
+                    .extracting(Memory::content)
+                    .containsExactly("Likes Green Tea");
+            assertThat(service.list(
+                                    new MemoryQuery(
+                                            USER,
+                                            Set.of(MemoryKind.PREFERENCE),
+                                            Optional.empty(),
+                                            Optional.empty(),
+                                            10),
+                                    ACTOR)
+                            .items())
+                    .extracting(Memory::content)
+                    .containsExactly("Prefers concise answers");
+            var firstPage = service.list(MemoryQuery.all(USER, 1), ACTOR);
+            assertThat(firstPage.nextCursor()).isPresent();
+            assertThat(service.list(new MemoryQuery(USER, Set.of(), Optional.empty(), firstPage.nextCursor(), 1), ACTOR)
+                            .items())
+                    .hasSize(1)
+                    .doesNotContainAnyElementsOf(firstPage.items());
+            assertThatThrownBy(() -> service.list(MemoryQuery.all(USER, 10), other))
+                    .isInstanceOf(MemoryOperationException.class);
+        }
+    }
+
+    @Test
+    void textMatchFoldsUnicodeCaseLikeTheInMemoryStore() {
+        onBothStores((store, service) -> {
+            service.put(fact(USER, "fruit", "Äpfel und Birnen"), ACTOR);
+            service.put(fact(USER, "friend", "ΣΟΦΙΑ drinks tea"), ACTOR);
+            service.put(fact(USER, "drink", "用户喜欢喝绿茶"), ACTOR);
+            service.put(fact(USER, "physics", "Kelvin is the unit of temperature"), ACTOR);
+            service.put(fact(USER, "ÜBER", "Subject keys are folded as well"), ACTOR);
+
+            assertThat(matching(service, "äpfel", 10)).as(store).containsExactly("Äpfel und Birnen");
+            assertThat(matching(service, "ÄPFEL", 10)).as(store).containsExactly("Äpfel und Birnen");
+            assertThat(matching(service, "BIRNEN", 10)).as(store).containsExactly("Äpfel und Birnen");
+            assertThat(matching(service, "σοφια", 10)).as(store).containsExactly("ΣΟΦΙΑ drinks tea");
+            assertThat(matching(service, "绿茶", 10)).as(store).containsExactly("用户喜欢喝绿茶");
+            assertThat(matching(service, "kelvin", 10)).as(store).containsExactly("Kelvin is the unit of temperature");
+            assertThat(matching(service, "Über", 10)).as(store).containsExactly("Subject keys are folded as well");
+            assertThat(matching(service, "kiwi", 10)).as(store).isEmpty();
         });
     }
 
-    private static Memory memory(MemoryScope scope, long version, String text, Optional<MemoryRef> previous) {
-        return memory(scope, version, text, previous, SqliteTestSupport.NOW);
+    @Test
+    void unicodeTextMatchPagesAcrossScanBatchesLikeTheInMemoryStore() {
+        // SQLite reads four candidate rows per batch, so each page must cross several batches of non-matching rows.
+        onBothStores(4, (store, service) -> {
+            service.put(fact(USER, "oldest", "Äpfel from the market"), ACTOR);
+            for (int index = 0; index < 10; index++)
+                service.put(fact(USER, "noise-a" + index, "Noise " + index), ACTOR);
+            service.put(fact(USER, "middle", "ÄPFEL in the cellar"), ACTOR);
+            for (int index = 0; index < 10; index++)
+                service.put(fact(USER, "noise-b" + index, "Noise " + index), ACTOR);
+            service.put(fact(USER, "newest", "äpfel for dessert"), ACTOR);
+
+            var first = service.list(new MemoryQuery(USER, Set.of(), Optional.of("äPFEL"), Optional.empty(), 2), ACTOR);
+            assertThat(first.items())
+                    .as(store)
+                    .extracting(Memory::content)
+                    .containsExactly("äpfel for dessert", "ÄPFEL in the cellar");
+            assertThat(first.nextCursor()).as(store).isPresent();
+            var second =
+                    service.list(new MemoryQuery(USER, Set.of(), Optional.of("äPFEL"), first.nextCursor(), 2), ACTOR);
+            assertThat(second.items()).as(store).extracting(Memory::content).containsExactly("Äpfel from the market");
+            assertThat(second.nextCursor()).as(store).isEmpty();
+            var exact = service.list(new MemoryQuery(USER, Set.of(), Optional.of("äpfel"), Optional.empty(), 3), ACTOR);
+            assertThat(exact.items()).as(store).hasSize(3);
+            assertThat(exact.nextCursor()).as(store).isEmpty();
+        });
     }
 
-    private static Memory memory(
-            MemoryScope scope, long version, String text, Optional<MemoryRef> previous, Instant timestamp) {
-        MemorySourceRef source = new MemorySourceRef(MemorySourceType.MESSAGE, "message-a", Optional.empty());
-        return new Memory(
-                new MemoryId("memory-a"),
-                new MemoryVersion(version),
-                scope,
-                MemoryKind.PREFERENCE,
-                "language",
-                Optional.of(new TextMemoryContent(text)),
-                List.of(source),
-                List.of(new MemoryEvidenceRef(source, "sha256:evidence")),
-                MemoryStatus.ACTIVE,
-                Set.of(MemorySecurityLabel.CONFIDENTIAL),
-                "sha256:" + text.toLowerCase(),
-                previous,
-                Optional.empty(),
-                Optional.empty(),
-                MemoryRetentionPolicy.RETAIN,
-                timestamp,
-                timestamp);
+    @Test
+    void retriedMutationsSucceedByIntentLikeTheInMemoryStore() {
+        onBothStores((store, service) -> {
+            Memory created = service.put(fact(USER, "editor", "Uses IntelliJ"), ACTOR);
+            Memory updated = service.update(created.id(), 1, "Uses VS Code", ACTOR);
+            assertThat(service.update(created.id(), 1, "Uses VS Code", ACTOR))
+                    .as(store)
+                    .isEqualTo(updated);
+            assertThatThrownBy(() -> service.update(created.id(), 1, "Uses Vim", ACTOR))
+                    .as(store)
+                    .extracting(error -> ((MemoryOperationException) error).code())
+                    .isEqualTo("MEMORY_REVISION_STALE");
+
+            service.delete(created.id(), 2, ACTOR);
+            service.delete(created.id(), 2, ACTOR);
+            assertThatThrownBy(() -> service.delete(created.id(), 1, ACTOR))
+                    .as(store)
+                    .extracting(error -> ((MemoryOperationException) error).code())
+                    .isEqualTo("MEMORY_UNAVAILABLE");
+            assertThatThrownBy(() -> service.delete(
+                            created.id(), 2, new MemoryActor(TENANT, new PrincipalRef("user-b", "user"))))
+                    .as(store)
+                    .extracting(error -> ((MemoryOperationException) error).code())
+                    .isEqualTo("MEMORY_UNAVAILABLE");
+
+            service.put(fact(USER, "city", "Lives in Hangzhou"), ACTOR);
+            assertThat(service.clear(USER, ACTOR)).as(store).isEqualTo(1);
+            assertThat(service.clear(USER, ACTOR)).as(store).isZero();
+            assertThatThrownBy(() -> service.delete(created.id(), 2, ACTOR))
+                    .as(store + ": clear removes the tombstone")
+                    .extracting(error -> ((MemoryOperationException) error).code())
+                    .isEqualTo("MEMORY_UNAVAILABLE");
+        });
+    }
+
+    private void onBothStores(java.util.function.BiConsumer<String, DefaultMemoryService> check) {
+        onBothStores(0, check);
+    }
+
+    private void onBothStores(int textScanBatch, java.util.function.BiConsumer<String, DefaultMemoryService> check) {
+        check.accept("in-memory", service(new InMemoryMemoryStore()));
+        try (SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory)) {
+            check.accept(
+                    "sqlite",
+                    service(
+                            textScanBatch == 0
+                                    ? new SqliteMemoryStore(foundation.unitOfWork())
+                                    : new SqliteMemoryStore(foundation.unitOfWork(), textScanBatch)));
+        }
+    }
+
+    private static List<String> matching(DefaultMemoryService service, String text, int limit) {
+        return service
+                .list(new MemoryQuery(USER, Set.of(), Optional.of(text), Optional.empty(), limit), ACTOR)
+                .items()
+                .stream()
+                .map(Memory::content)
+                .toList();
+    }
+
+    private Memory kept(DefaultMemoryService service) {
+        return service.list(MemoryQuery.all(USER, 10), ACTOR).items().getFirst();
+    }
+
+    private DefaultMemoryService service(SqliteStoreFoundation foundation) {
+        return service(new SqliteMemoryStore(foundation.unitOfWork()));
+    }
+
+    private DefaultMemoryService service(MemoryRepository repository) {
+        return new DefaultMemoryService(
+                repository, () -> "memory-" + ids.incrementAndGet(), () -> Instant.ofEpochMilli(clock.addAndGet(10)));
+    }
+
+    private static MemoryDraft fact(MemoryScope scope, String subject, String content) {
+        return MemoryDraft.of(scope, MemoryKind.FACT, subject, content);
+    }
+
+    private static long queryLong(Connection connection, String sql) throws Exception {
+        try (Statement statement = connection.createStatement();
+                ResultSet result = statement.executeQuery(sql)) {
+            assertThat(result.next()).isTrue();
+            return result.getLong(1);
+        }
     }
 }

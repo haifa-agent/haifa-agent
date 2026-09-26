@@ -1,108 +1,104 @@
 package io.haifa.agent.memory.core;
 
-import io.haifa.agent.core.reference.PrincipalRef;
-import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.memory.api.Memory;
-import io.haifa.agent.memory.api.MemoryId;
-import io.haifa.agent.memory.api.MemoryPolicy;
-import io.haifa.agent.memory.api.MemoryQuery;
+import io.haifa.agent.memory.api.MemoryContext;
+import io.haifa.agent.memory.api.MemoryContextRequest;
 import io.haifa.agent.memory.api.MemoryRepository;
-import io.haifa.agent.memory.api.MemoryRetrieval;
 import io.haifa.agent.memory.api.MemoryRetriever;
-import io.haifa.agent.memory.api.MemorySearchResult;
-import io.haifa.agent.memory.api.MemoryStatus;
-import io.haifa.agent.memory.api.MemoryVersion;
+import io.haifa.agent.memory.api.MemorySnippet;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Locale;
-import java.util.Optional;
+import java.util.Objects;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.stream.Collectors;
 
-/** Authorization-first deterministic keyword and recency retrieval without embeddings. */
+/**
+ * Authorization-first deterministic keyword and recency retrieval without embeddings. Only the trusted
+ * tenant/owner USER, AGENT and SESSION buckets of the request are read, and the result is bounded by item count
+ * and token budget.
+ */
 public final class DefaultMemoryRetriever implements MemoryRetriever {
+    public static final String POLICY_VERSION = "memory-retrieval-v2";
+    static final int MAX_ITEMS = 8;
+    static final int FETCH_LIMIT = 256;
+
     private final MemoryRepository repository;
-    private final MemoryPolicy policy;
 
-    public DefaultMemoryRetriever(MemoryRepository repository, MemoryPolicy policy) {
-        this.repository = java.util.Objects.requireNonNull(repository);
-        this.policy = java.util.Objects.requireNonNull(policy);
+    public DefaultMemoryRetriever(MemoryRepository repository) {
+        this.repository = Objects.requireNonNull(repository, "repository must not be null");
     }
 
     @Override
-    public MemoryRetrieval retrieve(MemoryQuery query) {
-        Set<String> terms = terms(query.queryText());
-        int fetchLimit = Math.min(10_000, Math.max(query.maxResults(), query.maxResults() * 32));
-        var ranked = repository.searchAuthorizedActive(query, fetchLimit).stream()
-                .filter(memory -> policy.canRead(query, memory))
-                .filter(memory -> query.kinds().isEmpty() || query.kinds().contains(memory.kind()))
-                .map(memory -> result(memory, terms))
-                .filter(result -> terms.isEmpty() || result.relevanceScore() > 0)
-                .sorted(Comparator.comparingInt(MemorySearchResult::relevanceScore)
+    public MemoryContext contextFor(MemoryContextRequest request) {
+        Objects.requireNonNull(request, "request must not be null");
+        Set<String> terms = terms(request.queryText());
+        List<Scored> ranked = repository.recent(request.scopes(), FETCH_LIMIT).stream()
+                .filter(memory -> request.scopes().contains(memory.scope()))
+                .map(memory -> new Scored(memory, score(memory, terms)))
+                .filter(scored -> terms.isEmpty() || scored.score() > 0)
+                .sorted(Comparator.comparingInt(Scored::score)
                         .reversed()
-                        .thenComparing(result -> result.memory().updatedAt(), Comparator.reverseOrder())
-                        .thenComparing(result -> result.memory().id().value())
-                        .thenComparingLong(result -> result.memory().version().value()))
+                        .thenComparing(scored -> scored.memory().updatedAt(), Comparator.reverseOrder())
+                        .thenComparing(scored -> scored.memory().id().value()))
                 .toList();
-        int remaining = query.tokenBudget();
-        ArrayList<MemorySearchResult> selected = new ArrayList<>();
-        for (MemorySearchResult result : ranked) {
-            if (selected.size() >= query.maxResults()) break;
-            if (result.estimatedTokens() > remaining) continue;
-            selected.add(result);
-            remaining -= result.estimatedTokens();
+        int remaining = request.tokenBudget();
+        List<MemorySnippet> selected = new ArrayList<>();
+        for (Scored scored : ranked) {
+            if (selected.size() >= MAX_ITEMS) break;
+            Memory memory = scored.memory();
+            int tokens = memory.estimatedTokens();
+            if (tokens > remaining) continue;
+            selected.add(new MemorySnippet(
+                    memory.id(),
+                    memory.revision(),
+                    memory.scope(),
+                    memory.content(),
+                    tokens,
+                    digest(memory.content())));
+            remaining -= tokens;
         }
-        return new MemoryRetrieval(selected, policy.version(), queryDigest(query));
+        return new MemoryContext(selected, POLICY_VERSION, queryDigest(request, terms));
     }
 
-    @Override
-    public Optional<Memory> findAuthorized(
-            MemoryId id, MemoryVersion version, TenantRef tenant, PrincipalRef owner, Instant now) {
-        return repository
-                .findAuthorized(
-                        id, version, new io.haifa.agent.memory.api.MemoryActor(tenant, owner, Set.of("memory:read")))
-                .filter(memory -> memory.status() == MemoryStatus.ACTIVE)
-                .filter(memory -> memory.scope().tenant().equals(tenant)
-                        && memory.scope().owner().equals(owner));
-    }
-
-    private MemorySearchResult result(Memory memory, Set<String> terms) {
-        String searchable =
-                (memory.subjectKey() + " " + memory.content().orElseThrow().boundedText()).toLowerCase(Locale.ROOT);
+    private static int score(Memory memory, Set<String> terms) {
+        String searchable = (memory.subjectKey() + " " + memory.content()).toLowerCase(Locale.ROOT);
         int matches =
                 Math.toIntExact(terms.stream().filter(searchable::contains).count());
-        int score = matches * 100 + (terms.isEmpty() ? 1 : 0);
-        int tokens = memory.content().orElseThrow().estimatedTokens();
-        return new MemorySearchResult(memory, score, tokens, matches > 0 ? "keyword-match" : "scope-recency");
+        return matches * 100 + (terms.isEmpty() ? 1 : 0);
     }
 
-    private Set<String> terms(String query) {
-        return java.util.Arrays.stream(query.toLowerCase(Locale.ROOT).split("[^\\p{L}\\p{N}_-]+"))
+    private static Set<String> terms(String query) {
+        return Arrays.stream(query.toLowerCase(Locale.ROOT).split("[^\\p{L}\\p{N}_-]+"))
                 .filter(value -> value.length() > 1)
-                .collect(Collectors.toCollection(java.util.TreeSet::new));
+                .collect(Collectors.toCollection(TreeSet::new));
     }
 
-    private String queryDigest(MemoryQuery query) {
-        String canonical = query.tenant().tenantId() + "|" + query.owner().principalId() + "|"
-                + query.scopes().stream()
+    private static String queryDigest(MemoryContextRequest request, Set<String> terms) {
+        return digest(request.tenant().tenantId() + "|" + request.owner().principalId() + "|"
+                + request.scopes().stream()
                         .map(scope -> scope.type() + ":" + scope.targetId())
-                        .sorted()
                         .toList()
-                + "|" + terms(query.queryText()) + "|"
-                + query.kinds().stream().sorted().toList() + "|"
-                + query.maxResults() + "|" + query.tokenBudget();
+                + "|" + terms + "|" + request.tokenBudget());
+    }
+
+    private static String digest(String value) {
         try {
             return "sha256:"
                     + HexFormat.of()
                             .formatHex(MessageDigest.getInstance("SHA-256")
-                                    .digest(canonical.getBytes(StandardCharsets.UTF_8)));
+                                    .digest(value.getBytes(StandardCharsets.UTF_8)));
         } catch (NoSuchAlgorithmException exception) {
             throw new IllegalStateException("SHA-256 is required", exception);
         }
     }
+
+    private record Scored(Memory memory, int score) {}
 }

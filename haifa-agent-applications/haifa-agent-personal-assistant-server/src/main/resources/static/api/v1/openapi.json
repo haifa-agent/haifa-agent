@@ -300,53 +300,47 @@
         "responses": {"200": {"description": "WebFlux Server-Sent Events", "content": {"text/event-stream": {"schema": {"$ref": "#/components/schemas/StreamEvent"}}}}}
       }
     },
-    "/api/v1/memory/candidates": {
-      "get": {
-        "operationId": "listMemoryCandidates",
-        "parameters": [{"$ref": "#/components/parameters/Limit"}],
-        "responses": {"200": {"description": "Pending candidates", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/MemoryCandidate"}}}}}}
-      }
-    },
-    "/api/v1/memory/candidates/{candidateId}/approve": {
-      "post": {
-        "operationId": "approveMemoryCandidate",
-        "parameters": [
-          {"name": "candidateId", "in": "path", "required": true, "schema": {"type": "string"}},
-          {"$ref": "#/components/parameters/IfMatch"},
-          {"$ref": "#/components/parameters/IdempotencyKey"}
-        ],
-        "responses": {"200": {"description": "Approved memory", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Memory"}}}}}
-      }
-    },
-    "/api/v1/memory/candidates/{candidateId}/reject": {
-      "post": {
-        "operationId": "rejectMemoryCandidate",
-        "parameters": [
-          {"name": "candidateId", "in": "path", "required": true, "schema": {"type": "string"}},
-          {"$ref": "#/components/parameters/IfMatch"},
-          {"$ref": "#/components/parameters/IdempotencyKey"}
-        ],
-        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/RejectMemory"}}}},
-        "responses": {"200": {"description": "Rejected candidate", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MemoryCandidate"}}}}}
-      }
-    },
     "/api/v1/memory": {
       "get": {
         "operationId": "listMemories",
         "parameters": [{"$ref": "#/components/parameters/Limit"}],
-        "responses": {"200": {"description": "Memories", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/Memory"}}}}}}
+        "responses": {"200": {"description": "Active user memories", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/Memory"}}}}}}
       }
     },
-    "/api/v1/memory/{memoryId}/versions/{version}/invalidate": {
-      "post": {
-        "operationId": "invalidateMemory",
+    "/api/v1/memory/{memoryId}": {
+      "patch": {
+        "operationId": "updateMemory",
+        "description": "Compare-and-set update without Idempotency-Key. Retrying with the same If-Match revision and content after the first attempt committed returns the current memory; other stale revisions return 409.",
         "parameters": [
           {"name": "memoryId", "in": "path", "required": true, "schema": {"type": "string"}},
-          {"name": "version", "in": "path", "required": true, "schema": {"type": "integer", "minimum": 1}},
-          {"$ref": "#/components/parameters/IdempotencyKey"}
+          {"$ref": "#/components/parameters/IfMatch"}
         ],
-        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/InvalidateMemory"}}}},
-        "responses": {"200": {"description": "Invalidated memory", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Memory"}}}}}
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/UpdateMemory"}}}},
+        "responses": {
+          "200": {"description": "Updated memory", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Memory"}}}},
+          "404": {"$ref": "#/components/responses/Error"},
+          "409": {"$ref": "#/components/responses/Error"}
+        }
+      },
+      "delete": {
+        "operationId": "deleteMemory",
+        "description": "Compare-and-set delete without Idempotency-Key. Retrying with the same If-Match revision after the first attempt committed returns 204; other revisions of a deleted memory return 404.",
+        "parameters": [
+          {"name": "memoryId", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"$ref": "#/components/parameters/IfMatch"}
+        ],
+        "responses": {
+          "204": {"description": "Deleted"},
+          "404": {"$ref": "#/components/responses/Error"},
+          "409": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/v1/memory/clear": {
+      "post": {
+        "operationId": "clearMemories",
+        "description": "Deletes every user memory without Idempotency-Key. Clearing is idempotent in state; a retry reports deleted = 0.",
+        "responses": {"200": {"description": "Cleared user memories", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ClearedMemories"}}}}}
       }
     },
     "/api/v1/missions": {
@@ -950,42 +944,28 @@
           "runVersion": {"type": "integer", "format": "int64"}
         }
       },
-      "MemoryCandidate": {
-        "type": "object",
-        "required": ["id", "kind", "subjectKey", "content", "status", "updatedAt", "revision"],
-        "properties": {
-          "id": {"type": "string"},
-          "kind": {"type": "string"},
-          "subjectKey": {"type": "string"},
-          "content": {"type": "string"},
-          "status": {"type": "string"},
-          "updatedAt": {"type": "string", "format": "date-time"},
-          "revision": {"type": "integer", "format": "int64"}
-        }
-      },
       "Memory": {
         "type": "object",
-        "required": ["id", "version", "kind", "subjectKey", "content", "status", "createdAt", "updatedAt"],
+        "required": ["id", "revision", "kind", "subjectKey", "content", "createdAt", "updatedAt"],
         "properties": {
           "id": {"type": "string"},
-          "version": {"type": "integer", "format": "int64"},
+          "revision": {"type": "integer", "format": "int64"},
           "kind": {"type": "string"},
           "subjectKey": {"type": "string"},
           "content": {"type": "string"},
-          "status": {"type": "string"},
           "createdAt": {"type": "string", "format": "date-time"},
           "updatedAt": {"type": "string", "format": "date-time"}
         }
       },
-      "RejectMemory": {
+      "UpdateMemory": {
         "type": "object",
-        "required": ["reason"],
-        "properties": {"reason": {"type": "string"}}
+        "required": ["content"],
+        "properties": {"content": {"type": "string"}}
       },
-      "InvalidateMemory": {
+      "ClearedMemories": {
         "type": "object",
-        "required": ["reason"],
-        "properties": {"reason": {"type": "string"}}
+        "required": ["deleted"],
+        "properties": {"deleted": {"type": "integer"}}
       },
       "CreateMission": {
         "type": "object",

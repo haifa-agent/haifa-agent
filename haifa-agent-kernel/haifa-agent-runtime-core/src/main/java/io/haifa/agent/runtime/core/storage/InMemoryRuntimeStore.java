@@ -165,6 +165,17 @@ public final class InMemoryRuntimeStore
     }
 
     @Override
+    public synchronized List<AgentRun> children(AgentRunId parentRunId) {
+        Objects.requireNonNull(parentRunId, "parentRunId must not be null");
+        return runs.values().stream()
+                .map(Versioned::value)
+                .filter(run -> run.parentRunId().filter(parentRunId::equals).isPresent())
+                .sorted(java.util.Comparator.comparing(AgentRun::createdAt)
+                        .thenComparing(run -> run.id().value()))
+                .toList();
+    }
+
+    @Override
     public synchronized void insert(AgentRunExecutionAttempt attempt) {
         boolean activeExists = attempts.values().stream()
                 .map(Versioned::value)

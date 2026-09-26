@@ -18,6 +18,8 @@ public interface RuntimeStoreMapper {
 
     RunRow findRun(@Param("runId") String runId);
 
+    java.util.List<RunRow> findChildRuns(@Param("parentRunId") String parentRunId);
+
     String configurationHash(@Param("configurationRef") String configurationRef);
 
     int insertAttempt(@Param("row") ExecutionAttemptRow row);
@@ -219,6 +221,8 @@ public interface RuntimeStoreMapper {
             @Param("idempotencyKey") String idempotencyKey);
 
     List<RunInputRow> pendingRunInputs(@Param("runId") String runId, @Param("limit") int limit);
+
+    int markRunInputRejected(@Param("inputId") String inputId, @Param("reasonCode") String reasonCode);
 
     int markRunInputApplied(
             @Param("inputId") String inputId,

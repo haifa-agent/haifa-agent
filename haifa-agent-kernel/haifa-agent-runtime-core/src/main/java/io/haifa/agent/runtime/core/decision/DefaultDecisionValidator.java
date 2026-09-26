@@ -22,6 +22,7 @@ public final class DefaultDecisionValidator implements DecisionValidator {
             duplicateToolCalls.check(tools);
         }
         if (decision instanceof DelegationDecision delegation) {
+            duplicateToolCalls.check(new ToolCallDecision(delegation.requests()));
             childRuns.check(run, delegation);
         }
     }

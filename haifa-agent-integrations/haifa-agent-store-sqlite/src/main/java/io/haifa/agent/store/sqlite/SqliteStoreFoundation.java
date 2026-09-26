@@ -65,6 +65,10 @@ public final class SqliteStoreFoundation implements AutoCloseable {
                 configuration.maximumPayloadBytes());
     }
 
+    Clock clock() {
+        return clock;
+    }
+
     public SqliteConnectionFactory connections() {
         return connections;
     }

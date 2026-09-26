@@ -1,5 +1,109 @@
 # Changelog
 
+- Memory collapses to direct CRUD with an `AGENT` scope; the candidate/approval path is removed with no compatibility
+  layer. `MemoryService` is now `put` / `update(id, expectedRevision, content)` / `delete(id, expectedRevision)` /
+  `find` / `list(MemoryQuery)` / `clear(scope)`, bounded by a trusted `MemoryActor(tenant, principal)`; `put` replaces
+  the memory with the same scope, kind and subject and leaves identical content untouched, and `MemoryQuery` offers a
+  bounded case-insensitive text match. `MemoryScopeType` is `USER` / `AGENT` / `SESSION` (`RUN` had no writer and is
+  removed); `AGENT` targets an Agent Definition id and Runtime recalls it from the Run's definition. `Memory` holds
+  plain text content, a `revision`, an optional `MemorySourceRef` and timestamps only. A `MemoryDraft.observedAt`
+  older than a scope clear or the deletion of the same subject is refused with `MEMORY_WRITE_STALE`, so late
+  asynchronous writes cannot resurrect content. `SensitiveMemoryFilter` rejects credential, payment and precise
+  identity content with `MEMORY_CONTENT_SENSITIVE` instead of labelling it. `MemoryRetriever` keeps only
+  `contextFor`, plus `none()` and `onlyWhen(predicate)` to switch recall off per Run or Agent;
+  `MemoryPlatformContribution` gains `withRecallWhen` and `withoutRecall`. Removed public types: every
+  `MemoryCandidate*` type, `MemoryStatus`, `MemoryVersion`, `MemoryRef`, `MemoryRecordQuery`, `MemoryContent` and its
+  `TextMemoryContent`/`StructuredMemoryContent`/`DerivedTextMemoryContent`/`DerivedTextType` implementations,
+  `MemoryPolicy`, `MemoryPolicyDecision`, `MemorySecurityLabel`, `MemoryVisibility`, `MemoryRetentionPolicy`,
+  `MemoryEvidenceRef`, `MemoryEvidenceVerifier`, `MemoryAuditEvent`, `MemoryAuditStore`, `MemoryUnitOfWork`,
+  `MemoryDerivedDataInvalidator`, `MemoryRetrieval`, `MemorySearchResult`, `DefaultMemoryPolicy`,
+  `DeterministicMemoryCandidateExtractor`, `MemoryObservation`, `InMemoryMemoryEvidenceVerifier`,
+  `SqliteMemoryEvidenceVerifier`, and the SDK `ProposeMemoryCommand`, `ReviseMemoryCandidateCommand`,
+  `ReviewMemoryCandidateCommand`, `RejectMemoryCandidateCommand`, `InvalidateMemoryCommand` and
+  `MemoryCandidateListQuery`. `AgentMemories` exposes `put(PutMemoryCommand)`, `update`, `delete`, `find`,
+  `list(MemoryListQuery)` and `clear(MemoryScopeSpec)`; `MemoryScopeSpec` offers `user()`, `agent(id)` and
+  `session(id)` and never carries a tenant or owner. `ProductMemoryPolicy` becomes
+  `(maxContentChars, maxQueryLimit)` with content capped at 4096 characters. `RuntimeCoreBuilder.memory(service,
+  retriever)`, `MemoryService.invalidateSource`, `MemoryRepository.allMemories` and the message-redaction Memory
+  listener are removed (nothing in production redacted messages); Runtime defaults to `MemoryRetriever.none()`.
+  `SqliteSdkContributions.memory(policy)` provides the SQLite Memory component over the same file. SQLite migration
+  V15 is a clean cut: it drops `memory_candidate`, `memory_audit_event` and the old `memory_record`, clears the
+  derived `memory_selection` rows, and creates a single `memory_record` table plus `memory_scope_clear` watermarks;
+  it aborts instead of dropping data when the old tables still hold ACTIVE memories or PENDING candidates (every
+  audited Personal Assistant database held none). Personal Assistant removes the candidate REST endpoints
+  (`/memory/candidates*`) and `/memory/{id}/versions/{version}/invalidate`, adds `PATCH` and `DELETE
+  /memory/{memoryId}` (If-Match revision) and `POST /memory/clear`, and its Memory dialog drops the pending-candidate
+  column in favour of edit, delete and clear on the active memories.
+
+- Memory mutations are idempotent by intent instead of by key. Personal Assistant `PATCH /memory/{memoryId}`,
+  `DELETE /memory/{memoryId}` and `POST /memory/clear` no longer take an `Idempotency-Key` (it was only
+  format-checked, so a retried delete returned 404); the web client stops sending it. Retrying an update with the same
+  If-Match revision and content after the first attempt committed returns the current memory and ETag, retrying a
+  delete with the same revision returns 204, and a retried clear reports `deleted: 0`; any other stale revision still
+  returns 409 (404 for a deleted memory). `DefaultMemoryService` applies these rules for every caller, identical
+  content now only counts as already applied at the expected revision or the one after it, and
+  `MemoryRepository` gains `deletedFrom(id, expectedRevision)` to recognise the tombstone a delete left behind.
+  `SqliteMemoryStore` text queries now fold case like the in-memory store (`Locale.ROOT`, including `Ä/ä` and
+  `Σ/σ`) by scanning candidate rows in bounded keyset batches and matching in Java, instead of the ASCII-only SQLite
+  `lower()` that silently dropped non-ASCII matches.
+
+- Memory drops governance entry points that no product called. Removed public types: `MemoryConflict`,
+  `MemoryConflictResolution`, `MemoryTombstone` and `MemoryAuditSink` (`MemoryAuditStore` now declares `record`
+  itself). Removed methods: `MemoryService.resolveConflict`, `evaluateExpiry`, `requestPurge` and `executePurge`;
+  `MemoryRepository.saveConflict`, `conflictFor`, `conflicts`, `saveTombstone` and `tombstones`;
+  `MemoryCandidateRepository.allCandidates` and `purgeScope`; `MemoryPolicy.canPurge`; `Memory.transition` and
+  `Memory.expiredAt`; `MemoryCandidate.expire`; and the `DefaultMemoryService` constructor that took a bare sink
+  (pass a `MemoryAuditStore` and a `MemoryUnitOfWork`). Every removed operation either always failed
+  (`resolveConflict`) or was rejected by the SQLite store with `MEMORY_DEFERRED_OPERATION`, so SDK and Personal
+  Assistant behavior, the SQLite schema and stored payloads are unchanged. `MemoryRetentionPolicy` and the
+  `EXPIRED`/`PURGE_PENDING`/`PURGED` status values remain until the Memory record is reshaped.
+- SDK applications can steer an active Run. `AgentRuns.submitInput(RunInputCommand)` returns an SDK-owned
+  `RunInputResult` with `RunInputStatus` (`ACCEPTED`, `DUPLICATE`, `APPLIED`, `REJECTED`); the caller identity still
+  comes only from the SDK caller provider, and the input reaches the model at the next `BEFORE_ITERATION`, never
+  inside Tool execution or model request construction. Accepted input is no longer silently lost when the model
+  finishes first: input acceptance and the final commit now share one Unit of Work, a final answer produced while
+  input is pending is deferred (`completion.deferred` with `PENDING_RUN_INPUT`) until the model has seen it, and any
+  terminal transition, including recovery after a restart, rejects still-pending input with a lower-kebab reason such
+  as `run-cancelled` and a new public `run.input.rejected` event. A Run that is completing or terminal returns
+  `REJECTED` (`run-not-accepting-input`) through the SDK. Runtime behavior change: steer retries are matched by
+  intent (target Run and contents), so retrying the same idempotency key with a fresh submission time or Run version
+  is a duplicate instead of `IDEMPOTENCY_CONFLICT`, and a retry after settlement reports `APPLIED` or `REJECTED`.
+  No SQLite migration is needed; the existing `run_input` `REJECTED` state is now used.
+- Minimal Parent–Child Delegation (Agent-as-Tool): parent runs can delegate to child agents with a Tool Call,
+  mirroring DeerFlow's `task`; this is not a parent–child communication protocol (no agent messages, child steer or
+  event-driven waiting). When the Product Profile
+  lists `allowedChildAgents`, the Runtime discloses one model-visible `task` Tool (`agent`, `objective`, optional
+  `context` and `expected_output`); every call in a response becomes one ordinary child `AgentRun` in its own
+  ephemeral session, the calls run in parallel within `maxParallelChildren` and a process cap (default 3,
+  `HaifaAgentBuilder.maxConcurrentChildRuns`), and each Tool Result returns after its child is terminal with the child
+  Run ID, Runtime status, bounded summary, the child's own usage and artifact references. When a response mixes `task`
+  with ordinary Tools, the delegations run first and the ordinary Tools then run in model order. The child Run ID is
+  derived from the parent Run ID and the Tool Call ID, so a retried call re-attaches instead of creating a second
+  child; `maxChildRuns` converges through the existing budget-limited completion; each child enforces its own
+  `maxWallTimeMillis`; delegation depth is fixed at one; waiting for children no longer counts as parent idle time but
+  still counts toward the parent's wall time; a child that needs approval keeps the parent waiting and is approved
+  through `pendingInteraction(childRunId)`/`respond`; parent cancel, timeout or recovery terminates its children, and
+  recovery settles unfinished children as interrupted without replay. Children neither recall nor write long-term
+  Memory, and the parent's usage only counts `childRuns`, never child tokens. Public API changes: new
+  `ChildAgentSpec`, `ProductProfile.allowedChildAgents` (the previous ten-argument constructor and `create` keep an
+  empty set) and `withAllowedChildAgents`, `HaifaAgentBuilder.childAgent`, `AgentRuns.children` returning the new
+  `ChildRunView`, `AgentRuntime.children`, and parent events `child.run.started`, `child.run.completed`,
+  `child.run.failed`, `child.run.cancelled` and `child.run.timed-out` carrying `RunEventPayloads.ChildRunLifecycle`.
+  Child sessions never appear in the Conversation list. `AgentInvocationMode` keeps only `ROOT` and `AGENT_AS_TOOL`
+  (`HANDOFF`, `FORK_JOIN`, `SUBGRAPH`, `SCHEDULED` and `EVENT_TRIGGERED` had no producer). Runtime internals:
+  `DelegationPort.executeChild` is replaced by the batch `executeChildren`, `DelegationDecision` now carries every Tool
+  request of the response, `RunStateRepository` gains `children(parentRunId)`, and `ResolvedDefinition` gains a
+  description and an optional child run profile. No Store or relation table is added; SQLite migration V14 adds
+  the `run(parent_run_id, created_at)` index used to list children. A child inherits an immutable snapshot of the
+  non-text references in the parent's `AgentRunRequest.inputs` (stored images and audio, image URLs, asset and artifact
+  references) but not its free text; the model cannot add or widen them. A process slot is held from child creation
+  until the child is terminal and its execution tasks (including one resumed after approval) have ended, so a parent
+  that stops waiting never lets more than `maxConcurrentChildRuns` children execute; a child the scheduler rejects is
+  failed at once with `RUNTIME_EXECUTION_FAILED` (`CHILD_NOT_SCHEDULED`) instead of staying QUEUED. The parent's
+  terminal `child.run.*` event is written by the child's own terminal transition, exactly once, including when the
+  child ends after the parent stopped or is settled by recovery. The HTTP transport does not project `child.run.*`
+  (`ChildRunLifecycle`) payloads in 0.1.2; SDK event consumers receive them.
+
 - The Personal Assistant real environment starts again. The catalog migration hardcoded
   `haifa.personal.execution.trusted-host-enabled: false` and dropped the `HAIFA_PERSONAL_EXECUTION_TRUSTED_HOST_ENABLED`
   override, so the fail-closed guard rejected every startup; `application.yml` reads the variable again, and

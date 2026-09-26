@@ -72,6 +72,14 @@ public final class SqliteRunStateRepository implements RunStateRepository {
     }
 
     @Override
+    public java.util.List<AgentRun> children(AgentRunId parentRunId) {
+        Objects.requireNonNull(parentRunId, "parentRunId must not be null");
+        return execute(() -> unitOfWork.mapper(RuntimeStoreMapper.class).findChildRuns(parentRunId.value()).stream()
+                .map(this::fromRow)
+                .toList());
+    }
+
+    @Override
     public Optional<AgentRun> find(AgentRunId runId) {
         Objects.requireNonNull(runId, "runId must not be null");
         return execute(() -> Optional.ofNullable(

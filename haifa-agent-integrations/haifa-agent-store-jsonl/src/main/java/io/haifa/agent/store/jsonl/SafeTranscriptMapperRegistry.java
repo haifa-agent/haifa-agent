@@ -54,6 +54,7 @@ public final class SafeTranscriptMapperRegistry {
         mappings.put(
                 "run.input.applied",
                 message -> select(message.payload(), "inputId", "attemptId", "iteration", "safePoint"));
+        mappings.put("run.input.rejected", message -> select(message.payload(), "inputId", "reasonCode"));
         mappings.put("runtime.command-accepted", message -> select(message.payload(), "commandId", "commandType"));
         mappings.put("runtime.command-rejected", message -> select(message.payload(), "commandId", "commandType"));
         return new SafeTranscriptMapperRegistry(mappings);
