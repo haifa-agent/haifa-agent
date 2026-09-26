@@ -26,8 +26,8 @@ import java.util.stream.Collectors;
  * and token budget.
  */
 public final class DefaultMemoryRetriever implements MemoryRetriever {
-    public static final String POLICY_VERSION = "memory-retrieval-v2";
-    static final int MAX_ITEMS = 8;
+    public static final String POLICY_VERSION = "memory-retrieval-v3";
+    public static final int MAX_ITEMS = 16;
     static final int FETCH_LIMIT = 256;
 
     private final MemoryRepository repository;
@@ -43,29 +43,33 @@ public final class DefaultMemoryRetriever implements MemoryRetriever {
         List<Scored> ranked = repository.recent(request.scopes(), FETCH_LIMIT).stream()
                 .filter(memory -> request.scopes().contains(memory.scope()))
                 .map(memory -> new Scored(memory, score(memory, terms)))
-                .filter(scored -> terms.isEmpty() || scored.score() > 0)
                 .sorted(Comparator.comparingInt(Scored::score)
                         .reversed()
                         .thenComparing(scored -> scored.memory().updatedAt(), Comparator.reverseOrder())
                         .thenComparing(scored -> scored.memory().id().value()))
                 .toList();
         int remaining = request.tokenBudget();
-        List<MemorySnippet> selected = new ArrayList<>();
+        List<Memory> chosen = new ArrayList<>();
         for (Scored scored : ranked) {
-            if (selected.size() >= MAX_ITEMS) break;
+            if (chosen.size() >= MAX_ITEMS) break;
             Memory memory = scored.memory();
             int tokens = memory.estimatedTokens();
             if (tokens > remaining) continue;
-            selected.add(new MemorySnippet(
-                    memory.id(),
-                    memory.revision(),
-                    memory.scope(),
-                    memory.content(),
-                    tokens,
-                    digest(memory.content())));
+            chosen.add(memory);
             remaining -= tokens;
         }
-        return new MemoryContext(selected, POLICY_VERSION, queryDigest(request, terms));
+        List<MemorySnippet> snippets = chosen.stream()
+                .sorted(Comparator.comparing(Memory::createdAt)
+                        .thenComparing(memory -> memory.id().value()))
+                .map(memory -> new MemorySnippet(
+                        memory.id(),
+                        memory.revision(),
+                        memory.scope(),
+                        memory.content(),
+                        memory.estimatedTokens(),
+                        digest(memory.content())))
+                .toList();
+        return new MemoryContext(snippets, POLICY_VERSION, queryDigest(request, terms));
     }
 
     private static int score(Memory memory, Set<String> terms) {
