@@ -33,9 +33,9 @@
 
 - Pure Java applications now consume remote MCP servers by declaration instead of by assembling the MCP Integration
   themselves. `McpServerSpec` (named connection, Streamable HTTP endpoint, explicit Tool allowlist, stable
-  `toolNamePrefix`, `readOnly()` governance preset, `required()`/`optional()`, timeouts and environment-backed header
-  credentials) plus `HaifaAgentStarter.builder().mcpServer(...)` replace the previous 100+ lines of
-  `McpServerDefinition`/`McpConnectionManager`/`McpToolDiscoveryService`/`McpToolDefinitionMapper`/`McpToolProvider`
+  `toolNamePrefix`, `readOnly()` governance preset, `required()`/`optional()`, timeouts, environment-backed or dynamic header
+  credentials, and lightweight `McpOAuthClientCredentials` refresh with scoped redaction lifecycle) plus `HaifaAgentStarter.builder().mcpServer(...)`
+  replace the previous 100+ lines of `McpServerDefinition`/`McpConnectionManager`/`McpToolDiscoveryService`/`McpToolDefinitionMapper`/`McpToolProvider`
   wiring; the MCP Integration itself is unchanged and stays the only MCP Runtime. The SDK's `JavaToolAssembly` is
   renamed to `ToolAssembly` and now registers Java Tools and Integration `ToolRegistration`s on one
   `ToolCatalogBuilder` with one freeze, so a Tool name contributed twice (MCP ↔ MCP or MCP ↔ Java Tool) fails the build

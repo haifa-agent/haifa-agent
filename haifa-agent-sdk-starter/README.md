@@ -88,9 +88,9 @@ MCP Client 的公共面只有 `McpServerSpec`、`McpServerRequirement` 和
 - **HTTPS**。非 loopback 端点必须是 HTTPS；本地开发可用 `allowLoopbackHttp()`。endpoint 不接受
   query 和 fragment：2025 线 Transport 按 origin + raw path 路由，带 query 会被静默丢弃。
 - **Credential 不入 Spec**。`bearerTokenFromEnvironment("PARTNER_MCP_TOKEN")` 或
-  `header(name, environmentVariable)` 只保存环境变量名。密钥在装配时读取一次、交由 Credential 边界
-  持有，再注入 discovery 与 Tool 调用；事后修改环境变量不会热轮换 Token。密钥不进入 Tool Definition、
-  诊断或日志。
+  `header(name, environmentVariable)` 只保存环境变量名；亦支持动态凭据供应 `bearerToken(Supplier<String>)`
+  与 `header(name, Supplier<String>)`。密钥交由 Credential 边界持有，动态 Token 通过 Scoped Redaction
+  随轮换动态纳管与卸载，并在 Agent 关闭时统一清理。密钥不进入 Tool Definition、诊断或日志。
 - **保留 Header**。Transport 自己拥有 `Content-Type`、`Accept`、`MCP-Protocol-Version`、`Mcp-Method`、
   `Mcp-Session-Id`、`Last-Event-ID`、`Host`、`Content-Length`、`Connection` 等头，Credential API 不能
   覆盖或追加它们；`X-Api-Key` 这类自定义头正常可用。
