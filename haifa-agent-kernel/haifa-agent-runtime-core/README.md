@@ -40,7 +40,9 @@ pause state fails closed; normal continuation cannot select an earlier budget.
 
 ## Parent-child delegation
 
-`ChildRunCoordinator` is the default `DelegationPort`. A run whose frozen configuration allows child agents, whose
+This is Minimal Parent–Child Delegation (Agent-as-Tool): a parent delegates with a Tool Call and receives the child's
+terminal result as that call's Tool Result. There is no parent–child messaging protocol, child steer or event-driven
+waiting. `ChildRunCoordinator` is the default `DelegationPort`. A run whose frozen configuration allows child agents, whose
 depth is zero and whose `maxChildRuns` is positive sees the Runtime-owned `task` Tool (`DelegationTool`); the response
 mapper turns any response containing it into one `DelegationDecision` holding every Tool request in model order.
 `DecisionExecutor` records all calls in one assistant message, runs the delegation calls first and in parallel, then
@@ -54,6 +56,19 @@ Result immediately, and a child exceeding its own `maxWallTimeMillis` is timed o
 time stop the batch: started children receive `PARENT_CANCELLED`, requests that never started are closed, and
 `terminateChildren` settles children whose executor is gone through `InterruptedRunSettler`, the same settlement
 `recover` uses. Child waits are excluded from the idle check but not from wall time. Child runs skip Memory recall.
+
+A child's first message holds the `task` brief plus an immutable copy of the non-text references the parent Run was
+started with (`AgentRunRequest.inputs`: stored images and audio, image URLs, asset and artifact references); the
+parent's free text is not copied and the `task` arguments cannot add or widen references.
+
+A process slot (`maxConcurrentChildRuns`) is taken before a child is created and returned only when the child Run is
+terminal and none of its execution tasks is running. The Runtime submits every task through
+`ChildRunCoordinator.scheduler()`, so a child resumed after approval runs under the same slot; a parent that stops
+waiting never frees a slot early. If the scheduler rejects a committed child, the child fails with
+`RUNTIME_EXECUTION_FAILED` (`CHILD_NOT_SCHEDULED`), its attempt is closed and the slot returns; no QUEUED child is left
+behind. The parent's `child.run.completed|failed|cancelled|timed-out` event is appended inside the child's own terminal
+transition (`RunTransitionCoordinator.projectTerminalRunsWith`), so it is written exactly once, also when the child ends
+after its parent stopped or is settled by recovery.
 
 ## Model-call client events
 

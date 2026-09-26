@@ -2,9 +2,18 @@ package io.haifa.agent.runtime.core.delegation;
 
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
+import io.haifa.agent.core.content.ArtifactRefPart;
+import io.haifa.agent.core.content.AssetRefPart;
+import io.haifa.agent.core.content.ContentPart;
+import io.haifa.agent.core.content.ImageUrlContentPart;
+import io.haifa.agent.core.content.StoredAudioContentPart;
+import io.haifa.agent.core.content.StoredImageContentPart;
 import io.haifa.agent.core.content.TextPart;
+import io.haifa.agent.core.content.ToolCallPart;
+import io.haifa.agent.core.content.ToolResultPart;
 import io.haifa.agent.core.error.AgentError;
 import io.haifa.agent.core.error.AgentErrorCode;
+import io.haifa.agent.core.message.AgentMessage;
 import io.haifa.agent.core.message.AgentMessageId;
 import io.haifa.agent.core.message.MessageRole;
 import io.haifa.agent.core.message.MessageStatus;
@@ -19,6 +28,7 @@ import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.session.SessionScope;
 import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.runtime.api.AgentRunRequest;
+import io.haifa.agent.runtime.api.AgentRunSnapshot;
 import io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt;
 import io.haifa.agent.runtime.core.attempt.ExecutionAttemptId;
 import io.haifa.agent.runtime.core.attempt.ExecutionAttemptStatus;
@@ -52,6 +62,8 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Deque;
 import java.util.HexFormat;
 import java.util.Iterator;
@@ -73,11 +85,18 @@ import java.util.concurrent.Semaphore;
  * dropped when the parent stops. The child Run ID is derived from the parent Run ID and the Tool Call ID, so a
  * retried Tool Call re-attaches to its existing child instead of creating another one. Child state is read only
  * from the Run repository; this class keeps no status copy.
+ *
+ * <p>A process slot belongs to the child's execution, not to the parent's observation of it: it is taken before the
+ * child is created and returned only once the child Run is terminal and none of its execution tasks (the first one
+ * and any resumed after an approval) is still running. A parent that stops watching therefore never frees capacity
+ * that a still-executing child occupies. A child's terminal fact reaches the parent's event feed from the child's
+ * own terminal transition ({@link #projectTerminal(AgentRun)}), whether or not the parent is still waiting.
  */
 public final class ChildRunCoordinator implements DelegationPort {
     public static final int DEFAULT_MAX_CONCURRENT_CHILD_RUNS = 3;
     private static final long POLL_MILLIS = 250;
     private static final long STOP_SETTLE_MILLIS = 2_000;
+    private static final String DELEGATION_TOOL_CALL_ID = "delegationToolCallId";
 
     private final RunStateRepository runs;
     private final AgentSessionRepository sessions;
@@ -98,7 +117,20 @@ public final class ChildRunCoordinator implements DelegationPort {
     private final TimeProvider time;
     private final Semaphore processSlots;
     private final Object monitor = new Object();
-    private final Set<AgentRunId> dispatched = ConcurrentHashMap.newKeySet();
+    /** Children admitted by this process that still hold a process slot; guarded by itself for task counts. */
+    private final Map<AgentRunId, ChildSlot> slots = new ConcurrentHashMap<>();
+
+    private final ExecutionScheduler trackingScheduler = new ExecutionScheduler() {
+        @Override
+        public void submit(AgentRunId runId, Runnable task) {
+            submitTracked(runId, task);
+        }
+
+        @Override
+        public void cancel(AgentRunId runId) {
+            scheduler.cancel(runId);
+        }
+    };
     private long wakeupSequence;
     private volatile AttemptExecutor executor;
 
@@ -149,9 +181,37 @@ public final class ChildRunCoordinator implements DelegationPort {
         executor = attemptExecutor;
     }
 
-    /** Wakes parents waiting for children; registered as a committed Run-change listener. */
-    public void onRunChanged() {
+    /**
+     * Wakes parents waiting for children and returns the slot of a child that has just settled while none of its
+     * execution tasks runs; registered as a committed Run-change listener.
+     */
+    public void onRunChanged(AgentRunSnapshot snapshot) {
+        if (snapshot.status().isTerminal()) releaseIfSettled(snapshot.runId());
         signal();
+    }
+
+    /**
+     * The scheduler the Runtime must use for every execution task it submits. Tasks of children admitted here keep
+     * their process slot while they run (including a child resumed after approval); other Runs pass through.
+     */
+    public ExecutionScheduler scheduler() {
+        return trackingScheduler;
+    }
+
+    /**
+     * Appends the child's terminal {@code child.run.*} event to its parent's feed. Runs inside the child's terminal
+     * transition, so the parent sees exactly one terminal event per child even when it stopped waiting before the
+     * child ended, or when the child was settled by recovery. Runs not created by delegation are ignored.
+     */
+    public void projectTerminal(AgentRun child) {
+        Optional<AgentRunId> parentRunId = child.parentRunId();
+        if (parentRunId.isEmpty() || !child.status().isTerminal()) return;
+        Optional<ToolCallId> toolCallId = sessions.find(child.sessionId())
+                .map(session -> session.metadata().get(DELEGATION_TOOL_CALL_ID))
+                .filter(String.class::isInstance)
+                .map(value -> new ToolCallId((String) value));
+        if (toolCallId.isEmpty()) return;
+        appendChildEvent(parentRunId.orElseThrow(), toolCallId.orElseThrow(), child, terminalEventType(child.status()));
     }
 
     /** Deterministic child Run identity: one Tool Call can create at most one child Run. */
@@ -222,16 +282,14 @@ public final class ChildRunCoordinator implements DelegationPort {
             Optional<AgentRun> found = runs.find(entry.getKey());
             if (found.isEmpty()) {
                 iterator.remove();
-                release(value);
                 listener.rejected(value.request().toolCallId(), "The child run is unavailable.");
                 continue;
             }
             AgentRun child = found.orElseThrow();
             if (child.status().isTerminal()) {
+                // The slot and the parent's child.run.* event follow the child's own lifecycle, not this observation.
                 iterator.remove();
-                release(value);
                 controls.clear(child.id());
-                appendChildEvent(parent, value.request(), child, terminalEventType(child.status()));
                 listener.terminal(value.request().toolCallId(), child);
                 continue;
             }
@@ -257,25 +315,27 @@ public final class ChildRunCoordinator implements DelegationPort {
             if (runs.find(childId).isPresent()) {
                 // A retried Tool Call re-attaches to its existing child instead of creating a second one.
                 pending.poll();
-                active.put(childId, new Active(next, false, false));
+                active.put(childId, new Active(next, false));
                 continue;
             }
-            if (!processSlots.tryAcquire()) return;
+            ChildSlot slot = admit(childId);
+            if (slot == null) return;
             pending.poll();
-            boolean launched = false;
+            boolean committed = false;
             try {
-                launch(parent, next, childId);
-                launched = true;
-                active.put(childId, new Active(next, true, false));
+                committed = launch(parent, next, childId);
+                active.put(childId, new Active(next, false));
             } catch (ChildRejectedException rejected) {
                 listener.rejected(next.toolCallId(), rejected.getMessage());
             } finally {
-                if (!launched) processSlots.release();
+                // Nothing was committed, so no child exists that could ever run under this slot.
+                if (!committed) forfeit(childId, slot);
             }
         }
     }
 
-    private void launch(AgentRun parent, ChildRunRequest request, AgentRunId childId) {
+    /** Returns {@code true} when this call committed the child, which then owns the slot until it settles. */
+    private boolean launch(AgentRun parent, ChildRunRequest request, AgentRunId childId) {
         RuntimeConfigurationSnapshot parentConfiguration = state.configuration(parent.configurationSnapshot())
                 .orElseThrow(() -> new IllegalStateException("parent configuration snapshot is unavailable"));
         var childDefinitionId = request.childDefinitionId();
@@ -318,6 +378,10 @@ public final class ChildRunCoordinator implements DelegationPort {
                     + "' does not permit a delegated run.");
         }
         AgentSessionId sessionId = childSessionId(parent.id(), request.toolCallId());
+        List<ContentPart> inheritedReferences = inheritedReferences(parent);
+        List<ContentPart> brief = new ArrayList<>();
+        brief.add(new TextPart(request.brief(), "plain"));
+        brief.addAll(inheritedReferences);
         AgentRunRequest childRequest = new AgentRunRequest(
                 "delegation:" + childId.value(),
                 childDefinitionId,
@@ -326,7 +390,7 @@ public final class ChildRunCoordinator implements DelegationPort {
                 sessionId,
                 parent.project(),
                 request.objective(),
-                List.of(),
+                inheritedReferences,
                 parentConfiguration.overrides());
         BootstrapResult bootstrap;
         try {
@@ -352,7 +416,7 @@ public final class ChildRunCoordinator implements DelegationPort {
                     Map.of(
                             "parentRunId",
                             parent.id().value(),
-                            "delegationToolCallId",
+                            DELEGATION_TOOL_CALL_ID,
                             request.toolCallId().value())));
             state.saveConfiguration(bootstrap.configuration());
             runs.insert(child);
@@ -364,7 +428,7 @@ public final class ChildRunCoordinator implements DelegationPort {
                     MessageRole.USER,
                     MessageStatus.COMPLETED,
                     MessageVisibility.USER_VISIBLE,
-                    List.of(new TextPart(request.brief(), "plain")),
+                    List.copyOf(brief),
                     Map.of("delegatedByRunId", parent.id().value()),
                     now));
             append(
@@ -378,27 +442,53 @@ public final class ChildRunCoordinator implements DelegationPort {
             transitions.queued(child);
             attempts.insert(attempt);
             transitions.usage(parent, new AgentRunUsageDelta(0, 0, 0, 0, 0, 1, 0, 0));
-            appendChildEvent(parent, request, child, "child.run.started");
+            appendChildEvent(parent.id(), request.toolCallId(), child, "child.run.started");
             return true;
         });
-        if (!created) return;
-        dispatched.add(childId);
+        if (!created) return false;
         try {
-            scheduler.submit(childId, () -> {
-                try {
-                    executor.execute(child, attempt);
-                } finally {
-                    dispatched.remove(childId);
-                    signal();
-                }
-            });
-        } catch (RuntimeException | Error failure) {
-            dispatched.remove(childId);
+            submitTracked(childId, () -> executor.execute(child, attempt));
+        } catch (RuntimeException rejected) {
+            settleUnscheduled(childId);
+        } catch (Error failure) {
+            settleUnscheduled(childId);
             throw failure;
         }
+        return true;
     }
 
-    /** Requests termination of started children, drops requests that never started, then settles briefly. */
+    /**
+     * Settles a committed child that the scheduler refused, so no QUEUED child is left without an executor. The
+     * child fails (nobody asked to cancel it; the Runtime could not run it), its attempt is closed, the terminal
+     * transition projects {@code child.run.failed} to the parent and returns the slot, and the parent's Tool Result
+     * reports the failure when it observes the terminal child.
+     */
+    private void settleUnscheduled(AgentRunId childId) {
+        unitOfWork.execute(() -> {
+            AgentRun current = runs.find(childId).orElseThrow();
+            if (current.status().isTerminal()) return null;
+            attempts.activeFor(childId).ifPresent(stored -> {
+                long expected = stored.version();
+                stored.finish(ExecutionAttemptStatus.FAILED, time.now(), Optional.empty());
+                attempts.save(stored, expected);
+            });
+            transitions.failed(
+                    current,
+                    new AgentError(
+                            AgentErrorCode.RUNTIME_EXECUTION_FAILED,
+                            Map.of("reason", "CHILD_NOT_SCHEDULED", "automaticResume", false),
+                            ids.nextValue(),
+                            time.now()));
+            return null;
+        });
+        releaseIfSettled(childId);
+    }
+
+    /**
+     * Requests termination of started children, drops requests that never started, then briefly collects terminal
+     * children for their Tool Results. Children still executing afterwards keep their slots until their tasks end,
+     * and their terminal events still reach the parent feed through {@link #projectTerminal(AgentRun)}.
+     */
     private void stop(
             AgentRun parent, Deque<ChildRunRequest> pending, Map<AgentRunId, Active> active, Listener listener) {
         while (!pending.isEmpty()) listener.notStarted(pending.poll().toolCallId());
@@ -412,14 +502,13 @@ public final class ChildRunCoordinator implements DelegationPort {
             if (active.isEmpty() || remainingMillis <= 0) break;
             awaitWakeup(observed, Math.min(POLL_MILLIS, remainingMillis));
         }
-        active.values().forEach(this::release);
     }
 
     private void terminate(AgentRun child) {
         if (child.status().isTerminal()) return;
         AgentRunId childId = child.id();
         Optional<AgentRunExecutionAttempt> activeAttempt = attempts.activeFor(childId);
-        boolean executingHere = dispatched.contains(childId)
+        boolean executingHere = executing(childId)
                 || activeAttempt
                         .filter(value -> value.workerId().isPresent() && ownership.stillOwned(value))
                         .isPresent();
@@ -494,6 +583,35 @@ public final class ChildRunCoordinator implements DelegationPort {
         }
     }
 
+    /**
+     * The non-text references the parent Run was started with ({@code AgentRunRequest.inputs}: uploaded images and
+     * audio, image URLs, asset and artifact references), copied as the immutable values they are. Free text is not
+     * inherited; the parent passes what matters in the {@code task} brief. The {@code task} arguments are text only,
+     * so the model can neither add a reference nor broaden one.
+     */
+    private List<ContentPart> inheritedReferences(AgentRun parent) {
+        return state.messages(parent.id()).stream()
+                .filter(message -> message.role() == MessageRole.USER)
+                .min(Comparator.comparingLong(AgentMessage::sequence))
+                .map(message -> message.contents().stream()
+                        .filter(ChildRunCoordinator::isInheritedReference)
+                        .toList())
+                .orElse(List.of());
+    }
+
+    private static boolean isInheritedReference(ContentPart part) {
+        return switch (part) {
+            case AssetRefPart asset -> true;
+            case ArtifactRefPart artifact -> true;
+            case ImageUrlContentPart image -> true;
+            case StoredImageContentPart image -> true;
+            case StoredAudioContentPart audio -> true;
+            case TextPart text -> false;
+            case ToolCallPart call -> false;
+            case ToolResultPart result -> false;
+        };
+    }
+
     private static ResolvedProfile inheritedProfile(RuntimeConfigurationSnapshot parent) {
         return new ResolvedProfile(
                 parent.profileId(),
@@ -525,14 +643,14 @@ public final class ChildRunCoordinator implements DelegationPort {
         return left.stream().filter(right::contains).collect(java.util.stream.Collectors.toUnmodifiableSet());
     }
 
-    private void appendChildEvent(AgentRun parent, ChildRunRequest request, AgentRun child, String type) {
+    private void appendChildEvent(AgentRunId parentRunId, ToolCallId toolCallId, AgentRun child, String type) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("childRunId", child.id().value());
-        data.put("toolCallId", request.toolCallId().value());
+        data.put("toolCallId", toolCallId.value());
         data.put("childAgent", child.agentDefinitionId().value());
         data.put("status", child.status().name());
         data.put("reasonCode", reasonCode(child));
-        append(parent.id(), type, Map.copyOf(data), Map.copyOf(data));
+        append(parentRunId, type, Map.copyOf(data), Map.copyOf(data));
     }
 
     private void append(AgentRunId runId, String type, Map<String, Object> data, Map<String, Object> outboxData) {
@@ -568,8 +686,80 @@ public final class ChildRunCoordinator implements DelegationPort {
         };
     }
 
-    private void release(Active active) {
-        if (active.holdsSlot()) {
+    /** Takes a process slot for a child about to be created, or returns {@code null} when none is free. */
+    private ChildSlot admit(AgentRunId childId) {
+        if (!processSlots.tryAcquire()) return null;
+        ChildSlot slot = new ChildSlot();
+        if (slots.putIfAbsent(childId, slot) != null) {
+            processSlots.release();
+            return null;
+        }
+        return slot;
+    }
+
+    /** Returns the slot of a child that was never committed. */
+    private void forfeit(AgentRunId childId, ChildSlot slot) {
+        if (slots.remove(childId, slot)) {
+            processSlots.release();
+            signal();
+        }
+    }
+
+    private void submitTracked(AgentRunId runId, Runnable task) {
+        ChildSlot slot = slots.get(runId);
+        if (slot == null) {
+            scheduler.submit(runId, task);
+            return;
+        }
+        synchronized (slot) {
+            slot.tasks++;
+        }
+        try {
+            scheduler.submit(runId, () -> {
+                try {
+                    task.run();
+                } finally {
+                    taskEnded(runId, slot);
+                }
+            });
+        } catch (RuntimeException | Error failure) {
+            taskEnded(runId, slot);
+            throw failure;
+        }
+    }
+
+    private void taskEnded(AgentRunId runId, ChildSlot slot) {
+        synchronized (slot) {
+            slot.tasks--;
+        }
+        releaseIfSettled(runId);
+        signal();
+    }
+
+    private boolean executing(AgentRunId childId) {
+        ChildSlot slot = slots.get(childId);
+        if (slot == null) return false;
+        synchronized (slot) {
+            return slot.tasks > 0;
+        }
+    }
+
+    /**
+     * Returns the child's slot once the child is terminal and no execution task of it is running. Both the task's
+     * {@code finally} and the committed terminal transition call this, so whichever happens last frees the slot. The
+     * status is read outside the slot lock: a terminal status is final and never gains another task.
+     */
+    private void releaseIfSettled(AgentRunId childId) {
+        ChildSlot slot = slots.get(childId);
+        if (slot == null) return;
+        boolean settled =
+                runs.find(childId).map(run -> run.status().isTerminal()).orElse(true);
+        if (!settled) return;
+        synchronized (slot) {
+            if (slot.tasks > 0 || slot.released) return;
+            slot.released = true;
+        }
+        if (slots.remove(childId, slot)) {
             processSlots.release();
             signal();
         }
@@ -610,10 +800,16 @@ public final class ChildRunCoordinator implements DelegationPort {
         }
     }
 
-    private record Active(ChildRunRequest request, boolean holdsSlot, boolean timeoutRequested) {
+    private record Active(ChildRunRequest request, boolean timeoutRequested) {
         private Active withTimeoutRequested() {
-            return new Active(request, holdsSlot, true);
+            return new Active(request, true);
         }
+    }
+
+    /** One admitted child's process slot and the number of its execution tasks currently submitted or running. */
+    private static final class ChildSlot {
+        private int tasks;
+        private boolean released;
     }
 
     private static final class ChildRejectedException extends RuntimeException {

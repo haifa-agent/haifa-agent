@@ -69,7 +69,9 @@
   intent (target Run and contents), so retrying the same idempotency key with a fresh submission time or Run version
   is a duplicate instead of `IDEMPOTENCY_CONFLICT`, and a retry after settlement reports `APPLIED` or `REJECTED`.
   No SQLite migration is needed; the existing `run_input` `REJECTED` state is now used.
-- Parent runs can delegate to child agents with a Tool Call, mirroring DeerFlow's `task`. When the Product Profile
+- Minimal Parent–Child Delegation (Agent-as-Tool): parent runs can delegate to child agents with a Tool Call,
+  mirroring DeerFlow's `task`; this is not a parent–child communication protocol (no agent messages, child steer or
+  event-driven waiting). When the Product Profile
   lists `allowedChildAgents`, the Runtime discloses one model-visible `task` Tool (`agent`, `objective`, optional
   `context` and `expected_output`); every call in a response becomes one ordinary child `AgentRun` in its own
   ephemeral session, the calls run in parallel within `maxParallelChildren` and a process cap (default 3,
@@ -92,7 +94,15 @@
   `DelegationPort.executeChild` is replaced by the batch `executeChildren`, `DelegationDecision` now carries every Tool
   request of the response, `RunStateRepository` gains `children(parentRunId)`, and `ResolvedDefinition` gains a
   description and an optional child run profile. No Store or relation table is added; SQLite migration V14 adds
-  the `run(parent_run_id, created_at)` index used to list children.
+  the `run(parent_run_id, created_at)` index used to list children. A child inherits an immutable snapshot of the
+  non-text references in the parent's `AgentRunRequest.inputs` (stored images and audio, image URLs, asset and artifact
+  references) but not its free text; the model cannot add or widen them. A process slot is held from child creation
+  until the child is terminal and its execution tasks (including one resumed after approval) have ended, so a parent
+  that stops waiting never lets more than `maxConcurrentChildRuns` children execute; a child the scheduler rejects is
+  failed at once with `RUNTIME_EXECUTION_FAILED` (`CHILD_NOT_SCHEDULED`) instead of staying QUEUED. The parent's
+  terminal `child.run.*` event is written by the child's own terminal transition, exactly once, including when the
+  child ends after the parent stopped or is settled by recovery. The HTTP transport does not project `child.run.*`
+  (`ChildRunLifecycle`) payloads in 0.1.2; SDK event consumers receive them.
 
 - The Personal Assistant real environment starts again. The catalog migration hardcoded
   `haifa.personal.execution.trusted-host-enabled: false` and dropped the `HAIFA_PERSONAL_EXECUTION_TRUSTED_HOST_ENABLED`

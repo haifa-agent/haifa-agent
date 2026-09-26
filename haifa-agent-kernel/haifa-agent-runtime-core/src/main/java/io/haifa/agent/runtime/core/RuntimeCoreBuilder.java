@@ -584,10 +584,13 @@ public final class RuntimeCoreBuilder {
                     ids,
                     time,
                     maxConcurrentChildRuns);
-            ChildRunCoordinator wakeups = childRuns;
-            transitions.addListener(snapshot -> wakeups.onRunChanged());
+            ChildRunCoordinator coordinator = childRuns;
+            transitions.addListener(coordinator::onRunChanged);
+            transitions.projectTerminalRunsWith(coordinator::projectTerminal);
             configuredDelegations = childRuns;
         }
+        // Resumed children must run under the slot their first execution took, so the Runtime submits through it.
+        ExecutionScheduler runtimeScheduler = childRuns != null ? childRuns.scheduler() : scheduler;
         DefaultCompletionGuard completion = new DefaultCompletionGuard(
                 state, pipeline, interactions, configuredDelegations, combinedOutputContract, completionPolicy);
         CheckpointManager checkpoints =
@@ -671,7 +674,7 @@ public final class RuntimeCoreBuilder {
                 configuredDelegations,
                 attemptExecutor,
                 toolRecovery,
-                scheduler,
+                runtimeScheduler,
                 ids,
                 time,
                 awaiter,

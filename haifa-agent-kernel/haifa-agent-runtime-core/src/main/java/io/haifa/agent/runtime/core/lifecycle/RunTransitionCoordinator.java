@@ -47,6 +47,7 @@ public final class RunTransitionCoordinator {
     private final RunInputPort runInputs;
     private final Map<AgentRunId, Object> locks = new ConcurrentHashMap<>();
     private final List<AgentRunListener> listeners = new CopyOnWriteArrayList<>();
+    private volatile Consumer<AgentRun> terminalProjection = run -> {};
 
     public RunTransitionCoordinator(
             RunStateRepository runs,
@@ -180,6 +181,7 @@ public final class RunTransitionCoordinator {
                         OutboxMessage.CURRENT_SCHEMA_VERSION,
                         Map.of("status", run.status().name(), "version", run.version()),
                         event.occurredAt()));
+                terminalProjection.accept(run);
                 AgentRunSnapshot committed = AgentRunSnapshot.from(run, state.output(run.id()));
                 unitOfWork.afterCommit(() -> notifyCommitted(committed));
                 return Optional.of(committed);
@@ -216,6 +218,7 @@ public final class RunTransitionCoordinator {
                         OutboxMessage.CURRENT_SCHEMA_VERSION,
                         eventData,
                         event.occurredAt()));
+                terminalProjection.accept(run);
                 AgentRunSnapshot committed = AgentRunSnapshot.from(run, state.output(run.id()));
                 unitOfWork.afterCommit(() -> notifyCommitted(committed));
                 return committed;
@@ -244,6 +247,15 @@ public final class RunTransitionCoordinator {
 
     public void addListener(AgentRunListener listener) {
         listeners.add(Objects.requireNonNull(listener));
+    }
+
+    /**
+     * Installs the projection that runs inside every terminal transition's Unit of Work, after the Run's own terminal
+     * event. The Core allows exactly one terminal transition per Run, so the projection runs once per Run and commits
+     * or rolls back together with it; delegation uses it to put a child's terminal fact on its parent's event feed.
+     */
+    public void projectTerminalRunsWith(Consumer<AgentRun> projection) {
+        terminalProjection = Objects.requireNonNull(projection, "projection must not be null");
     }
 
     /**
@@ -282,6 +294,7 @@ public final class RunTransitionCoordinator {
                         OutboxMessage.CURRENT_SCHEMA_VERSION,
                         safeEventData,
                         event.occurredAt()));
+                if (run.status().isTerminal()) terminalProjection.accept(run);
                 AgentRunSnapshot committed = AgentRunSnapshot.from(run, state.output(run.id()));
                 unitOfWork.afterCommit(() -> notifyCommitted(committed));
                 return committed;
