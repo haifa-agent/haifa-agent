@@ -14,14 +14,7 @@ import io.haifa.agent.core.run.AgentRunBudget;
 import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.core.run.AgentRunType;
 import io.haifa.agent.credential.api.CredentialBroker;
-import io.haifa.agent.memory.api.MemoryActor;
 import io.haifa.agent.memory.api.MemoryRetriever;
-import io.haifa.agent.memory.api.MemoryService;
-import io.haifa.agent.memory.api.MemorySourceRef;
-import io.haifa.agent.memory.api.MemorySourceType;
-import io.haifa.agent.memory.core.DefaultMemoryPolicy;
-import io.haifa.agent.memory.core.DefaultMemoryRetriever;
-import io.haifa.agent.memory.core.InMemoryMemoryStore;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.policy.api.ApprovalMode;
 import io.haifa.agent.policy.api.ApprovalVerification;
@@ -193,7 +186,6 @@ public final class RuntimeCoreBuilder {
     private String workerId = "local-runtime-" + ids.nextValue();
     private ExecutionOwnershipPort ownership;
     private MemoryRetriever memoryRetriever;
-    private MemoryService memoryService;
     private ModelImageResolver modelImageResolver = ModelImageResolver.unsupported();
     private ModelAudioResolver modelAudioResolver = ModelAudioResolver.unsupported();
 
@@ -445,11 +437,6 @@ public final class RuntimeCoreBuilder {
         return this;
     }
 
-    public RuntimeCoreBuilder memory(MemoryService service, MemoryRetriever retriever) {
-        memoryService = Objects.requireNonNull(service);
-        return memory(retriever);
-    }
-
     public DefaultAgentRuntime build() {
         if (chatModels.isEmpty()) throw new NullPointerException("a versioned Model API adapter must be configured");
         if (!toolCatalog.snapshot().bindings().isEmpty() && !toolPlatformConfigured) {
@@ -479,20 +466,7 @@ public final class RuntimeCoreBuilder {
         ExecutionOwnershipPort configuredOwnership =
                 ownership != null ? ownership : ExecutionOwnershipPort.local(workerId);
         RuntimeModelOutputPublisher modelOutput = new RuntimeModelOutputPublisher(time);
-        MemoryRetriever configuredMemoryRetriever = memoryRetriever;
-        if (configuredMemoryRetriever == null) {
-            InMemoryMemoryStore defaultMemoryStore = new InMemoryMemoryStore();
-            configuredMemoryRetriever = new DefaultMemoryRetriever(defaultMemoryStore, new DefaultMemoryPolicy());
-        }
-        if (memoryService != null) {
-            messageRedactions.register(message -> message.runId()
-                    .flatMap(runs::find)
-                    .ifPresent(run -> memoryService.invalidateSource(
-                            new MemorySourceRef(
-                                    MemorySourceType.MESSAGE, message.id().value(), java.util.Optional.empty()),
-                            "source message redacted",
-                            new MemoryActor(run.tenant(), run.principal(), Set.of("memory:review")))));
-        }
+        MemoryRetriever configuredMemoryRetriever = memoryRetriever == null ? MemoryRetriever.none() : memoryRetriever;
         Set<String> toolNames = toolCatalog.snapshot().bindings().stream()
                 .map(binding -> binding.alias().value())
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
@@ -638,7 +612,7 @@ public final class RuntimeCoreBuilder {
                 interactions, checkpointsRepository, transitions, state, access, toolInvoker, skillContentLoader);
         var sessionMessageSource = new SessionMessageSource(
                 state, summaries, compressor, effectiveCompressionPolicy, ids, time, activeContexts);
-        var memoryContextSource = new MemoryContextSource(configuredMemoryRetriever, state, time);
+        var memoryContextSource = new MemoryContextSource(configuredMemoryRetriever, state);
         RunInputApplier runInputApplier =
                 new RunInputApplier(configuredRunInputs, state, events, outbox, unitOfWork, ids, time);
         var compactionTriggerEvaluator = new CompactionTriggerEvaluator(effectiveCompressionPolicy);

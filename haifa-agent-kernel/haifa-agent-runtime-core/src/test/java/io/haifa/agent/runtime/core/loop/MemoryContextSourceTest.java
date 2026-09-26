@@ -8,16 +8,10 @@ import io.haifa.agent.core.message.AgentMessageId;
 import io.haifa.agent.core.message.MessageRole;
 import io.haifa.agent.core.message.MessageStatus;
 import io.haifa.agent.core.message.MessageVisibility;
-import io.haifa.agent.core.reference.PrincipalRef;
-import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.core.session.AgentSessionId;
-import io.haifa.agent.memory.api.Memory;
-import io.haifa.agent.memory.api.MemoryId;
-import io.haifa.agent.memory.api.MemoryQuery;
-import io.haifa.agent.memory.api.MemoryRetrieval;
+import io.haifa.agent.memory.api.MemoryContext;
 import io.haifa.agent.memory.api.MemoryRetriever;
-import io.haifa.agent.memory.api.MemoryVersion;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.ModelFinishReason;
 import io.haifa.agent.model.api.ModelUsage;
@@ -47,7 +41,7 @@ class MemoryContextSourceTest {
         AgentRun run = createRun(store);
         List<String> queryTexts = new ArrayList<>();
         AtomicInteger retrievals = new AtomicInteger();
-        MemoryContextSource source = new MemoryContextSource(retriever(retrievals, queryTexts), store, () -> NOW);
+        MemoryContextSource source = new MemoryContextSource(retriever(retrievals, queryTexts), store);
         FrozenModelBinding binding = binding(store, run);
         AgentLoopContext loopContext = new AgentLoopContext(1);
 
@@ -81,19 +75,10 @@ class MemoryContextSourceTest {
     }
 
     private static MemoryRetriever retriever(AtomicInteger retrievals, List<String> queryTexts) {
-        return new MemoryRetriever() {
-            @Override
-            public MemoryRetrieval retrieve(MemoryQuery query) {
-                int retrieval = retrievals.incrementAndGet();
-                queryTexts.add(query.queryText());
-                return new MemoryRetrieval(List.of(), "test-memory-policy", "sha256:query-" + retrieval);
-            }
-
-            @Override
-            public Optional<Memory> findAuthorized(
-                    MemoryId id, MemoryVersion version, TenantRef tenant, PrincipalRef owner, Instant now) {
-                return Optional.empty();
-            }
+        return request -> {
+            int retrieval = retrievals.incrementAndGet();
+            queryTexts.add(request.queryText());
+            return new MemoryContext(List.of(), "test-memory-policy", "sha256:query-" + retrieval);
         };
     }
 

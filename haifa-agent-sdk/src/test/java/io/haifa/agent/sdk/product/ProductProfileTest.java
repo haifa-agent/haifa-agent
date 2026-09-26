@@ -54,9 +54,9 @@ class ProductProfileTest {
 
     @Test
     void policiesFailClosedOnUnsafeMemoryAndDisabledExecutionShapes() {
-        assertThatThrownBy(() -> new ProductMemoryPolicy(false, 32_000, 100))
+        assertThatThrownBy(() -> new ProductMemoryPolicy(32_000, 100))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("manual review");
+                .hasMessageContaining("maxContentChars");
         assertThatThrownBy(() -> new ProductArtifactPolicy(1_000, 0, 0, Set.of("text/plain"), false, 0, 0, false))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("disabled artifact policy");

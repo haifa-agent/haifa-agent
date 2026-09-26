@@ -1,14 +1,11 @@
 package io.haifa.agent.sdk.product;
 
-/** Frozen product-level governance for durable memory operations. */
-public record ProductMemoryPolicy(boolean manualReviewRequired, int maxCandidateContentChars, int maxQueryLimit) {
+/** Frozen product-level limits for direct memory operations. */
+public record ProductMemoryPolicy(int maxContentChars, int maxQueryLimit) {
 
     public ProductMemoryPolicy {
-        if (!manualReviewRequired) {
-            throw new IllegalArgumentException("memory candidates must require manual review");
-        }
-        if (maxCandidateContentChars < 1 || maxCandidateContentChars > 1_000_000) {
-            throw new IllegalArgumentException("maxCandidateContentChars must be between 1 and 1000000");
+        if (maxContentChars < 1 || maxContentChars > 4_096) {
+            throw new IllegalArgumentException("maxContentChars must be between 1 and 4096");
         }
         if (maxQueryLimit < 1 || maxQueryLimit > 1_000) {
             throw new IllegalArgumentException("maxQueryLimit must be between 1 and 1000");
@@ -16,6 +13,6 @@ public record ProductMemoryPolicy(boolean manualReviewRequired, int maxCandidate
     }
 
     public static ProductMemoryPolicy safeDefault() {
-        return new ProductMemoryPolicy(true, 32_000, 100);
+        return new ProductMemoryPolicy(4_096, 100);
     }
 }

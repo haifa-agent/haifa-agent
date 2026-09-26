@@ -127,9 +127,6 @@ ON run(session_id, created_at);
 CREATE INDEX idx_run_status_updated
 ON run(status, updated_at);
 
-CREATE INDEX idx_run_parent_created
-    ON run(parent_run_id, created_at);
-
 CREATE TABLE execution_attempt (
     attempt_id TEXT PRIMARY KEY,
     schema_version TEXT NOT NULL,
@@ -1020,6 +1017,64 @@ ON sdk_conversation(
     session_id DESC
 );
 
+-- Migration V14: run_parent_index
+CREATE INDEX idx_run_parent_created
+    ON run(parent_run_id, created_at);
+
+-- Migration V15: memory_direct_crud
+-- Memory direct CRUD: one authoritative memory table plus per-scope clear watermarks.
+-- Clean cut: the audited Personal Assistant databases held no memory rows. Live user data (ACTIVE memories or
+-- PENDING candidates) aborts the migration instead of being dropped; derived and retired rows are discarded.
+CREATE TEMP TABLE v15_memory_guard (
+    live_rows INTEGER NOT NULL,
+    CONSTRAINT v15_memory_tables_must_not_hold_live_rows CHECK (live_rows = 0)
+);
+INSERT INTO v15_memory_guard(live_rows)
+SELECT (SELECT count(*) FROM memory_record WHERE status = 'ACTIVE')
+     + (SELECT count(*) FROM memory_candidate WHERE status = 'PENDING');
+DROP TABLE v15_memory_guard;
+
+DROP TABLE memory_audit_event;
+DROP TABLE memory_candidate;
+DROP TABLE memory_record;
+-- Selections reference retired memory versions; they are a derived per-Run record only.
+DELETE FROM memory_selection;
+
+CREATE TABLE memory_record (
+    memory_id TEXT PRIMARY KEY NOT NULL,
+    tenant_id TEXT NOT NULL,
+    owner_id TEXT NOT NULL,
+    owner_type TEXT NOT NULL,
+    scope_type TEXT NOT NULL CHECK (scope_type IN ('USER', 'AGENT', 'SESSION')),
+    target_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    subject_key TEXT NOT NULL,
+    content TEXT,
+    source_type TEXT,
+    source_id TEXT,
+    revision INTEGER NOT NULL CHECK (revision > 0),
+    created_at INTEGER NOT NULL CHECK (created_at >= 0),
+    updated_at INTEGER NOT NULL CHECK (updated_at >= created_at),
+    deleted_at INTEGER,
+    CHECK ((deleted_at IS NULL) = (content IS NOT NULL)),
+    CHECK ((source_type IS NULL) = (source_id IS NULL)),
+    UNIQUE (tenant_id, owner_id, owner_type, scope_type, target_id, kind, subject_key)
+) STRICT;
+
+CREATE INDEX idx_memory_record_scope_live
+    ON memory_record(tenant_id, owner_id, owner_type, scope_type, target_id, updated_at DESC, memory_id DESC)
+    WHERE deleted_at IS NULL;
+
+CREATE TABLE memory_scope_clear (
+    tenant_id TEXT NOT NULL,
+    owner_id TEXT NOT NULL,
+    owner_type TEXT NOT NULL,
+    scope_type TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    cleared_at INTEGER NOT NULL CHECK (cleared_at >= 0),
+    PRIMARY KEY (tenant_id, owner_id, owner_type, scope_type, target_id)
+) STRICT;
+
 -- Migration V1000: project_product_session
 CREATE TABLE project_product_session (
     session_id TEXT PRIMARY KEY,
@@ -1210,6 +1265,7 @@ INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (11, 's
 INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (12, 'runtime_applied_command', 'sha256:1d5efbd7ce11075e830de1b696dce06290e6753f5305ab3bf4343c5c33939db2', 0);
 INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (13, 'sdk_conversation_metadata_only', 'sha256:dc19669cfd56953827bd9b72f10c521f7c83eb3ec50cfea8976c941134330082', 0);
 INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (14, 'run_parent_index', 'sha256:6332ac2a2954017a88c1c8b97a0607625d16954deacdaef7e8d6d4fea2b78f7b', 0);
+INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (15, 'memory_direct_crud', 'sha256:df5d0d0f6225ee4d0fcf23fbbb868fd98168da1755bb822a968a0b6254a4920c', 0);
 INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (1000, 'project_product_session', 'sha256:929d869e45117a3e829be4f9b995bc646874583410c6f3572800f264aa4f418b', 0);
 INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (1001, 'coding_session_product_loop', 'sha256:109f86f30032eecb16a6d34ab945ce4fba8573eed8d8391f800d7132f2f06fcf', 0);
 INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (1002, 'coding_session_event_cursor', 'sha256:f566cba113dcf3ab9eb6f0883497e672cf3d02c5d7a3d64e94d5f186ed89c2b6', 0);

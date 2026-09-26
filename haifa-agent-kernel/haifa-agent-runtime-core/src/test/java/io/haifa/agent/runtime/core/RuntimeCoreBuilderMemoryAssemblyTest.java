@@ -4,15 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 
 import io.haifa.agent.core.agent.AgentDefinitionId;
-import io.haifa.agent.core.reference.PrincipalRef;
-import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.session.AgentSessionId;
-import io.haifa.agent.memory.api.Memory;
-import io.haifa.agent.memory.api.MemoryId;
-import io.haifa.agent.memory.api.MemoryQuery;
-import io.haifa.agent.memory.api.MemoryRetrieval;
+import io.haifa.agent.memory.api.MemoryContext;
 import io.haifa.agent.memory.api.MemoryRetriever;
-import io.haifa.agent.memory.api.MemoryVersion;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.ModelFinishReason;
 import io.haifa.agent.model.api.ModelUsage;
@@ -21,7 +15,6 @@ import io.haifa.agent.runtime.api.RuntimeOverrides;
 import io.haifa.agent.runtime.core.execution.ManualExecutionScheduler;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
-import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -60,18 +53,9 @@ class RuntimeCoreBuilderMemoryAssemblyTest {
     }
 
     private static MemoryRetriever retriever(AtomicInteger retrieveCalls) {
-        return new MemoryRetriever() {
-            @Override
-            public MemoryRetrieval retrieve(MemoryQuery query) {
-                retrieveCalls.incrementAndGet();
-                return new MemoryRetrieval(List.of(), "custom-memory-policy", "sha256:custom-memory-query");
-            }
-
-            @Override
-            public Optional<Memory> findAuthorized(
-                    MemoryId id, MemoryVersion version, TenantRef tenant, PrincipalRef owner, Instant now) {
-                return Optional.empty();
-            }
+        return request -> {
+            retrieveCalls.incrementAndGet();
+            return new MemoryContext(List.of(), "custom-memory-policy", "sha256:custom-memory-query");
         };
     }
 
