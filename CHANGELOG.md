@@ -1,5 +1,40 @@
 # Changelog
 
+- Memory collapses to direct CRUD with an `AGENT` scope; the candidate/approval path is removed with no compatibility
+  layer. `MemoryService` is now `put` / `update(id, expectedRevision, content)` / `delete(id, expectedRevision)` /
+  `find` / `list(MemoryQuery)` / `clear(scope)`, bounded by a trusted `MemoryActor(tenant, principal)`; `put` replaces
+  the memory with the same scope, kind and subject and leaves identical content untouched, and `MemoryQuery` offers a
+  bounded case-insensitive text match. `MemoryScopeType` is `USER` / `AGENT` / `SESSION` (`RUN` had no writer and is
+  removed); `AGENT` targets an Agent Definition id and Runtime recalls it from the Run's definition. `Memory` holds
+  plain text content, a `revision`, an optional `MemorySourceRef` and timestamps only. A `MemoryDraft.observedAt`
+  older than a scope clear or the deletion of the same subject is refused with `MEMORY_WRITE_STALE`, so late
+  asynchronous writes cannot resurrect content. `SensitiveMemoryFilter` rejects credential, payment and precise
+  identity content with `MEMORY_CONTENT_SENSITIVE` instead of labelling it. `MemoryRetriever` keeps only
+  `contextFor`, plus `none()` and `onlyWhen(predicate)` to switch recall off per Run or Agent;
+  `MemoryPlatformContribution` gains `withRecallWhen` and `withoutRecall`. Removed public types: every
+  `MemoryCandidate*` type, `MemoryStatus`, `MemoryVersion`, `MemoryRef`, `MemoryRecordQuery`, `MemoryContent` and its
+  `TextMemoryContent`/`StructuredMemoryContent`/`DerivedTextMemoryContent`/`DerivedTextType` implementations,
+  `MemoryPolicy`, `MemoryPolicyDecision`, `MemorySecurityLabel`, `MemoryVisibility`, `MemoryRetentionPolicy`,
+  `MemoryEvidenceRef`, `MemoryEvidenceVerifier`, `MemoryAuditEvent`, `MemoryAuditStore`, `MemoryUnitOfWork`,
+  `MemoryDerivedDataInvalidator`, `MemoryRetrieval`, `MemorySearchResult`, `DefaultMemoryPolicy`,
+  `DeterministicMemoryCandidateExtractor`, `MemoryObservation`, `InMemoryMemoryEvidenceVerifier`,
+  `SqliteMemoryEvidenceVerifier`, and the SDK `ProposeMemoryCommand`, `ReviseMemoryCandidateCommand`,
+  `ReviewMemoryCandidateCommand`, `RejectMemoryCandidateCommand`, `InvalidateMemoryCommand` and
+  `MemoryCandidateListQuery`. `AgentMemories` exposes `put(PutMemoryCommand)`, `update`, `delete`, `find`,
+  `list(MemoryListQuery)` and `clear(MemoryScopeSpec)`; `MemoryScopeSpec` offers `user()`, `agent(id)` and
+  `session(id)` and never carries a tenant or owner. `ProductMemoryPolicy` becomes
+  `(maxContentChars, maxQueryLimit)` with content capped at 4096 characters. `RuntimeCoreBuilder.memory(service,
+  retriever)`, `MemoryService.invalidateSource`, `MemoryRepository.allMemories` and the message-redaction Memory
+  listener are removed (nothing in production redacted messages); Runtime defaults to `MemoryRetriever.none()`.
+  `SqliteSdkContributions.memory(policy)` provides the SQLite Memory component over the same file. SQLite migration
+  V15 is a clean cut: it drops `memory_candidate`, `memory_audit_event` and the old `memory_record`, clears the
+  derived `memory_selection` rows, and creates a single `memory_record` table plus `memory_scope_clear` watermarks;
+  it aborts instead of dropping data when the old tables still hold ACTIVE memories or PENDING candidates (every
+  audited Personal Assistant database held none). Personal Assistant removes the candidate REST endpoints
+  (`/memory/candidates*`) and `/memory/{id}/versions/{version}/invalidate`, adds `PATCH` and `DELETE
+  /memory/{memoryId}` (If-Match revision) and `POST /memory/clear`, and its Memory dialog drops the pending-candidate
+  column in favour of edit, delete and clear on the active memories.
+
 - Memory drops governance entry points that no product called. Removed public types: `MemoryConflict`,
   `MemoryConflictResolution`, `MemoryTombstone` and `MemoryAuditSink` (`MemoryAuditStore` now declares `record`
   itself). Removed methods: `MemoryService.resolveConflict`, `evaluateExpiry`, `requestPurge` and `executePurge`;

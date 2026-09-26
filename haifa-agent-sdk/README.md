@@ -254,9 +254,10 @@ Core 或 Provider 异常。同步请求失败属于 `RuntimeApiErrorCode`，异�
 上下文过长、已产生部分输出和取消仍由 Runtime 硬拒绝重试，Provider/Model Binding 也不会隐式切换。
 Run Event Feed 使用 `ModelAttemptLifecycle` 暴露逻辑请求、Attempt、等待和耗尽的脱敏稳定视图。
 
-- Memory 治理（人工审查、候选与查询边界）由 `MemoryPlatformContribution` 拥有，Artifact 配额/Media
+- Memory 的内容长度与分页上限由 `MemoryPlatformContribution` 的 `ProductMemoryPolicy` 拥有，Artifact 配额/Media
   Type/本地容量门禁由 `ArtifactPlatformContribution` 拥有；Execution 约束由 `policy` 规则与 `approval`
-  验证表达。Profile 不再承载这些策略，本阶段仍不允许关闭 Memory Candidate 人工审查。
+  验证表达。Profile 不再承载这些策略。`MemoryPlatformContribution.withRecallWhen(predicate)` /
+  `withoutRecall()` 按 Run 或 Agent（`MemoryContextRequest.runId/agentId`）关闭召回，CRUD 不受影响。
 - Model、Tool Platform、Skill、Context、Memory、Artifact、Policy、Approval 和 Credential 均通过显式
   typed 组件注册。MCP Tool 由 Integration 直接写入统一 Tool Catalog，不再是独立 SDK
   Capability，也不存在第二条 MCP 执行通道。
@@ -268,8 +269,12 @@ Run Event Feed 使用 `ModelAttemptLifecycle` 暴露逻辑请求、Attempt、等
   第二条 Tool 执行通道。
 - `HaifaAgentException` 及 `ConversationException` 对外只暴露安全的 `code`、`operation` 和
   `correlation`。Conversation Adapter、SQLite/Runtime 底层异常和输入正文不会进入公共错误消息。
-- `HaifaAgent.memories()` 暴露受 Product Profile、可信 `SdkCaller` 与权限约束的产品级
-  propose/revise/approve/reject/invalidate/list API；调用命令不能注入 Tenant、Principal 或 Reviewer。
+- `HaifaAgent.memories()` 暴露直接 CRUD：`put`（同 scope/kind/subject 替换，重复内容不增加 revision）、
+  `update(id, expectedRevision, content)`、`delete(id, expectedRevision)`、`find`、`list`（可选有界大小写不敏感文本匹配）
+  和按 scope `clear`。`MemoryScopeSpec` 只选择 `USER`/`AGENT`/`SESSION` 桶，不携带 Tenant 或 Owner，二者恒取自可信
+  `SdkCaller`；`AGENT` 桶以 Agent Definition id 为目标，Runtime 召回时使用 Run 的 Agent Definition id。凭据、支付和精确
+  证件号内容以 `MEMORY_CONTENT_SENSITIVE` 拒绝写入。异步捕获应在 `PutMemoryCommand.observedAt` 传入来源观察时间，
+  使清空或删除之前观察到的迟到写入以 `MEMORY_WRITE_STALE` 被拒绝。
 - `HaifaAgent.memory()` 与 `HaifaAgent.artifacts()` 只在显式装配了对应 typed 组件
   时返回应用服务；SQLite Product Components 已提供 Memory 与 Artifact 的单机持久化实现基线。
 

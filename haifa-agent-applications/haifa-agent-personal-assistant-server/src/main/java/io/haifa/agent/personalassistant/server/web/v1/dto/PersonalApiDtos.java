@@ -478,28 +478,18 @@ public final class PersonalApiDtos {
             long revision,
             long runVersion) {}
 
-    public record MemoryCandidate(
-            String id,
-            String kind,
-            String subjectKey,
-            String content,
-            String status,
-            Instant updatedAt,
-            long revision) {}
-
     public record Memory(
             String id,
-            long version,
+            long revision,
             String kind,
             String subjectKey,
             String content,
-            String status,
             Instant createdAt,
             Instant updatedAt) {}
 
-    public record RejectMemory(String reason) {}
+    public record UpdateMemory(String content) {}
 
-    public record InvalidateMemory(String reason) {}
+    public record ClearedMemories(int deleted) {}
 
     public record StreamEvent(
             String eventId,

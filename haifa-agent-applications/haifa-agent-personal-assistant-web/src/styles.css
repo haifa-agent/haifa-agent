@@ -1782,9 +1782,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .text-prompt-dialog input { width: 100%; padding: 10px; border: 1px solid #d9dfea; border-radius: 9px; }
 .prompt-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 .dialog-intro { color: #687389; font-size: 13px; }
-.memory-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
-.memory-columns h3 { font-size: 13px; }
-.memory-columns h3 span { padding: 2px 6px; color: #5064a9; border-radius: 8px; background: #e7edff; }
+.memory-list-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.memory-list h3 { font-size: 13px; }
+.memory-list h3 span { padding: 2px 6px; color: #5064a9; border-radius: 8px; background: #e7edff; }
 .memory-card { margin-bottom: 8px; }
 .memory-card > small { color: #8a93a5; }
 .memory-card > div, .memory-status { display: flex; align-items: center; justify-content: space-between; gap: 7px; margin-top: 8px; }
@@ -2402,7 +2402,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .image-add-menu { width: min(300px, calc(100vw - 32px)); }
   .memory-button { font-size: 0; }
   .memory-button b { font-size: 10px; }
-  .memory-columns { grid-template-columns: 1fr; }
   .memory-dialog { max-height: calc(100dvh - 24px); padding: 15px; }
   body:has(.admin-app) { overflow: auto; }
   .admin-app { display: block; min-width: 320px; }

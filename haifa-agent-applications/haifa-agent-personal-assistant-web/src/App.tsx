@@ -56,7 +56,6 @@ import type {
   Interaction,
   ImageInput,
   Memory,
-  MemoryCandidate,
   MissionSnapshot,
   Model,
   ModelConnection,
@@ -1155,23 +1154,22 @@ function InteractionCard({
 }
 
 function MemoryDialog({
-  candidates,
   memories,
   pending,
   onClose,
-  onApprove,
-  onReject,
-  onInvalidate,
+  onEdit,
+  onDelete,
+  onClear,
 }: {
-  candidates: MemoryCandidate[];
   memories: Memory[];
   pending: boolean;
   onClose(): void;
-  onApprove(value: MemoryCandidate): void;
-  onReject(value: MemoryCandidate): void;
-  onInvalidate(value: Memory): void;
+  onEdit(value: Memory): void;
+  onDelete(value: Memory): void;
+  onClear(): void;
 }) {
   const closeRef = useRef<HTMLButtonElement>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
   useEffect(() => {
     closeRef.current?.focus();
     const escape = (event: KeyboardEvent) => event.key === "Escape" && onClose();
@@ -1185,35 +1183,30 @@ function MemoryDialog({
           <div><span className="eyebrow">MEMORY</span><h2 id="memory-title">记忆管理</h2></div>
           <button ref={closeRef} className="icon" aria-label="关闭记忆管理" onClick={onClose}><X size={19} /></button>
         </div>
-        <p className="dialog-intro">候选记忆必须由你明确确认。停用记忆不会删除历史记录。</p>
-        <div className="memory-columns">
-          <section>
-            <h3>待确认候选 <span>{candidates.length}</span></h3>
-            {candidates.map((candidate) => (
-              <article className="memory-card" key={candidate.id}>
-                <small>{candidate.kind} · {candidate.subjectKey}</small><p>{candidate.content}</p><time>{formatTime(candidate.updatedAt)}</time>
-                <div>
-                  <Button className="button primary-button" busy={pending} onClick={() => onApprove(candidate)}>确认记住</Button>
-                  <Button className="button" busy={pending} onClick={() => onReject(candidate)}>拒绝</Button>
-                </div>
-              </article>
+        <p className="dialog-intro">这里是助手已记住的内容。编辑会立即生效，删除后不会再被召回。</p>
+        <section className="memory-list">
+          <div className="memory-list-heading">
+            <h3>已生效记忆 <span>{memories.length}</span></h3>
+            {memories.length > 0 && (confirmClear ? (
+              <div className="memory-status">
+                <Button className="button" busy={pending} onClick={() => { setConfirmClear(false); onClear(); }}>确认清空</Button>
+                <button type="button" className="text-button" onClick={() => setConfirmClear(false)}>取消</button>
+              </div>
+            ) : (
+              <button type="button" className="text-button" disabled={pending} onClick={() => setConfirmClear(true)}>全部清空</button>
             ))}
-            {!candidates.length && <p className="muted">没有等待确认的候选。</p>}
-          </section>
-          <section>
-            <h3>已确认记忆 <span>{memories.length}</span></h3>
-            {memories.map((memory) => (
-              <article className="memory-card" key={`${memory.id}-${memory.version}`}>
-                <small>{memory.kind} · {memory.subjectKey}</small><p>{memory.content}</p>
-                <div className="memory-status">
-                  <span>{statusLabel(memory.status)}</span>
-                  {memory.status === "ACTIVE" && <Button className="text-button" busy={pending} onClick={() => onInvalidate(memory)}>停用</Button>}
-                </div>
-              </article>
-            ))}
-            {!memories.length && <p className="muted">还没有已确认记忆。</p>}
-          </section>
-        </div>
+          </div>
+          {memories.map((memory) => (
+            <article className="memory-card" key={`${memory.id}-${memory.revision}`}>
+              <small>{memory.kind} · {memory.subjectKey}</small><p>{memory.content}</p><time>{formatTime(memory.updatedAt)}</time>
+              <div className="memory-status">
+                <Button className="text-button" busy={pending} onClick={() => onEdit(memory)}>编辑</Button>
+                <Button className="text-button" busy={pending} onClick={() => onDelete(memory)}>删除</Button>
+              </div>
+            </article>
+          ))}
+          {!memories.length && <p className="muted">还没有记忆。</p>}
+        </section>
       </section>
     </div>
   );
@@ -1223,12 +1216,14 @@ function TextPromptDialog({
   title,
   label,
   initialValue = "",
+  maxLength = 256,
   onClose,
   onSubmit,
 }: {
   title: string;
   label: string;
   initialValue?: string;
+  maxLength?: number;
   onClose(): void;
   onSubmit(value: string): void;
 }) {
@@ -1257,7 +1252,7 @@ function TextPromptDialog({
           <h2 id="text-prompt-title">{title}</h2>
           <button type="button" className="icon" aria-label={`关闭${title}`} onClick={onClose}><X size={18} /></button>
         </div>
-        <label>{label}<input ref={inputRef} value={value} onChange={(event) => setValue(event.target.value)} maxLength={256} /></label>
+        <label>{label}<input ref={inputRef} value={value} onChange={(event) => setValue(event.target.value)} maxLength={maxLength} /></label>
         <div className="prompt-actions">
           <button type="button" className="button" onClick={onClose}>取消</button>
           <button type="submit" className="button primary-button" disabled={!value.trim()}>确认</button>
@@ -1281,9 +1276,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     useState<RecommendedQuestionState | null>(null);
   const [renameTarget, setRenameTarget] = useState<Conversation | null>(null);
   const [activityFocusRequest, setActivityFocusRequest] = useState(0);
-  const [reasonTarget, setReasonTarget] = useState<
-    { kind: "reject"; candidate: MemoryCandidate } | { kind: "invalidate"; memory: Memory } | null
-  >(null);
+  const [memoryEditTarget, setMemoryEditTarget] = useState<Memory | null>(null);
 
   const {
     composerMode,
@@ -1421,8 +1414,8 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   }, [closeSlashMenu, slashMenu]);
 
   const loadMemories = useCallback(async (signal?: AbortSignal) => {
-    const [candidates, memories] = await Promise.all([client.memoryCandidates(signal), client.memories(signal)]);
-    dispatch({ type: "memoryLoaded", candidates, memories });
+    const memories = await client.memories(signal);
+    dispatch({ type: "memoryLoaded", memories });
   }, [client]);
 
   const loadConversations = useCallback(async (signal?: AbortSignal) => {
@@ -1532,11 +1525,10 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     void Promise.all([
       client.bootstrap(controller.signal),
       client.conversations("", controller.signal),
-      client.memoryCandidates(controller.signal),
       client.memories(controller.signal),
-    ]).then(([bootstrap, conversations, memoryCandidates, memories]) => {
+    ]).then(([bootstrap, conversations, memories]) => {
       setNewModelId(bootstrap.defaultModelId);
-      dispatch({ type: "bootstrapLoaded", bootstrap, conversations, memoryCandidates, memories });
+      dispatch({ type: "bootstrapLoaded", bootstrap, conversations, memories });
     }).catch((error) => {
       const message = safeError(error);
       if (message) dispatch({ type: "error", message });
@@ -2423,7 +2415,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
             dispatch({ type: "toggleMemory", open: true });
             void loadMemories().catch((error) => dispatch({ type: "error", message: safeError(error) }));
           }}>
-            <Brain size={16} /> 记忆{state.memoryCandidates.length > 0 && <b>{state.memoryCandidates.length}</b>}
+            <Brain size={16} /> 记忆
           </button>
           {state.bootstrap?.capabilities.includes("mission") && (
             <button className="button mission-button" onClick={(event) => {
@@ -3084,13 +3076,12 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
 
       {state.memoryOpen && (
         <MemoryDialog
-          candidates={state.memoryCandidates}
           memories={state.memories}
           pending={Boolean(state.pending)}
           onClose={closeMemory}
-          onApprove={(candidate) => memoryCommand("确认记忆", (key) => client.approveMemory(candidate, { idempotencyKey: key }))}
-          onReject={(candidate) => setReasonTarget({ kind: "reject", candidate })}
-          onInvalidate={(memory) => setReasonTarget({ kind: "invalidate", memory })}
+          onEdit={(memory) => setMemoryEditTarget(memory)}
+          onDelete={(memory) => memoryCommand("删除记忆", (key) => client.deleteMemory(memory, { idempotencyKey: key }))}
+          onClear={() => memoryCommand("清空记忆", (key) => client.clearMemories({ idempotencyKey: key }))}
         />
       )}
       {missionOpen && (
@@ -3121,21 +3112,17 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
           }}
         />
       )}
-      {reasonTarget && (
+      {memoryEditTarget && (
         <TextPromptDialog
-          title={reasonTarget.kind === "reject" ? "拒绝候选记忆" : "停用记忆"}
-          label="原因"
-          initialValue={reasonTarget.kind === "reject" ? "不需要保存" : "不再适用"}
-          onClose={() => setReasonTarget(null)}
-          onSubmit={(reason) => {
-            if (reasonTarget.kind === "reject") {
-              const candidate = reasonTarget.candidate;
-              memoryCommand("拒绝记忆", (key) => client.rejectMemory(candidate, reason, { idempotencyKey: key }));
-            } else {
-              const memory = reasonTarget.memory;
-              memoryCommand("停用记忆", (key) => client.invalidateMemory(memory, reason, { idempotencyKey: key }));
-            }
-            setReasonTarget(null);
+          title="编辑记忆"
+          label="记忆内容"
+          initialValue={memoryEditTarget.content}
+          maxLength={4096}
+          onClose={() => setMemoryEditTarget(null)}
+          onSubmit={(content) => {
+            const memory = memoryEditTarget;
+            memoryCommand("编辑记忆", (key) => client.updateMemory(memory, content, { idempotencyKey: key }));
+            setMemoryEditTarget(null);
           }}
         />
       )}

@@ -361,33 +361,22 @@ export interface InteractionReceipt {
   runVersion: number;
 }
 
-export interface MemoryCandidate {
-  id: string;
-  kind: string;
-  subjectKey: string;
-  content: string;
-  status: string;
-  updatedAt: string;
-  revision: number;
-}
-
 export interface Memory {
   id: string;
-  version: number;
+  revision: number;
   kind: string;
   subjectKey: string;
   content: string;
-  status: string;
   createdAt: string;
   updatedAt: string;
 }
 
-export interface RejectMemory {
-  reason: string;
+export interface UpdateMemory {
+  content: string;
 }
 
-export interface InvalidateMemory {
-  reason: string;
+export interface ClearedMemories {
+  deleted: number;
 }
 
 export interface CreateMission {
@@ -547,4 +536,4 @@ export interface ApiError {
   actions: Array<string>;
 }
 
-export type OperationId = "bootstrap" | "listModels" | "listModelConnections" | "saveModelApiKey" | "saveModelNetworkProxy" | "resetModelNetworkProxy" | "startModelBrowserAttempt" | "getModelBrowserAttempt" | "cancelModelBrowserAttempt" | "deleteModelConnection" | "uploadImage" | "getUploadedImageContent" | "uploadAudio" | "listConversations" | "createConversation" | "getConversation" | "updateConversation" | "listTurns" | "selectConversationModel" | "submitMessage" | "recommendQuestions" | "getRun" | "cancelRun" | "listSafeActivities" | "getPendingInteraction" | "respondToInteraction" | "streamRun" | "listMemoryCandidates" | "approveMemoryCandidate" | "rejectMemoryCandidate" | "listMemories" | "invalidateMemory" | "listMissions" | "createMission" | "getMission" | "getMissionSnapshot" | "downloadMissionArtifact" | "replaceMissionPlan" | "confirmMission" | "cancelMission" | "retryMissionTask";
+export type OperationId = "bootstrap" | "listModels" | "listModelConnections" | "saveModelApiKey" | "saveModelNetworkProxy" | "resetModelNetworkProxy" | "startModelBrowserAttempt" | "getModelBrowserAttempt" | "cancelModelBrowserAttempt" | "deleteModelConnection" | "uploadImage" | "getUploadedImageContent" | "uploadAudio" | "listConversations" | "createConversation" | "getConversation" | "updateConversation" | "listTurns" | "selectConversationModel" | "submitMessage" | "recommendQuestions" | "getRun" | "cancelRun" | "listSafeActivities" | "getPendingInteraction" | "respondToInteraction" | "streamRun" | "listMemories" | "updateMemory" | "deleteMemory" | "clearMemories" | "listMissions" | "createMission" | "getMission" | "getMissionSnapshot" | "downloadMissionArtifact" | "replaceMissionPlan" | "confirmMission" | "cancelMission" | "retryMissionTask";
