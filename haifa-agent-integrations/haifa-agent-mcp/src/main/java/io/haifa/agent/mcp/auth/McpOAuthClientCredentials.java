@@ -3,6 +3,7 @@ package io.haifa.agent.mcp.auth;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -18,6 +19,9 @@ import java.util.function.Supplier;
 /**
  * Lightweight, thread-safe OAuth 2.0 client credentials token supplier.
  *
+ * <p>Supports the standard {@code OAuth 2.0} {@code client_credentials} grant
+ * with {@code client_secret_post} client authentication and {@code Bearer} access tokens.
+ *
  * <p>Acquires access tokens via standard HTTP POST to the token endpoint and automatically
  * refreshes them prior to expiration with single-flight concurrency protection.
  * Token values and client secrets are kept out of exception diagnostics.
@@ -26,6 +30,7 @@ public final class McpOAuthClientCredentials implements Supplier<String> {
     private static final Duration DEFAULT_REFRESH_SKEW = Duration.ofSeconds(30);
     private static final Duration DEFAULT_REQUEST_TIMEOUT = Duration.ofSeconds(15);
     private static final long DEFAULT_EXPIRES_IN_SECONDS = 3600L;
+    private static final int MAX_RESPONSE_BYTES = 64 * 1024;
 
     private final URI tokenEndpoint;
     private final String clientId;
@@ -40,6 +45,7 @@ public final class McpOAuthClientCredentials implements Supplier<String> {
 
     private volatile String currentAccessToken;
     private volatile long expiresAtEpochMillis;
+    private volatile long effectiveSkewMillis;
 
     public McpOAuthClientCredentials(URI tokenEndpoint, String clientId, String clientSecret) {
         this(
@@ -67,9 +73,14 @@ public final class McpOAuthClientCredentials implements Supplier<String> {
         this.clientSecret = requireNonBlank(clientSecret, "clientSecret");
         this.scopes = scopes == null ? List.of() : List.copyOf(scopes);
         this.refreshSkew = refreshSkew == null ? DEFAULT_REFRESH_SKEW : requirePositive(refreshSkew, "refreshSkew");
+        this.effectiveSkewMillis = this.refreshSkew.toMillis();
         this.requestTimeout =
                 requestTimeout == null ? DEFAULT_REQUEST_TIMEOUT : requirePositive(requestTimeout, "requestTimeout");
-        this.httpClient = httpClient != null ? httpClient : HttpClient.newHttpClient();
+        this.httpClient = httpClient != null
+                ? httpClient
+                : HttpClient.newBuilder()
+                        .followRedirects(HttpClient.Redirect.NEVER)
+                        .build();
         this.clock = clock != null ? clock : Clock.systemUTC();
         this.json = new ObjectMapper();
     }
@@ -78,13 +89,13 @@ public final class McpOAuthClientCredentials implements Supplier<String> {
     public String get() {
         long now = clock.millis();
         String cached = currentAccessToken;
-        if (cached != null && now < (expiresAtEpochMillis - refreshSkew.toMillis())) {
+        if (cached != null && now < (expiresAtEpochMillis - effectiveSkewMillis)) {
             return cached;
         }
         synchronized (lock) {
             now = clock.millis();
             cached = currentAccessToken;
-            if (cached != null && now < (expiresAtEpochMillis - refreshSkew.toMillis())) {
+            if (cached != null && now < (expiresAtEpochMillis - effectiveSkewMillis)) {
                 return cached;
             }
             return fetchToken(now);
@@ -107,9 +118,9 @@ public final class McpOAuthClientCredentials implements Supplier<String> {
                 .POST(HttpRequest.BodyPublishers.ofString(form.toString(), StandardCharsets.UTF_8))
                 .build();
 
-        HttpResponse<String> response;
+        HttpResponse<InputStream> response;
         try {
-            response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("OAuth token request interrupted", exception);
@@ -121,8 +132,25 @@ public final class McpOAuthClientCredentials implements Supplier<String> {
             throw new IllegalStateException("OAuth token endpoint returned status code: " + response.statusCode());
         }
 
+        byte[] bodyBytes;
+        try (InputStream in = response.body()) {
+            bodyBytes = in.readNBytes(MAX_RESPONSE_BYTES + 1);
+        } catch (IOException exception) {
+            throw new IllegalStateException("Failed to read OAuth token response body", exception);
+        }
+
+        if (bodyBytes.length > MAX_RESPONSE_BYTES) {
+            throw new IllegalStateException("OAuth token response exceeded maximum allowed size of 64KB");
+        }
+
         try {
-            JsonNode root = json.readTree(response.body());
+            JsonNode root = json.readTree(bodyBytes);
+            JsonNode typeNode = root.path("token_type");
+            if (typeNode.isMissingNode()
+                    || !"bearer".equalsIgnoreCase(typeNode.asText().trim())) {
+                throw new IllegalStateException(
+                        "OAuth response missing or unsupported token_type; only Bearer is supported");
+            }
             JsonNode tokenNode = root.path("access_token");
             if (tokenNode.isMissingNode() || tokenNode.asText().isBlank()) {
                 throw new IllegalStateException("OAuth response missing access_token");
@@ -135,8 +163,13 @@ public final class McpOAuthClientCredentials implements Supplier<String> {
                 expiresIn = DEFAULT_EXPIRES_IN_SECONDS;
             }
 
+            long lifetimeMillis = expiresIn * 1000L;
+            long maxAllowedSkewMillis = Math.max(1L, lifetimeMillis / 2);
+            long resolvedSkewMillis = Math.min(refreshSkew.toMillis(), maxAllowedSkewMillis);
+
             this.currentAccessToken = token;
-            this.expiresAtEpochMillis = now + (expiresIn * 1000L);
+            this.expiresAtEpochMillis = now + lifetimeMillis;
+            this.effectiveSkewMillis = resolvedSkewMillis;
             return token;
         } catch (IOException exception) {
             throw new IllegalStateException("Failed to parse OAuth token response JSON", exception);

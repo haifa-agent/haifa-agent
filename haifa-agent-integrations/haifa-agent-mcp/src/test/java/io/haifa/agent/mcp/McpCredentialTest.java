@@ -82,6 +82,24 @@ class McpCredentialTest {
     }
 
     @Test
+    void rejectsHttpCredentialContainingUntrimmedWhitespaceWithoutLeakingSecret() {
+        CredentialRequirement requirement = requirement();
+        McpCredentialInjection injection = new McpCredentialInjection(requirement, "X-Api-Key", "");
+        var context = new McpHttpCredentialContext(List.of(injection), "https://utility.example:443");
+        Map<String, String> untrimmedCredentials = Map.of("utility-token", " secret-token ");
+
+        assertThatThrownBy(() -> context.withCredentials(untrimmedCredentials, () -> {
+                    var builder = HttpRequest.newBuilder(URI.create("https://utility.example/mcp"));
+                    context.customize(
+                            builder, "POST", URI.create("https://utility.example/mcp"), "{}", context.snapshot());
+                    return builder.build();
+                }))
+                .isInstanceOf(SecurityException.class)
+                .hasMessageContaining("MCP HTTP credential header contains illegal characters: X-Api-Key")
+                .hasMessageNotContaining("secret-token");
+    }
+
+    @Test
     void authenticatedDiscoveryResolvesConfiguredCredentials() {
         var base = McpTestFixtures.httpServer(URI.create("http://127.0.0.1:8091/mcp"), Set.of("time_now"));
         var injection = new McpCredentialInjection(requirement(), "Authorization", "Bearer ");

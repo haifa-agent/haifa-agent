@@ -30,6 +30,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -56,17 +57,20 @@ final class NativeMcpToolPlatform implements AutoCloseable {
     private final CredentialBroker credentials;
     private final List<ToolRegistration> registrations;
     private final List<AgentDiagnostic> diagnostics;
+    private final Map<String, AutoCloseable> redactionScopes;
     private final AtomicBoolean closed = new AtomicBoolean();
 
     private NativeMcpToolPlatform(
             McpConnectionManager connections,
             CredentialBroker credentials,
             List<ToolRegistration> registrations,
-            List<AgentDiagnostic> diagnostics) {
+            List<AgentDiagnostic> diagnostics,
+            Map<String, AutoCloseable> redactionScopes) {
         this.connections = connections;
         this.credentials = credentials;
         this.registrations = List.copyOf(registrations);
         this.diagnostics = List.copyOf(diagnostics);
+        this.redactionScopes = Objects.requireNonNull(redactionScopes, "redactionScopes");
     }
 
     /**
@@ -121,6 +125,8 @@ final class NativeMcpToolPlatform implements AutoCloseable {
             }
         }
 
+        Map<String, AutoCloseable> redactionScopes = new ConcurrentHashMap<>();
+        Map<String, String> activeSecretValues = new ConcurrentHashMap<>();
         DefaultSecretRedactor redactor = new DefaultSecretRedactor();
         CredentialBroker broker = new DefaultCredentialBroker(
                 id -> {
@@ -130,7 +136,19 @@ final class NativeMcpToolPlatform implements AutoCloseable {
                     }
                     String secret = supplier.get();
                     if (secret != null && !secret.isBlank()) {
-                        redactor.registerSecret(secret);
+                        String current = activeSecretValues.get(id);
+                        if (!secret.equals(current)) {
+                            redactionScopes.compute(id, (k, oldScope) -> {
+                                if (oldScope != null) {
+                                    try {
+                                        oldScope.close();
+                                    } catch (Exception ignored) {
+                                    }
+                                }
+                                return redactor.registerScoped(secret);
+                            });
+                            activeSecretValues.put(id, secret);
+                        }
                         return Optional.of(secret);
                     }
                     return Optional.empty();
@@ -138,7 +156,7 @@ final class NativeMcpToolPlatform implements AutoCloseable {
                 redactor);
         var connections = new McpConnectionManager(definitions, clientFactory);
         if (definitions.isEmpty()) {
-            return new NativeMcpToolPlatform(connections, broker, List.of(), diagnostics);
+            return new NativeMcpToolPlatform(connections, broker, List.of(), diagnostics, redactionScopes);
         }
 
         var bindings = new InMemoryMcpToolBindingStore();
@@ -173,7 +191,7 @@ final class NativeMcpToolPlatform implements AutoCloseable {
             connections.close();
             throw exception;
         }
-        return new NativeMcpToolPlatform(connections, broker, registrations, diagnostics);
+        return new NativeMcpToolPlatform(connections, broker, registrations, diagnostics, redactionScopes);
     }
 
     /** Tool registrations imported from every usable MCP server, in declaration order. */
@@ -195,6 +213,13 @@ final class NativeMcpToolPlatform implements AutoCloseable {
     @Override
     public void close() {
         if (!closed.compareAndSet(false, true)) return;
+        for (AutoCloseable scope : redactionScopes.values()) {
+            try {
+                scope.close();
+            } catch (Exception ignored) {
+            }
+        }
+        redactionScopes.clear();
         connections.close();
     }
 

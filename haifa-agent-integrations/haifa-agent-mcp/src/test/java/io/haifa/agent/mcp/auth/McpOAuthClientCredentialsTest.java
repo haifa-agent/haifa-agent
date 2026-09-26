@@ -119,4 +119,83 @@ final class McpOAuthClientCredentialsTest {
                 .hasMessageContaining("401")
                 .hasMessageNotContaining("very-secret-password");
     }
+
+    @Test
+    void rejectsResponseExceedingMaxSize() {
+        responseBody =
+                "{\"access_token\":\"" + "a".repeat(70 * 1024) + "\",\"expires_in\":3600,\"token_type\":\"Bearer\"}";
+
+        var oauth = new McpOAuthClientCredentials(tokenEndpoint, "my-client", "my-secret");
+        assertThatThrownBy(oauth::get).isInstanceOf(IllegalStateException.class).hasMessageContaining("64KB");
+    }
+
+    @Test
+    void supportsShortTtlWithAdaptiveSkew() {
+        AtomicLong currentTime = new AtomicLong(1_000_000L);
+        Clock mutableClock = new Clock() {
+            @Override
+            public ZoneOffset getZone() {
+                return ZoneOffset.UTC;
+            }
+
+            @Override
+            public Clock withZone(java.time.ZoneId zone) {
+                return this;
+            }
+
+            @Override
+            public Instant instant() {
+                return Instant.ofEpochMilli(currentTime.get());
+            }
+        };
+
+        // expires_in = 10s (10,000ms), configured skew = 30s.
+        // Adaptive skew capped at lifetime / 2 = 5,000ms.
+        responseBody = "{\"access_token\":\"short-1\",\"expires_in\":10,\"token_type\":\"Bearer\"}";
+        var oauth = new McpOAuthClientCredentials(
+                tokenEndpoint,
+                "my-client",
+                "my-secret",
+                null,
+                Duration.ofSeconds(30),
+                Duration.ofSeconds(5),
+                null,
+                mutableClock);
+
+        assertThat(oauth.get()).isEqualTo("short-1");
+        assertThat(requestCount.get()).isEqualTo(1);
+
+        // Advance 4 seconds (within 5s validity window) -> should hit cache!
+        currentTime.addAndGet(4_000L);
+        assertThat(oauth.get()).isEqualTo("short-1");
+        assertThat(requestCount.get()).isEqualTo(1);
+
+        // Advance another 2 seconds (total 6s elapsed, now in 5s skew before expiration) -> should refresh!
+        responseBody = "{\"access_token\":\"short-2\",\"expires_in\":10,\"token_type\":\"Bearer\"}";
+        currentTime.addAndGet(2_000L);
+        assertThat(oauth.get()).isEqualTo("short-2");
+        assertThat(requestCount.get()).isEqualTo(2);
+    }
+
+    @Test
+    void rejectsMissingOrUnsupportedTokenType() {
+        responseBody = "{\"access_token\":\"token-123\",\"expires_in\":3600,\"token_type\":\"mac\"}";
+        var oauthMac = new McpOAuthClientCredentials(tokenEndpoint, "my-client", "my-secret");
+        assertThatThrownBy(oauthMac::get)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("token_type");
+
+        responseBody = "{\"access_token\":\"token-123\",\"expires_in\":3600}";
+        var oauthMissing = new McpOAuthClientCredentials(tokenEndpoint, "my-client", "my-secret");
+        assertThatThrownBy(oauthMissing::get)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("token_type");
+    }
+
+    @Test
+    void doesNotFollowRedirects() {
+        responseStatus = 302;
+        var oauth = new McpOAuthClientCredentials(tokenEndpoint, "my-client", "my-secret");
+        assertThatThrownBy(oauth::get).isInstanceOf(IllegalStateException.class).hasMessageContaining("302");
+    }
 }

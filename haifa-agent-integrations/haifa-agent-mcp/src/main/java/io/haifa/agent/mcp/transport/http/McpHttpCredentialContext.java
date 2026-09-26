@@ -61,7 +61,9 @@ public final class McpHttpCredentialContext implements McpRequestContext {
                         + injection.requirement().credentialId());
             }
             String headerValue = injection.valuePrefix() + secret;
-            if (headerValue.indexOf('\r') >= 0 || headerValue.indexOf('\n') >= 0) {
+            if (headerValue.indexOf('\r') >= 0
+                    || headerValue.indexOf('\n') >= 0
+                    || !headerValue.equals(headerValue.trim())) {
                 throw new SecurityException(
                         "MCP HTTP credential header contains illegal characters: " + injection.targetName());
             }
