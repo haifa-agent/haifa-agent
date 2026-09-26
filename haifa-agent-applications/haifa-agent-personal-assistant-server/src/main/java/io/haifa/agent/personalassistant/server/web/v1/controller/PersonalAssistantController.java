@@ -19,6 +19,7 @@ import java.util.Set;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -349,44 +350,37 @@ public final class PersonalAssistantController {
                 key(idempotencyKey)));
     }
 
-    @GetMapping("/memory/candidates")
-    List<PersonalApiDtos.MemoryCandidate> candidates(@RequestParam(defaultValue = "50") int limit) {
-        return application.memoryCandidates(bounded(limit)).stream()
-                .map(mapper::candidate)
-                .toList();
-    }
-
-    @PostMapping("/memory/candidates/{candidateId}/approve")
-    PersonalApiDtos.Memory approve(
-            @PathVariable String candidateId,
-            @RequestHeader("If-Match") String ifMatch,
-            @RequestHeader("Idempotency-Key") String idempotencyKey) {
-        return mapper.memory(application.approveMemoryCandidate(candidateId, revision(ifMatch), key(idempotencyKey)));
-    }
-
-    @PostMapping("/memory/candidates/{candidateId}/reject")
-    PersonalApiDtos.MemoryCandidate reject(
-            @PathVariable String candidateId,
-            @RequestHeader("If-Match") String ifMatch,
-            @RequestHeader("Idempotency-Key") String idempotencyKey,
-            @RequestBody PersonalApiDtos.RejectMemory request) {
-        return mapper.candidate(application.rejectMemoryCandidate(
-                candidateId, revision(ifMatch), key(idempotencyKey), text(request.reason(), "reason")));
-    }
-
     @GetMapping("/memory")
     List<PersonalApiDtos.Memory> memories(@RequestParam(defaultValue = "100") int limit) {
         return application.memories(bounded(limit)).stream().map(mapper::memory).toList();
     }
 
-    @PostMapping("/memory/{memoryId}/versions/{version}/invalidate")
-    PersonalApiDtos.Memory invalidate(
+    @PatchMapping("/memory/{memoryId}")
+    ResponseEntity<PersonalApiDtos.Memory> updateMemory(
             @PathVariable String memoryId,
-            @PathVariable long version,
+            @RequestHeader("If-Match") String ifMatch,
             @RequestHeader("Idempotency-Key") String idempotencyKey,
-            @RequestBody PersonalApiDtos.InvalidateMemory request) {
-        return mapper.memory(
-                application.invalidateMemory(memoryId, version, key(idempotencyKey), text(request.reason(), "reason")));
+            @RequestBody PersonalApiDtos.UpdateMemory request) {
+        key(idempotencyKey);
+        var body = mapper.memory(
+                application.updateMemory(memoryId, revision(ifMatch), text(request.content(), "content")));
+        return ResponseEntity.ok().eTag(Long.toString(body.revision())).body(body);
+    }
+
+    @DeleteMapping("/memory/{memoryId}")
+    ResponseEntity<Void> deleteMemory(
+            @PathVariable String memoryId,
+            @RequestHeader("If-Match") String ifMatch,
+            @RequestHeader("Idempotency-Key") String idempotencyKey) {
+        key(idempotencyKey);
+        application.deleteMemory(memoryId, revision(ifMatch));
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/memory/clear")
+    PersonalApiDtos.ClearedMemories clearMemories(@RequestHeader("Idempotency-Key") String idempotencyKey) {
+        key(idempotencyKey);
+        return new PersonalApiDtos.ClearedMemories(application.clearMemories());
     }
 
     private static int bounded(int value) {

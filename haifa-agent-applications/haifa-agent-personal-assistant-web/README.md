@@ -139,7 +139,7 @@ JAR 的构建或静态资源打包。
 - 助手完整 Markdown 回答和独立代码块的复制按钮，复制成功后显示图标反馈；
 - Clarification/Approval 的显式结构化回复；审批只在主对话区展示，长文本或代码默认预览并支持展开全文；
 - Tool、Skill、MCP 的安全 Activity 投影，不展示原始参数、结果、路径或协议 JSON；
-- Memory Candidate 确认/拒绝、Memory 查看/停用；
+- “记忆管理”：已生效 Memory 的查看、编辑、删除与全部清空（不再有待确认候选）；
 - 最终 Run 的后端权威 Token Usage；
 - 命令/脚本 exact approval 的结构化审批卡：动作标题、目的、可读正文、环境要点、默认折叠的技术细节与
   允许动作；缺少结构化展示时回退到 `safePrompt`；

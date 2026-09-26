@@ -190,7 +190,7 @@ public class PersonalAssistantConfiguration {
                 new io.haifa.agent.policy.core.DefaultPolicyDecisionService());
         TenantRef tenant = new TenantRef(properties.caller().tenant());
         PrincipalRef principal = new PrincipalRef(properties.caller().principal(), "user");
-        SdkCaller caller = new SdkCaller(tenant, principal, Set.of("memory:read", "memory:propose", "memory:review"));
+        SdkCaller caller = new SdkCaller(tenant, principal);
         Optional<Path> localSkillRoot = properties.localSkillRoot().isBlank()
                 ? Optional.empty()
                 : Optional.of(

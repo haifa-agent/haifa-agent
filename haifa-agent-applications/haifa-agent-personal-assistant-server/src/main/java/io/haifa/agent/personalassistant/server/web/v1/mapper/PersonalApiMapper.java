@@ -406,25 +406,13 @@ public final class PersonalApiMapper {
                 value.runVersion());
     }
 
-    public PersonalApiDtos.MemoryCandidate candidate(PersonalAssistantApplication.MemoryCandidateView value) {
-        return new PersonalApiDtos.MemoryCandidate(
-                value.id(),
-                value.kind(),
-                value.subjectKey(),
-                value.content(),
-                value.status(),
-                value.updatedAt(),
-                value.revision());
-    }
-
     public PersonalApiDtos.Memory memory(PersonalAssistantApplication.MemoryView value) {
         return new PersonalApiDtos.Memory(
                 value.id(),
-                value.version(),
+                value.revision(),
                 value.kind(),
                 value.subjectKey(),
                 value.content(),
-                value.status(),
                 value.createdAt(),
                 value.updatedAt());
     }

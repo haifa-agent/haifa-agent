@@ -4,7 +4,6 @@ import type {
   Conversation,
   Interaction,
   Memory,
-  MemoryCandidate,
   Run,
   StreamEvent,
   Turn,
@@ -41,7 +40,6 @@ export interface UiState {
   toolPreviews: Record<string, ToolOutputPreviewState>;
   interaction: Interaction | null;
   interactionError: string | null;
-  memoryCandidates: MemoryCandidate[];
   memories: Memory[];
   streamDraft: string;
   outputPhase: OutputPhase;
@@ -66,7 +64,6 @@ export type AppAction =
       type: "bootstrapLoaded";
       bootstrap: Bootstrap;
       conversations: Conversation[];
-      memoryCandidates: MemoryCandidate[];
       memories: Memory[];
     }
   | { type: "conversationsLoaded"; conversations: Conversation[] }
@@ -77,7 +74,7 @@ export type AppAction =
   | { type: "activitiesLoaded"; activities: Activity[] }
   | { type: "interactionLoaded"; interaction: Interaction | null }
   | { type: "interactionLoadFailed"; runId: string; message: string }
-  | { type: "memoryLoaded"; candidates: MemoryCandidate[]; memories: Memory[] }
+  | { type: "memoryLoaded"; memories: Memory[] }
   | { type: "streamEvent"; event: StreamEvent }
   | { type: "setConnection"; connection: ConnectionState }
   | { type: "setSearch"; value: string }

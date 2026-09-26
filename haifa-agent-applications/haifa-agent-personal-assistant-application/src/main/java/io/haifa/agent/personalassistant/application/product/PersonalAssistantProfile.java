@@ -28,7 +28,7 @@ public final class PersonalAssistantProfile {
     public static final String PRODUCT_VERSION = "1.0.1";
 
     /** Product-owned Memory governance; supplied to the Memory component at assembly time. */
-    public static final ProductMemoryPolicy MEMORY_POLICY = new ProductMemoryPolicy(true, 16_384, 100);
+    public static final ProductMemoryPolicy MEMORY_POLICY = new ProductMemoryPolicy(4_096, 100);
 
     /** Product-owned Artifact governance; supplied to the Artifact component at assembly time. */
     public static final ProductArtifactPolicy ARTIFACT_POLICY = new ProductArtifactPolicy(

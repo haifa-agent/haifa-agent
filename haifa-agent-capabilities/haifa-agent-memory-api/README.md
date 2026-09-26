@@ -1,16 +1,16 @@
 # Haifa Agent Memory API
 
-当前 Phase 2 公共契约提供：
+纯 Java 的直接 Memory 契约：
 
-- `PENDING -> revise(PENDING, revision+1) -> APPROVED/REJECTED` Candidate 生命周期；
-- `ACTIVE/INVALIDATED` 正式 Memory、精确版本引用与 `REPLACED` 双向引用；
-- 带 expected revision 和幂等键的 approve/reject/revise/invalidate；
-- Candidate/Memory 有界游标分页，以及授权优先的 Retriever Port；
-- 只写 Audit/幂等内部端口和可注入事务边界。
+- `MemoryService`：`put` / `update(id, expectedRevision, content)` / `delete(id, expectedRevision)` / `find` /
+  `list(MemoryQuery)` / `clear(scope)`，每次调用都以可信 `MemoryActor`（tenant + principal）约束，读取或写入他人
+  Scope 一律 `MEMORY_UNAVAILABLE`；
+- `MemoryScope`：`USER`（目标即 owner）/ `AGENT`（Agent Definition id）/ `SESSION`，均绑定 tenant 与 owner；
+- `Memory` 只表示有效记忆，删除后不再返回；`revision` 是 CAS 令牌；可选 `MemorySourceRef` 记录来源；
+- `MemoryDraft.observedAt`：异步捕获的来源观察时间，早于或等于 scope 清空水位线或同 subject 删除时间的写入以
+  `MEMORY_WRITE_STALE` 拒绝，防止清空/删除后复活；
+- `MemoryRepository`：`MemoryService` 背后的可信持久化端口，每个方法各自原子；
+- `MemoryRetriever.contextFor(MemoryContextRequest)`：按可信 Run 身份读取 USER/AGENT/SESSION 三个桶的有界片段；
+  `onlyWhen(predicate)` 与 `none()` 用于按 Run 或 Agent 关闭召回。
 
-本模块仍为纯 Java，不提供 Conflict 管理、Expiry、Purge 或 Tombstone 入口；`MemoryRetentionPolicy`
-只随记录保存，不驱动过期执行。Audit 查询和 Artifact 生产持久化不属于当前实现。
-
-Pure Java contracts for governed long-term memory. Candidates, approved immutable memory versions,
-scope, evidence, review, retention, and retrieval are intentionally separate from
-conversation summaries and Context assembly.
+不提供 Candidate 审批、生命周期状态机、Conflict、Retention、Evidence 或 Memory 专用 Audit。

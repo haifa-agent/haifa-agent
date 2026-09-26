@@ -1,13 +1,13 @@
 # Haifa Agent Memory Core
 
-`DefaultMemoryService` 当前只允许人工审批；策略即使报告可自动批准，Candidate 仍保持
-`PENDING`。审批、拒绝、修订、失效和版本替代通过 `MemoryUnitOfWork` 原子提交，并在提交成功后
-失效派生选择缓存。Retriever 只使用授权后的有界 ACTIVE 查询，不遍历全库。
+框架中立实现：
 
-同一 Scope、Kind、Subject 只允许一个 ACTIVE Memory：审批遇到未声明替换的 ACTIVE Memory 时以
-`MEMORY_SUBJECT_CONFLICT` fail closed，替换必须显式携带 `replacesMemoryRef`；不提供冲突管理、Expiry、Purge 或 Tombstone 入口；`MemoryRetentionPolicy` 只随记录保存，不驱动
-过期执行。
+- `DefaultMemoryService`：写入前做 owner 授权与 `SensitiveMemoryFilter` 硬过滤（凭据、支付卡/CVV、精确证件号），
+  ID 与时间由注入端口生成；`put` 以 scope + kind + subject 为身份，同内容重复写入不增加 revision，不同内容替换正文；
+  `update`/`delete` 使用 revision CAS，已提交的重试更新返回当前状态；
+- `DefaultMemoryRetriever`：只读取请求的 USER/AGENT/SESSION 桶，确定性关键词 + 新近度排序，最多 8 条并受 Token
+  预算约束，不使用向量检索；
+- `InMemoryMemoryStore`：测试与本地装配用的线程安全 `MemoryRepository`，语义与 SQLite 实现一致
+  （删除保留无正文的墓碑，清空记录 scope 水位线）。
 
-Framework-neutral memory governance implementation with deterministic classification, review,
-deduplication, fail-closed subject conflicts, authorization-first retrieval, and an
-in-memory repository for tests and local runtime assembly.
+捕获时机与提取策略属于产品层，不在本模块内。

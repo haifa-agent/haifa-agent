@@ -16,7 +16,6 @@ export const initialState: UiState = {
   toolPreviews: {},
   interaction: null,
   interactionError: null,
-  memoryCandidates: [],
   memories: [],
   streamDraft: "",
   outputPhase: "idle",
@@ -142,7 +141,6 @@ export function appReducer(state: UiState, action: AppAction): UiState {
         ...state,
         bootstrap: action.bootstrap,
         conversations: action.conversations,
-        memoryCandidates: action.memoryCandidates,
         memories: action.memories,
         selectedConversationId: selected,
         connection: "connected",
@@ -254,7 +252,6 @@ export function appReducer(state: UiState, action: AppAction): UiState {
     case "memoryLoaded":
       return {
         ...state,
-        memoryCandidates: action.candidates,
         memories: action.memories,
       };
     case "streamEvent": {
