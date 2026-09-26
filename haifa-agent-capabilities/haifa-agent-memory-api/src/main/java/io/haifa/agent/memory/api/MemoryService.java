@@ -1,45 +1,35 @@
 package io.haifa.agent.memory.api;
 
-import java.time.Instant;
-import java.util.List;
+import java.util.Optional;
 
+/**
+ * Direct Memory use cases. Every call is bounded by the trusted {@link MemoryActor}: a caller can only touch
+ * scopes it owns, and foreign or missing memories are reported identically as {@code MEMORY_UNAVAILABLE}.
+ */
 public interface MemoryService {
-    MemoryCandidate propose(MemoryCandidateDraft draft, MemoryActor actor);
+    /** Creates the memory, replaces the content of the live memory with the same subject, or returns it unchanged. */
+    Memory put(MemoryDraft draft, MemoryActor actor);
 
-    MemoryCandidate revise(
-            MemoryCandidateId candidateId,
-            MemoryCandidateDraft draft,
-            long expectedRevision,
-            MemoryActor actor,
-            String idempotencyKey);
+    /**
+     * Compare-and-set content update; {@code MEMORY_REVISION_STALE} when the revision moved on. Retrying with the
+     * same revision and content after the first attempt committed returns the current memory instead of failing.
+     */
+    Memory update(MemoryId id, long expectedRevision, String content, MemoryActor actor);
 
-    Memory approve(MemoryCandidateId candidateId, MemoryActor actor, String idempotencyKey);
+    /**
+     * Compare-and-set delete. Deleted content is erased and never recalled or listed again. Retrying with the same
+     * revision after the first attempt committed succeeds; any other revision of a deleted memory is
+     * {@code MEMORY_UNAVAILABLE}.
+     */
+    void delete(MemoryId id, long expectedRevision, MemoryActor actor);
 
-    Memory approve(MemoryCandidateId candidateId, long expectedRevision, MemoryActor actor, String idempotencyKey);
+    Optional<Memory> find(MemoryId id, MemoryActor actor);
 
-    MemoryCandidate reject(MemoryCandidateId candidateId, MemoryActor actor, String reason);
+    MemoryPage list(MemoryQuery query, MemoryActor actor);
 
-    MemoryCandidate reject(
-            MemoryCandidateId candidateId,
-            long expectedRevision,
-            MemoryActor actor,
-            String reason,
-            String idempotencyKey);
-
-    Memory invalidate(MemoryRef memory, MemoryActor actor, String reason, String idempotencyKey);
-
-    MemoryCandidatePage queryCandidates(MemoryCandidateQuery query, MemoryActor actor);
-
-    MemoryPage queryMemories(MemoryRecordQuery query, MemoryActor actor);
-
-    Memory resolveConflict(
-            String conflictId, MemoryConflictResolution resolution, MemoryActor actor, String idempotencyKey);
-
-    List<MemoryRef> evaluateExpiry(Instant now);
-
-    List<MemoryRef> invalidateSource(MemorySourceRef source, String reason, MemoryActor actor);
-
-    List<MemoryRef> requestPurge(MemoryScope scope, String reason, MemoryActor actor);
-
-    List<MemoryTombstone> executePurge(MemoryScope scope, String reason, MemoryActor actor);
+    /**
+     * Deletes every memory in the scope and records a clear watermark against late writes; returns the count. Clear is
+     * idempotent in state: a retry leaves the scope empty and reports {@code 0} (or whatever was written since).
+     */
+    int clear(MemoryScope scope, MemoryActor actor);
 }

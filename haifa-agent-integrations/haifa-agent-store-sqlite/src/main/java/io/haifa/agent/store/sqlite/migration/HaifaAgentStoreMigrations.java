@@ -24,6 +24,8 @@ public final class HaifaAgentStoreMigrations {
             new RegisteredMigration(11, "separate_run_limits", "V11__separate_run_limits.sql"),
             new RegisteredMigration(12, "runtime_applied_command", "V12__runtime_applied_command.sql"),
             new RegisteredMigration(13, "sdk_conversation_metadata_only", "V13__sdk_conversation_metadata_only.sql"),
+            new RegisteredMigration(14, "run_parent_index", "V14__run_parent_index.sql"),
+            new RegisteredMigration(15, "memory_direct_crud", "V15__memory_direct_crud.sql"),
             new RegisteredMigration(1_000, "project_product_session", "V1000__project_product_session.sql"),
             new RegisteredMigration(1_001, "coding_session_product_loop", "V1001__coding_session_product_loop.sql"),
             new RegisteredMigration(1_002, "coding_session_event_cursor", "V1002__coding_session_event_cursor.sql"),

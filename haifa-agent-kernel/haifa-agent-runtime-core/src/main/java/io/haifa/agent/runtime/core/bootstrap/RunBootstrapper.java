@@ -74,4 +74,45 @@ public final class RunBootstrapper {
                 time.now());
         return new BootstrapResult(run, definition, profile, configuration);
     }
+
+    /**
+     * Freezes one child run of {@code parent} from an already narrowed definition and profile. The child is an
+     * ordinary Run: it gets its own configuration snapshot, inherits the parent's tenant and principal, and the
+     * Core aggregate enforces the hierarchy and depth invariants.
+     */
+    public BootstrapResult bootstrapChild(
+            AgentRun parent,
+            AgentRunId childRunId,
+            AgentRunRequest request,
+            ResolvedDefinition definition,
+            ResolvedProfile profile) {
+        Objects.requireNonNull(parent, "parent must not be null");
+        Objects.requireNonNull(childRunId, "childRunId must not be null");
+        Objects.requireNonNull(request, "request must not be null");
+        Objects.requireNonNull(definition, "definition must not be null");
+        Objects.requireNonNull(profile, "profile must not be null");
+        RuntimeCallerContext caller = new RuntimeCallerContext(parent.tenant(), parent.principal());
+        var effectiveCapabilities = capabilities.resolve(request, definition, profile);
+        var configuration = snapshots.create(request, definition, profile, caller, effectiveCapabilities);
+        AgentRun child = AgentRun.createChild(
+                childRunId,
+                parent,
+                io.haifa.agent.core.run.AgentInvocationMode.AGENT_AS_TOOL,
+                new AgentRunSpec(
+                        request.sessionId(),
+                        request.project().orElse(null),
+                        parent.tenant(),
+                        parent.principal(),
+                        definition.id(),
+                        definition.version(),
+                        profile.id(),
+                        profile.version(),
+                        profile.runType(),
+                        request.objective(),
+                        profile.budget(),
+                        profile.limits(),
+                        configuration.reference()),
+                time.now());
+        return new BootstrapResult(child, definition, profile, configuration);
+    }
 }

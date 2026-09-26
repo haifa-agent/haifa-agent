@@ -178,6 +178,52 @@ SDK Conversation 层只保存 display/index 元数据（display name、时间、
 删除、回收站、Tree/Fork/Clone、Follow-up Queue 和 Retention 不属于该公共边界。SQLite 实现位于
 `haifa-agent-store-sqlite`，SDK 自身不依赖 SQLite；`InMemory` 实现只用于开发和确定性测试。
 
+## Run 输入（Steer）
+
+`agent.runs().submitInput(new RunInputCommand(runId, idempotencyKey, message))` 向当前 Caller 的活动 Run
+提交一段 Steer 文本，返回 SDK 自有的 `RunInputResult`（`inputId`、`RunInputStatus`、接收/应用时间、
+iteration、`reasonCode`）。Caller 身份只来自 `SdkCallerProvider`，命令不携带 tenant/principal；
+其他 Caller 的 Run 表现为 `RUN_NOT_FOUND`。
+
+- 输入在 Run 的下一个 `BEFORE_ITERATION` 生效：正在执行的 Tool（包括等待委托结果的 Tool）返回之后，
+  不在 Tool 执行或模型请求构造中途注入；只进入目标 Run，不广播给 Child。
+- 同一幂等键、同一内容的重试返回 `DUPLICATE`（已应用后返回 `APPLIED`），不会重复应用；内容不同则
+  `IDEMPOTENCY_CONFLICT`。
+- 模型在输入待应用期间给出 Final 时，完成被推迟到模型看过该输入之后；Run 已 `COMPLETING` 或终态时返回
+  `REJECTED` 与 `RunInputResult.RUN_NOT_ACCEPTING_INPUT`；已接收但 Run 在应用前停止（取消、失败、超时、
+  重启后 recover）的输入结算为 `REJECTED`，`reasonCode` 为 `run-cancelled` 等终态原因。
+- 公开事件流以 `inputId` 关联 `run.input.accepted`、`run.input.applied`、`run.input.rejected`，Final
+  被推迟时另有 `completion.deferred`（`PENDING_RUN_INPUT`）。
+
+Steer 不是取消：取消继续使用 `agent.runs().handle(runId).cancel()`。
+
+## 最小父子委托（Minimal Parent–Child Delegation，Agent-as-Tool）
+
+这是“委托即 Tool Call”：父 Run 等待 Child 终态并把结果作为 Tool Result 继续下一轮；不提供父子双向消息、Child Steer
+或事件驱动等待等父子通信协议。产品用 `ChildAgentSpec`（id、面向父模型的描述、instructions、可选 `ProductRunProfileRef`、Tool 白名单）经
+`HaifaAgentBuilder.childAgent(...)` 注册 Child，并在 `ProductProfile.allowedChildAgents`（或 `withAllowedChildAgents`）
+声明父 Run 可委托的集合。此时 Runtime 向父模型暴露唯一的 `task` Tool；同一响应中的多个 `task` 调用各创建一个普通
+Child Run 并行执行，Tool 在 Child 终态后返回 Child Run ID、Runtime 终态、摘要、Child 自身 Usage 与 Artifact 引用。
+
+- Child 模型：引用的 run profile 的模型；未引用时继承父 Run 冻结的模型、预算与限制。
+- Child 能力 = Child 白名单 ∩ 父 Run 可用 Tool；构建时白名单越界、未注册 Child 或未注册/不可委托的 run profile 以
+  `CHILD_AGENT_TOOL_UNAVAILABLE` / `CHILD_AGENT_UNAVAILABLE` / `CHILD_RUN_PROFILE_UNAVAILABLE` fail closed。
+- 深度固定为 1：Child 看不到 `task`。Child 不召回、不写入长期 Memory。
+- Child 继承父 Run 启动时 `inputs` 中的非文本引用（上传的图片/音频、图片 URL、Asset/Artifact 引用）的不可变快照，
+  与 `task` 的 objective/context 一起进入 Child 首条消息；父 Run 的自由文本不复制，模型也不能通过 `task` 增加或扩大引用。
+- 并发受父 Run `maxParallelChildren` 与进程上限（默认 3，`maxConcurrentChildRuns`）约束，超出部分按顺序排队，
+  排队项在父 Run 停止时直接丢弃；进程槽位随 Child 真实执行释放（Child 终态且其执行任务结束），父 Run 停止等待
+  不会提前释放。每个 Child 使用自身 profile 的 `maxWallTimeMillis`。
+- 等待 Child 不计入父 Run idle，但计入父 Run wall time。Child 需要审批时父 Run 保持等待，审批目标是 Child Run：
+  `runs().pendingInteraction(childRunId)` / `runs().respond(...)`。
+- 父 Run 取消、超时或恢复会终止其 Child；恢复时未完成 Child 按 interrupted 结算，不自动重放。
+- 查询：`runs().children(parentRunId)` 返回 `ChildRunView`（ID、状态、objective、起止时间、usage）；父事件流包含
+  `child.run.started` 与 `child.run.completed|failed|cancelled|timed-out`（终态事件由 Child 自身终态迁移写入，每个 Child
+  恰好一次，父 Run 已停止或经恢复结算时也不缺失），Child 自身事件用 `runs().events(childRunId, ...)`。
+  0.1.2 的 HTTP transport 不投影 `child.run.*` 载荷，只有 SDK 事件消费者可获得。
+- 父 usage 只记 `childRuns` 计数，不并入 Child token；Child Session 不出现在 Conversation 列表中，只能经父 Run
+  （`children` → `view(childRunId).sessionId()`）找到。
+
 ## 进程内 Prompt Diagnostics
 
 `agent.runs().promptDiagnostics(runId)` 从 Runtime 实际 `ContextReport` 读取脱敏事实：最终顺序、component
@@ -214,9 +260,10 @@ Core 或 Provider 异常。同步请求失败属于 `RuntimeApiErrorCode`，异�
 上下文过长、已产生部分输出和取消仍由 Runtime 硬拒绝重试，Provider/Model Binding 也不会隐式切换。
 Run Event Feed 使用 `ModelAttemptLifecycle` 暴露逻辑请求、Attempt、等待和耗尽的脱敏稳定视图。
 
-- Memory 治理（人工审查、候选与查询边界）由 `MemoryPlatformContribution` 拥有，Artifact 配额/Media
+- Memory 的内容长度与分页上限由 `MemoryPlatformContribution` 的 `ProductMemoryPolicy` 拥有，Artifact 配额/Media
   Type/本地容量门禁由 `ArtifactPlatformContribution` 拥有；Execution 约束由 `policy` 规则与 `approval`
-  验证表达。Profile 不再承载这些策略，本阶段仍不允许关闭 Memory Candidate 人工审查。
+  验证表达。Profile 不再承载这些策略。`MemoryPlatformContribution.withRecallWhen(predicate)` /
+  `withoutRecall()` 按 Run 或 Agent（`MemoryContextRequest.runId/agentId`）关闭召回，CRUD 不受影响。
 - Model、Tool Platform、Skill、Context、Memory、Artifact、Policy、Approval 和 Credential 均通过显式
   typed 组件注册。MCP Tool 由 Integration 直接写入统一 Tool Catalog，不再是独立 SDK
   Capability，也不存在第二条 MCP 执行通道。
@@ -228,8 +275,13 @@ Run Event Feed 使用 `ModelAttemptLifecycle` 暴露逻辑请求、Attempt、等
   第二条 Tool 执行通道。
 - `HaifaAgentException` 及 `ConversationException` 对外只暴露安全的 `code`、`operation` 和
   `correlation`。Conversation Adapter、SQLite/Runtime 底层异常和输入正文不会进入公共错误消息。
-- `HaifaAgent.memories()` 暴露受 Product Profile、可信 `SdkCaller` 与权限约束的产品级
-  propose/revise/approve/reject/invalidate/list API；调用命令不能注入 Tenant、Principal 或 Reviewer。
+- `HaifaAgent.memories()` 暴露直接 CRUD：`put`（同 scope/kind/subject 替换，重复内容不增加 revision）、
+  `update(id, expectedRevision, content)`、`delete(id, expectedRevision)`、`find`、`list`（可选有界、按 `Locale.ROOT`
+  折叠的 Unicode 大小写不敏感文本匹配）和按 scope `clear`。响应丢失后以同一 revision（更新还需同一内容）重试会成功，
+  `clear` 重试返回 0，无需幂等键。`MemoryScopeSpec` 只选择 `USER`/`AGENT`/`SESSION` 桶，不携带 Tenant 或 Owner，二者恒取自可信
+  `SdkCaller`；`AGENT` 桶以 Agent Definition id 为目标，Runtime 召回时使用 Run 的 Agent Definition id。凭据、支付和精确
+  证件号内容以 `MEMORY_CONTENT_SENSITIVE` 拒绝写入。异步捕获应在 `PutMemoryCommand.observedAt` 传入来源观察时间，
+  使清空或删除之前观察到的迟到写入以 `MEMORY_WRITE_STALE` 被拒绝。
 - `HaifaAgent.memory()` 与 `HaifaAgent.artifacts()` 只在显式装配了对应 typed 组件
   时返回应用服务；SQLite Product Components 已提供 Memory 与 Artifact 的单机持久化实现基线。
 

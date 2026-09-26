@@ -11,9 +11,21 @@ import java.util.Optional;
 public interface RunInputPort {
     RunInputAcceptance accept(RunInputSubmission submission, String callerScope, Instant acceptedAt);
 
+    /**
+     * Returns the input already bound to this caller, Run and idempotency key (or input id) without accepting
+     * anything. Bound content whose intent differs from the submission is an idempotency conflict.
+     */
+    Optional<RunInputRecord> findExisting(RunInputSubmission submission, String callerScope);
+
     Optional<RunInputRecord> find(RunInputId inputId);
 
     List<RunInputRecord> pending(AgentRunId runId, int limit);
 
     RunInputRecord markApplied(RunInputId inputId, String attemptId, int iteration, Instant appliedAt);
+
+    /**
+     * Settles an accepted input that can no longer reach a safe point because its Run stopped. Rejecting an input
+     * that is already rejected returns it unchanged; an applied input cannot be rejected.
+     */
+    RunInputRecord markRejected(RunInputId inputId, String reasonCode);
 }

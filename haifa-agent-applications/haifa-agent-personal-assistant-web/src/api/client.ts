@@ -7,8 +7,8 @@ import type {
   InteractionReceipt,
   ImageInput,
   AudioInput,
+  ClearedMemories,
   Memory,
-  MemoryCandidate,
   CreateMission,
   MissionPage,
   MissionSnapshot,
@@ -55,6 +55,11 @@ export class PersonalAssistantApiError extends Error {
 
 export interface CommandOptions {
   idempotencyKey?: string;
+  signal?: AbortSignal;
+}
+
+/** Memory mutations are idempotent by their If-Match revision and send no Idempotency-Key. */
+export interface MemoryCommandOptions {
   signal?: AbortSignal;
 }
 
@@ -128,15 +133,10 @@ export interface PersonalAssistantClient {
     text: string,
     options?: CommandOptions,
   ): Promise<InteractionReceipt>;
-  memoryCandidates(signal?: AbortSignal): Promise<MemoryCandidate[]>;
   memories(signal?: AbortSignal): Promise<Memory[]>;
-  approveMemory(candidate: MemoryCandidate, options?: CommandOptions): Promise<Memory>;
-  rejectMemory(
-    candidate: MemoryCandidate,
-    reason: string,
-    options?: CommandOptions,
-  ): Promise<MemoryCandidate>;
-  invalidateMemory(memory: Memory, reason: string, options?: CommandOptions): Promise<Memory>;
+  updateMemory(memory: Memory, content: string, options?: MemoryCommandOptions): Promise<Memory>;
+  deleteMemory(memory: Memory, options?: MemoryCommandOptions): Promise<void>;
+  clearMemories(options?: MemoryCommandOptions): Promise<ClearedMemories>;
   missions?(conversationId?: string, signal?: AbortSignal): Promise<MissionPage>;
   createMission?(request: CreateMission, options?: CommandOptions): Promise<MissionSnapshot>;
   mission?(id: string, signal?: AbortSignal): Promise<MissionSnapshot>;
@@ -166,6 +166,14 @@ function commandHeaders(revision?: number, key?: string): HeadersInit {
     "Content-Type": "application/json",
     "X-Haifa-CSRF": "1",
     "Idempotency-Key": key ?? crypto.randomUUID(),
+    ...(revision === undefined ? {} : { "If-Match": String(revision) }),
+  };
+}
+
+function memoryHeaders(revision?: number): HeadersInit {
+  return {
+    "Content-Type": "application/json",
+    "X-Haifa-CSRF": "1",
     ...(revision === undefined ? {} : { "If-Match": String(revision) }),
   };
 }
@@ -503,50 +511,34 @@ export class HttpPersonalAssistantClient implements PersonalAssistantClient {
     );
   }
 
-  memoryCandidates(signal?: AbortSignal) {
-    return this.request<MemoryCandidate[]>("/memory/candidates", {}, signal);
-  }
-
   memories(signal?: AbortSignal) {
     return this.request<Memory[]>("/memory", {}, signal);
   }
 
-  approveMemory(candidate: MemoryCandidate, options: CommandOptions = {}) {
+  updateMemory(memory: Memory, content: string, options: MemoryCommandOptions = {}) {
     return this.request<Memory>(
-      `/memory/candidates/${encoded(candidate.id)}/approve`,
+      `/memory/${encoded(memory.id)}`,
       {
-        method: "POST",
-        headers: commandHeaders(candidate.revision, options.idempotencyKey),
-        body: "{}",
+        method: "PATCH",
+        headers: memoryHeaders(memory.revision),
+        body: JSON.stringify({ content }),
       },
       options.signal,
     );
   }
 
-  rejectMemory(
-    candidate: MemoryCandidate,
-    reason: string,
-    options: CommandOptions = {},
-  ) {
-    return this.request<MemoryCandidate>(
-      `/memory/candidates/${encoded(candidate.id)}/reject`,
-      {
-        method: "POST",
-        headers: commandHeaders(candidate.revision, options.idempotencyKey),
-        body: JSON.stringify({ reason }),
-      },
+  deleteMemory(memory: Memory, options: MemoryCommandOptions = {}) {
+    return this.request<void>(
+      `/memory/${encoded(memory.id)}`,
+      { method: "DELETE", headers: memoryHeaders(memory.revision) },
       options.signal,
     );
   }
 
-  invalidateMemory(memory: Memory, reason: string, options: CommandOptions = {}) {
-    return this.request<Memory>(
-      `/memory/${encoded(memory.id)}/versions/${memory.version}/invalidate`,
-      {
-        method: "POST",
-        headers: commandHeaders(undefined, options.idempotencyKey),
-        body: JSON.stringify({ reason }),
-      },
+  clearMemories(options: MemoryCommandOptions = {}) {
+    return this.request<ClearedMemories>(
+      "/memory/clear",
+      { method: "POST", headers: memoryHeaders(), body: "{}" },
       options.signal,
     );
   }

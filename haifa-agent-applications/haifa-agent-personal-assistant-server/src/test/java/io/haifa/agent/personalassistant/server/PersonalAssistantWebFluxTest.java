@@ -56,6 +56,9 @@ class PersonalAssistantWebFluxTest {
     @Autowired
     ObjectMapper mapper;
 
+    @Autowired
+    io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties properties;
+
     @LocalServerPort
     int serverPort;
 
@@ -82,6 +85,78 @@ class PersonalAssistantWebFluxTest {
                 .expectBody()
                 .jsonPath("$.code")
                 .isEqualTo("UNSUPPORTED_MEDIA_TYPE");
+    }
+
+    @Test
+    void memoryManagementListsEditsDeletesAndClearsWithoutCandidateEndpoints() throws Exception {
+        seedMemory("editor", "Uses IntelliJ");
+        JsonNode listed = get("/api/v1/memory");
+        JsonNode memory = listed.get(0);
+        assertThat(listed).hasSize(1);
+        assertThat(memory.path("content").asText()).isEqualTo("Uses IntelliJ");
+        assertThat(memory.path("revision").asLong()).isEqualTo(1);
+        assertThat(memory.has("status")).isFalse();
+        String id = memory.path("id").asText();
+
+        memoryCommand(web.patch().uri("/api/v1/memory/{id}", id), 1)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"content\":\"Uses VS Code\"}")
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectBody()
+                .jsonPath("$.revision")
+                .isEqualTo(2)
+                .jsonPath("$.content")
+                .isEqualTo("Uses VS Code");
+        // The first response was lost: the same revision and content is recognised as the committed intent.
+        memoryCommand(web.patch().uri("/api/v1/memory/{id}", id), 1)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"content\":\"Uses VS Code\"}")
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectHeader()
+                .valueEquals("ETag", "\"2\"")
+                .expectBody()
+                .jsonPath("$.revision")
+                .isEqualTo(2);
+        memoryCommand(web.patch().uri("/api/v1/memory/{id}", id), 1)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"content\":\"Uses Vim\"}")
+                .exchange()
+                .expectStatus()
+                .isEqualTo(409)
+                .expectBody()
+                .jsonPath("$.code")
+                .isEqualTo("MEMORY_REVISION_STALE");
+
+        memoryCommand(web.delete().uri("/api/v1/memory/{id}", id), 1)
+                .exchange()
+                .expectStatus()
+                .isEqualTo(409);
+        memoryCommand(web.delete().uri("/api/v1/memory/{id}", id), 2)
+                .exchange()
+                .expectStatus()
+                .isNoContent();
+        assertThat(get("/api/v1/memory")).isEmpty();
+        memoryCommand(web.delete().uri("/api/v1/memory/{id}", id), 2)
+                .exchange()
+                .expectStatus()
+                .isNoContent();
+        memoryCommand(web.delete().uri("/api/v1/memory/{id}", id), 3)
+                .exchange()
+                .expectStatus()
+                .isNotFound();
+
+        seedMemory("city", "Lives in Hangzhou");
+        seedMemory("drink", "Likes green tea");
+        assertThat(clearMemories().path("deleted").asInt()).isEqualTo(2);
+        assertThat(get("/api/v1/memory")).isEmpty();
+        assertThat(clearMemories().path("deleted").asInt())
+                .as("a retried clear keeps the memories cleared and reports nothing new")
+                .isZero();
+        web.get().uri("/api/v1/memory/candidates").exchange().expectStatus().is4xxClientError();
     }
 
     @Test
@@ -1025,6 +1100,56 @@ class PersonalAssistantWebFluxTest {
                 .returnResult()
                 .getResponseBody();
         return mapper.readTree(body);
+    }
+
+    // Memory mutations carry no Idempotency-Key; the If-Match revision is the retry identity.
+    private WebTestClient.RequestHeadersSpec<?> memoryCommand(
+            WebTestClient.RequestHeadersSpec<?> request, long revision) {
+        return request.header("X-Haifa-CSRF", "1").header("If-Match", '"' + Long.toString(revision) + '"');
+    }
+
+    private WebTestClient.RequestBodySpec memoryCommand(WebTestClient.RequestBodySpec request, long revision) {
+        request.header("X-Haifa-CSRF", "1").header("If-Match", '"' + Long.toString(revision) + '"');
+        return request;
+    }
+
+    private JsonNode clearMemories() throws Exception {
+        byte[] body = web.post()
+                .uri("/api/v1/memory/clear")
+                .header("X-Haifa-CSRF", "1")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{}")
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectBody()
+                .returnResult()
+                .getResponseBody();
+        return mapper.readTree(body);
+    }
+
+    private void seedMemory(String subject, String content) {
+        // PA has no product path that writes memories yet; seed through the same SQLite file and trusted caller.
+        try (var foundation = io.haifa.agent.store.sqlite.SqliteStoreFoundation.initialize(
+                new io.haifa.agent.store.sqlite.SqliteStoreConfiguration(
+                        DATA.resolve("personal-assistant.sqlite").toAbsolutePath(), 1_250, 4 * 1024 * 1024),
+                java.time.Clock.systemUTC())) {
+            var tenant = new io.haifa.agent.core.reference.TenantRef(
+                    properties.caller().tenant());
+            var owner = new io.haifa.agent.core.reference.PrincipalRef(
+                    properties.caller().principal(), "user");
+            new io.haifa.agent.memory.core.DefaultMemoryService(
+                            new io.haifa.agent.store.sqlite.SqliteMemoryStore(foundation.unitOfWork()),
+                            () -> "seeded-memory-" + IDS.incrementAndGet(),
+                            java.time.Instant::now)
+                    .put(
+                            io.haifa.agent.memory.api.MemoryDraft.of(
+                                    io.haifa.agent.memory.api.MemoryScope.user(tenant, owner),
+                                    io.haifa.agent.memory.api.MemoryKind.PREFERENCE,
+                                    subject,
+                                    content),
+                            new io.haifa.agent.memory.api.MemoryActor(tenant, owner));
+        }
     }
 
     private JsonNode get(String uri) throws Exception {

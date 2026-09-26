@@ -15,6 +15,7 @@ public final class AgentLoopContext {
     private final Set<Integer> issuedBudgetThresholds = new LinkedHashSet<>();
     private RunBudgetSnapshot budgetSnapshot;
     private MemoryTurnSelection memoryTurnSelection;
+    private final List<ChildWait> childWaits = new java.util.ArrayList<>();
     private final Optional<RuntimeTraceContext> traceContext;
 
     public AgentLoopContext(int iteration) {
@@ -78,9 +79,30 @@ public final class AgentLoopContext {
         return Optional.of(memoryTurnSelection.items());
     }
 
+    /** Records one interval in which this run waited for delegated child runs (excluded from idle time). */
+    public void recordChildWait(java.time.Instant startedAt, java.time.Instant endedAt) {
+        java.util.Objects.requireNonNull(startedAt, "startedAt must not be null");
+        java.util.Objects.requireNonNull(endedAt, "endedAt must not be null");
+        if (endedAt.isAfter(startedAt)) childWaits.add(new ChildWait(startedAt, endedAt));
+    }
+
+    /** Milliseconds within {@code [since, now]} this run spent waiting for child runs. */
+    public long childWaitMillis(java.time.Instant since, java.time.Instant now) {
+        long total = 0;
+        for (ChildWait wait : childWaits) {
+            java.time.Instant start = wait.startedAt().isAfter(since) ? wait.startedAt() : since;
+            java.time.Instant end = wait.endedAt().isBefore(now) ? wait.endedAt() : now;
+            if (end.isAfter(start))
+                total += java.time.Duration.between(start, end).toMillis();
+        }
+        return total;
+    }
+
     public void cacheMemorySelection(AgentMessageId userMessageId, List<ContextItem> items) {
         memoryTurnSelection = new MemoryTurnSelection(userMessageId, items);
     }
+
+    private record ChildWait(java.time.Instant startedAt, java.time.Instant endedAt) {}
 
     private record MemoryTurnSelection(AgentMessageId userMessageId, List<ContextItem> items) {
         private MemoryTurnSelection {

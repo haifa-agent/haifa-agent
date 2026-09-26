@@ -7,6 +7,7 @@ import io.haifa.agent.core.message.MessageRole;
 import io.haifa.agent.core.message.MessageStatus;
 import io.haifa.agent.core.message.MessageVisibility;
 import io.haifa.agent.core.run.AgentRun;
+import io.haifa.agent.runtime.api.RunInputReceiptStatus;
 import io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt;
 import io.haifa.agent.runtime.core.storage.OutboxMessage;
 import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
@@ -49,7 +50,12 @@ public final class RunInputApplier {
     public List<RunInputRecord> applyPending(AgentRun run, AgentRunExecutionAttempt attempt, int iteration) {
         List<RunInputRecord> appliedInputs = new ArrayList<>();
         for (RunInputRecord pending : inputs.pending(run.id(), 100)) {
-            appliedInputs.add(unitOfWork.execute(() -> {
+            RunInputRecord outcome = unitOfWork.execute(() -> {
+                // A terminal transition may have settled the input after the pending read; never apply it twice.
+                boolean stillAccepted = inputs.find(pending.submission().inputId())
+                        .filter(current -> current.status() == RunInputReceiptStatus.ACCEPTED)
+                        .isPresent();
+                if (!stillAccepted) return null;
                 state.appendSessionMessage(new SessionMessageDraft(
                         new AgentMessageId(ids.nextValue()),
                         run.sessionId(),
@@ -88,7 +94,8 @@ public final class RunInputApplier {
                         event.data(),
                         event.occurredAt()));
                 return applied;
-            }));
+            });
+            if (outcome != null) appliedInputs.add(outcome);
         }
         return List.copyOf(appliedInputs);
     }

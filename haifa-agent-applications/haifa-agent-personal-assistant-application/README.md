@@ -151,7 +151,7 @@ category、retryability、安全 details、diagnosticId 和 occurredAt。应用�
 - 完成态回答的可选推荐问题：绑定精确 Conversation/Run，使用最近 6 条有界 Turn 做一次辅助模型推理；
 - Run 查询、取消、最终结果、权威 Usage 与安全 Activity；
 - Interaction 查询与响应；
-- Memory Candidate review 和 Memory invalidate；
+- 用户 Memory 列表、编辑（revision CAS）、删除与全部清空（无候选审批）；
 - Personal Mission create/list/get/replace/regenerate/confirm/cancel/task retry 和安全执行 Snapshot；
 - Personal Product Profile；
 - 一个确定性产品 Tool、版本化内置 Skill、可信只读本地 Skill Source；

@@ -15,6 +15,8 @@ if (document.servers?.[0]?.url !== "http://127.0.0.1:20001") {
   failures.push("the Personal Assistant Server must use 127.0.0.1:20001");
 }
 
+// Memory mutations are idempotent by intent (If-Match revision CAS, delete tombstone, clear) and take no key.
+const idempotentByIntent = new Set(["updateMemory", "deleteMemory", "clearMemories"]);
 const operations = [];
 for (const [path, pathItem] of Object.entries(document.paths ?? {})) {
   for (const [method, operation] of Object.entries(pathItem)) {
@@ -27,7 +29,11 @@ for (const [path, pathItem] of Object.entries(document.paths ?? {})) {
           parameter.$ref === "#/components/parameters/IdempotencyKey" ||
           parameter.name === "Idempotency-Key",
       );
-      if (!hasKey) failures.push(`${method.toUpperCase()} ${path} must require Idempotency-Key`);
+      if (idempotentByIntent.has(operation.operationId)) {
+        if (hasKey) failures.push(`${method.toUpperCase()} ${path} must not declare Idempotency-Key`);
+      } else if (!hasKey) {
+        failures.push(`${method.toUpperCase()} ${path} must require Idempotency-Key`);
+      }
     }
   }
 }
@@ -51,11 +57,10 @@ for (const required of [
   "getPendingInteraction",
   "respondToInteraction",
   "streamRun",
-  "listMemoryCandidates",
-  "approveMemoryCandidate",
-  "rejectMemoryCandidate",
   "listMemories",
-  "invalidateMemory",
+  "updateMemory",
+  "deleteMemory",
+  "clearMemories",
   "listMissions",
   "createMission",
   "getMission",

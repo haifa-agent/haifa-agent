@@ -12,6 +12,10 @@ import io.haifa.agent.core.run.AgentRunUsageDelta;
 import io.haifa.agent.core.run.RunTerminationReason;
 import io.haifa.agent.runtime.api.AgentRunListener;
 import io.haifa.agent.runtime.api.AgentRunSnapshot;
+import io.haifa.agent.runtime.core.input.InMemoryRunInputPort;
+import io.haifa.agent.runtime.core.input.RunInputPort;
+import io.haifa.agent.runtime.core.input.RunInputReasonCodes;
+import io.haifa.agent.runtime.core.input.RunInputRecord;
 import io.haifa.agent.runtime.core.storage.OutboxMessage;
 import io.haifa.agent.runtime.core.storage.RunStateRepository;
 import io.haifa.agent.runtime.core.storage.RuntimeEvent;
@@ -25,6 +29,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
@@ -39,8 +44,10 @@ public final class RunTransitionCoordinator {
     private final TimeProvider time;
     private final RunAwaiter awaiter;
     private final RuntimeUnitOfWork unitOfWork;
+    private final RunInputPort runInputs;
     private final Map<AgentRunId, Object> locks = new ConcurrentHashMap<>();
     private final List<AgentRunListener> listeners = new CopyOnWriteArrayList<>();
+    private volatile Consumer<AgentRun> terminalProjection = run -> {};
 
     public RunTransitionCoordinator(
             RunStateRepository runs,
@@ -51,6 +58,23 @@ public final class RunTransitionCoordinator {
             TimeProvider time,
             RunAwaiter awaiter,
             RuntimeUnitOfWork unitOfWork) {
+        this(runs, state, events, outbox, ids, time, awaiter, unitOfWork, new InMemoryRunInputPort());
+    }
+
+    /**
+     * Creates a coordinator that settles steer input in the same Unit of Work as every terminal transition, so an
+     * accepted input is either applied at a safe point or observably rejected, never silently dropped.
+     */
+    public RunTransitionCoordinator(
+            RunStateRepository runs,
+            RuntimeStateRepository state,
+            RuntimeEventAppender events,
+            RuntimeOutboxPublisher outbox,
+            IdentifierGenerator ids,
+            TimeProvider time,
+            RunAwaiter awaiter,
+            RuntimeUnitOfWork unitOfWork,
+            RunInputPort runInputs) {
         this.runs = Objects.requireNonNull(runs);
         this.state = Objects.requireNonNull(state);
         this.events = Objects.requireNonNull(events);
@@ -59,6 +83,7 @@ public final class RunTransitionCoordinator {
         this.time = Objects.requireNonNull(time);
         this.awaiter = Objects.requireNonNull(awaiter);
         this.unitOfWork = Objects.requireNonNull(unitOfWork);
+        this.runInputs = Objects.requireNonNull(runInputs);
     }
 
     public AgentRunSnapshot queued(AgentRun run) {
@@ -102,8 +127,33 @@ public final class RunTransitionCoordinator {
     /** Commits final assistant message, public output and terminal Run state in one Unit of Work. */
     public AgentRunSnapshot completedWithOutput(
             AgentRun run, AgentRunResult result, String output, SessionMessageDraft finalMessage) {
+        return completeWithOutput(run, result, output, finalMessage, false).orElseThrow();
+    }
+
+    /**
+     * Completes the Run with a model's final answer unless steer input is still waiting for a safe point.
+     *
+     * <p>The pending check and the terminal commit share one Unit of Work, which also serializes input acceptance.
+     * An input accepted before this commit therefore defers completion and nothing is changed; the caller keeps the
+     * Run in its loop so the input is applied at the next {@code BEFORE_ITERATION}. Input submitted after the commit
+     * observes a terminal Run and is rejected.
+     */
+    public Optional<AgentRunSnapshot> completedWithOutputUnlessInputPending(
+            AgentRun run, AgentRunResult result, String output, SessionMessageDraft finalMessage) {
+        return completeWithOutput(run, result, output, finalMessage, true);
+    }
+
+    private Optional<AgentRunSnapshot> completeWithOutput(
+            AgentRun run,
+            AgentRunResult result,
+            String output,
+            SessionMessageDraft finalMessage,
+            boolean deferForPendingInput) {
         synchronized (locks.computeIfAbsent(run.id(), ignored -> new Object())) {
-            AgentRunSnapshot snapshot = unitOfWork.execute(() -> {
+            return unitOfWork.execute(() -> {
+                if (deferForPendingInput && !runInputs.pending(run.id(), 1).isEmpty()) {
+                    return Optional.<AgentRunSnapshot>empty();
+                }
                 long expectedVersion = run.version();
                 AgentRunStatus previous = run.status();
                 run.beginCompleting(time.now());
@@ -111,6 +161,7 @@ public final class RunTransitionCoordinator {
                 recordWallTime(run);
                 run.complete(result, time.now());
                 runs.save(run, expectedVersion);
+                settlePendingInputs(run);
                 RuntimeEvent event = events.append(
                         run.id(),
                         "run.completed",
@@ -130,11 +181,11 @@ public final class RunTransitionCoordinator {
                         OutboxMessage.CURRENT_SCHEMA_VERSION,
                         Map.of("status", run.status().name(), "version", run.version()),
                         event.occurredAt()));
+                terminalProjection.accept(run);
                 AgentRunSnapshot committed = AgentRunSnapshot.from(run, state.output(run.id()));
                 unitOfWork.afterCommit(() -> notifyCommitted(committed));
-                return committed;
+                return Optional.of(committed);
             });
-            return snapshot;
         }
     }
 
@@ -156,6 +207,7 @@ public final class RunTransitionCoordinator {
                 recordWallTime(run);
                 run.fail(error, time.now());
                 runs.save(run, expectedVersion);
+                settlePendingInputs(run);
                 Map<String, Object> eventData = terminalEventData(run, previous);
                 RuntimeEvent event = events.append(run.id(), "run.failed", eventData, time.now());
                 outbox.append(new OutboxMessage(
@@ -166,6 +218,7 @@ public final class RunTransitionCoordinator {
                         OutboxMessage.CURRENT_SCHEMA_VERSION,
                         eventData,
                         event.occurredAt()));
+                terminalProjection.accept(run);
                 AgentRunSnapshot committed = AgentRunSnapshot.from(run, state.output(run.id()));
                 unitOfWork.afterCommit(() -> notifyCommitted(committed));
                 return committed;
@@ -197,6 +250,15 @@ public final class RunTransitionCoordinator {
     }
 
     /**
+     * Installs the projection that runs inside every terminal transition's Unit of Work, after the Run's own terminal
+     * event. The Core allows exactly one terminal transition per Run, so the projection runs once per Run and commits
+     * or rolls back together with it; delegation uses it to put a child's terminal fact on its parent's event feed.
+     */
+    public void projectTerminalRunsWith(Consumer<AgentRun> projection) {
+        terminalProjection = Objects.requireNonNull(projection, "projection must not be null");
+    }
+
+    /**
      * Brings the recorded wall time up to the run's active elapsed time before it turns terminal.
      *
      * <p>Nothing else increments it, so without this the persisted usage reports a run of zero
@@ -221,6 +283,7 @@ public final class RunTransitionCoordinator {
                 AgentRunStatus previous = run.status();
                 mutation.accept(run);
                 runs.save(run, expectedVersion);
+                if (run.status().isTerminal()) settlePendingInputs(run);
                 Map<String, Object> safeEventData = terminalEventData(run, previous);
                 RuntimeEvent event = events.append(run.id(), eventType, safeEventData, time.now());
                 outbox.append(new OutboxMessage(
@@ -231,11 +294,38 @@ public final class RunTransitionCoordinator {
                         OutboxMessage.CURRENT_SCHEMA_VERSION,
                         safeEventData,
                         event.occurredAt()));
+                if (run.status().isTerminal()) terminalProjection.accept(run);
                 AgentRunSnapshot committed = AgentRunSnapshot.from(run, state.output(run.id()));
                 unitOfWork.afterCommit(() -> notifyCommitted(committed));
                 return committed;
             });
             return snapshot;
+        }
+    }
+
+    /**
+     * Rejects every accepted input that the now-terminal Run can no longer apply. It runs inside the terminal Unit of
+     * Work and before the terminal event, so a subscriber that stops at the terminal event has already seen them.
+     */
+    private void settlePendingInputs(AgentRun run) {
+        String reasonCode = RunInputReasonCodes.terminal(run.status());
+        List<RunInputRecord> pending = runInputs.pending(run.id(), 100);
+        while (!pending.isEmpty()) {
+            for (RunInputRecord input : pending) {
+                runInputs.markRejected(input.submission().inputId(), reasonCode);
+                Map<String, Object> data =
+                        Map.of("inputId", input.submission().inputId().value(), "reasonCode", reasonCode);
+                RuntimeEvent event = events.append(run.id(), "run.input.rejected", data, time.now());
+                outbox.append(new OutboxMessage(
+                        event.eventId(),
+                        event.runId(),
+                        event.sequence(),
+                        event.type(),
+                        OutboxMessage.CURRENT_SCHEMA_VERSION,
+                        data,
+                        event.occurredAt()));
+            }
+            pending = runInputs.pending(run.id(), 100);
         }
     }
 

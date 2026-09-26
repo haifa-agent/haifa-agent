@@ -23,7 +23,34 @@ public record ProductProfile(
         AgentRunBudget budget,
         AgentRunLimits limits,
         Set<String> allowedTools,
-        Set<String> allowedSkills) {
+        Set<String> allowedSkills,
+        Set<String> allowedChildAgents) {
+
+    /** A profile whose runs cannot delegate to child agents. */
+    public ProductProfile(
+            ProductId productId,
+            ProductVersion productVersion,
+            AgentDefinitionId definitionId,
+            AgentDefinitionVersion definitionVersion,
+            String instructions,
+            ProductRunProfileRef defaultRunProfile,
+            AgentRunBudget budget,
+            AgentRunLimits limits,
+            Set<String> allowedTools,
+            Set<String> allowedSkills) {
+        this(
+                productId,
+                productVersion,
+                definitionId,
+                definitionVersion,
+                instructions,
+                defaultRunProfile,
+                budget,
+                limits,
+                allowedTools,
+                allowedSkills,
+                Set.of());
+    }
 
     public ProductProfile {
         productId = Objects.requireNonNull(productId, "productId must not be null");
@@ -36,6 +63,23 @@ public record ProductProfile(
         limits = Objects.requireNonNull(limits, "limits must not be null");
         allowedTools = normalized(allowedTools, "allowedTools");
         allowedSkills = normalized(allowedSkills, "allowedSkills");
+        allowedChildAgents = normalized(allowedChildAgents, "allowedChildAgents");
+    }
+
+    /** Returns this profile allowing its runs to delegate to the registered child agents with these ids. */
+    public ProductProfile withAllowedChildAgents(Set<String> childAgentIds) {
+        return new ProductProfile(
+                productId,
+                productVersion,
+                definitionId,
+                definitionVersion,
+                instructions,
+                defaultRunProfile,
+                budget,
+                limits,
+                allowedTools,
+                allowedSkills,
+                childAgentIds);
     }
 
     public static ProductProfile create(

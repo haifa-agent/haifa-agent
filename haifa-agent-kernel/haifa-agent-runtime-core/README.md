@@ -38,6 +38,38 @@ can use saved conversation facts and observe current conditions. Intentional pau
 resume/respond across restart, retaining caller, frozen binding, exact target and budget checks. Missing or non-latest
 pause state fails closed; normal continuation cannot select an earlier budget.
 
+## Parent-child delegation
+
+This is Minimal Parent–Child Delegation (Agent-as-Tool): a parent delegates with a Tool Call and receives the child's
+terminal result as that call's Tool Result. There is no parent–child messaging protocol, child steer or event-driven
+waiting. `ChildRunCoordinator` is the default `DelegationPort`. A run whose frozen configuration allows child agents, whose
+depth is zero and whose `maxChildRuns` is positive sees the Runtime-owned `task` Tool (`DelegationTool`); the response
+mapper turns any response containing it into one `DelegationDecision` holding every Tool request in model order.
+`DecisionExecutor` records all calls in one assistant message, runs the delegation calls first and in parallel, then
+the ordinary Tools sequentially. Each delegation creates an ordinary child `AgentRun` (`AGENT_AS_TOOL`, own
+ephemeral session and configuration snapshot, parent tenant/principal/project/overrides, Tools = child allowlist ∩
+parent Tools, no child agents) with ID `childRunId(parentRunId, toolCallId)`, so a retried call re-attaches.
+
+The parent thread owns the batch: a request is created only when a `maxParallelChildren` and process slot is free,
+child state is read only from `RunStateRepository` (`children(parentRunId)`), each terminal child becomes the Tool
+Result immediately, and a child exceeding its own `maxWallTimeMillis` is timed out. Stop signals and the parent wall
+time stop the batch: started children receive `PARENT_CANCELLED`, requests that never started are closed, and
+`terminateChildren` settles children whose executor is gone through `InterruptedRunSettler`, the same settlement
+`recover` uses. Child waits are excluded from the idle check but not from wall time. Child runs skip Memory recall.
+
+A child's first message holds the `task` brief plus an immutable copy of the non-text references the parent Run was
+started with (`AgentRunRequest.inputs`: stored images and audio, image URLs, asset and artifact references); the
+parent's free text is not copied and the `task` arguments cannot add or widen references.
+
+A process slot (`maxConcurrentChildRuns`) is taken before a child is created and returned only when the child Run is
+terminal and none of its execution tasks is running. The Runtime submits every task through
+`ChildRunCoordinator.scheduler()`, so a child resumed after approval runs under the same slot; a parent that stops
+waiting never frees a slot early. If the scheduler rejects a committed child, the child fails with
+`RUNTIME_EXECUTION_FAILED` (`CHILD_NOT_SCHEDULED`), its attempt is closed and the slot returns; no QUEUED child is left
+behind. The parent's `child.run.completed|failed|cancelled|timed-out` event is appended inside the child's own terminal
+transition (`RunTransitionCoordinator.projectTerminalRunsWith`), so it is written exactly once, also when the child ends
+after its parent stopped or is settled by recovery.
+
 ## Model-call client events
 
 `FrozenModelInvoker` records each physical model attempt as durable `model.attempt.scheduled` and
@@ -117,10 +149,20 @@ Pending Interaction。新的 revision-aware Response 返回稳定收据，按可
 request 和幂等键去重；Approval 继续复用 Policy API 的 Authority/Target verification，不产生
 Decision bearer、Authorization Evidence 或可复用 Grant。
 
-`RunInputPort` 独立保存 Steer 的 `ACCEPTED/APPLIED` 状态。AgentLoop 只在
+`RunInputPort` 独立保存 Steer 的 `ACCEPTED/APPLIED/REJECTED` 状态。AgentLoop 只在
 `BEFORE_ITERATION` safe point 将已接受输入追加为 Session 用户消息，并绑定 Attempt/Iteration，
 不会异步修改正在构造的模型请求或 Tool 参数。内存与 SQLite 均实现该 Port；SQLite 使用条件更新、
 canonical digest 和 Attempt/Iteration 外键实现重启后的 exactly-once state application。
+
+已 `ACCEPTED` 的输入不会静默丢失。`submitInput` 在同一 Unit of Work 中重读 Run 状态并接收输入，
+与终态提交互相串行：模型给出 Final 时若仍有待应用输入，`RunTransitionCoordinator` 不提交完成，
+原回答保留为普通 Assistant 消息并记录 `completion.deferred`（`PENDING_RUN_INPUT`），下一轮
+`BEFORE_ITERATION` 应用输入后模型重新作答；若冻结限额已不允许下一次模型调用，则直接完成。
+任何终态转换（完成、失败、取消、超时，含重启后的 `recover`）都会在同一 Unit of Work、终态事件之前把
+仍待应用的输入结算为 `REJECTED`（`run-completed`、`run-failed`、`run-cancelled`、`run-timeout`），
+并写入 `run.input.rejected`。已进入 `COMPLETING` 或终态的 Run 拒绝新输入（`RUN_STATE_CONFLICT`）；
+同一幂等键的重试按输入意图（目标 Run 与内容，不含提交时间和 expected version）去重，并返回绑定输入
+的权威状态（`DUPLICATE`/`APPLIED`/`REJECTED`）。
 
 `RuntimeEventFeed` 从权威 Journal 按排他 sequence 和固定 head 范围读取；`RuntimeClientEventProjector`
 只输出 P0 typed 白名单，未知内部事件只推进 Cursor。`RuntimeEventSubscriptions` 先注册 Run-scoped
@@ -157,7 +199,7 @@ Tail 按 Token 预算从后向前选择，固定消息组数只作为安全上�
 本次默认启用把 Policy 窗口版本从 `session-window-v2` 提升到 `session-window-v3`；Checkpoint 兼容性要求
 Policy 版本精确匹配，因此旧版本摘要不再被复用为 Checkpoint，并在下一次压缩中确定性重建，
 源消息始终是权威事实。
-Todo 与 governed Memory 等可变快照位于 append-only Session 前缀之后，其安全 provenance digest 参与
+Todo 与 Memory 等可变快照位于 append-only Session 前缀之后，其安全 provenance digest 参与
 `windowGeneration` identity；变化表现为显式窗口边界，而不是静默改写未标识的前置内容。Tree/活动路径
 延期期间不得把该入口解释为分支感知压缩。
 
@@ -182,10 +224,10 @@ Tool Pipeline 只接受 `PublicToolPolicy` 产生的瞬态 `PolicyDecision`；�
 
 ## Memory default assembly
 
-Runtime 只在未配置 `MemoryRetriever` 时创建默认的内存 Store、Policy 和 Retriever；配置自定义
-Retriever 时不会创建这些默认对象。`MemoryAuditSink` 属于 Memory Service 自身的写入审计边界，
-不是 Runtime Builder 的装配输入。配置 `MemoryService` 时，消息 redaction 仍会使其来源的 Memory
-失效。
+Runtime 只依赖 `MemoryRetriever`：未配置时使用 `MemoryRetriever.none()`，不召回任何 Memory。
+`memory(retriever)` 是唯一装配入口；Memory 的写入、更新、删除和清空由产品侧 `MemoryService`
+负责，Runtime 不注册消息 redaction 监听，也不修改 Memory。召回可用
+`retriever.onlyWhen(request -> ...)` 按 Run 或 Agent 关闭。
 
 ## Provider continuation
 
@@ -274,7 +316,7 @@ Run/Attempt 事实。具有副作用且结果不确定的 Tool 仍映射为 `TOO
 - `OutboxMessage` 保存与对应 `RuntimeEvent` 相同的 Run 内 `sequence` 和稳定 `schemaVersion`。本地
   `ExecutionOwnershipPort` 以当前进程实例 ID 精确匹配 Attempt `workerId`，进程重启后的旧 Attempt
   不再被误判为仍由本地持有。
-- Runtime 使用可信 Run 身份检索 RUN/SESSION/USER Scope 的 ACTIVE Memory；授权和状态过滤先于排序，结果仍通过 `ContextItem` IR 和统一 Token 预算。同一执行内以最新 COMPLETED USER 消息为回合键缓存检索结果，并且每个回合只持久化一次 `RuntimeMemorySelection`；继续时重新检索授权且有效的 Memory。Memory selection 不再复制到 Checkpoint。
+- Runtime 使用可信 Run 身份（tenant、owner、Session、Agent Definition id）检索 USER/AGENT/SESSION Scope 的有效 Memory；Scope 约束先于排序，结果仍通过 `ContextItem` IR 和统一 Token 预算。同一执行内以最新 COMPLETED USER 消息为回合键缓存检索结果，并且每个回合只持久化一次 `RuntimeMemorySelection`；继续时重新检索授权且有效的 Memory。Memory selection 不再复制到 Checkpoint。
 - Checkpoint 仅保存正常暂停／交互的最小续跑计数；SQLite 适配器保留有界持久化耗时指标。
 - 模块不依赖 Spring、模型 Provider SDK、MCP、Docker、JPA、产品模块或管理端。
 

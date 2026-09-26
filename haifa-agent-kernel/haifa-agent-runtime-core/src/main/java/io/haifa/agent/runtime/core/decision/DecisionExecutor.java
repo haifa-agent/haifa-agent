@@ -17,7 +17,6 @@ import io.haifa.agent.core.reference.InteractionRequestRef;
 import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.core.run.AgentRunOutcome;
 import io.haifa.agent.core.run.AgentRunResult;
-import io.haifa.agent.core.run.AgentRunUsageDelta;
 import io.haifa.agent.core.step.AgentStep;
 import io.haifa.agent.core.step.AgentStepError;
 import io.haifa.agent.core.step.AgentStepId;
@@ -26,6 +25,7 @@ import io.haifa.agent.core.step.AgentStepStatus;
 import io.haifa.agent.core.step.AgentStepType;
 import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallStatus;
+import io.haifa.agent.core.tool.ToolExecutionError;
 import io.haifa.agent.runtime.api.InteractionRequestId;
 import io.haifa.agent.runtime.api.InteractionResponseType;
 import io.haifa.agent.runtime.core.checkpoint.CheckpointManager;
@@ -35,8 +35,11 @@ import io.haifa.agent.runtime.core.control.CancellationObservedException;
 import io.haifa.agent.runtime.core.control.RunControlDirective;
 import io.haifa.agent.runtime.core.control.RunControlRegistry;
 import io.haifa.agent.runtime.core.control.RunControlSignal;
+import io.haifa.agent.runtime.core.delegation.ChildRunResults;
 import io.haifa.agent.runtime.core.delegation.DelegationPort;
+import io.haifa.agent.runtime.core.delegation.DelegationTool;
 import io.haifa.agent.runtime.core.execution.AgentExecutionFailureException;
+import io.haifa.agent.runtime.core.guard.ModelContinuationLimits;
 import io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException;
 import io.haifa.agent.runtime.core.interaction.InteractionPort;
 import io.haifa.agent.runtime.core.interaction.InteractionRequest;
@@ -74,6 +77,9 @@ public final class DecisionExecutor {
      * satisfy the completion requirements; interpreting that into a product work phase belongs to the product.
      */
     private static final String COMPLETION_PHASE = "COMPLETION";
+
+    /** Completion reason when accepted steer input must reach the model before the Run may finish. */
+    private static final String PENDING_RUN_INPUT = "PENDING_RUN_INPUT";
 
     private final ToolPipeline tools;
     private final CompletionGuard completionGuard;
@@ -127,7 +133,8 @@ public final class DecisionExecutor {
     public AgentLoopDirective execute(AgentRun run, AgentDecision decision, AgentLoopContext loopContext) {
         if (decision instanceof FinalAnswerDecision finalDecision) return executeFinal(run, finalDecision, loopContext);
         if (decision instanceof ToolCallDecision toolDecision) return executeTools(run, toolDecision, loopContext);
-        if (decision instanceof DelegationDecision delegation) return executeDelegation(run, delegation, loopContext);
+        if (decision instanceof DelegationDecision delegation)
+            return executeDelegation(run, delegation, loopContext, Optional.empty());
         if (decision instanceof InteractionDecision interaction)
             return executeInteraction(run, interaction, loopContext);
         ContinueDecision continuation = (ContinueDecision) decision;
@@ -140,6 +147,9 @@ public final class DecisionExecutor {
         AgentDecision decision = invocation.decision();
         if (decision instanceof ToolCallDecision toolDecision) {
             return executeTools(run, toolDecision, loopContext, java.util.Optional.of(invocation));
+        }
+        if (decision instanceof DelegationDecision delegation) {
+            return executeDelegation(run, delegation, loopContext, Optional.of(invocation));
         }
         return execute(run, decision, loopContext);
     }
@@ -344,24 +354,70 @@ public final class DecisionExecutor {
                             readiness.evidenceCodes()));
             return AgentLoopDirective.CONTINUE;
         }
-        transitions.completedWithOutput(
-                run,
-                new AgentRunResult(
-                        decision.outcome(),
-                        decision.summary(),
-                        decision.outputSchemaId(),
-                        decision.outputSchemaVersion(),
-                        decision.structuredOutput(),
-                        decision.artifacts(),
-                        decision.warnings()),
+        AgentRunResult result = new AgentRunResult(
+                decision.outcome(),
                 decision.summary(),
-                messageDraft(
-                        run,
-                        MessageRole.ASSISTANT,
-                        List.of(new TextPart(decision.summary(), "plain")),
-                        MessageVisibility.USER_VISIBLE,
-                        Map.of("final", true)));
-        return AgentLoopDirective.STOP;
+                decision.outputSchemaId(),
+                decision.outputSchemaVersion(),
+                decision.structuredOutput(),
+                decision.artifacts(),
+                decision.warnings());
+        SessionMessageDraft finalMessage = messageDraft(
+                run,
+                MessageRole.ASSISTANT,
+                List.of(new TextPart(decision.summary(), "plain")),
+                MessageVisibility.USER_VISIBLE,
+                Map.of("final", true));
+        if (ModelContinuationLimits.exceeded(run, loopContext.iteration() + 1) != null) {
+            // No further model call is allowed, so pending steer input could never be seen; completing settles it
+            // as rejected instead of trading the model's answer for a budget-limited summary.
+            transitions.completedWithOutput(run, result, decision.summary(), finalMessage);
+            return AgentLoopDirective.STOP;
+        }
+        if (transitions
+                .completedWithOutputUnlessInputPending(run, result, decision.summary(), finalMessage)
+                .isPresent()) {
+            return AgentLoopDirective.STOP;
+        }
+        deferFinalForRunInput(run, decision, loopContext);
+        return AgentLoopDirective.CONTINUE;
+    }
+
+    /**
+     * Keeps the superseded answer in the transcript as an ordinary assistant turn, then lets the loop reach
+     * {@code BEFORE_ITERATION} where the accepted steer input is applied and the model answers again.
+     */
+    private void deferFinalForRunInput(AgentRun run, FinalAnswerDecision decision, AgentLoopContext loopContext) {
+        appendMessage(
+                run,
+                MessageRole.ASSISTANT,
+                decision.summary(),
+                MessageVisibility.USER_VISIBLE,
+                Map.of("completionDeferred", PENDING_RUN_INPUT));
+        events.append(
+                run.id(),
+                "completion.deferred",
+                Map.of(
+                        "phase",
+                        COMPLETION_PHASE,
+                        "status",
+                        "COMPLETION_DEFERRED",
+                        "reasonCode",
+                        PENDING_RUN_INPUT,
+                        "blockerCodes",
+                        List.of(PENDING_RUN_INPUT),
+                        "missingEvidence",
+                        List.of(),
+                        "evidenceCodes",
+                        List.of(),
+                        "attempt",
+                        0,
+                        "remainingPercent",
+                        loopContext
+                                .budgetSnapshot()
+                                .map(value -> value.remainingPercent())
+                                .orElse(0)),
+                time.now());
     }
 
     private static String structuredCorrection(
@@ -404,6 +460,11 @@ public final class DecisionExecutor {
                 .map(request -> prepareTool(run, request))
                 .toList();
         appendToolCalls(run, prepared.stream().map(PreparedTool::call).toList(), invocation);
+        return executePreparedTools(run, prepared, loopContext);
+    }
+
+    private AgentLoopDirective executePreparedTools(
+            AgentRun run, List<PreparedTool> prepared, AgentLoopContext loopContext) {
         for (PreparedTool preparedTool : prepared) {
             ToolRequest request = preparedTool.request();
             ToolCall call = preparedTool.call();
@@ -636,6 +697,18 @@ public final class DecisionExecutor {
         for (PendingTool pendingTool : pending) {
             ToolCall call = pendingTool.call();
             AgentStep step = pendingTool.step();
+            if (DelegationTool.isDelegation(call)) {
+                // A delegation never survives a pause unfinished; an orphaned request is closed, never replayed.
+                call.cancel(time.now());
+                state.appendToolCall(call);
+                if (!terminal(step.status())) {
+                    step.cancel(time.now());
+                    state.appendStep(step);
+                }
+                appendToolResult(
+                        run, call, "Delegation was interrupted before its child run started; it was not executed.");
+                continue;
+            }
             if (call.status() == ToolCallStatus.APPROVED && step.status() == AgentStepStatus.WAITING) step.resume();
             else if (call.status() == ToolCallStatus.REQUESTED) step.start(time.now());
             state.appendStep(step);
@@ -860,30 +933,285 @@ public final class DecisionExecutor {
                 call.arguments());
     }
 
+    /**
+     * Executes one response that contains delegation Tool Calls. Every call of the response is recorded in one
+     * assistant message in model order. The delegation calls then run first and in parallel, one child run each,
+     * and each returns its child's terminal result; afterwards the ordinary Tool Calls run sequentially in model
+     * order through the regular Tool pipeline.
+     */
     private AgentLoopDirective executeDelegation(
-            AgentRun run, DelegationDecision decision, AgentLoopContext loopContext) {
-        long projectedChildRuns = run.usage().childRuns() + 1;
+            AgentRun run,
+            DelegationDecision decision,
+            AgentLoopContext loopContext,
+            Optional<ModelInvocationResult> invocation) {
+        long projectedToolCalls = run.usage().toolCalls() + decision.tools().size();
+        if (projectedToolCalls > run.limits().maxToolCalls()) {
+            RuntimeLimitExceededException limit =
+                    new RuntimeLimitExceededException("toolCalls", run.limits().maxToolCalls(), projectedToolCalls);
+            if (completeBudgetLimited(run, limit, Optional.empty())) return AgentLoopDirective.STOP;
+            throw limit;
+        }
+        long projectedChildRuns =
+                run.usage().childRuns() + decision.delegations().size();
         if (projectedChildRuns > run.limits().maxChildRuns()) {
             RuntimeLimitExceededException limit =
                     new RuntimeLimitExceededException("childRuns", run.limits().maxChildRuns(), projectedChildRuns);
             if (completeBudgetLimited(run, limit, Optional.empty())) return AgentLoopDirective.STOP;
             throw limit;
         }
-        var result = delegations.executeChild(run, decision);
-        appendMessage(
-                run,
-                MessageRole.AGENT,
-                result.summary(),
-                MessageVisibility.AGENT_VISIBLE,
-                Map.of(
-                        "outcome", result.outcome().name(),
-                        "structuredOutput", result.structuredOutput(),
-                        "artifacts", result.artifacts(),
-                        "warnings", result.warnings()));
-        transitions.usage(run, new AgentRunUsageDelta(0, 0, 0, 0, 0, 1, 0, 0));
+        List<PreparedTool> delegationCalls = new ArrayList<>();
+        List<PreparedTool> ordinary = new ArrayList<>();
+        List<ToolCall> calls = new ArrayList<>();
+        for (ToolRequest request : decision.requests()) {
+            boolean delegation = DelegationTool.isDelegation(request);
+            PreparedTool prepared = delegation ? prepareDelegation(run, request) : prepareTool(run, request);
+            if (delegation) delegationCalls.add(prepared);
+            else ordinary.add(prepared);
+            calls.add(prepared.call());
+        }
+        appendToolCalls(run, calls, invocation);
+        Map<io.haifa.agent.core.tool.ToolCallId, PreparedTool> started = new LinkedHashMap<>();
+        List<DelegationPort.ChildRunRequest> childRequests = new ArrayList<>();
+        for (PreparedTool prepared : delegationCalls) {
+            ToolCall call = prepared.call();
+            prepared.step().start(time.now());
+            state.appendStep(prepared.step());
+            DelegationTool.Arguments arguments;
+            try {
+                arguments = DelegationTool.parse(call.arguments().values());
+            } catch (IllegalArgumentException invalid) {
+                rejectToolRequest(
+                        run,
+                        call,
+                        prepared.step(),
+                        invalid,
+                        "Delegation request rejected: " + invalid.getMessage()
+                                + ". Repair the arguments and call the task tool again.");
+                appendDelegationEvent(run, call, "tool.cancelled", "CANCELLED", "ARGUMENTS_INVALID", "", "");
+                continue;
+            }
+            call.beginValidation();
+            call.beginPolicyCheck();
+            call.start(time.now());
+            state.appendToolCall(call);
+            appendDelegationEvent(
+                    run,
+                    call,
+                    "tool.started",
+                    "STARTED",
+                    "NONE",
+                    arguments.agent().value(),
+                    "");
+            started.put(call.id(), prepared);
+            childRequests.add(new DelegationPort.ChildRunRequest(
+                    call.id(), arguments.agent(), arguments.objective(), arguments.brief()));
+        }
+        ToolCall anchor = delegationCalls.getFirst().call();
+        if (!childRequests.isEmpty()) {
+            java.time.Instant waitStartedAt = time.now();
+            try {
+                delegations.executeChildren(run, childRequests, new DelegationOutcomes(run, started));
+            } catch (CancellationObservedException stopped) {
+                stopOpenDelegations(run, started.values(), stopped.signal());
+                cancelPendingSiblingTools(run, anchor, stopReasonCode(stopped.signal()));
+                throw stopped;
+            } catch (RuntimeException failure) {
+                AgentError error = new AgentError(
+                        AgentErrorCode.TOOL_INVOCATION_FAILED,
+                        Map.of("tool", DelegationTool.NAME),
+                        ids.nextValue(),
+                        time.now());
+                for (PreparedTool prepared : started.values()) {
+                    if (terminal(prepared.call().status())) continue;
+                    prepared.call().fail(new ToolExecutionError(error), time.now());
+                    state.appendToolCall(prepared.call());
+                    prepared.step().fail(new AgentStepError(error), time.now());
+                    state.appendStep(prepared.step());
+                    appendToolResult(run, prepared.call(), toolFailureMessage(error));
+                }
+                cancelPendingSiblingTools(run, anchor);
+                throw new AgentExecutionFailureException(error, failure);
+            } finally {
+                loopContext.recordChildWait(waitStartedAt, time.now());
+            }
+            for (PreparedTool prepared : started.values()) {
+                if (!terminal(prepared.call().status())) {
+                    throw new IllegalStateException("delegation port returned before a child run was terminal");
+                }
+            }
+        }
+        throwIfStoppedAndCancelPendingSiblings(run, anchor);
+        if (ordinary.isEmpty()) return AgentLoopDirective.CONTINUE;
+        return executePreparedTools(run, ordinary, loopContext);
+    }
 
-        throwIfStopped(run);
-        return AgentLoopDirective.CONTINUE;
+    private PreparedTool prepareDelegation(AgentRun run, ToolRequest request) {
+        AgentStep step = new AgentStep(
+                new AgentStepId(ids.nextValue()),
+                run.id(),
+                null,
+                null,
+                AgentStepType.TOOL_EXECUTION,
+                state.steps(run.id()).size() + 1,
+                time.now());
+        state.appendStep(step);
+        ToolCall call = new ToolCall(
+                request.toolCallId(),
+                run.id(),
+                step.id(),
+                request.providerCorrelationId(),
+                request.idempotencyKey(),
+                request.toolName(),
+                request.toolVersion(),
+                request.arguments(),
+                time.now());
+        state.appendToolCall(call);
+        appendDelegationEvent(run, call, "tool.requested", "REQUESTED", "NONE", "", "");
+        return new PreparedTool(request, call, step);
+    }
+
+    private void stopOpenDelegations(AgentRun run, Iterable<PreparedTool> delegations, RunControlSignal signal) {
+        for (PreparedTool prepared : delegations) {
+            ToolCall call = prepared.call();
+            if (terminal(call.status())) continue;
+            if (signal == RunControlSignal.TIMEOUT) call.timeout(time.now());
+            else call.cancel(time.now());
+            state.appendToolCall(call);
+            if (!terminal(prepared.step().status())) {
+                prepared.step().cancel(time.now());
+                state.appendStep(prepared.step());
+            }
+            appendToolResult(run, call, "Delegated child run was stopped because the parent run stopped.");
+            appendDelegationEvent(run, call, "tool.cancelled", call.status().name(), stopReasonCode(signal), "", "");
+        }
+    }
+
+    private void appendDelegationEvent(
+            AgentRun run,
+            ToolCall call,
+            String type,
+            String status,
+            String reasonCode,
+            String targetSummary,
+            String resultRef) {
+        events.append(
+                run.id(),
+                type,
+                Map.of(
+                        "toolCallId",
+                        call.id().value(),
+                        "displayName",
+                        DelegationTool.NAME,
+                        "toolName",
+                        DelegationTool.NAME,
+                        "status",
+                        status,
+                        "reasonCode",
+                        reasonCode,
+                        "targetSummary",
+                        targetSummary,
+                        "resultRef",
+                        resultRef),
+                time.now());
+    }
+
+    /** Converts each child outcome into the Tool Result of its delegation call, on the parent's own thread. */
+    private final class DelegationOutcomes implements DelegationPort.Listener {
+        private final AgentRun run;
+        private final Map<io.haifa.agent.core.tool.ToolCallId, PreparedTool> calls;
+
+        private DelegationOutcomes(AgentRun run, Map<io.haifa.agent.core.tool.ToolCallId, PreparedTool> calls) {
+            this.run = run;
+            this.calls = calls;
+        }
+
+        @Override
+        public void terminal(io.haifa.agent.core.tool.ToolCallId toolCallId, AgentRun child) {
+            PreparedTool prepared = open(toolCallId);
+            if (prepared == null) return;
+            ToolCall call = prepared.call();
+            io.haifa.agent.core.tool.ToolResult result = ChildRunResults.toolResult(child, state.output(child.id()));
+            boolean completed = child.status() == io.haifa.agent.core.run.AgentRunStatus.COMPLETED;
+            if (completed) {
+                call.complete(result, time.now());
+                prepared.step()
+                        .complete(
+                                new AgentStepResult(result.summary(), result.structuredData(), result.artifacts()),
+                                time.now());
+            } else {
+                AgentError error = new AgentError(
+                        AgentErrorCode.TOOL_INVOCATION_FAILED,
+                        Map.of(
+                                "tool",
+                                DelegationTool.NAME,
+                                "childRunId",
+                                child.id().value(),
+                                "childStatus",
+                                child.status().name()),
+                        ids.nextValue(),
+                        time.now());
+                call.fail(new ToolExecutionError(error), result, time.now());
+                prepared.step().fail(new AgentStepError(error), time.now());
+            }
+            state.appendToolCall(call);
+            state.appendStep(prepared.step());
+            appendToolResult(run, call, result.summary());
+            appendDelegationEvent(
+                    run,
+                    call,
+                    completed ? "tool.succeeded" : "tool.failed",
+                    completed ? "SUCCEEDED" : "FAILED",
+                    completed ? "NONE" : "CHILD_RUN_" + child.status().name(),
+                    child.agentDefinitionId().value(),
+                    child.id().value());
+        }
+
+        @Override
+        public void rejected(io.haifa.agent.core.tool.ToolCallId toolCallId, String safeReason) {
+            PreparedTool prepared = open(toolCallId);
+            if (prepared == null) return;
+            ToolCall call = prepared.call();
+            AgentError error = new AgentError(
+                    AgentErrorCode.TOOL_REQUEST_REJECTED,
+                    Map.of("reason", "DELEGATION_REJECTED"),
+                    ids.nextValue(),
+                    time.now());
+            String summary = "Delegation request rejected: " + safeReason;
+            call.fail(
+                    new ToolExecutionError(error),
+                    new io.haifa.agent.core.tool.ToolResult(
+                            false,
+                            summary,
+                            Map.of("status", "REJECTED", "reason", safeReason),
+                            List.of(),
+                            List.of(),
+                            false),
+                    time.now());
+            state.appendToolCall(call);
+            prepared.step().fail(new AgentStepError(error), time.now());
+            state.appendStep(prepared.step());
+            appendToolResult(run, call, summary);
+            appendDelegationEvent(run, call, "tool.failed", "FAILED", "DELEGATION_REJECTED", "", "");
+        }
+
+        @Override
+        public void notStarted(io.haifa.agent.core.tool.ToolCallId toolCallId) {
+            PreparedTool prepared = open(toolCallId);
+            if (prepared == null) return;
+            ToolCall call = prepared.call();
+            call.cancel(time.now());
+            state.appendToolCall(call);
+            prepared.step().cancel(time.now());
+            state.appendStep(prepared.step());
+            appendToolResult(run, call, "Delegated child run was not started because the parent run stopped.");
+            appendDelegationEvent(run, call, "tool.cancelled", "CANCELLED", "NOT_STARTED", "", "");
+        }
+
+        private PreparedTool open(io.haifa.agent.core.tool.ToolCallId toolCallId) {
+            PreparedTool prepared = calls.get(toolCallId);
+            if (prepared == null || DecisionExecutor.terminal(prepared.call().status())) return null;
+            return prepared;
+        }
     }
 
     private void throwIfStopped(AgentRun run) {

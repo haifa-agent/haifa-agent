@@ -1,6 +1,5 @@
 package io.haifa.agent.runtime.core.loop;
 
-import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.context.item.ContextItem;
 import io.haifa.agent.context.item.ContextItemId;
 import io.haifa.agent.context.item.ContextItemType;
@@ -23,19 +22,19 @@ import io.haifa.agent.runtime.core.storage.RuntimeMemorySelection;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import java.util.List;
 
-/** Retrieves governed Memory using trusted Run identity and maps authorized results to Context IR. */
+/** Retrieves Memory using trusted Run identity (tenant, owner, session, Agent) and maps results to Context IR. */
 public final class MemoryContextSource {
     private final MemoryRetriever memories;
     private final RuntimeStateRepository state;
-    private final TimeProvider time;
 
-    public MemoryContextSource(MemoryRetriever memories, RuntimeStateRepository state, TimeProvider time) {
+    public MemoryContextSource(MemoryRetriever memories, RuntimeStateRepository state) {
         this.memories = java.util.Objects.requireNonNull(memories);
         this.state = java.util.Objects.requireNonNull(state);
-        this.time = java.util.Objects.requireNonNull(time);
     }
 
     public List<ContextItem> select(AgentRun run, FrozenModelBinding model, AgentLoopContext loopContext) {
+        // First-version child runs neither recall nor write long-term Memory; conclusions return to the parent.
+        if (run.parentRunId().isPresent()) return List.of();
         UserTurn turn = latestUserTurn(run);
         return loopContext
                 .memorySelectionFor(turn.messageId())
@@ -50,27 +49,24 @@ public final class MemoryContextSource {
                 run.principal(),
                 run.id().value(),
                 run.sessionId().value(),
+                run.agentDefinitionId().value(),
                 turn.text(),
-                budget,
-                time.now()));
+                budget));
         state.saveMemorySelection(
                 run.id(),
                 new RuntimeMemorySelection(
                         retrieval.snippets().stream()
-                                .map(result -> new MemoryCheckpointRef(result.id(), result.version(), result.scope()))
+                                .map(result -> new MemoryCheckpointRef(result.id(), result.revision(), result.scope()))
                                 .toList(),
                         retrieval.policyVersion(),
                         retrieval.queryDigest()));
         List<ContextItem> items = retrieval.snippets().stream()
                 .map(result -> {
                     return new ContextItem(
-                            new ContextItemId("memory-" + result.id().value() + "-"
-                                    + result.version().value()),
+                            new ContextItemId("memory-" + result.id().value() + "-" + result.revision()),
                             ContextItemType.MEMORY_REFERENCE,
                             new MemoryReferenceContent(
-                                    result.id().value(),
-                                    Long.toString(result.version().value()),
-                                    result.text()),
+                                    result.id().value(), Long.toString(result.revision()), result.text()),
                             result.estimatedTokens(),
                             ContextPriority.NORMAL,
                             ContextRetention.COMPRESSIBLE,
@@ -78,8 +74,8 @@ public final class MemoryContextSource {
                             new ContextProvenance(
                                     "governed-memory",
                                     result.id().value(),
-                                    Long.toString(result.version().value()),
-                                    result.normalizedDigest()));
+                                    Long.toString(result.revision()),
+                                    result.contentDigest()));
                 })
                 .toList();
         loopContext.cacheMemorySelection(turn.messageId(), items);

@@ -6,7 +6,6 @@ import type {
   Conversation,
   Interaction,
   Memory,
-  MemoryCandidate,
   MissionSnapshot,
   Model,
   ReplaceMissionPlan,
@@ -176,22 +175,12 @@ const modelActivity: Activity = {
   interactionRef: null,
   version: 3,
 };
-const candidate: MemoryCandidate = {
-  id: "candidate-1",
-  kind: "PREFERENCE",
-  subjectKey: "travel",
-  content: "国内出行优先选择高铁。",
-  status: "PENDING",
-  updatedAt: "2026-07-28T01:00:00Z",
-  revision: 1,
-};
 const memory: Memory = {
   id: "memory-1",
-  version: 1,
+  revision: 1,
   kind: "PREFERENCE",
   subjectKey: "writing",
   content: "回答保持简洁。",
-  status: "ACTIVE",
   createdAt: "2026-07-28T01:00:00Z",
   updatedAt: "2026-07-28T01:00:00Z",
 };
@@ -333,11 +322,10 @@ function client(): PersonalAssistantClient {
       revision: 2,
       runVersion: 9,
     })),
-    memoryCandidates: vi.fn(async () => [candidate]),
     memories: vi.fn(async () => [memory]),
-    approveMemory: vi.fn(async () => memory),
-    rejectMemory: vi.fn(async () => ({ ...candidate, status: "REJECTED" })),
-    invalidateMemory: vi.fn(async () => ({ ...memory, status: "INVALIDATED" })),
+    updateMemory: vi.fn(async (_memory: Memory, content: string) => ({ ...memory, content, revision: 2 })),
+    deleteMemory: vi.fn(async () => undefined),
+    clearMemories: vi.fn(async () => ({ deleted: 1 })),
     streamRun: vi.fn(async () => undefined),
   };
 }
@@ -1920,12 +1908,36 @@ describe("Personal Assistant application", () => {
     const api = client();
     render(<App client={api} />);
     await screen.findByText("每日计划");
-    expect(api.approveMemory).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: /记忆/ }));
-    expect(await screen.findByRole("dialog", { name: "记忆管理" })).toBeTruthy();
-    expect(screen.getByText("国内出行优先选择高铁。")).toBeTruthy();
-    expect(api.approveMemory).not.toHaveBeenCalled();
+    const dialog = await screen.findByRole("dialog", { name: "记忆管理" });
+    expect(within(dialog).getByText("回答保持简洁。")).toBeTruthy();
+    expect(within(dialog).queryByText(/待确认候选/)).toBeNull();
+    expect(api.updateMemory).not.toHaveBeenCalled();
+    expect(api.deleteMemory).not.toHaveBeenCalled();
+    expect(api.clearMemories).not.toHaveBeenCalled();
+  });
+
+  it("edits, deletes and clears memories with the current revision", async () => {
+    const api = client();
+    render(<App client={api} />);
+    await screen.findByText("每日计划");
+    fireEvent.click(screen.getByRole("button", { name: /记忆/ }));
+    const dialog = await screen.findByRole("dialog", { name: "记忆管理" });
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "编辑" }));
+    const editor = await screen.findByRole("dialog", { name: "编辑记忆" });
+    fireEvent.change(within(editor).getByLabelText("记忆内容"), { target: { value: "回答保持简洁并给出要点。" } });
+    fireEvent.click(within(editor).getByRole("button", { name: "确认" }));
+    await waitFor(() => expect(api.updateMemory).toHaveBeenCalledWith(memory, "回答保持简洁并给出要点。"));
+
+    fireEvent.click(within(screen.getByRole("dialog", { name: "记忆管理" })).getByRole("button", { name: "删除" }));
+    await waitFor(() => expect(api.deleteMemory).toHaveBeenCalledWith(memory));
+
+    fireEvent.click(within(screen.getByRole("dialog", { name: "记忆管理" })).getByRole("button", { name: "全部清空" }));
+    expect(api.clearMemories).not.toHaveBeenCalled();
+    fireEvent.click(within(screen.getByRole("dialog", { name: "记忆管理" })).getByRole("button", { name: "确认清空" }));
+    await waitFor(() => expect(api.clearMemories).toHaveBeenCalledTimes(1));
   });
 
   it("opens the unified model center from slash commands and confirms a model", async () => {

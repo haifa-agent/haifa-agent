@@ -160,6 +160,33 @@ final class TestToolPlatform {
         return install(builder, definition, allow(), handler);
     }
 
+    /** Installs a read-only and a side-effecting tool that share one handler and a caller-supplied policy. */
+    static RuntimeCoreBuilder installReadWrite(
+            RuntimeCoreBuilder builder,
+            String readName,
+            String writeName,
+            io.haifa.agent.runtime.core.tool.PublicToolPolicy policy,
+            ToolHandler handler) {
+        ToolProvider provider = new ToolProvider() {
+            @Override
+            public ToolProviderId id() {
+                return PROVIDER_ID;
+            }
+
+            @Override
+            public ToolResult invoke(ToolInvocationRequest request) {
+                return handler.invoke(request);
+            }
+        };
+        var catalog = new ToolCatalogBuilder()
+                .register(alias(readName), definition(readName, "1.0.0", readName + ".input", false), "test", provider)
+                .register(
+                        alias(writeName), definition(writeName, "1.0.0", writeName + ".input", true), "test", provider)
+                .freeze();
+        return builder.publicToolPolicy(policy)
+                .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator());
+    }
+
     static FrozenToolBinding binding(String name, String version, String inputSchemaId, boolean sideEffecting) {
         ToolProvider provider = new ToolProvider() {
             @Override
