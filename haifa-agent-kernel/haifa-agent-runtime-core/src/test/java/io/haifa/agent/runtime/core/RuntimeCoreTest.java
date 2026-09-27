@@ -18,6 +18,8 @@ import io.haifa.agent.core.plan.AgentPlanId;
 import io.haifa.agent.core.plan.TodoItem;
 import io.haifa.agent.core.plan.TodoItemId;
 import io.haifa.agent.core.plan.TodoPriority;
+import io.haifa.agent.core.reference.PrincipalRef;
+import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunBudget;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunLimits;
@@ -67,6 +69,7 @@ import io.haifa.agent.runtime.api.RuntimeOverrides;
 import io.haifa.agent.runtime.core.attempt.ExecutionAttemptStatus;
 import io.haifa.agent.runtime.core.bootstrap.DefaultResolvedModelSnapshots;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
+import io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions;
 import io.haifa.agent.runtime.core.decision.FinalAnswerDecision;
 import io.haifa.agent.runtime.core.decision.ToolCallDecision;
@@ -255,6 +258,115 @@ class RuntimeCoreTest {
         assertThat(fixture.store.toolCalls(accepted.runId()))
                 .singleElement()
                 .satisfies(call -> assertThat(call.arguments().values()).containsEntry("workdir", "."));
+    }
+
+    @Test
+    void projectsStableBoundedAndRedactedToolCallTranscriptWithoutWrites() {
+        String inputSecret = "input-secret-material";
+        String resultSecret = "result-secret-material";
+        ToolRequest original = toolRequest(
+                "projected-tool",
+                "echo",
+                "1.0.0",
+                new ToolArguments(
+                        "echo.input",
+                        "1.0",
+                        Map.of(
+                                "workdir",
+                                "/app",
+                                "api_key",
+                                inputSecret,
+                                "nested",
+                                Map.of("continuation_token", inputSecret),
+                                "large",
+                                "x".repeat(20_000))));
+        Fixture fixture = fixture(
+                model(new ToolCallDecision(List.of(original)), finalDecision("done")),
+                builder -> TestToolPlatform.install(
+                        builder,
+                        "echo",
+                        "1.0.0",
+                        "echo.input",
+                        false,
+                        request -> new ToolResult(
+                                true,
+                                "completed with token=" + resultSecret + " " + "y".repeat(20_000),
+                                Map.of(
+                                        "path",
+                                        "outputs/demo.txt",
+                                        "credential",
+                                        resultSecret,
+                                        "nested",
+                                        Map.of("signature", resultSecret)),
+                                List.of(),
+                                List.of(),
+                                false)));
+
+        var accepted = fixture.runtime.start(request("tool-call-view"));
+        fixture.scheduler.runAll();
+        int eventCountBeforeRead = fixture.store.eventsFor(accepted.runId()).size();
+
+        var first = fixture.runtime.toolCalls(accepted.runId());
+        var second = fixture.runtime.toolCalls(accepted.runId());
+
+        assertThat(first).isEqualTo(second).singleElement().satisfies(view -> {
+            assertThat(view.id())
+                    .isEqualTo(
+                            fixture.store.toolCalls(accepted.runId()).getFirst().id());
+            assertThat(view.runId()).isEqualTo(accepted.runId());
+            assertThat(view.toolName()).isEqualTo("echo");
+            assertThat(view.toolVersion()).isEqualTo("1.0.0");
+            assertThat(view.status()).isEqualTo(ToolCallStatus.COMPLETED);
+            assertThat(view.arguments().truncated()).isTrue();
+            assertThat(view.arguments().values())
+                    .containsEntry("workdir", "/app")
+                    .containsEntry("api_key", "[REDACTED]");
+            assertThat(view.arguments().values().toString()).doesNotContain(inputSecret);
+            assertThat(view.result()).hasValueSatisfying(result -> {
+                assertThat(result.summary().text()).contains("token=[REDACTED]").doesNotContain(resultSecret);
+                assertThat(result.truncated()).isTrue();
+                assertThat(result.structuredData().values())
+                        .containsEntry("path", "outputs/demo.txt")
+                        .containsEntry("credential", "[REDACTED]");
+                assertThat(result.structuredData().values().toString()).doesNotContain(resultSecret);
+            });
+        });
+        assertThat(fixture.store.eventsFor(accepted.runId())).hasSize(eventCountBeforeRead);
+    }
+
+    @Test
+    void toolCallTranscriptFailsClosedForForeignAndUnknownRuns() {
+        AtomicReference<RuntimeCallerContext> caller = new AtomicReference<>(
+                new RuntimeCallerContext(new TenantRef("local"), new PrincipalRef("local-user", "user")));
+        ToolRequest original = toolRequest(
+                "caller-scoped-tool",
+                "echo",
+                "1.0.0",
+                new ToolArguments("echo.input", "1.0", Map.of("value", "visible")));
+        Fixture fixture = fixture(
+                model(new ToolCallDecision(List.of(original)), finalDecision("done")),
+                builder -> TestToolPlatform.install(
+                                builder,
+                                "echo",
+                                "1.0.0",
+                                "echo.input",
+                                false,
+                                request -> new ToolResult(true, "ok", Map.of(), List.of(), List.of(), false))
+                        .callers(caller::get));
+        var accepted = fixture.runtime.start(request("caller-scoped-tool-call-view"));
+        fixture.scheduler.runAll();
+        caller.set(new RuntimeCallerContext(new TenantRef("foreign"), new PrincipalRef("intruder", "user")));
+
+        assertThatThrownBy(() -> fixture.runtime.toolCalls(accepted.runId()))
+                .isInstanceOfSatisfying(RuntimeContractException.class, error -> {
+                    assertThat(error.code()).isEqualTo(RuntimeApiErrorCode.RUN_NOT_FOUND);
+                    assertThat(error).hasMessage("The run does not exist or is not visible");
+                });
+        assertThatThrownBy(() -> fixture.runtime.toolCalls(new AgentRunId("unknown-run")))
+                .isInstanceOfSatisfying(RuntimeContractException.class, error -> {
+                    assertThat(error.code()).isEqualTo(RuntimeApiErrorCode.RUN_NOT_FOUND);
+                    assertThat(error).hasMessage("The run does not exist or is not visible");
+                });
     }
 
     @Test
