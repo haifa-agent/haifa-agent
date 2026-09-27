@@ -25,6 +25,7 @@ import io.haifa.agent.runtime.api.RunOutputCursor;
 import io.haifa.agent.runtime.api.RunOutputSubscription;
 import io.haifa.agent.runtime.api.RuntimeApiErrorCode;
 import io.haifa.agent.runtime.api.RuntimeContractException;
+import io.haifa.agent.runtime.api.ToolCallView;
 import io.haifa.agent.sdk.diagnostics.PromptDiagnostics;
 import io.haifa.agent.sdk.internal.ProcessLocalPromptDiagnostics;
 import java.time.Duration;
@@ -89,6 +90,11 @@ public final class AgentRuns {
      */
     public List<ChildRunView> children(AgentRunId parentRunId) {
         return runtime.children(Objects.requireNonNull(parentRunId, "parentRunId must not be null"));
+    }
+
+    /** Returns bounded, redacted Tool Call views for one caller-visible Run in stable order. */
+    public List<ToolCallView> toolCalls(AgentRunId runId) {
+        return runtime.toolCalls(Objects.requireNonNull(runId, "runId must not be null"));
     }
 
     public AgentRunHandle handle(AgentRunId runId) {

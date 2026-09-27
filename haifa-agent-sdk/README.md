@@ -143,6 +143,14 @@ medium risk、unknown idempotency 与由 Policy 决定的审批。
 已经持有 Tool platform 的宿主在该平台上注册自己的 Tool：`.toolPlatform(...)` 与 `.tool(...)` 同时使用会以
 `JAVA_TOOL_PLATFORM_UNSUPPORTED` fail closed，而不是静默改写宿主平台的 Catalog 与 binding。
 
+Runtime 调用 Java Tool 时，`JavaToolContext` 还提供可信的 `sessionId` 与 `toolCallId`：它们分别来自当前
+权威 Run 和持久 Tool Call，而不是模型 arguments、HTTP 字段或产品自报值。旧的直接构造入口无法安全
+补出 Tool Call ID，因此保留源码形状但在调用时 fail closed；产品 Tool 应只消费 Runtime 注入的 context。
+
+需要在 reload 后还原 Tool 消息时，使用 `agent.runs().toolCalls(runId)`。它复用当前 Caller 的 Run
+授权，返回稳定排序且有界、脱敏的只读投影；普通 Conversation turns 仍只包含 `USER_VISIBLE` 内容，
+不会因为该查询而把内部 Tool parts 混入用户对话历史。
+
 ## Product Profile 与显式装配
 
 - `ProductProfile` 只冻结产品身份（ID/版本）、Agent Definition 版本、instructions、单一

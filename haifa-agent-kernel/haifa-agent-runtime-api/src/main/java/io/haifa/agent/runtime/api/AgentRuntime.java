@@ -51,6 +51,11 @@ public interface AgentRuntime {
         throw new UnsupportedOperationException("child run queries are not supported");
     }
 
+    /** Returns bounded, redacted views of the authoritative Tool Calls for a caller-visible Run. */
+    default List<ToolCallView> toolCalls(io.haifa.agent.core.run.AgentRunId runId) {
+        throw new UnsupportedOperationException("public Tool Call views are not supported");
+    }
+
     AgentRunHandle handle(io.haifa.agent.core.run.AgentRunId runId);
 
     void addListener(AgentRunListener listener);
