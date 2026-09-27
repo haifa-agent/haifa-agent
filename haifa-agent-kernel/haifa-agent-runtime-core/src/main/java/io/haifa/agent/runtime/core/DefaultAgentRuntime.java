@@ -283,7 +283,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         AgentRunSnapshot accepted = snapshot(run.id());
         if (created.get()) {
             AgentRun submittedRun = run;
-            scheduler.submit(run.id(), () -> attemptExecutor.execute(submittedRun, createdAttempt.get()));
+            scheduler.submitAfterCurrent(run.id(), () -> attemptExecutor.execute(submittedRun, createdAttempt.get()));
         }
         return accepted;
     }
