@@ -74,9 +74,31 @@ public final class LocalModelAuthenticationService implements AutoCloseable {
             }
         }
         if (value.startsWith("model-auth://")) {
-            return store.find(LocalModelAuthReference.parse(value)).isEmpty();
+            LocalModelAuthReference localReference = LocalModelAuthReference.parse(value);
+            try {
+                return store.find(localReference).isEmpty();
+            } catch (RuntimeException exception) {
+                if (!credentialStoreUnavailable(exception)) {
+                    throw exception;
+                }
+                return true;
+            }
         }
         throw new IllegalArgumentException("AUTH_CREDENTIAL_REFERENCE_UNSUPPORTED");
+    }
+
+    /**
+     * Reports whether a credential store failure means "no readable credential in this process" rather than a store
+     * defect. The store is unavailable on operating systems without a supported credential manager, and it is
+     * periodically unreachable on Windows itself; availability probing tolerates both like
+     * {@code WindowsLocalModelAuthStore.listSafe()} does, so the caller reports a required connection instead of
+     * failing. Credential resolution stays fail closed.
+     */
+    private static boolean credentialStoreUnavailable(RuntimeException exception) {
+        if (exception instanceof WindowsCredentialManagerException credentialException) {
+            return credentialException.reason() == WindowsCredentialManagerException.Reason.UNAVAILABLE;
+        }
+        return exception.getMessage() != null && exception.getMessage().contains("OS_CREDENTIAL_STORE_UNAVAILABLE");
     }
 
     public LocalModelConnectionView saveApiKey(String providerId, char[] secret) {
