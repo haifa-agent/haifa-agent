@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.haifa.agent.context.api.ContextBuildException;
 import io.haifa.agent.context.api.ContextBuildFailure;
 import io.haifa.agent.core.error.AgentErrorCode;
+import io.haifa.agent.core.run.AgentRunStatus;
+import io.haifa.agent.runtime.core.attempt.ExecutionAttemptStatus;
 import io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException;
 import io.haifa.agent.runtime.core.guard.RuntimeQuotaExceededException;
 import org.junit.jupiter.api.Test;
@@ -43,6 +45,22 @@ class AttemptExecutorTest {
 
         assertThat(AttemptExecutor.classifiedErrorCode(null, null, null, failure))
                 .isEqualTo(AgentErrorCode.CROSS_MODEL_CONTINUATION_INVALID);
+    }
+
+    @Test
+    void skipsOnlyAttemptsAtomicallyPausedAtEitherWaitingBoundary() {
+        assertThat(AttemptExecutor.pausedAtWaitingBoundary(
+                        AgentRunStatus.WAITING_APPROVAL, ExecutionAttemptStatus.PAUSED))
+                .isTrue();
+        assertThat(AttemptExecutor.pausedAtWaitingBoundary(
+                        AgentRunStatus.WAITING_INTERACTION, ExecutionAttemptStatus.PAUSED))
+                .isTrue();
+
+        assertThat(AttemptExecutor.pausedAtWaitingBoundary(AgentRunStatus.SUSPENDED, ExecutionAttemptStatus.PAUSED))
+                .isFalse();
+        assertThat(AttemptExecutor.pausedAtWaitingBoundary(
+                        AgentRunStatus.WAITING_APPROVAL, ExecutionAttemptStatus.FAILED))
+                .isFalse();
     }
 
     private static ContextBuildException failure(ContextBuildFailure failure) {

@@ -85,6 +85,7 @@ public final class AttemptExecutor {
                     run.status() == AgentRunStatus.FAILED ? run.error().orElse(null) : null;
             if (terminalError != null) recordTerminalFailure(run, attempt, traceContext, terminalError);
             recordRunTerminal(run, traceContext);
+            if (pausedAtWaitingBoundary(run.status(), attempt.status())) return;
             finish(attempt, statusFor(run.status()), terminalError);
         } catch (CancellationObservedException cancelled) {
             if (!run.status().isTerminal()) {
@@ -105,10 +106,26 @@ public final class AttemptExecutor {
         } catch (RuntimeException error) {
             AgentError attemptError = safeError(error);
             recordFailure(run, attempt, traceContext, attemptError, error);
+            if (pausedAtWaitingBoundary(run.status(), attempt.status())) {
+                // The WAITING Run and PAUSED Attempt already committed together. Reclassifying either one after a
+                // later loop callback failed would destroy a valid resume boundary. recordFailure above reports to
+                // the best-effort diagnostic sink, and this warning makes the post-commit settlement explicit.
+                LOGGER.warn(
+                        "event=runtime.waiting-post-commit-failure runId={} attemptId={} diagnosticId={}",
+                        run.id().value(),
+                        attempt.attemptId().value(),
+                        attemptError.diagnosticId() == null ? "" : attemptError.diagnosticId());
+                return;
+            }
             if (!run.status().isTerminal()) transitions.failed(run, attemptError);
             recordRunTerminal(run, traceContext);
             finish(attempt, ExecutionAttemptStatus.FAILED, attemptError);
         }
+    }
+
+    static boolean pausedAtWaitingBoundary(AgentRunStatus runStatus, ExecutionAttemptStatus attemptStatus) {
+        return attemptStatus == ExecutionAttemptStatus.PAUSED
+                && (runStatus == AgentRunStatus.WAITING_APPROVAL || runStatus == AgentRunStatus.WAITING_INTERACTION);
     }
 
     private void applyStopSignal(AgentRun run, RunControlSignal signal) {

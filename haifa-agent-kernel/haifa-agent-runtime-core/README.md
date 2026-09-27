@@ -140,6 +140,9 @@ Approval Interaction request、exact target、Checkpoint、Run `WAITING_APPROVAL
 `policy.decision.made` / `approval.requested` Event-Outbox 在同一 Runtime UoW 中提交。`PolicyDecision`
 只在当前求值中瞬态产生，不进入 Store。响应侧把可信 Caller、Authority/Target 验证结果、Interaction
 response/application 和安全事件放入同一 UoW，再在提交后恢复 Run；Tool Resolution 只应用一次。
+所有阻塞式 Interaction 在对外提交 `WAITING_APPROVAL` / `WAITING_INTERACTION` 时，也在同一 UoW
+把当前 Execution Attempt 提交为 `PAUSED`；提交前两者均不可见，回滚时两者均不生效，提交后的执行器
+不会再次结束同一个 Attempt。这样重启或并发响应不会观察到 WAITING Run 仍绑定 RUNNING Attempt。
 
 ## Interaction、Steer 与 Client Event（Task 01～03）
 

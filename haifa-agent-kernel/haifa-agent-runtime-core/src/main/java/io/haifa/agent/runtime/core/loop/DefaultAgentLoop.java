@@ -269,7 +269,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                                 "budgetThresholds",
                                 orderedThresholds));
             }
-            Optional<AgentLoopDirective> pendingTools = decisionExecutor.resumePendingTools(run, progress);
+            Optional<AgentLoopDirective> pendingTools = decisionExecutor.resumePendingTools(run, attempt, progress);
             if (pendingTools
                     .filter(value -> value != AgentLoopDirective.CONTINUE)
                     .isPresent()) {
@@ -689,7 +689,7 @@ public final class DefaultAgentLoop implements AgentLoop {
             middleware.apply(RuntimePhase.BEFORE_DECISION_EXECUTION, middlewareContextRef[0]);
             AgentLoopDirective directive;
             try {
-                directive = decisionExecutor.executeModel(run, response, progress);
+                directive = decisionExecutor.executeModel(run, attempt, response, progress);
             } catch (RuntimeException error) {
                 models.failed(run, response, progress.iteration());
                 middleware.apply(RuntimePhase.ON_ERROR, middlewareContextRef[0]);
