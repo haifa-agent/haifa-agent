@@ -28,6 +28,8 @@ import io.haifa.agent.core.tool.ToolCallStatus;
 import io.haifa.agent.core.tool.ToolExecutionError;
 import io.haifa.agent.runtime.api.InteractionRequestId;
 import io.haifa.agent.runtime.api.InteractionResponseType;
+import io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt;
+import io.haifa.agent.runtime.core.attempt.ExecutionAttemptStatus;
 import io.haifa.agent.runtime.core.checkpoint.CheckpointManager;
 import io.haifa.agent.runtime.core.completion.CompletionBlocker;
 import io.haifa.agent.runtime.core.completion.CompletionGuard;
@@ -52,6 +54,7 @@ import io.haifa.agent.runtime.core.model.continuation.ModelContinuationDraft;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationRef;
 import io.haifa.agent.runtime.core.recovery.BudgetLimitedSummary;
 import io.haifa.agent.runtime.core.retry.CompletionRepairPolicy;
+import io.haifa.agent.runtime.core.storage.ExecutionAttemptRepository;
 import io.haifa.agent.runtime.core.storage.OutboxMessage;
 import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
 import io.haifa.agent.runtime.core.storage.RuntimeOutboxPublisher;
@@ -84,6 +87,7 @@ public final class DecisionExecutor {
     private final ToolPipeline tools;
     private final CompletionGuard completionGuard;
     private final InteractionPort interactions;
+    private final ExecutionAttemptRepository attempts;
     private final DelegationPort delegations;
     private final RuntimeStateRepository state;
     private final RunTransitionCoordinator transitions;
@@ -101,6 +105,7 @@ public final class DecisionExecutor {
             ToolPipeline tools,
             CompletionGuard completionGuard,
             InteractionPort interactions,
+            ExecutionAttemptRepository attempts,
             DelegationPort delegations,
             RuntimeStateRepository state,
             RunTransitionCoordinator transitions,
@@ -116,6 +121,7 @@ public final class DecisionExecutor {
         this.tools = Objects.requireNonNull(tools);
         this.completionGuard = Objects.requireNonNull(completionGuard);
         this.interactions = Objects.requireNonNull(interactions);
+        this.attempts = Objects.requireNonNull(attempts);
         this.delegations = Objects.requireNonNull(delegations);
         this.state = Objects.requireNonNull(state);
         this.transitions = Objects.requireNonNull(transitions);
@@ -130,28 +136,33 @@ public final class DecisionExecutor {
         this.outbox = Objects.requireNonNull(outbox);
     }
 
-    public AgentLoopDirective execute(AgentRun run, AgentDecision decision, AgentLoopContext loopContext) {
+    public AgentLoopDirective execute(
+            AgentRun run, AgentRunExecutionAttempt attempt, AgentDecision decision, AgentLoopContext loopContext) {
         if (decision instanceof FinalAnswerDecision finalDecision) return executeFinal(run, finalDecision, loopContext);
-        if (decision instanceof ToolCallDecision toolDecision) return executeTools(run, toolDecision, loopContext);
+        if (decision instanceof ToolCallDecision toolDecision)
+            return executeTools(run, attempt, toolDecision, loopContext);
         if (decision instanceof DelegationDecision delegation)
-            return executeDelegation(run, delegation, loopContext, Optional.empty());
+            return executeDelegation(run, attempt, delegation, loopContext, Optional.empty());
         if (decision instanceof InteractionDecision interaction)
-            return executeInteraction(run, interaction, loopContext);
+            return executeInteraction(run, attempt, interaction, loopContext);
         ContinueDecision continuation = (ContinueDecision) decision;
         appendMessage(run, MessageRole.ASSISTANT, continuation.message(), MessageVisibility.USER_VISIBLE);
         return AgentLoopDirective.CONTINUE;
     }
 
     public AgentLoopDirective executeModel(
-            AgentRun run, ModelInvocationResult invocation, AgentLoopContext loopContext) {
+            AgentRun run,
+            AgentRunExecutionAttempt attempt,
+            ModelInvocationResult invocation,
+            AgentLoopContext loopContext) {
         AgentDecision decision = invocation.decision();
         if (decision instanceof ToolCallDecision toolDecision) {
-            return executeTools(run, toolDecision, loopContext, java.util.Optional.of(invocation));
+            return executeTools(run, attempt, toolDecision, loopContext, java.util.Optional.of(invocation));
         }
         if (decision instanceof DelegationDecision delegation) {
-            return executeDelegation(run, delegation, loopContext, Optional.of(invocation));
+            return executeDelegation(run, attempt, delegation, loopContext, Optional.of(invocation));
         }
-        return execute(run, decision, loopContext);
+        return execute(run, attempt, decision, loopContext);
     }
 
     public void failWithSummary(AgentRun run, AgentError error, String summary) {
@@ -440,12 +451,14 @@ public final class DecisionExecutor {
                 "nextAction=satisfy the unmet requirements above, then submit final output");
     }
 
-    private AgentLoopDirective executeTools(AgentRun run, ToolCallDecision decision, AgentLoopContext loopContext) {
-        return executeTools(run, decision, loopContext, java.util.Optional.empty());
+    private AgentLoopDirective executeTools(
+            AgentRun run, AgentRunExecutionAttempt attempt, ToolCallDecision decision, AgentLoopContext loopContext) {
+        return executeTools(run, attempt, decision, loopContext, java.util.Optional.empty());
     }
 
     private AgentLoopDirective executeTools(
             AgentRun run,
+            AgentRunExecutionAttempt attempt,
             ToolCallDecision decision,
             AgentLoopContext loopContext,
             java.util.Optional<ModelInvocationResult> invocation) {
@@ -460,11 +473,11 @@ public final class DecisionExecutor {
                 .map(request -> prepareTool(run, request))
                 .toList();
         appendToolCalls(run, prepared.stream().map(PreparedTool::call).toList(), invocation);
-        return executePreparedTools(run, prepared, loopContext);
+        return executePreparedTools(run, attempt, prepared, loopContext);
     }
 
     private AgentLoopDirective executePreparedTools(
-            AgentRun run, List<PreparedTool> prepared, AgentLoopContext loopContext) {
+            AgentRun run, AgentRunExecutionAttempt attempt, List<PreparedTool> prepared, AgentLoopContext loopContext) {
         for (PreparedTool preparedTool : prepared) {
             ToolRequest request = preparedTool.request();
             ToolCall call = preparedTool.call();
@@ -506,7 +519,7 @@ public final class DecisionExecutor {
                 step.waitForExternalInput();
                 state.appendStep(step);
                 state.appendToolCall(call);
-                createToolApproval(run, call, approval, loopContext);
+                createToolApproval(run, attempt, call, approval, loopContext);
                 return AgentLoopDirective.WAIT;
             }
             var result = ((ToolPipelineOutcome.Completed) outcome).result();
@@ -617,13 +630,17 @@ public final class DecisionExecutor {
     }
 
     private void createToolApproval(
-            AgentRun run, ToolCall call, ToolPipelineOutcome.ApprovalRequired approval, AgentLoopContext loopContext) {
+            AgentRun run,
+            AgentRunExecutionAttempt attempt,
+            ToolCall call,
+            ToolPipelineOutcome.ApprovalRequired approval,
+            AgentLoopContext loopContext) {
         String requestId = ids.nextValue();
         var binding = approval.binding();
         String interactionType = approval.reauthentication() ? "tool-reauthentication" : "tool-approval";
         var createdAt = time.now().truncatedTo(java.time.temporal.ChronoUnit.MILLIS);
         var approvalPrompt = approvalPrompts.format(binding, call, approval.reauthentication());
-        unitOfWork.execute(() -> {
+        commitWaiting(attempt, () -> {
             interactions.create(new InteractionRequest(
                     new InteractionRequestId(requestId),
                     run.id(),
@@ -666,7 +683,6 @@ public final class DecisionExecutor {
                             "semantics",
                             "CAPABILITY_CONFIRMATION"),
                     createdAt);
-            return null;
         });
     }
 
@@ -682,7 +698,8 @@ public final class DecisionExecutor {
                 event.occurredAt()));
     }
 
-    public Optional<AgentLoopDirective> resumePendingTools(AgentRun run, AgentLoopContext loopContext) {
+    public Optional<AgentLoopDirective> resumePendingTools(
+            AgentRun run, AgentRunExecutionAttempt attempt, AgentLoopContext loopContext) {
         List<PendingTool> pending = state.toolCalls(run.id()).stream()
                 .filter(call -> call.status() == ToolCallStatus.REQUESTED || call.status() == ToolCallStatus.APPROVED)
                 .map(call -> new PendingTool(
@@ -731,7 +748,7 @@ public final class DecisionExecutor {
                 step.waitForExternalInput();
                 state.appendStep(step);
                 state.appendToolCall(call);
-                createToolApproval(run, call, approval, loopContext);
+                createToolApproval(run, attempt, call, approval, loopContext);
                 return Optional.of(AgentLoopDirective.WAIT);
             }
             var result = ((ToolPipelineOutcome.Completed) outcome).result();
@@ -941,6 +958,7 @@ public final class DecisionExecutor {
      */
     private AgentLoopDirective executeDelegation(
             AgentRun run,
+            AgentRunExecutionAttempt attempt,
             DelegationDecision decision,
             AgentLoopContext loopContext,
             Optional<ModelInvocationResult> invocation) {
@@ -1042,7 +1060,7 @@ public final class DecisionExecutor {
         }
         throwIfStoppedAndCancelPendingSiblings(run, anchor);
         if (ordinary.isEmpty()) return AgentLoopDirective.CONTINUE;
-        return executePreparedTools(run, ordinary, loopContext);
+        return executePreparedTools(run, attempt, ordinary, loopContext);
     }
 
     private PreparedTool prepareDelegation(AgentRun run, ToolRequest request) {
@@ -1229,10 +1247,13 @@ public final class DecisionExecutor {
     }
 
     private AgentLoopDirective executeInteraction(
-            AgentRun run, InteractionDecision decision, AgentLoopContext loopContext) {
+            AgentRun run,
+            AgentRunExecutionAttempt attempt,
+            InteractionDecision decision,
+            AgentLoopContext loopContext) {
         String requestId = ids.nextValue();
         var createdAt = time.now();
-        unitOfWork.execute(() -> {
+        commitWaiting(attempt, () -> {
             interactions.create(new InteractionRequest(
                     new InteractionRequestId(requestId),
                     run.id(),
@@ -1255,9 +1276,25 @@ public final class DecisionExecutor {
                     "interaction.requested",
                     Map.of("requestId", requestId, "kind", decision.interactionType()),
                     createdAt);
-            return null;
         });
         return AgentLoopDirective.WAIT;
+    }
+
+    private void commitWaiting(AgentRunExecutionAttempt attempt, Runnable work) {
+        unitOfWork.execute(() -> {
+            pauseAttemptAfterCommit(attempt);
+            work.run();
+            return null;
+        });
+    }
+
+    private void pauseAttemptAfterCommit(AgentRunExecutionAttempt attempt) {
+        long expectedVersion = attempt.version();
+        AgentRunExecutionAttempt paused = AgentRunExecutionAttempt.reconstitute(attempt.persistenceSnapshot());
+        var pausedAt = time.now();
+        paused.finish(ExecutionAttemptStatus.PAUSED, pausedAt, Optional.empty());
+        attempts.save(paused, expectedVersion);
+        unitOfWork.afterCommit(() -> attempt.finish(ExecutionAttemptStatus.PAUSED, pausedAt, Optional.empty()));
     }
 
     private void appendMessage(AgentRun run, MessageRole role, String text, MessageVisibility visibility) {

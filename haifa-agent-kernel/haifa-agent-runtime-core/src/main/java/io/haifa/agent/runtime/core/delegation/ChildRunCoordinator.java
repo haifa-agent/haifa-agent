@@ -123,7 +123,12 @@ public final class ChildRunCoordinator implements DelegationPort {
     private final ExecutionScheduler trackingScheduler = new ExecutionScheduler() {
         @Override
         public void submit(AgentRunId runId, Runnable task) {
-            submitTracked(runId, task);
+            submitTracked(runId, task, false);
+        }
+
+        @Override
+        public void submitAfterCurrent(AgentRunId runId, Runnable task) {
+            submitTracked(runId, task, true);
         }
 
         @Override
@@ -447,7 +452,7 @@ public final class ChildRunCoordinator implements DelegationPort {
         });
         if (!created) return false;
         try {
-            submitTracked(childId, () -> executor.execute(child, attempt));
+            submitTracked(childId, () -> executor.execute(child, attempt), false);
         } catch (RuntimeException rejected) {
             settleUnscheduled(childId);
         } catch (Error failure) {
@@ -705,23 +710,26 @@ public final class ChildRunCoordinator implements DelegationPort {
         }
     }
 
-    private void submitTracked(AgentRunId runId, Runnable task) {
+    private void submitTracked(AgentRunId runId, Runnable task, boolean afterCurrent) {
         ChildSlot slot = slots.get(runId);
         if (slot == null) {
-            scheduler.submit(runId, task);
+            if (afterCurrent) scheduler.submitAfterCurrent(runId, task);
+            else scheduler.submit(runId, task);
             return;
         }
         synchronized (slot) {
             slot.tasks++;
         }
         try {
-            scheduler.submit(runId, () -> {
+            Runnable tracked = () -> {
                 try {
                     task.run();
                 } finally {
                     taskEnded(runId, slot);
                 }
-            });
+            };
+            if (afterCurrent) scheduler.submitAfterCurrent(runId, tracked);
+            else scheduler.submit(runId, tracked);
         } catch (RuntimeException | Error failure) {
             taskEnded(runId, slot);
             throw failure;
