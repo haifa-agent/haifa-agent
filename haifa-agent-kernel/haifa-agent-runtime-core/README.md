@@ -70,6 +70,11 @@ behind. The parent's `child.run.completed|failed|cancelled|timed-out` event is a
 transition (`RunTransitionCoordinator.projectTerminalRunsWith`), so it is written exactly once, also when the child ends
 after its parent stopped or is settled by recovery.
 
+`LocalExecutionScheduler` still rejects an ordinary duplicate `submit` for the same Run. Only the Runtime resume path
+may register one process-local successor. That successor starts only after the current delegate has completely
+returned and continues to hold the same child process slot. Closing the scheduler drains an already accepted current
+task and successor before rejecting new submissions.
+
 ## Model-call client events
 
 `FrozenModelInvoker` records each physical model attempt as durable `model.attempt.scheduled` and

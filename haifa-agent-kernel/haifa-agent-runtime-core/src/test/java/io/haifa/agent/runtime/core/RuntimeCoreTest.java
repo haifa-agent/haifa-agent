@@ -64,12 +64,14 @@ import io.haifa.agent.runtime.api.RuntimeCommandStatus;
 import io.haifa.agent.runtime.api.RuntimeCommandType;
 import io.haifa.agent.runtime.api.RuntimeContractException;
 import io.haifa.agent.runtime.api.RuntimeOverrides;
+import io.haifa.agent.runtime.core.attempt.ExecutionAttemptStatus;
 import io.haifa.agent.runtime.core.bootstrap.DefaultResolvedModelSnapshots;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions;
 import io.haifa.agent.runtime.core.decision.FinalAnswerDecision;
 import io.haifa.agent.runtime.core.decision.ToolCallDecision;
 import io.haifa.agent.runtime.core.decision.ToolRequest;
+import io.haifa.agent.runtime.core.execution.LocalExecutionScheduler;
 import io.haifa.agent.runtime.core.execution.ManualExecutionScheduler;
 import io.haifa.agent.runtime.core.input.InMemoryRunInputPort;
 import io.haifa.agent.runtime.core.interaction.InMemoryInteractionPort;
@@ -100,7 +102,9 @@ import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Queue;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -2144,6 +2148,87 @@ class RuntimeCoreTest {
                         "approval.authority.verified",
                         "approval.target.validated",
                         "approval.responded");
+    }
+
+    @Test
+    void immediateApprovalResponseFromWaitingListenerDoesNotStrandTheResumedAttempt() throws Exception {
+        AtomicInteger sequence = new AtomicInteger();
+        AtomicInteger modelCalls = new AtomicInteger();
+        AtomicInteger toolCalls = new AtomicInteger();
+        AtomicBoolean responseStarted = new AtomicBoolean();
+        AtomicReference<Throwable> responseFailure = new AtomicReference<>();
+        CountDownLatch responseReturned = new CountDownLatch(1);
+        CountDownLatch terminalObserved = new CountDownLatch(1);
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        InMemoryInteractionPort interactions = new InMemoryInteractionPort();
+        InMemoryToolExecutionJournal journal = new InMemoryToolExecutionJournal();
+        AgentChatModel model = ignored -> response(
+                modelCalls.incrementAndGet() == 1
+                        ? new ToolCallDecision(List.of(toolRequest(
+                                "immediate-response",
+                                "write",
+                                "1.0.0",
+                                new ToolArguments("write.input", "1.0", Map.of("v", 1)))))
+                        : finalDecision("completed after immediate approval"));
+
+        try (LocalExecutionScheduler scheduler = new LocalExecutionScheduler()) {
+            RuntimeCoreBuilder builder = new RuntimeCoreBuilder()
+                    .registerChatModel("openai-compatible", "1.0.0", model)
+                    .scheduler(scheduler)
+                    .persistence(RuntimePersistencePorts.inMemory(store, journal, interactions))
+                    .identifierGenerator(() -> "immediate-response-id-" + sequence.incrementAndGet())
+                    .timeProvider(() -> Instant.parse("2026-07-21T00:00:00Z"));
+            DefaultAgentRuntime runtime = TestToolPlatform.install(
+                            builder,
+                            "write",
+                            "1.0.0",
+                            "write.input",
+                            true,
+                            TestToolPlatform.approvalRequired(),
+                            request -> {
+                                toolCalls.incrementAndGet();
+                                return new ToolResult(true, "written", Map.of(), List.of(), List.of(), false);
+                            })
+                    .build();
+            runtime.addListener(snapshot -> {
+                if (snapshot.status() == AgentRunStatus.WAITING_APPROVAL
+                        && responseStarted.compareAndSet(false, true)) {
+                    try {
+                        var interaction = interactions.pending(snapshot.runId()).orElseThrow();
+                        runtime.respond(new InteractionResponse(
+                                new InteractionResponseId("immediate-response"),
+                                interaction.id(),
+                                snapshot.runId(),
+                                InteractionResponseType.APPROVE,
+                                List.of(),
+                                "immediate-response-key",
+                                Instant.parse("2026-07-21T00:00:00Z")));
+                    } catch (Throwable failure) {
+                        responseFailure.set(failure);
+                    } finally {
+                        responseReturned.countDown();
+                    }
+                }
+                if (snapshot.status().isTerminal()) terminalObserved.countDown();
+            });
+
+            AgentRunId runId =
+                    runtime.start(request("immediate-approval-response")).runId();
+
+            assertThat(responseReturned.await(2, TimeUnit.SECONDS)).isTrue();
+            assertThat(responseFailure.get())
+                    .as(
+                            "immediate response failed after durable resume; run=%s attempts=%s",
+                            runtime.find(runId).orElseThrow(), store.attemptsFor(runId))
+                    .isNull();
+            assertThat(terminalObserved.await(2, TimeUnit.SECONDS)).isTrue();
+            assertThat(runtime.find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(toolCalls).hasValue(1);
+            assertThat(modelCalls).hasValue(2);
+            assertThat(store.attemptsFor(runId))
+                    .extracting(attempt -> attempt.status())
+                    .containsExactly(ExecutionAttemptStatus.PAUSED, ExecutionAttemptStatus.SUCCEEDED);
+        }
     }
 
     @Test

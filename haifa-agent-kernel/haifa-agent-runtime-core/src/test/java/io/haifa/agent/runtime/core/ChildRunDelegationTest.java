@@ -81,6 +81,7 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 import java.util.function.UnaryOperator;
@@ -342,6 +343,71 @@ class ChildRunDelegationTest {
                 fixture.runtime.handle(started.runId()).awaitCompletion(AWAIT).orElseThrow();
         assertThat(parent.status()).isEqualTo(AgentRunStatus.COMPLETED);
         assertThat(fixture.store.find(child).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(writes).hasValue(1);
+    }
+
+    @Test
+    void childApprovalCanResumeFromTheCommittedWaitingListenerWithoutReleasingItsSlotEarly() throws Exception {
+        AtomicInteger writes = new AtomicInteger();
+        AtomicBoolean responded = new AtomicBoolean();
+        AtomicReference<Throwable> responseFailure = new AtomicReference<>();
+        CountDownLatch responseReturned = new CountDownLatch(1);
+        PublicToolPolicy approvalForChildWrites = (run, binding, request) ->
+                binding.alias().value().equals("write_doc") && run.parentRunId().isPresent()
+                        ? TestToolPlatform.approvalRequired()
+                        : TestToolPlatform.allow();
+        Fixture fixture = fixture(
+                Options.defaults().parallel(1).tools(approvalForChildWrites, invocation -> {
+                    if (invocation.binding().alias().value().equals("write_doc")) writes.incrementAndGet();
+                    return new ToolResult(true, "written", Map.of(), List.of(), List.of(), false);
+                }),
+                request -> {
+                    if (isParent(request)) {
+                        return hasToolResults(request) ? answer("approved work", 1) : taskCalls("reviewer", "edit");
+                    }
+                    return hasToolResults(request) ? answer("edited", 1) : toolCall("write_doc");
+                });
+        fixture.runtime.addListener(snapshot -> {
+            if (snapshot.status() != AgentRunStatus.WAITING_APPROVAL
+                    || fixture.store
+                            .find(snapshot.runId())
+                            .orElseThrow()
+                            .parentRunId()
+                            .isEmpty()
+                    || !responded.compareAndSet(false, true)) {
+                return;
+            }
+            try {
+                var pending =
+                        fixture.runtime.pendingInteraction(snapshot.runId()).orElseThrow();
+                fixture.runtime.respond(new InteractionResponseSubmission(
+                        new InteractionResponseId("approve-child-from-listener"),
+                        pending.requestId(),
+                        snapshot.runId(),
+                        pending.revision(),
+                        InteractionAction.APPROVE,
+                        List.of(),
+                        "approve-child-from-listener",
+                        Instant.now()));
+            } catch (Throwable failure) {
+                responseFailure.set(failure);
+            } finally {
+                responseReturned.countDown();
+            }
+        });
+
+        AgentRunSnapshot started = fixture.start("approval-from-listener");
+
+        assertThat(responseReturned.await(10, TimeUnit.SECONDS)).isTrue();
+        assertThat(responseFailure.get()).isNull();
+        AgentRunSnapshot parent =
+                fixture.runtime.handle(started.runId()).awaitCompletion(AWAIT).orElseThrow();
+        AgentRunId child = fixture.runtime.children(parent.runId()).getFirst().runId();
+        assertThat(parent.status()).isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(fixture.store.find(child).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(fixture.store.attemptsFor(child))
+                .extracting(attempt -> attempt.status())
+                .containsExactly(ExecutionAttemptStatus.PAUSED, ExecutionAttemptStatus.SUCCEEDED);
         assertThat(writes).hasValue(1);
     }
 
