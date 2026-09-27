@@ -11,10 +11,12 @@ import io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt;
 import io.haifa.agent.runtime.core.attempt.ExecutionAttemptStatus;
 import io.haifa.agent.runtime.core.control.CancellationObservedException;
 import io.haifa.agent.runtime.core.control.RunControlSignal;
+import io.haifa.agent.runtime.core.decision.AgentLoopDirective;
 import io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException;
 import io.haifa.agent.runtime.core.guard.RuntimeQuotaExceededException;
 import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.loop.AgentLoop;
+import io.haifa.agent.runtime.core.loop.AgentLoopResult;
 import io.haifa.agent.runtime.core.middleware.RuntimePhase;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationException;
 import io.haifa.agent.runtime.core.storage.ExecutionAttemptRepository;
@@ -68,6 +70,7 @@ public final class AttemptExecutor {
     }
 
     public void execute(AgentRun run, AgentRunExecutionAttempt attempt) {
+        boolean loopReturned = false;
         RuntimeTraceContext traceContext = RuntimeTraceContext.forAttempt(
                 traceIds.nextTraceId(), attempt.attemptId(), attempt.workerId().or(() -> Optional.of(owner)));
         try {
@@ -80,12 +83,13 @@ public final class AttemptExecutor {
                 transitions.started(run);
                 recordRunStarted(run, traceContext);
             }
-            loop.run(run, attempt, traceContext);
+            AgentLoopResult loopResult = loop.run(run, attempt, traceContext);
+            loopReturned = true;
+            if (committedWaitingBoundary(loopResult.directive(), attempt.status())) return;
             AgentError terminalError =
                     run.status() == AgentRunStatus.FAILED ? run.error().orElse(null) : null;
             if (terminalError != null) recordTerminalFailure(run, attempt, traceContext, terminalError);
             recordRunTerminal(run, traceContext);
-            if (pausedAtWaitingBoundary(run.status(), attempt.status())) return;
             finish(attempt, statusFor(run.status()), terminalError);
         } catch (CancellationObservedException cancelled) {
             if (!run.status().isTerminal()) {
@@ -106,10 +110,11 @@ public final class AttemptExecutor {
         } catch (RuntimeException error) {
             AgentError attemptError = safeError(error);
             recordFailure(run, attempt, traceContext, attemptError, error);
-            if (pausedAtWaitingBoundary(run.status(), attempt.status())) {
+            if (committedWaitingBoundaryBeforeLoopReturn(loopReturned, attempt.status())) {
                 // The WAITING Run and PAUSED Attempt already committed together. Reclassifying either one after a
-                // later loop callback failed would destroy a valid resume boundary. recordFailure above reports to
-                // the best-effort diagnostic sink, and this warning makes the post-commit settlement explicit.
+                // later loop callback failed would destroy a valid resume boundary. While the loop has not returned,
+                // commitWaiting is the only path that can PAUSE the Attempt. recordFailure above reports to the
+                // best-effort diagnostic sink, and this warning makes the settlement explicit.
                 LOGGER.warn(
                         "event=runtime.waiting-post-commit-failure runId={} attemptId={} diagnosticId={}",
                         run.id().value(),
@@ -123,9 +128,13 @@ public final class AttemptExecutor {
         }
     }
 
-    static boolean pausedAtWaitingBoundary(AgentRunStatus runStatus, ExecutionAttemptStatus attemptStatus) {
-        return attemptStatus == ExecutionAttemptStatus.PAUSED
-                && (runStatus == AgentRunStatus.WAITING_APPROVAL || runStatus == AgentRunStatus.WAITING_INTERACTION);
+    static boolean committedWaitingBoundary(AgentLoopDirective directive, ExecutionAttemptStatus attemptStatus) {
+        return directive == AgentLoopDirective.WAIT && attemptStatus == ExecutionAttemptStatus.PAUSED;
+    }
+
+    static boolean committedWaitingBoundaryBeforeLoopReturn(
+            boolean loopReturned, ExecutionAttemptStatus attemptStatus) {
+        return !loopReturned && attemptStatus == ExecutionAttemptStatus.PAUSED;
     }
 
     private void applyStopSignal(AgentRun run, RunControlSignal signal) {
