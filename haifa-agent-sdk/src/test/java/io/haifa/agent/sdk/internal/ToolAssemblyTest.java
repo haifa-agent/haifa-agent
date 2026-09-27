@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.core.tool.ToolResult;
@@ -39,9 +40,43 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 public class ToolAssemblyTest {
+
+    @Test
+    void mapsTrustedSessionAndToolCallIdentityIntoJavaToolContext() {
+        AtomicReference<JavaToolContext> captured = new AtomicReference<>();
+        ToolAssembly.Prepared prepared = ToolAssembly.prepare(null, List.of(new ContextSpoofTool(captured)), List.of());
+        var tool = prepared.platform()
+                .catalog()
+                .findByAlias(new ToolAlias("context_spoof"))
+                .orElseThrow();
+
+        prepared.platform()
+                .invoker()
+                .invoke(new ToolInvocationRequest(
+                        tool,
+                        new ToolCallId("call-context"),
+                        new AgentRunId("run-context"),
+                        java.util.Optional.of(new AgentSessionId("session-context")),
+                        new TenantRef("tenant-1"),
+                        new PrincipalRef("user-1", "user"),
+                        new ToolArguments(
+                                tool.definition().inputSchema().id(),
+                                tool.definition().inputSchema().version(),
+                                Map.of("sessionId", "model-session", "toolCallId", "model-tool-call")),
+                        Instant.parse("2026-08-05T01:02:03Z"),
+                        java.util.Optional.empty(),
+                        () -> false,
+                        Map.of(),
+                        ToolInvocationObserver.noop()));
+
+        assertThat(captured.get().runId()).isEqualTo(new AgentRunId("run-context"));
+        assertThat(captured.get().sessionId()).contains(new AgentSessionId("session-context"));
+        assertThat(captured.get().toolCallId()).isEqualTo(new ToolCallId("call-context"));
+    }
 
     @Test
     void registersJavaToolOnceAndPreservesDispatchSequence() {
@@ -294,7 +329,44 @@ public class ToolAssemblyTest {
 
     public record WeatherResponse(String forecast) {}
 
+    public record ContextSpoofRequest(String sessionId, String toolCallId) {}
+
+    public record ContextSpoofResponse(boolean accepted) {}
+
+    private static final class ContextSpoofTool implements JavaTool<ContextSpoofRequest, ContextSpoofResponse> {
+        private final AtomicReference<JavaToolContext> captured;
+
+        private ContextSpoofTool(AtomicReference<JavaToolContext> captured) {
+            this.captured = captured;
+        }
+
+        @Override
+        public JavaToolSpec<ContextSpoofRequest, ContextSpoofResponse> spec() {
+            return JavaToolSpec.builder("context_spoof", ContextSpoofRequest.class, ContextSpoofResponse.class)
+                    .pure()
+                    .build();
+        }
+
+        @Override
+        public ContextSpoofResponse invoke(ContextSpoofRequest input, JavaToolContext context) {
+            assertThat(input.sessionId()).isEqualTo("model-session");
+            assertThat(input.toolCallId()).isEqualTo("model-tool-call");
+            captured.set(context);
+            return new ContextSpoofResponse(true);
+        }
+    }
+
     private static final class WeatherTool implements JavaTool<WeatherRequest, WeatherResponse> {
+        private final AtomicReference<JavaToolContext> captured;
+
+        private WeatherTool() {
+            this(new AtomicReference<>());
+        }
+
+        private WeatherTool(AtomicReference<JavaToolContext> captured) {
+            this.captured = captured;
+        }
+
         @Override
         public JavaToolSpec<WeatherRequest, WeatherResponse> spec() {
             return JavaToolSpec.builder("weather_get", WeatherRequest.class, WeatherResponse.class)
@@ -305,6 +377,7 @@ public class ToolAssemblyTest {
 
         @Override
         public WeatherResponse invoke(WeatherRequest input, JavaToolContext context) {
+            captured.set(context);
             if (input.city().equals("fail")) throw new ToolInvocationException("sensitive provider detail");
             return new WeatherResponse("Sunny in " + input.city());
         }

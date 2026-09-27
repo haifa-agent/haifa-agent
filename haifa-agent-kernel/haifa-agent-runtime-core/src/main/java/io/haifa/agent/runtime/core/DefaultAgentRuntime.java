@@ -806,6 +806,17 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                 .toList();
     }
 
+    @Override
+    public List<io.haifa.agent.runtime.api.ToolCallView> toolCalls(AgentRunId runId) {
+        AgentRun run = requireRunForContract(Objects.requireNonNull(runId, "runId must not be null"));
+        requireContractCaller(run);
+        return state.toolCalls(runId).stream()
+                .sorted(java.util.Comparator.comparing(io.haifa.agent.core.tool.ToolCall::requestedAt)
+                        .thenComparing(call -> call.id().value()))
+                .map(io.haifa.agent.runtime.core.tool.ToolCallViewProjector::project)
+                .toList();
+    }
+
     /** The assembled delegation boundary; visible to same-package tests only. */
     DelegationPort delegations() {
         return delegations;

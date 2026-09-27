@@ -162,6 +162,8 @@ public final class ToolAssembly {
                     request.cancellation().throwIfCancellationRequested();
                     JavaToolContext context = new JavaToolContext(
                             request.runId(),
+                            request.sessionId(),
+                            request.toolCallId(),
                             request.tenant(),
                             request.principal(),
                             request.deadline(),
