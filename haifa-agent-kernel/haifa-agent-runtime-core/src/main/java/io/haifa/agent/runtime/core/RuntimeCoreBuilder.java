@@ -599,6 +599,7 @@ public final class RuntimeCoreBuilder {
                 pipeline,
                 completion,
                 interactions,
+                attempts,
                 configuredDelegations,
                 state,
                 transitions,
