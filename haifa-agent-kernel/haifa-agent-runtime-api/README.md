@@ -27,6 +27,17 @@ Journal maps or provider messages.
 有内部进展，不能据此重建 reasoning。`RunOutputSubscription` 必须关闭；订阅按 Run 隔离，
 Listener 失败不会中断 AgentLoop。
 
+## Tool Call 只读投影
+
+`AgentRuntime.toolCalls(runId)` 返回当前可信 Caller 可见 Run 的权威 Tool Call 只读副本，按请求时间与
+Tool Call ID 稳定排序。投影包含 canonical arguments、现有生命周期状态、完成结果和时间；它不暴露
+Runtime Store 或内部可变聚合，也不会写事件、缓存或第二套 transcript 状态。未知 Run 与其他
+Tenant/Principal 的 Run 都统一返回 `RUN_NOT_FOUND`，避免泄露资源是否存在。
+
+arguments、structured result 与 summary 在投影时执行敏感字段脱敏和显式大小限制；API key、credential、
+continuation、签名、密文等值不会原样返回。失败只投影稳定 `AgentErrorCode`，不外发内部错误 details。
+SQLite 与 InMemory 使用同一 Runtime 投影，因此重启后仍从权威持久 Tool Call 得到相同视图。
+
 `RunOutputCursor` 只在当前进程、当前活动 Run 的有界内存缓冲内单调有效；它不是持久化 Cursor，不能在
 进程重启后恢复未完成 Delta。Run 终态提交后缓冲与 Listener 会被清理，调用方应从权威
 `session_message`/Turns 查询完整 Assistant Message。Assistant text delta 按 Provider chunk 原样保留；

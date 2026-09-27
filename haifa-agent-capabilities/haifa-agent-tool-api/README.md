@@ -7,6 +7,9 @@ Canonical names use the model-safe function-name intersection directly: 1-64 ASC
 Model tool specifications use non-strict JSON Schema by default. Strict provider modes remain opt-in until their endpoint and supported-schema constraints are verified end to end.
 
 Providers receive only the exact frozen binding, validated Core arguments, trusted caller/run references, deadline/cancellation data, idempotency key, and short-lived credential leases.
+Runtime-owned invocations also carry the authoritative Session ID when available and the persisted Tool Call ID.
+Legacy callers that cannot supply a trusted Session explicitly use an empty optional value; providers must never
+derive it from model arguments or fabricate an identity.
 
 ## Recovery reconciliation
 

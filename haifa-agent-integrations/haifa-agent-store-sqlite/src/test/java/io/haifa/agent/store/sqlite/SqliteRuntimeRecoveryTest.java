@@ -142,6 +142,49 @@ class SqliteRuntimeRecoveryTest {
     }
 
     @Test
+    void projectsTheSameToolCallTranscriptAfterStoreReopen() {
+        AgentRunId runId;
+        List<io.haifa.agent.runtime.api.ToolCallView> beforeRestart;
+        AtomicInteger providerCalls = new AtomicInteger();
+        try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance processA = toolRuntime(
+                    first,
+                    model(toolResponse(), finalResponse("completed before restart")),
+                    "transcript-process-a",
+                    new TestIds("transcript-a"),
+                    providerCalls,
+                    allow());
+            runId = processA.runtime()
+                    .start(request("tool-call-transcript-restart"))
+                    .runId();
+            processA.scheduler().runAll();
+
+            assertThat(processA.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
+            beforeRestart = processA.runtime().toolCalls(runId);
+            assertThat(beforeRestart).singleElement().satisfies(view -> {
+                assertThat(view.toolName()).isEqualTo("write");
+                assertThat(view.status()).isEqualTo(io.haifa.agent.core.tool.ToolCallStatus.COMPLETED);
+                assertThat(view.result())
+                        .hasValueSatisfying(
+                                result -> assertThat(result.summary().text()).isEqualTo("provider"));
+            });
+        }
+
+        try (SqliteStoreFoundation reopened = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance processB = toolRuntime(
+                    reopened,
+                    finalModel("must not run"),
+                    "transcript-process-b",
+                    new TestIds("transcript-b"),
+                    providerCalls,
+                    allow());
+
+            assertThat(processB.runtime().toolCalls(runId)).isEqualTo(beforeRestart);
+            assertThat(providerCalls).hasValue(1);
+        }
+    }
+
+    @Test
     void streamsDeltasInProcessButPersistsOnlyOneCompleteAssistantMessage() throws Exception {
         AgentChatModel streaming = new AgentChatModel() {
             @Override

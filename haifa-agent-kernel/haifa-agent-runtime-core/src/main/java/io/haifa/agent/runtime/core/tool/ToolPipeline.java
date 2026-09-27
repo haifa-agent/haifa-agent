@@ -536,6 +536,7 @@ public final class ToolPipeline {
                     binding,
                     call.id(),
                     run.id(),
+                    java.util.Optional.of(run.sessionId()),
                     run.tenant(),
                     run.principal(),
                     request.arguments(),
