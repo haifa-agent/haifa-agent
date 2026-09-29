@@ -26,7 +26,6 @@ import io.haifa.agent.sdk.api.HaifaAgent;
 import io.haifa.agent.sdk.api.HaifaAgents;
 import io.haifa.agent.sdk.api.ModelImageResolver;
 import io.haifa.agent.sdk.api.SdkCallerProvider;
-import io.haifa.agent.sdk.contribution.CredentialPlatformContribution;
 import io.haifa.agent.sdk.contribution.InMemoryConversationContribution;
 import io.haifa.agent.sdk.contribution.ModelContribution;
 import io.haifa.agent.sdk.contribution.PolicyPlatformContribution;
@@ -253,7 +252,7 @@ public final class HaifaAgentStarterBuilder {
     public HaifaAgent build() {
         ModelBundle model = models.isEmpty() ? deepSeekModel() : configuredModels();
         ProductProfile profile = profile(model.snapshot());
-        NativeMcpToolPlatform mcp = connectMcpServers();
+        McpToolPlatforms.McpToolPlatform mcp = connectMcpServers();
         try {
             var builder = HaifaAgents.builder(profile)
                     .metadata(new AgentMetadata(name))
@@ -266,10 +265,7 @@ public final class HaifaAgentStarterBuilder {
                     .policy(new PolicyPlatformContribution(
                             PolicyPresets.standardApproval(), new DefaultPolicyDecisionService()));
             if (mcp != null) {
-                builder.toolRegistrations(mcp.registrations())
-                        .managedResource(mcp)
-                        .credentials(new CredentialPlatformContribution(mcp.credentials()));
-                mcp.diagnostics().forEach(builder::diagnostic);
+                mcp.applyTo(builder);
             }
             if (defaultInstructions) {
                 builder.starterDefaultInstructionsInUse();
@@ -282,14 +278,14 @@ public final class HaifaAgentStarterBuilder {
         }
     }
 
-    private NativeMcpToolPlatform connectMcpServers() {
+    private McpToolPlatforms.McpToolPlatform connectMcpServers() {
         if (mcpServers.isEmpty()) return null;
         var caller = Objects.requireNonNull(callers.current(), "caller provider returned null");
-        return NativeMcpToolPlatform.connect(
+        return McpToolPlatforms.connect(
                 List.copyOf(mcpServers), caller.tenant(), caller.principal(), environment, mcpClientFactory);
     }
 
-    private static void closeQuietly(NativeMcpToolPlatform mcp, Throwable original) {
+    private static void closeQuietly(McpToolPlatforms.McpToolPlatform mcp, Throwable original) {
         if (mcp == null) return;
         try {
             mcp.close();

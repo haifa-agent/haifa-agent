@@ -17,7 +17,9 @@ import io.haifa.agent.mcp.tool.McpToolDiscoveryService;
 import io.haifa.agent.mcp.tool.McpToolImportCandidate;
 import io.haifa.agent.mcp.tool.McpToolProvider;
 import io.haifa.agent.sdk.api.AgentDiagnostic;
+import io.haifa.agent.sdk.api.HaifaAgentBuilder;
 import io.haifa.agent.sdk.api.HaifaAgentException;
+import io.haifa.agent.sdk.contribution.CredentialPlatformContribution;
 import io.haifa.agent.sdk.contribution.ToolRegistration;
 import io.haifa.agent.tool.core.ToolDefinitionCanonicalizer;
 import java.time.Clock;
@@ -47,7 +49,7 @@ import java.util.stream.Collectors;
  * <p>This is an SDK assembly detail, not a stable extension point: it is package-private on purpose.
  * Applications declare MCP servers with {@link McpServerSpec} and never see this class.
  */
-final class NativeMcpToolPlatform implements AutoCloseable {
+final class NativeMcpToolPlatform implements McpToolPlatforms.McpToolPlatform {
     private static final int MAX_DISCOVERY_PAGES = 32;
     private static final int MAX_DISCOVERY_TOOLS = 256;
     private static final int MAX_DISCOVERY_SCHEMA_CHARS = 4 * 1024 * 1024;
@@ -58,6 +60,7 @@ final class NativeMcpToolPlatform implements AutoCloseable {
     private final List<ToolRegistration> registrations;
     private final List<AgentDiagnostic> diagnostics;
     private final Map<String, AutoCloseable> redactionScopes;
+    private final AtomicBoolean applied = new AtomicBoolean();
     private final AtomicBoolean closed = new AtomicBoolean();
 
     private NativeMcpToolPlatform(
@@ -207,6 +210,24 @@ final class NativeMcpToolPlatform implements AutoCloseable {
     /** The credential broker holding the MCP header secrets resolved for this platform. */
     CredentialBroker credentials() {
         return credentials;
+    }
+
+    /**
+     * Wires this platform into a builder exactly as the Starter does: imported Tools join the single
+     * Tool catalog freeze, this platform becomes a managed resource the Agent closes, the MCP
+     * credential broker becomes the product's credential boundary, and optional-server diagnostics
+     * are reported. The platform may be applied at most once.
+     */
+    @Override
+    public void applyTo(HaifaAgentBuilder builder) {
+        Objects.requireNonNull(builder, "builder must not be null");
+        if (!applied.compareAndSet(false, true)) {
+            throw new IllegalStateException("MCP Tool platform is already applied to a builder");
+        }
+        builder.toolRegistrations(registrations)
+                .managedResource(this)
+                .credentials(new CredentialPlatformContribution(credentials));
+        diagnostics.forEach(builder::diagnostic);
     }
 
     /** Releases every MCP connection and HTTP resource this platform opened. Repeated calls do nothing. */
