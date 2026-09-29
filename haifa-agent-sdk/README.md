@@ -20,6 +20,12 @@ SDK 不替代 Core/Runtime 状态机，不包含 Spring、SQLite、MCP SDK 或�
 扫描 Classpath 自动导入能力。具体实现仍由对应 Integration/Application 模块提供，并在进程启动时
 显式注册。
 
+需要启用内建 Skill Tool 的产品，可调用
+`SkillToolContributions.createRegistrations(persistence, contentLoader, time)`，并将返回的两个
+`ToolRegistration` 直接交给 `HaifaAgentBuilder.toolRegistrations(...)`。两项 Tool 分别为
+`skill_load` 和 `skill_resource_read`，与其它 SDK Tool 进入同一次 Catalog 冻结及别名冲突检查；
+旧的 `SkillToolContributions.create(...)` 继续可用。
+
 `AgentRuns.recover(runId)` 将失去旧物理执行者的持久 Run 交回同一 Runtime 恢复协议；SDK 不复制
 Checkpoint、Tool Journal 或幂等重放判断。仍由当前实例拥有的 Run 会被拒绝，防止双重执行。
 
