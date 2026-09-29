@@ -1,5 +1,11 @@
 # Changelog
 
+- Follow-up to the credential-conflict change (PR #258 review): `HaifaAgentBuilder.credentials(...)` compares
+  contributions by equality, so a new `CredentialPlatformContribution` wrapping the same broker is accepted;
+  `McpToolPlatform.applyTo` claims the credential boundary before adding Tools, the managed resource or diagnostics,
+  so a rejected apply leaves the builder unchanged and the platform unapplied; the SDK and Starter READMEs document
+  the single-credential-broker contract.
+
 - `HaifaAgentBuilder.credentials(...)` now rejects a second, different `CredentialPlatformContribution` with
   `IllegalStateException` instead of silently replacing the first (passing the same contribution again is still
   allowed). This closes the PR #257 review finding: `McpToolPlatform.applyTo(builder)` sets the builder's credential

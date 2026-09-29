@@ -161,6 +161,10 @@ Runtime 调用 Java Tool 时，`JavaToolContext` 还提供可信的 `sessionId` 
   `toolPlatform`、`skillPlatform`、`memory`、`artifacts`、`policy`、`approval`、`credentials` 为可选。
   缺少必需组件时构建以稳定错误码失败，可选组件缺失即对应能力不存在；不再存在 candidate resolution、
   ambiguity、suitability 或 assembly digest。
+- `credentials(...)` 只持有一个 Credential broker：已设置时再传入**不相等**的
+  `CredentialPlatformContribution` 会抛 `IllegalStateException`，而不是静默替换（包括 MCP
+  `McpToolPlatform.applyTo` 设置的 broker）；传入相等的贡献（同一 broker，即使是新的包装实例）是允许的。
+  需要多个凭据来源时，由调用方提供一个自行组合它们的 broker。
 - Tool 和 Skill 只有在 Profile 明确允许且冻结 Catalog 中存在时才进入 Runtime，否则构建以
   `TOOL_ALIAS_UNAVAILABLE` / `SKILL_ALIAS_UNAVAILABLE` 失败。MCP 先由 Integration
   完成连接、发现、schema/risk 映射和逐项 allowlist，再作为统一 Tool Catalog 的一部分注入；SDK
