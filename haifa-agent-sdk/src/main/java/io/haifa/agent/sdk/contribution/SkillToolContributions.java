@@ -22,4 +22,16 @@ public final class SkillToolContributions {
         var service = new DefaultSkillActivationService(ports.runs(), ports.state(), contentLoader, time);
         return new SkillToolProvider(service).contributions();
     }
+
+    /** Returns the built-in Skill Tools as public SDK registrations for the unified Tool catalog. */
+    public static List<ToolRegistration> createRegistrations(
+            SdkPersistenceContribution persistence, SkillContentLoader contentLoader, TimeProvider time) {
+        return create(persistence, contentLoader, time).stream()
+                .map(contribution -> new ToolRegistration(
+                        contribution.alias(),
+                        contribution.definition(),
+                        contribution.providerBindingReference(),
+                        contribution.provider()))
+                .toList();
+    }
 }
