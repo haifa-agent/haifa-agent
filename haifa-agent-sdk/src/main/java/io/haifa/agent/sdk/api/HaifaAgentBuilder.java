@@ -148,8 +148,8 @@ public final class HaifaAgentBuilder {
      * Sets the Agent's single credential broker. A second, different contribution is rejected instead
      * of silently replacing the first, because Tools already wired to the first broker (for example
      * MCP Tools applied through {@code McpToolPlatforms}) would lose their credentials. Callers that
-     * need several credential sources must supply one broker that composes them. Passing the same
-     * contribution again is allowed.
+     * need several credential sources must supply one broker that composes them. Passing an equal
+     * contribution again (the same broker, even in a new wrapper) is allowed.
      *
      * @param value the credential contribution
      * @return this builder
@@ -157,7 +157,7 @@ public final class HaifaAgentBuilder {
      */
     public HaifaAgentBuilder credentials(CredentialPlatformContribution value) {
         Objects.requireNonNull(value, "value must not be null");
-        if (credentials != null && credentials != value) {
+        if (credentials != null && !credentials.equals(value)) {
             throw new IllegalStateException("A credential contribution is already set on this builder; "
                     + "supply a single broker that composes every credential source instead of replacing it");
         }

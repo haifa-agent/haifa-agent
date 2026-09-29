@@ -216,7 +216,9 @@ final class NativeMcpToolPlatform implements McpToolPlatforms.McpToolPlatform {
      * Wires this platform into a builder exactly as the Starter does: imported Tools join the single
      * Tool catalog freeze, this platform becomes a managed resource the Agent closes, the MCP
      * credential broker becomes the product's credential boundary, and optional-server diagnostics
-     * are reported. The platform may be applied at most once.
+     * are reported. The platform may be applied at most once. The credential boundary is claimed
+     * first, so a builder that already holds a different credential contribution is rejected before
+     * any Tool, resource or diagnostic is added, and the platform can still be applied elsewhere.
      */
     @Override
     public void applyTo(HaifaAgentBuilder builder) {
@@ -224,9 +226,13 @@ final class NativeMcpToolPlatform implements McpToolPlatforms.McpToolPlatform {
         if (!applied.compareAndSet(false, true)) {
             throw new IllegalStateException("MCP Tool platform is already applied to a builder");
         }
-        builder.toolRegistrations(registrations)
-                .managedResource(this)
-                .credentials(new CredentialPlatformContribution(credentials));
+        try {
+            builder.credentials(new CredentialPlatformContribution(credentials));
+        } catch (RuntimeException rejected) {
+            applied.set(false);
+            throw rejected;
+        }
+        builder.toolRegistrations(registrations).managedResource(this);
         diagnostics.forEach(builder::diagnostic);
     }
 
