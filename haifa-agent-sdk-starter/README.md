@@ -110,6 +110,31 @@ Starter 的 `standardApproval()` preset 对任何带 NETWORK_ACCESS 的 Tool 都
 
 0.1.2-SNAPSHOT Native MCP Client 只提供 Streamable HTTP；stdio 需要 Execution Broker，暂不在 Starter 公开。
 
+### 自定义装配：把声明式 MCP 接入任意 Builder
+
+进程内 `HaifaAgentStarter` 固定装配内存 Persistence/Conversation。产品若已自有持久化与 Conversation
+组件（例如 SQLite），可用 `McpToolPlatforms.connect(...)` 得到同一个声明式 MCP 贡献，再接入任意
+`HaifaAgentBuilder`：
+
+```java
+var mcp = McpToolPlatforms.connect(List.of(search, jobs), tenant, principal);
+try {
+    HaifaAgentBuilder builder = HaifaAgents.builder(profile)
+            .persistence(sqlite.persistence())
+            .conversation(sqlite.conversation());
+    mcp.applyTo(builder); // Tool registration、managed resource、Credential 与诊断一次完成
+    return builder.build();
+} catch (RuntimeException | Error failure) {
+    mcp.close();
+    throw failure;
+}
+```
+
+`connect` 走与 Starter 相同的 `SdkMcpClientFactory` 与同一个 package-private 装配路径，返回值只暴露
+`applyTo(HaifaAgentBuilder)` 与 `close()`；空列表是 no-op，不覆盖调用方已有的 Credential。required Server
+失败时释放已开连接并抛出，optional Server 失败只贡献安全诊断。成功构建后由 Agent 持有并在 `close()` 释放；
+`applyTo` 只能调用一次。
+
 默认 instructions 只是 Quickstart fallback；使用它时 `agent.diagnostics()` 包含
 `DEFAULT_INSTRUCTIONS_IN_USE`，显式调用 `instructions(...)` 后该诊断消失。`name` 仅用于展示和
 Conversation display name，不进入 Prompt 或选择逻辑；Agent `description` 暂不暴露。多轮、重试、
