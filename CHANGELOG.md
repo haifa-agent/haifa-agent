@@ -1,5 +1,12 @@
 # Changelog
 
+- `HaifaAgentBuilder.credentials(...)` now rejects a second, different `CredentialPlatformContribution` with
+  `IllegalStateException` instead of silently replacing the first (passing the same contribution again is still
+  allowed). This closes the PR #257 review finding: `McpToolPlatform.applyTo(builder)` sets the builder's credential
+  broker, so a host that had already set its own broker lost it, and a host that set one afterwards broke the MCP
+  Tools. Callers that need several credential sources supply one broker that composes them; no composite broker is
+  added to the SDK.
+
 - Added the public `McpToolPlatforms.connect(List<McpServerSpec>, TenantRef, PrincipalRef)` facade and its opaque
   `McpToolPlatform` contribution (`applyTo(HaifaAgentBuilder)` / `close()`), so an external package can assemble the
   Tools, credential boundary, diagnostics and managed connections of declared MCP servers into any
