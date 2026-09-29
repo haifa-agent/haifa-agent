@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
   "repository": "git@github.com:haifa-agent/haifa-agent-autonomous-delivery-assets.git",
-  "revision": "099459d6133b58761d36208c229cbd873ca22ab1",
-  "manifestSha256": "597dab7bebdf23ef4b00ddb0f335d1e8bfa954eb77977b1b81c86c0f81635e34"
+  "revision": "29883ec231be3530f5ce83fc017d5a642306cff5",
+  "manifestSha256": "d154e178aa4a57f816ab0b151039ce4d1db139f81e0ee2db8fd6e2ff66acabcf"
 }
