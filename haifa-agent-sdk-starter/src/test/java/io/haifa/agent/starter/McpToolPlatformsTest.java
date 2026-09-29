@@ -5,10 +5,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
+import io.haifa.agent.credential.api.CredentialBroker;
 import io.haifa.agent.sdk.api.HaifaAgentException;
 import io.haifa.agent.sdk.api.HaifaAgents;
+import io.haifa.agent.sdk.contribution.CredentialPlatformContribution;
 import java.net.URI;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 /** Public MCP assembly facade: owned no-op, single-apply ownership, and fail-closed connect. */
@@ -71,6 +74,37 @@ class McpToolPlatformsTest {
 
         assertThat(mcp.openClients()).isEqualTo(2);
         assertThat(mcp.closedClients()).isEqualTo(1);
+    }
+
+    @Test
+    void refusesToReplaceTheHostCredentialBroker() {
+        var mcp = new FakeMcpServer().serving("enterprise-search", "search_jobs");
+        var builder = HaifaAgents.builder().credentials(hostCredentials());
+
+        try (var platform = McpToolPlatforms.connect(List.of(jobs()), TENANT, PRINCIPAL, name -> "test-secret", mcp)) {
+            assertThatThrownBy(() -> platform.applyTo(builder))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("credential contribution is already set");
+        }
+    }
+
+    @Test
+    void refusesAHostCredentialBrokerAfterTheMcpPlatformIsApplied() {
+        var mcp = new FakeMcpServer().serving("enterprise-search", "search_jobs");
+        var builder = HaifaAgents.builder();
+
+        try (var platform = McpToolPlatforms.connect(List.of(jobs()), TENANT, PRINCIPAL, name -> "test-secret", mcp)) {
+            platform.applyTo(builder);
+
+            assertThatThrownBy(() -> builder.credentials(hostCredentials()))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("credential contribution is already set");
+        }
+    }
+
+    private static CredentialPlatformContribution hostCredentials() {
+        CredentialBroker broker = id -> Optional.empty();
+        return new CredentialPlatformContribution(broker);
     }
 
     private static McpServerSpec jobs() {
