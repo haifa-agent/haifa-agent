@@ -1,5 +1,15 @@
 # Changelog
 
+- Added the public `McpToolPlatforms.connect(List<McpServerSpec>, TenantRef, PrincipalRef)` facade and its opaque
+  `McpToolPlatform` contribution (`applyTo(HaifaAgentBuilder)` / `close()`), so an external package can assemble the
+  Tools, credential boundary, diagnostics and managed connections of declared MCP servers into any
+  `HaifaAgentBuilder`, including a persistent SQLite assembly. `HaifaAgentStarterBuilder.build()` now reuses the same
+  single assembly path, so the Starter and a product-owned builder share one implementation. The facade exposes no MCP
+  Integration internals (the `NativeMcpToolPlatform` and client/connection types stay package-private); an empty
+  declaration is an owned no-op that leaves a caller's own credentials untouched, applying one contribution twice is
+  rejected, a required server that fails closes every connection opened so far, and an optional failure contributes a
+  safe diagnostic instead.
+
 - `DefaultMemoryRetriever` refines recall by removing the zero-score candidate filter: memories matching query terms
   take priority, and remaining slots are filled by recency up to `MAX_ITEMS` (increased from 8 to 16) within the token
   budget. Selected snippets are stably ordered by creation timestamp and ID to maximize LLM prompt cache hit rates.

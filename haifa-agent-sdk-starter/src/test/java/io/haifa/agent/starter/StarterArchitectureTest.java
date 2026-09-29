@@ -55,6 +55,10 @@ class StarterArchitectureTest {
 
         assertThat(publicTypes)
                 .containsExactlyInAnyOrder(
-                        "HaifaAgentStarter", "HaifaAgentStarterBuilder", "McpServerSpec", "McpServerRequirement");
+                        "HaifaAgentStarter",
+                        "HaifaAgentStarterBuilder",
+                        "McpServerSpec",
+                        "McpServerRequirement",
+                        "McpToolPlatforms");
     }
 }
