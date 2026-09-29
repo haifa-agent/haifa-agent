@@ -135,6 +135,11 @@ try {
 失败时释放已开连接并抛出，optional Server 失败只贡献安全诊断。成功构建后由 Agent 持有并在 `close()` 释放；
 `applyTo` 只能调用一次。
 
+`applyTo` 会占用 builder 唯一的 Credential 槽：若 builder 已设置了另一个 Credential 贡献，`applyTo` 在添加任何
+Tool、resource 或诊断之前抛 `IllegalStateException`，builder 保持原状，平台仍未应用、可交给其它 builder 或关闭；
+`applyTo` 之后再设置不同的 Credential 贡献同样失败。需要与宿主自有凭据并存时，请提供一个组合 broker，不要依赖
+后写覆盖。若 `HaifaAgentBuilder.build()` 在装配中途失败，平台不会被自动关闭，调用方须自行 `close()`。
+
 默认 instructions 只是 Quickstart fallback；使用它时 `agent.diagnostics()` 包含
 `DEFAULT_INSTRUCTIONS_IN_USE`，显式调用 `instructions(...)` 后该诊断消失。`name` 仅用于展示和
 Conversation display name，不进入 Prompt 或选择逻辑；Agent `description` 暂不暴露。多轮、重试、
