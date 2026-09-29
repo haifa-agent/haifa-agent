@@ -676,6 +676,21 @@ class CredentialPlanTest(unittest.TestCase):
         self.assertNotIn("never-written", text)
         self.assertEqual(str(written), argv[argv.index("--config") + 1])
 
+    def test_a_posix_launcher_also_receives_the_rewritten_configuration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.distribution(directory)
+            launcher = Path(directory) / "haifa-coding"
+            launcher.write_text("#!/bin/sh\n", encoding="utf-8")
+            os.environ["DEEPSEEK_API_KEY"] = "value"
+            configured = settings(agent=str(launcher), output_dir=Path(directory) / "out")
+
+            written = MODULE.agent_configuration(configured, 600)
+            argv = MODULE.agent_argv(configured, Path(directory), "task", 600)
+
+        self.assertIsNotNone(written)
+        self.assertEqual(str(written), argv[argv.index("--config") + 1])
+        self.assertLess(argv.index("--config"), argv.index("--workspace"))
+
     def test_an_unchanged_credential_source_keeps_the_configured_reference(self):
         with tempfile.TemporaryDirectory() as directory:
             launcher = self.distribution(directory)
