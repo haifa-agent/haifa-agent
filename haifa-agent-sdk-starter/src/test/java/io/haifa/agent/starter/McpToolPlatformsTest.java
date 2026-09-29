@@ -89,6 +89,22 @@ class McpToolPlatformsTest {
     }
 
     @Test
+    void aRejectedApplyLeavesThePlatformUnappliedAndOpen() {
+        var mcp = new FakeMcpServer().serving("enterprise-search", "search_jobs");
+        var hostBuilder = HaifaAgents.builder().credentials(hostCredentials());
+
+        try (var platform = McpToolPlatforms.connect(List.of(jobs()), TENANT, PRINCIPAL, name -> "test-secret", mcp)) {
+            assertThatThrownBy(() -> platform.applyTo(hostBuilder)).isInstanceOf(IllegalStateException.class);
+
+            assertThat(mcp.closedClients()).isZero();
+            platform.applyTo(HaifaAgents.builder());
+            assertThatThrownBy(() -> platform.applyTo(HaifaAgents.builder()))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("already applied");
+        }
+    }
+
+    @Test
     void refusesAHostCredentialBrokerAfterTheMcpPlatformIsApplied() {
         var mcp = new FakeMcpServer().serving("enterprise-search", "search_jobs");
         var builder = HaifaAgents.builder();

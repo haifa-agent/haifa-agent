@@ -33,12 +33,28 @@ class HaifaAgentBuilderCredentialsTest {
     }
 
     @Test
+    void acceptsANewWrapperAroundTheSameBroker() {
+        CredentialBroker broker = id -> Optional.empty();
+
+        assertThatCode(() -> HaifaAgents.builder()
+                        .credentials(new CredentialPlatformContribution(broker))
+                        .credentials(new CredentialPlatformContribution(broker)))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
     void rejectsNull() {
         assertThatThrownBy(() -> HaifaAgents.builder().credentials(null)).isInstanceOf(NullPointerException.class);
     }
 
     private static CredentialPlatformContribution contribution() {
-        CredentialBroker broker = id -> Optional.empty();
+        // A non-capturing lambda is one shared instance per call site; use a distinct broker per call.
+        CredentialBroker broker = new CredentialBroker() {
+            @Override
+            public Optional<String> getSecret(String credentialId) {
+                return Optional.empty();
+            }
+        };
         return new CredentialPlatformContribution(broker);
     }
 }
