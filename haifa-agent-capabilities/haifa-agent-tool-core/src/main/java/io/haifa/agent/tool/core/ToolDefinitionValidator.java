@@ -3,8 +3,12 @@ package io.haifa.agent.tool.core;
 import io.haifa.agent.tool.api.ToolDefinition;
 import io.haifa.agent.tool.api.ToolSchema;
 import java.util.Map;
+import java.util.Set;
 
 public final class ToolDefinitionValidator {
+    /** Keywords whose value maps names (property or definition names) to schemas rather than being a schema. */
+    private static final Set<String> NAME_TO_SCHEMA_KEYWORDS =
+            Set.of("properties", "$defs", "definitions", "dependentSchemas", "patternProperties");
     private static final int MAX_SCHEMA_DEPTH = 64;
     private static final int MAX_SCHEMA_NODES = 4096;
     private static final int MAX_SCHEMA_TEXT_CHARS = 1_048_576;
@@ -19,13 +23,24 @@ public final class ToolDefinitionValidator {
         if (!ToolSchema.DRAFT_2020_12.equals(dialect)) {
             throw new IllegalArgumentException(name + " must declare JSON Schema Draft 2020-12");
         }
-        inspect(schema.document(), schema.document(), name, 0, new SchemaBudget());
+        inspect(schema.document(), schema.document(), name, 0, new SchemaBudget(), false);
     }
 
-    private static void inspect(Object value, Map<String, Object> root, String name, int depth, SchemaBudget budget) {
+    /**
+     * @param nameMap {@code true} when {@code value} is the object under a {@link #NAME_TO_SCHEMA_KEYWORDS}
+     *     keyword: its keys are user-chosen names (a property may legitimately be called {@code pattern} or
+     *     {@code $ref}), so keyword checks apply only to each of its values.
+     */
+    private static void inspect(
+            Object value, Map<String, Object> root, String name, int depth, SchemaBudget budget, boolean nameMap) {
         if (depth > MAX_SCHEMA_DEPTH) throw new IllegalArgumentException(name + " exceeds maximum schema depth");
         budget.node();
-        if (value instanceof Map<?, ?> map) {
+        if (value instanceof Map<?, ?> map && nameMap) {
+            map.forEach((key, element) -> {
+                budget.text(String.valueOf(key));
+                inspect(element, root, name, depth + 1, budget, false);
+            });
+        } else if (value instanceof Map<?, ?> map) {
             Object reference = map.get("$ref");
             if (reference != null) {
                 if (!(reference instanceof String text)) {
@@ -45,10 +60,10 @@ public final class ToolDefinitionValidator {
             validateKeywordTypes(map, name);
             map.forEach((key, element) -> {
                 budget.text(String.valueOf(key));
-                inspect(element, root, name, depth + 1, budget);
+                inspect(element, root, name, depth + 1, budget, NAME_TO_SCHEMA_KEYWORDS.contains(String.valueOf(key)));
             });
         } else if (value instanceof Iterable<?> iterable) {
-            iterable.forEach(element -> inspect(element, root, name, depth + 1, budget));
+            iterable.forEach(element -> inspect(element, root, name, depth + 1, budget, false));
         } else if (value instanceof String text) {
             budget.text(text);
         }
