@@ -16,21 +16,25 @@ class ToolDefinitionValidatorTest {
     void acceptsPropertyNamedPattern() {
         // Frozen DeerFlow glob/grep expose a required `pattern` argument.
         var input = schema(Map.of(
-                "type", "object",
-                "properties", Map.of(
+                "type",
+                "object",
+                "properties",
+                Map.of(
                         "pattern", Map.of("type", "string", "minLength", 1),
                         "path", Map.of("type", "string")),
-                "required", List.of("pattern", "path"),
-                "additionalProperties", false));
+                "required",
+                List.of("pattern", "path"),
+                "additionalProperties",
+                false));
 
-        assertThatCode(() -> validator.validate(ToolFixtures.definition(ToolRisk.LOW, input))).doesNotThrowAnyException();
+        assertThatCode(() -> validator.validate(ToolFixtures.definition(ToolRisk.LOW, input)))
+                .doesNotThrowAnyException();
     }
 
     @Test
     void stillRejectsThePatternKeywordInsideAPropertySchema() {
-        var input = schema(Map.of(
-                "type", "object",
-                "properties", Map.of("path", Map.of("type", "string", "pattern", "^/mnt/"))));
+        var input = schema(
+                Map.of("type", "object", "properties", Map.of("path", Map.of("type", "string", "pattern", "^/mnt/"))));
 
         assertThatThrownBy(() -> validator.validate(ToolFixtures.definition(ToolRisk.LOW, input)))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -51,18 +55,18 @@ class ToolDefinitionValidatorTest {
         var input = schema(Map.of(
                 "type", "object",
                 "$defs", Map.of("pattern", Map.of("type", "string")),
-                "properties", Map.of(
-                        "$ref", Map.of("type", "string"),
-                        "glob", Map.of("$ref", "#/$defs/pattern"))));
+                "properties",
+                        Map.of(
+                                "$ref", Map.of("type", "string"),
+                                "glob", Map.of("$ref", "#/$defs/pattern"))));
 
-        assertThatCode(() -> validator.validate(ToolFixtures.definition(ToolRisk.LOW, input))).doesNotThrowAnyException();
+        assertThatCode(() -> validator.validate(ToolFixtures.definition(ToolRisk.LOW, input)))
+                .doesNotThrowAnyException();
     }
 
     @Test
     void stillRejectsUnresolvedReferencesBelowNameMaps() {
-        var input = schema(Map.of(
-                "type", "object",
-                "properties", Map.of("glob", Map.of("$ref", "#/$defs/missing"))));
+        var input = schema(Map.of("type", "object", "properties", Map.of("glob", Map.of("$ref", "#/$defs/missing"))));
 
         assertThatThrownBy(() -> validator.validate(ToolFixtures.definition(ToolRisk.LOW, input)))
                 .isInstanceOf(IllegalArgumentException.class)
