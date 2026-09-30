@@ -9,6 +9,7 @@ public final class ToolDefinitionValidator {
     /** Keywords whose value maps names (property or definition names) to schemas rather than being a schema. */
     private static final Set<String> NAME_TO_SCHEMA_KEYWORDS =
             Set.of("properties", "$defs", "definitions", "dependentSchemas", "patternProperties");
+
     private static final int MAX_SCHEMA_DEPTH = 64;
     private static final int MAX_SCHEMA_NODES = 4096;
     private static final int MAX_SCHEMA_TEXT_CHARS = 1_048_576;
