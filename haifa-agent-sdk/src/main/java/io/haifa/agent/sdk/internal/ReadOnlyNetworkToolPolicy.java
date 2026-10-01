@@ -45,6 +45,9 @@ import java.util.Set;
  */
 public final class ReadOnlyNetworkToolPolicy implements PolicyDecisionService {
     private static final String MARKER_PREFIX = "sdk-readonly-network-";
+    // Configuration-only marker: it must never match the Runtime's "invoke" action,
+    // otherwise it could shadow a product's default ASK/DENY after the preset ASK is removed.
+    private static final String MANIFEST_OPERATION = "declare-read-only-network";
     private static final int HASH_PREFIX_LENGTH = 12;
 
     private final PolicyDecisionService delegate;
@@ -197,7 +200,7 @@ public final class ReadOnlyNetworkToolPolicy implements PolicyDecisionService {
                         Optional.empty(),
                         Optional.empty(),
                         Optional.of(name),
-                        Optional.of("invoke"),
+                        Optional.of(MANIFEST_OPERATION),
                         Optional.of("tool"),
                         Optional.empty(),
                         Set.of(PolicySideEffect.NETWORK_ACCESS)),

@@ -305,6 +305,8 @@ Run Event Feed 使用 `ModelAttemptLifecycle` 暴露逻辑请求、Attempt、等
   fail fast。未配置 `policy` 组件时该能力不可用。
   `networkAccess(hosts)` 声明的是 Tool 的逻辑服务主机元数据，参与冻结 Catalog 与 Policy digest；
   SDK 不拦截 Tool 自建的 HTTP 客户端，也不把代理地址视为逻辑服务主机。Tool 实现仍须遵守声明。
+  名单 marker 使用声明操作，绝不匹配 Runtime 的 `invoke`；它只绑定配置 digest，不能遮蔽产品的
+  默认 ASK/DENY。移除原样标准网络 ASK 后仍由原 evaluator 和默认规则决定，未得到 ALLOW 则保留原决定。
 - `HaifaAgentException` 及 `ConversationException` 对外只暴露安全的 `code`、`operation` 和
   `correlation`。Conversation Adapter、SQLite/Runtime 底层异常和输入正文不会进入公共错误消息。
 - `HaifaAgent.memories()` 暴露直接 CRUD：`put`（同 scope/kind/subject 替换，重复内容不增加 revision）、

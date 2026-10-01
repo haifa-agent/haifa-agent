@@ -21,7 +21,7 @@ import java.util.Set;
  * <p>This is the ordinary SDK entry for typed in-process Java Tools: it declares the Tool name,
  * input/output record types, a human title and description, a timeout, and whether the Tool is a pure
  * function or declares side effects. Everything else a {@link io.haifa.agent.tool.api.ToolDefinition}
- * can carry (provider identity, concurrency policy, resource requirements, credential requirements,
+ * can carry (provider identity, concurrency policy, resource requirements other than network hosts, credential requirements,
  * approval requirement, provenance, tags) is fixed by the SDK Tool platform and is not mirrored here;
  * a Tool that needs those fields registers itself through the Tool API instead.
  *
@@ -30,8 +30,9 @@ import java.util.Set;
  * idempotency and policy-decided approval. Declaring side effects also drops the pure declaration, so
  * a side-effecting Tool can never keep the "never needs approval" state.
  *
- * <p>{@link Builder#networkAccess(String...)} declares a read-oriented Tool that reaches exactly the
- * named hosts. It always declares {@link ToolSideEffect#NETWORK_ACCESS}, is never pure, and keeps the
+ * <p>{@link Builder#networkAccess(String...)} declares logical service hosts for a read-oriented Tool.
+ * This metadata does not intercept a Tool's own HTTP client. It always declares
+ * {@link ToolSideEffect#NETWORK_ACCESS}, is never pure, and keeps the
  * same conservative defaults. Hosts are exact, lowercase DNS names; empty, blank, wildcard and
  * otherwise invalid hosts fail closed, and {@code pure()} removes the declaration so no contradictory
  * network metadata survives.
