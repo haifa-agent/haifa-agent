@@ -588,48 +588,6 @@ class SqliteRuntimeRecoveryTest {
     }
 
     @Test
-    void commitsWaitingApprovalAndPausedAttemptInOneUnitOfWork() throws Exception {
-        AtomicInteger providerCalls = new AtomicInteger();
-        AgentRunId runId;
-        InteractionRequestId approvalId;
-        try (SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory)) {
-            RuntimeInstance instance = toolRuntime(
-                    foundation,
-                    model(toolResponse()),
-                    "atomic-pause-process",
-                    new TestIds("atomic-pause"),
-                    providerCalls,
-                    approvalRequired());
-            runId = instance.runtime().start(request("atomic-approval-pause")).runId();
-            instance.scheduler().runAll();
-
-            assertThat(instance.ports().runs().find(runId).orElseThrow().status())
-                    .isEqualTo(AgentRunStatus.WAITING_APPROVAL);
-            InteractionRequest approval =
-                    instance.ports().interactions().pending(runId).orElseThrow();
-            approvalId = approval.id();
-            assertThat(instance.ports().attempts().activeFor(runId)).isEmpty();
-            assertThat(instance.ports().attempts().attemptsFor(runId).getLast().status())
-                    .isEqualTo(ExecutionAttemptStatus.PAUSED);
-        }
-
-        try (SqliteStoreFoundation reopened = SqliteTestSupport.foundation(directory)) {
-            RuntimeInstance resumed = toolRuntime(
-                    reopened,
-                    finalModel("completed after atomic approval pause"),
-                    "atomic-pause-resumed-process",
-                    new TestIds("atomic-pause-resumed"),
-                    providerCalls,
-                    approvalRequired());
-            resumed.runtime().respond(approvalResponse(runId, approvalId, "atomic-pause-approval"));
-            resumed.scheduler().runAll();
-
-            assertThat(resumed.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
-            assertThat(providerCalls).hasValue(1);
-        }
-    }
-
-    @Test
     void attemptVersionConflictRollsBackTheWholeWaitingApprovalTransaction() throws Exception {
         AtomicInteger providerCalls = new AtomicInteger();
         try (SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory)) {
@@ -727,6 +685,9 @@ class SqliteRuntimeRecoveryTest {
 
             assertThat(processA.runtime().find(runId).orElseThrow().status())
                     .isEqualTo(AgentRunStatus.WAITING_APPROVAL);
+            assertThat(processA.ports().attempts().activeFor(runId)).isEmpty();
+            assertThat(processA.ports().attempts().attemptsFor(runId).getLast().status())
+                    .isEqualTo(ExecutionAttemptStatus.PAUSED);
         }
 
         Instant resumedAt = NOW.plus(Duration.ofDays(365));
