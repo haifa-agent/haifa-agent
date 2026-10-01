@@ -108,7 +108,7 @@ public final class ToolAssembly {
                     spec.idempotency(),
                     spec.risk(),
                     spec.sideEffects(),
-                    ToolResourceRequirements.none(),
+                    new ToolResourceRequirements(Set.of(), spec.networkHosts(), Set.of()),
                     List.of(),
                     spec.approvalRequirement(),
                     PROVENANCE,
