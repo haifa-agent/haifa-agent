@@ -21,7 +21,6 @@ import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelDefinitionId;
 import io.haifa.agent.model.api.ModelFinishReason;
-import io.haifa.agent.model.api.ModelMessage;
 import io.haifa.agent.model.api.ModelProviderId;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelUsage;
@@ -84,9 +83,8 @@ class McpPersistentBuilderAssemblyTest {
             var mcp = McpToolPlatforms.connect(
                     List.of(spec("status-server", server.endpoint(), "status")), TENANT, PRINCIPAL);
             AtomicReference<List<String>> disclosedTools = new AtomicReference<>();
-            AtomicReference<List<ModelMessage>> lastMessages = new AtomicReference<>();
-            AgentChatModel model = toolCallingModel(
-                    List.of(toolCall("call-status", "status_get_status", "status")), disclosedTools, lastMessages);
+            AgentChatModel model =
+                    toolCallingModel(List.of(toolCall("call-status", "status_get_status", "status")), disclosedTools);
 
             AgentRunId runId;
             try (var agent = build(directory.resolve("assembly.sqlite"), model, mcp)) {
@@ -133,14 +131,11 @@ class McpPersistentBuilderAssemblyTest {
     }
 
     private static AgentChatModel toolCallingModel(
-            List<ModelToolCall> scriptedCalls,
-            AtomicReference<List<String>> disclosedTools,
-            AtomicReference<List<ModelMessage>> lastMessages) {
+            List<ModelToolCall> scriptedCalls, AtomicReference<List<String>> disclosedTools) {
         AtomicInteger step = new AtomicInteger();
         return request -> {
             disclosedTools.set(
                     request.tools().stream().map(tool -> tool.name()).sorted().toList());
-            lastMessages.set(request.messages());
             return respond(request, scriptedCalls, step.getAndIncrement());
         };
     }

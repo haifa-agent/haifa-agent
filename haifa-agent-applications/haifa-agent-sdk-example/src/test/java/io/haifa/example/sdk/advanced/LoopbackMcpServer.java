@@ -91,6 +91,8 @@ final class LoopbackMcpServer implements AutoCloseable {
     }
 
     private void handleInitialize(HttpExchange exchange, Map<String, Object> request) throws IOException {
+        // A session id makes the production Streamable HTTP transport track the session and send a
+        // DELETE on graceful close, which is how the tests observe connection release.
         exchange.getResponseHeaders().set("Mcp-Session-Id", "loopback-session-1");
         respond(
                 exchange,
