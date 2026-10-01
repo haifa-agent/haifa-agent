@@ -29,19 +29,12 @@ final class LoopbackMcpServer implements AutoCloseable {
     private final HttpServer server;
     private final String displayName;
     private final List<String> remoteToolNames;
-    private final boolean failing;
-    private final boolean echoAuthorization;
     private final List<String> calls = new CopyOnWriteArrayList<>();
-    private final List<String> authorizationValues = new CopyOnWriteArrayList<>();
     private final AtomicInteger deleteCount = new AtomicInteger();
-    private final AtomicInteger initializeCount = new AtomicInteger();
 
-    LoopbackMcpServer(String displayName, String[] remoteToolNames, boolean failing, boolean echoAuthorization)
-            throws IOException {
+    LoopbackMcpServer(String displayName, String[] remoteToolNames) throws IOException {
         this.displayName = displayName;
         this.remoteToolNames = List.of(remoteToolNames);
-        this.failing = failing;
-        this.echoAuthorization = echoAuthorization;
         this.server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         this.server.createContext("/mcp", this::handle);
         this.server.start();
@@ -55,21 +48,11 @@ final class LoopbackMcpServer implements AutoCloseable {
         return List.copyOf(calls);
     }
 
-    List<String> authorizationValues() {
-        return List.copyOf(authorizationValues);
-    }
-
     int deleteCount() {
         return deleteCount.get();
     }
 
-    int initializeCount() {
-        return initializeCount.get();
-    }
-
     private void handle(HttpExchange exchange) throws IOException {
-        String authorization = exchange.getRequestHeaders().getFirst("Authorization");
-        if (authorization != null) authorizationValues.add(authorization);
         try {
             switch (exchange.getRequestMethod()) {
                 case "GET" -> sendStatus(exchange, 405);
@@ -77,7 +60,7 @@ final class LoopbackMcpServer implements AutoCloseable {
                     deleteCount.incrementAndGet();
                     sendStatus(exchange, 200);
                 }
-                case "POST" -> handlePost(exchange, authorization);
+                case "POST" -> handlePost(exchange);
                 default -> sendStatus(exchange, 405);
             }
         } finally {
@@ -85,7 +68,7 @@ final class LoopbackMcpServer implements AutoCloseable {
         }
     }
 
-    private void handlePost(HttpExchange exchange, String authorization) throws IOException {
+    private void handlePost(HttpExchange exchange) throws IOException {
         Map<String, Object> request = mapper.readValue(exchange.getRequestBody(), new TypeReference<>() {});
         Object method = request.get("method");
         if (!request.containsKey("id")) {
@@ -101,21 +84,14 @@ final class LoopbackMcpServer implements AutoCloseable {
             return;
         }
         if ("tools/call".equals(method)) {
-            handleCall(exchange, request, authorization);
+            handleCall(exchange, request);
             return;
         }
         respond(exchange, request.get("id"), Map.of());
     }
 
     private void handleInitialize(HttpExchange exchange, Map<String, Object> request) throws IOException {
-        int sequence = initializeCount.incrementAndGet();
-        if (failing) {
-            sendStatus(exchange, 500);
-            return;
-        }
-        // A session id makes the production Streamable HTTP transport track the session and send a
-        // DELETE on graceful close, which is how the tests observe connection release.
-        exchange.getResponseHeaders().set("Mcp-Session-Id", "loopback-session-" + sequence);
+        exchange.getResponseHeaders().set("Mcp-Session-Id", "loopback-session-1");
         respond(
                 exchange,
                 request.get("id"),
@@ -128,20 +104,18 @@ final class LoopbackMcpServer implements AutoCloseable {
                         Map.of("name", displayName, "version", "1.0.0")));
     }
 
-    private void handleCall(HttpExchange exchange, Map<String, Object> request, String authorization)
-            throws IOException {
+    private void handleCall(HttpExchange exchange, Map<String, Object> request) throws IOException {
         Map<String, Object> params = mapper.convertValue(request.get("params"), new TypeReference<>() {});
         String toolName = String.valueOf(params.get("name"));
         Map<String, Object> arguments = params.get("arguments") instanceof Map<?, ?> value
                 ? mapper.convertValue(value, new TypeReference<>() {})
                 : Map.of();
         calls.add(displayName + ":" + toolName + ":" + arguments.get("name"));
-        String text = echoAuthorization && authorization != null ? "status-ok auth=" + authorization : "status-ok";
         respond(
                 exchange,
                 request.get("id"),
                 Map.of(
-                        "content", List.of(Map.of("type", "text", "text", text)),
+                        "content", List.of(Map.of("type", "text", "text", "status-ok")),
                         "structuredContent", Map.of("status", "ok"),
                         "isError", false));
     }
