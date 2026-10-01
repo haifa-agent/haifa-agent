@@ -27,6 +27,7 @@ import io.haifa.agent.sdk.contribution.ToolPlatformContribution;
 import io.haifa.agent.sdk.contribution.ToolRegistration;
 import io.haifa.agent.sdk.internal.DefaultConversationService;
 import io.haifa.agent.sdk.internal.ProcessLocalPromptDiagnostics;
+import io.haifa.agent.sdk.internal.ReadOnlyNetworkToolPolicy;
 import io.haifa.agent.sdk.internal.SafeConversationService;
 import io.haifa.agent.sdk.internal.ToolAssembly;
 import io.haifa.agent.sdk.memory.AgentMemories;
@@ -37,6 +38,7 @@ import io.haifa.agent.sdk.product.ProductRunProfileRef;
 import io.haifa.agent.sdk.spi.SdkConversationContribution;
 import io.haifa.agent.sdk.spi.SdkPersistenceContribution;
 import io.haifa.agent.sdk.tool.JavaTool;
+import io.haifa.agent.tool.api.ToolName;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -64,6 +66,7 @@ public final class HaifaAgentBuilder {
     private CredentialPlatformContribution credentials;
     private final List<JavaTool<?, ?>> javaTools = new ArrayList<>();
     private final List<ToolRegistration> toolRegistrations = new ArrayList<>();
+    private Set<ToolName> autoApproveReadOnlyNetworkTools = Set.of();
     private final List<AutoCloseable> managedResources = new ArrayList<>();
     private final List<AgentDiagnostic> assemblyDiagnostics = new ArrayList<>();
     private SdkCallerProvider callers = SdkCallerProvider.defaultPublicUser();
@@ -294,6 +297,26 @@ public final class HaifaAgentBuilder {
     }
 
     /**
+     * Exempts exactly the named read-only network Tools from the standard preset network approval.
+     *
+     * <p>The default is empty. A Tool is only exempted when its frozen definition declares exactly
+     * {@code NETWORK_ACCESS} as its single side effect, is not high or critical risk, keeps the
+     * policy-decided approval requirement, and constrains at least one host. The names become narrow
+     * {@code ALLOW} marker rules in the frozen product policy, so the list is part of the requirement
+     * digest. Every other standard ASK/DENY, custom rule, and approval mode is preserved; the
+     * product's own {@code PolicyDecisionService} is reused and never replaced.
+     *
+     * @param values the exact Tool names to auto-approve; an empty set disables the feature
+     * @return this builder
+     * @throws io.haifa.agent.sdk.api.HaifaAgentException if a listed Tool is missing, unsafe, or its
+     *     policy marker would collide with a different existing rule
+     */
+    public HaifaAgentBuilder autoApproveReadOnlyNetworkTools(Set<ToolName> values) {
+        autoApproveReadOnlyNetworkTools = Set.copyOf(Objects.requireNonNull(values, "values must not be null"));
+        return this;
+    }
+
+    /**
      * Registers a resource the assembled Agent owns and closes, such as a native MCP client
      * connection pool. It is also closed when the build itself fails.
      */
@@ -433,8 +456,30 @@ public final class HaifaAgentBuilder {
             }
             // No implicit policy: a tool platform without an explicit product policy fails closed in
             // RuntimeCoreBuilder instead of inheriting rules from the SDK assembly layer.
-            if (policy != null) {
-                runtimeBuilder.policy(policy.rules(), policy.evaluator());
+            PolicyPlatformContribution effectivePolicy = policy;
+            if (!autoApproveReadOnlyNetworkTools.isEmpty()) {
+                if (policy == null) {
+                    throw new HaifaAgentException(
+                            "NETWORK_AUTO_APPROVE_POLICY_REQUIRED",
+                            "product.assemble",
+                            "assembly",
+                            "auto-approved read-only network Tools require an explicit product policy");
+                }
+                if (tool == null) {
+                    throw new HaifaAgentException(
+                            "NETWORK_AUTO_APPROVE_TOOL_UNAVAILABLE",
+                            "product.assemble",
+                            "assembly",
+                            "auto-approved read-only network Tools are absent from the Tool catalog");
+                }
+                effectivePolicy = ReadOnlyNetworkToolPolicy.apply(
+                        policy,
+                        autoApproveReadOnlyNetworkTools,
+                        tool.catalog(),
+                        effectiveProfile.productId().value());
+            }
+            if (effectivePolicy != null) {
+                runtimeBuilder.policy(effectivePolicy.rules(), effectivePolicy.evaluator());
             }
             if (approval != null) {
                 runtimeBuilder.approvalVerification(approval.verification());
