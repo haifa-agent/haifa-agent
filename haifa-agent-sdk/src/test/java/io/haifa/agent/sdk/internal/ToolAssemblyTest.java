@@ -152,6 +152,21 @@ public class ToolAssemblyTest {
     }
 
     @Test
+    void freezesDeclaredNetworkHostsAndNetworkSideEffectIntoTheToolDefinition() {
+        ToolAssembly.Prepared prepared = ToolAssembly.prepare(null, List.of(new WebFetchTool()), List.of());
+        var binding = prepared.platform()
+                .catalog()
+                .findByAlias(new ToolAlias("web_fetch"))
+                .orElseThrow();
+
+        assertThat(binding.definition().resources().networkHosts()).containsExactly("api.example.com");
+        assertThat(binding.definition().sideEffects())
+                .containsExactly(io.haifa.agent.tool.api.ToolSideEffect.NETWORK_ACCESS);
+        assertThat(binding.definition().risk()).isEqualTo(ToolRisk.MEDIUM);
+        assertThat(binding.definition().approvalRequirement()).isEqualTo(ToolApprovalRequirement.POLICY);
+    }
+
+    @Test
     void producesTheSameCatalogDigestRegardlessOfJavaToolRegistrationOrder() {
         ToolAssembly.Prepared first =
                 ToolAssembly.prepare(null, List.of(new WeatherTool(), new GeocodeTool()), List.of());
@@ -380,6 +395,21 @@ public class ToolAssemblyTest {
             captured.set(context);
             if (input.city().equals("fail")) throw new ToolInvocationException("sensitive provider detail");
             return new WeatherResponse("Sunny in " + input.city());
+        }
+    }
+
+    private static final class WebFetchTool implements JavaTool<WeatherRequest, WeatherResponse> {
+        @Override
+        public JavaToolSpec<WeatherRequest, WeatherResponse> spec() {
+            return JavaToolSpec.builder("web_fetch", WeatherRequest.class, WeatherResponse.class)
+                    .description("Fetches an exact host")
+                    .networkAccess("api.example.com")
+                    .build();
+        }
+
+        @Override
+        public WeatherResponse invoke(WeatherRequest input, JavaToolContext context) {
+            return new WeatherResponse(input.city());
         }
     }
 

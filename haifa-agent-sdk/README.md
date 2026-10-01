@@ -141,10 +141,15 @@ SDK 把每个 Java Tool 一次性转换为 Tool Core 的 `ToolDefinition` 加 `T
 不属于当前版本。
 
 `JavaToolSpec` 只声明普通 Java Tool 需要的事实：name、input/output record、title、description、timeout，以及
-`pure()` 或 `sideEffects(...)`。provider 身份、并发策略、资源、Credential、Approval、provenance 与 tags 由 SDK
-Tool 平台固定，不再镜像到该入口；需要这些字段的 Tool 直接用 Tool API 的完整 `ToolDefinition` 注册。`pure()`
-是唯一降低 risk、idempotency 与 approval 声明的入口，声明 side effect 会自动取消 pure 声明，其余情况保持
-medium risk、unknown idempotency 与由 Policy 决定的审批。
+`pure()`、`sideEffects(...)` 或只读网络声明 `networkAccess(hosts...)`。provider 身份、并发策略、资源、Credential、
+Approval、provenance 与 tags 由 SDK Tool 平台固定，不再镜像到该入口；需要这些字段的 Tool 直接用 Tool API 的
+完整 `ToolDefinition` 注册。`pure()` 是唯一降低 risk、idempotency 与 approval 声明的入口，声明 side effect 会
+自动取消 pure 声明，其余情况保持 medium risk、unknown idempotency 与由 Policy 决定的审批。
+
+`networkAccess("api.example.com")` 声明一个只访问精确 host 的只读网络 Tool：它把 host 写入既有
+`ToolResourceRequirements.networkHosts`，同时声明 `NETWORK_ACCESS` 并自动取消 pure，但保持保守的 medium risk、
+unknown idempotency 与 policy 审批。空、空白、通配和非法 host 直接 fail closed；`sideEffects(NETWORK_ACCESS)` 若无
+已声明 host 仍被拒绝，`pure()` 会连 host 声明一并清除，混合写副作用不会被视为只读。
 
 已经持有 Tool platform 的宿主在该平台上注册自己的 Tool：`.toolPlatform(...)` 与 `.tool(...)` 同时使用会以
 `JAVA_TOOL_PLATFORM_UNSUPPORTED` fail closed，而不是静默改写宿主平台的 Catalog 与 binding。
@@ -291,6 +296,17 @@ Run Event Feed 使用 `ModelAttemptLifecycle` 暴露逻辑请求、Attempt、等
 - 产品可通过 `publicToolPolicyDecorator` 对 Runtime 已选定的公共 Tool Policy 做有界装饰；装饰器
   必须为自己拥有的精确动作生成 request-bound Decision，并把其它动作委托给既有 Policy，不得建立
   第二条 Tool 执行通道。
+- `autoApproveReadOnlyNetworkTools(Set<ToolName>)` 默认为空，只把名单内**精确满足**只读网络契约
+  （唯一副作用 `NETWORK_ACCESS`、非 high/critical risk、policy 审批、至少一个受限 host）的 Tool 从
+  标准 preset 网络 ASK 中豁免。名单会投影为既有 `PolicyRuleSet` 的窄 `ALLOW` marker 并进入 requirement
+  digest；每次决定先保留原 evaluator 的 DENY，仅对名单内精确动作以删除“原样标准 preset 网络 ASK”
+  后的请求视图复用同一 evaluator，其它 ASK/DENY、默认规则与审批模式均保留，原 rules/catalog 不被修改。
+  名单外的网络 Tool、写或混合副作用仍 ASK；自定义 DENY/ASK 不被放行，复用标准 ref 但内容不同的规则
+  fail fast。未配置 `policy` 组件时该能力不可用。
+  `networkAccess(hosts)` 声明的是 Tool 的逻辑服务主机元数据，参与冻结 Catalog 与 Policy digest；
+  SDK 不拦截 Tool 自建的 HTTP 客户端，也不把代理地址视为逻辑服务主机。Tool 实现仍须遵守声明。
+  名单 marker 使用声明操作，绝不匹配 Runtime 的 `invoke`；它只绑定配置 digest，不能遮蔽产品的
+  默认 ASK/DENY。移除原样标准网络 ASK 后仍由原 evaluator 和默认规则决定，未得到 ALLOW 则保留原决定。
 - `HaifaAgentException` 及 `ConversationException` 对外只暴露安全的 `code`、`operation` 和
   `correlation`。Conversation Adapter、SQLite/Runtime 底层异常和输入正文不会进入公共错误消息。
 - `HaifaAgent.memories()` 暴露直接 CRUD：`put`（同 scope/kind/subject 替换，重复内容不增加 revision）、
