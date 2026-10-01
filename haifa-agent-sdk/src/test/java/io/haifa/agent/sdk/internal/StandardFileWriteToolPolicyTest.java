@@ -6,15 +6,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.policy.api.ApprovalMode;
-import io.haifa.agent.policy.api.PolicyAction;
 import io.haifa.agent.policy.api.PolicyChallenge;
-import io.haifa.agent.policy.api.PolicyContext;
 import io.haifa.agent.policy.api.PolicyEffect;
 import io.haifa.agent.policy.api.PolicyPresets;
 import io.haifa.agent.policy.api.PolicyRequest;
 import io.haifa.agent.policy.api.PolicyRequirementDigest;
 import io.haifa.agent.policy.api.PolicyResource;
-import io.haifa.agent.policy.api.PolicyRisk;
 import io.haifa.agent.policy.api.PolicyRiskLevel;
 import io.haifa.agent.policy.api.PolicyRule;
 import io.haifa.agent.policy.api.PolicyRuleMatcher;
@@ -24,6 +21,7 @@ import io.haifa.agent.policy.api.PolicyRuleSource;
 import io.haifa.agent.policy.api.PolicySideEffect;
 import io.haifa.agent.policy.api.PolicySubject;
 import io.haifa.agent.policy.core.DefaultPolicyDecisionService;
+import io.haifa.agent.sdk.SdkTestFixtures;
 import io.haifa.agent.sdk.api.HaifaAgentException;
 import io.haifa.agent.sdk.contribution.PolicyPlatformContribution;
 import io.haifa.agent.sdk.contribution.ToolRegistration;
@@ -31,23 +29,12 @@ import io.haifa.agent.sdk.tool.JavaTool;
 import io.haifa.agent.sdk.tool.JavaToolContext;
 import io.haifa.agent.sdk.tool.JavaToolSpec;
 import io.haifa.agent.tool.api.FrozenToolBinding;
-import io.haifa.agent.tool.api.SemanticVersion;
-import io.haifa.agent.tool.api.ToolAlias;
 import io.haifa.agent.tool.api.ToolApprovalRequirement;
-import io.haifa.agent.tool.api.ToolDefinition;
-import io.haifa.agent.tool.api.ToolExecutionMode;
-import io.haifa.agent.tool.api.ToolIdempotency;
 import io.haifa.agent.tool.api.ToolName;
-import io.haifa.agent.tool.api.ToolProvider;
-import io.haifa.agent.tool.api.ToolProviderId;
-import io.haifa.agent.tool.api.ToolResourceRequirements;
 import io.haifa.agent.tool.api.ToolRisk;
-import io.haifa.agent.tool.api.ToolSchema;
 import io.haifa.agent.tool.api.ToolSideEffect;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
@@ -341,61 +328,18 @@ public class StandardFileWriteToolPolicyTest {
 
     private static PolicyRequest request(
             FrozenToolBinding binding, PolicyRiskLevel risk, Set<PolicySideEffect> effects, ApprovalMode mode) {
-        return new PolicyRequest(
-                new PolicySubject(new TenantRef("tenant"), new PrincipalRef("user", "user"), PRODUCT_ID),
-                new PolicyContext(
-                        Optional.empty(),
-                        Optional.of("session"),
-                        Optional.of("run"),
-                        Optional.empty(),
-                        mode,
-                        Optional.empty()),
-                new PolicyAction(binding.definition().name().value(), "invoke"),
-                new PolicyResource(
-                        "tool", binding.coordinate().externalForm(), Optional.of("arguments-digest"), "Tool"),
-                new PolicyRisk(risk, effects, false, Optional.of("api.example.com")));
+        return SdkTestFixtures.policyRequest(
+                PRODUCT_ID,
+                binding.definition().name().value(),
+                binding.coordinate().externalForm(),
+                risk,
+                effects,
+                mode);
     }
 
     private static ToolRegistration registration(
             ToolRisk risk, ToolApprovalRequirement approval, Set<ToolSideEffect> effects) {
-        ToolProviderId id = new ToolProviderId("java.writer");
-        ToolSchema schema = new ToolSchema(
-                "test.input",
-                "1.0.0",
-                Map.of("$schema", ToolSchema.DRAFT_2020_12, "type", "object", "additionalProperties", true));
-        ToolDefinition definition = new ToolDefinition(
-                new ToolName("writer"),
-                new SemanticVersion("1.0.0"),
-                id,
-                "Writer",
-                "Integration writer",
-                schema,
-                schema,
-                ToolExecutionMode.IN_PROCESS,
-                true,
-                Duration.ofSeconds(30),
-                "per-run",
-                ToolIdempotency.UNKNOWN,
-                risk,
-                effects,
-                ToolResourceRequirements.none(),
-                List.of(),
-                approval,
-                "java-sdk",
-                false,
-                Set.of());
-        ToolProvider provider = new ToolProvider() {
-            @Override
-            public ToolProviderId id() {
-                return id;
-            }
-
-            @Override
-            public io.haifa.agent.core.tool.ToolResult invoke(io.haifa.agent.tool.api.ToolInvocationRequest request) {
-                throw new AssertionError("assembly test must never invoke a Tool");
-            }
-        };
-        return new ToolRegistration(new ToolAlias("writer"), definition, "java-tool:writer@1.0.0", provider);
+        return SdkTestFixtures.toolRegistration("writer", risk, approval, effects);
     }
 
     public record Request(String value) {}
