@@ -24,12 +24,14 @@ import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.policy.api.PolicyPresets;
 import io.haifa.agent.policy.core.DefaultPolicyDecisionService;
+import io.haifa.agent.runtime.api.AgentRunSnapshot;
 import io.haifa.agent.runtime.api.InteractionAction;
 import io.haifa.agent.runtime.api.InteractionResponseId;
 import io.haifa.agent.runtime.api.InteractionResponseSubmission;
 import io.haifa.agent.runtime.api.RunEventCursor;
 import io.haifa.agent.runtime.api.RuntimeApiErrorCode;
 import io.haifa.agent.runtime.api.RuntimeContractException;
+import io.haifa.agent.sdk.api.HaifaAgent;
 import io.haifa.agent.sdk.api.HaifaAgents;
 import io.haifa.agent.sdk.api.SdkCaller;
 import io.haifa.agent.sdk.contribution.ModelContribution;
@@ -59,6 +61,8 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.crypto.spec.SecretKeySpec;
@@ -85,6 +89,9 @@ public final class FrozenInstructionDiagnosticProcess {
                 new SecretKeySpec(new byte[32], "AES"));
         AtomicInteger modelCalls = new AtomicInteger();
         AtomicInteger writes = new AtomicInteger();
+        var modelStarted = new AtomicReference<>(new CountDownLatch(1));
+        String instructionHashA = hash(A);
+        String instructionHashB = hash(B);
         var caller = new AtomicReference<>(SdkCaller.defaultPublicUser());
         List<String> actualInstructions = new CopyOnWriteArrayList<>();
         var snapshot = ResolvedModelSnapshot.create(
@@ -114,6 +121,10 @@ public final class FrozenInstructionDiagnosticProcess {
                             .anyMatch(message -> message.content().contains(B));
                     require(usesA != usesB, "Actual model request must contain exactly one frozen instruction");
                     actualInstructions.add(usesA ? "A" : "B");
+                    System.out.println(
+                            "MODEL_CAPTURE pid=" + ProcessHandle.current().pid() + " call=" + modelCalls.get()
+                                    + " instruction_hash=" + (usesA ? instructionHashA : instructionHashB));
+                    modelStarted.get().countDown();
                     if (request.messages().stream().anyMatch(message -> message.role() == ModelMessageRole.TOOL)) {
                         return new AgentChatResponse(
                                 "frozen-complete",
@@ -169,14 +180,9 @@ public final class FrozenInstructionDiagnosticProcess {
                             .start(new StartConversationCommand("frozen-write", "Fixture", "Return fixture result"))
                             .runId();
                     long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
-                    while (agent.runs().find(id).orElseThrow().status() != AgentRunStatus.WAITING_APPROVAL
-                            && !agent.runs().find(id).orElseThrow().status().isTerminal()
-                            && System.nanoTime() < deadline) {
-                        Thread.sleep(10);
-                    }
-                    require(
-                            agent.runs().find(id).orElseThrow().status() == AgentRunStatus.WAITING_APPROVAL,
-                            "Fixture must reach real standard write approval");
+                    var initialWait =
+                            new WaitProbe("initial-approval", "model-notification", id, modelCalls, writes, deadline);
+                    awaitApproval(agent, initialWait, modelStarted.get(), deadline);
                     var frozen = agent.runs().frozenInstructionDiagnostic(id).orElseThrow();
                     require(frozen.instructionContentHash().equals(hash(A)), "Writer digest must match frozen A");
                     metadata.setProperty("run_id", id.value());
@@ -293,12 +299,20 @@ public final class FrozenInstructionDiagnosticProcess {
                                     "approve-frozen-a",
                                     Instant.now()));
                     long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
-                    while (!agent.runs().find(id).orElseThrow().status().isTerminal() && System.nanoTime() < deadline) {
-                        Thread.sleep(10);
+                    var resumedWait =
+                            new WaitProbe("resumed-terminal", "public-await", id, modelCalls, writes, deadline);
+                    try {
+                        long remaining = deadline - System.nanoTime();
+                        require(remaining > 0, "Terminal fixture deadline exhausted");
+                        var terminal = agent.runs()
+                                .await(id, Duration.ofNanos(remaining))
+                                .orElseThrow(() -> new AssertionError("Approved A did not complete within deadline"));
+                        resumedWait.observe(terminal);
+                        require(System.nanoTime() <= deadline, "Terminal fixture deadline exceeded");
+                        require(terminal.status() == AgentRunStatus.COMPLETED, "Approved A must complete");
+                    } finally {
+                        resumedWait.finish();
                     }
-                    require(
-                            agent.runs().find(id).orElseThrow().status() == AgentRunStatus.COMPLETED,
-                            "Approved A must complete");
                     require(Files.exists(root.resolve("must-not-exist.txt")), "Actual approved Tool must execute");
                     require(writes.get() == 1, "Approved original Tool must execute exactly once");
                     require(
@@ -309,19 +323,16 @@ public final class FrozenInstructionDiagnosticProcess {
                                     .equals(hash(A)),
                             "Terminal A must retain original digest");
                     require(actualInstructions.equals(List.of("A")), "Resumed actual model request must use frozen A");
+                    var nextModelStarted = new CountDownLatch(1);
+                    modelStarted.set(nextModelStarted);
                     var next = agent.conversations()
                             .start(new StartConversationCommand(
                                     "frozen-next-b", "Fixture B", "Return next fixture result"))
                             .runId();
                     deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
-                    while (agent.runs().find(next).orElseThrow().status() != AgentRunStatus.WAITING_APPROVAL
-                            && !agent.runs().find(next).orElseThrow().status().isTerminal()
-                            && System.nanoTime() < deadline) {
-                        Thread.sleep(10);
-                    }
-                    require(
-                            agent.runs().find(next).orElseThrow().status() == AgentRunStatus.WAITING_APPROVAL,
-                            "Next B must reach actual approval");
+                    var nextWait =
+                            new WaitProbe("next-b-approval", "model-notification", next, modelCalls, writes, deadline);
+                    awaitApproval(agent, nextWait, nextModelStarted, deadline);
                     require(
                             agent.runs()
                                     .frozenInstructionDiagnostic(next)
@@ -357,6 +368,102 @@ public final class FrozenInstructionDiagnosticProcess {
 
     private static void require(boolean condition, String safeMessage) {
         if (!condition) throw new AssertionError(safeMessage);
+    }
+
+    private static void awaitApproval(HaifaAgent agent, WaitProbe probe, CountDownLatch modelStarted, long deadline)
+            throws InterruptedException {
+        try {
+            long remaining = deadline - System.nanoTime();
+            if (remaining <= 0 || !modelStarted.await(remaining, TimeUnit.NANOSECONDS)) {
+                probe.snapshot(agent);
+                throw new AssertionError("Actual model request did not arrive within approval deadline");
+            }
+            while (System.nanoTime() < deadline) {
+                var snapshot = probe.snapshot(agent);
+                require(System.nanoTime() <= deadline, "Approval fixture deadline exceeded");
+                if (snapshot.status() == AgentRunStatus.WAITING_APPROVAL) {
+                    require(agent.runs().pendingInteraction(probe.id).isPresent(), "Real pending approval must exist");
+                    require(System.nanoTime() <= deadline, "Pending approval fixture deadline exceeded");
+                    return;
+                }
+                require(!snapshot.status().isTerminal(), "Fixture terminated before real approval");
+                long sleepNanos = Math.min(Duration.ofMillis(10).toNanos(), deadline - System.nanoTime());
+                if (sleepNanos > 0) TimeUnit.NANOSECONDS.sleep(sleepNanos);
+            }
+            throw new AssertionError("Fixture did not reach real approval within deadline");
+        } finally {
+            probe.finish();
+        }
+    }
+
+    private static final class WaitProbe {
+        private final String stage;
+        private final String mode;
+        private final AgentRunId id;
+        private final AtomicInteger modelCalls;
+        private final AtomicInteger writes;
+        private final long started;
+        private long reads;
+        private long readNanos;
+        private long maxReadNanos;
+        private long lastLogNanos;
+        private AgentRunSnapshot last;
+
+        private WaitProbe(
+                String stage,
+                String mode,
+                AgentRunId id,
+                AtomicInteger modelCalls,
+                AtomicInteger writes,
+                long deadline) {
+            this.stage = stage;
+            this.mode = mode;
+            this.id = id;
+            this.modelCalls = modelCalls;
+            this.writes = writes;
+            this.started = deadline - Duration.ofSeconds(10).toNanos();
+            System.out.println("WAIT_START stage=" + stage + " mode=" + mode + " run=" + id.value() + " pid="
+                    + ProcessHandle.current().pid() + " timeout_ms=10000");
+        }
+
+        private AgentRunSnapshot snapshot(HaifaAgent agent) {
+            long readStarted = System.nanoTime();
+            var snapshot = agent.runs().find(id).orElseThrow();
+            long elapsed = System.nanoTime() - readStarted;
+            reads++;
+            readNanos += elapsed;
+            maxReadNanos = Math.max(maxReadNanos, elapsed);
+            observe(snapshot);
+            return snapshot;
+        }
+
+        private void observe(AgentRunSnapshot snapshot) {
+            long now = System.nanoTime();
+            boolean changed = last == null || last.status() != snapshot.status();
+            last = snapshot;
+            if (changed || now - lastLogNanos >= Duration.ofSeconds(1).toNanos()) {
+                log("WAIT_OBSERVATION");
+                lastLogNanos = now;
+            }
+        }
+
+        private void finish() {
+            log("WAIT_FINISH");
+        }
+
+        private void log(String kind) {
+            System.out.println(kind + " stage=" + stage + " mode=" + mode + " run=" + id.value() + " pid="
+                    + ProcessHandle.current().pid()
+                    + " elapsed_ms=" + (System.nanoTime() - started) / 1_000_000
+                    + " status=" + (last == null ? "UNOBSERVED" : last.status())
+                    + " error_code="
+                    + (last == null
+                            ? "NONE"
+                            : last.error().map(error -> error.code().wireCode()).orElse("NONE"))
+                    + " reads=" + reads + " read_ms=" + readNanos / 1_000_000 + " max_read_ms="
+                    + maxReadNanos / 1_000_000
+                    + " model_calls=" + modelCalls.get() + " writes=" + writes.get());
+        }
     }
 
     public record WriteInput(String text) {}
