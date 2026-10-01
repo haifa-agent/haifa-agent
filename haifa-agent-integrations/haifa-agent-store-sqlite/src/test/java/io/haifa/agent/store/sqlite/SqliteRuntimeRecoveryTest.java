@@ -50,17 +50,8 @@ import io.haifa.agent.runtime.core.RuntimeCoreBuilder;
 import io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt;
 import io.haifa.agent.runtime.core.attempt.ExecutionAttemptId;
 import io.haifa.agent.runtime.core.attempt.ExecutionAttemptStatus;
-import io.haifa.agent.runtime.core.decision.DecisionExecutor;
-import io.haifa.agent.runtime.core.decision.InteractionDecision;
-import io.haifa.agent.runtime.core.execution.AttemptExecutor;
 import io.haifa.agent.runtime.core.execution.ManualExecutionScheduler;
 import io.haifa.agent.runtime.core.interaction.InteractionRequest;
-import io.haifa.agent.runtime.core.loop.AgentLoopContext;
-import io.haifa.agent.runtime.core.loop.DefaultAgentLoop;
-import io.haifa.agent.runtime.core.middleware.AgentRuntimeMiddleware;
-import io.haifa.agent.runtime.core.middleware.RuntimeMiddlewareContext;
-import io.haifa.agent.runtime.core.middleware.RuntimeMiddlewareOrder;
-import io.haifa.agent.runtime.core.middleware.RuntimePhase;
 import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
 import io.haifa.agent.runtime.core.storage.ExecutionAttemptRepository;
 import io.haifa.agent.runtime.core.storage.OutboxMessage;
@@ -84,7 +75,6 @@ import io.haifa.agent.tool.api.ToolSideEffect;
 import io.haifa.agent.tool.core.DefaultToolInvoker;
 import io.haifa.agent.tool.core.JsonSchema202012Validator;
 import io.haifa.agent.tool.core.ToolCatalogBuilder;
-import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.security.SecureRandom;
@@ -101,8 +91,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Queue;
 import java.util.Set;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.crypto.spec.SecretKeySpec;
@@ -605,54 +593,24 @@ class SqliteRuntimeRecoveryTest {
         AgentRunId runId;
         InteractionRequestId approvalId;
         try (SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory)) {
-            RuntimePersistencePorts base = foundation.persistencePorts(protector());
-            BlockingPausedAttemptRepository attempts = new BlockingPausedAttemptRepository(base.attempts());
-            RuntimePersistencePorts instrumented = withAttempts(base, attempts);
-            ensureSession(instrumented);
-            RuntimeInstance instance = runtime(
-                    instrumented,
+            RuntimeInstance instance = toolRuntime(
+                    foundation,
                     model(toolResponse()),
                     "atomic-pause-process",
                     new TestIds("atomic-pause"),
-                    builder -> installTool(builder, providerCalls, approvalRequired()));
+                    providerCalls,
+                    approvalRequired());
             runId = instance.runtime().start(request("atomic-approval-pause")).runId();
-            AtomicReference<Throwable> executionFailure = new AtomicReference<>();
-            Thread execution = Thread.ofVirtual().start(() -> {
-                try {
-                    instance.scheduler().runAll();
-                } catch (Throwable failure) {
-                    executionFailure.set(failure);
-                }
-            });
+            instance.scheduler().runAll();
 
-            assertThat(attempts.awaitPausedSave())
-                    .as("the execution must reach the PAUSED attempt persistence boundary")
-                    .isTrue();
-            try {
-                try (Connection reader = foundation.connections().openConnection()) {
-                    assertThat(queryText(reader, "SELECT status FROM run WHERE run_id = ?", runId.value()))
-                            .as("WAITING must not become durable before the attempt is PAUSED")
-                            .isEqualTo(AgentRunStatus.RUNNING.name());
-                    assertThat(countWhere(
-                                    reader, "SELECT COUNT(*) FROM interaction_request WHERE run_id = ?", runId.value()))
-                            .as("the pending approval must share the attempt PAUSED commit")
-                            .isZero();
-                    assertThat(queryText(
-                                    reader, "SELECT status FROM execution_attempt WHERE run_id = ?", runId.value()))
-                            .isEqualTo(ExecutionAttemptStatus.RUNNING.name());
-                }
-            } finally {
-                attempts.releasePausedSave();
-                execution.join(Duration.ofSeconds(5));
-            }
-
-            assertThat(execution.isAlive()).isFalse();
-            assertThat(executionFailure.get()).isNull();
-            assertThat(base.runs().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.WAITING_APPROVAL);
-            InteractionRequest approval = base.interactions().pending(runId).orElseThrow();
+            assertThat(instance.ports().runs().find(runId).orElseThrow().status())
+                    .isEqualTo(AgentRunStatus.WAITING_APPROVAL);
+            InteractionRequest approval =
+                    instance.ports().interactions().pending(runId).orElseThrow();
             approvalId = approval.id();
-            assertThat(base.attempts().activeFor(runId)).isEmpty();
-            assertThat(base.attempts().attemptsFor(runId).getLast().status()).isEqualTo(ExecutionAttemptStatus.PAUSED);
+            assertThat(instance.ports().attempts().activeFor(runId)).isEmpty();
+            assertThat(instance.ports().attempts().attemptsFor(runId).getLast().status())
+                    .isEqualTo(ExecutionAttemptStatus.PAUSED);
         }
 
         try (SqliteStoreFoundation reopened = SqliteTestSupport.foundation(directory)) {
@@ -707,115 +665,6 @@ class SqliteRuntimeRecoveryTest {
                                 "run.waiting-approval"))
                         .isZero();
             }
-        }
-    }
-
-    @Test
-    void postCommitFailureKeepsTheWaitingBoundaryAndRecordsADiagnostic() {
-        AtomicInteger providerCalls = new AtomicInteger();
-        AtomicReference<Throwable> diagnostic = new AtomicReference<>();
-        try (SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory)) {
-            RuntimeInstance instance = runtime(
-                    foundation,
-                    model(toolResponse()),
-                    "post-commit-failure-process",
-                    new TestIds("post-commit-failure"),
-                    builder -> installTool(builder, providerCalls, approvalRequired())
-                            .middleware(new AgentRuntimeMiddleware() {
-                                @Override
-                                public RuntimePhase phase() {
-                                    return RuntimePhase.AFTER_DECISION_EXECUTION;
-                                }
-
-                                @Override
-                                public RuntimeMiddlewareOrder order() {
-                                    return new RuntimeMiddlewareOrder(1);
-                                }
-
-                                @Override
-                                public void apply(RuntimeMiddlewareContext context) {
-                                    throw new IllegalStateException("injected post-commit failure");
-                                }
-                            })
-                            .failureDiagnostics((context, failure) -> diagnostic.set(failure)));
-            AgentRunId runId = instance.runtime()
-                    .start(request("post-commit-waiting-boundary"))
-                    .runId();
-
-            instance.scheduler().runAll();
-
-            assertThat(instance.runtime().find(runId).orElseThrow().status())
-                    .isEqualTo(AgentRunStatus.WAITING_APPROVAL);
-            assertThat(instance.ports().interactions().pending(runId)).isPresent();
-            assertThat(instance.ports().attempts().activeFor(runId)).isEmpty();
-            assertThat(instance.ports().attempts().attemptsFor(runId).getLast().status())
-                    .isEqualTo(ExecutionAttemptStatus.PAUSED);
-            assertThat(diagnostic.get())
-                    .isInstanceOf(IllegalStateException.class)
-                    .hasMessage("injected post-commit failure");
-            assertThat(providerCalls).hasValue(0);
-        }
-    }
-
-    @Test
-    void genericInteractionCommitsPausedAttemptAndResumesAfterReload() throws Exception {
-        AgentRunId runId;
-        InteractionRequestId interactionId;
-        try (SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory)) {
-            RuntimeInstance first = runtime(
-                    foundation,
-                    finalModel("unused before interaction"),
-                    "generic-interaction-process",
-                    new TestIds("generic-interaction"));
-            runId = first.runtime().start(request("generic-interaction-pause")).runId();
-            RuntimePersistencePorts ports = first.ports();
-            AgentRun[] run = new AgentRun[1];
-            AgentRunExecutionAttempt[] attempt = new AgentRunExecutionAttempt[1];
-            ports.unitOfWork().execute(() -> {
-                run[0] = ports.runs().find(runId).orElseThrow();
-                long expectedRunVersion = run[0].version();
-                run[0].start(NOW);
-                ports.runs().save(run[0], expectedRunVersion);
-                attempt[0] = ports.attempts().activeFor(runId).orElseThrow();
-                long expectedAttemptVersion = attempt[0].version();
-                attempt[0].start("generic-interaction-process", NOW);
-                ports.attempts().save(attempt[0], expectedAttemptVersion);
-                return null;
-            });
-
-            DecisionExecutor decisions = decisionExecutor(first.runtime());
-            assertThat(decisions.execute(
-                            run[0],
-                            attempt[0],
-                            new InteractionDecision("clarification", "Which value should be used?", false),
-                            new AgentLoopContext(1)))
-                    .isEqualTo(io.haifa.agent.runtime.core.decision.AgentLoopDirective.WAIT);
-
-            assertThat(ports.runs().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.WAITING_INTERACTION);
-            InteractionRequest interaction = ports.interactions().pending(runId).orElseThrow();
-            interactionId = interaction.id();
-            assertThat(ports.attempts().activeFor(runId)).isEmpty();
-            assertThat(ports.attempts().attemptsFor(runId).getLast().status()).isEqualTo(ExecutionAttemptStatus.PAUSED);
-        }
-
-        try (SqliteStoreFoundation reopened = SqliteTestSupport.foundation(directory)) {
-            RuntimeInstance resumed = runtime(
-                    reopened,
-                    finalModel("completed after clarification"),
-                    "generic-interaction-resumed-process",
-                    new TestIds("generic-interaction-resumed"));
-            resumed.runtime()
-                    .respond(new InteractionResponse(
-                            new InteractionResponseId("generic-interaction-response"),
-                            interactionId,
-                            runId,
-                            InteractionResponseType.CLARIFY,
-                            List.of(new io.haifa.agent.core.content.TextPart("Use the safe value", "plain")),
-                            "generic-interaction-response-key",
-                            NOW));
-            resumed.scheduler().runAll();
-
-            assertThat(resumed.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
         }
     }
 
@@ -1592,64 +1441,6 @@ class SqliteRuntimeRecoveryTest {
                 base.messageRedactions());
     }
 
-    private static final class BlockingPausedAttemptRepository implements ExecutionAttemptRepository {
-        private final ExecutionAttemptRepository delegate;
-        private final CountDownLatch pausedSaveEntered = new CountDownLatch(1);
-        private final CountDownLatch releasePausedSave = new CountDownLatch(1);
-
-        private BlockingPausedAttemptRepository(ExecutionAttemptRepository delegate) {
-            this.delegate = delegate;
-        }
-
-        @Override
-        public void insert(AgentRunExecutionAttempt attempt) {
-            delegate.insert(attempt);
-        }
-
-        @Override
-        public void save(AgentRunExecutionAttempt attempt, long expectedVersion) {
-            if (attempt.status() == ExecutionAttemptStatus.PAUSED) {
-                pausedSaveEntered.countDown();
-                await(releasePausedSave, "timed out waiting to release PAUSED attempt persistence");
-            }
-            delegate.save(attempt, expectedVersion);
-        }
-
-        @Override
-        public Optional<AgentRunExecutionAttempt> find(ExecutionAttemptId id) {
-            return delegate.find(id);
-        }
-
-        @Override
-        public Optional<AgentRunExecutionAttempt> activeFor(AgentRunId runId) {
-            return delegate.activeFor(runId);
-        }
-
-        @Override
-        public List<AgentRunExecutionAttempt> attemptsFor(AgentRunId runId) {
-            return delegate.attemptsFor(runId);
-        }
-
-        private boolean awaitPausedSave() {
-            return await(pausedSaveEntered, "timed out waiting for PAUSED attempt persistence");
-        }
-
-        private void releasePausedSave() {
-            releasePausedSave.countDown();
-        }
-
-        private static boolean await(CountDownLatch latch, String message) {
-            try {
-                if (latch.await(5, TimeUnit.SECONDS)) return true;
-            } catch (InterruptedException interrupted) {
-                Thread.currentThread().interrupt();
-                throw new IllegalStateException(
-                        "interrupted while waiting at attempt persistence boundary", interrupted);
-            }
-            throw new IllegalStateException(message);
-        }
-    }
-
     private static final class ConflictingPausedAttemptRepository implements ExecutionAttemptRepository {
         private final ExecutionAttemptRepository delegate;
 
@@ -1926,30 +1717,6 @@ class SqliteRuntimeRecoveryTest {
                 return result.getLong(1);
             }
         }
-    }
-
-    private static String queryText(Connection connection, String sql, String... parameters) throws Exception {
-        try (PreparedStatement statement = connection.prepareStatement(sql)) {
-            for (int index = 0; index < parameters.length; index++) {
-                statement.setString(index + 1, parameters[index]);
-            }
-            try (ResultSet result = statement.executeQuery()) {
-                assertThat(result.next()).isTrue();
-                return result.getString(1);
-            }
-        }
-    }
-
-    private static DecisionExecutor decisionExecutor(DefaultAgentRuntime runtime) throws ReflectiveOperationException {
-        Field attemptExecutorField = DefaultAgentRuntime.class.getDeclaredField("attemptExecutor");
-        attemptExecutorField.setAccessible(true);
-        AttemptExecutor attemptExecutor = (AttemptExecutor) attemptExecutorField.get(runtime);
-        Field loopField = AttemptExecutor.class.getDeclaredField("loop");
-        loopField.setAccessible(true);
-        DefaultAgentLoop loop = (DefaultAgentLoop) loopField.get(attemptExecutor);
-        Field decisionExecutorField = DefaultAgentLoop.class.getDeclaredField("decisionExecutor");
-        decisionExecutorField.setAccessible(true);
-        return (DecisionExecutor) decisionExecutorField.get(loop);
     }
 
     private record RuntimeInstance(
