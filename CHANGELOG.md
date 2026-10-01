@@ -1,5 +1,12 @@
 # Changelog
 
+- Added `HaifaAgentBuilder.autoApproveStandardFileWriteTools(Set<ToolName>)` for exact registered Java
+  bindings with only FILE_WRITE, POLICY approval and non-high/critical risk. A configuration-only marker
+  freezes the list into the policy digest; request-local removal of the unchanged standard FILE_WRITE ASK
+  reuses the original evaluator and preserves custom ASK/DENY, defaults and approval modes. Integration
+  bindings cannot substitute for Java registrations. The list composes with read-only network approval
+  without exempting mixed effects; products retain responsibility for their Tool arguments and write scope.
+
 - Follow-up to the credential-conflict change (PR #258 review): `HaifaAgentBuilder.credentials(...)` compares
   contributions by equality, so a new `CredentialPlatformContribution` wrapping the same broker is accepted;
   `McpToolPlatform.applyTo` claims the credential boundary before adding Tools, the managed resource or diagnostics,

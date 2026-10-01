@@ -307,6 +307,14 @@ Run Event Feed 使用 `ModelAttemptLifecycle` 暴露逻辑请求、Attempt、等
   SDK 不拦截 Tool 自建的 HTTP 客户端，也不把代理地址视为逻辑服务主机。Tool 实现仍须遵守声明。
   名单 marker 使用声明操作，绝不匹配 Runtime 的 `invoke`；它只绑定配置 digest，不能遮蔽产品的
   默认 ASK/DENY。移除原样标准网络 ASK 后仍由原 evaluator 和默认规则决定，未得到 ALLOW 则保留原决定。
+- `autoApproveStandardFileWriteTools(Set<ToolName>)` 默认为空，产品可将真实注册 Java Tool 中
+  唯一副作用为 `FILE_WRITE`、非 high/critical risk、`POLICY` 审批的精确冻结绑定加入名单。
+  SDK 仅豁免原样 canonical standard FILE_WRITE ASK；先保留原 evaluator 的 DENY，再用同一
+  evaluator 对请求局部规则视图求值，只有 ALLOW 才执行。自定义 ASK/DENY、默认规则、非 ASK
+  模式与明确审批要求不变；未注册、Integration/MCP 替代绑定、unsafe 定义及 marker/ref 冲突
+  在装配时失败关闭，即使外部绑定伪造 Java provenance 也不被接受。配置 marker 不匹配 invoke，
+  名单与只读网络名单均进入同一冻结 Policy digest，两者组合不豁免混合副作用。
+  本能力要求显式 `policy`，不授权 Tool 参数或写入路径；产品仍须校验自己拥有的写操作。
 - `HaifaAgentException` 及 `ConversationException` 对外只暴露安全的 `code`、`operation` 和
   `correlation`。Conversation Adapter、SQLite/Runtime 底层异常和输入正文不会进入公共错误消息。
 - `HaifaAgent.memories()` 暴露直接 CRUD：`put`（同 scope/kind/subject 替换，重复内容不增加 revision）、
