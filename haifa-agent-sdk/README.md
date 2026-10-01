@@ -1,5 +1,12 @@
 # Haifa Agent SDK
 
+`AgentRuns.frozenInstructionDiagnostic(runId)` 返回已准入 Run 的持久冻结指令摘要，类型为
+`Optional<FrozenInstructionDiagnostic>`。投影只含 Run、Definition/version、opaque configuration reference
+及严格的 `instructionContentHash`（`sha256:<64 lowercase hex>`），不含正文；queued、人工等待及终态均可查询。
+它从既有 Run configuration snapshot 读取，在 SQLite 重启或新 Builder 使用 Profile B 后仍返回原 Run A 的摘要，
+不依赖进程内 `promptDiagnostics`，不调度模型或写入状态。未知及跨 Tenant/Principal 的 Run 返回空；
+可见 Run 的快照缺失、损坏或绑定不一致抛出固定、无正文及 cause 的 `INTERNAL_ERROR`，产品应失败关闭。
+
 `AgentRuns.plan(runId)` delegates the caller-scoped Runtime plan query and returns an immutable
 view only when an authoritative plan exists. Product UIs can therefore show real Todo progress
 without inferring steps from model text or activity counts.
