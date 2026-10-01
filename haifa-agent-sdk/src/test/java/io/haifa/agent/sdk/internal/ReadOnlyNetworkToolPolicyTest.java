@@ -148,6 +148,22 @@ public class ReadOnlyNetworkToolPolicyTest {
     }
 
     @Test
+    void manifestDoesNotOverrideACustomDefaultAskOrDeny() {
+        PolicyRequest request = request("web_fetch", PolicyRiskLevel.MEDIUM, Set.of(PolicySideEffect.NETWORK_ACCESS));
+        for (PolicyRule fallback : List.of(askRule("web_fetch", 500), denyRule("web_fetch", 500))) {
+            PolicyRuleSet rules = PolicyRuleSet.of(List.of(), Optional.of(fallback), ApprovalMode.ASK);
+            var applied = ReadOnlyNetworkToolPolicy.apply(
+                    new PolicyPlatformContribution(rules, new DefaultPolicyDecisionService()),
+                    Set.of(new ToolName("web_fetch")),
+                    catalog(new WebFetchTool()),
+                    PRODUCT_ID);
+            assertThat(applied.evaluator().evaluate(request, applied.rules()).effect())
+                    .as("SDK manifest must not shadow a product default rule")
+                    .isEqualTo(fallback.effect());
+        }
+    }
+
+    @Test
     void nonAskApprovalModeIsNotAutomaticallyChanged() {
         PolicyRuleSet auto = PolicyRuleSet.of(
                 PolicyPresets.standardApproval().rules(),
