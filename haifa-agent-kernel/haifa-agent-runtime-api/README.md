@@ -1,5 +1,13 @@
 # Haifa Agent Runtime API
 
+## 冻结指令摘要
+
+`AgentRuntime.frozenInstructionDiagnostic(runId)` 将既有已准入 Run 的冻结 configuration 投影为
+`Optional<FrozenInstructionDiagnostic>`，仅公开 Run、Definition/version、opaque configuration reference
+及 UTF-8 SHA-256 `instructionContentHash`。没有正文、当前 Profile、Store 或 Runtime Core 类型。
+查询沿用 Run 的 Tenant/Principal 可见性；未知及不可见 Run 返回空，可见但快照不可读或绑定错误时固定失败关闭。
+兼容默认方法返回空，表示该 Runtime 实现尚未支持；默认本地 Runtime 对成功准入的可见 Run 必须提供摘要。
+
 ## Authoritative plan view
 
 `AgentRuntime.plan(runId)` exposes an immutable, caller-scoped `AgentPlanView` when the

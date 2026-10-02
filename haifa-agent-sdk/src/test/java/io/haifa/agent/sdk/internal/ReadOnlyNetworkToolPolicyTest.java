@@ -3,17 +3,12 @@ package io.haifa.agent.sdk.internal;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import io.haifa.agent.core.reference.PrincipalRef;
-import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.policy.api.ApprovalMode;
-import io.haifa.agent.policy.api.PolicyAction;
-import io.haifa.agent.policy.api.PolicyContext;
 import io.haifa.agent.policy.api.PolicyDecision;
 import io.haifa.agent.policy.api.PolicyEffect;
 import io.haifa.agent.policy.api.PolicyPresets;
 import io.haifa.agent.policy.api.PolicyRequest;
 import io.haifa.agent.policy.api.PolicyRequirementDigest;
-import io.haifa.agent.policy.api.PolicyResource;
 import io.haifa.agent.policy.api.PolicyRisk;
 import io.haifa.agent.policy.api.PolicyRiskLevel;
 import io.haifa.agent.policy.api.PolicyRule;
@@ -22,30 +17,20 @@ import io.haifa.agent.policy.api.PolicyRuleRef;
 import io.haifa.agent.policy.api.PolicyRuleSet;
 import io.haifa.agent.policy.api.PolicyRuleSource;
 import io.haifa.agent.policy.api.PolicySideEffect;
-import io.haifa.agent.policy.api.PolicySubject;
 import io.haifa.agent.policy.core.DefaultPolicyDecisionService;
+import io.haifa.agent.sdk.SdkTestFixtures;
 import io.haifa.agent.sdk.api.HaifaAgentException;
 import io.haifa.agent.sdk.contribution.PolicyPlatformContribution;
 import io.haifa.agent.sdk.contribution.ToolRegistration;
 import io.haifa.agent.sdk.tool.JavaTool;
 import io.haifa.agent.sdk.tool.JavaToolContext;
 import io.haifa.agent.sdk.tool.JavaToolSpec;
-import io.haifa.agent.tool.api.ToolAlias;
 import io.haifa.agent.tool.api.ToolApprovalRequirement;
 import io.haifa.agent.tool.api.ToolCatalog;
-import io.haifa.agent.tool.api.ToolDefinition;
-import io.haifa.agent.tool.api.ToolExecutionMode;
-import io.haifa.agent.tool.api.ToolIdempotency;
 import io.haifa.agent.tool.api.ToolName;
-import io.haifa.agent.tool.api.ToolProvider;
-import io.haifa.agent.tool.api.ToolProviderId;
-import io.haifa.agent.tool.api.ToolResourceRequirements;
 import io.haifa.agent.tool.api.ToolRisk;
-import io.haifa.agent.tool.api.ToolSchema;
 import io.haifa.agent.tool.api.ToolSideEffect;
-import java.time.Duration;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
@@ -354,18 +339,8 @@ public class ReadOnlyNetworkToolPolicyTest {
     }
 
     private static PolicyRequest request(String capability, PolicyRiskLevel level, Set<PolicySideEffect> effects) {
-        return new PolicyRequest(
-                new PolicySubject(new TenantRef("tenant"), new PrincipalRef("user", "user"), PRODUCT_ID),
-                new PolicyContext(
-                        Optional.empty(),
-                        Optional.of("session"),
-                        Optional.of("run"),
-                        Optional.empty(),
-                        ApprovalMode.ASK,
-                        Optional.empty()),
-                new PolicyAction(capability, "invoke"),
-                new PolicyResource("tool", capability + "@1.0.0", Optional.of("digest"), "title"),
-                new PolicyRisk(level, effects, false, Optional.of("api.example.com")));
+        return SdkTestFixtures.policyRequest(
+                PRODUCT_ID, capability, capability + "@1.0.0", level, effects, ApprovalMode.ASK);
     }
 
     private static ToolCatalog catalog(JavaTool<?, ?>... tools) {
@@ -377,44 +352,8 @@ public class ReadOnlyNetworkToolPolicyTest {
     }
 
     private static ToolRegistration highRiskRegistration(ToolRisk risk, Set<String> hosts) {
-        ToolProviderId providerId = new ToolProviderId("test.high");
-        ToolSchema schema = new ToolSchema(
-                "test.high.input",
-                "1.0.0",
-                Map.of("$schema", ToolSchema.DRAFT_2020_12, "type", "object", "additionalProperties", true));
-        ToolDefinition definition = new ToolDefinition(
-                new ToolName("high_risk"),
-                new io.haifa.agent.tool.api.SemanticVersion("1.0.0"),
-                providerId,
-                "High risk",
-                "High risk network tool",
-                schema,
-                schema,
-                ToolExecutionMode.IN_PROCESS,
-                true,
-                Duration.ofSeconds(30),
-                "per-run",
-                ToolIdempotency.IDEMPOTENT,
-                risk,
-                Set.of(ToolSideEffect.NETWORK_ACCESS),
-                new ToolResourceRequirements(Set.of(), hosts, Set.of()),
-                List.of(),
-                ToolApprovalRequirement.POLICY,
-                "test",
-                false,
-                Set.of());
-        ToolProvider provider = new ToolProvider() {
-            @Override
-            public ToolProviderId id() {
-                return providerId;
-            }
-
-            @Override
-            public io.haifa.agent.core.tool.ToolResult invoke(io.haifa.agent.tool.api.ToolInvocationRequest request) {
-                return new io.haifa.agent.core.tool.ToolResult(true, "ok", Map.of(), List.of(), List.of(), false);
-            }
-        };
-        return new ToolRegistration(new ToolAlias("high_risk"), definition, "test:high", provider);
+        return SdkTestFixtures.toolRegistration(
+                "high_risk", risk, ToolApprovalRequirement.POLICY, Set.of(ToolSideEffect.NETWORK_ACCESS), hosts);
     }
 
     public record Request(String value) {}

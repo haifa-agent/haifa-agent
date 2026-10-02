@@ -24,6 +24,7 @@ import io.haifa.agent.runtime.api.AgentRunOutputListener;
 import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.AgentRunSnapshot;
 import io.haifa.agent.runtime.api.AgentRuntime;
+import io.haifa.agent.runtime.api.FrozenInstructionDiagnostic;
 import io.haifa.agent.runtime.api.InteractionAction;
 import io.haifa.agent.runtime.api.InteractionResponse;
 import io.haifa.agent.runtime.api.InteractionResponseReceipt;
@@ -81,8 +82,12 @@ import io.haifa.agent.runtime.core.storage.RuntimeOutboxPublisher;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import io.haifa.agent.runtime.core.storage.RuntimeUnitOfWork;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -752,6 +757,45 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                 .filter(run -> caller.tenant().equals(run.tenant())
                         && caller.principal().equals(run.principal()))
                 .map(run -> AgentRunSnapshot.from(run, state.output(run.id())));
+    }
+
+    @Override
+    public Optional<FrozenInstructionDiagnostic> frozenInstructionDiagnostic(AgentRunId runId) {
+        var caller = callers.current();
+        AgentRunId checked = Objects.requireNonNull(runId, "runId must not be null");
+        try {
+            return runs.findVisible(checked, caller.tenant(), caller.principal())
+                    .map(this::projectFrozenInstruction);
+        } catch (RuntimeException unreadable) {
+            // Materializing the visible Run may already require its configuration reference.
+            throw frozenInstructionUnavailable();
+        }
+    }
+
+    private FrozenInstructionDiagnostic projectFrozenInstruction(AgentRun run) {
+        try {
+            var configuration = state.configuration(run.configurationSnapshot()).orElseThrow();
+            if (!run.configurationSnapshot().equals(configuration.reference())
+                    || !run.agentDefinitionId().equals(configuration.definitionId())
+                    || !run.agentDefinitionVersion().equals(configuration.definitionVersion())) {
+                throw new IllegalStateException();
+            }
+            String hash = "sha256:"
+                    + HexFormat.of()
+                            .formatHex(MessageDigest.getInstance("SHA-256")
+                                    .digest(configuration.agentInstruction().getBytes(StandardCharsets.UTF_8)));
+            return new FrozenInstructionDiagnostic(
+                    run.id(), run.agentDefinitionId(), run.agentDefinitionVersion(), configuration.reference(), hash);
+        } catch (RuntimeException | NoSuchAlgorithmException unreadable) {
+            // Persistence/codec failures can contain payload bodies; never retain their cause.
+            throw frozenInstructionUnavailable();
+        }
+    }
+
+    private static io.haifa.agent.runtime.api.RuntimeContractException frozenInstructionUnavailable() {
+        return new io.haifa.agent.runtime.api.RuntimeContractException(
+                io.haifa.agent.runtime.api.RuntimeApiErrorCode.INTERNAL_ERROR,
+                "Frozen instruction diagnostic is unavailable");
     }
 
     @Override

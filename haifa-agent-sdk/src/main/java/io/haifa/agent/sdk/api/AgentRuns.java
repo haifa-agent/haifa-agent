@@ -13,6 +13,7 @@ import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.AgentRunSnapshot;
 import io.haifa.agent.runtime.api.AgentRunViewSnapshot;
 import io.haifa.agent.runtime.api.ChildRunView;
+import io.haifa.agent.runtime.api.FrozenInstructionDiagnostic;
 import io.haifa.agent.runtime.api.InteractionResponseReceipt;
 import io.haifa.agent.runtime.api.InteractionResponseSubmission;
 import io.haifa.agent.runtime.api.InteractionView;
@@ -59,6 +60,15 @@ public final class AgentRuns {
 
     public Optional<AgentRunSnapshot> find(AgentRunId runId) {
         return runtime.find(Objects.requireNonNull(runId, "runId must not be null"));
+    }
+
+    /**
+     * Returns only IDs, the opaque configuration reference and the SHA-256 instruction digest
+     * frozen at admission. Available before Context construction and after durable restarts;
+     * missing or invisible Runs return empty, while unreadable visible snapshots fail closed.
+     */
+    public Optional<FrozenInstructionDiagnostic> frozenInstructionDiagnostic(AgentRunId runId) {
+        return runtime.frozenInstructionDiagnostic(Objects.requireNonNull(runId, "runId must not be null"));
     }
 
     /** Reclaims a durable executing Run after its previous physical Runtime disappeared. */

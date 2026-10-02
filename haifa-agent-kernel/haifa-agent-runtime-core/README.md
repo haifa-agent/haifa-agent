@@ -1,5 +1,16 @@
 # Haifa Agent Runtime Core
 
+`DefaultAgentRuntime.frozenInstructionDiagnostic(runId)` 先通过既有 Run repository 的
+`findVisible(runId, tenant, principal)` 过滤可信 Caller 所有权，再通过
+`RuntimeStateRepository.configuration(run.configurationSnapshot())` 读取冻结事实并核对 reference、
+Definition ID/version。它对既有实际 `agentInstruction` 的 UTF-8 字节计算 SHA-256，只公开摘要；
+不读当前 Profile、不写缓存/事件、不调度执行。存储/codec 或绑定失败统一转换成无正文、无 cause 的固定
+`INTERNAL_ERROR`。没有新增持久化端口、表、状态或指令副本。
+
+SQLite 的 `findVisible` 在还原 Run 及其 referenced configuration 之前检查已有 RunRow 的
+Tenant/Principal。缺失 configuration 造成的还原异常也仅对 owner 返回固定诊断错误；
+其他 caller 看不到损坏资源的存在性。其他 Run 查询保持原合同。
+
 ## Human interaction lifetime
 
 Runtime 生成的 Clarification 与 Tool Approval 默认不自动过期，并在 Interaction Store 中持久保持

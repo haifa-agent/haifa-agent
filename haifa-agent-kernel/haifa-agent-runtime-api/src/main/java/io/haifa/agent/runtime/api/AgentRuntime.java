@@ -37,6 +37,18 @@ public interface AgentRuntime {
 
     Optional<AgentRunSnapshot> find(io.haifa.agent.core.run.AgentRunId runId);
 
+    /**
+     * Returns the digest of the instruction in the caller-visible Run's admission snapshot.
+     * No instruction body or current Profile is exposed. Unknown or invisible Runs return empty;
+     * an admitted visible Run with an unreadable snapshot fails with a safe contract error.
+     * The compatibility default returns empty because this implementation does not support the query.
+     */
+    default Optional<FrozenInstructionDiagnostic> frozenInstructionDiagnostic(
+            io.haifa.agent.core.run.AgentRunId runId) {
+        java.util.Objects.requireNonNull(runId, "runId must not be null");
+        return Optional.empty();
+    }
+
     default Optional<AgentRunViewSnapshot> view(io.haifa.agent.core.run.AgentRunId runId) {
         throw new UnsupportedOperationException("transport-ready Run views are not supported");
     }

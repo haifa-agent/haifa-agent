@@ -1,5 +1,15 @@
 # Haifa Agent SQLite Runtime Store
 
+冻结指令诊断复用现有 `configuration_snapshot` 的 content reference/hash 与 payload codec 完整性校验，
+不新增 schema 或正文副本。通过 SDK `AgentRuns.frozenInstructionDiagnostic(runId)` 可在同 SQLite/key 的
+新进程读取原准入摘要；当前 Builder 的 Profile 不参与历史查询。快照缺失或 payload/hash 破坏固定失败关闭，
+不能退回当前配置。相邻测试用两个真实 JVM、实际 FILE_WRITE 人工等待及批准恢复验证 A → 新 Run B，
+日志只记录标识、摘要和调用/写入计数。
+
+摘要查询使用既有 Run repository 的 `findVisible`，在 RunRow 身份校验后才还原 referenced configuration；
+因此已存在但缺 snapshot 的跨 Tenant/Principal 资源仍不可见，owner 则获得固定安全错误。
+该窄读取沿用既有 mapper/row，没有新增 SQL、table、Store 或迁移。
+
 `SqliteSdkProductContributions` 打开一个 SQLite Foundation，并共同提供 Persistence、Conversation、
 Memory 与 Artifact。Action Policy rules 及 evaluator contribution 由产品装配层提供；仓库不会为某个 Store 发布
 独立生产 Starter。单机持久化参考代码见 `haifa-agent-sdk-example` 的
