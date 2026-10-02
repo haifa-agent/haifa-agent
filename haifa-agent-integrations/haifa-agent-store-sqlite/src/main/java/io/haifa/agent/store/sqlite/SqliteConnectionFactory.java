@@ -161,17 +161,29 @@ public final class SqliteConnectionFactory implements AutoCloseable {
         return created;
     }
 
+    /**
+     * Waits for a lease without giving up on interruption. A cancelled run is interrupted and must
+     * still be able to persist its own cancellation, so the interrupt is kept for the caller instead
+     * of failing the store access.
+     */
     private void acquireLease() {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(configuration.busyTimeoutMillis());
+        boolean interrupted = Thread.interrupted();
         try {
-            if (leases.tryAcquire(configuration.busyTimeoutMillis(), TimeUnit.MILLISECONDS)) {
-                return;
+            while (true) {
+                try {
+                    if (leases.tryAcquire(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS)) {
+                        return;
+                    }
+                    break;
+                } catch (InterruptedException exception) {
+                    interrupted = true;
+                }
             }
-        } catch (InterruptedException exception) {
-            Thread.currentThread().interrupt();
-            throw new SqliteStoreException(
-                    SqliteStoreFailure.CONNECTION_FAILED,
-                    "Interrupted while waiting for a SQLite connection",
-                    exception);
+        } finally {
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
         }
         throw new SqliteStoreException(
                 SqliteStoreFailure.DATABASE_BUSY,

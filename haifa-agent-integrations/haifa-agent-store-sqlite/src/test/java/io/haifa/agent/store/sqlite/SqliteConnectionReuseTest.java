@@ -221,6 +221,26 @@ class SqliteConnectionReuseTest {
     }
 
     @Test
+    void interruptedThreadCanStillPersistAndKeepsItsInterrupt() throws Exception {
+        try (SqliteStoreFoundation foundation =
+                SqliteStoreFoundation.initialize(SqliteTestSupport.configuration(directory), SqliteTestSupport.CLOCK)) {
+            SqliteRuntimeUnitOfWork unitOfWork = foundation.unitOfWork();
+            createProbeTable(foundation.connections());
+
+            Thread.currentThread().interrupt();
+            try {
+                unitOfWork.execute(
+                        () -> execute(unitOfWork.currentConnection(), "INSERT INTO probe(note) VALUES ('cancelled')"));
+                assertThat(Thread.currentThread().isInterrupted()).isTrue();
+                assertThat(unitOfWork.executeReadOnly(() -> count(unitOfWork.currentConnection())))
+                        .isEqualTo(1);
+            } finally {
+                Thread.interrupted();
+            }
+        }
+    }
+
+    @Test
     void closingTheFactoryReleasesTheDatabaseFileAndInvalidatesOutstandingLeases() throws Exception {
         SqliteStoreConfiguration configuration = SqliteTestSupport.configuration(directory);
         SqliteConnectionFactory factory = new SqliteConnectionFactory(configuration);
