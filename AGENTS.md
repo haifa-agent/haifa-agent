@@ -31,11 +31,14 @@
 - 根仓（含 `docs/`）、`private-docs/` 与 `test-config/` 必须分别检查、暂存、提交和推送；禁止把私有文档或
   私有测试配置混入主仓。
 - 建立git worktree使用父目录统一在../haifa-agent-worktrees/
+- 向本地 Maven 仓库发布 SDK 只能通过 `scripts/publish-local-sdk.ps1`，禁止直接运行 `mvn install`。
+  基线坐标 `0.1.2-SNAPSHOT` 只在 PR 合入 `dev` 后由主检出在 `dev` 分支上发布；各 `feat-*` worktree
+  发布到各自带 worktree 目录名的坐标 `0.1.2-<worktree 目录名>-SNAPSHOT` 并生成发布清单。
+  一个下游功能同时需要多个 SDK 分支的改动时，先在上游合并到一个集成 worktree，再从该 worktree 发布。
 - Haifa Agent Super Harness（`../haifa-agent-super-harness`）是独立产品仓，只消费本地 Maven 仓库中的公开
-  JAR/BOM `0.1.2-SNAPSHOT`。为其补 SDK 缺口时，以
+  JAR/BOM。为其补 SDK 缺口时，以
   `private-docs/prompts/038-sdk-012-super-harness-gaps/README.md` 为需求索引，每项按上述 `feat-*` → `dev`
-  流程交付；完成后将公开 JAR/BOM 发布到本地 Maven 仓库，并在 Super Harness 的 `docs/todo.md` 记录 SDK
-  commit、PR 与验证状态。这类 PR 由人工审查合并，智能体不得自行合并。
+  流程交付；完成后须通过发布脚本发布并记录 SDK commit、PR 与验证状态。这类 PR 由人工审查合并，智能体不得自行合并。
 
 ## 事实源与任务路由
 
