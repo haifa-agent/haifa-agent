@@ -102,7 +102,7 @@ public final class SqliteConnectionFactory implements AutoCloseable {
         Connection pooled = null;
         try {
             PooledDataSource current = pool;
-            if (current == null) {
+            if (closed || current == null) {
                 throw new SqliteStoreException(
                         SqliteStoreFailure.CONNECTION_FAILED, "SQLite connection factory is closed");
             }
@@ -137,6 +137,11 @@ public final class SqliteConnectionFactory implements AutoCloseable {
         return configuration;
     }
 
+    /**
+     * Closes every physical connection. Outstanding leases are given up to the busy timeout to come
+     * back first, so a connection is not closed underneath the thread that is still using it; a
+     * lease returned after that closes its own connection.
+     */
     @Override
     public synchronized void close() {
         if (closed) return;
@@ -144,8 +149,35 @@ public final class SqliteConnectionFactory implements AutoCloseable {
         PooledDataSource current = pool;
         pool = null;
         permissionStrategy = null;
-        if (current != null) {
-            current.forceCloseAll();
+        if (current == null) {
+            return;
+        }
+        boolean drained = awaitOutstandingLeases();
+        current.forceCloseAll();
+        if (drained) {
+            // Lets a caller that was already waiting for a lease fail on the closed factory at once.
+            leases.release(MAXIMUM_POOLED_CONNECTIONS);
+        }
+    }
+
+    private boolean awaitOutstandingLeases() {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(configuration.busyTimeoutMillis());
+        boolean interrupted = Thread.interrupted();
+        try {
+            while (true) {
+                try {
+                    return leases.tryAcquire(
+                            MAXIMUM_POOLED_CONNECTIONS,
+                            Math.max(0, deadline - System.nanoTime()),
+                            TimeUnit.NANOSECONDS);
+                } catch (InterruptedException exception) {
+                    interrupted = true;
+                }
+            }
+        } finally {
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 

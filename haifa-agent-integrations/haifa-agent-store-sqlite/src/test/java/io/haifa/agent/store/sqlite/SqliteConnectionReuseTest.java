@@ -263,6 +263,48 @@ class SqliteConnectionReuseTest {
         assertThat(configuration.databasePath()).doesNotExist();
     }
 
+    @Test
+    void closingWhileOtherThreadsAreMidUnitOfWorkStillReleasesTheDatabaseFiles() throws Exception {
+        for (int round = 0; round < 40; round++) {
+            Path roundDirectory = Files.createDirectory(directory.resolve("round-" + round));
+            SqliteStoreFoundation foundation = SqliteStoreFoundation.initialize(
+                    SqliteTestSupport.configuration(roundDirectory), SqliteTestSupport.CLOCK);
+            SqliteRuntimeUnitOfWork unitOfWork = foundation.unitOfWork();
+            java.util.concurrent.atomic.AtomicBoolean stop = new java.util.concurrent.atomic.AtomicBoolean();
+            List<Thread> workers = new ArrayList<>();
+            for (int worker = 0; worker < 6; worker++) {
+                boolean writer = worker % 2 == 0;
+                workers.add(Thread.ofVirtual().start(() -> {
+                    while (!stop.get()) {
+                        try {
+                            if (writer) {
+                                unitOfWork.execute(() -> 1);
+                            } else {
+                                unitOfWork.executeReadOnly(() -> 1);
+                            }
+                        } catch (RuntimeException closedUnderneath) {
+                            // Expected once the store is closed.
+                        }
+                    }
+                }));
+            }
+            Thread.sleep(15);
+
+            foundation.close();
+
+            try (var paths = Files.list(roundDirectory)) {
+                for (Path path : paths.toList()) {
+                    Files.delete(path);
+                }
+            } finally {
+                stop.set(true);
+                for (Thread worker : workers) {
+                    worker.join();
+                }
+            }
+        }
+    }
+
     private SqliteConnectionFactory initializedFactory() {
         SqliteConnectionFactory factory = new SqliteConnectionFactory(SqliteTestSupport.configuration(directory));
         factory.initialize();
