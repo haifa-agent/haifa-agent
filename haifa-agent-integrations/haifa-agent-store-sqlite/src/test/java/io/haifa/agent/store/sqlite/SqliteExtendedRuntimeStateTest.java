@@ -80,10 +80,16 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import javax.crypto.spec.SecretKeySpec;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class SqliteExtendedRuntimeStateTest {
+    @AfterEach
+    void closeStores() throws Exception {
+        SqliteTestSupport.closeOpenedStores();
+    }
+
     private static final Instant NOW = SqliteAggregateTestData.NOW;
     private static final byte[] KEY = "0123456789abcdef0123456789abcdef".getBytes(StandardCharsets.UTF_8);
 

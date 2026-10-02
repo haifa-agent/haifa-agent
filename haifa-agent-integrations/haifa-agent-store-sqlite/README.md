@@ -20,6 +20,24 @@ V1、V2、V4～V13、V15 与 V1000～V1007；V3 legacy Policy family 和独立 V
 同目录下唯一 `haifa-agent-v1.0-init.sql` 由 `build-support/scripts/generate_haifa_agent_v1_schema.py`
 从该 registry 实际注册资源生成，`--check` 用于 byte-for-byte 门禁。
 
+## 连接复用
+
+`SqliteConnectionFactory` 复用物理连接：`openConnection()` 从一个小连接池（MyBatis `PooledDataSource`，
+上限 8）租出连接，关闭返回的连接即归还。归还时连接被恢复为新开状态（结束未完成的事务、`query_only=OFF`），
+无法恢复的连接会被丢弃；已归还的连接对象拒绝再次使用。池满时等待以 `busyTimeoutMillis` 为界，超时以
+`DATABASE_BUSY` 失败。每次租出仍会重新校验数据库文件权限。
+
+由此带来的使用要求：
+
+- **Store 必须关闭**。空闲连接保持数据库文件打开，直到 `SqliteConnectionFactory`/`SqliteStoreFoundation`
+  被 `close()`；未关闭时 Windows 上无法删除或替换数据库文件。测试用 try-with-resources 或
+  `SqliteTestSupport.closeOpenedStores()`。
+- Store 打开期间替换数据库文件不受支持：已有连接继续指向原文件。
+- 直接调用 `openConnection()` 的类限定为 `SqliteRuntimeUnitOfWork`、`SqliteArtifactStore` 与
+  `SqliteMigrationRunner`（由架构测试约束）；其余代码通过 unit of work 访问数据库。
+
+`SqliteUnitOfWorkTimingTest` 输出单个 unit of work 的平均耗时（`SQLITE_UOW_TIMING`），用于改动前后对比。
+
 ## SDK Conversation metadata
 
 Runtime Migration V5 新增产品中立的 `sdk_conversation`；V13 将其收敛为纯 display/index metadata：

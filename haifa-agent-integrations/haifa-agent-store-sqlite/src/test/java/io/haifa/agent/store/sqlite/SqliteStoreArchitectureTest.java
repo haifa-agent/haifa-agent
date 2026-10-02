@@ -42,4 +42,21 @@ class SqliteStoreArchitectureTest {
                         "io.haifa.agent.product..")
                 .check(classes);
     }
+
+    @Test
+    void onlyTheKnownOwnersLeaseStoreConnections() {
+        // A leased connection must be returned promptly and outside any transaction. Keeping the
+        // callers to this short list keeps that contract in one reviewable place.
+        noClasses()
+                .that()
+                .doNotHaveFullyQualifiedName(SqliteRuntimeUnitOfWork.class.getName())
+                .and()
+                .doNotHaveFullyQualifiedName(SqliteArtifactStore.class.getName())
+                .and()
+                .doNotHaveFullyQualifiedName(
+                        io.haifa.agent.store.sqlite.migration.SqliteMigrationRunner.class.getName())
+                .should()
+                .callMethod(SqliteConnectionFactory.class, "openConnection")
+                .check(classes);
+    }
 }
