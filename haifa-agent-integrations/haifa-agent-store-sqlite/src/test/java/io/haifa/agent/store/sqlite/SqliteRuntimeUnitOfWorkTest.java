@@ -15,10 +15,16 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.apache.ibatis.session.SqlSession;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class SqliteRuntimeUnitOfWorkTest {
+    @AfterEach
+    void closeStores() throws Exception {
+        SqliteTestSupport.closeOpenedStores();
+    }
+
     @TempDir
     Path directory;
 

@@ -12,10 +12,16 @@ import java.sql.Statement;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class SqliteConnectionFactoryTest {
+    @AfterEach
+    void closeStores() throws Exception {
+        SqliteTestSupport.closeOpenedStores();
+    }
+
     @TempDir
     Path directory;
 
@@ -45,7 +51,7 @@ class SqliteConnectionFactoryTest {
     @Test
     void initializesWalAndConfiguresEveryConnection() throws Exception {
         SqliteStoreConfiguration configuration = SqliteTestSupport.configuration(directory);
-        SqliteConnectionFactory factory = new SqliteConnectionFactory(configuration);
+        SqliteConnectionFactory factory = SqliteTestSupport.closeAfterTest(new SqliteConnectionFactory(configuration));
         factory.initialize();
         factory.initialize();
 
@@ -101,7 +107,8 @@ class SqliteConnectionFactoryTest {
                 }
             };
         };
-        SqliteConnectionFactory factory = new SqliteConnectionFactory(configuration, detector);
+        SqliteConnectionFactory factory =
+                SqliteTestSupport.closeAfterTest(new SqliteConnectionFactory(configuration, detector));
         factory.initialize();
 
         try (Connection first = factory.openConnection()) {
@@ -111,15 +118,19 @@ class SqliteConnectionFactoryTest {
             }
         }
 
+        // Pooled connections keep the database file itself open, so the changed storage identity is
+        // staged on the journal sibling, which the store also revalidates on every open.
         Path database = configuration.databasePath().toAbsolutePath().normalize();
-        int securedBeforeReplacement = securedFiles.get(database).get();
-        Path replacement = directory.resolve("replacement.db");
-        try (Connection ignored = java.sql.DriverManager.getConnection("jdbc:sqlite:" + replacement)) {
-            // Create a valid database whose storage identity differs from the active database.
-        }
-        Files.move(replacement, database, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        Path journal = database.resolveSibling(database.getFileName() + "-journal");
+        Files.writeString(journal, "first");
         try (Connection ignored = factory.openConnection()) {
-            assertThat(securedFiles.get(database).get()).isEqualTo(securedBeforeReplacement + 1);
+            assertThat(securedFiles).containsKey(journal);
+        }
+        int securedBeforeReplacement = securedFiles.get(journal).get();
+        Path replacement = Files.writeString(directory.resolve("replacement-journal"), "second");
+        Files.move(replacement, journal, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        try (Connection ignored = factory.openConnection()) {
+            assertThat(securedFiles.get(journal).get()).isEqualTo(securedBeforeReplacement + 1);
         }
 
         assertThat(detections).hasValue(1);
