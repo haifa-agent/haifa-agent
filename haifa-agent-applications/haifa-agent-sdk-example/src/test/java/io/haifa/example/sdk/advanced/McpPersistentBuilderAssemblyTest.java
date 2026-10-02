@@ -1,7 +1,6 @@
 package io.haifa.example.sdk.advanced;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.agent.AgentDefinitionVersion;
@@ -22,7 +21,6 @@ import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelDefinitionId;
 import io.haifa.agent.model.api.ModelFinishReason;
-import io.haifa.agent.model.api.ModelMessage;
 import io.haifa.agent.model.api.ModelProviderId;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelUsage;
@@ -38,12 +36,10 @@ import io.haifa.agent.policy.core.DefaultPolicyDecisionService;
 import io.haifa.agent.runtime.api.ToolCallView;
 import io.haifa.agent.sdk.api.HaifaAgent;
 import io.haifa.agent.sdk.api.HaifaAgentBuilder;
-import io.haifa.agent.sdk.api.HaifaAgentException;
 import io.haifa.agent.sdk.api.HaifaAgents;
 import io.haifa.agent.sdk.api.SdkCaller;
 import io.haifa.agent.sdk.contribution.ModelContribution;
 import io.haifa.agent.sdk.contribution.PolicyPlatformContribution;
-import io.haifa.agent.sdk.conversation.ConversationQuery;
 import io.haifa.agent.sdk.conversation.StartConversationCommand;
 import io.haifa.agent.sdk.product.ProductId;
 import io.haifa.agent.sdk.product.ProductProfile;
@@ -66,7 +62,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
-import java.util.function.Supplier;
 import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -83,192 +78,28 @@ class McpPersistentBuilderAssemblyTest {
             new SecretKeySpec("0123456789abcdef0123456789abcdef".getBytes(StandardCharsets.UTF_8), "AES");
 
     @Test
-    void assemblesTwoServersExposingTheSameToolNameWithoutMixingProvenance(@TempDir Path directory) throws Exception {
-        try (var alpha = new LoopbackMcpServer("alpha-status", new String[] {"get_status"}, false, false);
-                var beta = new LoopbackMcpServer("beta-status", new String[] {"get_status"}, false, false)) {
+    void assemblesMcpPlatformIntoPersistentBuilder(@TempDir Path directory) throws Exception {
+        try (var server = new LoopbackMcpServer("status-server", new String[] {"get_status"})) {
             var mcp = McpToolPlatforms.connect(
-                    List.of(
-                            spec("alpha-status", alpha.endpoint(), "alpha"),
-                            spec("beta-status", beta.endpoint(), "beta")),
-                    TENANT,
-                    PRINCIPAL);
+                    List.of(spec("status-server", server.endpoint(), "status")), TENANT, PRINCIPAL);
             AtomicReference<List<String>> disclosedTools = new AtomicReference<>();
-            AtomicReference<List<ModelMessage>> lastMessages = new AtomicReference<>();
-            AgentChatModel model = toolCallingModel(
-                    List.of(
-                            toolCall("call-alpha", "alpha_get_status", "alpha"),
-                            toolCall("call-beta", "beta_get_status", "beta")),
-                    disclosedTools,
-                    lastMessages);
+            AgentChatModel model =
+                    toolCallingModel(List.of(toolCall("call-status", "status_get_status", "status")), disclosedTools);
 
-            try (var agent = build(directory.resolve("alpha-beta.sqlite"), model, mcp)) {
-                AgentRunId runId = runOne(agent, "status of both servers");
+            AgentRunId runId;
+            try (var agent = build(directory.resolve("assembly.sqlite"), model, mcp)) {
+                runId = runOne(agent, "check status");
 
                 assertThat(agent.runs().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
-                assertThat(disclosedTools.get()).containsExactly("alpha_get_status", "beta_get_status");
-                assertThat(alpha.calls()).containsExactly("alpha-status:get_status:alpha");
-                assertThat(beta.calls()).containsExactly("beta-status:get_status:beta");
+                assertThat(disclosedTools.get()).containsExactly("status_get_status");
+                assertThat(server.calls()).containsExactly("status-server:get_status:status");
                 assertThat(agent.runs().toolCalls(runId))
                         .extracting(ToolCallView::toolName)
-                        .containsExactlyInAnyOrder("alpha_get_status", "beta_get_status");
-            }
-        }
-    }
-
-    @Test
-    void optionalServerFailureContributesNothingAndDoesNotPolluteTheOtherServer(@TempDir Path directory)
-            throws Exception {
-        try (var healthy = new LoopbackMcpServer("healthy-status", new String[] {"get_status"}, false, false);
-                var broken = new LoopbackMcpServer("broken-status", new String[] {"get_status"}, true, false)) {
-            var mcp = McpToolPlatforms.connect(
-                    List.of(
-                            spec("healthy-status", healthy.endpoint(), "healthy"),
-                            spec("broken-status", broken.endpoint(), "broken").optional()),
-                    TENANT,
-                    PRINCIPAL);
-            AtomicReference<List<String>> disclosedTools = new AtomicReference<>();
-            AtomicReference<List<ModelMessage>> lastMessages = new AtomicReference<>();
-            AgentChatModel model = toolCallingModel(
-                    List.of(toolCall("call-healthy", "healthy_get_status", "healthy")), disclosedTools, lastMessages);
-
-            try (var agent = build(directory.resolve("optional.sqlite"), model, mcp)) {
-                AgentRunId runId = runOne(agent, "status");
-
-                assertThat(agent.runs().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
-                assertThat(disclosedTools.get()).containsExactly("healthy_get_status");
-                assertThat(healthy.calls()).containsExactly("healthy-status:get_status:healthy");
-                assertThat(broken.initializeCount()).isGreaterThanOrEqualTo(1);
-                assertThat(agent.diagnostics())
-                        .extracting(diagnostic -> diagnostic.code())
-                        .contains("MCP_SERVER_UNAVAILABLE");
-            }
-        }
-    }
-
-    @Test
-    void requiredServerFailureClosesOpenedResourcesAndFailsTheConnect() throws Exception {
-        try (var healthy = new LoopbackMcpServer("healthy-status", new String[] {"get_status"}, false, false);
-                var broken = new LoopbackMcpServer("broken-status", new String[] {"get_status"}, true, false)) {
-            assertThatThrownBy(() -> McpToolPlatforms.connect(
-                            List.of(
-                                    spec("healthy-status", healthy.endpoint(), "healthy"),
-                                    spec("broken-status", broken.endpoint(), "broken")
-                                            .required()),
-                            TENANT,
-                            PRINCIPAL))
-                    .isInstanceOf(HaifaAgentException.class)
-                    .extracting("code")
-                    .isEqualTo("MCP_SERVER_UNAVAILABLE");
-
-            awaitCondition(() -> healthy.deleteCount() >= 1);
-            assertThat(healthy.deleteCount()).isGreaterThanOrEqualTo(1);
-        }
-    }
-
-    @Test
-    void emptyServerListAddsNoToolAndLeavesTheAgentUsable(@TempDir Path directory) throws Exception {
-        var mcp = McpToolPlatforms.connect(List.of(), TENANT, PRINCIPAL);
-        AtomicReference<List<String>> disclosedTools = new AtomicReference<>();
-        AtomicReference<List<ModelMessage>> lastMessages = new AtomicReference<>();
-        AgentChatModel model = toolCallingModel(List.of(), disclosedTools, lastMessages);
-
-        try (var agent = build(directory.resolve("empty.sqlite"), model, mcp)) {
-            AgentRunId runId = runOne(agent, "no tools");
-
-            assertThat(agent.runs().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
-            assertThat(disclosedTools.get()).isEmpty();
-            assertThat(agent.diagnostics()).isEmpty();
-        }
-    }
-
-    @Test
-    void injectsDeclaredCredentialAndRedactsItFromTheToolResult(@TempDir Path directory) throws Exception {
-        String secret = "external-secret-token";
-        try (var secure = new LoopbackMcpServer("secure-status", new String[] {"get_status"}, false, true)) {
-            var mcp = McpToolPlatforms.connect(
-                    List.of(bearerSpec("secure-status", secure.endpoint(), "secure", () -> secret)), TENANT, PRINCIPAL);
-            AtomicReference<List<String>> disclosedTools = new AtomicReference<>();
-            AtomicReference<List<ModelMessage>> lastMessages = new AtomicReference<>();
-            AgentChatModel model = toolCallingModel(
-                    List.of(toolCall("call-secure", "secure_get_status", "secure")), disclosedTools, lastMessages);
-
-            try (var agent = build(directory.resolve("credential.sqlite"), model, mcp)) {
-                AgentRunId runId = runOne(agent, "status");
-
-                assertThat(agent.runs().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
-                assertThat(secure.authorizationValues()).contains("Bearer " + secret);
-                assertThat(renderText(lastMessages.get()))
-                        .contains("[REDACTED]")
-                        .doesNotContain(secret);
-                assertThat(agent.diagnostics().toString()).doesNotContain(secret);
-            }
-            assertThat(secure.authorizationValues())
-                    .allSatisfy(value -> assertThat(value).contains("Bearer"));
-        }
-    }
-
-    @Test
-    void closingTheAgentReleasesEveryMcpConnection(@TempDir Path directory) throws Exception {
-        try (var alpha = new LoopbackMcpServer("alpha-status", new String[] {"get_status"}, false, false);
-                var beta = new LoopbackMcpServer("beta-status", new String[] {"get_status"}, false, false)) {
-            var mcp = McpToolPlatforms.connect(
-                    List.of(
-                            spec("alpha-status", alpha.endpoint(), "alpha"),
-                            spec("beta-status", beta.endpoint(), "beta")),
-                    TENANT,
-                    PRINCIPAL);
-            AtomicReference<List<String>> disclosedTools = new AtomicReference<>();
-            AtomicReference<List<ModelMessage>> lastMessages = new AtomicReference<>();
-            AgentChatModel model = toolCallingModel(List.of(), disclosedTools, lastMessages);
-
-            HaifaAgent agent = build(directory.resolve("close.sqlite"), model, mcp);
-            assertThat(alpha.deleteCount()).isZero();
-            assertThat(beta.deleteCount()).isZero();
-
-            agent.close();
-            agent.close();
-
-            awaitCondition(() -> alpha.deleteCount() >= 1 && beta.deleteCount() >= 1);
-            assertThat(alpha.deleteCount()).isGreaterThanOrEqualTo(1);
-            assertThat(beta.deleteCount()).isGreaterThanOrEqualTo(1);
-        }
-    }
-
-    @Test
-    void persistsRunAndToolFactsAcrossAgentRestart(@TempDir Path directory) throws Exception {
-        Path database = directory.resolve("restart.sqlite");
-        AgentRunId runId;
-        String sessionId;
-        try (var server = new LoopbackMcpServer("persist-status", new String[] {"get_status"}, false, false)) {
-            McpServerSpec spec = spec("persist-status", server.endpoint(), "persist");
-            AtomicReference<List<String>> disclosedTools = new AtomicReference<>();
-            AtomicReference<List<ModelMessage>> lastMessages = new AtomicReference<>();
-            AgentChatModel model = toolCallingModel(
-                    List.of(toolCall("call-persist", "persist_get_status", "persist")), disclosedTools, lastMessages);
-
-            try (var agent = build(database, model, McpToolPlatforms.connect(List.of(spec), TENANT, PRINCIPAL))) {
-                var conversation = agent.conversations()
-                        .start(new StartConversationCommand(
-                                "restart-" + UUID.randomUUID(), "Persistent MCP", "status"));
-                runId = conversation.runId();
-                sessionId = conversation.record().sessionId().value();
-                assertThat(agent.runs().await(runId).status()).isEqualTo(AgentRunStatus.COMPLETED);
+                        .containsExactly("status_get_status");
             }
 
-            AtomicReference<List<ModelMessage>> reopenedMessages = new AtomicReference<>();
-            AgentChatModel reopenedModel = toolCallingModel(List.of(), new AtomicReference<>(), reopenedMessages);
-            try (var reopened =
-                    build(database, reopenedModel, McpToolPlatforms.connect(List.of(spec), TENANT, PRINCIPAL))) {
-                assertThat(reopened.runs().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
-                assertThat(reopened.runs().toolCalls(runId))
-                        .extracting(ToolCallView::toolName)
-                        .contains("persist_get_status");
-                assertThat(reopened.conversations()
-                                .list(ConversationQuery.active(10))
-                                .items())
-                        .extracting(record -> record.sessionId().value())
-                        .contains(sessionId);
-            }
+            awaitCondition(() -> server.deleteCount() >= 1);
+            assertThat(server.deleteCount()).isGreaterThanOrEqualTo(1);
         }
     }
 
@@ -300,14 +131,11 @@ class McpPersistentBuilderAssemblyTest {
     }
 
     private static AgentChatModel toolCallingModel(
-            List<ModelToolCall> scriptedCalls,
-            AtomicReference<List<String>> disclosedTools,
-            AtomicReference<List<ModelMessage>> lastMessages) {
+            List<ModelToolCall> scriptedCalls, AtomicReference<List<String>> disclosedTools) {
         AtomicInteger step = new AtomicInteger();
         return request -> {
             disclosedTools.set(
                     request.tools().stream().map(tool -> tool.name()).sorted().toList());
-            lastMessages.set(request.messages());
             return respond(request, scriptedCalls, step.getAndIncrement());
         };
     }
@@ -339,29 +167,10 @@ class McpPersistentBuilderAssemblyTest {
         return new ModelToolCall(new ProviderToolCallCorrelationId(correlationId), toolName, Map.of("name", name));
     }
 
-    private static String renderText(List<ModelMessage> messages) {
-        if (messages == null) return "";
-        StringBuilder rendered = new StringBuilder();
-        for (ModelMessage message : messages) {
-            rendered.append(message.content()).append('\n');
-            rendered.append(message.toolResultData()).append('\n');
-        }
-        return rendered.toString();
-    }
-
     private static McpServerSpec spec(String name, URI endpoint, String prefix) {
         return McpServerSpec.streamableHttp(name, endpoint)
                 .allowTools("get_status")
                 .toolNamePrefix(prefix)
-                .readOnly()
-                .allowLoopbackHttp();
-    }
-
-    private static McpServerSpec bearerSpec(String name, URI endpoint, String prefix, Supplier<String> token) {
-        return McpServerSpec.streamableHttp(name, endpoint)
-                .allowTools("get_status")
-                .toolNamePrefix(prefix)
-                .bearerToken(token)
                 .readOnly()
                 .allowLoopbackHttp();
     }

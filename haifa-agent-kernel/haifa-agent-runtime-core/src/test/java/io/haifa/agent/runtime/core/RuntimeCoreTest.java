@@ -79,6 +79,10 @@ import io.haifa.agent.runtime.core.execution.ManualExecutionScheduler;
 import io.haifa.agent.runtime.core.input.InMemoryRunInputPort;
 import io.haifa.agent.runtime.core.interaction.InMemoryInteractionPort;
 import io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
+import io.haifa.agent.runtime.core.middleware.AgentRuntimeMiddleware;
+import io.haifa.agent.runtime.core.middleware.RuntimeMiddlewareContext;
+import io.haifa.agent.runtime.core.middleware.RuntimeMiddlewareOrder;
+import io.haifa.agent.runtime.core.middleware.RuntimePhase;
 import io.haifa.agent.runtime.core.recovery.RunBudgetSnapshot;
 import io.haifa.agent.runtime.core.retry.BackoffStrategy;
 import io.haifa.agent.runtime.core.retry.CompletionRepairPolicy;
@@ -2806,6 +2810,54 @@ class RuntimeCoreTest {
         assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
                 .isEqualTo(AgentRunStatus.COMPLETED);
         assertThat(modelCalls).hasValue(2);
+    }
+
+    @Test
+    void postCommitFailureKeepsTheWaitingBoundaryAndRecordsADiagnostic() {
+        AtomicInteger toolCalls = new AtomicInteger();
+        AtomicReference<Throwable> diagnostic = new AtomicReference<>();
+        AgentChatModel model = ignored -> response(new ToolCallDecision(List.of(toolRequest(
+                "call-write", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of("key", "value"))))));
+        Fixture fixture = fixture(model, builder -> TestToolPlatform.install(
+                        builder,
+                        "write",
+                        "1.0.0",
+                        "write.input",
+                        true,
+                        TestToolPlatform.approvalRequired(),
+                        request -> {
+                            toolCalls.incrementAndGet();
+                            return new ToolResult(true, "written", Map.of(), List.of(), List.of(), false);
+                        })
+                .middleware(new AgentRuntimeMiddleware() {
+                    @Override
+                    public RuntimePhase phase() {
+                        return RuntimePhase.AFTER_DECISION_EXECUTION;
+                    }
+
+                    @Override
+                    public RuntimeMiddlewareOrder order() {
+                        return new RuntimeMiddlewareOrder(1);
+                    }
+
+                    @Override
+                    public void apply(RuntimeMiddlewareContext context) {
+                        throw new IllegalStateException("injected post-commit failure");
+                    }
+                })
+                .failureDiagnostics((context, failure) -> diagnostic.set(failure)));
+
+        AgentRunId runId =
+                fixture.runtime.start(request("post-commit-waiting-boundary")).runId();
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.WAITING_APPROVAL);
+        assertThat(fixture.interactions.pending(runId)).isPresent();
+        assertThat(fixture.store.attemptsFor(runId).getLast().status()).isEqualTo(ExecutionAttemptStatus.PAUSED);
+        assertThat(diagnostic.get())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("injected post-commit failure");
+        assertThat(toolCalls).hasValue(0);
     }
 
     private static Fixture fixture(AgentChatModel model) {
