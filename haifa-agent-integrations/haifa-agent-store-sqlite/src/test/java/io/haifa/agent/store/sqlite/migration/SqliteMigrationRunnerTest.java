@@ -12,10 +12,16 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.List;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class SqliteMigrationRunnerTest {
+    @AfterEach
+    void closeStores() throws Exception {
+        SqliteTestSupport.closeOpenedStores();
+    }
+
     @TempDir
     Path directory;
 
@@ -335,7 +341,8 @@ class SqliteMigrationRunnerTest {
     }
 
     private SqliteConnectionFactory initializedConnections() {
-        SqliteConnectionFactory connections = new SqliteConnectionFactory(SqliteTestSupport.configuration(directory));
+        SqliteConnectionFactory connections = SqliteTestSupport.closeAfterTest(
+                new SqliteConnectionFactory(SqliteTestSupport.configuration(directory)));
         connections.initialize();
         return connections;
     }

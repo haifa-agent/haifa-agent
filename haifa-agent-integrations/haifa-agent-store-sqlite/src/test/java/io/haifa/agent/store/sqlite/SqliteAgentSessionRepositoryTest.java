@@ -13,10 +13,15 @@ import io.haifa.agent.runtime.core.storage.OptimisticLockException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class SqliteAgentSessionRepositoryTest {
+    @AfterEach
+    void closeStores() throws Exception {
+        SqliteTestSupport.closeOpenedStores();
+    }
 
     private static final Instant NOW = Instant.parse("2026-07-25T00:00:00Z");
 

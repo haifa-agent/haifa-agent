@@ -13,10 +13,16 @@ import java.sql.Connection;
 import java.util.List;
 import org.apache.ibatis.exceptions.PersistenceException;
 import org.apache.ibatis.session.SqlSession;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class SqliteMyBatisSessionFactoryTest {
+    @AfterEach
+    void closeStores() throws Exception {
+        SqliteTestSupport.closeOpenedStores();
+    }
+
     @TempDir
     Path directory;
 
@@ -73,7 +79,8 @@ class SqliteMyBatisSessionFactoryTest {
                 </mapper>
                 """);
         SqliteMyBatisSessionFactory myBatis = new SqliteMyBatisSessionFactory(1_024, List.of(badColumn));
-        SqliteConnectionFactory connections = new SqliteConnectionFactory(SqliteTestSupport.configuration(directory));
+        SqliteConnectionFactory connections = SqliteTestSupport.closeAfterTest(
+                new SqliteConnectionFactory(SqliteTestSupport.configuration(directory)));
         connections.initialize();
         new SqliteMigrationRunner(connections, SqliteTestSupport.CLOCK).migrate(HaifaAgentStoreMigrations.all());
 
