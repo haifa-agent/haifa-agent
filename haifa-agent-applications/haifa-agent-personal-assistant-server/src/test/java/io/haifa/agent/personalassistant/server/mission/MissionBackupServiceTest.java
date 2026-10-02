@@ -166,9 +166,10 @@ class MissionBackupServiceTest {
         Path data = directory.resolve(name);
         Files.createDirectories(data);
         Path database = data.resolve("personal-assistant.sqlite").toAbsolutePath();
-        var connections = new SqliteConnectionFactory(SqliteStoreConfiguration.defaults(database));
-        connections.initialize();
-        new SqliteMigrationRunner(connections, CLOCK).migrate(HaifaAgentStoreMigrations.all());
+        try (var connections = new SqliteConnectionFactory(SqliteStoreConfiguration.defaults(database))) {
+            connections.initialize();
+            new SqliteMigrationRunner(connections, CLOCK).migrate(HaifaAgentStoreMigrations.all());
+        }
         var store = new SqliteMissionStore(database, new ObjectMapper());
         MissionRuntimeAccess runtime = request -> {
             throw new AssertionError("planner is not used");
