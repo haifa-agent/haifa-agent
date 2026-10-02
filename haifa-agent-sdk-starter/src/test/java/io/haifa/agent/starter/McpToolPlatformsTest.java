@@ -29,6 +29,7 @@ class McpToolPlatformsTest {
 
             assertThat(mcp.openClients()).isEqualTo(1);
         }
+        assertThat(mcp.closedClients()).isEqualTo(1);
     }
 
     @Test
