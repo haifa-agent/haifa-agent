@@ -8,6 +8,7 @@ import io.haifa.agent.sdk.tool.JavaRecordSchemaGenerator;
 import io.haifa.agent.sdk.tool.JavaTool;
 import io.haifa.agent.sdk.tool.JavaToolContext;
 import io.haifa.agent.sdk.tool.JavaToolSpec;
+import io.haifa.agent.tool.api.FrozenToolBinding;
 import io.haifa.agent.tool.api.ToolDefinition;
 import io.haifa.agent.tool.api.ToolDispatchState;
 import io.haifa.agent.tool.api.ToolExecutionMode;
@@ -56,7 +57,7 @@ public final class ToolAssembly {
         List<JavaTool<?, ?>> tools = List.copyOf(Objects.requireNonNull(javaTools, "javaTools must not be null"));
         List<ToolRegistration> external =
                 List.copyOf(Objects.requireNonNull(registrations, "registrations must not be null"));
-        if (tools.isEmpty() && external.isEmpty()) return new Prepared(base, Set.of());
+        if (tools.isEmpty() && external.isEmpty()) return new Prepared(base, Set.of(), Set.of());
         if (base != null) {
             throw new HaifaAgentException(
                     "JAVA_TOOL_PLATFORM_UNSUPPORTED",
@@ -68,11 +69,15 @@ public final class ToolAssembly {
         ToolCatalogBuilder builder = new ToolCatalogBuilder();
         Set<String> aliases = new LinkedHashSet<>();
         registerJavaTools(builder, aliases, tools);
+        Set<String> javaAliases = Set.copyOf(aliases);
         registerIntegrationTools(builder, aliases, external);
         DefaultToolCatalog catalog = builder.freeze();
         return new Prepared(
                 new ToolPlatformContribution(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator()),
-                Set.copyOf(aliases));
+                Set.copyOf(aliases),
+                catalog.snapshot().bindings().stream()
+                        .filter(binding -> javaAliases.contains(binding.alias().value()))
+                        .collect(java.util.stream.Collectors.toUnmodifiableSet()));
     }
 
     private static void registerJavaTools(ToolCatalogBuilder builder, Set<String> aliases, List<JavaTool<?, ?>> tools) {
@@ -204,10 +209,12 @@ public final class ToolAssembly {
     }
 
     /** Effective Tool platform after SDK Tool registration and the aliases those Tools added. */
-    public record Prepared(ToolPlatformContribution platform, Set<String> contributedAliases) {
+    public record Prepared(
+            ToolPlatformContribution platform, Set<String> contributedAliases, Set<FrozenToolBinding> javaBindings) {
         public Prepared {
             contributedAliases =
                     Set.copyOf(Objects.requireNonNull(contributedAliases, "contributedAliases must not be null"));
+            javaBindings = Set.copyOf(Objects.requireNonNull(javaBindings, "javaBindings must not be null"));
         }
     }
 }

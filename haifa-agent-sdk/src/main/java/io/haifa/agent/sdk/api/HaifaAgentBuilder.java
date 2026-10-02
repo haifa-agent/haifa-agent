@@ -29,6 +29,7 @@ import io.haifa.agent.sdk.internal.DefaultConversationService;
 import io.haifa.agent.sdk.internal.ProcessLocalPromptDiagnostics;
 import io.haifa.agent.sdk.internal.ReadOnlyNetworkToolPolicy;
 import io.haifa.agent.sdk.internal.SafeConversationService;
+import io.haifa.agent.sdk.internal.StandardFileWriteToolPolicy;
 import io.haifa.agent.sdk.internal.ToolAssembly;
 import io.haifa.agent.sdk.memory.AgentMemories;
 import io.haifa.agent.sdk.product.ChildAgentSpec;
@@ -67,6 +68,7 @@ public final class HaifaAgentBuilder {
     private final List<JavaTool<?, ?>> javaTools = new ArrayList<>();
     private final List<ToolRegistration> toolRegistrations = new ArrayList<>();
     private Set<ToolName> autoApproveReadOnlyNetworkTools = Set.of();
+    private Set<ToolName> autoApproveStandardFileWriteTools = Set.of();
     private final List<AutoCloseable> managedResources = new ArrayList<>();
     private final List<AgentDiagnostic> assemblyDiagnostics = new ArrayList<>();
     private SdkCallerProvider callers = SdkCallerProvider.defaultPublicUser();
@@ -317,6 +319,25 @@ public final class HaifaAgentBuilder {
     }
 
     /**
+     * Exempts exactly the listed registered Java Tools from the canonical standard FILE_WRITE ASK.
+     *
+     * <p>The default is empty. Each actual frozen Java binding must declare only FILE_WRITE,
+     * non-high/non-critical risk and POLICY approval. Integration Tools, missing names and unsafe
+     * definitions fail assembly. The manifest participates in the frozen policy requirement digest;
+     * custom ASK/DENY, default rules, other effects and approval modes are preserved. This reuses the
+     * configured evaluator and does not authorize Tool arguments or constrain the Tool's own writes.
+     *
+     * @param values exact registered Java Tool names; empty disables the exemption
+     * @return this builder
+     * @throws HaifaAgentException if policy, a Java binding or a safe declaration is unavailable, or
+     *     a policy marker/ref conflicts with existing content
+     */
+    public HaifaAgentBuilder autoApproveStandardFileWriteTools(Set<ToolName> values) {
+        autoApproveStandardFileWriteTools = Set.copyOf(Objects.requireNonNull(values, "values must not be null"));
+        return this;
+    }
+
+    /**
      * Registers a resource the assembled Agent owns and closes, such as a native MCP client
      * connection pool. It is also closed when the build itself fails.
      */
@@ -476,6 +497,28 @@ public final class HaifaAgentBuilder {
                         policy,
                         autoApproveReadOnlyNetworkTools,
                         tool.catalog(),
+                        effectiveProfile.productId().value());
+            }
+            if (!autoApproveStandardFileWriteTools.isEmpty()) {
+                if (effectivePolicy == null) {
+                    throw new HaifaAgentException(
+                            "FILE_WRITE_AUTO_APPROVE_POLICY_REQUIRED",
+                            "product.assemble",
+                            "assembly",
+                            "auto-approved Java file-writing Tools require an explicit product policy");
+                }
+                if (tool == null) {
+                    throw new HaifaAgentException(
+                            "FILE_WRITE_AUTO_APPROVE_TOOL_UNAVAILABLE",
+                            "product.assemble",
+                            "assembly",
+                            "auto-approved Java file-writing Tools are absent from the Tool catalog");
+                }
+                effectivePolicy = StandardFileWriteToolPolicy.apply(
+                        effectivePolicy,
+                        autoApproveStandardFileWriteTools,
+                        tool.catalog(),
+                        prepared.javaBindings(),
                         effectiveProfile.productId().value());
             }
             if (effectivePolicy != null) {

@@ -87,6 +87,19 @@ public final class SqliteRunStateRepository implements RunStateRepository {
                 .map(this::fromRow));
     }
 
+    @Override
+    public Optional<AgentRun> findVisible(AgentRunId runId, TenantRef tenant, PrincipalRef principal) {
+        Objects.requireNonNull(runId, "runId must not be null");
+        Objects.requireNonNull(tenant, "tenant must not be null");
+        Objects.requireNonNull(principal, "principal must not be null");
+        return execute(() -> Optional.ofNullable(
+                        unitOfWork.mapper(RuntimeStoreMapper.class).findRun(runId.value()))
+                .filter(row -> tenant.tenantId().equals(row.tenantId())
+                        && principal.principalId().equals(row.principalId())
+                        && principal.principalType().equals(row.principalType()))
+                .map(this::fromRow));
+    }
+
     private RunRow toRow(AgentRun run) {
         AgentRunPersistenceSnapshot value = run.persistenceSnapshot();
         EncodedPayload result = value.result() == null
