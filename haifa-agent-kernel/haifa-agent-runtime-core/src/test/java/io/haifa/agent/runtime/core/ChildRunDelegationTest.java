@@ -62,6 +62,8 @@ import io.haifa.agent.runtime.core.delegation.DelegationPort;
 import io.haifa.agent.runtime.core.delegation.DelegationTool;
 import io.haifa.agent.runtime.core.execution.ExecutionScheduler;
 import io.haifa.agent.runtime.core.execution.LocalExecutionScheduler;
+import io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException;
+import io.haifa.agent.runtime.core.retry.BackoffStrategy;
 import io.haifa.agent.runtime.core.retry.RetryPolicy;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
@@ -101,6 +103,65 @@ class ChildRunDelegationTest {
     @AfterEach
     void close() throws Exception {
         for (AutoCloseable closeable : closeables) closeable.close();
+    }
+
+    @Test
+    void childWallDeadlineBeforeWatchdogTimesOutAndParentContinues() throws Exception {
+        Instant start = Instant.parse("2026-10-03T00:00:00Z");
+        ThreadLocal<Boolean> childExpired = ThreadLocal.withInitial(() -> false);
+        AtomicReference<Throwable> diagnostic = new AtomicReference<>();
+        AtomicInteger childCalls = new AtomicInteger();
+        // The worker observes its deadline before the parent's watchdog: no real sleep or scheduling race.
+        Fixture fixture = fixture(
+                Options.defaults().childWall(1_000).customize(builder -> builder.timeProvider(
+                                () -> childExpired.get() ? start.plusMillis(1_259) : start)
+                        .modelRetry(new RetryPolicy(
+                                2, error -> error instanceof ModelInvocationException, BackoffStrategy.none()))
+                        .failureDiagnostics((context, failure) -> diagnostic.set(failure))),
+                request -> {
+                    if (isParent(request)) {
+                        return hasToolResults(request)
+                                ? answer("parent continued", 1)
+                                : taskCalls("researcher", "slow request");
+                    }
+                    childCalls.incrementAndGet();
+                    childExpired.set(true);
+                    throw new ModelInvocationException(
+                            ModelErrorCategory.TIMEOUT,
+                            true,
+                            0,
+                            "timeout",
+                            request.callId(),
+                            "model request timed out",
+                            null);
+                });
+
+        AgentRunSnapshot parent = fixture.startAndAwait("wall-before-watchdog");
+        ChildRunView child = fixture.runtime.children(parent.runId()).getFirst();
+        assertThat(diagnostic.get().getCause()).isInstanceOf(RuntimeLimitExceededException.class);
+        RuntimeLimitExceededException limit =
+                (RuntimeLimitExceededException) diagnostic.get().getCause();
+        assertThat(limit.resource()).isEqualTo("wallTimeMillis");
+        assertThat(limit.limit()).isEqualTo(1_000);
+        assertThat(limit.used()).isEqualTo(1_259);
+        assertThat(child.status())
+                .as("actual retry guard resource=%s limit=%s used=%s", limit.resource(), limit.limit(), limit.used())
+                .isEqualTo(AgentRunStatus.TIMEOUT);
+        AgentRunSnapshot persisted = fixture.runtime.find(child.runId()).orElseThrow();
+        assertThat(persisted.status()).isEqualTo(AgentRunStatus.TIMEOUT);
+        assertThat(persisted.terminationReason().orElseThrow().code()).isEqualTo("WALL_TIME_EXCEEDED");
+        assertThat(childTerminalEvents(fixture, parent.runId(), child.runId()))
+                .containsExactly("child.run.timed-out:TIMEOUT");
+        assertThat(delegationCalls(fixture, parent.runId())
+                        .getFirst()
+                        .result()
+                        .orElseThrow()
+                        .structuredData())
+                .containsEntry("status", "TIMEOUT")
+                .containsEntry("reasonCode", "WALL_TIME_EXCEEDED");
+        assertThat(childCalls).hasValue(1);
+        assertThat(parent.status()).isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(parent.result().orElseThrow().summary()).isEqualTo("parent continued");
     }
 
     @Test
