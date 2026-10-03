@@ -214,7 +214,8 @@ public final class ModelMessageAssembler {
             if (!(item.content() instanceof MessageGroupContextContent group)) continue;
             for (AgentMessage message : group.messages()) {
                 boolean hasToolCall = message.contents().stream().anyMatch(ToolCallPart.class::isInstance);
-                if (hasToolCall) runIds.add(message.runId().orElse(currentRunId));
+                if (hasToolCall || message.role() == MessageRole.ASSISTANT)
+                    runIds.add(message.runId().orElse(currentRunId));
             }
         }
         Map<AgentRunId, List<ModelContinuationRecord>> byRun = new LinkedHashMap<>();
@@ -440,6 +441,21 @@ public final class ModelMessageAssembler {
                         "media inputs are only allowed on user messages");
             }
             return List.of(ModelMessage.user(text, mappedImages, mappedAudios));
+        }
+        if (message.role() == MessageRole.ASSISTANT && !isPriorModel(message, model, continuations)) {
+            ModelContinuationRecord continuation = continuations.byMessage().get(message.id());
+            if (continuation != null) {
+                if (model == null) {
+                    throw new IllegalStateException("model snapshot is required to resolve provider continuation");
+                }
+                return List.of(ModelMessage.assistant(
+                        text, List.of(), state.resolveContinuation(continuation, model, Set.of())));
+            }
+            if (message.metadata().containsKey("modelContinuationId")) {
+                throw new io.haifa.agent.runtime.core.model.continuation.ModelContinuationException(
+                        io.haifa.agent.runtime.core.model.continuation.ModelContinuationFailure.MISSING,
+                        "assistant continuation is unavailable");
+            }
         }
         return List.of(ModelMessage.text(mapRole(message.role()), text));
     }

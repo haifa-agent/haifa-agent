@@ -1074,6 +1074,76 @@ class ModelMessageAssemblerTest {
         assertThat(persistedCall.arguments().values().get("codeContent")).isEqualTo(massiveCode);
     }
 
+    @Test
+    void ordinaryAssistantUsesProtectedContinuationAndDoesNotMoveItAcrossBindings() {
+        var model = DefaultResolvedModelSnapshots.deepSeekV4Pro();
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        var reasoning = SensitiveModelReasoning.of("synthetic ordinary continuation");
+        var assistant = store.appendSessionMessageWithContinuation(
+                new SessionMessageDraft(
+                        new AgentMessageId("ordinary"),
+                        new AgentSessionId("session-1"),
+                        Optional.of(RUN_ID),
+                        Optional.empty(),
+                        MessageRole.ASSISTANT,
+                        MessageStatus.COMPLETED,
+                        MessageVisibility.USER_VISIBLE,
+                        List.of(new TextPart("answer", "plain")),
+                        Map.of("modelContinuationId", "ordinary-continuation"),
+                        Instant.EPOCH),
+                new ModelContinuationDraft(
+                        new ModelContinuationRef(
+                                "ordinary-continuation", "1.0", reasoning.digest(), reasoning.byteLength()),
+                        RUN_ID,
+                        new AgentSessionId("session-1"),
+                        "ordinary-call",
+                        model.providerId().value(),
+                        model.providerModelId(),
+                        model.configurationDigest(),
+                        Set.of(),
+                        reasoning,
+                        Instant.EPOCH));
+        var context = new AgentContext(
+                List.of(prompt()),
+                List.of(item("ordinary", ContextItemType.MESSAGE, new MessageGroupContextContent(List.of(assistant)))),
+                List.of(),
+                budget(),
+                20);
+        var assembled = new ModelMessageAssembler(store)
+                .assemble(RUN_ID, context, model)
+                .getLast();
+        assertThat(assembled.reasoning().orElseThrow().digest()).isEqualTo(reasoning.digest());
+        var other = ResolvedModelSnapshot.create(
+                model.providerId(),
+                model.providerVersion(),
+                model.modelId(),
+                model.modelVersion(),
+                model.providerModelId(),
+                model.adapterType(),
+                model.adapterVersion(),
+                model.apiStyle(),
+                model.dialect(),
+                model.endpoint(),
+                model.credentialRef(),
+                model.nativeStreaming(),
+                model.capabilities(),
+                model.contextWindow(),
+                model.maxOutputTokens(),
+                model.providerOptions(),
+                Map.of("thinking", "disabled"));
+        assertThat(new ModelMessageAssembler(store)
+                        .assemble(RUN_ID, context, other)
+                        .getLast()
+                        .reasoning())
+                .isEmpty();
+        assertThatThrownBy(() -> new ModelMessageAssembler(new InMemoryRuntimeStore()).assemble(RUN_ID, context, model))
+                .isInstanceOf(io.haifa.agent.runtime.core.model.continuation.ModelContinuationException.class)
+                .satisfies(error -> assertThat(
+                                ((io.haifa.agent.runtime.core.model.continuation.ModelContinuationException) error)
+                                        .failure())
+                        .isEqualTo(io.haifa.agent.runtime.core.model.continuation.ModelContinuationFailure.MISSING));
+    }
+
     private static AgentMessage message(
             String id,
             AgentSessionId sessionId,

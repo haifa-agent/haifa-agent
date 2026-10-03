@@ -258,6 +258,11 @@ public final class ActiveContextSnapshots implements MessageRedactionListener {
         Map<AgentRunId, Set<AgentMessageId>> continuationMessagesByRun = new LinkedHashMap<>();
         for (AgentMessage message : visible) {
             message.runId().ifPresent(runId -> {
+                if (message.role() == io.haifa.agent.core.message.MessageRole.ASSISTANT) {
+                    continuationMessagesByRun
+                            .computeIfAbsent(runId, ignored -> new LinkedHashSet<>())
+                            .add(message.id());
+                }
                 for (var part : message.contents()) {
                     if (part instanceof ToolCallPart call) {
                         toolIdsByRun

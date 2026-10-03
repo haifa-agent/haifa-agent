@@ -521,16 +521,49 @@ class SqliteRuntimeRecoveryTest {
 
     @Test
     void readsProtectedReasoningFromItsFactStoreAfterApprovalAcrossRestart() throws Exception {
+        protectedReasoningRecovery(false);
+    }
+
+    @Test
+    void ordinaryAndToolReasoningRecoverTogetherAtLowEffort() throws Exception {
+        protectedReasoningRecovery(true);
+    }
+
+    private void protectedReasoningRecovery(boolean ordinaryFirst) throws Exception {
         AtomicInteger providerCalls = new AtomicInteger();
         AgentRunId runId;
         try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
-            RuntimeInstance processA = toolRuntime(
+            RuntimeInstance processA = protectedToolRuntime(
                     first,
-                    model(reasoningToolResponse("checkpoint-private-reasoning")),
+                    ordinaryFirst
+                            ? model(
+                                    new AgentChatResponse(
+                                            "ordinary",
+                                            "deepseek-v4-pro",
+                                            "ordinary answer",
+                                            List.of(),
+                                            ModelFinishReason.STOP,
+                                            ModelUsage.unpriced(1, 1),
+                                            "",
+                                            Map.of(),
+                                            Optional.of(SensitiveModelReasoning.of("ordinary recovery reasoning"))),
+                                    reasoningToolResponse("checkpoint-private-reasoning"))
+                            : model(reasoningToolResponse("checkpoint-private-reasoning")),
                     "reasoning-process-a",
                     new TestIds("reasoning-a"),
                     providerCalls,
-                    approvalRequired());
+                    ordinaryFirst);
+            if (ordinaryFirst) {
+                var previous = processA.runtime().start(request("ordinary-before-approval"));
+                processA.scheduler().runAll();
+                assertThat(processA.runtime()
+                                .find(previous.runId())
+                                .orElseThrow()
+                                .status())
+                        .isEqualTo(AgentRunStatus.COMPLETED);
+                assertThat(processA.ports().state().modelContinuations(previous.runId()))
+                        .hasSize(1);
+            }
             runId = processA.runtime().start(request("reasoning-checkpoint")).runId();
             processA.scheduler().runAll();
 
@@ -547,13 +580,13 @@ class SqliteRuntimeRecoveryTest {
             return finalResponse("reasoning continuation recovered");
         };
         try (SqliteStoreFoundation reopened = SqliteTestSupport.foundation(directory)) {
-            RuntimeInstance processB = toolRuntime(
+            RuntimeInstance processB = protectedToolRuntime(
                     reopened,
                     resumedModel,
                     "reasoning-process-b",
                     new TestIds("reasoning-b"),
                     providerCalls,
-                    approvalRequired());
+                    ordinaryFirst);
             var interaction = processB.ports().interactions().pending(runId).orElseThrow();
             processB.runtime().respond(approvalResponse(runId, interaction.id(), "reasoning-approval"));
             processB.scheduler().runAll();
@@ -574,6 +607,20 @@ class SqliteRuntimeRecoveryTest {
                                     .orElseThrow()
                                     .value()
                                     .equals("provider-tool-call"));
+            if (ordinaryFirst) {
+                assertThat(resumedRequest.get().model().invocationOptions())
+                        .containsEntry("thinking", "enabled")
+                        .containsEntry("reasoning_effort", "low");
+                assertThat(resumedRequest.get().messages()).anyMatch(message -> message.reasoning()
+                        .map(value -> value.use(java.util.function.Function.identity())
+                                .equals("ordinary recovery reasoning"))
+                        .orElse(false));
+                var next = processB.runtime().start(request("next-after-recovery"));
+                processB.scheduler().runAll();
+                assertThat(processB.runtime().find(next.runId()).orElseThrow().status())
+                        .isEqualTo(AgentRunStatus.COMPLETED);
+                assertThat(providerCalls).hasValue(1);
+            }
             assertThat(processB.ports().attempts().attemptsFor(runId).getLast().resumedFromCheckpointId())
                     .isPresent();
             assertLegacyPolicyFamiliesAbsent(reopened.connections());
@@ -582,7 +629,7 @@ class SqliteRuntimeRecoveryTest {
         try (var paths = java.nio.file.Files.list(directory)) {
             for (Path path : paths.filter(java.nio.file.Files::isRegularFile).toList()) {
                 assertThat(new String(java.nio.file.Files.readAllBytes(path), StandardCharsets.ISO_8859_1))
-                        .doesNotContain("checkpoint-private-reasoning");
+                        .doesNotContain("checkpoint-private-reasoning", "ordinary recovery reasoning");
             }
         }
     }
@@ -1186,6 +1233,43 @@ class SqliteRuntimeRecoveryTest {
                 .timeProvider(time)
                 .workerId(workerId);
         return new RuntimeInstance(customizer.apply(builder).build(), scheduler, ports);
+    }
+
+    private RuntimeInstance protectedToolRuntime(
+            SqliteStoreFoundation foundation,
+            AgentChatModel model,
+            String workerId,
+            IdentifierGenerator ids,
+            AtomicInteger toolCalls,
+            boolean ordinaryFirst) {
+        if (!ordinaryFirst) return toolRuntime(foundation, model, workerId, ids, toolCalls, approvalRequired());
+        var base = io.haifa.agent.runtime.core.bootstrap.DefaultResolvedModelSnapshots.deepSeekV4Pro();
+        var snapshot = io.haifa.agent.model.api.ResolvedModelSnapshot.create(
+                base.providerId(),
+                base.providerVersion(),
+                base.modelId(),
+                base.modelVersion(),
+                base.providerModelId(),
+                base.adapterType(),
+                base.adapterVersion(),
+                base.apiStyle(),
+                base.dialect(),
+                base.endpoint(),
+                base.credentialRef(),
+                base.nativeStreaming(),
+                base.capabilities(),
+                base.contextWindow(),
+                base.maxOutputTokens(),
+                Map.of(),
+                Map.of("thinking", "enabled", "reasoning_effort", "low", "requires_reasoning_continuation", true));
+        return runtime(foundation, model, workerId, ids, builder -> installTool(builder, toolCalls, approvalRequired())
+                .profiles((id, overrides) -> new io.haifa.agent.runtime.core.bootstrap.ResolvedProfile(
+                        id,
+                        "1.0",
+                        io.haifa.agent.core.run.AgentRunType.CHAT,
+                        new io.haifa.agent.core.run.AgentRunBudget(10000, 10000, 10000, 20, 20, 5, "USD", 10000),
+                        new io.haifa.agent.core.run.AgentRunLimits(20, 5, 1, 60000, 30000),
+                        snapshot)));
     }
 
     private RuntimeInstance toolRuntime(
