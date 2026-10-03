@@ -924,6 +924,105 @@ class OpenAiCompatibleChatModelTest {
     }
 
     @Test
+    void serializesLowMaxAndDefaultEffortWithTheDeepSeekDialect() throws Exception {
+        response.set(responseWithFinishReason("stop"));
+        for (String effort : List.of("low", "max", "default")) {
+            Map<String, Object> options = effort.equals("default")
+                    ? Map.of("thinking", "enabled")
+                    : Map.of("thinking", "enabled", "reasoning_effort", effort);
+            model().invoke(thinkingRequest(
+                    options, List.of(ModelMessage.text(ModelMessageRole.USER, "hello")), List.of(), Map.of()));
+            JsonNode sent = json.readTree(requestBody.get());
+            assertThat(sent.path("thinking").path("type").asText()).isEqualTo("enabled");
+            assertThat(sent.path("reasoning_effort").asText()).isEqualTo(effort.equals("default") ? "high" : effort);
+        }
+    }
+
+    @Test
+    void rejectsIllegalThinkingCombinationsBeforeHttpDispatch() {
+        var tool = new ModelToolSpecification("echo", "1", "Echo", "echo-input", "1", Map.of("type", "object"), false);
+        Map<String, Object> low = Map.of("thinking", "enabled", "reasoning_effort", "low");
+        List<ModelMessage> messages = List.of(ModelMessage.text(ModelMessageRole.USER, "hello"));
+        assertThatThrownBy(() -> model().invoke(thinkingRequest(
+                        Map.of("thinking", "disabled", "reasoning_effort", "low"), messages, List.of(), Map.of())))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> model().invoke(thinkingRequest(low, messages, List.of(), Map.of("temperature", 0.2))))
+                .isInstanceOf(ModelInvocationException.class)
+                .satisfies(error -> assertThat(((ModelInvocationException) error).category())
+                        .isEqualTo(ModelErrorCategory.INVALID_REQUEST));
+        for (Object choice : List.of("required", Map.of("type", "function", "function", Map.of("name", "echo")))) {
+            assertThatThrownBy(() -> model().invoke(
+                                    thinkingRequest(low, messages, List.of(tool), Map.of("tool_choice", choice))))
+                    .isInstanceOf(ModelInvocationException.class)
+                    .satisfies(error -> assertThat(((ModelInvocationException) error).category())
+                            .isEqualTo(ModelErrorCategory.INVALID_REQUEST))
+                    .hasCauseInstanceOf(IllegalArgumentException.class);
+        }
+        assertThat(requestBody.get()).isNull();
+    }
+
+    @Test
+    void replaysOrdinaryReasoningOnlyWhenDeepSeekRequestCarriesTools() throws Exception {
+        response.set(responseWithFinishReason("stop"));
+        var history = List.of(
+                ModelMessage.assistant(
+                        "previous answer",
+                        List.of(),
+                        io.haifa.agent.model.api.SensitiveModelReasoning.of("synthetic ordinary reasoning")),
+                ModelMessage.text(ModelMessageRole.USER, "hello"));
+        var options = Map.<String, Object>of("thinking", "enabled", "reasoning_effort", "low");
+        model().invoke(thinkingRequest(options, history, List.of(), Map.of()));
+        assertThat(json.readTree(requestBody.get()).path("messages").get(0).has("reasoning_content"))
+                .isFalse();
+        var tool = new ModelToolSpecification("echo", "1", "Echo", "echo-input", "1", Map.of("type", "object"), false);
+        model().invoke(thinkingRequest(options, history, List.of(tool), Map.of()));
+        assertThat(json.readTree(requestBody.get())
+                        .path("messages")
+                        .get(0)
+                        .path("reasoning_content")
+                        .asText()
+                        .equals("synthetic ordinary reasoning"))
+                .isTrue();
+    }
+
+    private AgentChatRequest thinkingRequest(
+            Map<String, Object> options,
+            List<ModelMessage> messages,
+            List<ModelToolSpecification> tools,
+            Map<String, Object> requestOptions) {
+        var base = reasoningSnapshot();
+        var snapshot = ResolvedModelSnapshot.create(
+                base.providerId(),
+                base.providerVersion(),
+                base.modelId(),
+                base.modelVersion(),
+                base.providerModelId(),
+                base.adapterType(),
+                base.adapterVersion(),
+                base.apiStyle(),
+                base.dialect(),
+                base.endpoint(),
+                base.credentialRef(),
+                base.nativeStreaming(),
+                base.capabilities(),
+                base.contextWindow(),
+                base.maxOutputTokens(),
+                Map.of(),
+                options);
+        return new AgentChatRequest(
+                new ModelCallId("thinking-contract"),
+                new AgentRunId("thinking-run"),
+                1,
+                1,
+                snapshot,
+                messages,
+                tools,
+                1024,
+                Duration.ofSeconds(5),
+                requestOptions);
+    }
+
+    @Test
     void observesProviderHealthWithoutChangingConfigurationState() {
         response.set(Response.json(200, "{\"object\":\"list\",\"data\":[]}"));
         OpenAiCompatibleHealthProbe probe = new OpenAiCompatibleHealthProbe(

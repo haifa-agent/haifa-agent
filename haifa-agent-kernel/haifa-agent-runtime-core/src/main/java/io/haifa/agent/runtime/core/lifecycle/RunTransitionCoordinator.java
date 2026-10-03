@@ -16,6 +16,7 @@ import io.haifa.agent.runtime.core.input.InMemoryRunInputPort;
 import io.haifa.agent.runtime.core.input.RunInputPort;
 import io.haifa.agent.runtime.core.input.RunInputReasonCodes;
 import io.haifa.agent.runtime.core.input.RunInputRecord;
+import io.haifa.agent.runtime.core.model.continuation.ModelContinuationDraft;
 import io.haifa.agent.runtime.core.storage.OutboxMessage;
 import io.haifa.agent.runtime.core.storage.RunStateRepository;
 import io.haifa.agent.runtime.core.storage.RuntimeEvent;
@@ -127,7 +128,17 @@ public final class RunTransitionCoordinator {
     /** Commits final assistant message, public output and terminal Run state in one Unit of Work. */
     public AgentRunSnapshot completedWithOutput(
             AgentRun run, AgentRunResult result, String output, SessionMessageDraft finalMessage) {
-        return completeWithOutput(run, result, output, finalMessage, false).orElseThrow();
+        return completedWithOutput(run, result, output, finalMessage, Optional.empty());
+    }
+
+    public AgentRunSnapshot completedWithOutput(
+            AgentRun run,
+            AgentRunResult result,
+            String output,
+            SessionMessageDraft finalMessage,
+            Optional<ModelContinuationDraft> continuation) {
+        return completeWithOutput(run, result, output, finalMessage, continuation, false)
+                .orElseThrow();
     }
 
     /**
@@ -140,7 +151,16 @@ public final class RunTransitionCoordinator {
      */
     public Optional<AgentRunSnapshot> completedWithOutputUnlessInputPending(
             AgentRun run, AgentRunResult result, String output, SessionMessageDraft finalMessage) {
-        return completeWithOutput(run, result, output, finalMessage, true);
+        return completedWithOutputUnlessInputPending(run, result, output, finalMessage, Optional.empty());
+    }
+
+    public Optional<AgentRunSnapshot> completedWithOutputUnlessInputPending(
+            AgentRun run,
+            AgentRunResult result,
+            String output,
+            SessionMessageDraft finalMessage,
+            Optional<ModelContinuationDraft> continuation) {
+        return completeWithOutput(run, result, output, finalMessage, continuation, true);
     }
 
     private Optional<AgentRunSnapshot> completeWithOutput(
@@ -148,6 +168,7 @@ public final class RunTransitionCoordinator {
             AgentRunResult result,
             String output,
             SessionMessageDraft finalMessage,
+            Optional<ModelContinuationDraft> continuation,
             boolean deferForPendingInput) {
         synchronized (locks.computeIfAbsent(run.id(), ignored -> new Object())) {
             return unitOfWork.execute(() -> {
@@ -157,7 +178,12 @@ public final class RunTransitionCoordinator {
                 long expectedVersion = run.version();
                 AgentRunStatus previous = run.status();
                 run.beginCompleting(time.now());
-                state.saveFinalOutputAndMessage(run.id(), output, finalMessage);
+                if (continuation.isPresent()) {
+                    state.appendSessionMessageWithContinuation(finalMessage, continuation.orElseThrow());
+                    state.saveOutput(run.id(), output);
+                } else {
+                    state.saveFinalOutputAndMessage(run.id(), output, finalMessage);
+                }
                 recordWallTime(run);
                 run.complete(result, time.now());
                 runs.save(run, expectedVersion);

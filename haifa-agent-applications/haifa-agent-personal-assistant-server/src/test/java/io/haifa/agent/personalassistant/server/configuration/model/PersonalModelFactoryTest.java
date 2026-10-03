@@ -620,11 +620,13 @@ class PersonalModelFactoryTest {
                         PersonalResponseMode.RECOMMENDED, PersonalResponseMode.FAST, PersonalResponseMode.DEEP);
         assertThat(option.controls().reasoningEffort().visible()).isTrue();
         assertThat(option.controls().reasoningEffort().allowedValues())
-                .containsExactly(ModelReasoningEffort.HIGH, ModelReasoningEffort.MAX);
+                .containsExactly(ModelReasoningEffort.LOW, ModelReasoningEffort.HIGH, ModelReasoningEffort.MAX);
         assertThat(option.controls().responseMode().effectiveSummary()).isEqualTo("Thinking on · High");
-        assertThat(platform.catalog().runProfiles()).hasSize(20);
+        assertThat(platform.catalog().runProfiles()).hasSize(24);
 
         var recommended = platform.catalog().defaultSelection();
+        assertThat(platform.contribution().snapshot().invocationOptions())
+                .containsEntry("requires_reasoning_continuation", true);
         assertThat(recommended.effectiveParameters().reasoning().mode()).isEqualTo(ModelReasoningMode.ENABLED);
         assertThat(recommended.effectiveParameters().reasoning().effort()).contains(ModelReasoningEffort.HIGH);
 
@@ -653,6 +655,13 @@ class PersonalModelFactoryTest {
         assertThat(deep.effectiveParameters().reasoning().mode()).isEqualTo(ModelReasoningMode.ENABLED);
         assertThat(deep.effectiveParameters().reasoning().effort()).contains(ModelReasoningEffort.MAX);
         assertThat(deep.effectiveParameters().maxOutputTokens()).isEqualTo(8_192);
+
+        var disabledSnapshot = platform.contribution().snapshot().withEffectiveParameters(fast.effectiveParameters());
+        assertThat(disabledSnapshot
+                        .withEffectiveParameters(deep.effectiveParameters())
+                        .invocationOptions())
+                .containsEntry("thinking", "enabled")
+                .containsEntry("requires_reasoning_continuation", true);
     }
 
     @Test

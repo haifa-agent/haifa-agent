@@ -46,7 +46,13 @@ final class DeepSeekOpenAiChatDialect implements OpenAiCompatibleDialect {
             throw new IllegalArgumentException("DeepSeek thinking cannot be combined with temperature");
         }
         body.put("thinking", Map.of("type", thinking));
-        if ("enabled".equals(thinking)) body.put("reasoning_effort", frozen(request, "reasoning_effort", "high"));
+        if ("enabled".equals(thinking)) {
+            Object toolChoice = body.get("tool_choice");
+            if (toolChoice != null && !"auto".equals(toolChoice) && !"none".equals(toolChoice)) {
+                throw new IllegalArgumentException("DeepSeek thinking does not support forced tool_choice");
+            }
+            body.put("reasoning_effort", frozen(request, "reasoning_effort", "high"));
+        }
     }
 
     private static void validateOptions(Map<String, Object> options) {
@@ -55,8 +61,8 @@ final class DeepSeekOpenAiChatDialect implements OpenAiCompatibleDialect {
             throw new IllegalArgumentException("unsupported thinking mode: " + thinking);
         }
         Object effort = options.get("reasoning_effort");
-        if (effort != null && !"high".equals(effort) && !"max".equals(effort)) {
-            throw new IllegalArgumentException("DeepSeek supports reasoning_effort high or max");
+        if (effort != null && !"low".equals(effort) && !"high".equals(effort) && !"max".equals(effort)) {
+            throw new IllegalArgumentException("DeepSeek supports reasoning_effort low, high or max");
         }
         if ("disabled".equals(thinking) && effort != null) {
             throw new IllegalArgumentException("disabled thinking cannot have reasoning_effort");
