@@ -6,6 +6,10 @@
   Collapsed durations are hidden at or below 10s to reduce noise; expanding always shows the duration and
   the bounded detail metadata.
 
+- Typed wall-time exhaustion at an execution guard now settles a non-terminal Run as
+  `TIMEOUT / WALL_TIME_EXCEEDED`, including delegation children. Undispatched Tools retain their
+  `FAILED / RUN_BUDGET_EXCEEDED` record, and the failed Attempt retains its safe error and diagnostic ID.
+
 - Added `HaifaAgentBuilder.autoApproveStandardFileWriteTools(Set<ToolName>)` for exact registered Java
   bindings with only FILE_WRITE, POLICY approval and non-high/critical risk. A configuration-only marker
   freezes the list into the policy digest; request-local removal of the unchanged standard FILE_WRITE ASK

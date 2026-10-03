@@ -72,6 +72,9 @@ If an execution guard observes a typed `wallTimeMillis` limit before the coopera
 `AttemptExecutor` settles the non-terminal Run through the same `TIMEOUT / WALL_TIME_EXCEEDED` transition.
 Other execution limits retain their failure classification. Already terminal Runs and an atomically committed
 waiting Run/paused Attempt are preserved; generic error codes or messages cannot impersonate a wall deadline.
+A Tool whose dispatch window is already exhausted keeps its `FAILED / RUN_BUDGET_EXCEEDED` record and is
+never dispatched. The Run times out while the failed Attempt retains the classified error and diagnostic ID;
+cooperative watchdog cancellation may instead cancel the Tool. These records describe different boundaries.
 
 A child's first message holds the `task` brief plus an immutable copy of the non-text references the parent Run was
 started with (`AgentRunRequest.inputs`: stored images and audio, image URLs, asset and artifact references); the

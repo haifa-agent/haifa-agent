@@ -2824,6 +2824,46 @@ class RuntimeCoreTest {
     }
 
     @Test
+    void wallDeadlineAtToolDispatchTimesOutRunAndPreservesTheUndispatchedToolFailure() {
+        Instant start = Instant.parse("2026-07-21T00:00:00Z");
+        AtomicReference<Instant> clock = new AtomicReference<>(start);
+        AtomicInteger invocations = new AtomicInteger();
+        Fixture fixture = fixture(
+                model(new ToolCallDecision(List.of(toolRequest(
+                        "wall-dispatch", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of()))))),
+                builder -> TestToolPlatform.install(
+                                builder, "write", "1.0.0", "write.input", true, TestToolPlatform.allow(), request -> {
+                                    invocations.incrementAndGet();
+                                    return new ToolResult(true, "unreachable", Map.of(), List.of(), List.of(), false);
+                                })
+                        .publicToolPolicy((run, binding, request) -> {
+                            clock.set(start.plusMillis(run.limits().maxWallTimeMillis() + 259));
+                            return TestToolPlatform.allow();
+                        }),
+                clock::get);
+        AgentRunId runId =
+                fixture.runtime.start(request("wall-at-tool-dispatch")).runId();
+        fixture.scheduler.runAll();
+
+        var run = fixture.runtime.find(runId).orElseThrow();
+        assertThat(run.status()).isEqualTo(AgentRunStatus.TIMEOUT);
+        assertThat(run.terminationReason().orElseThrow().code()).isEqualTo("WALL_TIME_EXCEEDED");
+        assertThat(run.error()).isEmpty();
+        assertThat(invocations).hasValue(0);
+        var call = fixture.store.toolCalls(runId).getFirst();
+        assertThat(call.status()).isEqualTo(ToolCallStatus.FAILED);
+        var error = call.error().orElseThrow().error();
+        assertThat(error.code()).isEqualTo(AgentErrorCode.RUN_BUDGET_EXCEEDED);
+        assertThat(error.details()).containsEntry("resource", "wallTimeMillis");
+        assertThat(error.details().get("used")).isEqualTo((long) error.details().get("limit") + 259);
+        assertThat(fixture.journal.state(runId, call.idempotencyKey()))
+                .contains(io.haifa.agent.runtime.core.tool.ToolJournalState.FAILED);
+        var attempt = fixture.store.attemptsFor(runId).getLast();
+        assertThat(attempt.status()).isEqualTo(ExecutionAttemptStatus.FAILED);
+        assertThat(attempt.error()).contains(error);
+    }
+
+    @Test
     void nonWallExecutionLimitsKeepTheirPersistedFailureClassification() {
         for (String resource : List.of("modelCalls", "toolCalls", "iterations", "depth", "idleTimeMillis")) {
             Fixture fixture = fixture(
