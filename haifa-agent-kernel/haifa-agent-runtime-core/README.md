@@ -68,6 +68,11 @@ time stop the batch: started children receive `PARENT_CANCELLED`, requests that 
 `terminateChildren` settles children whose executor is gone through `InterruptedRunSettler`, the same settlement
 `recover` uses. Child waits are excluded from the idle check but not from wall time. Child runs skip Memory recall.
 
+If an execution guard observes a typed `wallTimeMillis` limit before the cooperative timeout signal arrives,
+`AttemptExecutor` settles the non-terminal Run through the same `TIMEOUT / WALL_TIME_EXCEEDED` transition.
+Other execution limits retain their failure classification. Already terminal Runs and an atomically committed
+waiting Run/paused Attempt are preserved; generic error codes or messages cannot impersonate a wall deadline.
+
 A child's first message holds the `task` brief plus an immutable copy of the non-text references the parent Run was
 started with (`AgentRunRequest.inputs`: stored images and audio, image URLs, asset and artifact references); the
 parent's free text is not copied and the `task` arguments cannot add or widen references.
