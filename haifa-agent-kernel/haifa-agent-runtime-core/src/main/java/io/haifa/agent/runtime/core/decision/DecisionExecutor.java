@@ -72,6 +72,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 /** Executes validated decisions without deciding Core lifecycle legality. */
 public final class DecisionExecutor {
@@ -162,6 +163,19 @@ public final class DecisionExecutor {
         if (decision instanceof DelegationDecision delegation) {
             return executeDelegation(run, attempt, delegation, loopContext, Optional.of(invocation));
         }
+        if (decision instanceof FinalAnswerDecision finalDecision) {
+            return executeFinal(run, finalDecision, loopContext, Optional.of(invocation));
+        }
+        if (decision instanceof ContinueDecision continuation) {
+            appendAssistant(
+                    run,
+                    List.of(new TextPart(continuation.message(), "plain")),
+                    MessageVisibility.USER_VISIBLE,
+                    Map.of(),
+                    Optional.of(invocation),
+                    Set.of());
+            return AgentLoopDirective.CONTINUE;
+        }
         return execute(run, attempt, decision, loopContext);
     }
 
@@ -194,6 +208,14 @@ public final class DecisionExecutor {
 
     public boolean completeBudgetLimited(
             AgentRun run, RuntimeLimitExceededException limit, Optional<FinalAnswerDecision> finalDecision) {
+        return completeBudgetLimited(run, limit, finalDecision, Optional.empty());
+    }
+
+    public boolean completeBudgetLimited(
+            AgentRun run,
+            RuntimeLimitExceededException limit,
+            Optional<FinalAnswerDecision> finalDecision,
+            Optional<ModelInvocationResult> invocation) {
         if (!supportsBudgetLimitedCompletion(run)) return false;
         String resource = upperSnake(limit.resource());
         FinalAnswerDecision candidate = finalDecision.orElse(null);
@@ -220,13 +242,13 @@ public final class DecisionExecutor {
                         : candidate.structuredOutput(),
                 candidate == null ? List.of() : candidate.artifacts(),
                 warnings.stream().distinct().toList());
+        Optional<ModelContinuationDraft> continuation = continuationDraft(run, invocation, Set.of());
         transitions.completedWithOutput(
                 run,
                 result,
                 summary,
-                messageDraft(
+                assistantMessageDraft(
                         run,
-                        MessageRole.ASSISTANT,
                         List.of(new TextPart(summary, "plain")),
                         MessageVisibility.USER_VISIBLE,
                         Map.of(
@@ -241,11 +263,22 @@ public final class DecisionExecutor {
                                 "limitingUsed",
                                 limit.used(),
                                 "limitingLimit",
-                                limit.limit())));
+                                limit.limit()),
+                        invocation,
+                        continuation),
+                continuation);
         return true;
     }
 
     private AgentLoopDirective executeFinal(AgentRun run, FinalAnswerDecision decision, AgentLoopContext loopContext) {
+        return executeFinal(run, decision, loopContext, Optional.empty());
+    }
+
+    private AgentLoopDirective executeFinal(
+            AgentRun run,
+            FinalAnswerDecision decision,
+            AgentLoopContext loopContext,
+            Optional<ModelInvocationResult> invocation) {
         var readiness = completionGuard.evaluate(run, decision);
         if (!readiness.ready()) {
             List<String> missingEvidence = readiness.blockers().stream()
@@ -373,24 +406,26 @@ public final class DecisionExecutor {
                 decision.structuredOutput(),
                 decision.artifacts(),
                 decision.warnings());
-        SessionMessageDraft finalMessage = messageDraft(
+        Optional<ModelContinuationDraft> continuation = continuationDraft(run, invocation, Set.of());
+        SessionMessageDraft finalMessage = assistantMessageDraft(
                 run,
-                MessageRole.ASSISTANT,
                 List.of(new TextPart(decision.summary(), "plain")),
                 MessageVisibility.USER_VISIBLE,
-                Map.of("final", true));
+                Map.of("final", true),
+                invocation,
+                continuation);
         if (ModelContinuationLimits.exceeded(run, loopContext.iteration() + 1) != null) {
             // No further model call is allowed, so pending steer input could never be seen; completing settles it
             // as rejected instead of trading the model's answer for a budget-limited summary.
-            transitions.completedWithOutput(run, result, decision.summary(), finalMessage);
+            transitions.completedWithOutput(run, result, decision.summary(), finalMessage, continuation);
             return AgentLoopDirective.STOP;
         }
         if (transitions
-                .completedWithOutputUnlessInputPending(run, result, decision.summary(), finalMessage)
+                .completedWithOutputUnlessInputPending(run, result, decision.summary(), finalMessage, continuation)
                 .isPresent()) {
             return AgentLoopDirective.STOP;
         }
-        deferFinalForRunInput(run, decision, loopContext);
+        deferFinalForRunInput(run, decision, loopContext, invocation);
         return AgentLoopDirective.CONTINUE;
     }
 
@@ -398,13 +433,18 @@ public final class DecisionExecutor {
      * Keeps the superseded answer in the transcript as an ordinary assistant turn, then lets the loop reach
      * {@code BEFORE_ITERATION} where the accepted steer input is applied and the model answers again.
      */
-    private void deferFinalForRunInput(AgentRun run, FinalAnswerDecision decision, AgentLoopContext loopContext) {
-        appendMessage(
+    private void deferFinalForRunInput(
+            AgentRun run,
+            FinalAnswerDecision decision,
+            AgentLoopContext loopContext,
+            Optional<ModelInvocationResult> invocation) {
+        appendAssistant(
                 run,
-                MessageRole.ASSISTANT,
-                decision.summary(),
+                List.of(new TextPart(decision.summary(), "plain")),
                 MessageVisibility.USER_VISIBLE,
-                Map.of("completionDeferred", PENDING_RUN_INPUT));
+                Map.of("completionDeferred", PENDING_RUN_INPUT),
+                invocation,
+                Set.of());
         events.append(
                 run.id(),
                 "completion.deferred",
@@ -1326,44 +1366,75 @@ public final class DecisionExecutor {
                 .map(call -> (ContentPart)
                         new ToolCallPart(call.id(), call.providerCorrelationId(), call.toolName(), call.toolVersion()))
                 .toList();
-        Map<String, Object> metadata = new LinkedHashMap<>();
-        if (invocation.isPresent()) {
-            metadata.put("providerId", invocation.get().model().providerId().value());
-            metadata.put("modelId", invocation.get().model().providerModelId());
-            metadata.put("configurationDigest", invocation.get().model().configurationDigest());
-        }
-        var continuationInvocation =
-                invocation.filter(value -> value.reasoning().isPresent());
-        if (continuationInvocation.isEmpty()) {
-            appendMessage(run, MessageRole.ASSISTANT, parts, MessageVisibility.AGENT_VISIBLE, metadata);
-            return;
-        }
-        ModelInvocationResult value = continuationInvocation.orElseThrow();
-        var reasoning = value.reasoning().orElseThrow();
-        ModelContinuationRef reference =
-                new ModelContinuationRef(ids.nextValue(), "1.0", reasoning.digest(), reasoning.byteLength());
-        metadata.put("modelContinuationId", reference.id());
-        metadata.put("modelContinuationVersion", reference.version());
-        metadata.put("modelContinuationDigest", reference.digest());
-        metadata.put("modelContinuationBytes", reference.byteLength());
-        SessionMessageDraft message =
-                messageDraft(run, MessageRole.ASSISTANT, parts, MessageVisibility.AGENT_VISIBLE, metadata);
-        var correlations = calls.stream()
+        Set<String> correlations = calls.stream()
                 .map(call -> call.providerCorrelationId().value())
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
-        state.appendSessionMessageWithContinuation(
-                message,
-                new ModelContinuationDraft(
-                        reference,
-                        run.id(),
-                        run.sessionId(),
-                        value.modelCallId(),
-                        value.model().providerId().value(),
-                        value.model().providerModelId(),
-                        value.model().configurationDigest(),
-                        correlations,
-                        reasoning,
-                        time.now()));
+        appendAssistant(run, parts, MessageVisibility.AGENT_VISIBLE, Map.of(), invocation, correlations);
+    }
+
+    private Optional<ModelContinuationDraft> continuationDraft(
+            AgentRun run, Optional<ModelInvocationResult> invocation, Set<String> correlations) {
+        return invocation
+                .filter(value -> value.reasoning().isPresent())
+                .filter(value -> !correlations.isEmpty()
+                        || Boolean.TRUE.equals(
+                                value.model().invocationOptions().get("requires_reasoning_continuation")))
+                .map(value -> {
+                    var reasoning = value.reasoning().orElseThrow();
+                    ModelContinuationRef reference = new ModelContinuationRef(
+                            ids.nextValue(), "1.0", reasoning.digest(), reasoning.byteLength());
+                    return new ModelContinuationDraft(
+                            reference,
+                            run.id(),
+                            run.sessionId(),
+                            value.modelCallId(),
+                            value.model().providerId().value(),
+                            value.model().providerModelId(),
+                            value.model().configurationDigest(),
+                            correlations,
+                            reasoning,
+                            time.now());
+                });
+    }
+
+    private SessionMessageDraft assistantMessageDraft(
+            AgentRun run,
+            List<ContentPart> contents,
+            MessageVisibility visibility,
+            Map<String, Object> metadata,
+            Optional<ModelInvocationResult> invocation,
+            Optional<ModelContinuationDraft> continuation) {
+        Map<String, Object> facts = new LinkedHashMap<>(metadata);
+        invocation.ifPresent(value -> {
+            facts.put("providerId", value.model().providerId().value());
+            facts.put("modelId", value.model().providerModelId());
+            facts.put("configurationDigest", value.model().configurationDigest());
+        });
+        continuation.ifPresent(value -> {
+            ModelContinuationRef reference = value.reference();
+            facts.put("modelContinuationId", reference.id());
+            facts.put("modelContinuationVersion", reference.version());
+            facts.put("modelContinuationDigest", reference.digest());
+            facts.put("modelContinuationBytes", reference.byteLength());
+        });
+        return messageDraft(run, MessageRole.ASSISTANT, contents, visibility, facts);
+    }
+
+    private void appendAssistant(
+            AgentRun run,
+            List<ContentPart> contents,
+            MessageVisibility visibility,
+            Map<String, Object> metadata,
+            Optional<ModelInvocationResult> invocation,
+            Set<String> correlations) {
+        Optional<ModelContinuationDraft> continuation = continuationDraft(run, invocation, correlations);
+        SessionMessageDraft message =
+                assistantMessageDraft(run, contents, visibility, metadata, invocation, continuation);
+        if (continuation.isPresent()) {
+            state.appendSessionMessageWithContinuation(message, continuation.orElseThrow());
+        } else {
+            state.appendSessionMessage(message);
+        }
     }
 
     private void appendToolResult(AgentRun run, ToolCall call, String text) {
