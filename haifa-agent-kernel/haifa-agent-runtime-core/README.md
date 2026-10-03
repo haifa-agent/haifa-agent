@@ -344,3 +344,7 @@ Completion 产品验收统一通过 `CompletionPolicy` 返回结构化阻塞与�
 
 恢复来源直接读取持久 Attempt 的 `resumedFromCheckpointId`，不再经过进程内 Selector。已记录来源必须精确存在，
 缺失、非最新的来源或缺失状态会拒绝继续；新 Run 无来源时从初始计数开始，不回退历史快照。
+
+声明 `requires_reasoning_continuation=true` 的模型，其普通 assistant 答案也通过既有
+continuation 保护和存储；最终答案、保护载荷与 Run 完成状态在同一 Unit of Work 中提交。
+消息装配仅恢复同配置 Binding 的保护载荷，缺失引用保持失败关闭，跨 Binding 不搬运。

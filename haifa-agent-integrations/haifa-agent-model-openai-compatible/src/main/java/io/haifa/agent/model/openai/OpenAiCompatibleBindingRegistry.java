@@ -75,7 +75,7 @@ final class OpenAiCompatibleBindingRegistry {
         Map<AdmissionKey, AdmittedBinding> map = new HashMap<>();
 
         // DeepSeek - Chat Completions
-        for (String model : Set.of("deepseek-v4-flash", "deepseek-v4-pro")) {
+        for (String model : Set.of("deepseek-flash", "deepseek-v4-flash", "deepseek-v4-pro")) {
             register(
                     map,
                     "deepseek",
@@ -84,7 +84,7 @@ final class OpenAiCompatibleBindingRegistry {
                     OpenAiCompatibleDialects.DEEPSEEK,
                     ModelReasoningBehavior.OPTIONAL,
                     Set.of(ModelReasoningMode.DISABLED, ModelReasoningMode.ENABLED),
-                    Set.of(ModelReasoningEffort.HIGH, ModelReasoningEffort.MAX),
+                    Set.of(ModelReasoningEffort.LOW, ModelReasoningEffort.HIGH, ModelReasoningEffort.MAX),
                     true);
         }
         register(
