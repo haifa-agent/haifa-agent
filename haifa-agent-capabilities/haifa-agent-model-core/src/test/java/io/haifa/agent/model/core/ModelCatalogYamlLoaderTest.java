@@ -128,6 +128,15 @@ class ModelCatalogYamlLoaderTest {
 
         assertThat(catalog.binding("deepseek-chat-pro").orElseThrow().profile().allowedReasoningEfforts())
                 .containsExactlyInAnyOrder(
+                        io.haifa.agent.model.api.ModelReasoningEffort.LOW,
+                        io.haifa.agent.model.api.ModelReasoningEffort.HIGH,
+                        io.haifa.agent.model.api.ModelReasoningEffort.MAX);
+        assertThat(catalog.binding("deepseek-chat-flash")
+                        .orElseThrow()
+                        .profile()
+                        .allowedReasoningEfforts())
+                .containsExactlyInAnyOrder(
+                        io.haifa.agent.model.api.ModelReasoningEffort.LOW,
                         io.haifa.agent.model.api.ModelReasoningEffort.HIGH,
                         io.haifa.agent.model.api.ModelReasoningEffort.MAX);
         assertThat(catalog.binding("antigravity-gemini").orElseThrow().profile().imageInput())

@@ -668,9 +668,13 @@ public final class DefaultAgentLoop implements AgentLoop {
                 if (budgetLimitRef[0] instanceof RuntimeLimitExceededException limitExceeded) {
                     middleware.apply(RuntimePhase.BEFORE_COMPLETION, middlewareContextRef[0]);
 
-                    Optional<FinalAnswerDecision> finalDecision = budgetLimitedFinalDecision(
-                            run, progress, model, builtRef[0].context().context(), decision, limitExceeded);
-                    decisionExecutor.completeBudgetLimited(run, limitExceeded, finalDecision);
+                    Optional<ModelInvocationResult> finalInvocation = budgetLimitedFinalInvocation(
+                            run, progress, model, builtRef[0].context().context(), response, limitExceeded);
+                    decisionExecutor.completeBudgetLimited(
+                            run,
+                            limitExceeded,
+                            finalInvocation.map(value -> (FinalAnswerDecision) value.decision()),
+                            finalInvocation);
                     models.committed(run, response, progress.iteration());
                     middleware.apply(RuntimePhase.AFTER_COMPLETION, middlewareContextRef[0]);
                     events.append(
@@ -907,14 +911,14 @@ public final class DefaultAgentLoop implements AgentLoop {
         return null;
     }
 
-    private Optional<FinalAnswerDecision> budgetLimitedFinalDecision(
+    private Optional<ModelInvocationResult> budgetLimitedFinalInvocation(
             AgentRun run,
             AgentLoopContext progress,
             FrozenModelBinding model,
             io.haifa.agent.context.api.AgentContext context,
-            AgentDecision decision,
+            ModelInvocationResult invocation,
             RuntimeLimitExceededException limit) {
-        if (decision instanceof FinalAnswerDecision answer) return Optional.of(answer);
+        if (invocation.decision() instanceof FinalAnswerDecision) return Optional.of(invocation);
         if (!"toolCalls".equals(limit.resource())
                 || run.usage().modelCalls() >= run.limits().maxModelCalls()
                 || run.activeElapsedMillis(time.now()) >= run.limits().maxWallTimeMillis()) {
@@ -935,14 +939,14 @@ public final class DefaultAgentLoop implements AgentLoop {
                             0,
                             synthesis.costMinorUnits(),
                             0));
-            if (synthesis.decision() instanceof FinalAnswerDecision answer) {
+            if (synthesis.decision() instanceof FinalAnswerDecision) {
                 models.committed(run, synthesis, progress.iteration());
                 events.append(
                         run.id(),
                         "budget.finalization-synthesized",
                         Map.of("limitingResource", "TOOL_CALLS"),
                         time.now());
-                return Optional.of(answer);
+                return Optional.of(synthesis);
             }
             models.failed(run, synthesis, progress.iteration());
         } catch (RuntimeException ignored) {

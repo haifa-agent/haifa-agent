@@ -708,8 +708,15 @@ public final class PersonalModelFactory {
                     "requires_reasoning_continuation",
                     reasoningMode != io.haifa.agent.model.api.ModelReasoningMode.DISABLED);
         }
-        return OpenAiCompatibleDialects.DEEPSEEK.equals(binding.dialect())
-                        || AnthropicMessagesDialects.DEEPSEEK.equals(binding.dialect())
+        if (OpenAiCompatibleDialects.DEEPSEEK.equals(binding.dialect())) {
+            // The binding requirement survives a preference switch from the default disabled mode.
+            return Map.of(
+                    "thinking",
+                    reasoningMode.name().toLowerCase(java.util.Locale.ROOT),
+                    "requires_reasoning_continuation",
+                    true);
+        }
+        return AnthropicMessagesDialects.DEEPSEEK.equals(binding.dialect())
                         || AnthropicMessagesDialects.ZHIPU.equals(binding.dialect())
                 ? Map.of("thinking", reasoningMode.name().toLowerCase(java.util.Locale.ROOT))
                 : Map.of();
