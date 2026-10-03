@@ -861,6 +861,38 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                 .toList();
     }
 
+    @Override
+    public io.haifa.agent.runtime.api.RunMessagePage messages(
+            AgentRunId runId, io.haifa.agent.runtime.api.RunMessageCursor after, int limit) {
+        Objects.requireNonNull(runId, "runId must not be null");
+        Objects.requireNonNull(after, "after must not be null");
+        var caller = callers.current();
+        try {
+            if (runs.findVisible(runId, caller.tenant(), caller.principal()).isEmpty())
+                throw new io.haifa.agent.runtime.api.RuntimeContractException(
+                        io.haifa.agent.runtime.api.RuntimeApiErrorCode.RUN_NOT_FOUND,
+                        "The run does not exist or is not visible");
+            if (!runId.equals(after.runId()) || limit < 1 || limit > 500)
+                throw new io.haifa.agent.runtime.api.RuntimeContractException(
+                        io.haifa.agent.runtime.api.RuntimeApiErrorCode.CURSOR_INVALID, "Invalid message page request");
+            return unitOfWork.execute(() -> io.haifa.agent.runtime.core.message.RunMessageProjector.page(
+                    state, runId, after.exclusiveSequence(), limit));
+        } catch (io.haifa.agent.runtime.api.RuntimeContractException refusal) {
+            throw refusal;
+        } catch (IllegalArgumentException invalid) {
+            throw new io.haifa.agent.runtime.api.RuntimeContractException(
+                    io.haifa.agent.runtime.api.RuntimeApiErrorCode.CURSOR_INVALID, "Invalid message page request");
+        } catch (RuntimeException unavailable) {
+            org.slf4j.LoggerFactory.getLogger(DefaultAgentRuntime.class)
+                    .warn(
+                            "event=runtime.messages-unavailable runId={} failureType={}",
+                            runId.value(),
+                            unavailable.getClass().getSimpleName());
+            throw new io.haifa.agent.runtime.api.RuntimeContractException(
+                    io.haifa.agent.runtime.api.RuntimeApiErrorCode.INTERNAL_ERROR, "Run messages are unavailable");
+        }
+    }
+
     /** The assembled delegation boundary; visible to same-package tests only. */
     DelegationPort delegations() {
         return delegations;

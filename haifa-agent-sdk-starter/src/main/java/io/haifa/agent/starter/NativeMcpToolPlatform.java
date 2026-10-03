@@ -202,6 +202,13 @@ final class NativeMcpToolPlatform implements McpToolPlatforms.McpToolPlatform {
         return registrations;
     }
 
+    @Override
+    public Set<String> toolNames() {
+        return registrations.stream()
+                .map(registration -> registration.alias().value())
+                .collect(Collectors.toUnmodifiableSet());
+    }
+
     /** Non-secret diagnostics describing optional MCP servers that contributed nothing. */
     List<AgentDiagnostic> diagnostics() {
         return diagnostics;

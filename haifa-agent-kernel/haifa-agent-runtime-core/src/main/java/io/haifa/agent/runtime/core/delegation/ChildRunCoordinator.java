@@ -315,6 +315,9 @@ public final class ChildRunCoordinator implements DelegationPort {
             Listener listener,
             int maxParallel) {
         while (!pending.isEmpty() && active.size() < maxParallel) {
+            // Collection callbacks or another thread can stop the Parent after the loop's
+            // initial check. Leave pending requests for the existing stop path to close.
+            if (controls.directive(parent.id()).signal().stopsExecution()) return;
             ChildRunRequest next = pending.peek();
             AgentRunId childId = childRunId(parent.id(), next.toolCallId());
             if (runs.find(childId).isPresent()) {

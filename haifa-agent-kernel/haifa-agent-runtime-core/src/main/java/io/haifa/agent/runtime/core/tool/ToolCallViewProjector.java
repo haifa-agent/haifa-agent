@@ -137,7 +137,8 @@ public final class ToolCallViewProjector {
         return bounded.text();
     }
 
-    private static String redactText(String value) {
+    /** Redacts display text without applying the separate Tool display size budget. */
+    public static String redactText(String value) {
         return PROVIDER_KEY
                 .matcher(LABELED_SECRET.matcher(value).replaceAll("$1" + REDACTED))
                 .replaceAll(REDACTED);

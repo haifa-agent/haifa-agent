@@ -47,7 +47,7 @@ public record ProductRunProfile(
     }
 
     public ProductRunProfile {
-        id = ProductValues.text(id, "id", 128);
+        id = ProductValues.text(id, "id");
         version = ProductValues.text(version, "version", 64);
         modelId = ProductValues.text(modelId, "modelId", 128);
         runType = Objects.requireNonNull(runType, "runType must not be null");

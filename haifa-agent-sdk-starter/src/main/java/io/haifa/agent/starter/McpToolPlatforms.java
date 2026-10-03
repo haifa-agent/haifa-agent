@@ -7,6 +7,7 @@ import io.haifa.agent.mcp.client.SdkMcpClientFactory;
 import io.haifa.agent.sdk.api.HaifaAgentBuilder;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Function;
 
 /**
@@ -79,8 +80,8 @@ public final class McpToolPlatforms {
     }
 
     /**
-     * One owned MCP contribution. It is intentionally opaque: the only operations are wiring it into
-     * a builder and releasing the connections it owns. The underlying platform stays package-private.
+     * One owned MCP contribution with a read-only registered-name snapshot, builder wiring and
+     * owned connection cleanup. The underlying platform stays package-private.
      *
      * <p>Call {@link #applyTo} at most once. When applied, the platform registers itself as a managed
      * resource, so an Agent that builds successfully closes it on {@link
@@ -89,6 +90,15 @@ public final class McpToolPlatforms {
      * {@link #close()} it explicitly.
      */
     public interface McpToolPlatform extends AutoCloseable {
+        /**
+         * Returns immutable registered Tool aliases after discovery and allowlist filtering.
+         * Reading does not connect, discover, apply or authorize a Tool; the snapshot remains readable after close.
+         * Implementations without an authoritative snapshot fail closed.
+         */
+        default Set<String> toolNames() {
+            throw new UnsupportedOperationException("MCP Tool name snapshot is not supported");
+        }
+
         /**
          * Wires Tool registrations, the managed resource, credentials and diagnostics into a builder.
          *
@@ -105,6 +115,11 @@ public final class McpToolPlatforms {
     /** Owned no-op used when no server is declared; it never touches the target builder. */
     private static final class NoOpMcpToolPlatform implements McpToolPlatform {
         private static final NoOpMcpToolPlatform INSTANCE = new NoOpMcpToolPlatform();
+
+        @Override
+        public Set<String> toolNames() {
+            return Set.of();
+        }
 
         @Override
         public void applyTo(HaifaAgentBuilder builder) {
