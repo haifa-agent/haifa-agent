@@ -16,6 +16,7 @@ Haifa Agent 是面向 Java 21 的 Agent Runtime、SDK 与应用开发平台。�
 
 - [Agent Runtime](core-components/agent-runtime.md)
 - [Conversation 与 Run](core-components/conversations-and-runs.md)
+- [委派结果展示元数据](runtime/delegation-result-metadata.md)
 - [Capabilities](core-components/capabilities.md)
 - [持久化与恢复](core-components/persistence-and-recovery.md)
 
