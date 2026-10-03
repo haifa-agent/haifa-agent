@@ -17,3 +17,9 @@ The pre-existing `status`, `childRunId`, `childAgent`, `outcome`, `reasonCode`, 
 `ModelMessageAssembler` excludes the three new display fields from the `task` Tool Result sent to the parent model. The authoritative result and public display projection retain them. Ordinary Tool Results keep their complete structured data. Internal context capacity estimates still count authoritative structured data, including display metadata; they are conservative estimates rather than exact counts of parent model input.
 
 This change does not implement non-interactive child approvals, a child transcript API, step replay, a directory, or product-specific protocol names. Parent-child execution, queue admission, cancellation and recovery are unchanged.
+
+Successful Runtime-owned `task` results retain the exact nonnegative integral `inputTokens`,
+`outputTokens` and `cachedInputTokens` in public display projection, including explicit zero.
+Other token-named fields remain redacted. Failed, cancelled and timed-out Children do not expose
+partial counters as complete token usage; products must retain unknown rather than infer zero.
+Model-visible result data remains unchanged.
