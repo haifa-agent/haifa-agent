@@ -620,9 +620,9 @@ class PersonalModelFactoryTest {
                         PersonalResponseMode.RECOMMENDED, PersonalResponseMode.FAST, PersonalResponseMode.DEEP);
         assertThat(option.controls().reasoningEffort().visible()).isTrue();
         assertThat(option.controls().reasoningEffort().allowedValues())
-                .containsExactly(ModelReasoningEffort.HIGH, ModelReasoningEffort.MAX);
+                .containsExactly(ModelReasoningEffort.LOW, ModelReasoningEffort.HIGH, ModelReasoningEffort.MAX);
         assertThat(option.controls().responseMode().effectiveSummary()).isEqualTo("Thinking on · High");
-        assertThat(platform.catalog().runProfiles()).hasSize(20);
+        assertThat(platform.catalog().runProfiles()).hasSize(24);
 
         var recommended = platform.catalog().defaultSelection();
         assertThat(recommended.effectiveParameters().reasoning().mode()).isEqualTo(ModelReasoningMode.ENABLED);
