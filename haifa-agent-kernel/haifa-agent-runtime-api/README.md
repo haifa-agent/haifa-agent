@@ -1,5 +1,21 @@
 # Haifa Agent Runtime API
 
+## 持久消息分页
+
+`AgentRuntime.messages(runId, RunMessageCursor.beforeFirst(runId), limit)` 返回可信 Caller 可见 Run 的
+已提交 Assistant/Tool 消息（`limit` 为 1–500）。`RunMessagePage` 的 `nextCursor`/`headCursor` 使用既有
+SessionMessage sequence，允许 User/internal 消息造成序号空洞；`messageIndex` 是过滤后从 1 开始的稳定编号。
+筛选在分页前完成，不因内部消息前缀返回假短页。消息正文只从既有 ContentPart/权威 ToolResult 读取，
+不返回内部 metadata、reasoning 或 continuation。`AGENT_VISIBLE` Assistant 只公开 ToolCall 引用，
+不输出该 visibility 的 TextPart；User-visible Assistant text 与 ToolResult 正文安全脱敏但不应用 Tool 展示预算；来源结果本身已截断时
+`textTruncated=true`。`toolCalls` 按该消息 parts 顺序精确绑定，arguments 的 `truncated` 仍表示公开 Tool
+视图的大小限制，`toolCorrelations` 将 SDK ToolCall ID 映射到 Provider correlation ID。
+
+现有 Run Event Feed 的 `message.committed` 只携带 `MessageCommitted(messageId,messageSequence)` 引用；
+正文通过消息分页读取。消息与引用在同一事务提交，既有 `subscribe` 在 afterCommit 唤醒，订阅必须关闭。
+历史未发该通知的非 redacted 消息也可分页；旧版已经 redacted 且缺少原展示资格标记的消息不会猜测其原内容。
+新版 redaction 保留原展示资格与角色、原编号，并返回 `[REDACTED]`，Journal 清理不影响该编号。
+
 ## 冻结指令摘要
 
 `AgentRuntime.frozenInstructionDiagnostic(runId)` 将既有已准入 Run 的冻结 configuration 投影为

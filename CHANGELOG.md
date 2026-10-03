@@ -1,5 +1,12 @@
 # Changelog
 
+- Added complete-output preview, SHA-256 and truncation metadata to completed delegation results. Public
+  display projection marks further preview changes and omits the digest on redaction; parent model input
+  excludes these display fields. See [delegation result metadata](docs/runtime/delegation-result-metadata.md).
+- Added authorized durable Run message pagination and reference-only `message.committed` notifications,
+  opt-in non-interactive Child Tool ASK denial, and MCP Tool name snapshots. Child names and instruction
+  text no longer have arbitrary SDK character limits; existing identifier syntax and runtime budgets remain.
+
 - Haifa Coding Terminal collapsed Tool/Execution cards now show one muted body preview line (the first
   meaningful output line; structural metadata such as `Target:`, `Reason:`, `Result:` and `Output:` headings
   is skipped) so results are visible without `Ctrl+O`. The writer and preview filter share `ToolBodyLines`.

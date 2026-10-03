@@ -33,6 +33,9 @@ HTTP 框架接入的请求、响应和 SSE 会话对象。
   （`RunEventPayloads.ChildRunLifecycle`）没有 Contract 映射，`ContractRuntimeMapper` 按不支持的公开事件载荷拒绝。
   需要这些事件的宿主应通过 SDK 的 `runs().events(...)` / `runs().children(...)` 读取，不要经 HTTP Event Page 或 SSE
   暴露发起委托的父 Run。
+- `ModelLifecycle`（如 `model.call.started`）及 `message.committed`（`MessageCommitted`）同样没有
+  Contract 映射。真实模型 Run 的 Event Page/SSE 因此并非完整支持的回放入口；未支持载荷会使
+  Event Page 失败或以 `SERIALIZATION_FAILED` 关闭 SSE。宿主应使用 SDK 的事件和消息分页 API。
 
 Run 查询 JSON 中的 `error` 是 `AgentExecutionErrorView`；它与 HTTP Problem 的
 `RuntimeApiErrorCode` 分离。HTTP 状态只表达本次请求结果，不会把已持久化的 Model、Tool 或预算
