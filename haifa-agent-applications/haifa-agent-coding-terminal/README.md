@@ -63,6 +63,10 @@ Terminal 默认启用 bracketed paste；完整 `PasteMessage` 中的 CRLF 会归
 门禁：紧随其后的字符、CR 或 LF 会把该 Enter 归并为编辑器换行，只有独立 Enter 才提交。该门禁只
 覆盖普通 Editor Enter；Shift/Ctrl+Enter、Alt+Enter 和 Selector/Approval Enter 保持各自既有语义。
 
+Bracketed paste 超过 3 行或 150 字符（`strip` 后）时，Editor 只插入 `[Pasted #N ~M lines]` 占位符，
+完整正文保存在进程内的当前草稿映射中；占位符按整体单元处理（左右键跨界、退格/删除一次清除），提交时再
+展开为完整原文后进入 Session 与输入历史。阈值与 opencode 的 paste summary 一致；较小粘贴仍原样插入。
+
 生产 Model 初始化时主动请求一次真实 Window Size，避免在用户没有手工 Resize 时一直停留在
 `80x24` 启动尺寸。tui4j `0.3.3` 不全局启用 Kitty keyboard protocol；该版本只为修饰 Enter
 提供显式映射，全局启用会让部分 CSI-u 控制键残留字符进入编辑器。`Ctrl+O` 因此保持传统 `SI`
