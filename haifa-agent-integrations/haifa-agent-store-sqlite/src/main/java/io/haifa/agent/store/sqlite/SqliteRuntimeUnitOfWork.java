@@ -106,7 +106,12 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
             Context context = new Context(unitOfWorkId, connection, session, mode == TransactionMode.READ_ONLY);
             active.set(context);
             boolean transactionStarted = false;
+            boolean writerHeld = false;
             try {
+                if (mode == TransactionMode.WRITE) {
+                    connections.acquireWriter();
+                    writerHeld = true;
+                }
                 long phaseStarted = System.nanoTime();
                 begin(connection, mode);
                 long beginMillis = elapsedMillis(phaseStarted);
@@ -147,6 +152,9 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
                 throw new SqliteStoreException(
                         SqliteStoreFailure.TRANSACTION_FAILED, "SQLite unit of work failed", exception);
             } finally {
+                if (writerHeld) {
+                    connections.releaseWriter();
+                }
                 active.remove();
             }
         } catch (SQLException exception) {
