@@ -2275,6 +2275,7 @@ class RuntimeCoreTest {
         AtomicReference<Throwable> responseFailure = new AtomicReference<>();
         CountDownLatch responseReturned = new CountDownLatch(1);
         CountDownLatch terminalObserved = new CountDownLatch(1);
+        CountDownLatch attemptSettled = new CountDownLatch(1);
         InMemoryRuntimeStore store = new InMemoryRuntimeStore();
         InMemoryInteractionPort interactions = new InMemoryInteractionPort();
         InMemoryToolExecutionJournal journal = new InMemoryToolExecutionJournal();
@@ -2337,7 +2338,14 @@ class RuntimeCoreTest {
                             "immediate response failed after durable resume; run=%s attempts=%s",
                             runtime.find(runId).orElseThrow(), store.attemptsFor(runId))
                     .isNull();
+            long settlementDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
             assertThat(terminalObserved.await(2, TimeUnit.SECONDS)).isTrue();
+            // The terminal Run listener runs before AttemptExecutor settles the Attempt.
+            // Observe completion of that same scheduler lane within the original terminal wait budget.
+            scheduler.submitAfterCurrent(runId, attemptSettled::countDown);
+            assertThat(attemptSettled.await(Math.max(0, settlementDeadline - System.nanoTime()), TimeUnit.NANOSECONDS))
+                    .as("the resumed execution attempt must settle after the terminal Run notification")
+                    .isTrue();
             assertThat(runtime.find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
             assertThat(toolCalls).hasValue(1);
             assertThat(modelCalls).hasValue(2);
