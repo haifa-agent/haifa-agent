@@ -13,7 +13,9 @@ import java.util.regex.Pattern;
  * limits the child uses; when absent the child inherits the frozen model, budget and limits of its parent run.
  * {@code allowedTools} is the child's Tool allowlist; the child's effective Tools are this set intersected with
  * the Tools its parent may use, so a read-only child is expressed by listing only read-only Tools. A child never
- * delegates further and neither recalls nor writes long-term Memory.
+ * delegates further and neither recalls nor writes long-term Memory. Trusted child names accept lower-case
+ * letters, digits, underscores and hyphens without a leading-letter rule; definition text is nonblank.
+ * Execution budgets and model context admission remain owned by the Runtime.
  */
 public record ChildAgentSpec(
         String id,
@@ -21,15 +23,15 @@ public record ChildAgentSpec(
         String instructions,
         Optional<ProductRunProfileRef> runProfile,
         Set<String> allowedTools) {
-    private static final Pattern ID = Pattern.compile("[a-z][a-z0-9_-]{0,63}");
+    private static final Pattern ID = Pattern.compile("[a-z0-9_-]+");
 
     public ChildAgentSpec {
-        id = ProductValues.text(id, "id", 64);
+        id = ProductValues.text(id, "id");
         if (!ID.matcher(id).matches()) {
             throw new IllegalArgumentException("child agent id must match " + ID.pattern());
         }
-        description = ProductValues.text(description, "description", 1_000);
-        instructions = ProductValues.text(instructions, "instructions", 32_000);
+        description = ProductValues.text(description, "description");
+        instructions = ProductValues.text(instructions, "instructions");
         runProfile = Objects.requireNonNull(runProfile, "runProfile must not be null");
         allowedTools = Objects.requireNonNull(allowedTools, "allowedTools must not be null").stream()
                 .map(alias -> ProductValues.text(alias, "allowedTools entry", 128))

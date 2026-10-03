@@ -93,7 +93,7 @@ public final class RunBootstrapper {
         Objects.requireNonNull(profile, "profile must not be null");
         RuntimeCallerContext caller = new RuntimeCallerContext(parent.tenant(), parent.principal());
         var effectiveCapabilities = capabilities.resolve(request, definition, profile);
-        var configuration = snapshots.create(request, definition, profile, caller, effectiveCapabilities);
+        var configuration = snapshots.createChild(parent, request, definition, profile, caller, effectiveCapabilities);
         AgentRun child = AgentRun.createChild(
                 childRunId,
                 parent,

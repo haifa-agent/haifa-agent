@@ -29,6 +29,12 @@ public final class RuntimeClientEventProjector {
         }
         Projection projection =
                 switch (event.type()) {
+                    case "message.committed" ->
+                        new Projection(
+                                "message.committed",
+                                new RunEventPayloads.MessageCommitted(
+                                        text(event.data(), "messageId", ""),
+                                        number(event.data(), "messageSequence", 0)));
                     case "run.created" ->
                         new Projection(
                                 "run.accepted",
@@ -126,6 +132,7 @@ public final class RuntimeClientEventProjector {
     private static boolean isKnownClientFact(RuntimeEvent event) {
         return event.type().startsWith("runtime.command-")
                 || java.util.Set.of(
+                                "message.committed",
                                 "tool.requested",
                                 "tool.started",
                                 "tool.succeeded",

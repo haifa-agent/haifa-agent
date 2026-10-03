@@ -63,7 +63,9 @@ public record ProductProfile(
         limits = Objects.requireNonNull(limits, "limits must not be null");
         allowedTools = normalized(allowedTools, "allowedTools");
         allowedSkills = normalized(allowedSkills, "allowedSkills");
-        allowedChildAgents = normalized(allowedChildAgents, "allowedChildAgents");
+        allowedChildAgents = Objects.requireNonNull(allowedChildAgents, "allowedChildAgents must not be null").stream()
+                .map(value -> ProductValues.text(value, "allowedChildAgents entry"))
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
     }
 
     /** Returns this profile allowing its runs to delegate to the registered child agents with these ids. */

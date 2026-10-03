@@ -137,6 +137,8 @@ public final class RuntimeCoreBuilder {
     private DefinitionResolver definitions;
     private ProfileResolver profiles;
     private ConfigurationSnapshotFactory snapshots;
+    private java.util.function.UnaryOperator<ConfigurationSnapshotFactory> snapshotFactoryDecorator =
+            java.util.function.UnaryOperator.identity();
     private DelegationPort delegations;
     private int maxConcurrentChildRuns = ChildRunCoordinator.DEFAULT_MAX_CONCURRENT_CHILD_RUNS;
     private final Map<ModelAdapterKey, AgentChatModel> chatModels = new LinkedHashMap<>();
@@ -276,6 +278,13 @@ public final class RuntimeCoreBuilder {
 
     public RuntimeCoreBuilder snapshotFactory(ConfigurationSnapshotFactory value) {
         snapshots = value;
+        return this;
+    }
+
+    /** Decorates the selected factory while preserving its catalog and trust inputs. */
+    public RuntimeCoreBuilder snapshotFactoryDecorator(
+            java.util.function.UnaryOperator<ConfigurationSnapshotFactory> value) {
+        snapshotFactoryDecorator = Objects.requireNonNull(value, "value");
         return this;
     }
 
@@ -447,6 +456,7 @@ public final class RuntimeCoreBuilder {
         var checkpointsRepository = persistence.checkpoints();
         var state = persistence.state();
         RuntimeEventWakeupRegistry eventWakeups = new RuntimeEventWakeupRegistry();
+        state.registerMessageCommitListener(eventWakeups::wake);
         var events = new NotifyingRuntimeEventAppender(persistence.events(), persistence.unitOfWork(), eventWakeups);
         var outbox = persistence.outbox();
         var idempotency = persistence.idempotency();
@@ -555,9 +565,13 @@ public final class RuntimeCoreBuilder {
         OutputContractValidator combinedOutputContract = (run, decision) ->
                 configuredOutputContract.isValid(run, decision) && productOutputContract.isValid(run, decision);
         var toolRecovery = new io.haifa.agent.runtime.core.loop.ToolRecoveryCoordinator(state, pipeline, ids, time);
-        ConfigurationSnapshotFactory configuredSnapshots = snapshots != null
-                ? snapshots
-                : new ContentAddressedSnapshotFactory(toolCatalog.snapshot(), skillCatalog.snapshot(), skillTrust);
+        ConfigurationSnapshotFactory configuredSnapshots = Objects.requireNonNull(
+                snapshotFactoryDecorator.apply(
+                        snapshots != null
+                                ? snapshots
+                                : new ContentAddressedSnapshotFactory(
+                                        toolCatalog.snapshot(), skillCatalog.snapshot(), skillTrust)),
+                "snapshot factory decorator returned null");
         RunBootstrapper bootstrapper =
                 new RunBootstrapper(definitionResolver, profileResolver, access, configuredSnapshots, ids, time);
         var settler = new io.haifa.agent.runtime.core.recovery.InterruptedRunSettler(

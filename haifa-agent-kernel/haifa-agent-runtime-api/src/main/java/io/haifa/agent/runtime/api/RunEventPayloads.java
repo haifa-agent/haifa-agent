@@ -11,6 +11,14 @@ public final class RunEventPayloads {
 
     private RunEventPayloads() {}
 
+    /** Reference to authoritative SessionMessage content; the journal never copies message text. */
+    public record MessageCommitted(String messageId, long messageSequence) implements AgentRunEvent.Payload {
+        public MessageCommitted {
+            messageId = InteractionOption.requireText(messageId, "messageId", 256);
+            if (messageSequence < 1) throw new IllegalArgumentException("messageSequence must be positive");
+        }
+    }
+
     public record RunLifecycle(
             String status,
             long version,
@@ -240,7 +248,7 @@ public final class RunEventPayloads {
         public ChildRunLifecycle {
             childRunId = text(childRunId, "childRunId", 256);
             toolCallId = text(toolCallId, "toolCallId", 256);
-            childAgent = text(childAgent, "childAgent", 128);
+            childAgent = text(childAgent, "childAgent", Integer.MAX_VALUE);
             status = text(status, "status", 64);
             reasonCode = text(reasonCode, "reasonCode", 128);
         }

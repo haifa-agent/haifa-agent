@@ -56,6 +56,26 @@ public final class SqliteRuntimeStateRepository implements RuntimeStateRepositor
     }
 
     @Override
+    public List<AgentMessage> runMessagesAfter(AgentRunId runId, long after, long head, int limit) {
+        return messages.runMessagesAfter(runId, after, head, limit);
+    }
+
+    @Override
+    public long runMessageCountThrough(AgentRunId runId, long sequence) {
+        return messages.runMessageCountThrough(runId, sequence);
+    }
+
+    @Override
+    public java.util.OptionalLong runMessageHead(AgentRunId runId) {
+        return messages.runMessageHead(runId);
+    }
+
+    @Override
+    public void registerMessageCommitListener(java.util.function.Consumer<AgentRunId> listener) {
+        messages.registerMessageCommitListener(listener);
+    }
+
+    @Override
     public List<AgentMessage> messagesAfter(AgentSessionId sessionId, MessageCursor cursor, int limit) {
         return messages.messagesAfter(sessionId, cursor, limit);
     }
