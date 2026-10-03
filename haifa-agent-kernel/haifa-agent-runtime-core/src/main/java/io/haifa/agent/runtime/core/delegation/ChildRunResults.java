@@ -43,6 +43,20 @@ public final class ChildRunResults {
             boolean summaryRedacted,
             java.util.function.UnaryOperator<String> redactor) {
         Map<String, Object> data = new LinkedHashMap<>(projected);
+        // Only Runtime-owned successful Child results can expose complete numeric token counts.
+        // Generic token-named fields and incomplete/failed Child usage stay redacted.
+        if ("COMPLETED".equals(source.get("status"))
+                && source.get("usage") instanceof Map<?, ?> usage
+                && data.get("usage") instanceof Map<?, ?> displayed) {
+            List<String> counts = List.of("inputTokens", "outputTokens", "cachedInputTokens");
+            if (counts.stream().allMatch(key -> nonnegativeCount(usage.get(key)))) {
+                Map<String, Object> safeUsage = new LinkedHashMap<>();
+                displayed.forEach((key, value) -> safeUsage.put(String.valueOf(key), value));
+                counts.forEach(key -> safeUsage.put(key, usage.get(key)));
+                data.put("usage", Map.copyOf(safeUsage));
+            }
+        }
+
         if (source.containsKey(OUTPUT_PREVIEW)
                 && data.containsKey(OUTPUT_PREVIEW)
                 && !Objects.equals(source.get(OUTPUT_PREVIEW), data.get(OUTPUT_PREVIEW))) {
@@ -53,6 +67,11 @@ public final class ChildRunResults {
                 source.get(OUTPUT_PREVIEW) instanceof String preview && !preview.equals(redactor.apply(preview));
         if (summaryRedacted || previewRedacted) data.remove(OUTPUT_SHA256);
         return Map.copyOf(data);
+    }
+
+    private static boolean nonnegativeCount(Object value) {
+        return (value instanceof Byte || value instanceof Short || value instanceof Integer || value instanceof Long)
+                && ((Number) value).longValue() >= 0;
     }
 
     public static ToolResult toolResult(AgentRun child, Optional<String> output) {
