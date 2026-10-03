@@ -323,13 +323,23 @@ public final class CodingTerminalController implements AutoCloseable {
      * through {@link #accept(TerminalInput)} and therefore return an empty result here.
      */
     public Optional<PreparedMessageSubmission> prepareMessageSubmission(TerminalInput input) {
+        return prepareMessageSubmission(input, input.text());
+    }
+
+    /**
+     * Routes on {@code routingText} (what the user sees) while submitting {@code input.text()} (the
+     * expanded draft), so text hidden behind an editor placeholder cannot trigger shell or slash
+     * command routing.
+     */
+    public Optional<PreparedMessageSubmission> prepareMessageSubmission(TerminalInput input, String routingText) {
         Objects.requireNonNull(input, "input must not be null");
+        Objects.requireNonNull(routingText, "routingText must not be null");
         drainEvents();
         if ((input.kind() != TerminalInput.Kind.SUBMIT && input.kind() != TerminalInput.Kind.FOLLOW_UP)
                 || state.selector().isPresent()
                 || input.text().isBlank()
-                || input.text().startsWith("!")
-                || commands.route(input.text()) != TerminalCommand.MESSAGE) {
+                || routingText.startsWith("!")
+                || commands.route(routingText) != TerminalCommand.MESSAGE) {
             return Optional.empty();
         }
         return Optional.of(beginMessageSubmission(input.text(), input.kind() == TerminalInput.Kind.FOLLOW_UP));
