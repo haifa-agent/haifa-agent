@@ -229,18 +229,100 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
-    void keepsConsecutiveSummarizedPastesSeparatedAndDistinct() {
+    void expandsConsecutiveSummarizedPastesWithoutInjectingContent() {
         var fixture = fixture();
         fixture.model.update(new PasteMessage("a1\na2\na3"));
         fixture.model.update(new PasteMessage("b1\nb2\nb3"));
 
-        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~3 lines] [Pasted #2 ~3 lines]");
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~3 lines][Pasted #2 ~3 lines]");
 
         var guarded = fixture.model.update(key(KeyType.keyCR));
         fixture.model.update(guarded.command().execute());
 
         assertThat(fixture.controller.state().transcript()).singleElement().satisfies(item -> assertThat(item.body())
-                .isEqualTo("a1\na2\na3 b1\nb2\nb3"));
+                .isEqualTo("a1\na2\na3b1\nb2\nb3"));
+    }
+
+    @Test
+    void deletesASummarizedPasteForwardInOneStroke() {
+        var fixture = fixture();
+        fixture.model.update(new PasteMessage("alpha\nbeta\ngamma"));
+
+        fixture.model.update(key(KeyType.KeyLeft));
+        fixture.model.update(key(KeyType.KeyDelete));
+
+        assertThat(fixture.controller.state().editorBuffer()).isEmpty();
+    }
+
+    @Test
+    void treatsASummarizedPasteStartingWithASlashAsAMessage() {
+        var fixture = fixture();
+        String pasted = "/usr/local/bin/tool\nsecond line\nthird line";
+        fixture.model.update(new PasteMessage(pasted));
+
+        var guarded = fixture.model.update(key(KeyType.keyCR));
+        fixture.model.update(guarded.command().execute());
+
+        assertThat(fixture.controller.state().transcript()).singleElement().satisfies(item -> {
+            assertThat(item.title()).isEqualTo("You");
+            assertThat(item.body()).isEqualTo(pasted);
+        });
+    }
+
+    @Test
+    void preservesLeadingIndentationInASummarizedPaste() {
+        var fixture = fixture();
+        String pasted = "    indented\nplain\nthird";
+        fixture.model.update(new PasteMessage(pasted));
+
+        var guarded = fixture.model.update(key(KeyType.keyCR));
+        fixture.model.update(guarded.command().execute());
+
+        assertThat(fixture.controller.state().transcript()).singleElement().satisfies(item -> assertThat(item.body())
+                .isEqualTo(pasted));
+    }
+
+    @Test
+    void doesNotInjectASeparatorAfterExistingDraftText() {
+        var fixture = fixture();
+        fixture.model.update(new PasteMessage("--data="));
+        fixture.model.update(new PasteMessage("alpha\nbeta\ngamma"));
+
+        var guarded = fixture.model.update(key(KeyType.keyCR));
+        fixture.model.update(guarded.command().execute());
+
+        assertThat(fixture.controller.state().transcript()).singleElement().satisfies(item -> assertThat(item.body())
+                .isEqualTo("--data=alpha\nbeta\ngamma"));
+    }
+
+    @Test
+    void doesNotExpandAPlaceholderLiteralInsideAnotherPaste() {
+        var fixture = fixture();
+        String first = "keep\n[Pasted #2 ~3 lines]\ntail";
+        fixture.model.update(new PasteMessage(first));
+        fixture.model.update(new PasteMessage("b1\nb2\nb3"));
+
+        var guarded = fixture.model.update(key(KeyType.keyCR));
+        fixture.model.update(guarded.command().execute());
+
+        assertThat(fixture.controller.state().transcript()).singleElement().satisfies(item -> assertThat(item.body())
+                .isEqualTo(first + "b1\nb2\nb3"));
+    }
+
+    @Test
+    void protectsASummarizedPasteFromPartialEditing() {
+        var fixture = fixture();
+        fixture.model.update(new PasteMessage("alpha\nbeta\ngamma"));
+        fixture.model.update(key(KeyType.keyLF));
+        fixture.model.update(runes('x'));
+        fixture.model.update(runes('y'));
+        String draft = fixture.controller.state().editorBuffer();
+
+        fixture.model.update(key(KeyType.KeyUp));
+        fixture.model.update(runes('Z'));
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo(draft);
+        assertThat(fixture.controller.state().recoverableError()).contains("PASTE_PLACEHOLDER_ATOMIC");
     }
 
     @Test
