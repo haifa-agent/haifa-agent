@@ -1,5 +1,12 @@
 # Haifa Agent Runtime Core
 
+`DefaultAgentRuntime.messages` 先通过 `findVisible` 校验实际 Run 的可信 Caller，再由既有
+SessionMessage repository 有界读取 Assistant/Tool 消息。`RunMessageProjector` 只查询本页 parts 引用的
+ToolCall ID，并校验 Run、correlation/name/version；不会加载整个 Run 的 Tool 历史。正文沿既有安全
+redactor 投影，权威结果已有截断标记时透传。存储或引用失效统一为固定安全 `INTERNAL_ERROR`。
+共用 `appendSessionMessage` seam 同事务追加 reference-only `message.committed` 并在 afterCommit
+唤醒现有 Run Event Feed；正常、拒绝、恢复和 final-output 写入均沿此 seam，没有第二份消息正文。
+
 `DefaultAgentRuntime.frozenInstructionDiagnostic(runId)` 先通过既有 Run repository 的
 `findVisible(runId, tenant, principal)` 过滤可信 Caller 所有权，再通过
 `RuntimeStateRepository.configuration(run.configurationSnapshot())` 读取冻结事实并核对 reference、
@@ -51,6 +58,12 @@ pause state fails closed; normal continuation cannot select an earlier budget.
 
 ## Parent-child delegation
 
+`RuntimeCoreBuilder.snapshotFactoryDecorator` 在既有配置工厂外增加窄装饰，不重新组装 Tool、Skill 或 trust
+目录。`ConfigurationSnapshotFactory.createChild` 接收真实 Parent，用于从它的冻结配置继承执行能力；
+默认实现继续调用原 `create`，保留已有自定义工厂的函数式接口兼容性。SDK 的
+`nonInteractiveChildTools()` 仅追加一项既有 capability 事实；Child 的启用值由 Parent snapshot 冻结，
+重装时的当前 builder 选项不会改变旧 Run。
+
 This is Minimal Parent–Child Delegation (Agent-as-Tool): a parent delegates with a Tool Call and receives the child's
 terminal result as that call's Tool Result. There is no parent–child messaging protocol, child steer or event-driven
 waiting. `ChildRunCoordinator` is the default `DelegationPort`. A run whose frozen configuration allows child agents, whose
@@ -60,6 +73,9 @@ mapper turns any response containing it into one `DelegationDecision` holding ev
 the ordinary Tools sequentially. Each delegation creates an ordinary child `AgentRun` (`AGENT_AS_TOOL`, own
 ephemeral session and configuration snapshot, parent tenant/principal/project/overrides, Tools = child allowlist ∩
 parent Tools, no child agents) with ID `childRunId(parentRunId, toolCallId)`, so a retried call re-attaches.
+
+终态收集回调或其他线程在批次运行期间发出 Parent 停止信号时，每次准入前重新读取既有 control directive。
+尚未准入的请求仍由原停止路径关闭，不在收集完成后继续创建 Child；没有停止信号时沿用原准入顺序。
 
 The parent thread owns the batch: a request is created only when a `maxParallelChildren` and process slot is free,
 child state is read only from `RunStateRepository` (`children(parentRunId)`), each terminal child becomes the Tool
@@ -357,3 +373,12 @@ Completion 产品验收统一通过 `CompletionPolicy` 返回结构化阻塞与�
 continuation 保护和存储；最终答案、保护载荷与 Run 完成状态在同一 Unit of Work 中提交。
 工具预算耗尽时生成的收尾答案同样保留其自身调用的保护载荷；本地降级摘要不关联被丢弃的工具推理。
 消息装配仅恢复同配置 Binding 的保护载荷，缺失引用保持失败关闭，跨 Binding 不搬运。
+
+## Shared Child capacity
+
+`ChildRunCapacity` is caller-owned and may be shared across Agents using
+`HaifaAgentBuilder.childRunCapacity(capacity)` (or `RuntimeCoreBuilder.childRunCapacity(capacity)`).
+Its maximum takes precedence over `maxConcurrentChildRuns`; no shared capacity is installed by default.
+A Child keeps its slot while waiting for approval and until its terminal Run and actual execution tasks
+have settled. Releasing a slot wakes waiting parents across all participating Agents. Cancelling a
+parent waiting for admission creates no Child. Closing one Agent does not close the shared capacity.

@@ -43,6 +43,45 @@ class ProductProfileTest {
     }
 
     @Test
+    void childDefinitionsAcceptManagedNamesAndRetainTrustedText() {
+        for (String id : java.util.List.of("1-worker", "-worker", "-", "sdk_child", "worker".repeat(60))) {
+            ChildAgentSpec child = ChildAgentSpec.of(id, "d".repeat(2_000), "i".repeat(33_000), Set.of());
+            assertThat(child.id()).isEqualTo(id);
+            assertThat(child.description()).hasSize(2_000);
+            assertThat(child.instructions()).hasSize(33_000);
+            String profileId = "child/" + id;
+            assertThat(new ProductRunProfileRef(profileId, "1.0.0").id()).isEqualTo(profileId);
+            ProductProfile parent = profile(Set.of(), Set.of());
+            assertThat(new ProductRunProfile(
+                                    profileId,
+                                    "1.0.0",
+                                    "model",
+                                    io.haifa.agent.core.run.AgentRunType.CHAT,
+                                    parent.budget(),
+                                    parent.limits(),
+                                    java.util.Map.of())
+                            .id())
+                    .isEqualTo(profileId);
+            assertThat(profile(Set.of(), Set.of())
+                            .withAllowedChildAgents(Set.of(id))
+                            .allowedChildAgents())
+                    .containsExactly(id);
+        }
+    }
+
+    @Test
+    void childDefinitionCompatibilityRetainsInvalidIdentityAndBlankTextRejection() {
+        for (String id : java.util.List.of("", " ", "Bad Id", "Uppercase", "../child", "child/path", "child.name")) {
+            assertThatThrownBy(() -> ChildAgentSpec.of(id, "description", "instructions", Set.of()))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+        assertThatThrownBy(() -> ChildAgentSpec.of("worker", " ", "instructions", Set.of()))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> ChildAgentSpec.of("worker", "description", " ", Set.of()))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void rejectsBlankDefaultRunProfileValues() {
         assertThatThrownBy(() -> new ProductRunProfileRef(" ", "1.0.0"))
                 .isInstanceOf(IllegalArgumentException.class)

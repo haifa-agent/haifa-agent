@@ -48,6 +48,16 @@ public interface RuntimeStoreMapper {
 
     List<SessionMessageRow> messagesForRun(@Param("runId") String runId);
 
+    List<SessionMessageRow> runMessagesAfter(
+            @Param("runId") String runId,
+            @Param("after") long after,
+            @Param("head") long head,
+            @Param("limit") int limit);
+
+    long runMessageCountThrough(@Param("runId") String runId, @Param("sequence") long sequence);
+
+    Long runMessageHead(@Param("runId") String runId);
+
     int redactMessage(@Param("row") SessionMessageRow row);
 
     int invalidateSummariesForSession(@Param("sessionId") String sessionId);

@@ -1,5 +1,11 @@
 # Haifa Agent SDK Starter
 
+`McpToolPlatforms.McpToolPlatform.toolNames()` 返回连接时完成协议协商、发现及 allowlist 筛选后
+实际注册的 SDK Tool alias（包含真实 prefix 映射）的不可变 `Set<String>`。读取不重新连接、发现或
+调用 `applyTo`，关闭后该快照仍可读取；空声明与 optional 失败均返回空集。旧第三方实现默认拒绝该
+查询，不能用猜测名称替代真实注册事实。该方法只公开名称，不公开 schema、Provider 或凭据；
+已发现名称不等于执行授权，调用仍进入既有 Runtime/Policy 边界。
+
 面向首次接入者的纯 Java 安全默认装配。Starter 默认使用 DeepSeek V4 Flash、环境变量
 `DEEPSEEK_API_KEY`、进程内 Runtime Persistence 和 Conversation Store，不启用文件、Shell、Git、
 Web、Memory、Artifact 或 Execution。MCP 默认同样不启用，只有显式声明 `mcpServer(...)` 时才作为

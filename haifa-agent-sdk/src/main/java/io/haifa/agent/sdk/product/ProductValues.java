@@ -5,6 +5,10 @@ import java.util.Objects;
 final class ProductValues {
     private ProductValues() {}
 
+    static String text(String value, String field) {
+        return text(value, field, Integer.MAX_VALUE);
+    }
+
     static String text(String value, String field, int maximumLength) {
         String normalized =
                 Objects.requireNonNull(value, field + " must not be null").trim();

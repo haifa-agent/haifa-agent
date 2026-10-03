@@ -68,6 +68,11 @@ public interface AgentRuntime {
         throw new UnsupportedOperationException("public Tool Call views are not supported");
     }
 
+    /** Safely projects existing durable assistant/tool messages for an authorized Run. */
+    default RunMessagePage messages(io.haifa.agent.core.run.AgentRunId runId, RunMessageCursor after, int limit) {
+        throw new UnsupportedOperationException("Run message paging is not supported");
+    }
+
     AgentRunHandle handle(io.haifa.agent.core.run.AgentRunId runId);
 
     void addListener(AgentRunListener listener);

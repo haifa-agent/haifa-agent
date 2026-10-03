@@ -1,5 +1,11 @@
 # Haifa Agent SDK
 
+`AgentRuns.messages(runId, RunMessageCursor.beforeFirst(runId), limit)` 薄委托既有 Runtime，返回
+`RunMessagePage` 的安全已提交 Assistant/Tool 步骤。seq/cursor 是既有 Message sequence，messageIndex
+是过滤后稳定编号；Tool 引用与 correlation 来自该消息 actual parts。正文与参数的截断标记见
+[Runtime API](../haifa-agent-kernel/haifa-agent-runtime-api/README.md)。现有 events/subscribe 的
+`message.committed` 仅通知 message ID/sequence，正文仍由同一权威 SessionMessage 分页读取。
+
 `AgentRuns.frozenInstructionDiagnostic(runId)` 返回已准入 Run 的持久冻结指令摘要，类型为
 `Optional<FrozenInstructionDiagnostic>`。投影只含 Run、Definition/version、opaque configuration reference
 及严格的 `instructionContentHash`（`sha256:<64 lowercase hex>`），不含正文；queued、人工等待及终态均可查询。
@@ -246,6 +252,15 @@ Child Run 并行执行，Tool 在 Child 终态后返回 Child Run ID、Runtime �
   不会提前释放。每个 Child 使用自身 profile 的 `maxWallTimeMillis`。
 - 等待 Child 不计入父 Run idle，但计入父 Run wall time。Child 需要审批时父 Run 保持等待，审批目标是 Child Run：
   `runs().pendingInteraction(childRunId)` / `runs().respond(...)`。
+- 需要非交互 Child Tool 时显式调用 `HaifaAgentBuilder.nonInteractiveChildTools()`（默认关闭，要求显式
+  `policy`）。它在既有 Tool Policy 求值及产品装饰之后，仅将实际 Child 的 `ASK` 安全收窄为 `DENY`，
+  复用 Runtime 拒绝结果让模型继续；不创建 Tool Approval Interaction，不执行被拒绝的 Tool，不自动批准。
+  Parent 的决定及 Child 原有 `ALLOW`/`DENY` 不变，且不读取 Child 策略快照；仅 Child 的实际 `ASK`
+  才检查冻结选项，缺失或无效快照时失败关闭。非 Tool Interaction 不受此选项影响。
+  启用事实仅存在 Run configuration 的既有 `EffectiveCapability` 列表中，进入其 content hash；Child
+  从实际 Parent 的冻结 configuration 继承。重新装配启用或关闭该入口只影响新 Root Run，既有 Run
+  继续按自身 snapshot 判断。仅 Child ASK 的拒绝 requirement digest 绑定冻结 configuration content hash，
+  Parent 的原 requirement digest 不变；不增加 Policy 授权规则、持久化表或审批执行通道。
 - 父 Run 取消、超时或恢复会终止其 Child；恢复时未完成 Child 按 interrupted 结算，不自动重放。
 - 查询：`runs().children(parentRunId)` 返回 `ChildRunView`（ID、状态、objective、起止时间、usage）；父事件流包含
   `child.run.started` 与 `child.run.completed|failed|cancelled|timed-out`（终态事件由 Child 自身终态迁移写入，每个 Child
@@ -335,3 +350,17 @@ Run Event Feed 使用 `ModelAttemptLifecycle` 暴露逻辑请求、Attempt、等
   时返回应用服务；SQLite Product Components 已提供 Memory 与 Artifact 的单机持久化实现基线。
 
 当前开发范围由 `docs/20-agent-sdk-product-session-memory-foundation.md` 定义。
+
+`ChildAgentSpec` 接受小写字母、数字、下划线和连字符组成的非空自然名称，允许数字或连字符开头，
+不再用 64 字符 ID、1000 字符 description 或 32000 字符 Child instructions 的 SDK 构造边界拒绝可信定义。
+`ProductProfile.allowedChildAgents` 和命名 Run Profile 的 ID 保留完整自然标识；不会截断或转换为别名。定义文本仍必须非空，
+Child 工具授权、Runtime 预算和模型上下文准入继续生效，普通 Parent instructions 等已有长度限制保留。
+
+## Shared Child capacity
+
+`ChildRunCapacity` is caller-owned and may be shared across Agents using
+`HaifaAgentBuilder.childRunCapacity(capacity)` (or `RuntimeCoreBuilder.childRunCapacity(capacity)`).
+Its maximum takes precedence over `maxConcurrentChildRuns`; no shared capacity is installed by default.
+A Child keeps its slot while waiting for approval and until its terminal Run and actual execution tasks
+have settled. Releasing a slot wakes waiting parents across all participating Agents. Cancelling a
+parent waiting for admission creates no Child. Closing one Agent does not close the shared capacity.

@@ -21,6 +21,7 @@ import io.haifa.agent.policy.api.ApprovalVerification;
 import io.haifa.agent.policy.api.ApprovalVerificationService;
 import io.haifa.agent.policy.api.PolicyDecisionService;
 import io.haifa.agent.policy.api.PolicyRuleSet;
+import io.haifa.agent.runtime.api.ChildRunCapacity;
 import io.haifa.agent.runtime.core.bootstrap.CallerContextProvider;
 import io.haifa.agent.runtime.core.bootstrap.ConfigurationSnapshotFactory;
 import io.haifa.agent.runtime.core.bootstrap.ContentAddressedSnapshotFactory;
@@ -137,8 +138,11 @@ public final class RuntimeCoreBuilder {
     private DefinitionResolver definitions;
     private ProfileResolver profiles;
     private ConfigurationSnapshotFactory snapshots;
+    private java.util.function.UnaryOperator<ConfigurationSnapshotFactory> snapshotFactoryDecorator =
+            java.util.function.UnaryOperator.identity();
     private DelegationPort delegations;
     private int maxConcurrentChildRuns = ChildRunCoordinator.DEFAULT_MAX_CONCURRENT_CHILD_RUNS;
+    private ChildRunCapacity childRunCapacity;
     private final Map<ModelAdapterKey, AgentChatModel> chatModels = new LinkedHashMap<>();
     private ToolCatalog toolCatalog = ToolCatalog.empty();
     private SkillCatalog skillCatalog = SkillCatalog.empty();
@@ -279,6 +283,13 @@ public final class RuntimeCoreBuilder {
         return this;
     }
 
+    /** Decorates the selected factory while preserving its catalog and trust inputs. */
+    public RuntimeCoreBuilder snapshotFactoryDecorator(
+            java.util.function.UnaryOperator<ConfigurationSnapshotFactory> value) {
+        snapshotFactoryDecorator = Objects.requireNonNull(value, "value");
+        return this;
+    }
+
     /**
      * Replaces the process-local child run coordinator. Without an override, delegation Tool Calls create
      * ordinary child runs executed by this Runtime.
@@ -289,6 +300,12 @@ public final class RuntimeCoreBuilder {
     }
 
     /** Process-wide cap on concurrently started child runs across all parents (default 3). */
+    /** Shared capacity takes precedence over the per-Agent maximum. */
+    public RuntimeCoreBuilder childRunCapacity(ChildRunCapacity value) {
+        childRunCapacity = Objects.requireNonNull(value, "childRunCapacity must not be null");
+        return this;
+    }
+
     public RuntimeCoreBuilder maxConcurrentChildRuns(int value) {
         if (value < 1) throw new IllegalArgumentException("maxConcurrentChildRuns must be positive");
         maxConcurrentChildRuns = value;
@@ -447,6 +464,7 @@ public final class RuntimeCoreBuilder {
         var checkpointsRepository = persistence.checkpoints();
         var state = persistence.state();
         RuntimeEventWakeupRegistry eventWakeups = new RuntimeEventWakeupRegistry();
+        state.registerMessageCommitListener(eventWakeups::wake);
         var events = new NotifyingRuntimeEventAppender(persistence.events(), persistence.unitOfWork(), eventWakeups);
         var outbox = persistence.outbox();
         var idempotency = persistence.idempotency();
@@ -555,9 +573,13 @@ public final class RuntimeCoreBuilder {
         OutputContractValidator combinedOutputContract = (run, decision) ->
                 configuredOutputContract.isValid(run, decision) && productOutputContract.isValid(run, decision);
         var toolRecovery = new io.haifa.agent.runtime.core.loop.ToolRecoveryCoordinator(state, pipeline, ids, time);
-        ConfigurationSnapshotFactory configuredSnapshots = snapshots != null
-                ? snapshots
-                : new ContentAddressedSnapshotFactory(toolCatalog.snapshot(), skillCatalog.snapshot(), skillTrust);
+        ConfigurationSnapshotFactory configuredSnapshots = Objects.requireNonNull(
+                snapshotFactoryDecorator.apply(
+                        snapshots != null
+                                ? snapshots
+                                : new ContentAddressedSnapshotFactory(
+                                        toolCatalog.snapshot(), skillCatalog.snapshot(), skillTrust)),
+                "snapshot factory decorator returned null");
         RunBootstrapper bootstrapper =
                 new RunBootstrapper(definitionResolver, profileResolver, access, configuredSnapshots, ids, time);
         var settler = new io.haifa.agent.runtime.core.recovery.InterruptedRunSettler(
@@ -583,7 +605,7 @@ public final class RuntimeCoreBuilder {
                     settler,
                     ids,
                     time,
-                    maxConcurrentChildRuns);
+                    childRunCapacity != null ? childRunCapacity : new ChildRunCapacity(maxConcurrentChildRuns));
             ChildRunCoordinator coordinator = childRuns;
             transitions.addListener(coordinator::onRunChanged);
             transitions.projectTerminalRunsWith(coordinator::projectTerminal);

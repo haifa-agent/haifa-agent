@@ -162,7 +162,7 @@ public final class DelegationTool {
                 throw new IllegalArgumentException("unknown argument '" + key + "'");
             }
         }
-        String agent = text(values, "agent", 128, true);
+        String agent = text(values, "agent", Integer.MAX_VALUE, true);
         String objective = text(values, "objective", MAX_OBJECTIVE_LENGTH, true);
         String context = text(values, "context", MAX_CONTEXT_LENGTH, false);
         String expected = text(values, "expected_output", MAX_EXPECTED_OUTPUT_LENGTH, false);

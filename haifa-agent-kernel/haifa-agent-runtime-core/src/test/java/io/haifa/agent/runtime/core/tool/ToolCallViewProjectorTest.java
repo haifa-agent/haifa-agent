@@ -113,6 +113,81 @@ class ToolCallViewProjectorTest {
         }
     }
 
+    @Test
+    void completedDelegationsKeepExactNumericUsageIncludingZeroWithoutExemptingSecrets() {
+        for (long count : List.of(0L, 7L)) {
+            ToolCall task = usageCall("task", "COMPLETED", count);
+            var usage = (Map<?, ?>) ToolCallViewProjector.project(task)
+                    .result()
+                    .orElseThrow()
+                    .structuredData()
+                    .values()
+                    .get("usage");
+            assertThat(usage.get("inputTokens")).isEqualTo(count);
+            assertThat(usage.get("outputTokens")).isEqualTo(count);
+            assertThat(usage.get("cachedInputTokens")).isEqualTo(0L);
+            assertThat(usage.get("accessToken")).isEqualTo("[REDACTED]");
+        }
+    }
+
+    @Test
+    void failedChildrenMalformedCountsAndOrdinaryToolsDoNotExposeTokenNamedValues() {
+        for (ToolCall call : List.of(
+                usageCall("task", "FAILED", 0L),
+                usageCall("task", "COMPLETED", "0"),
+                usageCall("task", "COMPLETED", -1L),
+                usageCall("task", "COMPLETED", 0.0),
+                usageCall("ordinary", "COMPLETED", 0L))) {
+            var usage = (Map<?, ?>) ToolCallViewProjector.project(call)
+                    .result()
+                    .orElseThrow()
+                    .structuredData()
+                    .values()
+                    .get("usage");
+            assertThat(usage.get("inputTokens")).isEqualTo("[REDACTED]");
+            assertThat(usage.get("outputTokens")).isEqualTo("[REDACTED]");
+            assertThat(usage.get("accessToken")).isEqualTo("[REDACTED]");
+        }
+    }
+
+    private static ToolCall usageCall(String tool, String status, Object count) {
+        ToolCall call = new ToolCall(
+                new ToolCallId("usage-call"),
+                new AgentRunId("usage-run"),
+                new AgentStepId("usage-step"),
+                new ProviderToolCallCorrelationId("usage-provider"),
+                new RuntimeIdempotencyKey("usage-key"),
+                tool,
+                "1.0.0",
+                new ToolArguments("usage.input", "1.0", Map.of()),
+                REQUESTED_AT);
+        call.beginValidation();
+        call.beginPolicyCheck();
+        call.start(STARTED_AT);
+        call.complete(
+                new ToolResult(
+                        true,
+                        "done",
+                        Map.of(
+                                "status",
+                                status,
+                                "usage",
+                                Map.of(
+                                        "inputTokens",
+                                        count,
+                                        "outputTokens",
+                                        count,
+                                        "cachedInputTokens",
+                                        0L,
+                                        "accessToken",
+                                        123L)),
+                        List.of(),
+                        List.of(),
+                        false),
+                COMPLETED_AT);
+        return call;
+    }
+
     private static ToolCall call(String id) {
         return new ToolCall(
                 new ToolCallId("tool-" + id),
