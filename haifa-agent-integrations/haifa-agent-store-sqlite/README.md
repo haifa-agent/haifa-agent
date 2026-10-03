@@ -1,5 +1,12 @@
 # Haifa Agent SQLite Runtime Store
 
+Run 消息分页复用 `session_message`：共用 SQL predicate 在 `LIMIT` 前过滤 Assistant/Tool，
+`COUNT` 使用同一 predicate 计算稳定 `messageIndex`，head/cursor 使用已有 message sequence。
+查询只解码一页正文，不调用全量 `messagesForRun`。没有新增表、迁移或正文副本。
+`appendSessionMessage` 与既有 Journal 中的 `message.committed` 引用使用同一 UnitOfWork；
+事务回滚不发布通知。redaction 在已有 metadata 中保留一个内部布尔展示资格（原 role 保留），
+因此 Journal 清理或 Store 关闭重开后仍保持原序号和 `[REDACTED]` 占位；升级前非 redacted 历史也能读取。
+
 冻结指令诊断复用现有 `configuration_snapshot` 的 content reference/hash 与 payload codec 完整性校验，
 不新增 schema 或正文副本。通过 SDK `AgentRuns.frozenInstructionDiagnostic(runId)` 可在同 SQLite/key 的
 新进程读取原准入摘要；当前 Builder 的 Profile 不参与历史查询。快照缺失或 payload/hash 破坏固定失败关闭，
