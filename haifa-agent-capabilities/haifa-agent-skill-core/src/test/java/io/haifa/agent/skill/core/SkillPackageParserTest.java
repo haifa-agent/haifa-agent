@@ -17,6 +17,33 @@ class SkillPackageParserTest {
     private final SkillPackageParser parser = new SkillPackageParser(SkillPackageLimits.defaults());
 
     @Test
+    void compatibleAcceptsStringListToolHintsWithoutChangingPortableStrictMode() {
+        byte[] markdown = bytes("""
+                ---
+                name: skill-reviewer
+                description: Reviews complete packages as untrusted data.
+                allowed-tools:
+                  - review_skill_package
+                  - file_read
+                  - review_skill_package
+                ---
+                Inspect the package without executing it.
+                """);
+        var files = Map.of("SKILL.md", markdown);
+        var compatible = parser.parseFiles("skill-reviewer", files, descriptor(SkillParserMode.COMPATIBLE));
+        assertThat(compatible.parsed()).isPresent();
+        assertThat(compatible.parsed().orElseThrow().metadata().toolHints())
+                .extracting(value -> value.value()).containsExactlyInAnyOrder("review_skill_package", "file_read");
+        assertThat(parser.parseFiles("skill-reviewer", files, descriptor(SkillParserMode.STRICT)).parsed()).isEmpty();
+        for (String invalid : new String[] {"[file_read, 42]", "[file_read, null]", "['']", "{read: file_read}"}) {
+            var rejected = parser.parseFiles("skill-reviewer", Map.of("SKILL.md", bytes(new String(markdown, StandardCharsets.UTF_8)
+                    .replace("allowed-tools:\n  - review_skill_package\n  - file_read\n  - review_skill_package", "allowed-tools: " + invalid))),
+                    descriptor(SkillParserMode.COMPATIBLE));
+            assertThat(rejected.parsed()).isEmpty();
+        }
+    }
+
+    @Test
     void parsesPortablePackageAndIndexesScriptsWithoutExecutingThem() {
         Map<String, byte[]> files = new LinkedHashMap<>();
         files.put(

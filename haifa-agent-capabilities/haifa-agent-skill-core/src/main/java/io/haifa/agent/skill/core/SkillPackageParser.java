@@ -330,9 +330,22 @@ public final class SkillPackageParser {
     private static Set<ToolAlias> toolHints(
             JsonNode node, SkillSourceDescriptor source, Optional<SkillName> name, List<SkillDiagnostic> diagnostics) {
         if (node == null || node.isNull()) return Set.of();
-        if (!node.isTextual()) throw new IllegalArgumentException("allowed-tools must be a space-separated string");
+        List<String> tokens;
+        if (node.isTextual()) {
+            tokens = List.of(node.textValue().trim().split("\\s+"));
+        } else if (node.isArray() && source.parserMode() == SkillParserMode.COMPATIBLE) {
+            tokens = new ArrayList<>();
+            for (JsonNode item : node) {
+                if (!item.isTextual() || item.textValue().isBlank()) {
+                    throw new IllegalArgumentException("allowed-tools list entries must be non-empty strings");
+                }
+                tokens.add(item.textValue().trim());
+            }
+        } else {
+            throw new IllegalArgumentException("allowed-tools must be a space-separated string");
+        }
         Set<ToolAlias> result = new LinkedHashSet<>();
-        for (String token : node.textValue().trim().split("\\s+")) {
+        for (String token : tokens) {
             if (token.isBlank()) continue;
             try {
                 result.add(new ToolAlias(token));

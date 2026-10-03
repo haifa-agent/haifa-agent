@@ -7,6 +7,10 @@ and exact content loading.
 This module does not depend on Context or Runtime, execute scripts, access credentials, call networks, or
 trust package metadata as authorization. Local roots are supplied by a trusted application boundary.
 
+`COMPATIBLE` parsing accepts `allowed-tools` as a sequence of non-empty strings as well as the portable
+space-separated scalar. `STRICT` keeps the portable scalar contract. These declarations remain Tool hints;
+they do not grant Tool permissions or script execution rights.
+
 ## Reviewed package eligibility
 
 Script-bearing packages remain `REVIEW_REQUIRED` unless `SkillCatalogBuilder` receives an active, unexpired,
