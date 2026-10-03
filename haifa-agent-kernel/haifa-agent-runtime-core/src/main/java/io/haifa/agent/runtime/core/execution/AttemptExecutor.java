@@ -127,7 +127,7 @@ public final class AttemptExecutor {
                 // A retry/dispatch guard can observe the wall deadline before the cooperative timeout signal.
                 applyStopSignal(run, RunControlSignal.TIMEOUT);
                 recordRunTerminal(run, traceContext);
-                finish(attempt, statusFor(run.status()), null);
+                finish(attempt, statusFor(run.status()), attemptError);
                 return;
             }
             if (!run.status().isTerminal()) transitions.failed(run, attemptError);
