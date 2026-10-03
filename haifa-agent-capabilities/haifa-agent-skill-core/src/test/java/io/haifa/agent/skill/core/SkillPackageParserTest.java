@@ -18,7 +18,8 @@ class SkillPackageParserTest {
 
     @Test
     void compatibleAcceptsStringListToolHintsWithoutChangingPortableStrictMode() {
-        byte[] markdown = bytes("""
+        byte[] markdown = bytes(
+                """
                 ---
                 name: skill-reviewer
                 description: Reviews complete packages as untrusted data.
@@ -33,11 +34,20 @@ class SkillPackageParserTest {
         var compatible = parser.parseFiles("skill-reviewer", files, descriptor(SkillParserMode.COMPATIBLE));
         assertThat(compatible.parsed()).isPresent();
         assertThat(compatible.parsed().orElseThrow().metadata().toolHints())
-                .extracting(value -> value.value()).containsExactlyInAnyOrder("review_skill_package", "file_read");
-        assertThat(parser.parseFiles("skill-reviewer", files, descriptor(SkillParserMode.STRICT)).parsed()).isEmpty();
+                .extracting(value -> value.value())
+                .containsExactlyInAnyOrder("review_skill_package", "file_read");
+        assertThat(parser.parseFiles("skill-reviewer", files, descriptor(SkillParserMode.STRICT))
+                        .parsed())
+                .isEmpty();
         for (String invalid : new String[] {"[file_read, 42]", "[file_read, null]", "['']", "{read: file_read}"}) {
-            var rejected = parser.parseFiles("skill-reviewer", Map.of("SKILL.md", bytes(new String(markdown, StandardCharsets.UTF_8)
-                    .replace("allowed-tools:\n  - review_skill_package\n  - file_read\n  - review_skill_package", "allowed-tools: " + invalid))),
+            var rejected = parser.parseFiles(
+                    "skill-reviewer",
+                    Map.of(
+                            "SKILL.md",
+                            bytes(new String(markdown, StandardCharsets.UTF_8)
+                                    .replace(
+                                            "allowed-tools:\n  - review_skill_package\n  - file_read\n  - review_skill_package",
+                                            "allowed-tools: " + invalid))),
                     descriptor(SkillParserMode.COMPATIBLE));
             assertThat(rejected.parsed()).isEmpty();
         }
