@@ -6,6 +6,8 @@ import io.haifa.agent.runtime.api.ToolDataView;
 import io.haifa.agent.runtime.api.ToolResultView;
 import io.haifa.agent.runtime.api.display.BoundedText;
 import io.haifa.agent.runtime.api.display.ToolDisplayBudget;
+import io.haifa.agent.runtime.core.delegation.ChildRunResults;
+import io.haifa.agent.runtime.core.delegation.DelegationTool;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -55,9 +57,16 @@ public final class ToolCallViewProjector {
                 call.status(),
                 call.result().map(result -> {
                     ProjectionBudget resultBudget = new ProjectionBudget();
-                    ToolDataView structuredData = new ToolDataView(
-                            projectMap(result.structuredData(), resultBudget, 0), resultBudget.truncated);
+                    Map<String, Object> projected = projectMap(result.structuredData(), resultBudget, 0);
                     String safeSummary = redactText(result.summary());
+                    if (DelegationTool.NAME.equals(call.toolName())) {
+                        projected = ChildRunResults.displayData(
+                                result.structuredData(),
+                                projected,
+                                !safeSummary.equals(result.summary()),
+                                ToolCallViewProjector::redactText);
+                    }
+                    ToolDataView structuredData = new ToolDataView(projected, resultBudget.truncated);
                     BoundedText boundedSummary = BoundedText.of(safeSummary, ToolDisplayBudget.defaultOutput());
                     return new ToolResultView(
                             result.successful(),

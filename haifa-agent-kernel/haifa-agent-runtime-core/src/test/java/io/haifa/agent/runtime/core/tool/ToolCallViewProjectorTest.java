@@ -73,6 +73,46 @@ class ToolCallViewProjectorTest {
         return call;
     }
 
+    @Test
+    void delegationPreviewReflectsDisplayTruncationAndRedactionWithoutChangingStoredMetadata() {
+        for (String output : List.of("x\n".repeat(300), "token: synthetic-private", "complete answer")) {
+            ToolCall call = new ToolCall(
+                    new ToolCallId("task-preview"),
+                    new AgentRunId("run-projection"),
+                    new AgentStepId("task-step"),
+                    new ProviderToolCallCorrelationId("provider-task"),
+                    new RuntimeIdempotencyKey("task-key"),
+                    "task",
+                    "1.0.0",
+                    new ToolArguments("task.input", "1.0", Map.of()),
+                    REQUESTED_AT);
+            call.beginValidation();
+            call.beginPolicyCheck();
+            call.start(STARTED_AT);
+            Map<String, Object> source = Map.of(
+                    "outputPreview",
+                    output,
+                    "outputSha256",
+                    "a".repeat(64),
+                    "outputTruncated",
+                    false,
+                    "usage",
+                    Map.of("inputTokens", 1));
+            call.complete(new ToolResult(true, output, source, List.of(), List.of(), false), COMPLETED_AT);
+            var view = ToolCallViewProjector.project(call).result().orElseThrow();
+            var data = view.structuredData().values();
+            assertThat(data.get("outputTruncated")).isEqualTo(!output.equals(data.get("outputPreview")));
+            if (output.startsWith("token:")) {
+                assertThat(data).doesNotContainKey("outputSha256");
+                assertThat(data.get("outputPreview")).isEqualTo("token: [REDACTED]");
+            } else {
+                assertThat(data).containsEntry("outputSha256", "a".repeat(64));
+                assertThat(view.structuredData().truncated()).isEqualTo(output.contains("\n"));
+            }
+            assertThat(call.result().orElseThrow().structuredData()).isEqualTo(source);
+        }
+    }
+
     private static ToolCall call(String id) {
         return new ToolCall(
                 new ToolCallId("tool-" + id),
