@@ -54,24 +54,26 @@ tui4j `0.3.3` 由本模块直接依赖。该第三方库内部仍使用 `jline-t
 项目依赖管理仅把这一传递后端收敛到 `3.30.0`；这不是项目保留的 JLine UI 实现。
 
 Windows ConPTY Spike 已证明 `Program / Model / update / view`、viewport、textarea、
-`Program.send()`、alternate screen、Unicode 粘贴及正常/Escape/Ctrl+C/异常退出可以运行。tui4j `0.3.3`
-的自动 Resize 只依赖 POSIX `WINCH` 信号，而 Windows JVM 不支持该信号，因此生产 Model 不再等待事件
-驱动的 Resize：它在启动时查询一次真实 Window Size，并以 500ms 有界周期重新查询，使窗口缩放或移动到
-另一块显示器后仍能收敛到真实尺寸。旧 JLine 实现没有回退路径，事件驱动的 Resize 仍标记
-`SKIPPED_AFTER_3_ATTEMPTS` 并延期。
+`Program.send()`、alternate screen、Unicode 粘贴及正常/Escape/Ctrl+C/异常退出可以运行；但 tui4j 事件
+驱动的动态 Resize 在三次调整后仍会丢失 Header/Diagnostics/Transcript 区域，已标记
+`SKIPPED_AFTER_3_ATTEMPTS` 并延期。tui4j `0.3.3` 的自动 Resize 只依赖 POSIX `WINCH` 信号，而 Windows
+JVM 不支持该信号，因此生产 Model 在 Windows 上以 50ms 轮询每计数 10 次（约 500ms）重新查询真实
+Window Size 作为兜底；该兜底尚未在真实 Windows 终端上人工验收。旧 JLine 实现没有回退路径。
 
 Terminal 默认启用 bracketed paste；完整 `PasteMessage` 中的 CRLF 会归一化为换行且不会提交。对于
 没有发送 bracketed-paste 标记、而把剪贴板内容拆成普通按键的宿主，普通 Enter 经过 100ms 输入稳定
 门禁：紧随其后的字符、CR 或 LF 会把该 Enter 归并为编辑器换行，只有独立 Enter 才提交。该门禁只
 覆盖普通 Editor Enter；Shift/Ctrl+Enter、Alt+Enter 和 Selector/Approval Enter 保持各自既有语义。
 
-生产 Model 初始化时主动请求一次真实 Window Size，并每 500ms 重新查询，避免停留在 `80x24` 启动尺寸
-或在窗口缩放、跨显示器移动后与实际终端尺寸不一致。tui4j `0.3.3` 不全局启用 Kitty keyboard protocol；
-该版本只为修饰 Enter 提供显式映射，全局启用会让部分 CSI-u 控制键残留字符进入编辑器。`Ctrl+O` 因此
-保持传统 `SI` 输入并稳定切换最近 Tool 卡片的展开状态。
+生产 Model 初始化时主动请求一次真实 Window Size，并在 Windows 上约每 500ms 重新查询，避免停留在
+`80x24` 启动尺寸或在窗口缩放、跨显示器移动后与实际终端尺寸不一致。尺寸未变化时 `Tui4jTerminalIo` 在
+消息进入 tui4j 渲染器前丢弃该 `WindowSizeMessage`，避免渲染器清空行缓存导致整屏重绘。tui4j `0.3.3`
+不全局启用 Kitty keyboard protocol；该版本只为修饰 Enter 提供显式映射，全局启用会让部分 CSI-u 控制键
+残留字符进入编辑器。`Ctrl+O` 因此保持传统 `SI` 输入并稳定切换最近 Tool 卡片的展开状态。
 
-启动 UI 时通过 `OSC 2` 把宿主终端标签/窗口标题设为 `Haifa Coding Agent`，退出时清空以让宿主恢复默认
-标题；标题只影响宿主终端显示，不写入 Session、Transcript 或任何持久化事实。
+启动 UI 时把宿主窗口标题压栈（`CSI 22;2t`）并设为 `Haifa Coding Agent`，退出时弹栈恢复（`CSI 23;2t`）；
+支持 xterm 标题栈的终端会恢复原标题，不支持时保留应用标题。标题只影响宿主终端显示，不写入 Session、
+Transcript 或任何持久化事实。
 
 非 TTY 自定义流会被 tui4j 内部终端后端报告为 `1x1`，导致多帧 Renderer 输出被截断。该自动化路径
 连续三轮调整仍未通过，已按规则跳过；输入语义由 Model/Reducer 测试覆盖，真实显示与退出恢复留给

@@ -89,14 +89,38 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
-    void periodicallyRechecksTheRealWindowSizeAfterStartup() {
+    void rechecksTheRealWindowSizeEveryBoundedNumberOfPolls() {
         var fixture = fixture();
 
         assertThat(requestsWindowSizeCheck(fixture.model.init())).isTrue();
 
-        var polled = fixture.model.update(new Tui4jCodingTerminalModel.WindowSizePollMessage());
+        int polls = 0;
+        boolean requested = false;
+        while (polls < Tui4jCodingTerminalModel.WINDOW_SIZE_POLL_TICKS && !requested) {
+            polls++;
+            var polled = fixture.model.update(new Tui4jCodingTerminalModel.PollMessage());
+            requested = requestsWindowSizeCheck(polled.command());
+        }
 
-        assertThat(requestsWindowSizeCheck(polled.command())).isTrue();
+        assertThat(requested).isTrue();
+        assertThat(polls).isEqualTo(Tui4jCodingTerminalModel.WINDOW_SIZE_POLL_TICKS);
+    }
+
+    @Test
+    void doesNotPollWindowSizeWhenTheHostReportsResizeSignals() {
+        TerminalHostInfo linux = TerminalHostInfo.detect(
+                Map.of(
+                        "os.name", "Linux",
+                        "os.version", "6.0",
+                        "os.arch", "amd64",
+                        "java.version", "21"),
+                List.of());
+        var fixture = fixture(linux);
+
+        for (int poll = 0; poll < Tui4jCodingTerminalModel.WINDOW_SIZE_POLL_TICKS; poll++) {
+            var polled = fixture.model.update(new Tui4jCodingTerminalModel.PollMessage());
+            assertThat(requestsWindowSizeCheck(polled.command())).isFalse();
+        }
     }
 
     @Test
@@ -810,6 +834,19 @@ class Tui4jCodingTerminalModelTest {
                 TerminalUiState.initial(80, 24),
                 Runnable::run);
         return new Fixture(controller, pump, new Tui4jCodingTerminalModel(controller, pump, monotonicNanos));
+    }
+
+    private Fixture fixture(TerminalHostInfo hostInfo) {
+        var pump = new TerminalEventPump(64);
+        var controller = new CodingTerminalController(
+                new ProjectId("project-1"),
+                new UnusedClient(),
+                pump,
+                new TerminalUiReducer(),
+                TerminalUiState.initial(80, 24),
+                Runnable::run);
+        return new Fixture(
+                controller, pump, new Tui4jCodingTerminalModel(controller, pump, System::nanoTime, hostInfo));
     }
 
     private Fixture fixture(CodingAuthenticationClient authentication) {

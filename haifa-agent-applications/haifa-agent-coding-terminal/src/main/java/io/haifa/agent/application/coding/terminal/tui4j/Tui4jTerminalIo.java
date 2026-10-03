@@ -23,6 +23,8 @@ public record Tui4jTerminalIo(
         boolean withoutSignalHandler,
         boolean interactive) {
     private static final String WINDOW_TITLE = "Haifa Coding Agent";
+    private static final String SAVE_WINDOW_TITLE = "\u001B[22;2t";
+    private static final String RESTORE_WINDOW_TITLE = "\u001B[23;2t";
     private static final byte[] RESET_MOUSE_REPORTING =
             "\u001B[?1000l\u001B[?1002l\u001B[?1003l\u001B[?1006l".getBytes(StandardCharsets.US_ASCII);
     private static final Set<String> SAFE_TERMINAL_ENVIRONMENT = Set.of(
@@ -123,6 +125,10 @@ public record Tui4jTerminalIo(
         // into the editor (for example Ctrl+O becoming "5u"). Traditional control-key
         // input keeps Ctrl+O as keySI while the registered Enter fallbacks remain usable.
         options.add(ProgramOption.withAltScreen());
+        // Drop unchanged window sizes before the renderer so an unchanged resize poll does not
+        // reset tui4j's line cache and repaint the whole screen.
+        options.add(ProgramOption.withFilter((candidate, message) ->
+                candidate instanceof Tui4jCodingTerminalModel terminal ? terminal.filterMessage(message) : message));
         // Keep mouse reporting disabled. The host terminal must own ordinary drag selection and
         // clipboard copy; transcript navigation remains available through PageUp/PageDown.
         return new Program(model, options.toArray(ProgramOption[]::new));
@@ -131,22 +137,28 @@ public record Tui4jTerminalIo(
     void run(Program program) {
         Objects.requireNonNull(program, "program must not be null");
         resetMouseReporting();
-        writeWindowTitle(WINDOW_TITLE);
         try {
+            // Push the host title so it can be restored on exit (xterm title stack), then claim it.
+            writeSequence(SAVE_WINDOW_TITLE);
+            writeSequence("\u001B]2;" + WINDOW_TITLE + "\u0007");
             program.run();
         } finally {
-            writeWindowTitle("");
+            try {
+                writeSequence(RESTORE_WINDOW_TITLE);
+            } catch (RuntimeException ignored) {
+                // A cosmetic title restore must not mask a program failure or skip mouse cleanup.
+            }
             resetMouseReporting();
         }
     }
 
-    private void writeWindowTitle(String title) {
+    private void writeSequence(String sequence) {
         OutputStream terminalOutput = output.orElse(System.out);
         try {
-            terminalOutput.write(("\u001B]2;" + title + "\u0007").getBytes(StandardCharsets.UTF_8));
+            terminalOutput.write(sequence.getBytes(StandardCharsets.UTF_8));
             terminalOutput.flush();
         } catch (IOException failure) {
-            throw new UncheckedIOException("TUI_WINDOW_TITLE_FAILED", failure);
+            throw new UncheckedIOException("TUI_TERMINAL_SEQUENCE_FAILED", failure);
         }
     }
 
