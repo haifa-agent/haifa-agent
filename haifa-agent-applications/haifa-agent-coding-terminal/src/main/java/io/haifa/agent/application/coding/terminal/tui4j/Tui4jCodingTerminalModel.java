@@ -33,6 +33,7 @@ import java.util.function.LongSupplier;
 final class Tui4jCodingTerminalModel implements Model {
     private static final Duration EVENT_POLL_INTERVAL = Duration.ofMillis(50);
     private static final Duration UNBRACKETED_PASTE_GUARD_INTERVAL = Duration.ofMillis(100);
+    static final int WINDOW_SIZE_POLL_TICKS = 10;
     private static final int MAX_SECRET_CHARACTERS = 65_536;
 
     private final CodingTerminalController controller;
@@ -44,6 +45,7 @@ final class Tui4jCodingTerminalModel implements Model {
     private final List<String> history = new ArrayList<>();
     private final StringBuilder secretBuffer = new StringBuilder();
     private final LongSupplier monotonicNanos;
+    private final boolean pollWindowSize;
 
     private String transcriptContent = "";
     private List<TranscriptItem> renderedTranscript = List.of();
@@ -62,6 +64,7 @@ final class Tui4jCodingTerminalModel implements Model {
     private long deferredEnterSequence;
     private DeferredEnter pendingEnter;
     private boolean secretPresentation;
+    private int windowSizePollTicks;
 
     Tui4jCodingTerminalModel(CodingTerminalController controller, TerminalEventPump pump) {
         this(controller, pump, System::nanoTime, null);
@@ -79,6 +82,8 @@ final class Tui4jCodingTerminalModel implements Model {
         this.controller = controller;
         this.pump = pump;
         this.monotonicNanos = monotonicNanos;
+        this.pollWindowSize =
+                hostInfo == null || hostInfo.operatingSystem() == TerminalHostInfo.OperatingSystem.WINDOWS;
         this.shortcuts =
                 hostInfo == null ? TerminalShortcutProfile.standard() : TerminalShortcutProfile.forHost(hostInfo);
         this.view = new Tui4jTerminalView(shortcuts);
@@ -97,8 +102,10 @@ final class Tui4jCodingTerminalModel implements Model {
     @Override
     public Command init() {
         syncComponents();
-        // tui4j does not emit the initial size until explicitly requested. Without this,
-        // the production terminal stays at the 80x24 bootstrap size until the user resizes it.
+        // tui4j only reports the size when explicitly requested, and its automatic resize path
+        // relies on the POSIX WINCH signal, which does not exist on Windows. On Windows the 50ms
+        // poll carries a bounded size re-check; Tui4jTerminalIo drops unchanged sizes before the
+        // renderer, so an unchanged poll does not reset the renderer cache and repaint every row.
         return Command.batch(Command.checkWindowSize(), nextTick());
     }
 
@@ -109,6 +116,11 @@ final class Tui4jCodingTerminalModel implements Model {
             controller.drainEvents();
             syncComponents();
             command = nextTick();
+            if (pollWindowSize && ++windowSizePollTicks >= WINDOW_SIZE_POLL_TICKS) {
+                windowSizePollTicks = 0;
+                // checkWindowSize first so observers can detect the request without running the tick.
+                command = Command.batch(Command.checkWindowSize(), command);
+            }
         } else if (message instanceof DeferredEnterMessage deferred) {
             command = commitDeferredEnter(deferred);
         } else if (message instanceof SubmissionCompletedMessage completed) {
@@ -118,7 +130,10 @@ final class Tui4jCodingTerminalModel implements Model {
                 syncComponents();
             }
         } else if (message instanceof WindowSizeMessage resized) {
-            pump.offer(new TerminalUiAction.TerminalResized(resized.width(), resized.height()));
+            TerminalUiState state = controller.state();
+            if (resized.width() != state.columns() || resized.height() != state.rows()) {
+                pump.offer(new TerminalUiAction.TerminalResized(resized.width(), resized.height()));
+            }
             controller.drainEvents();
             syncComponents();
         } else if (controller.secureInputRequested() && message instanceof KeyPressMessage key) {
@@ -668,6 +683,19 @@ final class Tui4jCodingTerminalModel implements Model {
         return Command.tick(EVENT_POLL_INTERVAL, ignored -> new PollMessage());
     }
 
+    /**
+     * Drops a window-size report that matches the current state so a periodic or signal-driven
+     * resize with no change does not make the tui4j renderer clear its line cache and repaint.
+     */
+    Message filterMessage(Message message) {
+        if (message instanceof WindowSizeMessage size
+                && size.width() == controller.state().columns()
+                && size.height() == controller.state().rows()) {
+            return null;
+        }
+        return message;
+    }
+
     private String sanitizeEditorInput(String value) {
         String normalized = value.replace("\r\n", "\n").replace('\r', '\n');
         StringBuilder safe = new StringBuilder(normalized.length());
@@ -683,7 +711,7 @@ final class Tui4jCodingTerminalModel implements Model {
         return safe.toString();
     }
 
-    private record PollMessage() implements Message {}
+    record PollMessage() implements Message {}
 
     private record DeferredEnter(long sequence, TerminalInput.Kind kind) {}
 
