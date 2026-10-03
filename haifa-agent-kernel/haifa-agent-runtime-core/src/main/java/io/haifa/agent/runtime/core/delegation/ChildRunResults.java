@@ -16,12 +16,44 @@ import java.util.Optional;
  *
  * <p>The status comes from the Runtime, never from the child model's text. The parent only receives the bounded
  * final summary, the child's own usage and its artifact references; intermediate child messages stay in the child
- * session.
+ * session. When the complete successful output is available, structured display metadata also identifies that
+ * output without making clients hash a bounded summary. Missing output produces no invented preview or digest.
  */
 public final class ChildRunResults {
     static final int MAX_SUMMARY_LENGTH = 16_000;
+    static final String OUTPUT_PREVIEW = "outputPreview";
+    static final String OUTPUT_SHA256 = "outputSha256";
+    static final String OUTPUT_TRUNCATED = "outputTruncated";
 
     private ChildRunResults() {}
+
+    /** Removes display-only output metadata at the model message boundary. */
+    public static Map<String, Object> modelVisibleData(Map<String, Object> source) {
+        Map<String, Object> data = new LinkedHashMap<>(source);
+        data.remove(OUTPUT_PREVIEW);
+        data.remove(OUTPUT_SHA256);
+        data.remove(OUTPUT_TRUNCATED);
+        return Map.copyOf(data);
+    }
+
+    /** Reconciles complete-output metadata with a bounded, redacted display copy. */
+    public static Map<String, Object> displayData(
+            Map<String, Object> source,
+            Map<String, Object> projected,
+            boolean summaryRedacted,
+            java.util.function.UnaryOperator<String> redactor) {
+        Map<String, Object> data = new LinkedHashMap<>(projected);
+        if (source.containsKey(OUTPUT_PREVIEW)
+                && data.containsKey(OUTPUT_PREVIEW)
+                && !Objects.equals(source.get(OUTPUT_PREVIEW), data.get(OUTPUT_PREVIEW))) {
+            data.put(OUTPUT_TRUNCATED, true);
+        }
+        // A digest of redacted text can disclose low-entropy secrets through offline guessing.
+        boolean previewRedacted =
+                source.get(OUTPUT_PREVIEW) instanceof String preview && !preview.equals(redactor.apply(preview));
+        if (summaryRedacted || previewRedacted) data.remove(OUTPUT_SHA256);
+        return Map.copyOf(data);
+    }
 
     public static ToolResult toolResult(AgentRun child, Optional<String> output) {
         Objects.requireNonNull(child, "child must not be null");
@@ -40,6 +72,7 @@ public final class ChildRunResults {
             case COMPLETED -> {
                 var result = child.result().orElseThrow();
                 data.put("outcome", result.outcome().name());
+                output.ifPresent(value -> data.putAll(DelegationOutput.metadata(value)));
                 summary = result.summary();
                 text = prefix + "completed with outcome " + result.outcome().name() + ".";
             }

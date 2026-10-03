@@ -24,6 +24,7 @@ import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import io.haifa.agent.core.tool.ToolCall;
+import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.model.api.ImageUrlPart;
 import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelAudioPart;
@@ -34,6 +35,7 @@ import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.runtime.core.context.ActiveContextSnapshot;
 import io.haifa.agent.runtime.core.context.ActiveContextSnapshots;
+import io.haifa.agent.runtime.core.delegation.DelegationTool;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationRecord;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import java.nio.charset.StandardCharsets;
@@ -384,7 +386,7 @@ public final class ModelMessageAssembler {
                                     return ModelMessage.tool(
                                             call.providerCorrelationId(),
                                             canonical.summary(),
-                                            canonical.structuredData(),
+                                            modelToolResultData(call, canonical),
                                             canonical.truncated());
                                 })
                                 .orElseGet(() -> ModelMessage.tool(call.providerCorrelationId(), result.summary()));
@@ -581,6 +583,12 @@ public final class ModelMessageAssembler {
         return providerId.equals(model.providerId().value())
                 && modelId.equals(model.providerModelId())
                 && configurationDigest.equals(model.configurationDigest());
+    }
+
+    private static Map<String, Object> modelToolResultData(ToolCall call, ToolResult result) {
+        if (!DelegationTool.NAME.equals(call.toolName())) return result.structuredData();
+        // Complete-output identity is display metadata, not additional input to the parent model.
+        return io.haifa.agent.runtime.core.delegation.ChildRunResults.modelVisibleData(result.structuredData());
     }
 
     private ModelMessage projectHistoricalAssistant(
