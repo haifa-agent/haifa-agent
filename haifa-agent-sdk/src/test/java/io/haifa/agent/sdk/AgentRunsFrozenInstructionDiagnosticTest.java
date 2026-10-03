@@ -46,6 +46,13 @@ class AgentRunsFrozenInstructionDiagnosticTest {
             frozen = first.runs().frozenInstructionDiagnostic(runId).orElseThrow();
             assertThat(frozen.instructionContentHash()).isEqualTo(hash(profileA.instructions()));
             assertThat(first.runs().promptDiagnostics(runId).available()).isTrue();
+            var messages =
+                    first.runs().messages(runId, io.haifa.agent.runtime.api.RunMessageCursor.beforeFirst(runId), 10);
+            assertThat(messages.items()).singleElement().satisfies(message -> {
+                assertThat(message.role()).isEqualTo("ASSISTANT");
+                assertThat(message.messageIndex()).isEqualTo(1);
+                assertThat(message.text()).isNotBlank();
+            });
         }
         var profileB = profile("Synthetic current instruction B");
         AtomicInteger calls = new AtomicInteger();

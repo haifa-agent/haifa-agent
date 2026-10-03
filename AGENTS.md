@@ -19,7 +19,7 @@
   发起 Pull Request。`0.1.2-SNAPSHOT` 开发线默认不设 baseline 分支：每个功能从最新 `origin/dev` 拉 `feat-*`，
   验证通过后向 `dev` 发起 PR。例外：相互交叉的多个任务可由主控智能体从 `dev` 拉一个 `feat-*` 集成分支统一汇合，
   子分支由主控验收后合入集成分支，集成分支再向 `dev` 发起 PR 并由人工合并；该集成分支只服务指定任务，合并进
-  `dev` 后即删除。当前唯一的集成分支是 `feat-012-sh-sdk-gaps`（038-01、038-02）。
+  `dev` 后即删除。当前集成分支为 `feat-012-sh-sdk-gaps`（038-01、038-02）和 `feat-w08-runtime-integration`（038-16～22）。
 - Git Commit Message 和 GitHub Pull Request 说明必须使用英文。大任务 PR 说明最多 7 条；小修改最多
   2 条，验证结果也计入上限。
 - GitHub 平台操作必须使用 GitHub CLI（`gh`）；本地 Git 和远端分支操作使用 `git`。

@@ -6,6 +6,7 @@ import io.haifa.agent.common.time.SystemTimeProvider;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.context.compression.CompressionPolicy;
 import io.haifa.agent.core.run.AgentRunType;
+import io.haifa.agent.runtime.api.ChildRunCapacity;
 import io.haifa.agent.runtime.core.RuntimeCoreBuilder;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedDefinition;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
@@ -26,6 +27,7 @@ import io.haifa.agent.sdk.contribution.SkillPlatformContribution;
 import io.haifa.agent.sdk.contribution.ToolPlatformContribution;
 import io.haifa.agent.sdk.contribution.ToolRegistration;
 import io.haifa.agent.sdk.internal.DefaultConversationService;
+import io.haifa.agent.sdk.internal.NonInteractiveChildToolPolicy;
 import io.haifa.agent.sdk.internal.ProcessLocalPromptDiagnostics;
 import io.haifa.agent.sdk.internal.ReadOnlyNetworkToolPolicy;
 import io.haifa.agent.sdk.internal.SafeConversationService;
@@ -69,6 +71,7 @@ public final class HaifaAgentBuilder {
     private final List<ToolRegistration> toolRegistrations = new ArrayList<>();
     private Set<ToolName> autoApproveReadOnlyNetworkTools = Set.of();
     private Set<ToolName> autoApproveStandardFileWriteTools = Set.of();
+    private boolean nonInteractiveChildTools;
     private final List<AutoCloseable> managedResources = new ArrayList<>();
     private final List<AgentDiagnostic> assemblyDiagnostics = new ArrayList<>();
     private SdkCallerProvider callers = SdkCallerProvider.defaultPublicUser();
@@ -84,6 +87,7 @@ public final class HaifaAgentBuilder {
     private final Map<String, ProductRunProfile> runProfiles = new LinkedHashMap<>();
     private final Map<String, ChildAgentSpec> childAgents = new LinkedHashMap<>();
     private Integer maxConcurrentChildRuns;
+    private ChildRunCapacity childRunCapacity;
     private AgentMetadata metadata = AgentMetadata.defaults();
     private boolean starterDefaultInstructionsInUse;
     private CompressionPolicy compressionPolicy;
@@ -211,6 +215,20 @@ public final class HaifaAgentBuilder {
         return this;
     }
 
+    /**
+     * Denies approval-required Tools in delegated Child Runs without creating an Interaction.
+     * The Child receives the Runtime's safe policy-denial result and may continue. Root Run decisions,
+     * existing ALLOW/DENY decisions, and non-Tool Interactions are unchanged. Disabled by default.
+     *
+     * <p>Requires an explicit product policy. The option is frozen in each Run configuration and
+     * inherited by its Children; it is applied after the configured Tool policy decorator.
+     * A Child denial's requirement digest includes that frozen configuration. Never auto-approves a Tool.
+     */
+    public HaifaAgentBuilder nonInteractiveChildTools() {
+        nonInteractiveChildTools = true;
+        return this;
+    }
+
     public HaifaAgentBuilder modelImageResolver(ModelImageResolver value) {
         modelImageResolver = Objects.requireNonNull(value, "value must not be null");
         return this;
@@ -267,7 +285,16 @@ public final class HaifaAgentBuilder {
         return this;
     }
 
-    /** Caps concurrently started child runs across all parent runs of this agent (default 3). */
+    /**
+     * Uses a caller-owned Child capacity shared with other Agents. Its maximum takes precedence over
+     * {@link #maxConcurrentChildRuns(int)}; closing this Agent does not close the shared capacity.
+     */
+    public HaifaAgentBuilder childRunCapacity(ChildRunCapacity value) {
+        childRunCapacity = Objects.requireNonNull(value, "childRunCapacity must not be null");
+        return this;
+    }
+
+    /** Per-Agent maximum (default three); an explicitly shared capacity takes precedence. */
     public HaifaAgentBuilder maxConcurrentChildRuns(int value) {
         if (value < 1) throw new IllegalArgumentException("maxConcurrentChildRuns must be positive");
         maxConcurrentChildRuns = value;
@@ -463,6 +490,7 @@ public final class HaifaAgentBuilder {
                             runtimeBuilder.registerChatModel(coordinate.type(), coordinate.version(), adapter));
             runtimeBuilder.policyProductId(effectiveProfile.productId().value());
             if (maxConcurrentChildRuns != null) runtimeBuilder.maxConcurrentChildRuns(maxConcurrentChildRuns);
+            if (childRunCapacity != null) runtimeBuilder.childRunCapacity(childRunCapacity);
 
             if (tool != null) {
                 runtimeBuilder.toolPlatform(tool.catalog(), tool.invoker(), tool.schemaValidator());
@@ -471,7 +499,11 @@ public final class HaifaAgentBuilder {
                 runtimeBuilder.skillPlatform(
                         skillPlatform.catalog(), skillPlatform.contentLoader(), skillPlatform.trust());
             }
-            runtimeBuilder.publicToolPolicyDecorator(publicToolPolicyDecorator);
+            boolean denyChildApprovals = nonInteractiveChildTools;
+            var configuredDecorator = publicToolPolicyDecorator;
+            var configuredState = persistence.runtimePersistence().state();
+            runtimeBuilder.snapshotFactoryDecorator(
+                    selected -> NonInteractiveChildToolPolicy.snapshots(selected, configuredState, denyChildApprovals));
             if (memory != null) {
                 runtimeBuilder.memory(memory.retriever());
             }
@@ -521,9 +553,25 @@ public final class HaifaAgentBuilder {
                         prepared.javaBindings(),
                         effectiveProfile.productId().value());
             }
+            if (denyChildApprovals) {
+                if (effectivePolicy == null) {
+                    throw new HaifaAgentException(
+                            "CHILD_NON_INTERACTIVE_POLICY_REQUIRED",
+                            "product.assemble",
+                            "assembly",
+                            "non-interactive Child Tools require an explicit product policy");
+                }
+            }
             if (effectivePolicy != null) {
                 runtimeBuilder.policy(effectivePolicy.rules(), effectivePolicy.evaluator());
             }
+            var configuredRules = effectivePolicy == null ? null : effectivePolicy.rules();
+            runtimeBuilder.publicToolPolicyDecorator(selected -> new NonInteractiveChildToolPolicy(
+                    Objects.requireNonNull(
+                            configuredDecorator.apply(selected), "public tool policy decorator returned null"),
+                    configuredState,
+                    configuredRules,
+                    effectiveProfile.productId().value()));
             if (approval != null) {
                 runtimeBuilder.approvalVerification(approval.verification());
             }

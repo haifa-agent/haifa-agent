@@ -107,6 +107,12 @@ public final class AgentRuns {
         return runtime.toolCalls(Objects.requireNonNull(runId, "runId must not be null"));
     }
 
+    /** Pages safe, committed Assistant and Tool messages by their durable SessionMessage sequence. */
+    public io.haifa.agent.runtime.api.RunMessagePage messages(
+            AgentRunId runId, io.haifa.agent.runtime.api.RunMessageCursor after, int limit) {
+        return runtime.messages(Objects.requireNonNull(runId, "runId must not be null"), after, limit);
+    }
+
     public AgentRunHandle handle(AgentRunId runId) {
         return runtime.handle(Objects.requireNonNull(runId, "runId must not be null"));
     }

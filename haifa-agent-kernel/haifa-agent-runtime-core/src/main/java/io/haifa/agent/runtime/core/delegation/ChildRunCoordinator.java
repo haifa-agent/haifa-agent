@@ -29,6 +29,7 @@ import io.haifa.agent.core.session.SessionScope;
 import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.AgentRunSnapshot;
+import io.haifa.agent.runtime.api.ChildRunCapacity;
 import io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt;
 import io.haifa.agent.runtime.core.attempt.ExecutionAttemptId;
 import io.haifa.agent.runtime.core.attempt.ExecutionAttemptStatus;
@@ -74,7 +75,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Semaphore;
 
 /**
  * Process-local {@link DelegationPort}: a child is an ordinary {@link AgentRun} executed by the same Runtime on the
@@ -115,8 +115,7 @@ public final class ChildRunCoordinator implements DelegationPort {
     private final InterruptedRunSettler settler;
     private final IdentifierGenerator ids;
     private final TimeProvider time;
-    private final Semaphore processSlots;
-    private final Object monitor = new Object();
+    private final ChildRunCapacity processSlots;
     /** Children admitted by this process that still hold a process slot; guarded by itself for task counts. */
     private final Map<AgentRunId, ChildSlot> slots = new ConcurrentHashMap<>();
 
@@ -136,7 +135,6 @@ public final class ChildRunCoordinator implements DelegationPort {
             scheduler.cancel(runId);
         }
     };
-    private long wakeupSequence;
     private volatile AttemptExecutor executor;
 
     public ChildRunCoordinator(
@@ -157,7 +155,7 @@ public final class ChildRunCoordinator implements DelegationPort {
             InterruptedRunSettler settler,
             IdentifierGenerator ids,
             TimeProvider time,
-            int maxConcurrentChildRuns) {
+            ChildRunCapacity capacity) {
         this.runs = Objects.requireNonNull(runs);
         this.sessions = Objects.requireNonNull(sessions);
         this.attempts = Objects.requireNonNull(attempts);
@@ -175,8 +173,7 @@ public final class ChildRunCoordinator implements DelegationPort {
         this.settler = Objects.requireNonNull(settler);
         this.ids = Objects.requireNonNull(ids);
         this.time = Objects.requireNonNull(time);
-        if (maxConcurrentChildRuns < 1) throw new IllegalArgumentException("maxConcurrentChildRuns must be positive");
-        this.processSlots = new Semaphore(maxConcurrentChildRuns, true);
+        this.processSlots = Objects.requireNonNull(capacity, "capacity must not be null");
     }
 
     /** Completes assembly; the attempt executor is created after the delegation port it depends on. */
@@ -315,6 +312,9 @@ public final class ChildRunCoordinator implements DelegationPort {
             Listener listener,
             int maxParallel) {
         while (!pending.isEmpty() && active.size() < maxParallel) {
+            // Collection callbacks or another thread can stop the Parent after the loop's
+            // initial check. Leave pending requests for the existing stop path to close.
+            if (controls.directive(parent.id()).signal().stopsExecution()) return;
             ChildRunRequest next = pending.peek();
             AgentRunId childId = childRunId(parent.id(), next.toolCallId());
             if (runs.find(childId).isPresent()) {
@@ -774,27 +774,15 @@ public final class ChildRunCoordinator implements DelegationPort {
     }
 
     private void signal() {
-        synchronized (monitor) {
-            wakeupSequence++;
-            monitor.notifyAll();
-        }
+        processSlots.signal();
     }
 
     private long wakeups() {
-        synchronized (monitor) {
-            return wakeupSequence;
-        }
+        return processSlots.wakeups();
     }
 
     private void awaitWakeup(long observed, long millis) {
-        synchronized (monitor) {
-            if (wakeupSequence != observed) return;
-            try {
-                monitor.wait(Math.max(1, millis));
-            } catch (InterruptedException interrupted) {
-                // The interrupt flag is cleared; the next pass re-reads the authoritative control signal.
-            }
-        }
+        processSlots.awaitWakeup(observed, millis);
     }
 
     private static String digest(String purpose, AgentRunId parentRunId, ToolCallId toolCallId) {
