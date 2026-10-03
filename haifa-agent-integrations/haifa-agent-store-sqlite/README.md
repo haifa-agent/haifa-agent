@@ -36,8 +36,6 @@ V1、V2、V4～V13、V15 与 V1000～V1007；V3 legacy Policy family 和独立 V
 - 直接调用 `openConnection()` 的类限定为 `SqliteRuntimeUnitOfWork`、`SqliteArtifactStore` 与
   `SqliteMigrationRunner`（由架构测试约束）；其余代码通过 unit of work 访问数据库。
 
-`SqliteUnitOfWorkTimingTest` 输出单个 unit of work 的平均耗时（`SQLITE_UOW_TIMING`），用于改动前后对比。
-
 ## SDK Conversation metadata
 
 Runtime Migration V5 新增产品中立的 `sdk_conversation`；V13 将其收敛为纯 display/index metadata：
