@@ -122,6 +122,14 @@ public final class AttemptExecutor {
                         attemptError.diagnosticId() == null ? "" : attemptError.diagnosticId());
                 return;
             }
+            RuntimeLimitExceededException limit = findFailure(error, RuntimeLimitExceededException.class);
+            if (!run.status().isTerminal() && limit != null && "wallTimeMillis".equals(limit.resource())) {
+                // A retry/dispatch guard can observe the wall deadline before the cooperative timeout signal.
+                applyStopSignal(run, RunControlSignal.TIMEOUT);
+                recordRunTerminal(run, traceContext);
+                finish(attempt, statusFor(run.status()), attemptError);
+                return;
+            }
             if (!run.status().isTerminal()) transitions.failed(run, attemptError);
             recordRunTerminal(run, traceContext);
             finish(attempt, ExecutionAttemptStatus.FAILED, attemptError);
