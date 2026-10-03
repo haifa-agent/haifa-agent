@@ -57,6 +57,7 @@ import io.haifa.agent.runtime.core.bootstrap.DefaultResolvedModelSnapshots;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedDefinition;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
 import io.haifa.agent.runtime.core.delegation.ChildRunCoordinator;
+import io.haifa.agent.runtime.core.delegation.ChildRunResults;
 import io.haifa.agent.runtime.core.delegation.DelegationPort;
 import io.haifa.agent.runtime.core.delegation.DelegationTool;
 import io.haifa.agent.runtime.core.execution.ExecutionScheduler;
@@ -141,10 +142,20 @@ class ChildRunDelegationTest {
             ToolResult result = call.result().orElseThrow();
             assertThat(result.structuredData())
                     .containsEntry("status", "COMPLETED")
-                    .containsKeys("childRunId", "summary", "usage", "artifacts");
+                    .containsEntry("outputPreview", result.structuredData().get("summary"))
+                    .containsEntry("outputTruncated", false)
+                    .containsKeys("childRunId", "summary", "usage", "artifacts", "outputSha256");
+            assertThat(result.structuredData().get("outputSha256")).asString().matches("[0-9a-f]{64}");
             assertThat(result.structuredData().get("childRunId"))
                     .isEqualTo(ChildRunCoordinator.childRunId(parent.runId(), call.id())
                             .value());
+            AgentRun child = fixture.store
+                    .find(ChildRunCoordinator.childRunId(parent.runId(), call.id()))
+                    .orElseThrow();
+            ToolResult missingOutput = ChildRunResults.toolResult(child, Optional.empty());
+            assertThat(missingOutput.structuredData())
+                    .doesNotContainKeys("outputPreview", "outputSha256", "outputTruncated");
+            assertThat(missingOutput.summary()).isEqualTo(result.summary());
         });
 
         // D4: the parent's usage holds only its own tokens and the child-run count.
