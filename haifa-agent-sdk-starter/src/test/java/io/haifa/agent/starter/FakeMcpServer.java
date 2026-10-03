@@ -38,6 +38,7 @@ public final class FakeMcpServer implements McpClientFactory {
     private final List<String> authorizationValues = new CopyOnWriteArrayList<>();
     private final AtomicInteger openClients = new AtomicInteger();
     private final AtomicInteger closedClients = new AtomicInteger();
+    private final AtomicInteger listToolsCalls = new AtomicInteger();
 
     public FakeMcpServer serving(String serverName, String... remoteToolNames) {
         toolsByServer.put(serverName, List.of(remoteToolNames));
@@ -63,6 +64,10 @@ public final class FakeMcpServer implements McpClientFactory {
 
     public int closedClients() {
         return closedClients.get();
+    }
+
+    public int listToolsCalls() {
+        return listToolsCalls.get();
     }
 
     @Override
@@ -104,6 +109,7 @@ public final class FakeMcpServer implements McpClientFactory {
 
         @Override
         public McpListToolsPage listTools(String cursor, Map<String, String> credentials) {
+            listToolsCalls.incrementAndGet();
             recordCredentials(credentials);
             List<McpRemoteTool> tools = new ArrayList<>();
             for (String name : toolsByServer.getOrDefault(server.serverId().value(), List.of())) {

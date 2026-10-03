@@ -122,6 +122,33 @@ import org.junit.jupiter.api.Test;
 
 class RuntimeCoreTest {
     @Test
+    void committedMessagesWakeExistingEventSubscriptionAndReplayTheSameAuthoritativeMessage() throws Exception {
+        Fixture fixture = fixture(model(finalDecision("complete")));
+        var runId = fixture.runtime.start(request("message-notification")).runId();
+        CountDownLatch committed = new CountDownLatch(1);
+        AtomicReference<io.haifa.agent.runtime.api.RunEventPayloads.MessageCommitted> reference =
+                new AtomicReference<>();
+        try (var subscription = fixture.runtime.subscribe(
+                runId, io.haifa.agent.runtime.api.RunEventCursor.beforeFirst(runId), event -> {
+                    if (event.payload()
+                            instanceof io.haifa.agent.runtime.api.RunEventPayloads.MessageCommitted message) {
+                        reference.set(message);
+                        committed.countDown();
+                    }
+                })) {
+            fixture.scheduler.runAll();
+            assertThat(committed.await(5, TimeUnit.SECONDS)).isTrue();
+            var page =
+                    fixture.runtime.messages(runId, io.haifa.agent.runtime.api.RunMessageCursor.beforeFirst(runId), 10);
+            assertThat(page.items()).singleElement().satisfies(message -> {
+                assertThat(message.messageId()).isEqualTo(reference.get().messageId());
+                assertThat(message.sequence()).isEqualTo(reference.get().messageSequence());
+                assertThat(message.text()).isEqualTo("complete");
+            });
+        }
+    }
+
+    @Test
     void currentRunObjectiveAppearsOnceThroughAuthoritativeSessionHistory() {
         AtomicReference<AgentChatRequest> captured = new AtomicReference<>();
         Fixture fixture = fixture(request -> {
