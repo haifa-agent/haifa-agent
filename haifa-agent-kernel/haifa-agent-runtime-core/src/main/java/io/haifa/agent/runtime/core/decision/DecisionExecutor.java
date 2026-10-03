@@ -208,6 +208,14 @@ public final class DecisionExecutor {
 
     public boolean completeBudgetLimited(
             AgentRun run, RuntimeLimitExceededException limit, Optional<FinalAnswerDecision> finalDecision) {
+        return completeBudgetLimited(run, limit, finalDecision, Optional.empty());
+    }
+
+    public boolean completeBudgetLimited(
+            AgentRun run,
+            RuntimeLimitExceededException limit,
+            Optional<FinalAnswerDecision> finalDecision,
+            Optional<ModelInvocationResult> invocation) {
         if (!supportsBudgetLimitedCompletion(run)) return false;
         String resource = upperSnake(limit.resource());
         FinalAnswerDecision candidate = finalDecision.orElse(null);
@@ -234,13 +242,13 @@ public final class DecisionExecutor {
                         : candidate.structuredOutput(),
                 candidate == null ? List.of() : candidate.artifacts(),
                 warnings.stream().distinct().toList());
+        Optional<ModelContinuationDraft> continuation = continuationDraft(run, invocation, Set.of());
         transitions.completedWithOutput(
                 run,
                 result,
                 summary,
-                messageDraft(
+                assistantMessageDraft(
                         run,
-                        MessageRole.ASSISTANT,
                         List.of(new TextPart(summary, "plain")),
                         MessageVisibility.USER_VISIBLE,
                         Map.of(
@@ -255,7 +263,10 @@ public final class DecisionExecutor {
                                 "limitingUsed",
                                 limit.used(),
                                 "limitingLimit",
-                                limit.limit())));
+                                limit.limit()),
+                        invocation,
+                        continuation),
+                continuation);
         return true;
     }
 

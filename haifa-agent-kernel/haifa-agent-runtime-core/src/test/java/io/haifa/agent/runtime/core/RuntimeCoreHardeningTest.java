@@ -16,9 +16,12 @@ import io.haifa.agent.core.plan.TodoItemId;
 import io.haifa.agent.core.plan.TodoPriority;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
+import io.haifa.agent.core.run.AgentRunBudget;
 import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.core.run.AgentRunOutcome;
 import io.haifa.agent.core.run.AgentRunStatus;
+import io.haifa.agent.core.run.AgentRunType;
 import io.haifa.agent.core.run.AgentRunUsageDelta;
 import io.haifa.agent.core.run.StructuredOutputRequirement;
 import io.haifa.agent.core.session.AgentSessionId;
@@ -35,6 +38,8 @@ import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.model.api.ModelUsage;
+import io.haifa.agent.model.api.ResolvedModelSnapshot;
+import io.haifa.agent.model.api.SensitiveModelReasoning;
 import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.InteractionRequestId;
 import io.haifa.agent.runtime.api.InteractionResponse;
@@ -48,6 +53,8 @@ import io.haifa.agent.runtime.api.RuntimeCommandType;
 import io.haifa.agent.runtime.api.RuntimeOverrides;
 import io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt;
 import io.haifa.agent.runtime.core.attempt.ExecutionAttemptId;
+import io.haifa.agent.runtime.core.bootstrap.DefaultResolvedModelSnapshots;
+import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext;
 import io.haifa.agent.runtime.core.control.RunControlRegistry;
 import io.haifa.agent.runtime.core.control.RunControlSignal;
@@ -958,15 +965,54 @@ class RuntimeCoreHardeningTest {
         Fixture fixture = fixture(
                 request -> {
                     if (modelCalls.incrementAndGet() == 2) finalizationRequest.set(request);
-                    return response(
+                    AgentChatResponse response = response(
                             modelCalls.get() == 1
                                     ? new ToolCallDecision(List.of(tool))
                                     : finalDecision("retained answer from completed evidence"));
+                    return new AgentChatResponse(
+                            response.responseId(),
+                            response.actualModelId(),
+                            response.content(),
+                            response.toolCalls(),
+                            response.finishReason(),
+                            response.usage(),
+                            response.systemFingerprint(),
+                            response.metadata(),
+                            Optional.of(SensitiveModelReasoning.of(
+                                    modelCalls.get() == 1 ? "unused-tool-reasoning" : "synthesis-reasoning")));
                 },
                 builder -> TestToolPlatform.install(builder, "read", "1.0.0", "read.input", false, request -> {
-                    executions.incrementAndGet();
-                    return new ToolResult(true, "ok", Map.of(), List.of(), List.of(), false);
-                }));
+                            executions.incrementAndGet();
+                            return new ToolResult(true, "ok", Map.of(), List.of(), List.of(), false);
+                        })
+                        .profiles((id, overrides) -> {
+                            var base = DefaultResolvedModelSnapshots.deepSeekV4Pro();
+                            var model = ResolvedModelSnapshot.create(
+                                    base.providerId(),
+                                    base.providerVersion(),
+                                    base.modelId(),
+                                    base.modelVersion(),
+                                    base.providerModelId(),
+                                    base.adapterType(),
+                                    base.adapterVersion(),
+                                    base.apiStyle(),
+                                    base.dialect(),
+                                    base.endpoint(),
+                                    base.credentialRef(),
+                                    base.nativeStreaming(),
+                                    base.capabilities(),
+                                    base.contextWindow(),
+                                    base.maxOutputTokens(),
+                                    base.providerOptions(),
+                                    Map.of("thinking", "enabled", "requires_reasoning_continuation", true));
+                            return new ResolvedProfile(
+                                    id,
+                                    "1.0.0",
+                                    AgentRunType.CHAT,
+                                    new AgentRunBudget(1_000_000, 1_000_000, 1_000_000, 32, 64, 8, "USD", 1_000_000),
+                                    new AgentRunLimits(50, 4, 1, 300_000, 60_000),
+                                    model);
+                        }));
 
         var accepted = fixture.runtime.start(request("tool-budget-limited"));
         var run = fixture.store.find(accepted.runId()).orElseThrow();
@@ -984,6 +1030,14 @@ class RuntimeCoreHardeningTest {
         });
         assertThat(modelCalls).hasValue(2);
         assertThat(finalizationRequest.get().tools()).isEmpty();
+        assertThat(fixture.store.modelContinuations(accepted.runId()))
+                .singleElement()
+                .satisfies(value -> {
+                    assertThat(value.reference().digest())
+                            .isEqualTo(SensitiveModelReasoning.of("synthesis-reasoning")
+                                    .digest());
+                    assertThat(value.toolCorrelationIds()).isEmpty();
+                });
         assertThat(executions).hasValue(0);
         assertThat(fixture.store.toolCalls(accepted.runId())).isEmpty();
     }
