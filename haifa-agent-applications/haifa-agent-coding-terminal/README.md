@@ -117,12 +117,14 @@ Error、Queued 和 Focus。TrueColor 参考色会按明暗背景自适应；NoCo
 - User 使用低对比消息块，便于定位用户意图；
 - Assistant 正文直接进入对话流，不使用厚卡片；高频 Markdown 子集只在 View 层转换为终端样式，
   `TranscriptItem`、Session 与持久化继续保留原始 Markdown；
-- Tool 根据 `requested/started/succeeded/failed/cancelled` 使用状态色。折叠项只占一行：
+- Tool 根据 `requested/started/succeeded/failed/cancelled` 使用状态色。折叠项默认占一行：
   以 `✓`/`✗`/`●` 状态符号开头，随后是 `名称 · 目标`，并把 `ctrl+o expand` 放在同一行；连续折叠项
-  之间不插入空行。成功的 Tool/Execution 折叠时再追加一行灰色正文预览（取正文里第一条有效内容，
-  跳过 `Target:`、`Output:`、`Output (streaming):` 等结构行），无需展开即可看到实际结果；
-  失败/未决项在折叠状态保留最多两行安全原因。折叠时完成耗时只在超过 10s 时显示，避免短调用
-  刷屏；按 `ctrl+o` 展开后始终显示既有有界详情和 `Duration … · N lines · X KB` 元数据尾行；
+  之间不插入空行。成功的 Tool/Execution 折叠时再追加一行灰色正文预览（取正文里第一条有效内容；
+  流式长输出只保留尾部窗口时，预览取该窗口首行），结构行统一由 `ToolBodyLines` 判定并跳过：`Target:`、`Reason:`、`Next:`、`Outcome:`、`Status:`、
+  `Result:`、`Output:`、`Output (truncated):`、`Output (streaming):`、`Output truncated · …`、
+  `[stdout]`/`[stderr]` 以及预览截断/丢弃标记；正文全为结构行时不显示预览。失败/未决项在折叠
+  状态保留最多两行安全原因。折叠时完成耗时只在超过 10s 时显示，避免短调用刷屏；按 `ctrl+o`
+  展开后始终显示既有有界详情和 `Duration … · N lines · X KB` 元数据尾行；
 - 运行中的执行工具通过进程内 transient publisher 增量刷新同一 Tool Call 卡片的
   `Output (streaming):` 段；每批最多 4 KiB，卡片正文最多保留 16 KiB 尾部，stderr 和 preview
   丢弃会显式标记；执行侧达到输出上限时使用独立截断标记，避免与预览丢批混淆。该内容不持久化、
@@ -321,8 +323,9 @@ key，并在所有重启间保持不变。
 10. Terminal 模式使用 `--trace detail` 但不提供 `--trace-file`，确认 Trace 不写入 TUI；提供
     `--trace-file` 后确认诊断仅进入文件。
 11. 用 Stub/Fake Tool 走通 requested → started → succeeded/failed/cancelled，确认同一 Tool
-    只更新一张卡片，折叠行带 `✓`/`✗`/`●` 状态符号与耗时，Ctrl+O 可折叠/展开最近项（含 Run Summary
-    与可折叠 Resource 项）；Run 终态确认追加 Run Summary 卡片。
+    只更新一张卡片，折叠行带 `✓`/`✗`/`●` 状态符号、成功/运行项的一行正文预览行和（超过 10s 的）
+    耗时，Ctrl+O 可折叠/展开最近项（含 Run Summary 与可折叠 Resource 项）；Run 终态确认追加 Run
+    Summary 卡片。
 12. 用 Stub/Fake Approval 检查结构化字段、approve/reject 回执与 editor 草稿恢复；审批期间输入只由
     Selector 消费。
 13. Active Enter 后观察 Steer 从 accepted 保持到 applied；Alt+Enter 后观察持久 Follow-up Queue，

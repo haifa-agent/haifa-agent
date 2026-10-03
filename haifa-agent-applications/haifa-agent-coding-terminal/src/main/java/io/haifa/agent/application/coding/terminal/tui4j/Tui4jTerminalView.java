@@ -9,6 +9,7 @@ import io.haifa.agent.application.coding.terminal.state.TerminalDurations;
 import io.haifa.agent.application.coding.terminal.state.TerminalRecovery;
 import io.haifa.agent.application.coding.terminal.state.TerminalSelector;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
+import io.haifa.agent.application.coding.terminal.state.ToolBodyLines;
 import io.haifa.agent.application.coding.terminal.state.TranscriptItem;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -75,8 +76,6 @@ final class Tui4jTerminalView {
             "TIMEOUT");
     private static final Set<String> UNKNOWN_STATUSES = Set.of("OUTCOME_UNKNOWN", "UNKNOWN_OUTCOME");
     private static final long COLLAPSED_DURATION_HIDE_MILLIS = 10_000L;
-    private static final String OUTPUT_TRUNCATED_HEADING = "Output (truncated):";
-    private static final String OUTPUT_STREAMING_HEADING = "Output (streaming):";
 
     private final Tui4jTerminalTheme theme = new Tui4jTerminalTheme();
     private final IncrementalTerminalMarkdownRenderer markdown = new IncrementalTerminalMarkdownRenderer(theme);
@@ -333,7 +332,7 @@ final class Tui4jTerminalView {
                         .map(value -> "  " + sanitize(value))
                         .collect(Collectors.joining("\n"));
                 if (!details.isBlank()) content.append('\n').append(details);
-            } else if (item.kind() == TranscriptItem.Kind.TOOL || item.kind() == TranscriptItem.Kind.EXECUTION) {
+            } else if (isToolLike(item)) {
                 String preview = previewLine(item.body(), bodyWidth);
                 if (!preview.isBlank()) content.append('\n').append(theme.muted("  " + preview));
             }
@@ -343,32 +342,26 @@ final class Tui4jTerminalView {
                 item.expanded() ? item.body() : item.body().lines().limit(5).collect(Collectors.joining("\n"));
         String content =
                 title + "\n" + body.lines().map(value -> "  " + sanitize(value)).collect(Collectors.joining("\n"));
-        if (item.expanded()
-                && (item.kind() == TranscriptItem.Kind.TOOL || item.kind() == TranscriptItem.Kind.EXECUTION)) {
+        if (item.expanded() && isToolLike(item)) {
             String metadata = metadata(item);
             if (!metadata.isBlank()) content = content + "\n" + theme.muted("  " + metadata);
         }
         return style(item, content);
     }
 
-    private String previewLine(String body, int bodyWidth) {
+    private static String previewLine(String body, int bodyWidth) {
         int available = Math.max(16, bodyWidth - 2);
         return body.lines()
                 .map(String::strip)
                 .filter(line -> !line.isEmpty())
-                .filter(line -> !isCollapsedStructuralLine(line))
+                .filter(line -> !ToolBodyLines.isStructural(line))
                 .findFirst()
                 .map(line -> Truncate.truncate(sanitize(line), available, "…"))
                 .orElse("");
     }
 
-    private static boolean isCollapsedStructuralLine(String line) {
-        return line.startsWith("Target:")
-                || line.equals("Output:")
-                || line.equals(OUTPUT_TRUNCATED_HEADING)
-                || line.equals(OUTPUT_STREAMING_HEADING)
-                || line.equals("[stdout]")
-                || line.equals("[stderr]");
+    private static boolean isToolLike(TranscriptItem item) {
+        return item.kind() == TranscriptItem.Kind.TOOL || item.kind() == TranscriptItem.Kind.EXECUTION;
     }
 
     private String approval(String title, ApprovalDetails details, boolean expanded) {
@@ -487,7 +480,7 @@ final class Tui4jTerminalView {
 
     private java.util.Optional<String> resources(TerminalUiState state) {
         List<String> values = state.loadedResources().stream()
-                .map(this::sanitize)
+                .map(Tui4jTerminalView::sanitize)
                 .filter(this::isMeaningfulResource)
                 .toList();
         if (values.isEmpty()) return java.util.Optional.empty();
@@ -595,7 +588,7 @@ final class Tui4jTerminalView {
                 .collect(Collectors.joining("\n"));
     }
 
-    private String sanitize(String value) {
+    private static String sanitize(String value) {
         StringBuilder safe = new StringBuilder(value.length());
         value.codePoints().forEach(codePoint -> {
             if (codePoint == '\t') {
