@@ -355,3 +355,12 @@ Run Event Feed 使用 `ModelAttemptLifecycle` 暴露逻辑请求、Attempt、等
 不再用 64 字符 ID、1000 字符 description 或 32000 字符 Child instructions 的 SDK 构造边界拒绝可信定义。
 `ProductProfile.allowedChildAgents` 和命名 Run Profile 的 ID 保留完整自然标识；不会截断或转换为别名。定义文本仍必须非空，
 Child 工具授权、Runtime 预算和模型上下文准入继续生效，普通 Parent instructions 等已有长度限制保留。
+
+## Shared Child capacity
+
+`ChildRunCapacity` is caller-owned and may be shared across Agents using
+`HaifaAgentBuilder.childRunCapacity(capacity)` (or `RuntimeCoreBuilder.childRunCapacity(capacity)`).
+Its maximum takes precedence over `maxConcurrentChildRuns`; no shared capacity is installed by default.
+A Child keeps its slot while waiting for approval and until its terminal Run and actual execution tasks
+have settled. Releasing a slot wakes waiting parents across all participating Agents. Cancelling a
+parent waiting for admission creates no Child. Closing one Agent does not close the shared capacity.

@@ -28,6 +28,7 @@ import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.policy.api.PolicyPresets;
 import io.haifa.agent.policy.core.DefaultPolicyDecisionService;
+import io.haifa.agent.runtime.api.ChildRunCapacity;
 import io.haifa.agent.runtime.api.ChildRunView;
 import io.haifa.agent.runtime.api.RunEventCursor;
 import io.haifa.agent.runtime.api.RunEventPayloads;
@@ -119,6 +120,8 @@ public class ChildAgentDelegationTest {
                                 childModel.modelId().value(), childModel)))
                 .persistence(SdkContributions.inMemoryPersistence())
                 .conversation(new InMemoryConversationContribution())
+                .childRunCapacity(new ChildRunCapacity(1))
+                .maxConcurrentChildRuns(3)
                 .policy(new PolicyPlatformContribution(
                         PolicyPresets.standardApproval(), new DefaultPolicyDecisionService()))
                 .runProfile(childProfile)

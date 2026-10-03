@@ -44,6 +44,7 @@ import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.AgentRunSnapshot;
+import io.haifa.agent.runtime.api.ChildRunCapacity;
 import io.haifa.agent.runtime.api.ChildRunView;
 import io.haifa.agent.runtime.api.InteractionAction;
 import io.haifa.agent.runtime.api.InteractionResponseId;
@@ -477,6 +478,8 @@ class ChildRunDelegationTest {
         AgentRunId child = fixture.runtime.children(parent.runId()).getFirst().runId();
         assertThat(parent.status()).isEqualTo(AgentRunStatus.COMPLETED);
         assertThat(fixture.store.find(child).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
+        eventually(() -> fixture.store.attemptsFor(child).stream()
+                .noneMatch(attempt -> attempt.status() == ExecutionAttemptStatus.RUNNING));
         assertThat(fixture.store.attemptsFor(child))
                 .extracting(attempt -> attempt.status())
                 .containsExactly(ExecutionAttemptStatus.PAUSED, ExecutionAttemptStatus.SUCCEEDED);
@@ -750,6 +753,102 @@ class ChildRunDelegationTest {
         assertThat(childTerminalEvents(
                         fixture, started.runId(), children.get("slow").id()))
                 .containsExactly("child.run.failed:FAILED");
+    }
+
+    @Test
+    void independentCoordinatorsShareThreeSlotsAndWakeWhenAnotherChildSettles() throws Exception {
+        ChildRunCapacity capacity = new ChildRunCapacity(3);
+        CountDownLatch threeStarted = new CountDownLatch(3);
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicInteger executing = new AtomicInteger();
+        AtomicInteger maximum = new AtomicInteger();
+        java.util.function.Function<AgentChatRequest, AgentChatResponse> model = request -> {
+            if (isParent(request))
+                return hasToolResults(request)
+                        ? answer("done", 1)
+                        : taskCalls("researcher", "first", "researcher", "second");
+            maximum.accumulateAndGet(executing.incrementAndGet(), Math::max);
+            threeStarted.countDown();
+            try {
+                awaitIgnoringInterrupts(release);
+                return answer("finding", 1);
+            } finally {
+                executing.decrementAndGet();
+            }
+        };
+        Fixture first = fixture(Options.defaults().customize(builder -> builder.childRunCapacity(capacity)), model);
+        Fixture second = fixture(Options.defaults().customize(builder -> builder.childRunCapacity(capacity)), model);
+        var parentA = first.start("shared-a");
+        var parentB = second.start("shared-b");
+        try {
+            assertThat(threeStarted.await(10, TimeUnit.SECONDS)).isTrue();
+            assertThat(first.runtime.children(parentA.runId()).size()
+                            + second.runtime.children(parentB.runId()).size())
+                    .isEqualTo(3);
+            assertThat(maximum).hasValue(3);
+        } finally {
+            release.countDown();
+        }
+        assertThat(first.runtime
+                        .handle(parentA.runId())
+                        .awaitCompletion(AWAIT)
+                        .orElseThrow()
+                        .status())
+                .isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(second.runtime
+                        .handle(parentB.runId())
+                        .awaitCompletion(AWAIT)
+                        .orElseThrow()
+                        .status())
+                .isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(first.runtime.children(parentA.runId())).hasSize(2);
+        assertThat(second.runtime.children(parentB.runId())).hasSize(2);
+        assertThat(maximum).hasValue(3);
+    }
+
+    @Test
+    void cancellingAnotherCoordinatorsPendingParentCreatesNoChildAndLeaksNoSlot() throws Exception {
+        ChildRunCapacity capacity = new ChildRunCapacity(1);
+        CountDownLatch heldStarted = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        java.util.function.Function<AgentChatRequest, AgentChatResponse> model = request -> {
+            if (isParent(request)) return hasToolResults(request) ? answer("done", 1) : taskCalls("researcher", "held");
+            heldStarted.countDown();
+            awaitIgnoringInterrupts(release);
+            return answer("finding", 1);
+        };
+        Fixture first = fixture(Options.defaults().customize(builder -> builder.childRunCapacity(capacity)), model);
+        Fixture second = fixture(Options.defaults().customize(builder -> builder.childRunCapacity(capacity)), model);
+        var held = first.start("shared-held");
+        assertThat(heldStarted.await(10, TimeUnit.SECONDS)).isTrue();
+        var pending = second.start("shared-pending");
+        try {
+            eventually(() -> !delegationCalls(second, pending.runId()).isEmpty());
+            assertThat(second.runtime.children(pending.runId())).isEmpty();
+            second.runtime.handle(pending.runId()).cancel(RunCancellation.userRequest());
+            assertThat(second.runtime
+                            .handle(pending.runId())
+                            .awaitCompletion(AWAIT)
+                            .orElseThrow()
+                            .status())
+                    .isEqualTo(AgentRunStatus.CANCELLED);
+            assertThat(second.runtime.children(pending.runId())).isEmpty();
+            assertThat(second.runtime
+                            .events(pending.runId(), RunEventCursor.beforeFirst(pending.runId()), 200)
+                            .items())
+                    .noneMatch(event -> event.eventType().equals("child.run.started"));
+        } finally {
+            release.countDown();
+        }
+        assertThat(first.runtime
+                        .handle(held.runId())
+                        .awaitCompletion(AWAIT)
+                        .orElseThrow()
+                        .status())
+                .isEqualTo(AgentRunStatus.COMPLETED);
+        var later = second.startAndAwait("shared-later");
+        assertThat(later.status()).isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(second.runtime.children(later.runId())).hasSize(1);
     }
 
     @Test
