@@ -297,6 +297,76 @@ class ModelMessageAssemblerTest {
     }
 
     @Test
+    void keepsDelegationDisplayMetadataOutOfModelMessagesButPreservesOrdinaryToolData() {
+        for (String name : List.of("task", "utility_search")) {
+            InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+            ToolCallId callId = new ToolCallId("tool-call-display");
+            ProviderToolCallCorrelationId correlation = new ProviderToolCallCorrelationId("provider-display");
+            ToolCall call = new ToolCall(
+                    callId,
+                    RUN_ID,
+                    new AgentStepId("step-display"),
+                    correlation,
+                    new RuntimeIdempotencyKey("idempotency-display"),
+                    name,
+                    "1.0.0",
+                    new ToolArguments("display.input", "1.0.0", Map.of()),
+                    Instant.parse("2026-07-21T00:00:00Z"));
+            call.beginValidation();
+            call.beginPolicyCheck();
+            call.start(Instant.parse("2026-07-21T00:00:01Z"));
+            Map<String, Object> data = Map.of(
+                    "status",
+                    "COMPLETED",
+                    "outputPreview",
+                    "display-only output",
+                    "outputSha256",
+                    "a".repeat(64),
+                    "outputTruncated",
+                    false);
+            call.complete(
+                    new io.haifa.agent.core.tool.ToolResult(
+                            true, "original summary", data, List.of(), List.of(), false),
+                    Instant.parse("2026-07-21T00:00:02Z"));
+            store.appendToolCall(call);
+            AgentSessionId session = new AgentSessionId("session-display");
+            AgentMessage assistant = message(
+                    "assistant-display",
+                    session,
+                    RUN_ID,
+                    MessageRole.ASSISTANT,
+                    1,
+                    List.of(new ToolCallPart(callId, correlation, name, "1.0.0")));
+            AgentMessage result = message(
+                    "result-display",
+                    session,
+                    RUN_ID,
+                    MessageRole.TOOL,
+                    2,
+                    List.of(new ToolResultPart(callId, correlation, "original summary")));
+            AgentContext context = new AgentContext(
+                    List.of(prompt()),
+                    List.of(item(
+                            "display-group",
+                            ContextItemType.MESSAGE,
+                            new MessageGroupContextContent(List.of(assistant, result)))),
+                    List.of(),
+                    budget(),
+                    30);
+
+            ModelMessage projected =
+                    new ModelMessageAssembler(store).assemble(RUN_ID, context).getLast();
+            assertThat(projected.content()).isEqualTo("original summary");
+            assertThat(projected.providerCorrelationId()).contains(correlation);
+            assertThat(projected.toolResultTruncated()).isFalse();
+            assertThat(projected.toolResultData())
+                    .isEqualTo(name.equals("task") ? Map.of("status", "COMPLETED") : data);
+            assertThat(store.toolCalls(RUN_ID).getFirst().result().orElseThrow().structuredData())
+                    .isEqualTo(data);
+        }
+    }
+
+    @Test
     void passesCanonicalBoundedExecutionFailureFactsIntoTheModelToolMessage() {
         InMemoryRuntimeStore store = new InMemoryRuntimeStore();
         AgentSessionId sessionId = new AgentSessionId("session-1");

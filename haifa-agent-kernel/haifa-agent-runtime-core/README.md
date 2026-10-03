@@ -301,7 +301,7 @@ Run/Attempt 事实。具有副作用且结果不确定的 Tool 仍映射为 `TOO
 - Run 配置按 alias 冻结精确 `FrozenSkillBinding`、Catalog digest 和 Resolution Policy reference；普通未启用 Skill 的 Profile 冻结空集合。
 - 模型初始上下文只披露冻结 Skill 的有界元数据。`skill_load` 与 `skill_resource_read` 作为普通 Tool 经统一冻结、Policy、Schema、Journal 和调用管线执行；激活后的指令进入最弱 `PromptLayer.SKILL`，资源只可从当前 Run 已冻结、已激活且索引为可读文本的包中按需读取。未允许、未激活、未索引或非文本资源会返回结构化 Tool 失败供模型修正请求；调用者越权、内容摘要漂移等完整性故障仍 fail closed。
 - Skill 激活是 Run-scope 的幂等事实，保存在 Skill 状态仓。继续执行时检查冻结 Binding 与内容访问，不复制到 Checkpoint。
-- `ToolCall` 是工具调用的权威记录。`ToolCallPart`/`ToolResultPart` 只保存领域 `ToolCallId`、Provider correlation 等协议引用和有界摘要；组装下一轮模型请求时，从权威 `ToolCall.result()` 重建已归一化的 `structuredData` 与 `truncated`，Runtime idempotency key 不发送给模型。
+- `ToolCall` 是工具调用的权威记录。`ToolCallPart`/`ToolResultPart` 只保存领域 `ToolCallId`、Provider correlation 等协议引用和有界摘要；组装下一轮模型请求时，从权威 `ToolCall.result()` 重建已归一化的 `structuredData` 与 `truncated`；`task` 结果排除仅供展示的 `outputPreview`、`outputSha256`、`outputTruncated`，Runtime idempotency key 不发送给模型。
 - Session Context 的 Token 估算同样从权威 `ToolCall` 读取完整 arguments 与 structured result；Tool 执行和持久化 Trace 记录实际 AgentLoop iteration，不使用占位值。
 - Provider 在 Tool dispatch 后抛出异常时，Runtime 会先把权威 `ToolCall` 和 Step 收敛为失败并追加
   使用同一 Provider correlation 的安全 `ToolResultPart`，再终止当前 Run。后续 Run 因此仍能组装
