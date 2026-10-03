@@ -25,6 +25,7 @@ class McpToolPlatformsTest {
         var mcp = new FakeMcpServer().serving("enterprise-search", "search_jobs");
 
         try (var platform = McpToolPlatforms.connect(List.of(jobs()), TENANT, PRINCIPAL, name -> "test-secret", mcp)) {
+            assertThat(platform.toolNames()).containsExactly("enterprise_search_jobs");
             platform.applyTo(HaifaAgents.builder());
 
             assertThat(mcp.openClients()).isEqualTo(1);
@@ -35,9 +36,24 @@ class McpToolPlatformsTest {
     @Test
     void anEmptyDeclarationIsAnOwnedNoOp() {
         try (var platform = McpToolPlatforms.connect(List.of(), TENANT, PRINCIPAL)) {
+            assertThat(platform.toolNames()).isEmpty();
+            assertThatThrownBy(() -> platform.toolNames().add("invented"))
+                    .isInstanceOf(UnsupportedOperationException.class);
             platform.applyTo(HaifaAgents.builder());
             platform.close();
         }
+    }
+
+    @Test
+    void aLegacyImplementationWithoutAnAuthoritativeSnapshotFailsClosed() {
+        var platform = new McpToolPlatforms.McpToolPlatform() {
+            @Override
+            public void applyTo(io.haifa.agent.sdk.api.HaifaAgentBuilder builder) {}
+
+            @Override
+            public void close() {}
+        };
+        assertThatThrownBy(platform::toolNames).isInstanceOf(UnsupportedOperationException.class);
     }
 
     @Test
@@ -96,6 +112,7 @@ class McpToolPlatformsTest {
 
         try (var platform = McpToolPlatforms.connect(List.of(jobs()), TENANT, PRINCIPAL, name -> "test-secret", mcp)) {
             assertThatThrownBy(() -> platform.applyTo(hostBuilder)).isInstanceOf(IllegalStateException.class);
+            assertThat(platform.toolNames()).containsExactly("enterprise_search_jobs");
 
             assertThat(mcp.closedClients()).isZero();
             platform.applyTo(HaifaAgents.builder());

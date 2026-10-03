@@ -5,11 +5,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.agent.AgentDefinitionVersion;
+import io.haifa.agent.core.error.AgentErrorCode;
 import io.haifa.agent.core.run.AgentRunBudget;
 import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.run.AgentRunType;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
+import io.haifa.agent.core.tool.ToolCallStatus;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.ApiStyleId;
@@ -29,6 +31,7 @@ import io.haifa.agent.policy.core.DefaultPolicyDecisionService;
 import io.haifa.agent.runtime.api.ChildRunView;
 import io.haifa.agent.runtime.api.RunEventCursor;
 import io.haifa.agent.runtime.api.RunEventPayloads;
+import io.haifa.agent.sdk.SdkTestFixtures;
 import io.haifa.agent.sdk.contribution.InMemoryConversationContribution;
 import io.haifa.agent.sdk.contribution.ModelContribution;
 import io.haifa.agent.sdk.contribution.PolicyPlatformContribution;
@@ -41,6 +44,10 @@ import io.haifa.agent.sdk.product.ProductProfile;
 import io.haifa.agent.sdk.product.ProductRunProfile;
 import io.haifa.agent.sdk.product.ProductRunProfileRef;
 import io.haifa.agent.sdk.product.ProductVersion;
+import io.haifa.agent.sdk.tool.JavaTool;
+import io.haifa.agent.sdk.tool.JavaToolContext;
+import io.haifa.agent.sdk.tool.JavaToolSpec;
+import io.haifa.agent.tool.api.ToolSideEffect;
 import java.net.URI;
 import java.time.Duration;
 import java.util.List;
@@ -48,15 +55,26 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 
 /** Public SDK surface for delegation: register children, delegate, list children, read child events. */
-class ChildAgentDelegationTest {
+public class ChildAgentDelegationTest {
     private static final ResolvedModelSnapshot PARENT_MODEL = snapshot("parent-chat");
-    private static final ResolvedModelSnapshot CHILD_MODEL = snapshot("child-chat");
 
     @Test
     void parentDelegatesToRegisteredChildrenThroughThePublicSdkSurface() throws Exception {
+        delegateLongDefinition(65_536, true);
+    }
+
+    @Test
+    void longTrustedInstructionsStillRespectTheSelectedModelContextBudget() throws Exception {
+        delegateLongDefinition(8_192, false);
+    }
+
+    private void delegateLongDefinition(int contextWindow, boolean contextFits) throws Exception {
+        String researcherId = "1-" + "researcher".repeat(40);
+        ResolvedModelSnapshot childModel = snapshot("child-chat", contextWindow);
         Map<String, String> modelByObjective = new ConcurrentHashMap<>();
         AgentChatModel model = request -> {
             boolean parent =
@@ -68,7 +86,7 @@ class ChildAgentDelegationTest {
                         "r",
                         "stub",
                         "",
-                        List.of(call("a", "researcher", "find sources"), call("b", "summarizer", "summarize context")),
+                        List.of(call("a", researcherId, "find sources"), call("b", "summarizer", "summarize context")),
                         ModelFinishReason.TOOL_CALLS,
                         ModelUsage.unpriced(1, 1),
                         "",
@@ -85,29 +103,29 @@ class ChildAgentDelegationTest {
         ProductRunProfile childProfile = new ProductRunProfile(
                 "child-profile",
                 "1.0.0",
-                CHILD_MODEL.modelId().value(),
+                childModel.modelId().value(),
                 AgentRunType.CHAT,
                 budget(),
                 new AgentRunLimits(8, 1, 1, 30_000, 30_000, 8, 8, 0),
                 Map.of());
 
         try (HaifaAgent agent = HaifaAgents.builder(
-                        profile().withAllowedChildAgents(Set.of("researcher", "summarizer")))
+                        profile().withAllowedChildAgents(Set.of(researcherId, "summarizer")))
                 .model(new ModelContribution(
                         Map.of(ModelAdapterCoordinate.from(PARENT_MODEL), model),
                         PARENT_MODEL,
                         Map.of(
                                 PARENT_MODEL.modelId().value(), PARENT_MODEL,
-                                CHILD_MODEL.modelId().value(), CHILD_MODEL)))
+                                childModel.modelId().value(), childModel)))
                 .persistence(SdkContributions.inMemoryPersistence())
                 .conversation(new InMemoryConversationContribution())
                 .policy(new PolicyPlatformContribution(
                         PolicyPresets.standardApproval(), new DefaultPolicyDecisionService()))
                 .runProfile(childProfile)
                 .childAgent(new ChildAgentSpec(
-                        "researcher",
-                        "Finds and verifies sources",
-                        "Research carefully and cite evidence.",
+                        researcherId,
+                        "Finds and verifies sources. ".repeat(80),
+                        "Research carefully and cite evidence. ".repeat(1_000),
                         Optional.of(new ProductRunProfileRef("child-profile", "1.0.0")),
                         Set.of()))
                 .childAgent(
@@ -119,18 +137,39 @@ class ChildAgentDelegationTest {
 
             assertThat(parent.status()).isEqualTo(AgentRunStatus.COMPLETED);
             List<ChildRunView> children = agent.runs().children(parent.runId());
+            if (!contextFits) {
+                ChildRunView rejected = children.stream()
+                        .filter(child -> child.agentDefinitionId().value().equals(researcherId))
+                        .findFirst()
+                        .orElseThrow();
+                var rejectedRun = agent.runs().find(rejected.runId()).orElseThrow();
+                assertThat(rejected.status()).isEqualTo(AgentRunStatus.FAILED);
+                assertThat(rejectedRun.error()).hasValueSatisfying(error -> {
+                    assertThat(error.code()).isEqualTo(AgentErrorCode.MODEL_CONTEXT_TOO_LONG);
+                });
+                assertThat(rejectedRun.usage().modelCalls()).isZero();
+                assertThat(modelByObjective).doesNotContainKey("find sources");
+                assertThat(children)
+                        .filteredOn(child -> child.agentDefinitionId().value().equals("summarizer"))
+                        .singleElement()
+                        .satisfies(child -> assertThat(child.status()).isEqualTo(AgentRunStatus.COMPLETED));
+                return;
+            }
             assertThat(children).hasSize(2).allSatisfy(child -> {
                 assertThat(child.status()).isEqualTo(AgentRunStatus.COMPLETED);
                 assertThat(child.startedAt()).isPresent();
                 assertThat(child.completedAt()).isPresent();
             });
             assertThat(children)
+                    .extracting(child -> child.agentDefinitionId().value())
+                    .containsExactlyInAnyOrder(researcherId, "summarizer");
+            assertThat(children)
                     .extracting(ChildRunView::objective)
                     .containsExactlyInAnyOrder("find sources", "summarize context");
 
             // D5: a referenced run profile selects the child model; otherwise the child inherits the parent's.
             assertThat(modelByObjective)
-                    .containsEntry("find sources", CHILD_MODEL.modelId().value())
+                    .containsEntry("find sources", childModel.modelId().value())
                     .containsEntry("summarize context", PARENT_MODEL.modelId().value());
 
             // D4: the parent's usage only counts its children.
@@ -144,6 +183,10 @@ class ChildAgentDelegationTest {
                     .containsExactlyInAnyOrderElementsOf(children.stream()
                             .map(child -> child.runId().value())
                             .toList());
+            assertThat(events.items())
+                    .filteredOn(event -> event.payload() instanceof RunEventPayloads.ChildRunLifecycle)
+                    .extracting(event -> ((RunEventPayloads.ChildRunLifecycle) event.payload()).childAgent())
+                    .contains(researcherId, "summarizer");
             ChildRunView child = children.getFirst();
             assertThat(agent.runs()
                             .events(child.runId(), RunEventCursor.beforeFirst(child.runId()), 500)
@@ -187,10 +230,95 @@ class ChildAgentDelegationTest {
                 .isEqualTo("CHILD_RUN_PROFILE_UNAVAILABLE");
         assertThatThrownBy(() -> ChildAgentSpec.of("Bad Id", "d", "i", Set.of()))
                 .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> builder(profile()).nonInteractiveChildTools().build())
+                .isInstanceOf(HaifaAgentException.class)
+                .extracting("code")
+                .isEqualTo("CHILD_NON_INTERACTIVE_POLICY_REQUIRED");
+    }
+
+    @Test
+    void nonInteractiveChildDeniesToolAndContinuesWhileParentStillRequiresApproval() throws Exception {
+        Map<String, Integer> executions = new ConcurrentHashMap<>();
+        AtomicBoolean childSawDenial = new AtomicBoolean();
+        AgentChatModel model = request -> {
+            boolean parent =
+                    request.tools().stream().anyMatch(tool -> tool.name().equals("task"));
+            var results = request.messages().stream()
+                    .filter(message -> message.role() == ModelMessageRole.TOOL)
+                    .toList();
+            if (!parent) {
+                if (results.isEmpty()) return SdkTestFixtures.toolCall("writer", Map.of("value", "child"));
+                childSawDenial.set(
+                        results.stream().anyMatch(message -> message.content().contains("denied by policy")));
+                return answer("child continued after denial");
+            }
+            if (results.isEmpty()) return SdkTestFixtures.toolCall("writer", Map.of("value", "parent"));
+            if (results.size() == 1)
+                return SdkTestFixtures.toolCall("task", Map.of("agent", "writer-child", "objective", "Write"));
+            return answer("parent completed");
+        };
+        var parentProfile = profile().withAllowedChildAgents(Set.of("writer-child"));
+        try (HaifaAgent agent = builder(parentProfile, model)
+                .policy(new PolicyPlatformContribution(
+                        PolicyPresets.standardApproval(), new DefaultPolicyDecisionService()))
+                .tool(new Writer(executions))
+                .childAgent(ChildAgentSpec.of(
+                        "writer-child", "Writes", "Attempt the write and handle denial.", Set.of("writer")))
+                .nonInteractiveChildTools()
+                .build()) {
+            var started = agent.conversations().start(new StartConversationCommand("non-interactive", "Parent", "Go"));
+            var interaction = SdkTestFixtures.awaitPending(agent, started.runId());
+            assertThat(agent.runs().find(started.runId()).orElseThrow().status())
+                    .isEqualTo(AgentRunStatus.WAITING_APPROVAL);
+            SdkTestFixtures.approve(agent, started.runId(), interaction);
+            var completed =
+                    agent.runs().await(started.runId(), Duration.ofSeconds(20)).orElseThrow();
+            assertThat(completed.status()).isEqualTo(AgentRunStatus.COMPLETED);
+            var children = agent.runs().children(started.runId());
+            assertThat(children).hasSize(1);
+            var child = children.getFirst();
+            assertThat(child.status()).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(agent.runs().pendingInteraction(child.runId())).isEmpty();
+            assertThat(agent.runs()
+                            .events(child.runId(), RunEventCursor.beforeFirst(child.runId()), 500)
+                            .items())
+                    .extracting(event -> event.eventType())
+                    .doesNotContain("approval.requested", "interaction.requested");
+            assertThat(agent.runs().toolCalls(child.runId()))
+                    .singleElement()
+                    .satisfies(call -> assertThat(call.status()).isEqualTo(ToolCallStatus.DENIED));
+            assertThat(executions)
+                    .containsOnlyKeys(started.runId().value())
+                    .containsEntry(started.runId().value(), 1);
+            assertThat(childSawDenial).isTrue();
+        }
+    }
+
+    public record WriteRequest(String value) {}
+
+    public record WriteResponse(String value) {}
+
+    private record Writer(Map<String, Integer> executions) implements JavaTool<WriteRequest, WriteResponse> {
+        @Override
+        public JavaToolSpec<WriteRequest, WriteResponse> spec() {
+            return JavaToolSpec.builder("writer", WriteRequest.class, WriteResponse.class)
+                    .description("Writes a value")
+                    .sideEffects(ToolSideEffect.FILE_WRITE)
+                    .build();
+        }
+
+        @Override
+        public WriteResponse invoke(WriteRequest request, JavaToolContext context) {
+            executions.merge(context.runId().value(), 1, Integer::sum);
+            return new WriteResponse(request.value());
+        }
     }
 
     private static HaifaAgentBuilder builder(ProductProfile profile) {
-        AgentChatModel model = request -> answer("unused");
+        return builder(profile, request -> answer("unused"));
+    }
+
+    private static HaifaAgentBuilder builder(ProductProfile profile, AgentChatModel model) {
         return HaifaAgents.builder(profile)
                 .model(new ModelContribution(
                         Map.of(ModelAdapterCoordinate.from(PARENT_MODEL), model),
@@ -231,6 +359,10 @@ class ChildAgentDelegationTest {
     }
 
     private static ResolvedModelSnapshot snapshot(String modelId) {
+        return snapshot(modelId, 8_192);
+    }
+
+    private static ResolvedModelSnapshot snapshot(String modelId, int contextWindow) {
         return ResolvedModelSnapshot.create(
                 new ModelProviderId("test"),
                 "1.0",
@@ -245,7 +377,7 @@ class ChildAgentDelegationTest {
                 new CredentialRef("credential:test"),
                 true,
                 Set.of(ModelCapability.TEXT_CHAT),
-                8_192,
+                contextWindow,
                 1_024,
                 Map.of(),
                 Map.of());

@@ -37,6 +37,20 @@ class NativeMcpToolPlatformTest {
                     .containsExactly(
                             "enterprise_search_courses", "enterprise_search_policies", "enterprise_search_jobs");
             assertThat(platform.diagnostics()).isEmpty();
+            int discoveryCalls = mcp.listToolsCalls();
+            var names = platform.toolNames();
+            assertThat(names)
+                    .containsExactlyInAnyOrder(
+                            "enterprise_search_courses", "enterprise_search_policies", "enterprise_search_jobs");
+            assertThatThrownBy(() -> names.add("invented")).isInstanceOf(UnsupportedOperationException.class);
+            assertThat(platform.toolNames()).isEqualTo(names);
+            assertThat(mcp.listToolsCalls()).isEqualTo(discoveryCalls);
+            assertThat(mcp.openClients()).isEqualTo(1);
+            assertThat(mcp.calls()).isEmpty();
+            platform.close();
+            assertThat(platform.toolNames()).isEqualTo(names);
+            assertThat(mcp.listToolsCalls()).isEqualTo(discoveryCalls);
+            assertThat(mcp.closedClients()).isEqualTo(1);
         }
     }
 
@@ -102,6 +116,7 @@ class NativeMcpToolPlatformTest {
 
         try (var platform = connect(mcp, jobs().readOnly().optional())) {
             assertThat(platform.registrations()).isEmpty();
+            assertThat(platform.toolNames()).isEmpty();
             assertThat(platform.diagnostics()).singleElement().satisfies(diagnostic -> {
                 assertThat(diagnostic.code()).isEqualTo("MCP_SERVER_UNAVAILABLE");
                 assertThat(diagnostic.safeMessage()).contains("enterprise-search");

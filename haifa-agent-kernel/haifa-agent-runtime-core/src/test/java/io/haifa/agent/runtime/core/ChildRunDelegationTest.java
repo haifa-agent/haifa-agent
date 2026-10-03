@@ -979,6 +979,186 @@ class ChildRunDelegationTest {
 
     // ---------------------------------------------------------------------------------------------------------
 
+    @Test
+    void insufficientInputWindowRejectsLargeChildToolArgumentsAndResult() throws Exception {
+        largeChildToolArgumentsAndTruncatedResultRespectTheInputWindow(32_768);
+    }
+
+    @Test
+    void sufficientInputWindowAllowsTheNextChildModelTurnAfterLargeArgumentsAndResult() throws Exception {
+        largeChildToolArgumentsAndTruncatedResultRespectTheInputWindow(65_536);
+    }
+
+    private void largeChildToolArgumentsAndTruncatedResultRespectTheInputWindow(int contextWindow) throws Exception {
+        AtomicReference<Throwable> diagnostic = new AtomicReference<>();
+        AtomicInteger childCalls = new AtomicInteger();
+        String path = "/mnt/user-data/" + "x".repeat(20_000);
+        String output = "child completed";
+        ResolvedModelSnapshot original = DefaultResolvedModelSnapshots.deepSeekV4Pro();
+        ResolvedModelSnapshot bounded = ResolvedModelSnapshot.create(
+                original.providerId(),
+                original.providerVersion(),
+                original.modelId(),
+                original.modelVersion(),
+                original.providerModelId(),
+                original.adapterType(),
+                original.adapterVersion(),
+                original.apiStyle(),
+                original.dialect(),
+                original.endpoint(),
+                original.credentialRef(),
+                true,
+                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
+                contextWindow,
+                16_384,
+                Map.of(),
+                Map.of());
+        Options options = Options.defaults();
+        Fixture fixture = fixture(
+                options.tools(
+                                (run, binding, request) -> TestToolPlatform.allow(),
+                                invocation -> new ToolResult(
+                                        true,
+                                        "Error: INVALID_PATH\npath=" + path,
+                                        Map.of(
+                                                "path",
+                                                path,
+                                                "size",
+                                                0,
+                                                "sha256",
+                                                "",
+                                                "encoding",
+                                                "",
+                                                "totalLines",
+                                                0,
+                                                "startLine",
+                                                0,
+                                                "endLine",
+                                                0,
+                                                "truncated",
+                                                false,
+                                                "content",
+                                                "",
+                                                "error",
+                                                "INVALID_PATH"),
+                                        List.of(),
+                                        List.of(),
+                                        false))
+                        .customize(builder -> builder.failureDiagnostics((context, failure) -> diagnostic.set(failure))
+                                .profiles((id, overrides) -> new ResolvedProfile(
+                                        id,
+                                        "1.0.0",
+                                        AgentRunType.CHAT,
+                                        AgentRunBudget.disabled(),
+                                        id.equals("child-profile") ? options.childLimits() : options.parentLimits(),
+                                        bounded))),
+                request -> {
+                    if (isParent(request))
+                        return hasToolResults(request)
+                                ? answer("done", 1)
+                                : taskCalls("researcher", "Read the bounded file");
+                    if (childCalls.incrementAndGet() == 1)
+                        return response(List.of(new ModelToolCall(
+                                new ProviderToolCallCorrelationId("large-read"), "read_doc", Map.of("path", path))));
+                    return answer(output, 1);
+                });
+        AgentRunSnapshot parent = fixture.startAndAwait("large-tool-result");
+        assertThat(parent.status()).isEqualTo(AgentRunStatus.COMPLETED);
+        AgentRun child = fixture.store
+                .find(fixture.runtime.children(parent.runId()).getFirst().runId())
+                .orElseThrow();
+        if (contextWindow == 32_768) {
+            assertThat(childCalls).hasValue(1);
+            assertThat(child.status()).isEqualTo(AgentRunStatus.FAILED);
+            assertThat(diagnostic.get())
+                    .isInstanceOf(io.haifa.agent.runtime.core.loop.ContextRebuildExhaustedException.class);
+        } else {
+            assertThat(childCalls).hasValue(2);
+            assertThat(child.status()).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(diagnostic.get()).isNull();
+        }
+        assertThat(fixture.store.toolCalls(child.id())).singleElement().satisfies(call -> assertThat(
+                        call.result().orElseThrow().truncated())
+                .isTrue());
+    }
+
+    @Test
+    void cancellationDuringTerminalCollectionDoesNotAdmitTheWaitingChild() throws Exception {
+        terminalCollectionUsesTheCurrentParentStopSignalBeforeAdmission(true);
+    }
+
+    @Test
+    void terminalCollectionStillAdmitsTheWaitingChildWithoutAStopSignal() throws Exception {
+        terminalCollectionUsesTheCurrentParentStopSignalBeforeAdmission(false);
+    }
+
+    private void terminalCollectionUsesTheCurrentParentStopSignalBeforeAdmission(boolean cancel) throws Exception {
+        var controls = new io.haifa.agent.runtime.core.control.RunControlRegistry();
+        var parentAtSecondModel = new CountDownLatch(1);
+        var releaseParent = new CountDownLatch(1);
+        Fixture fixture = fixture(
+                Options.defaults().parallel(1).customize(builder -> builder.controlRegistry(controls)), request -> {
+                    if (!isParent(request)) return answer("child", 1);
+                    if (!hasToolResults(request)) return taskCalls("researcher", "first");
+                    parentAtSecondModel.countDown();
+                    awaitIgnoringInterrupts(releaseParent);
+                    return answer("done", 1);
+                });
+        AgentRunSnapshot parent = fixture.start("cancel-during-collect");
+        assertThat(parentAtSecondModel.await(AWAIT.toSeconds(), TimeUnit.SECONDS))
+                .isTrue();
+        assertThat(fixture.store.find(parent.runId()).orElseThrow().status()).isEqualTo(AgentRunStatus.RUNNING);
+        ToolCall existing = delegationCalls(fixture, parent.runId()).getFirst();
+        List<ToolCallId> notStarted = new ArrayList<>();
+        ToolCallId waiting = new ToolCallId("waiting-child-call");
+        try {
+            Throwable stopped = org.assertj.core.api.Assertions.catchThrowable(() -> fixture.runtime
+                    .delegations()
+                    .executeChildren(
+                            fixture.store.find(parent.runId()).orElseThrow(),
+                            List.of(
+                                    new DelegationPort.ChildRunRequest(existing.id(), RESEARCHER, "first", "first"),
+                                    new DelegationPort.ChildRunRequest(waiting, RESEARCHER, "waiting", "waiting")),
+                            new DelegationPort.Listener() {
+                                @Override
+                                public void terminal(ToolCallId id, AgentRun child) {
+                                    if (cancel) controls.requestCancel(parent.runId());
+                                }
+
+                                @Override
+                                public void rejected(ToolCallId id, String reason) {
+                                    throw new AssertionError(reason);
+                                }
+
+                                @Override
+                                public void notStarted(ToolCallId id) {
+                                    notStarted.add(id);
+                                }
+                            }));
+            if (cancel) {
+                assertThat(stopped)
+                        .isInstanceOf(io.haifa.agent.runtime.core.control.CancellationObservedException.class);
+                assertThat(notStarted).containsExactly(waiting);
+                assertThat(fixture.runtime.children(parent.runId())).hasSize(1);
+                assertThat(fixture.store.find(ChildRunCoordinator.childRunId(parent.runId(), waiting)))
+                        .isEmpty();
+            } else {
+                assertThat(stopped).isNull();
+                assertThat(notStarted).isEmpty();
+                assertThat(fixture.runtime.children(parent.runId())).hasSize(2);
+                assertThat(fixture.store.find(ChildRunCoordinator.childRunId(parent.runId(), waiting)))
+                        .get()
+                        .satisfies(child -> assertThat(child.status()).isEqualTo(AgentRunStatus.COMPLETED));
+            }
+        } finally {
+            releaseParent.countDown();
+        }
+        assertThat(fixture.runtime.handle(parent.runId()).awaitCompletion(AWAIT))
+                .get()
+                .satisfies(result -> assertThat(result.status())
+                        .isEqualTo(cancel ? AgentRunStatus.CANCELLED : AgentRunStatus.COMPLETED));
+    }
+
     private Fixture fixture(Options options, Function<AgentChatRequest, AgentChatResponse> script) {
         LocalExecutionScheduler scheduler = new LocalExecutionScheduler();
         closeables.add(scheduler);
