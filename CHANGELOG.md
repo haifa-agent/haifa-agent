@@ -1,5 +1,8 @@
 # Changelog
 
+- Added caller-owned `ChildRunCapacity` to share Child admission and wakeups across independently built
+  Agents without changing their Run/Attempt settlement, cancellation or approval behavior.
+
 - Added complete-output preview, SHA-256 and truncation metadata to completed delegation results. Public
   display projection marks further preview changes and omits the digest on redaction; parent model input
   excludes these display fields. See [delegation result metadata](docs/runtime/delegation-result-metadata.md).

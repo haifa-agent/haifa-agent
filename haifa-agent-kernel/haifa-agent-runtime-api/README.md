@@ -113,3 +113,12 @@ SQLite 与 InMemory 使用同一 Runtime 投影，因此重启后仍从权威持
 `RuntimeApiErrorCode` 只表达提交、查询、命令、Interaction、Cursor 和协议失败；异步执行中的
 Run/Attempt/Step 失败继续使用 Core `AgentErrorCode`。失败 Run 的生命周期事件携带稳定执行
 错误码、安全默认文案和同一个可选 `diagnosticId`，调用方不需要解析异常消息。
+
+## Shared Child capacity
+
+`ChildRunCapacity` is caller-owned and may be shared across Agents using
+`HaifaAgentBuilder.childRunCapacity(capacity)` (or `RuntimeCoreBuilder.childRunCapacity(capacity)`).
+Its maximum takes precedence over `maxConcurrentChildRuns`; no shared capacity is installed by default.
+A Child keeps its slot while waiting for approval and until its terminal Run and actual execution tasks
+have settled. Releasing a slot wakes waiting parents across all participating Agents. Cancelling a
+parent waiting for admission creates no Child. Closing one Agent does not close the shared capacity.

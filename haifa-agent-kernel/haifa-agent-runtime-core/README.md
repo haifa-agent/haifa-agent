@@ -373,3 +373,12 @@ Completion 产品验收统一通过 `CompletionPolicy` 返回结构化阻塞与�
 continuation 保护和存储；最终答案、保护载荷与 Run 完成状态在同一 Unit of Work 中提交。
 工具预算耗尽时生成的收尾答案同样保留其自身调用的保护载荷；本地降级摘要不关联被丢弃的工具推理。
 消息装配仅恢复同配置 Binding 的保护载荷，缺失引用保持失败关闭，跨 Binding 不搬运。
+
+## Shared Child capacity
+
+`ChildRunCapacity` is caller-owned and may be shared across Agents using
+`HaifaAgentBuilder.childRunCapacity(capacity)` (or `RuntimeCoreBuilder.childRunCapacity(capacity)`).
+Its maximum takes precedence over `maxConcurrentChildRuns`; no shared capacity is installed by default.
+A Child keeps its slot while waiting for approval and until its terminal Run and actual execution tasks
+have settled. Releasing a slot wakes waiting parents across all participating Agents. Cancelling a
+parent waiting for admission creates no Child. Closing one Agent does not close the shared capacity.

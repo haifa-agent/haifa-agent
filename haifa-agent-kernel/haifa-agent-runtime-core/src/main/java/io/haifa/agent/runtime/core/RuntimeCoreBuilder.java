@@ -21,6 +21,7 @@ import io.haifa.agent.policy.api.ApprovalVerification;
 import io.haifa.agent.policy.api.ApprovalVerificationService;
 import io.haifa.agent.policy.api.PolicyDecisionService;
 import io.haifa.agent.policy.api.PolicyRuleSet;
+import io.haifa.agent.runtime.api.ChildRunCapacity;
 import io.haifa.agent.runtime.core.bootstrap.CallerContextProvider;
 import io.haifa.agent.runtime.core.bootstrap.ConfigurationSnapshotFactory;
 import io.haifa.agent.runtime.core.bootstrap.ContentAddressedSnapshotFactory;
@@ -141,6 +142,7 @@ public final class RuntimeCoreBuilder {
             java.util.function.UnaryOperator.identity();
     private DelegationPort delegations;
     private int maxConcurrentChildRuns = ChildRunCoordinator.DEFAULT_MAX_CONCURRENT_CHILD_RUNS;
+    private ChildRunCapacity childRunCapacity;
     private final Map<ModelAdapterKey, AgentChatModel> chatModels = new LinkedHashMap<>();
     private ToolCatalog toolCatalog = ToolCatalog.empty();
     private SkillCatalog skillCatalog = SkillCatalog.empty();
@@ -298,6 +300,12 @@ public final class RuntimeCoreBuilder {
     }
 
     /** Process-wide cap on concurrently started child runs across all parents (default 3). */
+    /** Shared capacity takes precedence over the per-Agent maximum. */
+    public RuntimeCoreBuilder childRunCapacity(ChildRunCapacity value) {
+        childRunCapacity = Objects.requireNonNull(value, "childRunCapacity must not be null");
+        return this;
+    }
+
     public RuntimeCoreBuilder maxConcurrentChildRuns(int value) {
         if (value < 1) throw new IllegalArgumentException("maxConcurrentChildRuns must be positive");
         maxConcurrentChildRuns = value;
@@ -597,7 +605,7 @@ public final class RuntimeCoreBuilder {
                     settler,
                     ids,
                     time,
-                    maxConcurrentChildRuns);
+                    childRunCapacity != null ? childRunCapacity : new ChildRunCapacity(maxConcurrentChildRuns));
             ChildRunCoordinator coordinator = childRuns;
             transitions.addListener(coordinator::onRunChanged);
             transitions.projectTerminalRunsWith(coordinator::projectTerminal);

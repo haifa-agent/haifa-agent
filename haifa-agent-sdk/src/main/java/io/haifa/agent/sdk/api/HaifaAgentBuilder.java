@@ -6,6 +6,7 @@ import io.haifa.agent.common.time.SystemTimeProvider;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.context.compression.CompressionPolicy;
 import io.haifa.agent.core.run.AgentRunType;
+import io.haifa.agent.runtime.api.ChildRunCapacity;
 import io.haifa.agent.runtime.core.RuntimeCoreBuilder;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedDefinition;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
@@ -86,6 +87,7 @@ public final class HaifaAgentBuilder {
     private final Map<String, ProductRunProfile> runProfiles = new LinkedHashMap<>();
     private final Map<String, ChildAgentSpec> childAgents = new LinkedHashMap<>();
     private Integer maxConcurrentChildRuns;
+    private ChildRunCapacity childRunCapacity;
     private AgentMetadata metadata = AgentMetadata.defaults();
     private boolean starterDefaultInstructionsInUse;
     private CompressionPolicy compressionPolicy;
@@ -283,7 +285,16 @@ public final class HaifaAgentBuilder {
         return this;
     }
 
-    /** Caps concurrently started child runs across all parent runs of this agent (default 3). */
+    /**
+     * Uses a caller-owned Child capacity shared with other Agents. Its maximum takes precedence over
+     * {@link #maxConcurrentChildRuns(int)}; closing this Agent does not close the shared capacity.
+     */
+    public HaifaAgentBuilder childRunCapacity(ChildRunCapacity value) {
+        childRunCapacity = Objects.requireNonNull(value, "childRunCapacity must not be null");
+        return this;
+    }
+
+    /** Per-Agent maximum (default three); an explicitly shared capacity takes precedence. */
     public HaifaAgentBuilder maxConcurrentChildRuns(int value) {
         if (value < 1) throw new IllegalArgumentException("maxConcurrentChildRuns must be positive");
         maxConcurrentChildRuns = value;
@@ -479,6 +490,7 @@ public final class HaifaAgentBuilder {
                             runtimeBuilder.registerChatModel(coordinate.type(), coordinate.version(), adapter));
             runtimeBuilder.policyProductId(effectiveProfile.productId().value());
             if (maxConcurrentChildRuns != null) runtimeBuilder.maxConcurrentChildRuns(maxConcurrentChildRuns);
+            if (childRunCapacity != null) runtimeBuilder.childRunCapacity(childRunCapacity);
 
             if (tool != null) {
                 runtimeBuilder.toolPlatform(tool.catalog(), tool.invoker(), tool.schemaValidator());
