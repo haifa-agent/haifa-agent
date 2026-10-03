@@ -89,6 +89,17 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
+    void periodicallyRechecksTheRealWindowSizeAfterStartup() {
+        var fixture = fixture();
+
+        assertThat(requestsWindowSizeCheck(fixture.model.init())).isTrue();
+
+        var polled = fixture.model.update(new Tui4jCodingTerminalModel.WindowSizePollMessage());
+
+        assertThat(requestsWindowSizeCheck(polled.command())).isTrue();
+    }
+
+    @Test
     void preservesTheEditorWhileCompletionSelectorIsOpenedAndClosed() {
         var fixture = fixture();
 
@@ -821,6 +832,24 @@ class Tui4jCodingTerminalModelTest {
     private void commitPlainEnter(Fixture fixture) {
         var guarded = fixture.model.update(key(KeyType.keyCR));
         fixture.model.update(guarded.command().execute());
+    }
+
+    private boolean requestsWindowSizeCheck(Command command) {
+        if (Command.isNone(command)) {
+            return false;
+        }
+        Message message = command.execute();
+        if (message instanceof com.williamcallahan.tui4j.message.CheckWindowSizeMessage) {
+            return true;
+        }
+        if (message instanceof BatchMessage batch) {
+            for (Command child : batch.commands()) {
+                if (requestsWindowSizeCheck(child)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private boolean emitsClearScreen(Command command) {

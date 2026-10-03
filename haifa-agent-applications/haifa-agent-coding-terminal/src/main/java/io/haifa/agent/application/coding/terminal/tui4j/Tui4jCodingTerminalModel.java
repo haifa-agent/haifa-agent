@@ -33,6 +33,7 @@ import java.util.function.LongSupplier;
 final class Tui4jCodingTerminalModel implements Model {
     private static final Duration EVENT_POLL_INTERVAL = Duration.ofMillis(50);
     private static final Duration UNBRACKETED_PASTE_GUARD_INTERVAL = Duration.ofMillis(100);
+    private static final Duration WINDOW_SIZE_POLL_INTERVAL = Duration.ofMillis(500);
     private static final int MAX_SECRET_CHARACTERS = 65_536;
 
     private final CodingTerminalController controller;
@@ -97,9 +98,11 @@ final class Tui4jCodingTerminalModel implements Model {
     @Override
     public Command init() {
         syncComponents();
-        // tui4j does not emit the initial size until explicitly requested. Without this,
-        // the production terminal stays at the 80x24 bootstrap size until the user resizes it.
-        return Command.batch(Command.checkWindowSize(), nextTick());
+        // tui4j only reports the size when explicitly requested, and its automatic resize path
+        // relies on the POSIX WINCH signal, which does not exist on Windows. Re-check the real
+        // size once at startup and again on a bounded interval so resizing the window or moving
+        // it to another display is reflected even without an operating-system resize event.
+        return Command.batch(Command.checkWindowSize(), nextTick(), nextWindowSizePoll());
     }
 
     @Override
@@ -117,6 +120,8 @@ final class Tui4jCodingTerminalModel implements Model {
                 pendingSubmission = null;
                 syncComponents();
             }
+        } else if (message instanceof WindowSizePollMessage) {
+            command = Command.batch(Command.checkWindowSize(), nextWindowSizePoll());
         } else if (message instanceof WindowSizeMessage resized) {
             pump.offer(new TerminalUiAction.TerminalResized(resized.width(), resized.height()));
             controller.drainEvents();
@@ -668,6 +673,10 @@ final class Tui4jCodingTerminalModel implements Model {
         return Command.tick(EVENT_POLL_INTERVAL, ignored -> new PollMessage());
     }
 
+    private Command nextWindowSizePoll() {
+        return Command.tick(WINDOW_SIZE_POLL_INTERVAL, ignored -> new WindowSizePollMessage());
+    }
+
     private String sanitizeEditorInput(String value) {
         String normalized = value.replace("\r\n", "\n").replace('\r', '\n');
         StringBuilder safe = new StringBuilder(normalized.length());
@@ -684,6 +693,8 @@ final class Tui4jCodingTerminalModel implements Model {
     }
 
     private record PollMessage() implements Message {}
+
+    record WindowSizePollMessage() implements Message {}
 
     private record DeferredEnter(long sequence, TerminalInput.Kind kind) {}
 

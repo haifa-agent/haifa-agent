@@ -22,6 +22,7 @@ public record Tui4jTerminalIo(
         List<String> environment,
         boolean withoutSignalHandler,
         boolean interactive) {
+    private static final String WINDOW_TITLE = "Haifa Coding Agent";
     private static final byte[] RESET_MOUSE_REPORTING =
             "\u001B[?1000l\u001B[?1002l\u001B[?1003l\u001B[?1006l".getBytes(StandardCharsets.US_ASCII);
     private static final Set<String> SAFE_TERMINAL_ENVIRONMENT = Set.of(
@@ -130,10 +131,22 @@ public record Tui4jTerminalIo(
     void run(Program program) {
         Objects.requireNonNull(program, "program must not be null");
         resetMouseReporting();
+        writeWindowTitle(WINDOW_TITLE);
         try {
             program.run();
         } finally {
+            writeWindowTitle("");
             resetMouseReporting();
+        }
+    }
+
+    private void writeWindowTitle(String title) {
+        OutputStream terminalOutput = output.orElse(System.out);
+        try {
+            terminalOutput.write(("\u001B]2;" + title + "\u0007").getBytes(StandardCharsets.UTF_8));
+            terminalOutput.flush();
+        } catch (IOException failure) {
+            throw new UncheckedIOException("TUI_WINDOW_TITLE_FAILED", failure);
         }
     }
 
