@@ -64,6 +64,26 @@ class Tui4jTerminalIoTest {
                 .hasSizeGreaterThanOrEqualTo(3);
     }
 
+    @Test
+    void setsAndClearsTheTerminalWindowTitleForTheHostTerminal() throws Exception {
+        var output = new ByteArrayOutputStream();
+        try (var inputWriter = new PipedOutputStream();
+                var input = new PipedInputStream(inputWriter)) {
+            var terminalIo = Tui4jTerminalIo.streams(input, output, List.of("TERM=xterm-256color"));
+            var program = terminalIo.program(new Tui4jTerminalSpikeModel(80, 24));
+            CompletableFuture<Void> run = CompletableFuture.runAsync(() -> terminalIo.run(program))
+                    .orTimeout(Duration.ofSeconds(10).toMillis(), TimeUnit.MILLISECONDS);
+
+            program.waitForInit();
+            program.send(new QuitMessage());
+            run.get(10, TimeUnit.SECONDS);
+        }
+
+        String reset = "\u001B[?1000l\u001B[?1002l\u001B[?1003l\u001B[?1006l";
+        String terminalOutput = output.toString(Charset.defaultCharset());
+        assertThat(terminalOutput).contains("\u001B]2;Haifa Coding Agent\u0007").endsWith("\u001B]2;\u0007" + reset);
+    }
+
     private Tui4jTerminalIo io(String environment) {
         return new Tui4jTerminalIo(Optional.empty(), Optional.empty(), List.of(environment), false, true);
     }
