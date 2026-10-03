@@ -1,5 +1,10 @@
 # Changelog
 
+- Haifa Coding Terminal collapsed Tool/Execution cards now show one muted body preview line (the first
+  meaningful output line, skipping structural `Target:`/`Output:` headings) so results are visible without
+  `Ctrl+O`. Collapsed durations are hidden at or below 10s to reduce noise; expanding always shows the
+  duration and the bounded detail metadata.
+
 - Added `HaifaAgentBuilder.autoApproveStandardFileWriteTools(Set<ToolName>)` for exact registered Java
   bindings with only FILE_WRITE, POLICY approval and non-high/critical risk. A configuration-only marker
   freezes the list into the policy digest; request-local removal of the unchanged standard FILE_WRITE ASK

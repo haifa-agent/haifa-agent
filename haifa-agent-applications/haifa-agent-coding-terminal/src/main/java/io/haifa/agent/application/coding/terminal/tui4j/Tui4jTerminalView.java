@@ -74,6 +74,9 @@ final class Tui4jTerminalView {
             "SHELL COMMAND DENIED",
             "TIMEOUT");
     private static final Set<String> UNKNOWN_STATUSES = Set.of("OUTCOME_UNKNOWN", "UNKNOWN_OUTCOME");
+    private static final long COLLAPSED_DURATION_HIDE_MILLIS = 10_000L;
+    private static final String OUTPUT_TRUNCATED_HEADING = "Output (truncated):";
+    private static final String OUTPUT_STREAMING_HEADING = "Output (streaming):";
 
     private final Tui4jTerminalTheme theme = new Tui4jTerminalTheme();
     private final IncrementalTerminalMarkdownRenderer markdown = new IncrementalTerminalMarkdownRenderer(theme);
@@ -300,11 +303,13 @@ final class Tui4jTerminalView {
 
     private String transcriptItem(TranscriptItem item, int bodyWidth) {
         String status = item.status().toLowerCase(Locale.ROOT);
+        boolean collapsed = item.collapsible();
         String title = sanitize(
                 switch (item.kind()) {
                     case USER -> "You";
                     case ASSISTANT -> item.title();
-                    case TOOL, EXECUTION, SUMMARY -> glyph(item.status()) + " " + item.title() + durationSuffix(item);
+                    case TOOL, EXECUTION, SUMMARY ->
+                        glyph(item.status()) + " " + item.title() + durationSuffix(item, collapsed);
                     case APPROVAL -> item.title() + " [" + status + "]";
                     case RESOURCE -> "Resource · " + item.title() + " [" + status + "]";
                     case ERROR -> "Error · " + item.title() + " [" + status + "]";
@@ -318,17 +323,21 @@ final class Tui4jTerminalView {
                 && item.approvalDetails().isPresent()) {
             return style(item, approval(title, item.approvalDetails().orElseThrow(), item.expanded()));
         }
-        if (item.collapsible()) {
-            String content = title + theme.muted(" · " + shortcuts.toggleExpansion() + " expand");
+        if (collapsed) {
+            StringBuilder content =
+                    new StringBuilder(title).append(theme.muted(" · " + shortcuts.toggleExpansion() + " expand"));
             if (isErrorStatus(item.status()) || isUnknownStatus(item.status())) {
                 String details = item.body()
                         .lines()
                         .limit(2)
                         .map(value -> "  " + sanitize(value))
                         .collect(Collectors.joining("\n"));
-                if (!details.isBlank()) content = content + "\n" + details;
+                if (!details.isBlank()) content.append('\n').append(details);
+            } else if (item.kind() == TranscriptItem.Kind.TOOL || item.kind() == TranscriptItem.Kind.EXECUTION) {
+                String preview = previewLine(item.body(), bodyWidth);
+                if (!preview.isBlank()) content.append('\n').append(theme.muted("  " + preview));
             }
-            return style(item, content);
+            return style(item, content.toString());
         }
         String body =
                 item.expanded() ? item.body() : item.body().lines().limit(5).collect(Collectors.joining("\n"));
@@ -340,6 +349,26 @@ final class Tui4jTerminalView {
             if (!metadata.isBlank()) content = content + "\n" + theme.muted("  " + metadata);
         }
         return style(item, content);
+    }
+
+    private String previewLine(String body, int bodyWidth) {
+        int available = Math.max(16, bodyWidth - 2);
+        return body.lines()
+                .map(String::strip)
+                .filter(line -> !line.isEmpty())
+                .filter(line -> !isCollapsedStructuralLine(line))
+                .findFirst()
+                .map(line -> Truncate.truncate(sanitize(line), available, "…"))
+                .orElse("");
+    }
+
+    private static boolean isCollapsedStructuralLine(String line) {
+        return line.startsWith("Target:")
+                || line.equals("Output:")
+                || line.equals(OUTPUT_TRUNCATED_HEADING)
+                || line.equals(OUTPUT_STREAMING_HEADING)
+                || line.equals("[stdout]")
+                || line.equals("[stderr]");
     }
 
     private String approval(String title, ApprovalDetails details, boolean expanded) {
@@ -391,8 +420,9 @@ final class Tui4jTerminalView {
         return "●";
     }
 
-    private static String durationSuffix(TranscriptItem item) {
+    private static String durationSuffix(TranscriptItem item, boolean collapsed) {
         return item.durationMillis()
+                .filter(value -> !collapsed || value > COLLAPSED_DURATION_HIDE_MILLIS)
                 .map(value -> " · " + TerminalDurations.human(value))
                 .orElse("");
     }

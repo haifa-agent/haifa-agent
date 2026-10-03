@@ -533,6 +533,39 @@ class Tui4jTerminalViewTest {
     }
 
     @Test
+    void showsOneCollapsedBodyPreviewLineWithoutExpandingToolCards() {
+        TerminalUiState state = stateWithItem(new TranscriptItem(
+                "tool-1",
+                TranscriptItem.Kind.TOOL,
+                "file_read · README.md",
+                "Target: README.md\nOutput:\nBUILD SUCCESS\nResult: artifact:1",
+                "SUCCEEDED",
+                false,
+                Optional.empty(),
+                Optional.of(1_000L),
+                Optional.of(300L)));
+
+        String content = view.transcriptContent(state);
+
+        assertThat(content)
+                .contains("✓ file_read · README.md · ctrl+o expand", "BUILD SUCCESS")
+                .doesNotContain("Result: artifact:1", "Duration", "· 300 ms");
+    }
+
+    @Test
+    void hidesCollapsedDurationsBelowTenSecondsAndAlwaysShowsThemWhenExpanded() {
+        String shortCollapsed = view.transcriptContent(stateWithItem(toolItemWithDuration(false, 9_000L)));
+        String longCollapsed = view.transcriptContent(stateWithItem(toolItemWithDuration(false, 15_000L)));
+        String shortExpanded = view.transcriptContent(stateWithItem(toolItemWithDuration(true, 9_000L)));
+
+        assertThat(shortCollapsed)
+                .contains("✓ file_read · README.md · ctrl+o expand")
+                .doesNotContain("· 9s");
+        assertThat(longCollapsed).contains("✓ file_read · README.md · 15s · ctrl+o expand");
+        assertThat(shortExpanded).contains("✓ file_read · README.md · 9s");
+    }
+
+    @Test
     void keepsCollapsedToolErrorsActionableWithoutShowingTheWholeResult() {
         TerminalUiState initial = TerminalUiState.initial(100, 30);
         TerminalUiState state = new TerminalUiState(
@@ -801,6 +834,41 @@ class Tui4jTerminalViewTest {
                 initial.seenEventIds(),
                 initial.recoverableError(),
                 initial.exitRequested());
+    }
+
+    private TerminalUiState stateWithItem(TranscriptItem item) {
+        TerminalUiState initial = TerminalUiState.initial(100, 30);
+        return new TerminalUiState(
+                initial.header(),
+                initial.loadedResources(),
+                List.of(item),
+                initial.pending(),
+                initial.status(),
+                initial.editorBuffer(),
+                initial.editorCursor(),
+                initial.selector(),
+                initial.footer(),
+                initial.columns(),
+                initial.rows(),
+                initial.session(),
+                initial.currentRunId(),
+                initial.appliedCursor(),
+                initial.seenEventIds(),
+                initial.recoverableError(),
+                initial.exitRequested());
+    }
+
+    private TranscriptItem toolItemWithDuration(boolean expanded, long durationMillis) {
+        return new TranscriptItem(
+                "tool-1",
+                TranscriptItem.Kind.TOOL,
+                "file_read · README.md",
+                "Target: README.md",
+                "SUCCEEDED",
+                expanded,
+                Optional.empty(),
+                Optional.of(1_000L),
+                Optional.of(durationMillis));
     }
 
     private TranscriptItem item(
