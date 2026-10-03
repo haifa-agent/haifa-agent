@@ -26,13 +26,17 @@ import io.haifa.agent.application.coding.terminal.state.TranscriptItem;
 import io.haifa.agent.core.run.AgentRunId;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.LongSupplier;
 
 /** Production tui4j adapter around the authoritative terminal Controller and Reducer state. */
 final class Tui4jCodingTerminalModel implements Model {
     private static final Duration EVENT_POLL_INTERVAL = Duration.ofMillis(50);
     private static final Duration UNBRACKETED_PASTE_GUARD_INTERVAL = Duration.ofMillis(100);
+    private static final int PASTE_SUMMARY_MIN_LINES = 3;
+    private static final int PASTE_SUMMARY_MAX_CHARACTERS = 150;
     private static final int MAX_SECRET_CHARACTERS = 65_536;
 
     private final CodingTerminalController controller;
@@ -43,6 +47,7 @@ final class Tui4jCodingTerminalModel implements Model {
     private final Tui4jTerminalView view;
     private final List<String> history = new ArrayList<>();
     private final StringBuilder secretBuffer = new StringBuilder();
+    private final Map<String, String> pastedContent = new LinkedHashMap<>();
     private final LongSupplier monotonicNanos;
 
     private String transcriptContent = "";
@@ -62,6 +67,7 @@ final class Tui4jCodingTerminalModel implements Model {
     private long deferredEnterSequence;
     private DeferredEnter pendingEnter;
     private boolean secretPresentation;
+    private int pasteSequence;
 
     Tui4jCodingTerminalModel(CodingTerminalController controller, TerminalEventPump pump) {
         this(controller, pump, System::nanoTime, null);
@@ -138,7 +144,7 @@ final class Tui4jCodingTerminalModel implements Model {
             command = key(key);
         } else if (message instanceof PasteMessage paste) {
             resolvePendingEnterAsNewline();
-            edit(new PasteMessage(sanitizeEditorInput(paste.content())));
+            pasteContent(paste.content());
         } else {
             editor.update(message);
         }
@@ -284,11 +290,21 @@ final class Tui4jCodingTerminalModel implements Model {
             return Command.none();
         }
         if (key.type() == KeyType.KeyLeft) {
-            moveCursor(TerminalTextCursor.previous(state.editorBuffer(), state.editorCursor()));
+            int tokenStart = pasteUnitStart(state.editorBuffer(), state.editorCursor());
+            if (tokenStart >= 0) {
+                moveCursor(tokenStart);
+            } else {
+                moveCursor(TerminalTextCursor.previous(state.editorBuffer(), state.editorCursor()));
+            }
             return Command.none();
         }
         if (key.type() == KeyType.KeyRight) {
-            moveCursor(TerminalTextCursor.next(state.editorBuffer(), state.editorCursor()));
+            int tokenEnd = pasteUnitEnd(state.editorBuffer(), state.editorCursor());
+            if (tokenEnd >= 0) {
+                moveCursor(tokenEnd);
+            } else {
+                moveCursor(TerminalTextCursor.next(state.editorBuffer(), state.editorCursor()));
+            }
             return Command.none();
         }
         if (key.type() == KeyType.KeyHome) {
@@ -300,12 +316,30 @@ final class Tui4jCodingTerminalModel implements Model {
             return Command.none();
         }
         if (key.type() == KeyType.keyBS || key.type() == KeyType.keyDEL) {
-            int cursor = TerminalTextCursor.previous(state.editorBuffer(), state.editorCursor());
-            replaceEditor(TerminalTextCursor.backspace(state.editorBuffer(), state.editorCursor()), cursor);
+            String buffer = state.editorBuffer();
+            int cursor = state.editorCursor();
+            int tokenStart = pasteUnitStart(buffer, cursor);
+            if (tokenStart >= 0) {
+                String token = tokenAt(buffer, tokenStart);
+                if (token != null) pastedContent.remove(token);
+                replaceEditor(buffer.substring(0, tokenStart) + buffer.substring(cursor), tokenStart);
+                return Command.none();
+            }
+            int previous = TerminalTextCursor.previous(buffer, cursor);
+            replaceEditor(TerminalTextCursor.backspace(buffer, cursor), previous);
             return Command.none();
         }
         if (key.type() == KeyType.KeyDelete) {
-            replaceEditor(TerminalTextCursor.delete(state.editorBuffer(), state.editorCursor()), state.editorCursor());
+            String buffer = state.editorBuffer();
+            int cursor = state.editorCursor();
+            int tokenEnd = pasteUnitEnd(buffer, cursor);
+            if (tokenEnd >= 0) {
+                String token = tokenAt(buffer, cursor);
+                if (token != null) pastedContent.remove(token);
+                replaceEditor(buffer.substring(0, cursor) + buffer.substring(tokenEnd), cursor);
+                return Command.none();
+            }
+            replaceEditor(TerminalTextCursor.delete(buffer, cursor), cursor);
             return Command.none();
         }
         return edit(key);
@@ -505,20 +539,24 @@ final class Tui4jCodingTerminalModel implements Model {
         if (pendingSubmission != null) {
             return Command.none();
         }
-        if (!state.editorBuffer().isBlank()) {
+        String expanded = expandPastedContent(state.editorBuffer());
+        if (!expanded.isBlank()) {
             resumeTranscriptFollowing();
-            history.add(state.editorBuffer());
+            history.add(expanded);
         }
         resetHistoryNavigation();
-        TerminalInput input = new TerminalInput(kind, state.editorBuffer(), state.editorCursor());
+        TerminalInput input =
+                new TerminalInput(kind, expanded, TerminalTextCursor.clamp(expanded, state.editorCursor()));
         var prepared = controller.prepareMessageSubmission(input);
         if (prepared.isEmpty()) {
             controller.accept(input);
             syncComponents();
+            pruneStalePastes(controller.state().editorBuffer());
             return Command.none();
         }
         pendingSubmission = prepared.orElseThrow();
         syncComponents();
+        pruneStalePastes(controller.state().editorBuffer());
         PreparedMessageSubmission submission = pendingSubmission;
         return () -> new SubmissionCompletedMessage(controller.executeMessageSubmission(submission));
     }
@@ -570,6 +608,65 @@ final class Tui4jCodingTerminalModel implements Model {
                 state.editorBuffer(),
                 TerminalTextCursor.clamp(state.editorBuffer(), cursor)));
         syncComponents();
+    }
+
+    private void pasteContent(String content) {
+        String normalized = sanitizeEditorInput(content);
+        String trimmed = normalized.strip();
+        TerminalUiState state = controller.state();
+        pruneStalePastes(state.editorBuffer());
+        int lines = (int) trimmed.chars().filter(character -> character == '\n').count() + 1;
+        if (!trimmed.isEmpty()
+                && (lines >= PASTE_SUMMARY_MIN_LINES || trimmed.length() > PASTE_SUMMARY_MAX_CHARACTERS)) {
+            String token = "[Pasted #" + (++pasteSequence) + " ~" + lines + " lines]";
+            pastedContent.put(token, trimmed);
+            int cursor = state.editorCursor();
+            String separator =
+                    cursor > 0 && !Character.isWhitespace(state.editorBuffer().charAt(cursor - 1)) ? " " : "";
+            edit(new PasteMessage(separator + token));
+            return;
+        }
+        edit(new PasteMessage(normalized));
+    }
+
+    private String expandPastedContent(String buffer) {
+        String expanded = buffer;
+        for (Map.Entry<String, String> entry : pastedContent.entrySet()) {
+            expanded = expanded.replace(entry.getKey(), entry.getValue());
+        }
+        return expanded;
+    }
+
+    private void pruneStalePastes(String buffer) {
+        pastedContent.keySet().removeIf(token -> !buffer.contains(token));
+    }
+
+    private int pasteUnitStart(String buffer, int cursor) {
+        for (String token : pastedContent.keySet()) {
+            int start = cursor - token.length();
+            if (start >= 0 && buffer.startsWith(token, start)) {
+                return start;
+            }
+        }
+        return -1;
+    }
+
+    private int pasteUnitEnd(String buffer, int cursor) {
+        for (String token : pastedContent.keySet()) {
+            if (buffer.startsWith(token, cursor)) {
+                return cursor + token.length();
+            }
+        }
+        return -1;
+    }
+
+    private String tokenAt(String buffer, int start) {
+        for (String token : pastedContent.keySet()) {
+            if (buffer.startsWith(token, start)) {
+                return token;
+            }
+        }
+        return null;
     }
 
     private void resetHistoryNavigation() {
