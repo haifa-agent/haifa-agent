@@ -89,6 +89,41 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
+    void rechecksTheRealWindowSizeEveryBoundedNumberOfPolls() {
+        var fixture = fixture();
+
+        assertThat(requestsWindowSizeCheck(fixture.model.init())).isTrue();
+
+        int polls = 0;
+        boolean requested = false;
+        while (polls < Tui4jCodingTerminalModel.WINDOW_SIZE_POLL_TICKS && !requested) {
+            polls++;
+            var polled = fixture.model.update(new Tui4jCodingTerminalModel.PollMessage());
+            requested = requestsWindowSizeCheck(polled.command());
+        }
+
+        assertThat(requested).isTrue();
+        assertThat(polls).isEqualTo(Tui4jCodingTerminalModel.WINDOW_SIZE_POLL_TICKS);
+    }
+
+    @Test
+    void doesNotPollWindowSizeWhenTheHostReportsResizeSignals() {
+        TerminalHostInfo linux = TerminalHostInfo.detect(
+                Map.of(
+                        "os.name", "Linux",
+                        "os.version", "6.0",
+                        "os.arch", "amd64",
+                        "java.version", "21"),
+                List.of());
+        var fixture = fixture(linux);
+
+        for (int poll = 0; poll < Tui4jCodingTerminalModel.WINDOW_SIZE_POLL_TICKS; poll++) {
+            var polled = fixture.model.update(new Tui4jCodingTerminalModel.PollMessage());
+            assertThat(requestsWindowSizeCheck(polled.command())).isFalse();
+        }
+    }
+
+    @Test
     void preservesTheEditorWhileCompletionSelectorIsOpenedAndClosed() {
         var fixture = fixture();
 
@@ -801,6 +836,19 @@ class Tui4jCodingTerminalModelTest {
         return new Fixture(controller, pump, new Tui4jCodingTerminalModel(controller, pump, monotonicNanos));
     }
 
+    private Fixture fixture(TerminalHostInfo hostInfo) {
+        var pump = new TerminalEventPump(64);
+        var controller = new CodingTerminalController(
+                new ProjectId("project-1"),
+                new UnusedClient(),
+                pump,
+                new TerminalUiReducer(),
+                TerminalUiState.initial(80, 24),
+                Runnable::run);
+        return new Fixture(
+                controller, pump, new Tui4jCodingTerminalModel(controller, pump, System::nanoTime, hostInfo));
+    }
+
     private Fixture fixture(CodingAuthenticationClient authentication) {
         var pump = new TerminalEventPump(64);
         var controller = new CodingTerminalController(
@@ -821,6 +869,24 @@ class Tui4jCodingTerminalModelTest {
     private void commitPlainEnter(Fixture fixture) {
         var guarded = fixture.model.update(key(KeyType.keyCR));
         fixture.model.update(guarded.command().execute());
+    }
+
+    private boolean requestsWindowSizeCheck(Command command) {
+        if (Command.isNone(command)) {
+            return false;
+        }
+        Message message = command.execute();
+        if (message instanceof com.williamcallahan.tui4j.message.CheckWindowSizeMessage) {
+            return true;
+        }
+        if (message instanceof BatchMessage batch) {
+            for (Command child : batch.commands()) {
+                if (requestsWindowSizeCheck(child)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private boolean emitsClearScreen(Command command) {

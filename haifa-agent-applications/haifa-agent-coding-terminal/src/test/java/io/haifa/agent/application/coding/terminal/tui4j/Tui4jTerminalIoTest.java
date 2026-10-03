@@ -41,6 +41,28 @@ class Tui4jTerminalIoTest {
 
     @Test
     void productionProgramLeavesMouseReportingDisabledForNativeTextSelection() throws Exception {
+        String terminalOutput = runSpikeProgramToQuit();
+
+        String reset = "\u001B[?1000l\u001B[?1002l\u001B[?1003l\u001B[?1006l";
+        assertThat(terminalOutput)
+                .startsWith(reset)
+                .endsWith(reset)
+                .doesNotContain("\u001B[?1000h", "\u001B[?1002h", "\u001B[?1003h", "\u001B[?1006h");
+        assertThat(terminalOutput.split(java.util.regex.Pattern.quote(reset), -1))
+                .hasSizeGreaterThanOrEqualTo(3);
+    }
+
+    @Test
+    void claimsAndRestoresTheHostWindowTitle() throws Exception {
+        String terminalOutput = runSpikeProgramToQuit();
+
+        assertThat(terminalOutput)
+                .contains("\u001B[22;2t")
+                .contains("\u001B]2;Haifa Coding Agent\u0007")
+                .contains("\u001B[23;2t");
+    }
+
+    private String runSpikeProgramToQuit() throws Exception {
         var output = new ByteArrayOutputStream();
         try (var inputWriter = new PipedOutputStream();
                 var input = new PipedInputStream(inputWriter)) {
@@ -53,15 +75,7 @@ class Tui4jTerminalIoTest {
             program.send(new QuitMessage());
             run.get(10, TimeUnit.SECONDS);
         }
-
-        String terminalOutput = output.toString(Charset.defaultCharset());
-        String reset = "\u001B[?1000l\u001B[?1002l\u001B[?1003l\u001B[?1006l";
-        assertThat(terminalOutput)
-                .startsWith(reset)
-                .endsWith(reset)
-                .doesNotContain("\u001B[?1000h", "\u001B[?1002h", "\u001B[?1003h", "\u001B[?1006h");
-        assertThat(terminalOutput.split(java.util.regex.Pattern.quote(reset), -1))
-                .hasSizeGreaterThanOrEqualTo(3);
+        return output.toString(Charset.defaultCharset());
     }
 
     private Tui4jTerminalIo io(String environment) {
