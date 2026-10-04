@@ -23,6 +23,7 @@ import io.haifa.agent.runtime.core.control.CancellationObservedException;
 import io.haifa.agent.runtime.core.control.RunControlRegistry;
 import io.haifa.agent.runtime.core.control.RunControlSignal;
 import io.haifa.agent.runtime.core.delegation.DelegationTool;
+import io.haifa.agent.runtime.core.skill.SkillToolProvider;
 import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import io.haifa.agent.tool.api.FrozenToolBinding;
@@ -138,6 +139,37 @@ public final class FrozenModelInvoker {
                 schema.version(),
                 schema.document(),
                 false);
+    }
+
+    /**
+     * Returns the frozen built-in Skill reader specification when the current request hid it only because no Skill was
+     * activated yet. A model that follows earlier Run history may still name the reader; the existing activation guard
+     * then rejects it as a normal {@code SKILL_NOT_ACTIVATED} Tool failure instead of an invalid model response.
+     *
+     * <p>The fallback is deliberately narrow: it never applies to requests that disclose no tools at all, never
+     * duplicates an already disclosed reader, and only covers the built-in Skill provider alias. Host tools sharing the
+     * alias with another provider and other hidden tools keep their existing undisclosed behavior.
+     */
+    static List<ModelToolSpecification> repairableSkillReadTools(
+            List<FrozenToolBinding> frozenBindings,
+            List<ModelToolSpecification> frozenTools,
+            List<ModelToolSpecification> disclosedTools) {
+        if (disclosedTools.isEmpty()) {
+            return List.of();
+        }
+        if (disclosedTools.stream()
+                .anyMatch(tool -> tool.name().equals(SkillToolProvider.RESOURCE_READ_ALIAS.value()))) {
+            return List.of();
+        }
+        boolean builtInReader = frozenBindings.stream()
+                .anyMatch(binding -> binding.alias().equals(SkillToolProvider.RESOURCE_READ_ALIAS)
+                        && binding.definition().providerId().equals(SkillToolProvider.PROVIDER_ID));
+        if (!builtInReader) {
+            return List.of();
+        }
+        return frozenTools.stream()
+                .filter(tool -> tool.name().equals(SkillToolProvider.RESOURCE_READ_ALIAS.value()))
+                .toList();
     }
 
     public ModelInvocationResult invoke(FrozenModelBinding binding, AgentRun run, int iteration, AgentContext context) {
@@ -274,7 +306,11 @@ public final class FrozenModelInvoker {
                 }
                 throw new CancellationObservedException(completedSignal);
             }
-            var decision = responses.map(request, response, disclosedTools);
+            var decision = responses.map(
+                    request,
+                    response,
+                    disclosedTools,
+                    repairableSkillReadTools(binding.configuration().toolBindings(), binding.tools(), disclosedTools));
             var invocation = new ModelInvocationResult(
                     decision,
                     response.usage().inputTokens(),
