@@ -4,9 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.agent.AgentDefinitionVersion;
+import io.haifa.agent.core.error.AgentErrorCode;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
+import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.ModelFinishReason;
 import io.haifa.agent.model.api.ModelMessageRole;
@@ -61,6 +63,68 @@ class SkillToolVisibilityTest {
     }
 
     @Test
+    void repairsAHiddenBuiltInReaderCallAndRecoversAfterActivation() {
+        var calls = new AtomicInteger();
+        var harness = harness(true, request -> {
+            int phase = calls.getAndIncrement() % 4;
+            if (phase == 0) {
+                assertThat(request.tools())
+                        .extracting(ModelToolSpecification::name)
+                        .containsExactly("skill_load");
+                return response(
+                        request.runId().value(),
+                        "skill_resource_read",
+                        Map.of("skill", "fixture", "path", "references/fact.txt"));
+            }
+            if (phase == 1) {
+                assertThat(request.tools())
+                        .extracting(ModelToolSpecification::name)
+                        .containsExactly("skill_load");
+                assertThat(toolValues(request, "failureCode")).contains("SKILL_NOT_ACTIVATED");
+                return response(request.runId().value(), "skill_load", Map.of("skill", "fixture"));
+            }
+            if (phase == 2) {
+                assertThat(request.tools())
+                        .extracting(ModelToolSpecification::name)
+                        .containsExactly("skill_load", "skill_resource_read");
+                return response(
+                        request.runId().value(),
+                        "skill_resource_read",
+                        Map.of("skill", "fixture", "path", "references/fact.txt"));
+            }
+            assertThat(toolValues(request, "content")).contains("17\n");
+            return response("done", null, Map.of());
+        });
+        var accepted = harness.start("premature-reader");
+        harness.scheduler().runAll();
+
+        assertThat(harness.runtime().find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(harness.store().skillActivations(accepted.runId())).hasSize(1);
+        assertThat(calls).hasValue(4);
+        assertThat(harness.store().eventsFor(accepted.runId()))
+                .noneMatch(event -> event.type().equals("model.call.failed"));
+    }
+
+    @Test
+    void rejectsAToolNameAbsentFromTheFrozenBinding() {
+        var harness = harness(false, request -> response(request.runId().value(), "not_a_frozen_tool", Map.of()));
+        var accepted = harness.start("unknown-tool");
+        harness.scheduler().runAll();
+
+        assertThat(harness.runtime().find(accepted.runId()).orElseThrow()).satisfies(run -> {
+            assertThat(run.status()).isEqualTo(AgentRunStatus.FAILED);
+            assertThat(run.error().orElseThrow().code()).isEqualTo(AgentErrorCode.MODEL_RESPONSE_INVALID);
+        });
+        assertThat(harness.store().eventsFor(accepted.runId()))
+                .filteredOn(event -> event.type().equals("model.call.failed"))
+                .isNotEmpty()
+                .allSatisfy(event -> assertThat(event.data())
+                        .containsEntry("reasonCode", "MALFORMED_RESPONSE")
+                        .containsEntry("providerCode", "undisclosed_tool"));
+    }
+
+    @Test
     void doesNotHideACustomProviderUsingTheReaderAlias() {
         var scheduler = new ManualExecutionScheduler();
         var calls = new AtomicInteger();
@@ -104,6 +168,44 @@ class SkillToolVisibilityTest {
     }
 
     private static void execute(boolean resources, int runs) {
+        var calls = new AtomicInteger();
+        int phases = resources ? 3 : 2;
+        var harness = harness(resources, request -> {
+            int phase = calls.getAndIncrement() % phases;
+            if (phase == 0) {
+                assertThat(request.tools())
+                        .extracting(ModelToolSpecification::name)
+                        .containsExactly("skill_load");
+                return response(request.runId().value(), "skill_load", Map.of("skill", "fixture"));
+            }
+            if (resources) {
+                assertThat(request.tools())
+                        .extracting(ModelToolSpecification::name)
+                        .containsExactly("skill_load", "skill_resource_read");
+                if (phase == 1)
+                    return response(
+                            request.runId().value(),
+                            "skill_resource_read",
+                            Map.of("skill", "fixture", "path", "references/fact.txt"));
+                assertThat(toolValues(request, "content")).contains("17\n");
+            } else {
+                assertThat(request.tools())
+                        .extracting(ModelToolSpecification::name)
+                        .containsExactly("skill_load");
+            }
+            return response("done", null, Map.of());
+        });
+        for (int index = 0; index < runs; index++) {
+            var accepted = harness.start("visibility-" + index);
+            harness.scheduler().runAll();
+            assertThat(harness.runtime().find(accepted.runId()).orElseThrow().status())
+                    .isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(harness.store().skillActivations(accepted.runId())).hasSize(1);
+        }
+        assertThat(calls).hasValue(phases * runs);
+    }
+
+    private static Harness harness(boolean resources, Responder responder) {
         var store = new InMemoryRuntimeStore();
         var scheduler = new ManualExecutionScheduler();
         var files = new HashMap<String, byte[]>();
@@ -140,8 +242,6 @@ class SkillToolVisibilityTest {
         provider.contributions()
                 .forEach(c -> tools.register(c.alias(), c.definition(), c.providerBindingReference(), c.provider()));
         var catalog = tools.freeze();
-        var calls = new AtomicInteger();
-        int phases = resources ? 3 : 2;
         var runtime = new RuntimeCoreBuilder()
                 .persistence(RuntimePersistencePorts.inMemory(store))
                 .scheduler(scheduler)
@@ -156,38 +256,16 @@ class SkillToolVisibilityTest {
                 .skillPlatform(skillCatalog, loader)
                 .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator())
                 .publicToolPolicy((run, binding, request) -> TestToolPlatform.allow())
-                .registerChatModel("openai-compatible", "1.0.0", request -> {
-                    int phase = calls.getAndIncrement() % phases;
-                    if (phase == 0) {
-                        assertThat(request.tools())
-                                .extracting(ModelToolSpecification::name)
-                                .containsExactly("skill_load");
-                        return response(request.runId().value(), "skill_load", Map.of("skill", "fixture"));
-                    }
-                    if (resources) {
-                        assertThat(request.tools())
-                                .extracting(ModelToolSpecification::name)
-                                .containsExactly("skill_load", "skill_resource_read");
-                        if (phase == 1)
-                            return response(
-                                    request.runId().value(),
-                                    "skill_resource_read",
-                                    Map.of("skill", "fixture", "path", "references/fact.txt"));
-                        assertThat(request.messages().stream()
-                                        .filter(message -> message.role() == ModelMessageRole.TOOL)
-                                        .map(message -> message.toolResultData().get("content")))
-                                .contains("17\n");
-                    } else {
-                        assertThat(request.tools())
-                                .extracting(ModelToolSpecification::name)
-                                .containsExactly("skill_load");
-                    }
-                    return response("done", null, Map.of());
-                })
+                .registerChatModel("openai-compatible", "1.0.0", responder::respond)
                 .build();
-        for (int index = 0; index < runs; index++) {
-            var accepted = runtime.start(new AgentRunRequest(
-                    "visibility-" + index,
+        return new Harness(runtime, scheduler, store);
+    }
+
+    private record Harness(
+            DefaultAgentRuntime runtime, ManualExecutionScheduler scheduler, InMemoryRuntimeStore store) {
+        private io.haifa.agent.runtime.api.AgentRunSnapshot start(String sessionSuffix) {
+            return runtime.start(new AgentRunRequest(
+                    "visibility-" + sessionSuffix,
                     new AgentDefinitionId("fixture-agent"),
                     Optional.empty(),
                     "default",
@@ -196,11 +274,19 @@ class SkillToolVisibilityTest {
                     "Use the Skill.",
                     List.of(),
                     RuntimeOverrides.NONE));
-            scheduler.runAll();
-            assertThat(runtime.find(accepted.runId()).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
-            assertThat(store.skillActivations(accepted.runId())).hasSize(1);
         }
-        assertThat(calls).hasValue(phases * runs);
+    }
+
+    @FunctionalInterface
+    private interface Responder {
+        AgentChatResponse respond(AgentChatRequest request);
+    }
+
+    private static List<Object> toolValues(AgentChatRequest request, String key) {
+        return request.messages().stream()
+                .filter(message -> message.role() == ModelMessageRole.TOOL)
+                .map(message -> message.toolResultData().get(key))
+                .toList();
     }
 
     private static AgentChatResponse response(String id, String tool, Map<String, Object> args) {
