@@ -33,6 +33,20 @@ public final class AgentChatResponseMapper {
 
     public AgentDecision map(
             AgentChatRequest request, AgentChatResponse response, List<ModelToolSpecification> disclosedTools) {
+        return map(request, response, disclosedTools, List.of());
+    }
+
+    /**
+     * Maps a response using the tools disclosed to the model plus a fallback source of frozen tools that the model may
+     * legitimately name even though this particular request hid them (for example the built-in Skill reader withheld
+     * before activation). The disclosed list always wins; the fallback only prevents a valid frozen tool from being
+     * classified as an undisclosed response.
+     */
+    AgentDecision map(
+            AgentChatRequest request,
+            AgentChatResponse response,
+            List<ModelToolSpecification> disclosedTools,
+            List<ModelToolSpecification> fallbackTools) {
         if (response.content().isBlank()
                 && response.toolCalls().isEmpty()
                 && response.structuredOutput().isEmpty()) {
@@ -48,6 +62,7 @@ public final class AgentChatResponseMapper {
         if (!response.toolCalls().isEmpty()) {
             Map<String, ModelToolSpecification> byName = new LinkedHashMap<>();
             disclosedTools.forEach(tool -> byName.put(tool.name(), tool));
+            fallbackTools.forEach(tool -> byName.putIfAbsent(tool.name(), tool));
             List<ToolRequest> requests = response.toolCalls().stream()
                     .map(call -> toolRequest(request, call, byName.get(call.name())))
                     .toList();

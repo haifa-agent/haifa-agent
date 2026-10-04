@@ -3,6 +3,9 @@
 内建 `skill_resource_read` 只在当前 Run 已激活至少一个包含可读辅助资源的 Skill 后进入模型的
 Tool 列表。新 Run 不继承上一 Run 的工具展示状态；只有 `SKILL.md` 的包不会展示辅助 reader。
 冻结 Tool binding 和实际调用的 caller、激活、索引、hash 与预算校验保持原有语义。
+模型若在未激活时调用这个未展示的内建 reader，调用按冻结绑定映射为普通 Tool 请求，由既有激活
+守卫返回 `SKILL_NOT_ACTIVATED` 工具失败供模型自行加载后重读，而不是判为无效模型响应；展示列表
+为空的收尾与最终回答尝试、以及冻结绑定中不存在或非内建 Skill provider 的工具名行为不变。
 
 `DefaultAgentRuntime.messages` 先通过 `findVisible` 校验实际 Run 的可信 Caller，再由既有
 SessionMessage repository 有界读取 Assistant/Tool 消息。`RunMessageProjector` 只查询本页 parts 引用的
