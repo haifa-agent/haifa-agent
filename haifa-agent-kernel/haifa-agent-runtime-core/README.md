@@ -1,5 +1,9 @@
 # Haifa Agent Runtime Core
 
+内建 `skill_resource_read` 只在当前 Run 已激活至少一个包含可读辅助资源的 Skill 后进入模型的
+Tool 列表。新 Run 不继承上一 Run 的工具展示状态；只有 `SKILL.md` 的包不会展示辅助 reader。
+冻结 Tool binding 和实际调用的 caller、激活、索引、hash 与预算校验保持原有语义。
+
 `DefaultAgentRuntime.messages` 先通过 `findVisible` 校验实际 Run 的可信 Caller，再由既有
 SessionMessage repository 有界读取 Assistant/Tool 消息。`RunMessageProjector` 只查询本页 parts 引用的
 ToolCall ID，并校验 Run、correlation/name/version；不会加载整个 Run 的 Tool 历史。正文沿既有安全
