@@ -45,11 +45,17 @@ import java.util.OptionalLong;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class SqliteOperationalAdaptersIT {
     private static final Instant NOW = SqliteAggregateTestData.NOW;
+
+    @AfterEach
+    void closeOpenedStores() throws Exception {
+        SqliteTestSupport.closeOpenedStores();
+    }
 
     @Test
     void eventOutboxAndIdempotencyRoundTripAcrossFreshFoundation(@TempDir java.nio.file.Path directory) {
