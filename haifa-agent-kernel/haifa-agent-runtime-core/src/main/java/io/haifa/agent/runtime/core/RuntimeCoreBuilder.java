@@ -685,7 +685,7 @@ public final class RuntimeCoreBuilder {
                 runInputApplier,
                 compactionCoordinator);
         AttemptExecutor attemptExecutor = new AttemptExecutor(
-                attempts, loop, transitions, time, workerId, trace, traceIds, ids, failureDiagnostics);
+                attempts, loop, transitions, controls, time, workerId, trace, traceIds, ids, failureDiagnostics);
         if (childRuns != null) childRuns.bind(attemptExecutor);
         return new DefaultAgentRuntime(
                 callers,

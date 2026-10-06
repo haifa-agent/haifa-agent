@@ -10,6 +10,8 @@ import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt;
 import io.haifa.agent.runtime.core.attempt.ExecutionAttemptStatus;
 import io.haifa.agent.runtime.core.control.CancellationObservedException;
+import io.haifa.agent.runtime.core.control.RunControlDirective;
+import io.haifa.agent.runtime.core.control.RunControlRegistry;
 import io.haifa.agent.runtime.core.control.RunControlSignal;
 import io.haifa.agent.runtime.core.decision.AgentLoopDirective;
 import io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException;
@@ -41,6 +43,7 @@ public final class AttemptExecutor {
     private final ExecutionAttemptRepository attempts;
     private final AgentLoop loop;
     private final RunTransitionCoordinator transitions;
+    private final RunControlRegistry controls;
     private final TimeProvider time;
     private final String owner;
     private final TracePort trace;
@@ -52,6 +55,7 @@ public final class AttemptExecutor {
             ExecutionAttemptRepository attempts,
             AgentLoop loop,
             RunTransitionCoordinator transitions,
+            RunControlRegistry controls,
             TimeProvider time,
             String owner,
             TracePort trace,
@@ -61,6 +65,7 @@ public final class AttemptExecutor {
         this.attempts = Objects.requireNonNull(attempts);
         this.loop = Objects.requireNonNull(loop);
         this.transitions = Objects.requireNonNull(transitions);
+        this.controls = Objects.requireNonNull(controls);
         this.time = Objects.requireNonNull(time);
         this.owner = Objects.requireNonNull(owner);
         this.trace = Objects.requireNonNull(trace);
@@ -122,6 +127,7 @@ public final class AttemptExecutor {
                         attemptError.diagnosticId() == null ? "" : attemptError.diagnosticId());
                 return;
             }
+            if (settleAcceptedCancellation(run, attempt, traceContext)) return;
             RuntimeLimitExceededException limit = findFailure(error, RuntimeLimitExceededException.class);
             if (!run.status().isTerminal() && limit != null && "wallTimeMillis".equals(limit.resource())) {
                 // A retry/dispatch guard can observe the wall deadline before the cooperative timeout signal.
@@ -156,6 +162,37 @@ public final class AttemptExecutor {
         String reasonCode = signal == RunControlSignal.CANCEL ? "USER_CANCELLED" : signal.name();
         transitions.cancelled(
                 run, new io.haifa.agent.core.run.RunTerminationReason(reasonCode, "Runtime stop signal observed"));
+    }
+
+    /**
+     * An accepted cancellation outranks a failure raised while the Run was executing.
+     *
+     * <p>A stop directive recorded before the Run settles means the user already accepted cancellation; a tool
+     * invocation that fails because the Run is stopping must therefore not flip the Run to {@code FAILED}. The
+     * normal cooperative path observes the directive at a loop safe point, but a failure can surface first (for
+     * example a delegated child cancelling makes its {@code task} call fail). Only cancel-type directives are
+     * handled here so timeout, approval and wall-time settlement keep their existing paths.
+     */
+    private boolean settleAcceptedCancellation(
+            AgentRun run, AgentRunExecutionAttempt attempt, RuntimeTraceContext traceContext) {
+        if (run.status().isTerminal()) return false;
+        RunControlDirective directive = controls.directive(run.id());
+        RunControlSignal signal = directive.signal();
+        if (signal != RunControlSignal.CANCEL
+                && signal != RunControlSignal.PARENT_CANCELLED
+                && signal != RunControlSignal.ADMIN_STOP
+                && signal != RunControlSignal.LEASE_LOST) {
+            return false;
+        }
+        if (signal == RunControlSignal.CANCEL) {
+            transitions.cancelled(run, directive.terminationReason().orElseThrow());
+        } else {
+            transitions.cancelled(run, new io.haifa.agent.core.run.RunTerminationReason(
+                    signal.name(), "Runtime stop signal observed"));
+        }
+        recordRunTerminal(run, traceContext);
+        finish(attempt, statusFor(run.status()), null);
+        return true;
     }
 
     private void recordAttemptStarted(AgentRun run, RuntimeTraceContext context) {

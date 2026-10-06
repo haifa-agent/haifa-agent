@@ -72,6 +72,7 @@ import io.haifa.agent.runtime.core.bootstrap.DefaultResolvedModelSnapshots;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions;
+import io.haifa.agent.runtime.core.control.RunControlRegistry;
 import io.haifa.agent.runtime.core.decision.FinalAnswerDecision;
 import io.haifa.agent.runtime.core.decision.ToolCallDecision;
 import io.haifa.agent.runtime.core.decision.ToolRequest;
@@ -842,6 +843,78 @@ class RuntimeCoreTest {
                 .isEqualTo(AgentRunStatus.CANCELLED);
         assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().terminationReason())
                 .hasValueSatisfying(reason -> assertThat(reason.code()).isEqualTo("USER_CANCELLED"));
+    }
+
+    @Test
+    void acceptedCancelOutranksToolFailureAtRunSettlement() {
+        RunControlRegistry controls = new RunControlRegistry();
+        ToolRequest call = toolRequest(
+                "fail-after-cancel", "read_doc", "1.0.0", new ToolArguments("read.doc.input", "1.0", Map.of()));
+        Fixture fixture = fixture(
+                ignored -> response(new ToolCallDecision(List.of(call))),
+                builder -> {
+                    builder.controlRegistry(controls);
+                    return TestToolPlatform.install(
+                            builder, "read_doc", "1.0.0", "read.doc.input", false, invocation -> {
+                                controls.requestCancel(invocation.runId());
+                                throw new IllegalStateException("tool failed after the accepted cancel");
+                            });
+                });
+
+        var accepted = fixture.runtime.start(request("fail-after-cancel"));
+        fixture.scheduler.runAll();
+
+        var settled = fixture.runtime.find(accepted.runId()).orElseThrow();
+        assertThat(settled.status()).isEqualTo(AgentRunStatus.CANCELLED);
+        assertThat(settled.terminationReason()).hasValueSatisfying(reason -> assertThat(reason.code())
+                .isEqualTo("USER_CANCELLED"));
+        assertThat(fixture.store.toolCalls(accepted.runId())).singleElement().satisfies(toolCall -> {
+            assertThat(toolCall.status()).isEqualTo(ToolCallStatus.FAILED);
+            assertThat(toolCall.error().orElseThrow().error().code())
+                    .isEqualTo(AgentErrorCode.TOOL_INVOCATION_FAILED);
+        });
+    }
+
+    @Test
+    void toolFailureWithoutAnAcceptedCancelStillFailsTheRun() {
+        ToolRequest call = toolRequest(
+                "fail-without-cancel", "read_doc", "1.0.0", new ToolArguments("read.doc.input", "1.0", Map.of()));
+        Fixture fixture = fixture(
+                ignored -> response(new ToolCallDecision(List.of(call))),
+                builder -> TestToolPlatform.install(
+                        builder, "read_doc", "1.0.0", "read.doc.input", false, invocation -> {
+                            throw new IllegalStateException("tool failed without cancellation");
+                        }));
+
+        var accepted = fixture.runtime.start(request("fail-without-cancel"));
+        fixture.scheduler.runAll();
+
+        var settled = fixture.runtime.find(accepted.runId()).orElseThrow();
+        assertThat(settled.status()).isEqualTo(AgentRunStatus.FAILED);
+        assertThat(settled.error().orElseThrow().code()).isEqualTo(AgentErrorCode.TOOL_INVOCATION_FAILED);
+    }
+
+    @Test
+    void cancelAfterTerminalToolFailureDoesNotRewriteTheRun() {
+        ToolRequest call = toolRequest(
+                "fail-then-cancel", "read_doc", "1.0.0", new ToolArguments("read.doc.input", "1.0", Map.of()));
+        Fixture fixture = fixture(
+                ignored -> response(new ToolCallDecision(List.of(call))),
+                builder -> TestToolPlatform.install(
+                        builder, "read_doc", "1.0.0", "read.doc.input", false, invocation -> {
+                            throw new IllegalStateException("tool failed without cancellation");
+                        }));
+
+        var accepted = fixture.runtime.start(request("fail-then-cancel"));
+        fixture.scheduler.runAll();
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.FAILED);
+
+        fixture.runtime.command(command(accepted.runId().value(), RuntimeCommandType.CANCEL, "cancel-after-failed"));
+
+        var settled = fixture.runtime.find(accepted.runId()).orElseThrow();
+        assertThat(settled.status()).isEqualTo(AgentRunStatus.FAILED);
+        assertThat(settled.error().orElseThrow().code()).isEqualTo(AgentErrorCode.TOOL_INVOCATION_FAILED);
     }
 
     @Test
