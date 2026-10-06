@@ -165,31 +165,19 @@ public final class AttemptExecutor {
     }
 
     /**
-     * An accepted cancellation outranks a failure raised while the Run was executing.
+     * An accepted user cancellation outranks a failure raised while the Run was executing.
      *
-     * <p>A stop directive recorded before the Run settles means the user already accepted cancellation; a tool
-     * invocation that fails because the Run is stopping must therefore not flip the Run to {@code FAILED}. The
-     * normal cooperative path observes the directive at a loop safe point, but a failure can surface first (for
-     * example a delegated child cancelling makes its {@code task} call fail). Only cancel-type directives are
-     * handled here so timeout, approval and wall-time settlement keep their existing paths.
+     * <p>The cooperative path observes the cancel directive at a loop safe point, but a failure can surface first:
+     * cancelling a delegating Run terminates its children, which makes the pending {@code task} calls fail. Once the
+     * cancel is recorded the Run must settle as {@code CANCELLED}, not {@code FAILED}. Only {@code CANCEL} is handled
+     * here; timeout, approval, wall-time and the other stop signals keep their existing settlement.
      */
     private boolean settleAcceptedCancellation(
             AgentRun run, AgentRunExecutionAttempt attempt, RuntimeTraceContext traceContext) {
         if (run.status().isTerminal()) return false;
         RunControlDirective directive = controls.directive(run.id());
-        RunControlSignal signal = directive.signal();
-        if (signal != RunControlSignal.CANCEL
-                && signal != RunControlSignal.PARENT_CANCELLED
-                && signal != RunControlSignal.ADMIN_STOP
-                && signal != RunControlSignal.LEASE_LOST) {
-            return false;
-        }
-        if (signal == RunControlSignal.CANCEL) {
-            transitions.cancelled(run, directive.terminationReason().orElseThrow());
-        } else {
-            transitions.cancelled(run, new io.haifa.agent.core.run.RunTerminationReason(
-                    signal.name(), "Runtime stop signal observed"));
-        }
+        if (directive.signal() != RunControlSignal.CANCEL) return false;
+        transitions.cancelled(run, directive.terminationReason().orElseThrow());
         recordRunTerminal(run, traceContext);
         finish(attempt, statusFor(run.status()), null);
         return true;
