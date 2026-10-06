@@ -187,6 +187,7 @@ public final class RuntimeCoreBuilder {
                     && !decision.outputSchemaVersion().isBlank();
     private CompletionPolicy completionPolicy = (run, decision) -> CompletionPolicyResult.accepted();
     private final List<AgentRuntimeMiddleware> additionalMiddleware = new ArrayList<>();
+    private String todoSystemPrompt = "";
     private String workerId = "local-runtime-" + ids.nextValue();
     private ExecutionOwnershipPort ownership;
     private MemoryRetriever memoryRetriever;
@@ -438,6 +439,11 @@ public final class RuntimeCoreBuilder {
         return this;
     }
 
+    public RuntimeCoreBuilder todoSystemPrompt(String value) {
+        this.todoSystemPrompt = Objects.requireNonNull(value, "todoSystemPrompt must not be null");
+        return this;
+    }
+
     public RuntimeCoreBuilder workerId(String value) {
         workerId = Objects.requireNonNull(value, "workerId must not be null").trim();
         if (workerId.isEmpty()) throw new IllegalArgumentException("workerId must not be blank");
@@ -562,7 +568,7 @@ public final class RuntimeCoreBuilder {
         List<AgentRuntimeMiddleware> configuredMiddleware = new ArrayList<>(List.of(
                 new RunMetadataMiddleware(),
                 new SafetyInstructionMiddleware(),
-                new TodoMiddleware(),
+                new TodoMiddleware(todoSystemPrompt),
                 new ToolDisclosureMiddleware(toolNames),
                 new TraceMiddleware()));
         configuredMiddleware.addAll(additionalMiddleware);
