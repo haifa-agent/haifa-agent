@@ -28,12 +28,14 @@ import io.haifa.agent.sdk.contribution.ToolPlatformContribution;
 import io.haifa.agent.sdk.contribution.ToolRegistration;
 import io.haifa.agent.sdk.internal.DefaultConversationService;
 import io.haifa.agent.sdk.internal.NonInteractiveChildToolPolicy;
+import io.haifa.agent.sdk.internal.PlanAuthoringTool;
 import io.haifa.agent.sdk.internal.ProcessLocalPromptDiagnostics;
 import io.haifa.agent.sdk.internal.ReadOnlyNetworkToolPolicy;
 import io.haifa.agent.sdk.internal.SafeConversationService;
 import io.haifa.agent.sdk.internal.StandardFileWriteToolPolicy;
 import io.haifa.agent.sdk.internal.ToolAssembly;
 import io.haifa.agent.sdk.memory.AgentMemories;
+import io.haifa.agent.sdk.plan.PlanAuthoringSpec;
 import io.haifa.agent.sdk.product.ChildAgentSpec;
 import io.haifa.agent.sdk.product.ProductProfile;
 import io.haifa.agent.sdk.product.ProductRunProfile;
@@ -91,6 +93,7 @@ public final class HaifaAgentBuilder {
     private AgentMetadata metadata = AgentMetadata.defaults();
     private boolean starterDefaultInstructionsInUse;
     private CompressionPolicy compressionPolicy;
+    private PlanAuthoringSpec planAuthoringSpec;
 
     HaifaAgentBuilder() {}
 
@@ -101,6 +104,15 @@ public final class HaifaAgentBuilder {
 
     public CompressionPolicy compressionPolicy() {
         return compressionPolicy;
+    }
+
+    public HaifaAgentBuilder planAuthoring(PlanAuthoringSpec spec) {
+        this.planAuthoringSpec = Objects.requireNonNull(spec, "planAuthoringSpec must not be null");
+        return this;
+    }
+
+    public HaifaAgentBuilder enablePlanAuthoring() {
+        return planAuthoring(PlanAuthoringSpec.defaults());
     }
 
     public HaifaAgentBuilder product(ProductProfile value) {
@@ -394,7 +406,12 @@ public final class HaifaAgentBuilder {
                     "assembly",
                     "Artifact component is forbidden by the Product Profile policy");
         }
-        ToolAssembly.Prepared prepared = ToolAssembly.prepare(this.toolPlatform, javaTools, toolRegistrations);
+        List<JavaTool<?, ?>> effectiveJavaTools = new ArrayList<>(this.javaTools);
+        if (planAuthoringSpec != null) {
+            effectiveJavaTools.add(new PlanAuthoringTool(
+                    planAuthoringSpec, persistence.runtimePersistence().state(), ids, time));
+        }
+        ToolAssembly.Prepared prepared = ToolAssembly.prepare(this.toolPlatform, effectiveJavaTools, toolRegistrations);
         ToolPlatformContribution tool = prepared.platform();
         Set<String> allowedTools = new LinkedHashSet<>(effectiveProfile.allowedTools());
         allowedTools.addAll(prepared.contributedAliases());
@@ -580,6 +597,9 @@ public final class HaifaAgentBuilder {
             }
             if (compressionPolicy != null) {
                 runtimeBuilder.compressionPolicy(compressionPolicy);
+            }
+            if (planAuthoringSpec != null) {
+                runtimeBuilder.todoSystemPrompt(planAuthoringSpec.systemPrompt());
             }
 
             var runtime = runtimeBuilder.build();
