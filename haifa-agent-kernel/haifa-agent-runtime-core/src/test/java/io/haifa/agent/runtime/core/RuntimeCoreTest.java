@@ -850,28 +850,24 @@ class RuntimeCoreTest {
         RunControlRegistry controls = new RunControlRegistry();
         ToolRequest call = toolRequest(
                 "fail-after-cancel", "read_doc", "1.0.0", new ToolArguments("read.doc.input", "1.0", Map.of()));
-        Fixture fixture = fixture(
-                ignored -> response(new ToolCallDecision(List.of(call))),
-                builder -> {
-                    builder.controlRegistry(controls);
-                    return TestToolPlatform.install(
-                            builder, "read_doc", "1.0.0", "read.doc.input", false, invocation -> {
-                                controls.requestCancel(invocation.runId());
-                                throw new IllegalStateException("tool failed after the accepted cancel");
-                            });
-                });
+        Fixture fixture = fixture(ignored -> response(new ToolCallDecision(List.of(call))), builder -> {
+            builder.controlRegistry(controls);
+            return TestToolPlatform.install(builder, "read_doc", "1.0.0", "read.doc.input", false, invocation -> {
+                controls.requestCancel(invocation.runId());
+                throw new IllegalStateException("tool failed after the accepted cancel");
+            });
+        });
 
         var accepted = fixture.runtime.start(request("fail-after-cancel"));
         fixture.scheduler.runAll();
 
         var settled = fixture.runtime.find(accepted.runId()).orElseThrow();
         assertThat(settled.status()).isEqualTo(AgentRunStatus.CANCELLED);
-        assertThat(settled.terminationReason()).hasValueSatisfying(reason -> assertThat(reason.code())
-                .isEqualTo("USER_CANCELLED"));
+        assertThat(settled.terminationReason())
+                .hasValueSatisfying(reason -> assertThat(reason.code()).isEqualTo("USER_CANCELLED"));
         assertThat(fixture.store.toolCalls(accepted.runId())).singleElement().satisfies(toolCall -> {
             assertThat(toolCall.status()).isEqualTo(ToolCallStatus.FAILED);
-            assertThat(toolCall.error().orElseThrow().error().code())
-                    .isEqualTo(AgentErrorCode.TOOL_INVOCATION_FAILED);
+            assertThat(toolCall.error().orElseThrow().error().code()).isEqualTo(AgentErrorCode.TOOL_INVOCATION_FAILED);
         });
     }
 
@@ -881,8 +877,8 @@ class RuntimeCoreTest {
                 "fail-without-cancel", "read_doc", "1.0.0", new ToolArguments("read.doc.input", "1.0", Map.of()));
         Fixture fixture = fixture(
                 ignored -> response(new ToolCallDecision(List.of(call))),
-                builder -> TestToolPlatform.install(
-                        builder, "read_doc", "1.0.0", "read.doc.input", false, invocation -> {
+                builder ->
+                        TestToolPlatform.install(builder, "read_doc", "1.0.0", "read.doc.input", false, invocation -> {
                             throw new IllegalStateException("tool failed without cancellation");
                         }));
 
@@ -900,8 +896,8 @@ class RuntimeCoreTest {
                 "fail-then-cancel", "read_doc", "1.0.0", new ToolArguments("read.doc.input", "1.0", Map.of()));
         Fixture fixture = fixture(
                 ignored -> response(new ToolCallDecision(List.of(call))),
-                builder -> TestToolPlatform.install(
-                        builder, "read_doc", "1.0.0", "read.doc.input", false, invocation -> {
+                builder ->
+                        TestToolPlatform.install(builder, "read_doc", "1.0.0", "read.doc.input", false, invocation -> {
                             throw new IllegalStateException("tool failed without cancellation");
                         }));
 
