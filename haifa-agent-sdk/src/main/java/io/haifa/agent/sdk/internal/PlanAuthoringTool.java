@@ -111,7 +111,7 @@ public final class PlanAuthoringTool implements JavaTool<PlanAuthoringInput, Pla
         for (PlanTodoItemInput itemInput : todoInputs) {
             String title = itemInput.content().trim();
             TodoItemId itemId = new TodoItemId(ids.nextValue());
-            TodoItem todoItem = new TodoItem(itemId, title, title, TodoPriority.MEDIUM, List.of());
+            TodoItem todoItem = new TodoItem(itemId, title, title, TodoPriority.NORMAL, List.of());
             String status = itemInput.status();
             if (STATUS_IN_PROGRESS.equals(status)) {
                 todoItem.start(Set.of(), now);

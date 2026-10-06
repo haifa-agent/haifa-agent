@@ -15,16 +15,12 @@ import io.haifa.agent.sdk.SdkTestFixtures;
 import io.haifa.agent.sdk.api.HaifaAgent;
 import io.haifa.agent.sdk.api.HaifaAgents;
 import io.haifa.agent.sdk.contribution.InMemoryConversationContribution;
-import io.haifa.agent.sdk.contribution.ModelContribution;
+import io.haifa.agent.sdk.conversation.ConversationRecord;
 import io.haifa.agent.sdk.conversation.StartConversationCommand;
 import io.haifa.agent.sdk.conversation.SubmitConversationTurnCommand;
 import io.haifa.agent.sdk.internal.InMemoryPersistenceContribution;
 import io.haifa.agent.sdk.product.ChildAgentSpec;
 import io.haifa.agent.sdk.product.ProductProfile;
-import io.haifa.agent.tool.api.ToolApprovalRequirement;
-import io.haifa.agent.tool.api.ToolRisk;
-import java.time.Duration;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -42,23 +38,32 @@ public class PlanAuthoringTest {
             var started = agent.conversations()
                     .start(new StartConversationCommand("start-1", "Disabled test", "Hello"));
             AgentRunId runId = started.runId();
-            agent.runs().await(runId, Duration.ofSeconds(10));
+            agent.runs().await(runId);
 
             assertThat(agent.runs().plan(runId)).isEmpty();
             var promptDiagnostics = agent.runs().promptDiagnostics(runId);
             assertThat(promptDiagnostics.components())
-                    .noneMatch(component -> component.id().value().equals("runtime-todo"));
+                    .noneMatch(component -> component.componentId().equals("runtime-todo"));
         }
     }
 
     @Test
     void enabled_writesAllThreeStatusesAndReadsBackViaPlan() throws Exception {
-        AgentChatModel model = SdkTestFixtures.queueModel(
+        AtomicReference<String> systemPromptSeen = new AtomicReference<>();
+        AgentChatModel queue = SdkTestFixtures.queueModel(
                 SdkTestFixtures.toolCall("write_todos", Map.of("todos", List.of(
                         Map.of("content", "Step 1", "status", "completed"),
                         Map.of("content", "Step 2", "status", "in_progress"),
                         Map.of("content", "Step 3", "status", "pending")))),
                 SdkTestFixtures.finalAnswer("Plan established."));
+
+        AgentChatModel model = request -> {
+            request.messages().stream()
+                    .filter(m -> m.role() == ModelMessageRole.SYSTEM && m.content().contains("Track multi-step objectives"))
+                    .findFirst()
+                    .ifPresent(m -> systemPromptSeen.set(m.content()));
+            return queue.invoke(request);
+        };
 
         try (HaifaAgent agent = SdkTestFixtures.builder("p-enabled")
                 .model(SdkTestFixtures.modelContribution(model))
@@ -68,7 +73,7 @@ public class PlanAuthoringTest {
             var started = agent.conversations()
                     .start(new StartConversationCommand("start-2", "Plan test", "Create plan"));
             AgentRunId runId = started.runId();
-            agent.runs().await(runId, Duration.ofSeconds(10));
+            agent.runs().await(runId);
 
             Optional<AgentPlanView> planOpt = agent.runs().plan(runId);
             assertThat(planOpt).isPresent();
@@ -95,10 +100,11 @@ public class PlanAuthoringTest {
             assertThat(item2.startedAt()).isEmpty();
             assertThat(item2.completedAt()).isEmpty();
 
+            assertThat(systemPromptSeen.get()).contains(PlanAuthoringSpec.DEFAULT_SYSTEM_PROMPT);
+
             var promptDiagnostics = agent.runs().promptDiagnostics(runId);
             assertThat(promptDiagnostics.components())
-                    .anyMatch(c -> c.id().value().equals("runtime-todo")
-                            && c.text().contains(PlanAuthoringSpec.DEFAULT_SYSTEM_PROMPT));
+                    .anyMatch(c -> c.componentId().equals("runtime-todo"));
         }
     }
 
@@ -108,11 +114,10 @@ public class PlanAuthoringTest {
                 SdkTestFixtures.toolCall("write_todos", Map.of("todos", List.of(
                         Map.of("content", "Task A", "status", "completed"),
                         Map.of("content", "Task B", "status", "in_progress")))),
-                SdkTestFixtures.finalAnswer("Turn 1 complete"),
                 SdkTestFixtures.toolCall("write_todos", Map.of("todos", List.of(
                         Map.of("content", "Task A", "status", "pending"),
                         Map.of("content", "Task C", "status", "in_progress")))),
-                SdkTestFixtures.finalAnswer("Turn 2 complete"));
+                SdkTestFixtures.finalAnswer("Run complete"));
 
         try (HaifaAgent agent = SdkTestFixtures.builder("p-replace")
                 .model(SdkTestFixtures.modelContribution(model))
@@ -120,14 +125,10 @@ public class PlanAuthoringTest {
                 .build()) {
 
             var conv = agent.conversations()
-                    .start(new StartConversationCommand("start-3", "Replace test", "First turn"));
-            agent.runs().await(conv.runId(), Duration.ofSeconds(10));
+                    .start(new StartConversationCommand("start-3", "Replace test", "Run"));
+            agent.runs().await(conv.runId());
 
-            var turn2 = agent.conversations()
-                    .submitTurn(new SubmitConversationTurnCommand(conv.conversationId(), "start-3-t2", "Second turn"));
-            agent.runs().await(turn2.runId(), Duration.ofSeconds(10));
-
-            Optional<AgentPlanView> planOpt = agent.runs().plan(turn2.runId());
+            Optional<AgentPlanView> planOpt = agent.runs().plan(conv.runId());
             assertThat(planOpt).isPresent();
             AgentPlanView plan = planOpt.get();
             assertThat(plan.revision()).isEqualTo(2L);
@@ -146,15 +147,12 @@ public class PlanAuthoringTest {
         AgentChatModel model = SdkTestFixtures.queueModel(
                 SdkTestFixtures.toolCall("write_todos", Map.of("todos", List.of(
                         Map.of("content", "Valid task", "status", "pending")))),
-                SdkTestFixtures.finalAnswer("Initial plan established"),
                 SdkTestFixtures.toolCall("write_todos", Map.of("todos", List.of(
                         Map.of("content", "Broken task", "status", "doing")))),
-                SdkTestFixtures.finalAnswer("Handled invalid status"),
                 SdkTestFixtures.toolCall("write_todos", Map.of("todos", List.of(
                         Map.of("content", "   ", "status", "pending")))),
-                SdkTestFixtures.finalAnswer("Handled blank content"),
                 SdkTestFixtures.toolCall("write_todos", Map.of()),
-                SdkTestFixtures.finalAnswer("Handled missing todos"));
+                SdkTestFixtures.finalAnswer("All handled"));
 
         try (HaifaAgent agent = SdkTestFixtures.builder("p-validation")
                 .model(SdkTestFixtures.modelContribution(model))
@@ -163,36 +161,13 @@ public class PlanAuthoringTest {
 
             var conv = agent.conversations()
                     .start(new StartConversationCommand("start-4", "Val test", "Init"));
-            agent.runs().await(conv.runId(), Duration.ofSeconds(10));
+            var snap = agent.runs().await(conv.runId());
+            assertThat(snap.status()).isEqualTo(AgentRunStatus.COMPLETED);
 
-            // Turn 2: invalid status
-            var t2 = agent.conversations()
-                    .submitTurn(new SubmitConversationTurnCommand(conv.conversationId(), "start-4-t2", "Turn 2"));
-            var snap2 = agent.runs().await(t2.runId(), Duration.ofSeconds(10));
-            assertThat(snap2.status()).isEqualTo(AgentRunStatus.COMPLETED);
-
-            AgentPlanView planAfterT2 = agent.runs().plan(t2.runId()).orElseThrow();
-            assertThat(planAfterT2.revision()).isEqualTo(1L);
-            assertThat(planAfterT2.items()).hasSize(1);
-            assertThat(planAfterT2.items().get(0).title()).isEqualTo("Valid task");
-
-            // Turn 3: blank content
-            var t3 = agent.conversations()
-                    .submitTurn(new SubmitConversationTurnCommand(conv.conversationId(), "start-4-t3", "Turn 3"));
-            var snap3 = agent.runs().await(t3.runId(), Duration.ofSeconds(10));
-            assertThat(snap3.status()).isEqualTo(AgentRunStatus.COMPLETED);
-
-            AgentPlanView planAfterT3 = agent.runs().plan(t3.runId()).orElseThrow();
-            assertThat(planAfterT3.revision()).isEqualTo(1L);
-
-            // Turn 4: missing todos
-            var t4 = agent.conversations()
-                    .submitTurn(new SubmitConversationTurnCommand(conv.conversationId(), "start-4-t4", "Turn 4"));
-            var snap4 = agent.runs().await(t4.runId(), Duration.ofSeconds(10));
-            assertThat(snap4.status()).isEqualTo(AgentRunStatus.COMPLETED);
-
-            AgentPlanView planAfterT4 = agent.runs().plan(t4.runId()).orElseThrow();
-            assertThat(planAfterT4.revision()).isEqualTo(1L);
+            AgentPlanView plan = agent.runs().plan(conv.runId()).orElseThrow();
+            assertThat(plan.revision()).isEqualTo(1L);
+            assertThat(plan.items()).hasSize(1);
+            assertThat(plan.items().get(0).title()).isEqualTo("Valid task");
         }
     }
 
@@ -201,7 +176,6 @@ public class PlanAuthoringTest {
         AgentChatModel model = SdkTestFixtures.queueModel(
                 SdkTestFixtures.toolCall("write_todos", Map.of("todos", List.of(
                         Map.of("content", "Initial task", "status", "pending")))),
-                SdkTestFixtures.finalAnswer("Plan set"),
                 SdkTestFixtures.toolCall("write_todos", Map.of("todos", List.of())),
                 SdkTestFixtures.finalAnswer("Plan cleared"));
 
@@ -212,13 +186,9 @@ public class PlanAuthoringTest {
 
             var conv = agent.conversations()
                     .start(new StartConversationCommand("start-5", "Clear test", "Set"));
-            agent.runs().await(conv.runId(), Duration.ofSeconds(10));
+            agent.runs().await(conv.runId());
 
-            var t2 = agent.conversations()
-                    .submitTurn(new SubmitConversationTurnCommand(conv.conversationId(), "start-5-t2", "Clear"));
-            agent.runs().await(t2.runId(), Duration.ofSeconds(10));
-
-            AgentPlanView plan = agent.runs().plan(t2.runId()).orElseThrow();
+            AgentPlanView plan = agent.runs().plan(conv.runId()).orElseThrow();
             assertThat(plan.revision()).isEqualTo(2L);
             assertThat(plan.items()).isEmpty();
         }
@@ -242,7 +212,7 @@ public class PlanAuthoringTest {
 
             assertThat(agent.runs().pendingInteraction(runId)).isEmpty();
 
-            var snapshot = agent.runs().await(runId, Duration.ofSeconds(10));
+            var snapshot = agent.runs().await(runId);
             assertThat(snapshot.status()).isEqualTo(AgentRunStatus.COMPLETED);
             assertThat(agent.runs().plan(runId)).isPresent();
         }
@@ -254,22 +224,31 @@ public class PlanAuthoringTest {
         AtomicReference<List<String>> childTools = new AtomicReference<>();
 
         AgentChatModel model = request -> {
-            boolean isChild = request.messages().stream()
-                    .anyMatch(m -> m.content().contains("subtask"));
-            if (isChild) {
-                childTools.set(request.tools().stream().map(ModelToolSpecification::name).toList());
-                return SdkTestFixtures.finalAnswer("child finished");
+            boolean isParent = request.tools().stream().map(ModelToolSpecification::name).anyMatch("task"::equals);
+            if (isParent) {
+                parentTools.set(request.tools().stream().map(ModelToolSpecification::name).toList());
+                boolean hasToolResult = request.messages().stream().anyMatch(m -> m.role() == ModelMessageRole.TOOL);
+                if (hasToolResult) {
+                    return SdkTestFixtures.finalAnswer("all finished");
+                }
+                return SdkTestFixtures.toolCall("task", Map.of("agent", "subagent-worker", "objective", "subtask work"));
             }
-            parentTools.set(request.tools().stream().map(ModelToolSpecification::name).toList());
-            boolean hasToolResult = request.messages().stream().anyMatch(m -> m.role() == ModelMessageRole.TOOL);
-            if (hasToolResult) {
-                return SdkTestFixtures.finalAnswer("all finished");
-            }
-            return SdkTestFixtures.toolCall("task", Map.of("subagent", "subagent-worker", "description", "subtask work"));
+            childTools.set(request.tools().stream().map(ModelToolSpecification::name).toList());
+            return SdkTestFixtures.finalAnswer("child finished");
         };
 
-        ProductProfile profile = SdkTestFixtures.profile("p-child")
-                .withAllowedChildAgents(Set.of("subagent-worker"));
+        ProductProfile profile = new ProductProfile(
+                new io.haifa.agent.sdk.product.ProductId("p-child"),
+                new io.haifa.agent.sdk.product.ProductVersion("1.0.0"),
+                new io.haifa.agent.core.agent.AgentDefinitionId("p-child-agent"),
+                new io.haifa.agent.core.agent.AgentDefinitionVersion(1, 0, 0),
+                "Parent instructions",
+                new io.haifa.agent.sdk.product.ProductRunProfileRef("p-child-chat", "1.0.0"),
+                new io.haifa.agent.core.run.AgentRunBudget(100_000, 100_000, 100_000, 8, 8, 4, "USD", 1_000),
+                new io.haifa.agent.core.run.AgentRunLimits(8, 1, 2, 30_000, 30_000, 8, 8, 4),
+                Set.of(),
+                Set.of(),
+                Set.of("subagent-worker"));
 
         try (HaifaAgent agent = HaifaAgents.builder(profile)
                 .model(SdkTestFixtures.modelContribution(model))
@@ -284,7 +263,7 @@ public class PlanAuthoringTest {
 
             var started = agent.conversations()
                     .start(new StartConversationCommand("start-7", "Child test", "Start parent"));
-            agent.runs().await(started.runId(), Duration.ofSeconds(15));
+            agent.runs().await(started.runId());
 
             assertThat(parentTools.get()).contains("write_todos");
             assertThat(childTools.get()).isNotNull();
@@ -308,13 +287,16 @@ public class PlanAuthoringTest {
                 .model(SdkTestFixtures.modelContribution(model))
                 .persistence(new InMemoryPersistenceContribution(ports))
                 .conversation(new InMemoryConversationContribution())
+                .policy(new io.haifa.agent.sdk.contribution.PolicyPlatformContribution(
+                        io.haifa.agent.policy.api.PolicyPresets.standardApproval(),
+                        new io.haifa.agent.policy.core.DefaultPolicyDecisionService()))
                 .enablePlanAuthoring()
                 .build()) {
 
             var started = agent1.conversations()
                     .start(new StartConversationCommand("start-8", "Persist test", "Run"));
             runId = started.runId();
-            agent1.runs().await(runId, Duration.ofSeconds(10));
+            agent1.runs().await(runId);
             assertThat(agent1.runs().plan(runId)).isPresent();
         }
 
@@ -323,6 +305,9 @@ public class PlanAuthoringTest {
                 .model(SdkTestFixtures.modelContribution())
                 .persistence(new InMemoryPersistenceContribution(ports))
                 .conversation(new InMemoryConversationContribution())
+                .policy(new io.haifa.agent.sdk.contribution.PolicyPlatformContribution(
+                        io.haifa.agent.policy.api.PolicyPresets.standardApproval(),
+                        new io.haifa.agent.policy.core.DefaultPolicyDecisionService()))
                 .enablePlanAuthoring()
                 .build()) {
 
