@@ -40,10 +40,7 @@ public final class PlanAuthoringTool implements JavaTool<PlanAuthoringInput, Pla
     private final JavaToolSpec<PlanAuthoringInput, PlanAuthoringOutput> toolSpec;
 
     public PlanAuthoringTool(
-            PlanAuthoringSpec spec,
-            RuntimeStateRepository state,
-            IdentifierGenerator ids,
-            TimeProvider time) {
+            PlanAuthoringSpec spec, RuntimeStateRepository state, IdentifierGenerator ids, TimeProvider time) {
         this.spec = Objects.requireNonNull(spec, "spec must not be null");
         this.state = Objects.requireNonNull(state, "state must not be null");
         this.ids = Objects.requireNonNull(ids, "ids must not be null");
@@ -69,10 +66,7 @@ public final class PlanAuthoringTool implements JavaTool<PlanAuthoringInput, Pla
         int currentItemCount = existingPlan.map(p -> p.items().size()).orElse(0);
 
         if (input == null || input.todos() == null) {
-            return new PlanAuthoringOutput(
-                    currentRevision,
-                    currentItemCount,
-                    "Error: missing required field 'todos'");
+            return new PlanAuthoringOutput(currentRevision, currentItemCount, "Error: missing required field 'todos'");
         }
 
         List<PlanTodoItemInput> todoInputs = input.todos();
@@ -80,9 +74,7 @@ public final class PlanAuthoringTool implements JavaTool<PlanAuthoringInput, Pla
             PlanTodoItemInput item = todoInputs.get(i);
             if (item == null) {
                 return new PlanAuthoringOutput(
-                        currentRevision,
-                        currentItemCount,
-                        "Error: todo item at index " + i + " must not be null");
+                        currentRevision, currentItemCount, "Error: todo item at index " + i + " must not be null");
             }
             if (item.content() == null || item.content().trim().isEmpty()) {
                 return new PlanAuthoringOutput(
@@ -97,7 +89,9 @@ public final class PlanAuthoringTool implements JavaTool<PlanAuthoringInput, Pla
                         "Error: todo item status at index " + i + " must not be null");
             }
             String status = item.status();
-            if (!STATUS_PENDING.equals(status) && !STATUS_IN_PROGRESS.equals(status) && !STATUS_COMPLETED.equals(status)) {
+            if (!STATUS_PENDING.equals(status)
+                    && !STATUS_IN_PROGRESS.equals(status)
+                    && !STATUS_COMPLETED.equals(status)) {
                 return new PlanAuthoringOutput(
                         currentRevision,
                         currentItemCount,

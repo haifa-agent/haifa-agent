@@ -9,10 +9,7 @@ import java.util.Objects;
  * @param toolDescription The description of the tool exposed to the model.
  * @param systemPrompt The system prompt instruction injected into the context.
  */
-public record PlanAuthoringSpec(
-        String toolName,
-        String toolDescription,
-        String systemPrompt) {
+public record PlanAuthoringSpec(String toolName, String toolDescription, String systemPrompt) {
 
     public static final String DEFAULT_TOOL_NAME = "write_todos";
     public static final String DEFAULT_TOOL_DESCRIPTION =
@@ -35,7 +32,8 @@ public record PlanAuthoringSpec(
     }
 
     private static String requireText(String value, String field) {
-        String checked = Objects.requireNonNull(value, field + " must not be null").trim();
+        String checked =
+                Objects.requireNonNull(value, field + " must not be null").trim();
         if (checked.isEmpty()) {
             throw new IllegalArgumentException(field + " must not be blank");
         }

@@ -409,10 +409,7 @@ public final class HaifaAgentBuilder {
         List<JavaTool<?, ?>> effectiveJavaTools = new ArrayList<>(this.javaTools);
         if (planAuthoringSpec != null) {
             effectiveJavaTools.add(new PlanAuthoringTool(
-                    planAuthoringSpec,
-                    persistence.runtimePersistence().state(),
-                    ids,
-                    time));
+                    planAuthoringSpec, persistence.runtimePersistence().state(), ids, time));
         }
         ToolAssembly.Prepared prepared = ToolAssembly.prepare(this.toolPlatform, effectiveJavaTools, toolRegistrations);
         ToolPlatformContribution tool = prepared.platform();
