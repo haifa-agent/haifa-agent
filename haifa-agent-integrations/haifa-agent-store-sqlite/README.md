@@ -1,5 +1,8 @@
 # Haifa Agent SQLite Runtime Store
 
+Runtime command 幂等结果按同一 payload codec 的往返表示比较，避免 JSON 将小整数 `Long` 读回 `Integer`
+时误判内容冲突。真实参数数值、命令身份或结果不同仍拒绝；重开 Store 后保留原取消期限的语义。
+
 Run 消息分页复用 `session_message`：共用 SQL predicate 在 `LIMIT` 前过滤 Assistant/Tool，
 `COUNT` 使用同一 predicate 计算稳定 `messageIndex`，head/cursor 使用已有 message sequence。
 查询只解码一页正文，不调用全量 `messagesForRun`。没有新增表、迁移或正文副本。

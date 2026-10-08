@@ -1,5 +1,12 @@
 # Haifa Agent SDK
 
+测试宿主可以通过 `HaifaAgentBuilder.executionExecutorFactoryForTests(Supplier<? extends ExecutorService>)`
+提供确定性夹具的物理执行器；生产装配继续使用虚拟线程 per-task 默认值。
+测试执行器必须支持 Parent 等待时 Child 独立并发执行；单线程及固定大小线程池不受支持，不得用此入口限制并发。每次 `build()` 必须返回新的独立执行器，
+其关闭生命周期由 SDK 持有，不得跨 Agent 共享。测试宿主保留已提交的任务时，关闭前仍须排空这些 wrapper。
+已创建但尚未进入执行器的 Child 在 Parent 停止后直接收敛为 `CANCELLED/PARENT_CANCELLED`；
+稍后排空任务不会产生 `run.status.changed` 的 `RUNNING` 状态、模型调用或步骤，容量槽直到实际 wrapper 排空才释放。
+
 `AgentRuns.messages(runId, RunMessageCursor.beforeFirst(runId), limit)` 薄委托既有 Runtime，返回
 `RunMessagePage` 的安全已提交 Assistant/Tool 步骤。seq/cursor 是既有 Message sequence，messageIndex
 是过滤后稳定编号；Tool 引用与 correlation 来自该消息 actual parts。正文与参数的截断标记见
