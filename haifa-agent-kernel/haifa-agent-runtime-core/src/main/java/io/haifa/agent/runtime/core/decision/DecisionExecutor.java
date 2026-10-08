@@ -1362,14 +1362,20 @@ public final class DecisionExecutor {
 
     private void appendToolCalls(
             AgentRun run, List<ToolCall> calls, java.util.Optional<ModelInvocationResult> invocation) {
-        List<ContentPart> parts = calls.stream()
+        List<ContentPart> parts = new ArrayList<>();
+        Optional<String> visibleText =
+                invocation.map(ModelInvocationResult::content).filter(content -> !content.isBlank());
+        visibleText.ifPresent(text -> parts.add(new TextPart(text, "plain")));
+        calls.stream()
                 .map(call -> (ContentPart)
                         new ToolCallPart(call.id(), call.providerCorrelationId(), call.toolName(), call.toolVersion()))
-                .toList();
+                .forEach(parts::add);
         Set<String> correlations = calls.stream()
                 .map(call -> call.providerCorrelationId().value())
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
-        appendAssistant(run, parts, MessageVisibility.AGENT_VISIBLE, Map.of(), invocation, correlations);
+        MessageVisibility visibility =
+                visibleText.isPresent() ? MessageVisibility.USER_VISIBLE : MessageVisibility.AGENT_VISIBLE;
+        appendAssistant(run, List.copyOf(parts), visibility, Map.of(), invocation, correlations);
     }
 
     private Optional<ModelContinuationDraft> continuationDraft(

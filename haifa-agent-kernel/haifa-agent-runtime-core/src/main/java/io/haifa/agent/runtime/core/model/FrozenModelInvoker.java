@@ -344,7 +344,8 @@ public final class FrozenModelInvoker {
                     callId.value(),
                     physicalAttempt,
                     binding.configuration().model(),
-                    response.reasoning());
+                    response.reasoning(),
+                    response.content());
             appendLifecycle(
                     binding,
                     run,

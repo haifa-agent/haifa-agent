@@ -95,6 +95,81 @@ class RuntimeCoreHardeningTest {
     private static final Instant NOW = Instant.parse("2026-07-21T00:00:00Z");
 
     @Test
+    void nativeToolTurnRetainsOrdinaryTextInAuthoritativeMessageContextAndPublicSteps() {
+        verifyNativeToolTurnText("ordinary tool narration");
+        verifyNativeToolTurnText("");
+    }
+
+    private void verifyNativeToolTurnText(String text) {
+        AtomicInteger modelCalls = new AtomicInteger();
+        AtomicInteger executions = new AtomicInteger();
+        AtomicReference<AgentChatRequest> next = new AtomicReference<>();
+        Fixture fixture = fixture(
+                request -> {
+                    if (modelCalls.incrementAndGet() == 1) {
+                        return new AgentChatResponse(
+                                "native-tool",
+                                "deepseek-v4-pro",
+                                text,
+                                List.of(new ModelToolCall(
+                                        new ProviderToolCallCorrelationId("native-correlation"), "read", Map.of())),
+                                ModelFinishReason.TOOL_CALLS,
+                                ModelUsage.unpriced(1, 1),
+                                "",
+                                Map.of(),
+                                Optional.of(SensitiveModelReasoning.of("PRIVATE_TOOL_REASONING")));
+                    }
+                    next.set(request);
+                    return response(finalDecision("done"));
+                },
+                builder -> TestToolPlatform.install(builder, "read", "1.0.0", "read.input", false, request -> {
+                    executions.incrementAndGet();
+                    return new ToolResult(true, "read result", Map.of(), List.of(), List.of(), false);
+                }));
+        var accepted = fixture.runtime.start(request("native-text-" + text.length()));
+        fixture.scheduler.runAll();
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(executions).hasValue(1);
+        var assistant = fixture.store.messages(accepted.runId()).stream()
+                .filter(message -> message.contents().stream()
+                        .anyMatch(io.haifa.agent.core.content.ToolCallPart.class::isInstance))
+                .toList();
+        assertThat(assistant).singleElement().satisfies(message -> {
+            assertThat(message.visibility())
+                    .isEqualTo(
+                            text.isEmpty()
+                                    ? io.haifa.agent.core.message.MessageVisibility.AGENT_VISIBLE
+                                    : io.haifa.agent.core.message.MessageVisibility.USER_VISIBLE);
+            assertThat(message.contents()).hasSize(text.isEmpty() ? 1 : 2);
+            if (!text.isEmpty()) assertThat(message.contents().getFirst()).isEqualTo(new TextPart(text, "plain"));
+            assertThat(message.contents().getLast()).isInstanceOf(io.haifa.agent.core.content.ToolCallPart.class);
+        });
+        assertThat(next.get().messages().stream()
+                        .filter(message -> !message.toolCalls().isEmpty())
+                        .toList())
+                .singleElement()
+                .satisfies(message -> {
+                    assertThat(message.content()).isEqualTo(text);
+                    assertThat(message.toolCalls()).singleElement().satisfies(call -> assertThat(
+                                    call.providerCorrelationId().value())
+                            .isEqualTo("native-correlation"));
+                });
+        var publicSteps = fixture.runtime.messages(
+                accepted.runId(), io.haifa.agent.runtime.api.RunMessageCursor.beforeFirst(accepted.runId()), 50);
+        assertThat(publicSteps.items().stream()
+                        .filter(message -> "ASSISTANT".equals(message.role())
+                                && !message.toolCalls().isEmpty())
+                        .toList())
+                .singleElement()
+                .satisfies(message -> {
+                    assertThat(message.text()).isEqualTo(text);
+                    assertThat(message.toolCorrelations()).containsValue("native-correlation");
+                });
+        assertThat(publicSteps.toString()).doesNotContain("PRIVATE_TOOL_REASONING");
+    }
+
+    @Test
     void callerIdentityScopesVisibilityAndStartIdempotency() {
         AtomicReference<RuntimeCallerContext> caller = new AtomicReference<>(caller("tenant-a", "alice"));
         Fixture fixture = fixture(model(finalDecision("done")), builder -> builder.callers(caller::get));
