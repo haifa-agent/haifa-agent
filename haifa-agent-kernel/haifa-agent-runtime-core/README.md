@@ -394,7 +394,8 @@ An already created Child whose execution wrapper has been submitted but has not 
 settles as `CANCELLED/PARENT_CANCELLED` when its parent stops. Admission and queued cancellation
 share the existing Unit of Work; draining the retained wrapper cannot start a terminal Child. Its
 capacity slot remains reserved until that physical wrapper drains. Parent `child.run.started` still
-describes creation/admission, while the Child's own `run.started` describes physical execution.
+describes creation/admission, while the Child's typed `RunLifecycle` status `RUNNING` in
+`run.status.changed` describes physical execution.
 
 ## Budget threshold notices
 
