@@ -255,7 +255,7 @@ public final class HaifaAgentBuilder {
     }
 
     /**
-     * Optional host-assembly hook supplying the standard {@link ExecutorService} that backs the
+     * Test-only host-assembly hook supplying the standard {@link ExecutorService} that backs the
      * process-local execution scheduler. By default every assembled Agent owns a fresh
      * virtual-thread-per-task executor, which stays the default when this hook is not set.
      *
@@ -266,12 +266,15 @@ public final class HaifaAgentBuilder {
      * scheduled, so the owner remains responsible for draining any work it enqueues and for not
      * leaving tasks the Agent did not submit. This controls host assembly only; it is neither a
      * request option nor part of a frozen Run configuration, and it does not change lifecycle
-     * defaults.
+     * defaults. Production callers must retain the default executor. A test executor must permit
+     * independent concurrent Parent and Child tasks, including while Parents await their Children;
+     * single-thread and fixed-size pools are unsupported because delegation waits synchronously.
+     * A deliberately held Child must be explicitly released by the test owner, even on failure.
      *
      * @param value the executor factory; must not be null
      * @return this builder
      */
-    public HaifaAgentBuilder executionExecutorFactory(Supplier<? extends ExecutorService> value) {
+    public HaifaAgentBuilder executionExecutorFactoryForTests(Supplier<? extends ExecutorService> value) {
         executionExecutorFactory = Objects.requireNonNull(value, "executionExecutorFactory must not be null");
         return this;
     }

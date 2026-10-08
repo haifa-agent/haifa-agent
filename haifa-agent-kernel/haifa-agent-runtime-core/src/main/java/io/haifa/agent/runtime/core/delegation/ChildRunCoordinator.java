@@ -75,6 +75,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Process-local {@link DelegationPort}: a child is an ordinary {@link AgentRun} executed by the same Runtime on the
@@ -736,20 +737,23 @@ public final class ChildRunCoordinator implements DelegationPort {
         }
         try {
             Runnable tracked = () -> {
-                boolean entered = false;
+                AtomicBoolean entered = new AtomicBoolean();
                 try {
-                    entered = unitOfWork.execute(() -> {
+                    unitOfWork.execute(() -> {
                         if (runs.find(runId)
                                 .map(run -> run.status().isTerminal())
-                                .orElse(true)) return false;
+                                .orElse(true)) return null;
                         synchronized (slot) {
                             slot.runningTasks++;
+                            // This process-local increment is not rolled back by the durable
+                            // transaction. Remember it even if committing this UoW throws.
+                            entered.set(true);
                         }
-                        return true;
+                        return null;
                     });
-                    if (entered) task.run();
+                    if (entered.get()) task.run();
                 } finally {
-                    taskEnded(runId, slot, entered);
+                    taskEnded(runId, slot, entered.get());
                 }
             };
             if (afterCurrent) scheduler.submitAfterCurrent(runId, tracked);

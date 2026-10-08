@@ -68,6 +68,7 @@ import io.haifa.agent.runtime.core.retry.BackoffStrategy;
 import io.haifa.agent.runtime.core.retry.RetryPolicy;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
+import io.haifa.agent.runtime.core.storage.RuntimeUnitOfWork;
 import io.haifa.agent.runtime.core.tool.PublicToolPolicy;
 import java.net.URI;
 import java.time.Duration;
@@ -88,6 +89,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -104,6 +106,67 @@ class ChildRunDelegationTest {
     @AfterEach
     void close() throws Exception {
         for (AutoCloseable closeable : closeables) closeable.close();
+    }
+
+    @Test
+    void failedChildAdmissionDoesNotPreventCancellation() throws Exception {
+        ThreadLocal<Boolean> failAdmission = ThreadLocal.withInitial(() -> false);
+        CountDownLatch failed = new CountDownLatch(1);
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        AtomicInteger submissions = new AtomicInteger();
+        AtomicInteger childCalls = new AtomicInteger();
+        LocalExecutionScheduler delegate = new LocalExecutionScheduler();
+        closeables.add(delegate);
+        ExecutionScheduler scheduler = (runId, task) -> delegate.submit(runId, () -> {
+            boolean child = submissions.incrementAndGet() > 1;
+            if (child) failAdmission.set(true);
+            try {
+                task.run();
+            } catch (RuntimeException exception) {
+                failure.set(exception);
+                failed.countDown();
+            } finally {
+                failAdmission.remove();
+            }
+        });
+        Fixture fixture = fixture(
+                Options.defaults().customize(builder -> builder.scheduler(scheduler)),
+                request -> {
+                    if (isParent(request))
+                        return hasToolResults(request) ? answer("done", 1) : taskCalls("researcher", "never started");
+                    childCalls.incrementAndGet();
+                    return answer("child", 1);
+                },
+                original -> new RuntimeUnitOfWork() {
+                    @Override
+                    public <T> T execute(Supplier<T> work) {
+                        T result = original.execute(work);
+                        if (failAdmission.get()) {
+                            failAdmission.set(false);
+                            throw new IllegalStateException("simulated admission commit failure");
+                        }
+                        return result;
+                    }
+                });
+        AgentRunSnapshot parent = fixture.start("failed-child-admission");
+        try {
+            assertThat(failed.await(AWAIT.toSeconds(), TimeUnit.SECONDS)).isTrue();
+            assertThat(failure.get()).hasMessage("simulated admission commit failure");
+            assertThat(fixture.runtime.children(parent.runId())).singleElement().satisfies(child -> {
+                assertThat(child.status()).isEqualTo(AgentRunStatus.QUEUED);
+                assertThat(child.startedAt()).isEmpty();
+            });
+            fixture.runtime.handle(parent.runId()).cancel();
+            assertThat(fixture.runtime.handle(parent.runId()).awaitCompletion(AWAIT))
+                    .get()
+                    .satisfies(result -> assertThat(result.status()).isEqualTo(AgentRunStatus.CANCELLED));
+            assertThat(fixture.runtime.children(parent.runId()))
+                    .singleElement()
+                    .satisfies(child -> assertThat(child.status()).isEqualTo(AgentRunStatus.CANCELLED));
+            assertThat(childCalls).hasValue(0);
+        } finally {
+            fixture.runtime.handle(parent.runId()).cancel();
+        }
     }
 
     @Test
@@ -1271,16 +1334,40 @@ class ChildRunDelegationTest {
     }
 
     private Fixture fixture(Options options, Function<AgentChatRequest, AgentChatResponse> script) {
+        return fixture(options, script, UnaryOperator.identity());
+    }
+
+    private Fixture fixture(
+            Options options,
+            Function<AgentChatRequest, AgentChatResponse> script,
+            UnaryOperator<RuntimeUnitOfWork> unitOfWorkWrapper) {
         LocalExecutionScheduler scheduler = new LocalExecutionScheduler();
         closeables.add(scheduler);
         InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        RuntimePersistencePorts original = RuntimePersistencePorts.inMemory(store);
+        RuntimePersistencePorts persistence = new RuntimePersistencePorts(
+                original.sessions(),
+                original.runs(),
+                original.attempts(),
+                original.checkpoints(),
+                original.state(),
+                original.events(),
+                original.outbox(),
+                original.idempotency(),
+                unitOfWorkWrapper.apply(original.unitOfWork()),
+                original.toolJournal(),
+                original.interactions(),
+                original.runInputs(),
+                original.conversationSummaries(),
+                original.toolResultAssets(),
+                original.messageRedactions());
         AgentChatModel model = script::apply;
         Set<String> parentTools = options.policy == null ? Set.of() : Set.of("read_doc", "write_doc");
         Set<String> researcherTools = options.policy == null ? Set.of() : Set.of("read_doc");
         RuntimeCoreBuilder builder = new RuntimeCoreBuilder()
                 .registerChatModel("openai-compatible", "1.0.0", model)
                 .scheduler(scheduler)
-                .persistence(RuntimePersistencePorts.inMemory(store))
+                .persistence(persistence)
                 .modelRetry(RetryPolicy.none())
                 .definitions((id, requested) -> {
                     if (id.equals(LEAD)) {

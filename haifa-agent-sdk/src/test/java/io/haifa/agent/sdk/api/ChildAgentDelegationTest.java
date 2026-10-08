@@ -134,6 +134,7 @@ public class ChildAgentDelegationTest {
                 .conversation(new InMemoryConversationContribution())
                 .childRunCapacity(new ChildRunCapacity(1))
                 .maxConcurrentChildRuns(3)
+                .executionExecutorFactoryForTests(Executors::newVirtualThreadPerTaskExecutor)
                 .policy(new PolicyPlatformContribution(
                         PolicyPresets.standardApproval(), new DefaultPolicyDecisionService()))
                 .runProfile(childProfile)
@@ -329,10 +330,11 @@ public class ChildAgentDelegationTest {
 
     @Test
     void executionExecutorFactoryFailsClosedForNullFactoryAndNullExecutor() {
-        assertThatThrownBy(() -> builder(profile()).executionExecutorFactory(null))
+        assertThatThrownBy(() -> builder(profile()).executionExecutorFactoryForTests(null))
                 .isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() ->
-                        builder(profile()).executionExecutorFactory(() -> null).build())
+        assertThatThrownBy(() -> builder(profile())
+                        .executionExecutorFactoryForTests(() -> null)
+                        .build())
                 .isInstanceOf(NullPointerException.class);
     }
 
@@ -340,15 +342,15 @@ public class ChildAgentDelegationTest {
     void executionExecutorFactoryCreatesAndClosesAnOwnedExecutorForEachAgent() throws Exception {
         List<ExecutorService> created = new ArrayList<>();
         java.util.function.Supplier<ExecutorService> factory = () -> {
-            ExecutorService executor = Executors.newSingleThreadExecutor();
+            ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
             created.add(executor);
             return executor;
         };
         try (HaifaAgent first = builder(profile(), request -> answer("factory-first"))
-                        .executionExecutorFactory(factory)
+                        .executionExecutorFactoryForTests(factory)
                         .build();
                 HaifaAgent second = builder(profile(), request -> answer("factory-second"))
-                        .executionExecutorFactory(factory)
+                        .executionExecutorFactoryForTests(factory)
                         .build()) {
             assertThat(created).hasSize(2);
             assertThat(created.getFirst()).isNotSameAs(created.getLast());
@@ -402,7 +404,7 @@ public class ChildAgentDelegationTest {
                         PolicyPresets.standardApproval(), new DefaultPolicyDecisionService()))
                 .childAgent(ChildAgentSpec.of("worker", "Works", "Do the work.", Set.of()))
                 .childRunCapacity(capacity)
-                .executionExecutorFactory(() -> gated)
+                .executionExecutorFactoryForTests(() -> gated)
                 .build();
         try {
             AgentRunId parentRunId = agent.conversations()
