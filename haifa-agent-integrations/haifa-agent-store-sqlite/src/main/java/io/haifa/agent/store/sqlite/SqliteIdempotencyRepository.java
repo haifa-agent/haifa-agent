@@ -193,7 +193,10 @@ public final class SqliteIdempotencyRepository implements IdempotencyRepository 
                             stored.resultSchemaVersion(),
                             stored.resultPayload(),
                             stored.resultHash()));
-            if (!decoded.toDomain().equals(result)) {
+            // Compare both values in their persisted representation. JSON may read a small
+            // Long command argument back as Integer; boxed-width changes are not conflicts.
+            CommandResultPayload incoming = codecs.decode(SqliteRuntimePayloadTypes.COMMAND_RESULT, payload);
+            if (!decoded.toDomain().equals(incoming.toDomain())) {
                 throw new IllegalStateException("command result idempotency key has conflicting content");
             }
             return null;
