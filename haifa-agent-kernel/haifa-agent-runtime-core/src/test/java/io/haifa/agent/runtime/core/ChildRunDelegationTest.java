@@ -357,13 +357,25 @@ class ChildRunDelegationTest {
 
     @Test
     void waitingForAChildStillCountsTowardParentWallTimeAndStopsTheChild() throws Exception {
-        Fixture fixture = fixture(Options.defaults().parentWall(800), request -> {
-            if (isParent(request)) return taskCalls("researcher", "endless");
-            sleep(10_000);
-            return answer("too late", 1);
-        });
+        Instant start = Instant.parse("2026-10-08T00:00:00Z");
+        AtomicReference<Instant> clock = new AtomicReference<>(start);
+        CountDownLatch childStarted = new CountDownLatch(1);
+        Fixture fixture = fixture(
+                Options.defaults().parentWall(800).customize(builder -> builder.timeProvider(clock::get)), request -> {
+                    if (isParent(request)) return taskCalls("researcher", "endless");
+                    childStarted.countDown();
+                    sleep(10_000);
+                    return answer("too late", 1);
+                });
 
-        AgentRunSnapshot parent = fixture.startAndAwait("wall");
+        AgentRunSnapshot started = fixture.start("wall");
+        assertThat(childStarted.await(10, TimeUnit.SECONDS)).isTrue();
+        assertThat(fixture.runtime.children(started.runId())).isNotEmpty();
+
+        clock.set(start.plusMillis(801));
+
+        AgentRunSnapshot parent =
+                fixture.runtime.handle(started.runId()).awaitCompletion(AWAIT).orElseThrow();
 
         assertThat(parent.status()).isEqualTo(AgentRunStatus.TIMEOUT);
         assertThat(parent.terminationReason().orElseThrow().code()).isEqualTo("WALL_TIME_EXCEEDED");

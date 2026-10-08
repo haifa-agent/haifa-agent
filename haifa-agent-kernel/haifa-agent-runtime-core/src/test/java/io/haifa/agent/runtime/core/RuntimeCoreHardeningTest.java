@@ -801,6 +801,38 @@ class RuntimeCoreHardeningTest {
     }
 
     @Test
+    void largeToolBudgetDoesNotInventConvergenceAndKeepsExactThresholdRounding() {
+        AtomicReference<List<String>> messages = new AtomicReference<>();
+        Fixture largeBudget = fixture(
+                request -> {
+                    messages.set(request.messages().stream()
+                            .map(message -> message.content())
+                            .toList());
+                    return response(finalDecision("done"));
+                },
+                builder -> builder.profiles((id, overrides) -> new ResolvedProfile(
+                        id,
+                        "1.0.0",
+                        AgentRunType.CHAT,
+                        new AgentRunBudget(1_000_000, 1_000_000, 1_000_000, Long.MAX_VALUE, 150, 6, "USD", 1_000_000),
+                        new AgentRunLimits(150, 4, 1, 900_000, 600_000, 150, Long.MAX_VALUE, 6))));
+        var accepted = largeBudget.runtime.start(request("large-tool-budget"));
+        var run = largeBudget.store.find(accepted.runId()).orElseThrow();
+        var fresh = io.haifa.agent.runtime.core.recovery.RunBudgetSnapshot.from(run, 1, NOW);
+        assertThat(fresh.remainingPercent()).isEqualTo(100);
+        assertThat(fresh.crossedThresholds()).isEmpty();
+        largeBudget.scheduler.runAll();
+        assertThat(messages.get()).noneMatch(value -> value.contains("type=BUDGET_THRESHOLD"));
+
+        var halfAccepted = largeBudget.runtime.start(request("large-tool-half"));
+        var halfRun = largeBudget.store.find(halfAccepted.runId()).orElseThrow();
+        halfRun.recordUsage(new AgentRunUsageDelta(0, 0, 0, 0, Long.MAX_VALUE / 2 + 1, 0, 0, 0));
+        var half = io.haifa.agent.runtime.core.recovery.RunBudgetSnapshot.from(halfRun, 1, NOW);
+        assertThat(half.remainingPercent()).isEqualTo(49);
+        assertThat(half.crossedThresholds()).containsExactly(50);
+    }
+
+    @Test
     void budgetConvergenceInstructionReachesTheModelContext() {
         AtomicReference<List<String>> messages = new AtomicReference<>();
         Fixture nearBudget = fixture(request -> {

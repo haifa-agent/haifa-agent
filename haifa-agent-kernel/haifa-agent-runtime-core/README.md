@@ -389,3 +389,9 @@ Its maximum takes precedence over `maxConcurrentChildRuns`; no shared capacity i
 A Child keeps its slot while waiting for approval and until its terminal Run and actual execution tasks
 have settled. Releasing a slot wakes waiting parents across all participating Agents. Cancelling a
 parent waiting for admission creates no Child. Closing one Agent does not close the shared capacity.
+
+## Budget threshold notices
+
+预算百分比按精确整数向下取整并限制在 0–100，包括 `Long.MAX_VALUE` 的工具额度；
+大额度的乘法不会溢出为零或触发虚假的 `BUDGET_THRESHOLD` 收敛通知。
+真实的 50/25/10 百分比阈值和既有模型消息角色保持不变。
