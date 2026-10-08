@@ -542,12 +542,26 @@ public final class ChildRunCoordinator implements DelegationPort {
                 }
             }
             case PENDING, QUEUED -> {
-                if (executingHere) {
-                    controls.reportParentCancelled(childId);
-                    scheduler.cancel(childId);
-                } else {
-                    cancelDirectly(childId, activeAttempt);
-                }
+                // Admission and this decision share the Unit of Work. A submitted wrapper is
+                // not a physical executor: settle a held Child now, and let its later wrapper
+                // drain without starting an already terminal Run.
+                unitOfWork.execute(() -> {
+                    AgentRun current = runs.find(childId).orElseThrow();
+                    if (current.status().isTerminal()) return null;
+                    Optional<AgentRunExecutionAttempt> currentAttempt = attempts.activeFor(childId);
+                    boolean entered = executing(childId)
+                            || currentAttempt
+                                    .filter(value -> value.workerId().isPresent() && ownership.stillOwned(value))
+                                    .isPresent();
+                    if ((current.status() == AgentRunStatus.PENDING || current.status() == AgentRunStatus.QUEUED)
+                            && !entered) {
+                        cancelDirectly(childId, currentAttempt);
+                    } else {
+                        controls.reportParentCancelled(childId);
+                        scheduler.cancel(childId);
+                    }
+                    return null;
+                });
             }
             case COMPLETING -> {
                 // Completion commits atomically; the child becomes terminal without further action.
@@ -722,23 +736,34 @@ public final class ChildRunCoordinator implements DelegationPort {
         }
         try {
             Runnable tracked = () -> {
+                boolean entered = false;
                 try {
-                    task.run();
+                    entered = unitOfWork.execute(() -> {
+                        if (runs.find(runId)
+                                .map(run -> run.status().isTerminal())
+                                .orElse(true)) return false;
+                        synchronized (slot) {
+                            slot.runningTasks++;
+                        }
+                        return true;
+                    });
+                    if (entered) task.run();
                 } finally {
-                    taskEnded(runId, slot);
+                    taskEnded(runId, slot, entered);
                 }
             };
             if (afterCurrent) scheduler.submitAfterCurrent(runId, tracked);
             else scheduler.submit(runId, tracked);
         } catch (RuntimeException | Error failure) {
-            taskEnded(runId, slot);
+            taskEnded(runId, slot, false);
             throw failure;
         }
     }
 
-    private void taskEnded(AgentRunId runId, ChildSlot slot) {
+    private void taskEnded(AgentRunId runId, ChildSlot slot, boolean entered) {
         synchronized (slot) {
             slot.tasks--;
+            if (entered) slot.runningTasks--;
         }
         releaseIfSettled(runId);
         signal();
@@ -748,7 +773,7 @@ public final class ChildRunCoordinator implements DelegationPort {
         ChildSlot slot = slots.get(childId);
         if (slot == null) return false;
         synchronized (slot) {
-            return slot.tasks > 0;
+            return slot.runningTasks > 0;
         }
     }
 
@@ -805,6 +830,7 @@ public final class ChildRunCoordinator implements DelegationPort {
     /** One admitted child's process slot and the number of its execution tasks currently submitted or running. */
     private static final class ChildSlot {
         private int tasks;
+        private int runningTasks;
         private boolean released;
     }
 

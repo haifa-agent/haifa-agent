@@ -390,6 +390,12 @@ A Child keeps its slot while waiting for approval and until its terminal Run and
 have settled. Releasing a slot wakes waiting parents across all participating Agents. Cancelling a
 parent waiting for admission creates no Child. Closing one Agent does not close the shared capacity.
 
+An already created Child whose execution wrapper has been submitted but has not entered execution
+settles as `CANCELLED/PARENT_CANCELLED` when its parent stops. Admission and queued cancellation
+share the existing Unit of Work; draining the retained wrapper cannot start a terminal Child. Its
+capacity slot remains reserved until that physical wrapper drains. Parent `child.run.started` still
+describes creation/admission, while the Child's own `run.started` describes physical execution.
+
 ## Budget threshold notices
 
 预算百分比按精确整数向下取整并限制在 0–100，包括 `Long.MAX_VALUE` 的工具额度；

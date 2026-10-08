@@ -53,8 +53,10 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Predicate;
+import java.util.function.Supplier;
 
 /** Fluent bootstrap builder with explicit typed component assembly. */
 public final class HaifaAgentBuilder {
@@ -94,6 +96,7 @@ public final class HaifaAgentBuilder {
     private boolean starterDefaultInstructionsInUse;
     private CompressionPolicy compressionPolicy;
     private PlanAuthoringSpec planAuthoringSpec;
+    private Supplier<? extends ExecutorService> executionExecutorFactory;
 
     HaifaAgentBuilder() {}
 
@@ -248,6 +251,28 @@ public final class HaifaAgentBuilder {
 
     public HaifaAgentBuilder modelAudioResolver(ModelAudioResolver value) {
         modelAudioResolver = Objects.requireNonNull(value, "value must not be null");
+        return this;
+    }
+
+    /**
+     * Optional host-assembly hook supplying the standard {@link ExecutorService} that backs the
+     * process-local execution scheduler. By default every assembled Agent owns a fresh
+     * virtual-thread-per-task executor, which stays the default when this hook is not set.
+     *
+     * <p>The factory is invoked exactly once per {@link #build()}; the SDK owns the returned executor,
+     * closes it together with the Agent through the existing {@code LocalExecutionScheduler.close()},
+     * and treats a null factory or a null created executor as an assembly failure. The executor must
+     * not be shared with other Agents or callers: shutdown only waits for the tasks this Agent
+     * scheduled, so the owner remains responsible for draining any work it enqueues and for not
+     * leaving tasks the Agent did not submit. This controls host assembly only; it is neither a
+     * request option nor part of a frozen Run configuration, and it does not change lifecycle
+     * defaults.
+     *
+     * @param value the executor factory; must not be null
+     * @return this builder
+     */
+    public HaifaAgentBuilder executionExecutorFactory(Supplier<? extends ExecutorService> value) {
+        executionExecutorFactory = Objects.requireNonNull(value, "executionExecutorFactory must not be null");
         return this;
     }
 
@@ -427,7 +452,12 @@ public final class HaifaAgentBuilder {
         List<AutoCloseable> lifecycle = collectLifecycle();
         LocalExecutionScheduler scheduler;
         try {
-            scheduler = new LocalExecutionScheduler();
+            if (executionExecutorFactory == null) {
+                scheduler = new LocalExecutionScheduler();
+            } else {
+                scheduler = new LocalExecutionScheduler(Objects.requireNonNull(
+                        executionExecutorFactory.get(), "executionExecutorFactory returned null"));
+            }
         } catch (RuntimeException | Error exception) {
             closeAfterFailedBuild(lifecycle, exception);
             throw exception;

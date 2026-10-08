@@ -7,6 +7,7 @@ import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.agent.AgentDefinitionVersion;
 import io.haifa.agent.core.error.AgentErrorCode;
 import io.haifa.agent.core.run.AgentRunBudget;
+import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.run.AgentRunType;
@@ -28,10 +29,13 @@ import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.policy.api.PolicyPresets;
 import io.haifa.agent.policy.core.DefaultPolicyDecisionService;
+import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.ChildRunCapacity;
 import io.haifa.agent.runtime.api.ChildRunView;
+import io.haifa.agent.runtime.api.RunCancellation;
 import io.haifa.agent.runtime.api.RunEventCursor;
 import io.haifa.agent.runtime.api.RunEventPayloads;
+import io.haifa.agent.runtime.api.RunMessageCursor;
 import io.haifa.agent.sdk.SdkTestFixtures;
 import io.haifa.agent.sdk.contribution.InMemoryConversationContribution;
 import io.haifa.agent.sdk.contribution.ModelContribution;
@@ -51,12 +55,20 @@ import io.haifa.agent.sdk.tool.JavaToolSpec;
 import io.haifa.agent.tool.api.ToolSideEffect;
 import java.net.URI;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.AbstractExecutorService;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 /** Public SDK surface for delegation: register children, delegate, list children, read child events. */
@@ -294,6 +306,279 @@ public class ChildAgentDelegationTest {
                     .containsOnlyKeys(started.runId().value())
                     .containsEntry(started.runId().value(), 1);
             assertThat(childSawDenial).isTrue();
+        }
+    }
+
+    // Oracle16: a Child that is already created but whose executor task is held before it physically
+    // starts must still settle when its Parent stops, without inventing a physical start, model call or step.
+    @Test
+    void parentCancelWhileChildIsQueuedSettlesTheChildWithoutPhysicalExecution() throws Exception {
+        assertQueuedChildSettlesWhileExecutorIsHeld(
+                "cancel-held-child",
+                AgentRunStatus.CANCELLED,
+                (agent, runId) -> agent.runs().handle(runId).cancel());
+    }
+
+    @Test
+    void parentDeadlineTimeoutWhileChildIsQueuedSettlesTheChildWithoutPhysicalExecution() throws Exception {
+        assertQueuedChildSettlesWhileExecutorIsHeld(
+                "timeout-held-child", AgentRunStatus.TIMEOUT, (agent, runId) -> agent.runs()
+                        .handle(runId)
+                        .cancel(RunCancellation.deadlineExceeded(Duration.ofSeconds(1))));
+    }
+
+    @Test
+    void executionExecutorFactoryFailsClosedForNullFactoryAndNullExecutor() {
+        assertThatThrownBy(() -> builder(profile()).executionExecutorFactory(null))
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() ->
+                        builder(profile()).executionExecutorFactory(() -> null).build())
+                .isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    void executionExecutorFactoryCreatesAndClosesAnOwnedExecutorForEachAgent() throws Exception {
+        List<ExecutorService> created = new ArrayList<>();
+        java.util.function.Supplier<ExecutorService> factory = () -> {
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            created.add(executor);
+            return executor;
+        };
+        try (HaifaAgent first = builder(profile(), request -> answer("factory-first"))
+                        .executionExecutorFactory(factory)
+                        .build();
+                HaifaAgent second = builder(profile(), request -> answer("factory-second"))
+                        .executionExecutorFactory(factory)
+                        .build()) {
+            assertThat(created).hasSize(2);
+            assertThat(created.getFirst()).isNotSameAs(created.getLast());
+            for (HaifaAgent agent : List.of(first, second)) {
+                AgentRunId runId = agent.conversations()
+                        .start(new StartConversationCommand("factory", "Factory", "Answer once"))
+                        .runId();
+                assertThat(agent.runs()
+                                .await(runId, Duration.ofSeconds(10))
+                                .orElseThrow()
+                                .status())
+                        .isEqualTo(AgentRunStatus.COMPLETED);
+                assertThat(runLifecycleStatuses(agent, runId)).contains("RUNNING");
+            }
+        }
+        assertThat(created).allSatisfy(executor -> {
+            assertThat(executor.isShutdown()).isTrue();
+            assertThat(executor.isTerminated()).isTrue();
+        });
+    }
+
+    private void assertQueuedChildSettlesWhileExecutorIsHeld(
+            String objective, AgentRunStatus expectedParentStatus, ParentStopper stopper) throws Exception {
+        GatedExecutionExecutor gated = new GatedExecutionExecutor();
+        ChildRunCapacity capacity = new ChildRunCapacity(1);
+        AtomicInteger childModelCalls = new AtomicInteger();
+        AgentChatModel model = request -> {
+            boolean parent =
+                    request.tools().stream().map(ModelToolSpecification::name).anyMatch("task"::equals);
+            if (!parent) {
+                childModelCalls.incrementAndGet();
+                return answer("a queued child must never reach the model");
+            }
+            boolean toolResults =
+                    request.messages().stream().anyMatch(message -> message.role() == ModelMessageRole.TOOL);
+            return toolResults
+                    ? answer("parent observed the settled child")
+                    : new AgentChatResponse(
+                            "r",
+                            "stub",
+                            "",
+                            List.of(call("a", "worker", objective)),
+                            ModelFinishReason.TOOL_CALLS,
+                            ModelUsage.unpriced(1, 1),
+                            "",
+                            Map.of());
+        };
+
+        HaifaAgent agent = builder(profile().withAllowedChildAgents(Set.of("worker")), model)
+                .policy(new PolicyPlatformContribution(
+                        PolicyPresets.standardApproval(), new DefaultPolicyDecisionService()))
+                .childAgent(ChildAgentSpec.of("worker", "Works", "Do the work.", Set.of()))
+                .childRunCapacity(capacity)
+                .executionExecutorFactory(() -> gated)
+                .build();
+        try {
+            AgentRunId parentRunId = agent.conversations()
+                    .start(new StartConversationCommand("held-" + objective, "Parent", "Delegate once"))
+                    .runId();
+            assertThat(gated.awaitChildRetained(10, TimeUnit.SECONDS))
+                    .as("the created Child's execution task reached the injected executor")
+                    .isTrue();
+
+            // The public child projection shows exactly the created but not physically started Child.
+            List<ChildRunView> children = agent.runs().children(parentRunId);
+            assertThat(children).hasSize(1);
+            ChildRunView queued = children.getFirst();
+            assertThat(queued.objective()).isEqualTo(objective);
+            assertThat(queued.status()).isEqualTo(AgentRunStatus.QUEUED);
+            assertThat(queued.parentRunId()).isEqualTo(parentRunId);
+            assertThat(queued.startedAt()).isEmpty();
+            assertThat(runLifecycleStatuses(agent, queued.runId())).doesNotContain("RUNNING");
+            assertThat(capacity.tryAcquire())
+                    .as("the created Child owns its capacity slot")
+                    .isFalse();
+            assertThat(eventTypes(agent, queued.runId()))
+                    .doesNotContain("run.started")
+                    .noneMatch(type -> type.startsWith("model.call"))
+                    .noneMatch(type -> type.startsWith("step."));
+            assertThat(eventTypes(agent, parentRunId))
+                    .doesNotContain(
+                            "child.run.completed", "child.run.failed", "child.run.cancelled", "child.run.timed-out");
+
+            stopper.stop(agent, parentRunId);
+            var parent = agent.runs().await(parentRunId, Duration.ofSeconds(20)).orElseThrow();
+            assertThat(parent.status()).isEqualTo(expectedParentStatus);
+
+            assertThat(agent.runs().find(queued.runId()).orElseThrow().status())
+                    .as("an already created Child must settle when its Parent stops")
+                    .isEqualTo(AgentRunStatus.CANCELLED);
+            assertThat(agent.runs()
+                            .find(queued.runId())
+                            .orElseThrow()
+                            .terminationReason()
+                            .orElseThrow()
+                            .code())
+                    .isEqualTo("PARENT_CANCELLED");
+            assertThat(capacity.tryAcquire())
+                    .as("terminal Child retains its slot until the wrapper drains")
+                    .isFalse();
+
+            var taskCalls = agent.runs().toolCalls(parentRunId);
+            assertThat(taskCalls).singleElement().satisfies(task -> {
+                assertThat(task.toolName()).isEqualTo("task");
+                assertThat(task.status()).isIn(ToolCallStatus.FAILED, ToolCallStatus.CANCELLED, ToolCallStatus.TIMEOUT);
+            });
+            var task = taskCalls.getFirst();
+            var parentMessages = agent.runs().messages(parentRunId, RunMessageCursor.beforeFirst(parentRunId), 100);
+            assertThat(parentMessages.items())
+                    .filteredOn(message -> "TOOL".equals(message.role()))
+                    .singleElement()
+                    .satisfies(message -> {
+                        assertThat(message.toolCalls())
+                                .extracting(call -> call.id())
+                                .containsExactly(task.id());
+                        assertThat(message.text()).containsAnyOf("cancelled", "stopped");
+                    });
+
+            // Cleanup only: drain the held wrapper before asserting no physical execution was invented.
+            gated.releaseRetained();
+            agent.runs().await(queued.runId(), Duration.ofSeconds(20));
+            assertThat(capacity.tryAcquire())
+                    .as("drained terminal Child releases its slot")
+                    .isTrue();
+            capacity.release();
+
+            assertThat(childModelCalls.get())
+                    .as("no model call may be invented")
+                    .isZero();
+            assertThat(agent.runs().find(queued.runId()).orElseThrow().usage().modelCalls())
+                    .as("no model call may be invented")
+                    .isZero();
+            assertThat(agent.runs().toolCalls(queued.runId())).isEmpty();
+            assertThat(eventTypes(agent, queued.runId()))
+                    .doesNotContain("run.started")
+                    .noneMatch(type -> type.startsWith("model.call"))
+                    .noneMatch(type -> type.startsWith("step."));
+            ChildRunView settled = agent.runs().children(parentRunId).getFirst();
+            assertThat(settled.status()).isEqualTo(AgentRunStatus.CANCELLED);
+            assertThat(runLifecycleStatuses(agent, queued.runId())).doesNotContain("RUNNING");
+            assertThat(settled.startedAt())
+                    .as("physical start must not be invented")
+                    .isEmpty();
+        } finally {
+            gated.releaseRetained();
+            agent.close();
+        }
+    }
+
+    private static List<String> eventTypes(HaifaAgent agent, AgentRunId runId) {
+        return agent.runs().events(runId, RunEventCursor.beforeFirst(runId), 500).items().stream()
+                .map(AgentRunEvent::eventType)
+                .toList();
+    }
+
+    @FunctionalInterface
+    private interface ParentStopper {
+        void stop(HaifaAgent agent, AgentRunId runId);
+    }
+
+    private static List<String> runLifecycleStatuses(HaifaAgent agent, AgentRunId runId) {
+        return agent.runs().events(runId, RunEventCursor.beforeFirst(runId), 500).items().stream()
+                .map(AgentRunEvent::payload)
+                .filter(RunEventPayloads.RunLifecycle.class::isInstance)
+                .map(RunEventPayloads.RunLifecycle.class::cast)
+                .map(RunEventPayloads.RunLifecycle::status)
+                .toList();
+    }
+
+    /**
+     * Deterministic executor injection: the first submitted task (the Parent) delegates to a real
+     * executor; every later submission (the created Child) is retained before execution so the test
+     * can cancel or time out the Parent while the Child can never have physically started.
+     */
+    private static final class GatedExecutionExecutor extends AbstractExecutorService {
+        private final ExecutorService delegate = Executors.newCachedThreadPool();
+        private final List<Runnable> retained = new CopyOnWriteArrayList<>();
+        private final CountDownLatch childRetained = new CountDownLatch(1);
+        private final AtomicInteger submissions = new AtomicInteger();
+
+        @Override
+        public void execute(Runnable command) {
+            if (submissions.getAndIncrement() == 0) {
+                delegate.execute(command);
+                return;
+            }
+            retained.add(command);
+            childRetained.countDown();
+        }
+
+        boolean awaitChildRetained(long timeout, TimeUnit unit) throws InterruptedException {
+            return childRetained.await(timeout, unit);
+        }
+
+        void releaseRetained() {
+            List<Runnable> pending = List.copyOf(retained);
+            retained.removeAll(pending);
+            for (Runnable task : pending) {
+                try {
+                    delegate.submit(task).get(10, TimeUnit.SECONDS);
+                } catch (Exception error) {
+                    throw new IllegalStateException(
+                            "held Child wrapper did not drain within its cleanup budget", error);
+                }
+            }
+        }
+
+        @Override
+        public void shutdown() {
+            delegate.shutdown();
+        }
+
+        @Override
+        public List<Runnable> shutdownNow() {
+            return delegate.shutdownNow();
+        }
+
+        @Override
+        public boolean isShutdown() {
+            return delegate.isShutdown();
+        }
+
+        @Override
+        public boolean isTerminated() {
+            return delegate.isTerminated();
+        }
+
+        @Override
+        public boolean awaitTermination(long timeout, TimeUnit unit) throws InterruptedException {
+            return delegate.awaitTermination(timeout, unit);
         }
     }
 
