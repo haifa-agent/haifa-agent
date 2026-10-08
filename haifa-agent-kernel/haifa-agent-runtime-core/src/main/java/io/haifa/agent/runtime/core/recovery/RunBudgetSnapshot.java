@@ -1,6 +1,7 @@
 package io.haifa.agent.runtime.core.recovery;
 
 import io.haifa.agent.core.run.AgentRun;
+import java.math.BigInteger;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -137,7 +138,12 @@ public record RunBudgetSnapshot(
 
     private static int percent(long remaining, long maximum) {
         if (maximum <= 0) return 100;
-        return (int) Math.max(0, Math.min(100, remaining * 100L / maximum));
+        return BigInteger.valueOf(remaining)
+                .multiply(BigInteger.valueOf(100))
+                .divide(BigInteger.valueOf(maximum))
+                .max(BigInteger.ZERO)
+                .min(BigInteger.valueOf(100))
+                .intValue();
     }
 
     private static BudgetDimension minimum(List<BudgetDimension> values) {
