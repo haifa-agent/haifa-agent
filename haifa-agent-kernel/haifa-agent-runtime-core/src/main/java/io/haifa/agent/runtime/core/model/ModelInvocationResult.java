@@ -19,7 +19,8 @@ public record ModelInvocationResult(
         String modelCallId,
         int physicalAttempt,
         ResolvedModelSnapshot model,
-        Optional<SensitiveModelReasoning> reasoning) {
+        Optional<SensitiveModelReasoning> reasoning,
+        String content) {
     public ModelInvocationResult {
         decision = Objects.requireNonNull(decision, "decision must not be null");
         if (inputTokens < 0 || outputTokens < 0 || cachedInputTokens < 0 || costMinorUnits < 0) {
@@ -36,5 +37,33 @@ public record ModelInvocationResult(
         if (physicalAttempt < 1) throw new IllegalArgumentException("physicalAttempt must be positive");
         model = Objects.requireNonNull(model, "model must not be null");
         reasoning = Objects.requireNonNull(reasoning, "reasoning must not be null");
+        content = Objects.requireNonNull(content, "content must not be null");
+    }
+
+    public ModelInvocationResult(
+            AgentDecision decision,
+            long inputTokens,
+            long outputTokens,
+            long cachedInputTokens,
+            boolean costKnown,
+            long costMinorUnits,
+            Map<String, Object> metadata,
+            String modelCallId,
+            int physicalAttempt,
+            ResolvedModelSnapshot model,
+            Optional<SensitiveModelReasoning> reasoning) {
+        this(
+                decision,
+                inputTokens,
+                outputTokens,
+                cachedInputTokens,
+                costKnown,
+                costMinorUnits,
+                metadata,
+                modelCallId,
+                physicalAttempt,
+                model,
+                reasoning,
+                "");
     }
 }

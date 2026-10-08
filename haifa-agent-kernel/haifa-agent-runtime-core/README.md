@@ -13,6 +13,10 @@ ToolCall ID，并校验 Run、correlation/name/version；不会加载整个 Run 
 redactor 投影，权威结果已有截断标记时透传。存储或引用失效统一为固定安全 `INTERNAL_ERROR`。
 共用 `appendSessionMessage` seam 同事务追加 reference-only `message.committed` 并在 afterCommit
 唤醒现有 Run Event Feed；正常、拒绝、恢复和 final-output 写入均沿此 seam，没有第二份消息正文。
+模型在包含 native Tool 调用（普通 Tool 或 delegation）的回合中若同时返回非空普通可见正文，
+该正文作为 `TextPart` 置于同一权威 Assistant 消息中（位于 `ToolCallPart` 之前），消息可见性提升为
+`USER_VISIBLE`；正文为空时保持既有 `AGENT_VISIBLE`。公开展现 `runtime.messages` 沿同一 Assistant
+条目同时呈现可见文本与工具调用及关联 ID；模型后续上下文保留该文本与工具调用，私有 reasoning 保持隔离。
 
 `DefaultAgentRuntime.frozenInstructionDiagnostic(runId)` 先通过既有 Run repository 的
 `findVisible(runId, tenant, principal)` 过滤可信 Caller 所有权，再通过
