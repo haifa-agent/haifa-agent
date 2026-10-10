@@ -9,6 +9,7 @@ import io.haifa.agent.core.run.AgentRunType;
 import io.haifa.agent.core.run.StructuredOutputRequirement;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.runtime.api.RuntimeOverrides;
+import io.haifa.agent.runtime.api.TruncatedOutputPolicy;
 import io.haifa.agent.skill.api.FrozenSkillBinding;
 import io.haifa.agent.skill.api.SkillContentDigest;
 import io.haifa.agent.skill.api.SkillTrustSnapshot;
@@ -40,7 +41,9 @@ public record RuntimeConfigurationSnapshot(
         List<EffectiveCapability> capabilities,
         ResolvedModelSnapshot model,
         Map<String, Object> modelRequestOptions,
-        Optional<StructuredOutputRequirement> structuredOutput) {
+        Optional<StructuredOutputRequirement> structuredOutput,
+        TruncatedOutputPolicy truncatedOutputPolicy) {
+
     public RuntimeConfigurationSnapshot(
             RunConfigurationSnapshotRef reference,
             AgentDefinitionId definitionId,
@@ -79,7 +82,8 @@ public record RuntimeConfigurationSnapshot(
                 capabilities,
                 model,
                 Map.of(),
-                Optional.empty());
+                Optional.empty(),
+                TruncatedOutputPolicy.FAIL_CLOSED);
     }
 
     public RuntimeConfigurationSnapshot(
@@ -121,7 +125,8 @@ public record RuntimeConfigurationSnapshot(
                 capabilities,
                 model,
                 Map.of(),
-                Optional.empty());
+                Optional.empty(),
+                TruncatedOutputPolicy.FAIL_CLOSED);
     }
 
     public RuntimeConfigurationSnapshot(
@@ -164,7 +169,53 @@ public record RuntimeConfigurationSnapshot(
                 capabilities,
                 model,
                 modelRequestOptions,
-                Optional.empty());
+                Optional.empty(),
+                TruncatedOutputPolicy.FAIL_CLOSED);
+    }
+
+    public RuntimeConfigurationSnapshot(
+            RunConfigurationSnapshotRef reference,
+            AgentDefinitionId definitionId,
+            AgentDefinitionVersion definitionVersion,
+            String profileId,
+            String profileVersion,
+            AgentRunType runType,
+            AgentRunBudget budget,
+            AgentRunLimits limits,
+            List<FrozenToolBinding> toolBindings,
+            List<FrozenSkillBinding> skillBindings,
+            SkillContentDigest skillCatalogDigest,
+            String skillResolutionPolicyRef,
+            SkillTrustSnapshot skillTrust,
+            Set<AgentDefinitionId> allowedChildAgents,
+            String agentInstruction,
+            RuntimeOverrides overrides,
+            List<EffectiveCapability> capabilities,
+            ResolvedModelSnapshot model,
+            Map<String, Object> modelRequestOptions,
+            Optional<StructuredOutputRequirement> structuredOutput) {
+        this(
+                reference,
+                definitionId,
+                definitionVersion,
+                profileId,
+                profileVersion,
+                runType,
+                budget,
+                limits,
+                toolBindings,
+                skillBindings,
+                skillCatalogDigest,
+                skillResolutionPolicyRef,
+                skillTrust,
+                allowedChildAgents,
+                agentInstruction,
+                overrides,
+                capabilities,
+                model,
+                modelRequestOptions,
+                structuredOutput,
+                TruncatedOutputPolicy.FAIL_CLOSED);
     }
 
     public RuntimeConfigurationSnapshot {
@@ -200,6 +251,7 @@ public record RuntimeConfigurationSnapshot(
         modelRequestOptions = ModelRequestOptions.freeze(Objects.requireNonNullElse(modelRequestOptions, Map.of()));
         RuntimeControlOptions.validate(modelRequestOptions, budget);
         structuredOutput = Objects.requireNonNullElse(structuredOutput, Optional.empty());
+        truncatedOutputPolicy = Objects.requireNonNullElse(truncatedOutputPolicy, TruncatedOutputPolicy.FAIL_CLOSED);
     }
 
     public Set<String> allowedTools() {
@@ -236,7 +288,8 @@ public record RuntimeConfigurationSnapshot(
                 capabilities,
                 newModel,
                 modelRequestOptions,
-                structuredOutput);
+                structuredOutput,
+                truncatedOutputPolicy);
     }
 
     private static String requireText(String value, String field) {

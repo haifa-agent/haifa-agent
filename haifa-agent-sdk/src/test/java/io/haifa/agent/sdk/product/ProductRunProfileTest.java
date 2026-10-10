@@ -71,6 +71,50 @@ final class ProductRunProfileTest {
                 .contains(Set.of());
     }
 
+    @Test
+    void defaultsTruncatedOutputPolicyToFailClosed() {
+        ProductRunProfile defaultProfile = profile(Map.of());
+        assertThat(defaultProfile.truncatedOutputPolicy())
+                .isEqualTo(io.haifa.agent.runtime.api.TruncatedOutputPolicy.FAIL_CLOSED);
+    }
+
+    @Test
+    void supportsOptInTruncatedOutputPolicy() {
+        ProductRunProfile optIn = new ProductRunProfile(
+                "child-agent",
+                "v1",
+                "model",
+                AgentRunType.CHAT,
+                new AgentRunBudget(1_000, 1_000, 1_000, 0, 1, 0, "USD", 100),
+                new AgentRunLimits(2, 0, 1, 10_000, 10_000),
+                Map.of(),
+                io.haifa.agent.runtime.api.TruncatedOutputPolicy.ACCEPT_NONEMPTY_PLAIN_TEXT);
+        assertThat(optIn.truncatedOutputPolicy())
+                .isEqualTo(io.haifa.agent.runtime.api.TruncatedOutputPolicy.ACCEPT_NONEMPTY_PLAIN_TEXT);
+
+        ProductRunProfile updated = profile(Map.of())
+                .withTruncatedOutputPolicy(io.haifa.agent.runtime.api.TruncatedOutputPolicy.ACCEPT_NONEMPTY_PLAIN_TEXT);
+        assertThat(updated.truncatedOutputPolicy())
+                .isEqualTo(io.haifa.agent.runtime.api.TruncatedOutputPolicy.ACCEPT_NONEMPTY_PLAIN_TEXT);
+    }
+
+    @Test
+    void rejectsExplicitNullTruncatedOutputPolicy() {
+        assertThatThrownBy(() -> new ProductRunProfile(
+                        "child-agent",
+                        "v1",
+                        "model",
+                        AgentRunType.CHAT,
+                        new AgentRunBudget(1_000, 1_000, 1_000, 0, 1, 0, "USD", 100),
+                        new AgentRunLimits(2, 0, 1, 10_000, 10_000),
+                        Map.of(),
+                        Optional.empty(),
+                        Optional.empty(),
+                        null))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("truncatedOutputPolicy");
+    }
+
     private static ProductRunProfile profile(Map<String, Object> options) {
         return new ProductRunProfile(
                 "planner",
