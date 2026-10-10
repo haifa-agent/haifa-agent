@@ -26,29 +26,47 @@ final class TruncatedOutputPolicyBootstrapTest {
     private static final AgentRunLimits LIMITS = new AgentRunLimits(5, 0, 1, 60_000, 10_000);
     private static final RuntimeCallerContext CALLER =
             new RuntimeCallerContext(new TenantRef("tenant"), new PrincipalRef("principal", "user"));
+    private static final ResolvedModelSnapshot MODEL = DefaultResolvedModelSnapshots.deepSeekV4Pro();
+    private static final ResolvedDefinition DEFINITION = new ResolvedDefinition(
+            new AgentDefinitionId("agent"),
+            new AgentDefinitionVersion(1, 0, 0),
+            Set.of(),
+            Set.of(),
+            Set.of(),
+            "Execute the task.",
+            List.of());
+    private static final AgentRunRequest REQUEST = new AgentRunRequest(
+            "req-1",
+            new AgentDefinitionId("agent"),
+            Optional.empty(),
+            "profile",
+            new AgentSessionId("session-1"),
+            Optional.empty(),
+            "Execute.",
+            List.of(),
+            RuntimeOverrides.NONE);
+    private static final ContentAddressedSnapshotFactory FACTORY = new ContentAddressedSnapshotFactory();
 
     @Test
     void resolvedProfileDefaultsToFailClosed() {
-        ResolvedModelSnapshot model = DefaultResolvedModelSnapshots.deepSeekV4Pro();
         ResolvedProfile defaultProfile =
-                new ResolvedProfile("profile", "1.0", AgentRunType.CHAT, BUDGET, LIMITS, model);
+                new ResolvedProfile("profile", "1.0", AgentRunType.CHAT, BUDGET, LIMITS, MODEL);
         assertThat(defaultProfile.truncatedOutputPolicy()).isEqualTo(TruncatedOutputPolicy.FAIL_CLOSED);
 
         ResolvedProfile fullDefaultProfile = new ResolvedProfile(
-                "profile", "1.0", AgentRunType.CHAT, BUDGET, LIMITS, model, Map.of(), Map.of(), Optional.empty());
+                "profile", "1.0", AgentRunType.CHAT, BUDGET, LIMITS, MODEL, Map.of(), Map.of(), Optional.empty());
         assertThat(fullDefaultProfile.truncatedOutputPolicy()).isEqualTo(TruncatedOutputPolicy.FAIL_CLOSED);
     }
 
     @Test
     void resolvedProfileRejectsNullPolicy() {
-        ResolvedModelSnapshot model = DefaultResolvedModelSnapshots.deepSeekV4Pro();
         assertThatThrownBy(() -> new ResolvedProfile(
                         "profile",
                         "1.0",
                         AgentRunType.CHAT,
                         BUDGET,
                         LIMITS,
-                        model,
+                        MODEL,
                         Map.of(),
                         Map.of(),
                         Optional.empty(),
@@ -59,54 +77,8 @@ final class TruncatedOutputPolicyBootstrapTest {
 
     @Test
     void contentAddressedSnapshotPreservesLegacyHashForDefaultAndDivergesForOptIn() {
-        ResolvedModelSnapshot model = DefaultResolvedModelSnapshots.deepSeekV4Pro();
-        ResolvedDefinition definition = new ResolvedDefinition(
-                new AgentDefinitionId("agent"),
-                new AgentDefinitionVersion(1, 0, 0),
-                Set.of(),
-                Set.of(),
-                Set.of(),
-                "Execute the task.",
-                List.of());
-        AgentRunRequest request = new AgentRunRequest(
-                "req-1",
-                new AgentDefinitionId("agent"),
-                Optional.empty(),
-                "profile",
-                new AgentSessionId("session-1"),
-                Optional.empty(),
-                "Execute.",
-                List.of(),
-                RuntimeOverrides.NONE);
-
-        ContentAddressedSnapshotFactory factory = new ContentAddressedSnapshotFactory();
-
-        ResolvedProfile defaultProfile = new ResolvedProfile(
-                "profile",
-                "1.0",
-                AgentRunType.CHAT,
-                BUDGET,
-                LIMITS,
-                model,
-                Map.of(),
-                Map.of(),
-                Optional.empty(),
-                TruncatedOutputPolicy.FAIL_CLOSED);
-
-        ResolvedProfile optInProfile = new ResolvedProfile(
-                "profile",
-                "1.0",
-                AgentRunType.CHAT,
-                BUDGET,
-                LIMITS,
-                model,
-                Map.of(),
-                Map.of(),
-                Optional.empty(),
-                TruncatedOutputPolicy.ACCEPT_NONEMPTY_PLAIN_TEXT);
-
-        var defaultSnapshot = factory.create(request, definition, defaultProfile, CALLER);
-        var optInSnapshot = factory.create(request, definition, optInProfile, CALLER);
+        var defaultSnapshot = snapshotFor(TruncatedOutputPolicy.FAIL_CLOSED);
+        var optInSnapshot = snapshotFor(TruncatedOutputPolicy.ACCEPT_NONEMPTY_PLAIN_TEXT);
 
         assertThat(defaultSnapshot.truncatedOutputPolicy()).isEqualTo(TruncatedOutputPolicy.FAIL_CLOSED);
         // Calculated by the identical fixture against the published dev2948c63b
@@ -120,7 +92,25 @@ final class TruncatedOutputPolicyBootstrapTest {
                 .isNotEqualTo(optInSnapshot.reference().contentHash());
 
         // withModel preserves policy
-        assertThat(optInSnapshot.withModel(model).truncatedOutputPolicy())
+        assertThat(optInSnapshot.withModel(MODEL).truncatedOutputPolicy())
                 .isEqualTo(TruncatedOutputPolicy.ACCEPT_NONEMPTY_PLAIN_TEXT);
+    }
+
+    private static ResolvedProfile profile(TruncatedOutputPolicy policy) {
+        return new ResolvedProfile(
+                "profile",
+                "1.0",
+                AgentRunType.CHAT,
+                BUDGET,
+                LIMITS,
+                MODEL,
+                Map.of(),
+                Map.of(),
+                Optional.empty(),
+                policy);
+    }
+
+    private static RuntimeConfigurationSnapshot snapshotFor(TruncatedOutputPolicy policy) {
+        return FACTORY.create(REQUEST, DEFINITION, profile(policy), CALLER);
     }
 }

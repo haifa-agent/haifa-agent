@@ -30,12 +30,8 @@ final class ChildRunCappedProvenanceTest {
     @Test
     void attachesCappedModelProvenanceOnlyWhenAuthoritativeWarningPresent() {
         String summary = "Partial summary capped at token limit";
-        AgentRun run = AgentRun.createRoot(new AgentRunId("child-run-1"), runSpec(1), NOW);
-        run.start(NOW.plusSeconds(1));
-        run.beginCompleting(NOW.plusSeconds(2));
-        run.complete(result(summary, List.of(AgentChatResponseMapper.TRUNCATED_LENGTH_WARNING)), NOW.plusSeconds(3));
-
-        ToolResult toolResult = ChildRunResults.toolResult(run, Optional.of(summary));
+        ToolResult toolResult =
+                completedChildToolResult(summary, List.of(AgentChatResponseMapper.TRUNCATED_LENGTH_WARNING));
 
         assertThat(toolResult.structuredData()).containsEntry("modelOutputTruncated", true);
         assertThat(toolResult.structuredData()).containsEntry("modelFinishReason", "LENGTH");
@@ -49,12 +45,7 @@ final class ChildRunCappedProvenanceTest {
     @Test
     void preservesDefaultMetadataWithoutTruncationProvenanceWhenNotCapped() {
         String summary = "Complete normal summary";
-        AgentRun run = AgentRun.createRoot(new AgentRunId("child-run-2"), runSpec(1), NOW);
-        run.start(NOW.plusSeconds(1));
-        run.beginCompleting(NOW.plusSeconds(2));
-        run.complete(result(summary, List.of()), NOW.plusSeconds(3));
-
-        ToolResult toolResult = ChildRunResults.toolResult(run, Optional.of(summary));
+        ToolResult toolResult = completedChildToolResult(summary, List.of());
 
         assertThat(toolResult.structuredData()).doesNotContainKey("modelOutputTruncated");
         assertThat(toolResult.structuredData()).doesNotContainKey("modelFinishReason");
@@ -65,12 +56,7 @@ final class ChildRunCappedProvenanceTest {
     @Test
     void separatesSummaryLengthTruncationFromModelCap() {
         String summary = "a".repeat(17_000);
-        AgentRun run = AgentRun.createRoot(new AgentRunId("child-run-3"), runSpec(1), NOW);
-        run.start(NOW.plusSeconds(1));
-        run.beginCompleting(NOW.plusSeconds(2));
-        run.complete(result(summary, List.of()), NOW.plusSeconds(3));
-
-        ToolResult toolResult = ChildRunResults.toolResult(run, Optional.of(summary));
+        ToolResult toolResult = completedChildToolResult(summary, List.of());
 
         // Summary cap is triggered by length > MAX_SUMMARY_LENGTH (= 16000)
         assertThat(toolResult.truncated()).isTrue();
@@ -78,6 +64,14 @@ final class ChildRunCappedProvenanceTest {
         // Model cap provenance is NOT present because the model did not truncate
         assertThat(toolResult.structuredData()).doesNotContainKey("modelOutputTruncated");
         assertThat(toolResult.structuredData()).doesNotContainKey("modelFinishReason");
+    }
+
+    private static ToolResult completedChildToolResult(String summary, List<String> warnings) {
+        AgentRun run = AgentRun.createRoot(new AgentRunId("child-run-1"), runSpec(1), NOW);
+        run.start(NOW.plusSeconds(1));
+        run.beginCompleting(NOW.plusSeconds(2));
+        run.complete(result(summary, warnings), NOW.plusSeconds(3));
+        return ChildRunResults.toolResult(run, Optional.of(summary));
     }
 
     private static AgentRunResult result(String summary, List<String> warnings) {

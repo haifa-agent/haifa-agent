@@ -11,6 +11,7 @@ import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.run.AgentRunType;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import io.haifa.agent.model.api.AgentChatModel;
+import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.ApiStyleId;
 import io.haifa.agent.model.api.CredentialRef;
@@ -26,6 +27,7 @@ import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.policy.api.PolicyPresets;
 import io.haifa.agent.policy.core.DefaultPolicyDecisionService;
+import io.haifa.agent.runtime.api.AgentRunSnapshot;
 import io.haifa.agent.runtime.api.ChildRunCapacity;
 import io.haifa.agent.runtime.api.ChildRunView;
 import io.haifa.agent.runtime.api.RunEventCursor;
@@ -54,102 +56,23 @@ import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 import org.junit.jupiter.api.Test;
 
 public final class ChildAgentTruncatedOutputPolicyTest {
     private static final ResolvedModelSnapshot PARENT_MODEL = snapshot("parent-chat");
     private static final ResolvedModelSnapshot CHILD_MODEL = snapshot("child-chat");
+    private static final Duration AWAIT_TIMEOUT = Duration.ofSeconds(20);
 
     @Test
     void childOptInAcceptsPlainLengthAndParentCompletesWithItsResult() throws Exception {
         AtomicReference<Map<String, Object>> parentToolData = new AtomicReference<>();
-        AgentChatModel model = request -> {
-            boolean isParent =
-                    request.tools().stream().map(ModelToolSpecification::name).anyMatch("task"::equals);
-            if (isParent) {
-                boolean hasToolResult = request.messages().stream().anyMatch(m -> m.role() == ModelMessageRole.TOOL);
-                if (hasToolResult) {
-                    parentToolData.set(request.messages().stream()
-                            .filter(message -> message.role() == ModelMessageRole.TOOL)
-                            .findFirst()
-                            .orElseThrow()
-                            .toolResultData());
-                    return answer("Parent summary of child findings");
-                }
-                return new AgentChatResponse(
-                        "r1",
-                        "stub",
-                        "",
-                        List.of(new ModelToolCall(
-                                new ProviderToolCallCorrelationId("task-1"),
-                                "task",
-                                Map.of("agent", "opt-in-child", "objective", "explain primes"))),
-                        ModelFinishReason.TOOL_CALLS,
-                        ModelUsage.unpriced(1, 1),
-                        "",
-                        Map.of());
-            }
-            // Child turn: terminates with finishReason LENGTH and non-empty plain text
-            return new AgentChatResponse(
-                    "r2",
-                    "stub",
-                    "The first twenty primes are 2, 3, 5, 7, 11, 13, 17, 19...",
-                    List.of(),
-                    ModelFinishReason.LENGTH,
-                    ModelUsage.unpriced(50, 2048),
-                    "",
-                    Map.of());
-        };
+        AgentChatModel model = parentDispatchingTaskTo(
+                request -> lengthCappedChildTurn("The first twenty primes are 2, 3, 5, 7, 11, 13, 17, 19..."),
+                parentToolData);
 
-        ProductRunProfile childProfile = new ProductRunProfile(
-                "child-opt-in-profile",
-                "1.0.0",
-                CHILD_MODEL.modelId().value(),
-                AgentRunType.CHAT,
-                budget(),
-                new AgentRunLimits(8, 1, 1, 30_000, 30_000, 8, 8, 0),
-                Map.of(),
-                TruncatedOutputPolicy.ACCEPT_NONEMPTY_PLAIN_TEXT);
-
-        ProductProfile productProfile = new ProductProfile(
-                new ProductId("test-product"),
-                new ProductVersion("1.0.0"),
-                new AgentDefinitionId("parent"),
-                new AgentDefinitionVersion(1, 0, 0),
-                "test instructions",
-                new ProductRunProfileRef("default", "1.0.0"),
-                budget(),
-                new AgentRunLimits(8, 1, 2, 30_000, 30_000, 8, 8, 4),
-                Set.of(),
-                Set.of(),
-                Set.of("opt-in-child"));
-
-        try (HaifaAgent agent = HaifaAgents.builder(productProfile)
-                .model(new ModelContribution(
-                        Map.of(ModelAdapterCoordinate.from(PARENT_MODEL), model),
-                        PARENT_MODEL,
-                        Map.of(
-                                PARENT_MODEL.modelId().value(), PARENT_MODEL,
-                                CHILD_MODEL.modelId().value(), CHILD_MODEL)))
-                .persistence(SdkContributions.inMemoryPersistence())
-                .conversation(new InMemoryConversationContribution())
-                .childRunCapacity(new ChildRunCapacity(1))
-                .maxConcurrentChildRuns(3)
-                .executionExecutorFactoryForTests(Executors::newVirtualThreadPerTaskExecutor)
-                .policy(new PolicyPlatformContribution(
-                        PolicyPresets.standardApproval(), new DefaultPolicyDecisionService()))
-                .runProfile(childProfile)
-                .childAgent(new ChildAgentSpec(
-                        "opt-in-child",
-                        "Child agent accepting plain text length cap",
-                        "Explain primes thoroughly.",
-                        Optional.of(new ProductRunProfileRef("child-opt-in-profile", "1.0.0")),
-                        Set.of()))
-                .build()) {
-
-            var started = agent.conversations().start(new StartConversationCommand("start", "Parent chat", "Go"));
-            var parent =
-                    agent.runs().await(started.runId(), Duration.ofSeconds(20)).orElseThrow();
+        try (HaifaAgent agent = openChildAgent(model, Set.of(), null)) {
+            AgentRunSnapshot parent = awaitParent(agent, "Go");
 
             assertThat(parent.status()).isEqualTo(AgentRunStatus.COMPLETED);
 
@@ -158,7 +81,7 @@ public final class ChildAgentTruncatedOutputPolicyTest {
             ChildRunView child = children.get(0);
             assertThat(child.status()).isEqualTo(AgentRunStatus.COMPLETED);
 
-            var childRun = agent.runs().find(child.runId()).orElseThrow();
+            AgentRunSnapshot childRun = agent.runs().find(child.runId()).orElseThrow();
             assertThat(childRun.status()).isEqualTo(AgentRunStatus.COMPLETED);
             assertThat(childRun.result().orElseThrow().warnings()).contains("TRUNCATED:LENGTH");
             assertThat(childRun.usage().inputTokens()).isEqualTo(50);
@@ -183,26 +106,8 @@ public final class ChildAgentTruncatedOutputPolicyTest {
 
     @Test
     void parentDefaultPolicyRejectsPlainLengthAtRuntime() throws Exception {
-        AgentChatModel model = request -> new AgentChatResponse(
-                "parent-length",
-                "stub",
-                "Partial parent answer",
-                List.of(),
-                ModelFinishReason.LENGTH,
-                ModelUsage.unpriced(50, 2048),
-                "",
-                Map.of());
-        ProductProfile profile = new ProductProfile(
-                new ProductId("strict-parent"),
-                new ProductVersion("1.0.0"),
-                new AgentDefinitionId("parent"),
-                new AgentDefinitionVersion(1, 0, 0),
-                "Answer the user",
-                new ProductRunProfileRef("default", "1.0.0"),
-                budget(),
-                new AgentRunLimits(8, 1, 2, 30_000, 30_000, 8, 8, 4),
-                Set.of(),
-                Set.of());
+        AgentChatModel model = request -> lengthCappedChildTurn("Partial parent answer");
+        ProductProfile profile = productProfile("strict-parent", "Answer the user", Set.of());
         try (HaifaAgent agent = HaifaAgents.builder(profile)
                 .model(new ModelContribution(
                         Map.of(ModelAdapterCoordinate.from(PARENT_MODEL), model),
@@ -212,8 +117,7 @@ public final class ChildAgentTruncatedOutputPolicyTest {
                 .conversation(new InMemoryConversationContribution())
                 .build()) {
             var started = agent.conversations().start(new StartConversationCommand("strict", "Parent", "Go"));
-            var parent =
-                    agent.runs().await(started.runId(), Duration.ofSeconds(20)).orElseThrow();
+            var parent = agent.runs().await(started.runId(), AWAIT_TIMEOUT).orElseThrow();
             assertThat(parent.status()).isEqualTo(AgentRunStatus.FAILED);
             assertThat(parent.error().orElseThrow().code()).isEqualTo(AgentErrorCode.MODEL_OUTPUT_TRUNCATED);
             assertThat(parent.result()).isEmpty();
@@ -243,108 +147,38 @@ public final class ChildAgentTruncatedOutputPolicyTest {
     private void runChildToolLengthScenario(ChildToolLengthTurn scenario) throws Exception {
         AtomicInteger echoInvocations = new AtomicInteger();
         AtomicReference<Map<String, Object>> parentToolData = new AtomicReference<>();
-        AgentChatModel model = request -> {
-            boolean isParent =
-                    request.tools().stream().map(ModelToolSpecification::name).anyMatch("task"::equals);
-            if (isParent) {
-                boolean hasToolResult = request.messages().stream().anyMatch(m -> m.role() == ModelMessageRole.TOOL);
-                if (hasToolResult) {
-                    parentToolData.set(request.messages().stream()
-                            .filter(message -> message.role() == ModelMessageRole.TOOL)
-                            .findFirst()
-                            .orElseThrow()
-                            .toolResultData());
-                    return answer("Parent completed after receiving the child task result");
-                }
-                return new AgentChatResponse(
-                        "r1",
-                        "stub",
-                        "",
-                        List.of(new ModelToolCall(
-                                new ProviderToolCallCorrelationId("task-1"),
-                                "task",
-                                Map.of("agent", "opt-in-child", "objective", "explain primes"))),
-                        ModelFinishReason.TOOL_CALLS,
-                        ModelUsage.unpriced(1, 1),
-                        "",
-                        Map.of());
-            }
-            if (request.messages().stream().anyMatch(m -> m.role() == ModelMessageRole.TOOL)) {
-                return answer("Child echo result received");
-            }
-            assertThat(request.tools().stream().map(ModelToolSpecification::name))
-                    .contains("echo");
-            ModelToolCall echo =
-                    new ModelToolCall(new ProviderToolCallCorrelationId("echo-1"), "echo", Map.of("value", "echo"));
-            return new AgentChatResponse(
-                    "r2",
-                    "stub",
-                    "The child started explaining primes and emitted a tool call mid response...",
-                    List.of(echo),
-                    scenario == ChildToolLengthTurn.LENGTH_WITH_TOOL_CALL
-                            ? ModelFinishReason.LENGTH
-                            : ModelFinishReason.TOOL_CALLS,
-                    ModelUsage.unpriced(50, 2048),
-                    "",
-                    Map.of());
-        };
+        AgentChatModel model = parentDispatchingTaskTo(
+                request -> {
+                    if (request.messages().stream().anyMatch(m -> m.role() == ModelMessageRole.TOOL)) {
+                        return answer("Child echo result received");
+                    }
+                    assertThat(request.tools().stream().map(ModelToolSpecification::name))
+                            .contains("echo");
+                    ModelToolCall echo = new ModelToolCall(
+                            new ProviderToolCallCorrelationId("echo-1"), "echo", Map.of("value", "echo"));
+                    return new AgentChatResponse(
+                            "r2",
+                            "stub",
+                            "The child started explaining primes and emitted a tool call mid response...",
+                            List.of(echo),
+                            scenario == ChildToolLengthTurn.LENGTH_WITH_TOOL_CALL
+                                    ? ModelFinishReason.LENGTH
+                                    : ModelFinishReason.TOOL_CALLS,
+                            ModelUsage.unpriced(50, 2048),
+                            "",
+                            Map.of());
+                },
+                parentToolData);
 
-        ProductRunProfile childProfile = new ProductRunProfile(
-                "child-opt-in-profile",
-                "1.0.0",
-                CHILD_MODEL.modelId().value(),
-                AgentRunType.CHAT,
-                budget(),
-                new AgentRunLimits(8, 1, 1, 30_000, 30_000, 8, 8, 0),
-                Map.of(),
-                TruncatedOutputPolicy.ACCEPT_NONEMPTY_PLAIN_TEXT);
-
-        ProductProfile productProfile = new ProductProfile(
-                new ProductId("test-product"),
-                new ProductVersion("1.0.0"),
-                new AgentDefinitionId("parent"),
-                new AgentDefinitionVersion(1, 0, 0),
-                "test instructions",
-                new ProductRunProfileRef("default", "1.0.0"),
-                budget(),
-                new AgentRunLimits(8, 1, 2, 30_000, 30_000, 8, 8, 4),
-                Set.of(),
-                Set.of(),
-                Set.of("opt-in-child"));
-
-        try (HaifaAgent agent = HaifaAgents.builder(productProfile)
-                .model(new ModelContribution(
-                        Map.of(ModelAdapterCoordinate.from(PARENT_MODEL), model),
-                        PARENT_MODEL,
-                        Map.of(
-                                PARENT_MODEL.modelId().value(), PARENT_MODEL,
-                                CHILD_MODEL.modelId().value(), CHILD_MODEL)))
-                .persistence(SdkContributions.inMemoryPersistence())
-                .conversation(new InMemoryConversationContribution())
-                .policy(new PolicyPlatformContribution(
-                        PolicyPresets.standardApproval(), new DefaultPolicyDecisionService()))
-                .runProfile(childProfile)
-                .childRunCapacity(new ChildRunCapacity(1))
-                .maxConcurrentChildRuns(3)
-                .executionExecutorFactoryForTests(Executors::newVirtualThreadPerTaskExecutor)
-                .childAgent(new ChildAgentSpec(
-                        "opt-in-child",
-                        "Child agent with opt-in truncated output policy",
-                        "Explain primes thoroughly and echo the value.",
-                        Optional.of(new ProductRunProfileRef("child-opt-in-profile", "1.0.0")),
-                        Set.of("echo")))
-                .tool(new EchoTool(echoInvocations))
-                .build()) {
-
-            var started = agent.conversations().start(new StartConversationCommand("child-tool-guard", "Parent", "Go"));
-            var parent =
-                    agent.runs().await(started.runId(), Duration.ofSeconds(20)).orElseThrow();
+        try (HaifaAgent agent = openChildAgent(model, Set.of("echo"), new EchoTool(echoInvocations))) {
+            AgentRunSnapshot parent = awaitParent(agent, "Go");
 
             List<ChildRunView> children = agent.runs().children(parent.runId());
             assertThat(children).hasSize(1);
-            ChildRunView child = children.getFirst();
-            var childRun = agent.runs().find(child.runId()).orElseThrow();
-            assertThat(agent.runs().pendingInteraction(child.runId())).isEmpty();
+            AgentRunSnapshot childRun =
+                    agent.runs().find(children.getFirst().runId()).orElseThrow();
+            assertThat(agent.runs().pendingInteraction(children.getFirst().runId()))
+                    .isEmpty();
 
             switch (scenario) {
                 case LENGTH_WITH_TOOL_CALL -> {
@@ -370,6 +204,118 @@ public final class ChildAgentTruncatedOutputPolicyTest {
                 }
             }
         }
+    }
+
+    /**
+     * Parent turn model that dispatches one {@code task} call to the opt-in child and, once the tool
+     * result arrives, captures its structured data and finishes the parent run.
+     */
+    private static AgentChatModel parentDispatchingTaskTo(
+            Function<AgentChatRequest, AgentChatResponse> childTurn,
+            AtomicReference<Map<String, Object>> parentToolData) {
+        return request -> {
+            boolean isParent =
+                    request.tools().stream().map(ModelToolSpecification::name).anyMatch("task"::equals);
+            if (isParent) {
+                boolean hasToolResult = request.messages().stream().anyMatch(m -> m.role() == ModelMessageRole.TOOL);
+                if (hasToolResult) {
+                    parentToolData.set(request.messages().stream()
+                            .filter(message -> message.role() == ModelMessageRole.TOOL)
+                            .findFirst()
+                            .orElseThrow()
+                            .toolResultData());
+                    return answer("Parent summary of child findings");
+                }
+                return taskDispatch();
+            }
+            return childTurn.apply(request);
+        };
+    }
+
+    private static AgentChatResponse taskDispatch() {
+        return new AgentChatResponse(
+                "r1",
+                "stub",
+                "",
+                List.of(new ModelToolCall(
+                        new ProviderToolCallCorrelationId("task-1"),
+                        "task",
+                        Map.of("agent", "opt-in-child", "objective", "explain primes"))),
+                ModelFinishReason.TOOL_CALLS,
+                ModelUsage.unpriced(1, 1),
+                "",
+                Map.of());
+    }
+
+    private static AgentChatResponse lengthCappedChildTurn(String text) {
+        return new AgentChatResponse(
+                "r2", "stub", text, List.of(), ModelFinishReason.LENGTH, ModelUsage.unpriced(50, 2048), "", Map.of());
+    }
+
+    /**
+     * Builds the standard child-agent runtime: both models, in-memory persistence/conversation,
+     * opt-in child run profile and the single {@code opt-in-child} child agent.
+     */
+    private static HaifaAgent openChildAgent(AgentChatModel model, Set<String> childTools, EchoTool echoTool)
+            throws Exception {
+        HaifaAgentBuilder builder = HaifaAgents.builder(
+                        productProfile("test-product", "test instructions", Set.of("opt-in-child")))
+                .model(new ModelContribution(
+                        Map.of(ModelAdapterCoordinate.from(PARENT_MODEL), model),
+                        PARENT_MODEL,
+                        Map.of(
+                                PARENT_MODEL.modelId().value(), PARENT_MODEL,
+                                CHILD_MODEL.modelId().value(), CHILD_MODEL)))
+                .persistence(SdkContributions.inMemoryPersistence())
+                .conversation(new InMemoryConversationContribution())
+                .childRunCapacity(new ChildRunCapacity(1))
+                .maxConcurrentChildRuns(3)
+                .executionExecutorFactoryForTests(Executors::newVirtualThreadPerTaskExecutor)
+                .policy(new PolicyPlatformContribution(
+                        PolicyPresets.standardApproval(), new DefaultPolicyDecisionService()))
+                .runProfile(childProfile())
+                .childAgent(new ChildAgentSpec(
+                        "opt-in-child",
+                        "Child agent with opt-in truncated output policy",
+                        "Explain primes thoroughly and echo the value.",
+                        Optional.of(new ProductRunProfileRef("child-opt-in-profile", "1.0.0")),
+                        childTools));
+        if (echoTool != null) {
+            builder = builder.tool(echoTool);
+        }
+        return builder.build();
+    }
+
+    private static AgentRunSnapshot awaitParent(HaifaAgent agent, String objective) throws Exception {
+        var started = agent.conversations().start(new StartConversationCommand("start", "Parent", objective));
+        return agent.runs().await(started.runId(), AWAIT_TIMEOUT).orElseThrow();
+    }
+
+    private static ProductRunProfile childProfile() {
+        return new ProductRunProfile(
+                "child-opt-in-profile",
+                "1.0.0",
+                CHILD_MODEL.modelId().value(),
+                AgentRunType.CHAT,
+                budget(),
+                new AgentRunLimits(8, 1, 1, 30_000, 30_000, 8, 8, 0),
+                Map.of(),
+                TruncatedOutputPolicy.ACCEPT_NONEMPTY_PLAIN_TEXT);
+    }
+
+    private static ProductProfile productProfile(String productId, String instructions, Set<String> childAgents) {
+        return new ProductProfile(
+                new ProductId(productId),
+                new ProductVersion("1.0.0"),
+                new AgentDefinitionId("parent"),
+                new AgentDefinitionVersion(1, 0, 0),
+                instructions,
+                new ProductRunProfileRef("default", "1.0.0"),
+                budget(),
+                new AgentRunLimits(8, 1, 2, 30_000, 30_000, 8, 8, 4),
+                Set.of(),
+                Set.of(),
+                childAgents);
     }
 
     private record EchoTool(AtomicInteger invocations) implements JavaTool<EchoRequest, EchoResponse> {
