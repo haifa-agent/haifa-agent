@@ -1,5 +1,11 @@
 # Changelog
 
+- Added opt-in `TruncatedOutputPolicy.ACCEPT_NONEMPTY_PLAIN_TEXT` on `ProductRunProfile` for nonempty
+  ordinary LENGTH output. Opted-in Runs complete with `TRUNCATED:LENGTH`, preserve Provider finish reason
+  and usage, and reject incomplete Tool or structured responses. Child task metadata distinguishes model
+  output truncation from summary clipping. Default profiles retain their existing behavior; legacy frozen
+  configuration hashes and JSON remain compatible. See [SDK run profiles](haifa-agent-sdk/README.md).
+
 - Added caller-owned `ChildRunCapacity` to share Child admission and wakeups across independently built
   Agents without changing their Run/Attempt settlement, cancellation or approval behavior.
 
