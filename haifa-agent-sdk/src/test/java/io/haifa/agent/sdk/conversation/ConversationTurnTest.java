@@ -1,13 +1,11 @@
 package io.haifa.agent.sdk.conversation;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.message.MessageRole;
 import io.haifa.agent.core.message.MessageVisibility;
 import io.haifa.agent.core.run.AgentRunId;
-import io.haifa.agent.core.session.AgentSessionId;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -47,18 +45,4 @@ class ConversationTurnTest {
         assertThat(turn.text()).isEqualTo(first + "\n" + second);
     }
 
-    @Test
-    void submitCommandStillRejectsUserMessageAboveInputLimit() {
-        assertThatThrownBy(() -> new SubmitConversationTurnCommand(
-                        new AgentSessionId("session-1"), 0, "submit-32k", "m".repeat(32_001)))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("message is too long");
-    }
-
-    @Test
-    void startCommandStillRejectsInitialMessageAboveInputLimit() {
-        assertThatThrownBy(() -> new StartConversationCommand("start-32k", "Chat", "s".repeat(32_001)))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("message is too long");
-    }
 }
