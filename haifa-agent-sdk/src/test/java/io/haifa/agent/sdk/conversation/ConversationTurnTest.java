@@ -44,5 +44,4 @@ class ConversationTurnTest {
 
         assertThat(turn.text()).isEqualTo(first + "\n" + second);
     }
-
 }
