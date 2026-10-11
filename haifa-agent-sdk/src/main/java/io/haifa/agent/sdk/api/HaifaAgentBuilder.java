@@ -533,7 +533,8 @@ public final class HaifaAgentBuilder {
                                 snapshot,
                                 Map.of(),
                                 selected.modelRequestOptions(),
-                                selected.allowedTools());
+                                selected.allowedTools(),
+                                selected.truncatedOutputPolicy());
                     });
             model.adapters()
                     .forEach((coordinate, adapter) ->

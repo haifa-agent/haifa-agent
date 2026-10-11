@@ -12,6 +12,7 @@ import io.haifa.agent.model.api.ModelFinishReason;
 import io.haifa.agent.model.api.ModelInvocationException;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelToolSpecification;
+import io.haifa.agent.runtime.api.TruncatedOutputPolicy;
 import io.haifa.agent.runtime.core.decision.AgentDecision;
 import io.haifa.agent.runtime.core.decision.DelegationDecision;
 import io.haifa.agent.runtime.core.decision.FinalAnswerDecision;
@@ -25,6 +26,8 @@ import java.util.Objects;
 
 /** Maps Model API responses into Runtime decisions while allocating Runtime-owned identifiers. */
 public final class AgentChatResponseMapper {
+    public static final String TRUNCATED_LENGTH_WARNING = "TRUNCATED:LENGTH";
+
     private final IdentifierGenerator ids;
 
     public AgentChatResponseMapper(IdentifierGenerator ids) {
@@ -33,7 +36,15 @@ public final class AgentChatResponseMapper {
 
     public AgentDecision map(
             AgentChatRequest request, AgentChatResponse response, List<ModelToolSpecification> disclosedTools) {
-        return map(request, response, disclosedTools, List.of());
+        return map(request, response, disclosedTools, List.of(), TruncatedOutputPolicy.FAIL_CLOSED);
+    }
+
+    public AgentDecision map(
+            AgentChatRequest request,
+            AgentChatResponse response,
+            List<ModelToolSpecification> disclosedTools,
+            TruncatedOutputPolicy policy) {
+        return map(request, response, disclosedTools, List.of(), policy);
     }
 
     /**
@@ -47,6 +58,16 @@ public final class AgentChatResponseMapper {
             AgentChatResponse response,
             List<ModelToolSpecification> disclosedTools,
             List<ModelToolSpecification> fallbackTools) {
+        return map(request, response, disclosedTools, fallbackTools, TruncatedOutputPolicy.FAIL_CLOSED);
+    }
+
+    AgentDecision map(
+            AgentChatRequest request,
+            AgentChatResponse response,
+            List<ModelToolSpecification> disclosedTools,
+            List<ModelToolSpecification> fallbackTools,
+            TruncatedOutputPolicy policy) {
+        Objects.requireNonNull(policy, "policy must not be null");
         if (response.content().isBlank()
                 && response.toolCalls().isEmpty()
                 && response.structuredOutput().isEmpty()) {
@@ -58,6 +79,69 @@ public final class AgentChatResponseMapper {
                     request.callId(),
                     "model returned no usable output",
                     null);
+        }
+        if (policy == TruncatedOutputPolicy.ACCEPT_NONEMPTY_PLAIN_TEXT) {
+            if (response.finishReason() == ModelFinishReason.UNKNOWN) {
+                throw new ModelInvocationException(
+                        ModelErrorCategory.UNKNOWN_PROVIDER_ERROR,
+                        false,
+                        200,
+                        "unknown_finish_reason",
+                        request.callId(),
+                        "model returned an unknown finish reason",
+                        null);
+            }
+            if (response.finishReason() == ModelFinishReason.CONTENT_FILTER) {
+                throw new ModelInvocationException(
+                        ModelErrorCategory.CONTENT_REJECTED,
+                        false,
+                        200,
+                        "content_filter",
+                        request.callId(),
+                        "model response was rejected by content safety filters",
+                        null);
+            }
+            if (response.finishReason() == ModelFinishReason.LENGTH) {
+                if (!response.toolCalls().isEmpty()) {
+                    throw new ModelInvocationException(
+                            ModelErrorCategory.MALFORMED_RESPONSE,
+                            false,
+                            200,
+                            "output_truncated",
+                            request.callId(),
+                            "model output was truncated during tool calling",
+                            null);
+                }
+                if (request.structuredOutput().isPresent()
+                        || response.structuredOutput().isPresent()) {
+                    throw new ModelInvocationException(
+                            ModelErrorCategory.MALFORMED_RESPONSE,
+                            false,
+                            200,
+                            "output_truncated",
+                            request.callId(),
+                            "model output was truncated before structured output completion",
+                            null);
+                }
+                if (response.content().isBlank()) {
+                    throw new ModelInvocationException(
+                            ModelErrorCategory.EMPTY_RESPONSE,
+                            true,
+                            200,
+                            "empty_response",
+                            request.callId(),
+                            "model returned no usable output",
+                            null);
+                }
+                return new FinalAnswerDecision(
+                        AgentRunOutcome.SUCCESS,
+                        response.content(),
+                        "haifa.agent.final-answer",
+                        "1.0",
+                        Map.of("answer", response.content()),
+                        List.of(),
+                        List.of(TRUNCATED_LENGTH_WARNING));
+            }
         }
         if (!response.toolCalls().isEmpty()) {
             Map<String, ModelToolSpecification> byName = new LinkedHashMap<>();

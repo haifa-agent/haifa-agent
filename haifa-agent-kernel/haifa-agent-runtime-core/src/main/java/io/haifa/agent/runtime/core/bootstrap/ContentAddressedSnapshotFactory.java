@@ -2,6 +2,7 @@ package io.haifa.agent.runtime.core.bootstrap;
 
 import io.haifa.agent.core.reference.RunConfigurationSnapshotRef;
 import io.haifa.agent.runtime.api.AgentRunRequest;
+import io.haifa.agent.runtime.api.TruncatedOutputPolicy;
 import io.haifa.agent.skill.api.FrozenSkillBinding;
 import io.haifa.agent.skill.api.SkillCatalogSnapshot;
 import io.haifa.agent.skill.api.SkillTrustSnapshot;
@@ -165,7 +166,10 @@ public final class ContentAddressedSnapshotFactory implements ConfigurationSnaps
                         .map(value -> value.capabilityId() + "@" + value.version() + ":"
                                 + value.optionalBindingRef().orElse("") + ":" + value.configurationDigest())
                         .toList()
-                + "|" + caller.tenant().tenantId() + "|" + caller.principal();
+                + "|" + caller.tenant().tenantId() + "|" + caller.principal()
+                + (profile.truncatedOutputPolicy() == TruncatedOutputPolicy.FAIL_CLOSED
+                        ? ""
+                        : "|" + profile.truncatedOutputPolicy().name());
         try {
             String hash = HexFormat.of()
                     .formatHex(MessageDigest.getInstance("SHA-256").digest(canonical.getBytes(StandardCharsets.UTF_8)));
@@ -190,7 +194,8 @@ public final class ContentAddressedSnapshotFactory implements ConfigurationSnaps
                     capabilities,
                     profile.model(),
                     profile.modelRequestOptions(),
-                    request.structuredOutput());
+                    request.structuredOutput(),
+                    profile.truncatedOutputPolicy());
         } catch (NoSuchAlgorithmException exception) {
             throw new IllegalStateException("SHA-256 is required by the Java runtime", exception);
         }

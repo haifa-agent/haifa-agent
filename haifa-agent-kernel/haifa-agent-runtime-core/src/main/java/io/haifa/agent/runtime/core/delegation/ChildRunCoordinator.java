@@ -642,7 +642,8 @@ public final class ChildRunCoordinator implements DelegationPort {
                 parent.model(),
                 Map.of(),
                 parent.modelRequestOptions(),
-                Optional.empty());
+                Optional.empty(),
+                parent.truncatedOutputPolicy());
     }
 
     private static ResolvedProfile narrowedProfile(ResolvedProfile profile, Set<String> tools) {
@@ -656,7 +657,8 @@ public final class ChildRunCoordinator implements DelegationPort {
                 profile.model(),
                 profile.capabilities(),
                 profile.modelRequestOptions(),
-                profile.allowedTools().map(allowed -> intersection(allowed, tools)));
+                profile.allowedTools().map(allowed -> intersection(allowed, tools)),
+                profile.truncatedOutputPolicy());
     }
 
     private static Set<String> intersection(Set<String> left, Set<String> right) {
