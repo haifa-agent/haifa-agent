@@ -218,6 +218,10 @@ SDK Conversation 层只保存 display/index 元数据（display name、时间、
   绑定在跨崩溃窗口内复用同一 Run，`rename`/`archive`/`unarchive` 通过 Runtime applied-command 记录保证
   exactly-once。
 
+读投影不设聚合文本上限：`ConversationTurn` 只校验成员角色/可见性/允许的 content 类型等读取不变量，
+不再对 TextPart 总长求和并拒绝。已接收内容的长度与顺序由既有 Runtime/Store 写入契约拥有；写入侧
+`StartConversationCommand`/`SubmitConversationTurnCommand` 的 32000 字符消息输入上限保持不变。
+
 删除、回收站、Tree/Fork/Clone、Follow-up Queue 和 Retention 不属于该公共边界。SQLite 实现位于
 `haifa-agent-store-sqlite`，SDK 自身不依赖 SQLite；`InMemory` 实现只用于开发和确定性测试。
 
