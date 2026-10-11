@@ -40,12 +40,6 @@ public record ConversationTurn(
                         || content instanceof StoredAudioContentPart))) {
             throw new IllegalArgumentException("tool protocol content is not user-visible");
         }
-        long textLength = contents.stream()
-                .filter(TextPart.class::isInstance)
-                .map(TextPart.class::cast)
-                .mapToLong(value -> value.text().length())
-                .sum();
-        if (textLength > 64_000) throw new IllegalArgumentException("turn text is too long");
         visibility = Objects.requireNonNull(visibility, "visibility must not be null");
         if (visibility != MessageVisibility.USER_VISIBLE) {
             throw new IllegalArgumentException("ConversationTurn must be user-visible");
