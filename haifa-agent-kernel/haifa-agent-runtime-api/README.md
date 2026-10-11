@@ -11,6 +11,10 @@ SessionMessage sequence，允许 User/internal 消息造成序号空洞；`messa
 `textTruncated=true`。`toolCalls` 按该消息 parts 顺序精确绑定，arguments 的 `truncated` 仍表示公开 Tool
 视图的大小限制，`toolCorrelations` 将 SDK ToolCall ID 映射到 Provider correlation ID。
 
+模型产生且已提交的 Assistant 消息提供 `RunMessageView.modelCallId()`，其值与对应公开输出事件的
+`modelCallId`/`generationId` 一致。旧消息、非模型消息、Tool 消息及 redacted 消息返回空值；原九参数
+构造器保留。只公开这个安全标识，不公开 metadata 集合；不能用消息序号推测缺失的关联。
+
 现有 Run Event Feed 的 `message.committed` 只携带 `MessageCommitted(messageId,messageSequence)` 引用；
 正文通过消息分页读取。消息与引用在同一事务提交，既有 `subscribe` 在 afterCommit 唤醒，订阅必须关闭。
 历史未发该通知的非 redacted 消息也可分页；旧版已经 redacted 且缺少原展示资格标记的消息不会猜测其原内容。

@@ -20,6 +20,58 @@ class RunMessageProjectorTest {
     private static final Instant NOW = Instant.parse("2026-10-03T00:00:00Z");
 
     @Test
+    void projectsOnlySafeAssistantCorrelationAndClearsItAfterRedaction() {
+        var store = new InMemoryRuntimeStore();
+        var tool = call("correlation-tool", "echo", Map.of(), false);
+        store.appendToolCall(tool);
+        for (var role : List.of(MessageRole.ASSISTANT, MessageRole.TOOL)) {
+            store.appendSessionMessage(new SessionMessageDraft(
+                    new AgentMessageId(role.name()),
+                    new AgentSessionId("session"),
+                    Optional.of(RUN),
+                    Optional.empty(),
+                    role,
+                    MessageStatus.COMPLETED,
+                    MessageVisibility.USER_VISIBLE,
+                    role == MessageRole.TOOL
+                            ? List.of(new ToolResultPart(tool.id(), tool.providerCorrelationId(), "result"))
+                            : List.of(new TextPart("visible", "plain")),
+                    Map.of("modelCallId", "call-exact", "reasoning", "private-reasoning", "runMessageProjected", true),
+                    NOW));
+        }
+        append(
+                store,
+                "legacy",
+                MessageRole.ASSISTANT,
+                MessageVisibility.USER_VISIBLE,
+                List.of(new TextPart("legacy answer", "plain")));
+        var page = RunMessageProjector.page(store, RUN, 0, 20);
+        assertThat(page.items())
+                .extracting(view -> view.modelCallId())
+                .containsExactly(Optional.of("call-exact"), Optional.empty(), Optional.empty());
+        assertThat(page.toString()).doesNotContain("private-reasoning");
+        store.redactMessage(new AgentMessageId("ASSISTANT"));
+        assertThat(RunMessageProjector.page(store, RUN, 0, 20)
+                        .items()
+                        .getFirst()
+                        .modelCallId())
+                .isEmpty();
+    }
+
+    @Test
+    void legacyViewConstructorPreservesMissingCorrelationAndNewViewRejectsBlankIdentity() {
+        var legacy = new io.haifa.agent.runtime.api.RunMessageView(
+                "message", 1, 1, "ASSISTANT", "text", false, List.of(), Map.of(), 0);
+        assertThat(legacy.modelCallId()).isEmpty();
+        assertThatThrownBy(() -> new io.haifa.agent.runtime.api.RunMessageView(
+                        "message", 1, 1, "ASSISTANT", "text", false, List.of(), Map.of(), 0, Optional.of(" ")))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new io.haifa.agent.runtime.api.RunMessageView(
+                        "message", 1, 1, "ASSISTANT", "text", false, List.of(), Map.of(), 0, null))
+                .isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
     void fillsFilteredPagesWithStableIndicesExactMultipleToolsAndCompleteSafeText() {
         var store = new InMemoryRuntimeStore();
         ToolCall first =

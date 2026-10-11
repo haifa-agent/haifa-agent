@@ -1,5 +1,8 @@
 # Changelog
 
+- Added optional safe RunMessageView.modelCallId() correlation with public output events for accepted
+  model-backed assistant messages. The original constructor and legacy missing-field messages remain
+  supported; internal metadata and reasoning are not exposed, and redaction clears the correlation.
 - Added opt-in `TruncatedOutputPolicy.ACCEPT_NONEMPTY_PLAIN_TEXT` on `ProductRunProfile` for nonempty
   ordinary LENGTH output. Opted-in Runs complete with `TRUNCATED:LENGTH`, preserve Provider finish reason
   and usage, and reject incomplete Tool or structured responses. Child task metadata distinguishes model
