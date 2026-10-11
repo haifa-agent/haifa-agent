@@ -24,6 +24,43 @@ import org.junit.jupiter.api.io.TempDir;
 
 class RunMessagePagingTest {
     @Test
+    void preservesOptionalModelCallIdentityThroughCloseAndReopen(@TempDir Path directory) {
+        var protector = new AesGcmModelContinuationProtector(
+                new SecretKeySpec(new byte[32], "AES"), new java.security.SecureRandom());
+        AgentRunId runId;
+        try (var foundation =
+                SqliteStoreFoundation.initialize(SqliteTestSupport.configuration(directory), SqliteTestSupport.CLOCK)) {
+            runId = SqliteAggregateTestData.prepareRun(foundation).id();
+            var state = foundation.runtimeState(protector);
+            var legacy = draft("legacy", runId, MessageRole.ASSISTANT, MessageVisibility.USER_VISIBLE, "legacy");
+            state.appendSessionMessage(legacy);
+            var correlated =
+                    draft("correlated", runId, MessageRole.ASSISTANT, MessageVisibility.USER_VISIBLE, "answer");
+            var metadata = new LinkedHashMap<>(correlated.metadata());
+            metadata.put("modelCallId", "call-durable-exact");
+            state.appendSessionMessage(new SessionMessageDraft(
+                    correlated.id(),
+                    correlated.sessionId(),
+                    correlated.runId(),
+                    correlated.parentMessageId(),
+                    correlated.role(),
+                    correlated.status(),
+                    correlated.visibility(),
+                    correlated.contents(),
+                    metadata,
+                    correlated.createdAt()));
+        }
+        try (var reopened =
+                SqliteStoreFoundation.initialize(SqliteTestSupport.configuration(directory), SqliteTestSupport.CLOCK)) {
+            var page = RunMessageProjector.page(reopened.runtimeState(protector), runId, 0, 10);
+            assertThat(page.items()).extracting(RunMessageView::messageId).containsExactly("legacy", "correlated");
+            assertThat(page.items())
+                    .extracting(RunMessageView::modelCallId)
+                    .containsExactly(Optional.empty(), Optional.of("call-durable-exact"));
+        }
+    }
+
+    @Test
     void pagesAcrossFilteredLegacyMessagesAndPreservesRanksAfterRedactionPruneAndReopen(@TempDir Path directory) {
         var protector = new AesGcmModelContinuationProtector(
                 new SecretKeySpec(new byte[32], "AES"), new java.security.SecureRandom());

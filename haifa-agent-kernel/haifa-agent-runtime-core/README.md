@@ -1,5 +1,8 @@
 # Haifa Agent Runtime Core
 
+已提交模型 Assistant 消息的公开 `modelCallId` 取自同一次 `ModelInvocationResult`，由既有消息 metadata
+持久化并经消息分页窄投影公开；重开 Store 不丢失关联，旧记录缺失时保留空值，redaction 清除公开关联。
+
 内建 `skill_resource_read` 只在当前 Run 已激活至少一个包含可读辅助资源的 Skill 后进入模型的
 Tool 列表。新 Run 不继承上一 Run 的工具展示状态；只有 `SKILL.md` 的包不会展示辅助 reader。
 冻结 Tool binding 和实际调用的 caller、激活、索引、hash 与预算校验保持原有语义。
