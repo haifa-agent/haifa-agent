@@ -248,7 +248,14 @@ Steer 不是取消：取消继续使用 `agent.runs().handle(runId).cancel()`。
 声明父 Run 可委托的集合。此时 Runtime 向父模型暴露唯一的 `task` Tool；同一响应中的多个 `task` 调用各创建一个普通
 Child Run 并行执行，Tool 在 Child 终态后返回 Child Run ID、Runtime 终态、摘要、Child 自身 Usage 与 Artifact 引用。
 
-- Child 模型：引用的 run profile 的模型；未引用时继承父 Run 冻结的模型、预算与限制。
+- Child 模型与截断策略：引用的 run profile 的模型与不可变属性；未引用时继承父 Run 冻结的模型、预算、限制与截断策略。
+  `ProductRunProfile` 支持显式指定 `TruncatedOutputPolicy`（默认为严格的 `FAIL_CLOSED`；可按 Child profile 选定 `ACCEPT_NONEMPTY_PLAIN_TEXT`）。
+  当 Child 模型达到输出 token 上限以 `LENGTH` 停止并产出非空普通文本时，选定 opt-in 的 Child Run 正常结算为 `COMPLETED`（`SUCCESS`）并附带
+  `TRUNCATED:LENGTH` 警告；返回给父 Run 的 `task` ToolResult 元数据真实携带 `modelOutputTruncated=true` 与 `modelFinishReason="LENGTH"`，
+  同时父 Run 仍可维持默认严格的 `FAIL_CLOSED` 隔离。
+  例如 `childProfile.withTruncatedOutputPolicy(TruncatedOutputPolicy.ACCEPT_NONEMPTY_PLAIN_TEXT)`；将返回的 profile
+  通过 `builder.runProfile(...)` 注册，并让 `ChildAgentSpec` 引用它的 `ProductRunProfileRef`。包含 Tool 调用或结构化输出的
+  `LENGTH` 仍拒绝；空文本、`CONTENT_FILTER` 和 `UNKNOWN` 不会因 opt-in 被接受。
 - Child 能力 = Child 白名单 ∩ 父 Run 可用 Tool；构建时白名单越界、未注册 Child 或未注册/不可委托的 run profile 以
   `CHILD_AGENT_TOOL_UNAVAILABLE` / `CHILD_AGENT_UNAVAILABLE` / `CHILD_RUN_PROFILE_UNAVAILABLE` fail closed。
 - 深度固定为 1：Child 看不到 `task`。Child 不召回、不写入长期 Memory。

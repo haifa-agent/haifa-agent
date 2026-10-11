@@ -5,6 +5,7 @@ import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.run.AgentRunUsage;
 import io.haifa.agent.core.tool.ToolResult;
+import io.haifa.agent.runtime.core.model.AgentChatResponseMapper;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -92,6 +93,11 @@ public final class ChildRunResults {
                 var result = child.result().orElseThrow();
                 data.put("outcome", result.outcome().name());
                 output.ifPresent(value -> data.putAll(DelegationOutput.metadata(value)));
+                if (result.warnings().contains(AgentChatResponseMapper.TRUNCATED_LENGTH_WARNING)) {
+                    data.put("modelOutputTruncated", true);
+                    data.put("modelFinishReason", "LENGTH");
+                    data.put("warnings", List.of(AgentChatResponseMapper.TRUNCATED_LENGTH_WARNING));
+                }
                 summary = result.summary();
                 text = prefix + "completed with outcome " + result.outcome().name() + ".";
             }

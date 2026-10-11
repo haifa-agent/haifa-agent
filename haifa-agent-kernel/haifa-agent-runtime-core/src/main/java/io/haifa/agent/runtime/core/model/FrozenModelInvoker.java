@@ -310,7 +310,8 @@ public final class FrozenModelInvoker {
                     request,
                     response,
                     disclosedTools,
-                    repairableSkillReadTools(binding.configuration().toolBindings(), binding.tools(), disclosedTools));
+                    repairableSkillReadTools(binding.configuration().toolBindings(), binding.tools(), disclosedTools),
+                    binding.configuration().truncatedOutputPolicy());
             var invocation = new ModelInvocationResult(
                     decision,
                     response.usage().inputTokens(),
