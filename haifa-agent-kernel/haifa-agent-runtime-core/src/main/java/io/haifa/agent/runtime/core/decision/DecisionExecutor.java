@@ -1412,6 +1412,7 @@ public final class DecisionExecutor {
             Optional<ModelContinuationDraft> continuation) {
         Map<String, Object> facts = new LinkedHashMap<>(metadata);
         invocation.ifPresent(value -> {
+            facts.put("modelCallId", value.modelCallId());
             facts.put("providerId", value.model().providerId().value());
             facts.put("modelId", value.model().providerModelId());
             facts.put("configurationDigest", value.model().configurationDigest());

@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -93,6 +94,13 @@ public final class RunMessageProjector {
                     truncated |= call.result().map(result -> result.truncated()).orElse(false);
                 }
             }
+        Optional<String> modelCallId = message.role() == io.haifa.agent.core.message.MessageRole.ASSISTANT
+                        && message.status() != MessageStatus.REDACTED
+                ? Optional.ofNullable(message.metadata().get("modelCallId"))
+                        .filter(String.class::isInstance)
+                        .map(String.class::cast)
+                        .filter(value -> !value.isBlank())
+                : Optional.empty();
         return new RunMessageView(
                 message.id().value(),
                 message.sequence(),
@@ -102,7 +110,8 @@ public final class RunMessageProjector {
                 truncated,
                 tools,
                 correlations,
-                message.createdAt().toEpochMilli());
+                message.createdAt().toEpochMilli(),
+                modelCallId);
     }
 
     private static ToolCall requireCall(
