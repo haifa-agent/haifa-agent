@@ -179,7 +179,9 @@ public final class RuntimeCoreBuilder {
     private PromptDiagnosticsSink promptDiagnostics = PromptDiagnosticsSink.noop();
     private FailureDiagnosticSink failureDiagnostics = FailureDiagnosticSink.noop();
     private RunInputPort runInputs;
-    private CompressionPolicy compressionPolicy = CompressionPolicy.defaults();
+    // Null until set: build() applies CompressionPolicy.defaults(), and a product assembly can detect the unset
+    // case to install its own default (for example a degraded-fallback-enabled policy) before build().
+    private CompressionPolicy compressionPolicy;
     private ToolResultNormalizer toolResultNormalizer = new BoundedToolResultNormalizer(4_000, 100);
     private ToolRequestCanonicalizer toolRequestCanonicalizer = ToolRequestCanonicalizer.identity();
     private OutputContractValidator outputContract =
