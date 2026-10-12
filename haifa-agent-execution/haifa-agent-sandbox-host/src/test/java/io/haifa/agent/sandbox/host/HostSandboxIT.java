@@ -726,6 +726,71 @@ class HostSandboxIT {
     }
 
     @Test
+    void doesNotDeadlockWhenASurvivingDescendantHoldsTheOutputPipe() throws Exception {
+        Fixture fixture = fixture(root, "workspace-pipe-holder");
+        var provider = new HostGuardedSandboxProvider(
+                fixture.workspaces,
+                fixture.locations,
+                () -> "session-pipe-holder",
+                () -> Instant.ofEpochMilli(System.currentTimeMillis()));
+        var profile = SandboxProfile.hostGuarded(
+                new SandboxProfileRef("pipe-holder", "1"),
+                provider.configurationDigest(),
+                Set.of("java"),
+                Set.of(),
+                false);
+        copySleepClass(root);
+        copyProcessClass(root, BackgroundPipeHolder.class);
+
+        try (var session = provider.open(profile, fixture.workspaceId)) {
+            Path childPidFile = root.resolve("background-child.pid");
+            var holder = new java.util.concurrent.atomic.AtomicReference<SandboxProcessResult>();
+            var failure = new java.util.concurrent.atomic.AtomicReference<Throwable>();
+            Thread runner = new Thread(
+                    () -> {
+                        try {
+                            holder.set(session.execute(new SandboxExecution(
+                                    new ExecutionCommand(
+                                            ExecutionCommandMode.DIRECT,
+                                            List.of(
+                                                    "java",
+                                                    "-cp",
+                                                    ".",
+                                                    "io.haifa.agent.sandbox.host.BackgroundPipeHolder",
+                                                    childPidFile.getFileName().toString())),
+                                    WorkspacePath.root(fixture.workspaceId),
+                                    Map.of(),
+                                    new ExecutionLimits(Duration.ofSeconds(10), 4096, 4096, 8))));
+                        } catch (Throwable throwable) {
+                            failure.set(throwable);
+                        }
+                    },
+                    "host-pipe-holder-test");
+            runner.setDaemon(true);
+            runner.start();
+            runner.join(Duration.ofSeconds(30));
+
+            assertThat(runner.isAlive())
+                    .as("a command that leaves a pipe-holding descendant must not deadlock execution")
+                    .isFalse();
+            assertThat(failure.get()).isNull();
+            SandboxProcessResult result = holder.get();
+            assertThat(result.status()).isEqualTo(SandboxProcessStatus.EXITED);
+            assertThat(result.exitCode()).isZero();
+
+            long childPid = Long.parseLong(Files.readString(childPidFile).trim());
+            long deadline = System.currentTimeMillis() + 5000;
+            while (ProcessHandle.of(childPid).filter(ProcessHandle::isAlive).isPresent()
+                    && System.currentTimeMillis() < deadline) {
+                Thread.sleep(50);
+            }
+            assertThat(ProcessHandle.of(childPid).filter(ProcessHandle::isAlive))
+                    .as("the surviving pipe-holding descendant must be released")
+                    .isEmpty();
+        }
+    }
+
+    @Test
     void keepsTimedOutTreeTerminationUnconfirmed() {
         assertThat(HostGuardedSandboxProvider.settledStatus(HostGuardedSandboxProvider.WaitOutcome.TIMED_OUT, false))
                 .isEqualTo(SandboxProcessStatus.UNKNOWN);
