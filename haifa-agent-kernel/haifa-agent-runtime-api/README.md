@@ -86,6 +86,7 @@ SQLite 与 InMemory 使用同一 Runtime 投影，因此重启后仍从权威持
   Resume 与 Command 可携带 expected Run version，供 HTTP `If-Match` 映射；版本检查仍由
   Runtime 事实执行，Transport 不维护第二份版本。
 - `recover(runId)` 将失去执行者的旧 Run 收敛为中断／结果未知，不调度新的 Attempt，也不重放工具；当前仍被拥有的执行会被拒绝。正常暂停和批准仍通过 resume/respond 继续。
+- `recoverAbandoned(runId, heartbeatStaleness)` 在 `recover` 之上判定“执行者已丢失”：本地 Runtime 的 worker 身份带宿主进程号，宿主进程已不存在时立即结算（无需等满 `heartbeatStaleness`），宿主进程仍存活时绝不结算（避免误杀同机另一进程的活 Run），无法判定归属时回退到心跳静默门槛。仍被本实例拥有、等待人工的 Run 不结算；未实现持久恢复的 Runtime 返回 `false`。客户端（如 Coding Agent 的 Session 调和）据此清理进程丢失留下的活跃 Run。
 - 公共命令只有 `PAUSE`、`CANCEL`、`TERMINATE_CHILDREN`；`CANCEL` 的 `RunCancellation` 明确区分
   `USER_REQUEST` 与 Host 已判定的 `DEADLINE_EXCEEDED`，并将实际时限写入终止说明。旧的空参数取消仍按
   用户请求解释。`InteractionResponse` 以 Request/Response ID 关联 Clarification 或 Approval，并从可信

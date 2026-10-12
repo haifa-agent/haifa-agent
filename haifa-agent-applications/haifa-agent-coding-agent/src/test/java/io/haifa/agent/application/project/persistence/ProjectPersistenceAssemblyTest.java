@@ -392,8 +392,31 @@ class ProjectPersistenceAssemblyTest {
             assertThat(reconciled.activeRunTaskSummary()).contains("then update the docs");
             assertThat(reconciled.summary().queuedCount()).isZero();
 
-            RuntimeCommandResult aborted = coding.abortActiveRun(sessionId, "abort-key");
+            RuntimeCommandResult aborted =
+                    coding.abortActiveRun(sessionId, "abort-key").orElseThrow();
             assertThat(aborted.status()).isEqualTo(RuntimeCommandStatus.ACCEPTED);
+        }
+    }
+
+    @Test
+    void reconcileSettlesAnAbandonedActiveRunAndClearsThePointer() {
+        ProductFixture fixture = productFixture();
+        CapturingRuntime runtime = new CapturingRuntime();
+        runtime.settleAbandonedOnRecover();
+        TestIds ids = new TestIds("abandoned");
+        try (ProjectPersistenceAssembly assembly =
+                ProjectPersistenceAssembly.open(ProjectPersistenceConfiguration.memory(), CLOCK, ids, null)) {
+            CodingSessionService coding = fixture.codingService(assembly, runtime, ids);
+            var created = coding.createSession(fixture.projectId, "long running task", List.of(), "abandoned-key");
+            AgentSessionId sessionId = created.summary().sessionId();
+            assertThat(created.activeRun()).isPresent();
+
+            // Re-entering the Session settles the abandoned Run instead of reattaching to it forever.
+            var reconciled = coding.reconcileSession(sessionId);
+            assertThat(reconciled.activeRun()).isEmpty();
+
+            // Cancelling an already-settled Session is an idempotent no-op, not an error.
+            assertThat(coding.abortActiveRun(sessionId, "abandoned-abort")).isEmpty();
         }
     }
 
@@ -1062,6 +1085,30 @@ class ProjectPersistenceAssemblyTest {
                             Optional.empty(),
                             Optional.empty(),
                             Optional.empty()));
+        }
+
+        private boolean settleAbandoned = false;
+
+        void settleAbandonedOnRecover() {
+            this.settleAbandoned = true;
+        }
+
+        @Override
+        public boolean recoverAbandoned(AgentRunId runId, java.time.Duration heartbeatStaleness) {
+            if (!settleAbandoned) return false;
+            AgentRunSnapshot current = snapshots.get(runId);
+            if (current == null || current.status().isTerminal()) return true;
+            snapshots.put(
+                    runId,
+                    new AgentRunSnapshot(
+                            runId,
+                            AgentRunStatus.FAILED,
+                            current.version() + 1,
+                            NOW,
+                            Optional.empty(),
+                            Optional.empty(),
+                            Optional.empty()));
+            return true;
         }
     }
 

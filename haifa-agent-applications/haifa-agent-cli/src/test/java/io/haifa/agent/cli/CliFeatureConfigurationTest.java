@@ -20,19 +20,11 @@ class CliFeatureConfigurationTest {
 
         assertThat(defaults.enabledTools()).contains("execution_run").doesNotContain("file_search");
         assertThat(defaults.maxModelCalls()).isEqualTo(64);
+        assertThat(defaults.abandonedRunStaleness()).isEqualTo(java.time.Duration.ofMinutes(30));
 
-        var explicitCompatibilityConfiguration = new CliConfiguration(
-                defaults.model(),
-                Set.of("file_search"),
-                defaults.mcpServers(),
-                defaults.web(),
-                defaults.skills(),
-                defaults.execution(),
-                defaults.approval(),
-                defaults.timeout(),
-                defaults.maxIterations(),
-                defaults.maxToolCalls(),
-                defaults.persistence());
+        var explicitCompatibilityConfiguration = CliConfigurationBuilder.from(defaults)
+                .enabledTools(Set.of("file_search"))
+                .build();
         assertThat(explicitCompatibilityConfiguration.enabledTools()).containsExactly("file_search");
     }
 
@@ -141,6 +133,7 @@ class CliFeatureConfigurationTest {
                       maxModelCalls: 5
                       maxToolCalls: 4
                       maxWallTimeMillis: 120000
+                      abandonedRunStalenessMillis: 900000
                     mcp:
                       servers:
                         - id: utility
@@ -162,6 +155,7 @@ class CliFeatureConfigurationTest {
         assertThat(result.approval()).isEqualTo(ApprovalMode.DENY);
         assertThat(result.timeout()).isEqualTo(java.time.Duration.ofMillis(120000));
         assertThat(result.maxModelCalls()).isEqualTo(5);
+        assertThat(result.abandonedRunStaleness()).isEqualTo(java.time.Duration.ofMillis(900000));
         assertThat(result.execution().provider()).isEqualTo("host-guarded");
         assertThat(result.execution().maximumTimeout()).isEqualTo(java.time.Duration.ofMillis(600000));
         assertThat(result.execution().maxOutputBytes()).isEqualTo(32768);
@@ -504,18 +498,11 @@ class CliFeatureConfigurationTest {
     void rejectsWebToolAndProviderEnablementMismatch() {
         CliConfiguration defaults = CliConfiguration.defaults();
 
-        assertThatThrownBy(() -> new CliConfiguration(
-                        defaults.model(),
-                        java.util.stream.Stream.concat(
+        assertThatThrownBy(() -> CliConfigurationBuilder.from(defaults)
+                        .enabledTools(java.util.stream.Stream.concat(
                                         defaults.enabledTools().stream(), java.util.stream.Stream.of("web_search"))
-                                .collect(java.util.stream.Collectors.toUnmodifiableSet()),
-                        defaults.mcpServers(),
-                        defaults.web(),
-                        defaults.execution(),
-                        defaults.approval(),
-                        defaults.timeout(),
-                        defaults.maxIterations(),
-                        defaults.maxToolCalls()))
+                                .collect(java.util.stream.Collectors.toUnmodifiableSet()))
+                        .build())
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("must match");
     }

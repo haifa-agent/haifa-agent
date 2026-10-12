@@ -2148,6 +2148,95 @@ class RuntimeCoreTest {
     }
 
     @Test
+    void recoverAbandonedSettlesOnlyUnownedStaleHeartbeats() {
+        AtomicBoolean owned = new AtomicBoolean(true);
+        AtomicReference<Instant> wallClock = new AtomicReference<>(Instant.parse("2026-07-21T00:00:00Z"));
+        AgentChatModel model = request -> {
+            throw new AssertionError("simulated process loss");
+        };
+        Fixture fixture = fixture(model, builder -> builder.executionOwnership(attempt -> owned.get()), wallClock::get);
+        var accepted = fixture.runtime.start(request("abandoned"));
+
+        assertThatThrownBy(fixture.scheduler::runNext).isInstanceOf(AssertionError.class);
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.RUNNING);
+
+        // Owned by this executor: never settled, even with a stale heartbeat.
+        wallClock.set(wallClock.get().plus(Duration.ofMinutes(31)));
+        assertThat(fixture.runtime.recoverAbandoned(accepted.runId(), Duration.ofMinutes(30)))
+                .isFalse();
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.RUNNING);
+
+        // Unowned but with a fresh heartbeat: not settled.
+        owned.set(false);
+        wallClock.set(Instant.parse("2026-07-21T00:00:00Z"));
+        assertThat(fixture.runtime.recoverAbandoned(accepted.runId(), Duration.ofMinutes(30)))
+                .isFalse();
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.RUNNING);
+
+        // Unowned and stale: settled to FAILED, then idempotent.
+        wallClock.set(Instant.parse("2026-07-21T00:00:00Z").plus(Duration.ofMinutes(31)));
+        assertThat(fixture.runtime.recoverAbandoned(accepted.runId(), Duration.ofMinutes(30)))
+                .isTrue();
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.FAILED);
+        assertThat(fixture.runtime.recoverAbandoned(accepted.runId(), Duration.ofMinutes(30)))
+                .isTrue();
+    }
+
+    @Test
+    void recoverAbandonedHonorsHostOwnershipLiveness() {
+        AtomicReference<io.haifa.agent.runtime.core.execution.ExecutionOwnershipPort.OwnerLiveness> liveness =
+                new AtomicReference<>(io.haifa.agent.runtime.core.execution.ExecutionOwnershipPort.OwnerLiveness.OWNED);
+        AtomicReference<Instant> wallClock = new AtomicReference<>(Instant.parse("2026-07-21T00:00:00Z"));
+        io.haifa.agent.runtime.core.execution.ExecutionOwnershipPort ownership =
+                new io.haifa.agent.runtime.core.execution.ExecutionOwnershipPort() {
+                    @Override
+                    public boolean stillOwned(io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt attempt) {
+                        return liveness.get()
+                                == io.haifa.agent.runtime.core.execution.ExecutionOwnershipPort.OwnerLiveness.OWNED;
+                    }
+
+                    @Override
+                    public io.haifa.agent.runtime.core.execution.ExecutionOwnershipPort.OwnerLiveness ownerLiveness(
+                            io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt attempt) {
+                        return liveness.get();
+                    }
+                };
+        AgentChatModel model = request -> {
+            throw new AssertionError("simulated process loss");
+        };
+        Fixture fixture = fixture(model, builder -> builder.executionOwnership(ownership), wallClock::get);
+        var accepted = fixture.runtime.start(request("liveness"));
+        assertThatThrownBy(fixture.scheduler::runNext).isInstanceOf(AssertionError.class);
+
+        // A live owner process on this host is never settled, even with a stale heartbeat.
+        liveness.set(io.haifa.agent.runtime.core.execution.ExecutionOwnershipPort.OwnerLiveness.ALIVE);
+        wallClock.set(wallClock.get().plus(Duration.ofMinutes(31)));
+        assertThat(fixture.runtime.recoverAbandoned(accepted.runId(), Duration.ofMinutes(30)))
+                .isFalse();
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.RUNNING);
+
+        // Unknown ownership still falls back to the heartbeat window.
+        liveness.set(io.haifa.agent.runtime.core.execution.ExecutionOwnershipPort.OwnerLiveness.UNKNOWN);
+        wallClock.set(Instant.parse("2026-07-21T00:00:00Z"));
+        assertThat(fixture.runtime.recoverAbandoned(accepted.runId(), Duration.ofMinutes(30)))
+                .isFalse();
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.RUNNING);
+
+        // A provably gone host owner is settled immediately even though the heartbeat is still fresh.
+        liveness.set(io.haifa.agent.runtime.core.execution.ExecutionOwnershipPort.OwnerLiveness.GONE);
+        assertThat(fixture.runtime.recoverAbandoned(accepted.runId(), Duration.ofMinutes(30)))
+                .isTrue();
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.FAILED);
+    }
+
+    @Test
     void settlesAbandonedAttemptWithoutAutomaticResume() {
         AtomicInteger calls = new AtomicInteger();
         AtomicBoolean owned = new AtomicBoolean(true);
