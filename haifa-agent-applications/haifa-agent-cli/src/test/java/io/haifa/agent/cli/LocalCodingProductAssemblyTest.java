@@ -560,13 +560,8 @@ class LocalCodingProductAssemblyTest {
     private static CliConfiguration configuration(ProjectPersistenceConfiguration persistence) {
         CliConfiguration defaults = CliConfiguration.defaults();
         CliConfiguration.Execution execution = defaults.execution();
-        return new CliConfiguration(
-                defaults.model(),
-                defaults.enabledTools(),
-                defaults.mcpServers(),
-                defaults.web(),
-                defaults.skills(),
-                new CliConfiguration.Execution(
+        return CliConfigurationBuilder.from(defaults)
+                .execution(new CliConfiguration.Execution(
                         "host-guarded",
                         execution.shell(),
                         execution.shellPath(),
@@ -574,12 +569,11 @@ class LocalCodingProductAssemblyTest {
                         execution.maxOutputBytes(),
                         execution.maxOutputLines(),
                         execution.maxProcesses(),
-                        execution.inheritEnvironment()),
-                ApprovalMode.AUTO,
-                Duration.ofSeconds(10),
-                defaults.maxIterations(),
-                defaults.maxToolCalls(),
-                persistence);
+                        execution.inheritEnvironment()))
+                .approval(ApprovalMode.AUTO)
+                .timeout(Duration.ofSeconds(10))
+                .persistence(persistence)
+                .build();
     }
 
     private static AesGcmModelContinuationProtector protector() {

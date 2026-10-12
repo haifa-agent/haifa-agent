@@ -150,7 +150,11 @@ final class CliConfigurationLoader {
                 number(runtime, "maxModelCalls", defaults.maxModelCalls()),
                 number(runtime, "maxToolCalls", defaults.maxToolCalls()),
                 persistence,
-                Math.toIntExact(number(modelsConfiguration, "maxResponseBytes", defaults.modelMaxResponseBytes())));
+                Math.toIntExact(number(modelsConfiguration, "maxResponseBytes", defaults.modelMaxResponseBytes())),
+                Duration.ofMillis(number(
+                        runtime,
+                        "abandonedRunStalenessMillis",
+                        defaults.abandonedRunStaleness().toMillis())));
     }
 
     private static CodingApprovalThreshold compatibleThreshold(ApprovalMode approval) {

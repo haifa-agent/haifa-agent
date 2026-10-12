@@ -86,6 +86,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
@@ -971,6 +972,33 @@ public final class DefaultAgentRuntime implements AgentRuntime {
             delegations.terminateChildren(current);
             return transitions.failed(current, error);
         });
+    }
+
+    @Override
+    public boolean recoverAbandoned(AgentRunId runId, Duration heartbeatStaleness) {
+        Objects.requireNonNull(runId, "runId must not be null");
+        Objects.requireNonNull(heartbeatStaleness, "heartbeatStaleness must not be null");
+        AgentRun run = requireRun(runId);
+        requireCaller(run);
+        if (run.status().isTerminal()) return true;
+        if (run.status() != AgentRunStatus.RUNNING && run.status() != AgentRunStatus.SUSPENDING) {
+            return false;
+        }
+        Optional<AgentRunExecutionAttempt> active = attempts.activeFor(runId);
+        if (active.isEmpty()) return false;
+        AgentRunExecutionAttempt attempt = active.orElseThrow();
+        ExecutionOwnershipPort.OwnerLiveness liveness = ownership.ownerLiveness(attempt);
+        if (liveness == ExecutionOwnershipPort.OwnerLiveness.OWNED
+                || liveness == ExecutionOwnershipPort.OwnerLiveness.ALIVE) {
+            return false;
+        }
+        if (liveness == ExecutionOwnershipPort.OwnerLiveness.UNKNOWN) {
+            Instant heartbeat = attempt.heartbeatAt().orElse(null);
+            if (heartbeat == null) return false;
+            if (Duration.between(heartbeat, time.now()).compareTo(heartbeatStaleness) < 0) return false;
+        }
+        recover(runId);
+        return true;
     }
 
     private void applyCancel(AgentRun run, RunCancellation cancellation) {

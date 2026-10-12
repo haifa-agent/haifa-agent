@@ -789,7 +789,8 @@ final class LocalCodingAgent implements AutoCloseable {
                     runtime,
                     identifiers,
                     clock,
-                    new CliCodingModelCatalog(configuration, connectionState));
+                    new CliCodingModelCatalog(configuration, connectionState),
+                    configuration.abandonedRunStaleness());
             var sessionHistory = new CodingSessionHistoryService(
                     codingSessions,
                     persistence.ports().state(),
