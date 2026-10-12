@@ -37,9 +37,11 @@ record CliConfiguration(
         long maxModelCalls,
         long maxToolCalls,
         ProjectPersistenceConfiguration persistence,
-        int modelMaxResponseBytes) {
+        int modelMaxResponseBytes,
+        Duration abandonedRunStaleness) {
     private static final long DEFAULT_MAX_MODEL_CALLS = 64L;
     static final int DEFAULT_MODEL_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
+    static final Duration DEFAULT_ABANDONED_RUN_STALENESS = Duration.ofMinutes(30);
     private static final Set<String> DEFAULT_TOOLS = Set.of(
             "file_list",
             "file_stat",
@@ -97,6 +99,46 @@ record CliConfiguration(
         if (modelMaxResponseBytes < 1024 * 1024 || modelMaxResponseBytes > 32 * 1024 * 1024) {
             throw new IllegalArgumentException("models.maxResponseBytes must be between 1048576 and 33554432");
         }
+        abandonedRunStaleness = Objects.requireNonNull(abandonedRunStaleness, "abandonedRunStaleness must not be null");
+        if (abandonedRunStaleness.isNegative() || abandonedRunStaleness.isZero()) {
+            throw new IllegalArgumentException("runtime.abandonedRunStalenessMillis must be positive");
+        }
+    }
+
+    /** Compatibility constructor: an unconfigured abandoned-run staleness uses the shipped default. */
+    CliConfiguration(
+            Model model,
+            List<Model> availableModels,
+            Set<String> enabledTools,
+            List<McpServer> mcpServers,
+            Web web,
+            Skills skills,
+            Execution execution,
+            ApprovalMode approval,
+            CodingApprovalThreshold approvalThreshold,
+            Duration timeout,
+            int maxIterations,
+            long maxModelCalls,
+            long maxToolCalls,
+            ProjectPersistenceConfiguration persistence,
+            int modelMaxResponseBytes) {
+        this(
+                model,
+                availableModels,
+                enabledTools,
+                mcpServers,
+                web,
+                skills,
+                execution,
+                approval,
+                approvalThreshold,
+                timeout,
+                maxIterations,
+                maxModelCalls,
+                maxToolCalls,
+                persistence,
+                modelMaxResponseBytes,
+                DEFAULT_ABANDONED_RUN_STALENESS);
     }
 
     static CliConfiguration defaults() {
@@ -165,7 +207,8 @@ record CliConfiguration(
                 DEFAULT_MAX_MODEL_CALLS,
                 32,
                 ProjectPersistenceConfiguration.memory(),
-                DEFAULT_MODEL_MAX_RESPONSE_BYTES);
+                DEFAULT_MODEL_MAX_RESPONSE_BYTES,
+                DEFAULT_ABANDONED_RUN_STALENESS);
     }
 
     CliConfiguration(
