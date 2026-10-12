@@ -612,15 +612,10 @@ class CliModelConfigurationTest {
                 131_072,
                 8_192);
         CliConfiguration defaults = CliConfiguration.defaults();
-        var snapshot = LocalCodingAgent.modelSnapshot(new CliConfiguration(
-                model,
-                defaults.enabledTools(),
-                defaults.mcpServers(),
-                defaults.execution(),
-                defaults.approval(),
-                defaults.timeout(),
-                defaults.maxIterations(),
-                defaults.maxToolCalls()));
+        var snapshot = LocalCodingAgent.modelSnapshot(CliConfigurationBuilder.from(defaults)
+                .model(model)
+                .availableModels(java.util.List.of(model))
+                .build());
 
         assertThat(model.workspaceId()).isEqualTo("workspace-123");
         assertThat(model.region()).isEqualTo("cn-beijing");
@@ -737,22 +732,9 @@ class CliModelConfigurationTest {
 
     private static CliConfiguration withModelMaxResponseBytes(int value) {
         CliConfiguration defaults = CliConfiguration.defaults();
-        return new CliConfiguration(
-                defaults.model(),
-                defaults.availableModels(),
-                defaults.enabledTools(),
-                defaults.mcpServers(),
-                defaults.web(),
-                defaults.skills(),
-                defaults.execution(),
-                defaults.approval(),
-                defaults.approvalThreshold(),
-                defaults.timeout(),
-                defaults.maxIterations(),
-                defaults.maxModelCalls(),
-                defaults.maxToolCalls(),
-                defaults.persistence(),
-                value);
+        return CliConfigurationBuilder.from(defaults)
+                .modelMaxResponseBytes(value)
+                .build();
     }
 
     @Test
