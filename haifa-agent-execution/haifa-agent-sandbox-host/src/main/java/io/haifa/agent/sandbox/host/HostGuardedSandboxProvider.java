@@ -57,8 +57,11 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
      * Dedicated daemon threads keep the pipe readers off the shared common pool. A reader may stay blocked on a
      * surviving descendant that inherited the pipe write end, so it must never occupy shared worker threads.
      */
+    private static final java.util.concurrent.atomic.AtomicLong OUTPUT_READER_SEQUENCE =
+            new java.util.concurrent.atomic.AtomicLong();
+
     private static final Executor OUTPUT_READERS = command -> {
-        Thread thread = new Thread(command, "haifa-host-output-reader");
+        Thread thread = new Thread(command, "haifa-host-output-reader-" + OUTPUT_READER_SEQUENCE.incrementAndGet());
         thread.setDaemon(true);
         thread.start();
     };
@@ -289,8 +292,9 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                     treeTerminated = terminateTree(process);
                 }
                 status = settledStatus(outcome, treeTerminated);
-                BoundedBytes out = collectOutput(stdout, process, observedDescendants);
-                BoundedBytes err = collectOutput(stderr, process, observedDescendants);
+                awaitOutputDrain(CompletableFuture.allOf(stdout, stderr), process, observedDescendants);
+                BoundedBytes out = stdout.getNow(BoundedBytes.incomplete());
+                BoundedBytes err = stderr.getNow(BoundedBytes.incomplete());
                 if (outputLimitExceeded.get()
                         && execution.limits().outputOverflowPolicy()
                                 == io.haifa.agent.execution.api.ExecutionOutputOverflowPolicy.TERMINATE
@@ -422,7 +426,7 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                 List<ProcessHandle> descendants =
                         process.toHandle().descendants().toList();
                 observedDescendants.addAll(descendants);
-                if (maxProcesses.isPresent() && 1 + Math.min(descendants.size(), 63) > maxProcesses.get()) {
+                if (maxProcesses.isPresent() && 1 + descendants.size() > maxProcesses.get()) {
                     return WaitOutcome.PROCESS_LIMIT_EXCEEDED;
                 }
                 long remainingMillis = deadlineMillis - System.currentTimeMillis();
@@ -748,27 +752,31 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
         }
     }
 
-    private static BoundedBytes collectOutput(
-            CompletableFuture<BoundedBytes> collector, Process process, Set<ProcessHandle> observedDescendants) {
+    /**
+     * Waits once for both output readers together, so the worst-case drain is one timeout plus one grace rather
+     * than one per channel. When the drain does not complete it releases surviving pipe holders and tries once more,
+     * but never closes the streams from this thread: Windows blocks FileInputStream.close() while a concurrent read
+     * is parked on the same descriptor, which is the deadlock this path must avoid.
+     */
+    private static void awaitOutputDrain(
+            CompletableFuture<Void> drained, Process process, Set<ProcessHandle> observedDescendants) {
         try {
-            return collector.get(OUTPUT_DRAIN_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS);
+            drained.get(OUTPUT_DRAIN_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS);
+            return;
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
-            return BoundedBytes.incomplete();
+            return;
         } catch (Exception exception) {
             // A pipe that never drains is held by a surviving descendant that inherited the write end.
         }
         releaseSurvivingDescendants(process, observedDescendants);
         try {
-            return collector.get(OUTPUT_DRAIN_GRACE_MILLIS, TimeUnit.MILLISECONDS);
+            drained.get(OUTPUT_DRAIN_GRACE_MILLIS, TimeUnit.MILLISECONDS);
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
         } catch (Exception exception) {
-            // The reader stays blocked on a pipe that could not be released; report incomplete output without
-            // ever closing the stream from this thread. Windows blocks FileInputStream.close() while a concurrent
-            // read is parked on the same descriptor, which is the deadlock this path must avoid.
+            // The reader stays blocked on a pipe that could not be released; incomplete output is reported instead.
         }
-        return BoundedBytes.incomplete();
     }
 
     /**
@@ -777,12 +785,24 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
      * affected. The immediate process is targeted as well in case a timeout left it alive.
      */
     private static void releaseSurvivingDescendants(Process process, Set<ProcessHandle> observedDescendants) {
-        if (process.isAlive()) {
-            process.descendants().forEach(ProcessHandle::destroyForcibly);
-            process.destroyForcibly();
+        try {
+            if (process.isAlive()) {
+                process.descendants().forEach(ProcessHandle::destroyForcibly);
+                process.destroyForcibly();
+            }
+        } catch (RuntimeException ignored) {
+            // One unreleasable process must not stop the individual cleanup below.
         }
         for (ProcessHandle descendant : observedDescendants) {
-            if (descendant.isAlive()) descendant.destroyForcibly();
+            try {
+                if (descendant.isAlive()) {
+                    // destroyForcibly does not cascade to grandchildren on Windows, so kill the subtree first.
+                    descendant.descendants().forEach(ProcessHandle::destroyForcibly);
+                    descendant.destroyForcibly();
+                }
+            } catch (RuntimeException ignored) {
+                // A single unreleasable process must not stop the remaining cleanup.
+            }
         }
     }
 
