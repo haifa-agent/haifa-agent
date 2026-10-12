@@ -35,6 +35,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 
 public final class HostGuardedSandboxProvider implements SandboxProvider {
@@ -48,6 +50,18 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
             "AWS_SECRET_ACCESS_KEY",
             "AZURE_CLIENT_SECRET",
             "GOOGLE_APPLICATION_CREDENTIALS");
+    private static final long OUTPUT_DRAIN_TIMEOUT_MILLIS = 5000;
+    private static final long OUTPUT_DRAIN_GRACE_MILLIS = 2000;
+
+    /**
+     * Dedicated daemon threads keep the pipe readers off the shared common pool. A reader may stay blocked on a
+     * surviving descendant that inherited the pipe write end, so it must never occupy shared worker threads.
+     */
+    private static final Executor OUTPUT_READERS = command -> {
+        Thread thread = new Thread(command, "haifa-host-output-reader");
+        thread.setDaemon(true);
+        thread.start();
+    };
 
     private final WorkspaceStore workspaces;
     private final HostWorkspaceLocationStore locations;
@@ -239,25 +253,31 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                     standardInput.write(execution.input().bytes());
                 }
                 var outputLimitExceeded = new java.util.concurrent.atomic.AtomicBoolean();
-                var stdout = CompletableFuture.supplyAsync(() -> read(
-                        process.getInputStream(),
-                        execution.limits().maxStdoutBytes(),
-                        io.haifa.agent.execution.api.ExecutionOutputChannel.STDOUT,
-                        observer,
-                        execution.limits().outputOverflowPolicy(),
-                        outputLimitExceeded));
-                var stderr = CompletableFuture.supplyAsync(() -> read(
-                        process.getErrorStream(),
-                        execution.limits().maxStderrBytes(),
-                        io.haifa.agent.execution.api.ExecutionOutputChannel.STDERR,
-                        observer,
-                        execution.limits().outputOverflowPolicy(),
-                        outputLimitExceeded));
+                Set<ProcessHandle> observedDescendants = ConcurrentHashMap.newKeySet();
+                var stdout = CompletableFuture.supplyAsync(
+                        () -> read(
+                                process.getInputStream(),
+                                execution.limits().maxStdoutBytes(),
+                                io.haifa.agent.execution.api.ExecutionOutputChannel.STDOUT,
+                                observer,
+                                execution.limits().outputOverflowPolicy(),
+                                outputLimitExceeded),
+                        OUTPUT_READERS);
+                var stderr = CompletableFuture.supplyAsync(
+                        () -> read(
+                                process.getErrorStream(),
+                                execution.limits().maxStderrBytes(),
+                                io.haifa.agent.execution.api.ExecutionOutputChannel.STDERR,
+                                observer,
+                                execution.limits().outputOverflowPolicy(),
+                                outputLimitExceeded),
+                        OUTPUT_READERS);
                 WaitOutcome outcome = waitFor(
                         process,
                         execution.limits().timeout(),
                         execution.limits().maxProcesses(),
-                        outputLimitExceeded);
+                        outputLimitExceeded,
+                        observedDescendants);
                 SandboxProcessStatus status;
                 boolean treeTerminated = true;
                 Integer exitCode = null;
@@ -269,8 +289,8 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                     treeTerminated = terminateTree(process);
                 }
                 status = settledStatus(outcome, treeTerminated);
-                BoundedBytes out = collectOutput(stdout, process.getInputStream());
-                BoundedBytes err = collectOutput(stderr, process.getErrorStream());
+                BoundedBytes out = collectOutput(stdout, process, observedDescendants);
+                BoundedBytes err = collectOutput(stderr, process, observedDescendants);
                 if (outputLimitExceeded.get()
                         && execution.limits().outputOverflowPolicy()
                                 == io.haifa.agent.execution.api.ExecutionOutputOverflowPolicy.TERMINATE
@@ -392,13 +412,17 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                 Process process,
                 Duration timeout,
                 Optional<Integer> maxProcesses,
-                java.util.concurrent.atomic.AtomicBoolean outputLimitExceeded)
+                java.util.concurrent.atomic.AtomicBoolean outputLimitExceeded,
+                Set<ProcessHandle> observedDescendants)
                 throws InterruptedException {
             long deadlineMillis = System.currentTimeMillis() + timeout.toMillis();
             while (process.isAlive()) {
                 if (cancelRequested) return WaitOutcome.CANCELLED;
                 if (outputLimitExceeded.get()) return WaitOutcome.OUTPUT_LIMIT_EXCEEDED;
-                if (maxProcesses.isPresent() && observedProcesses(process) > maxProcesses.get()) {
+                List<ProcessHandle> descendants =
+                        process.toHandle().descendants().toList();
+                observedDescendants.addAll(descendants);
+                if (maxProcesses.isPresent() && 1 + Math.min(descendants.size(), 63) > maxProcesses.get()) {
                     return WaitOutcome.PROCESS_LIMIT_EXCEEDED;
                 }
                 long remainingMillis = deadlineMillis - System.currentTimeMillis();
@@ -724,20 +748,42 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
         }
     }
 
-    private static BoundedBytes collectOutput(CompletableFuture<BoundedBytes> collector, InputStream stream) {
+    private static BoundedBytes collectOutput(
+            CompletableFuture<BoundedBytes> collector, Process process, Set<ProcessHandle> observedDescendants) {
         try {
-            return collector.get(5, TimeUnit.SECONDS);
+            return collector.get(OUTPUT_DRAIN_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            return BoundedBytes.incomplete();
+        } catch (Exception exception) {
+            // A pipe that never drains is held by a surviving descendant that inherited the write end.
+        }
+        releaseSurvivingDescendants(process, observedDescendants);
+        try {
+            return collector.get(OUTPUT_DRAIN_GRACE_MILLIS, TimeUnit.MILLISECONDS);
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
         } catch (Exception exception) {
-            // The process outcome remains valid even when output collection is incomplete.
-        }
-        try {
-            stream.close();
-        } catch (IOException ignored) {
-            // The incomplete output fact is sufficient and safe to expose.
+            // The reader stays blocked on a pipe that could not be released; report incomplete output without
+            // ever closing the stream from this thread. Windows blocks FileInputStream.close() while a concurrent
+            // read is parked on the same descriptor, which is the deadlock this path must avoid.
         }
         return BoundedBytes.incomplete();
+    }
+
+    /**
+     * Forces surviving descendants to release output pipes inherited from a command whose own process already
+     * exited. Only invoked when output collection did not drain, so ordinary commands that exit cleanly are never
+     * affected. The immediate process is targeted as well in case a timeout left it alive.
+     */
+    private static void releaseSurvivingDescendants(Process process, Set<ProcessHandle> observedDescendants) {
+        if (process.isAlive()) {
+            process.descendants().forEach(ProcessHandle::destroyForcibly);
+            process.destroyForcibly();
+        }
+        for (ProcessHandle descendant : observedDescendants) {
+            if (descendant.isAlive()) descendant.destroyForcibly();
+        }
     }
 
     static SandboxProcessStatus settledStatus(WaitOutcome outcome, boolean treeTerminated) {
