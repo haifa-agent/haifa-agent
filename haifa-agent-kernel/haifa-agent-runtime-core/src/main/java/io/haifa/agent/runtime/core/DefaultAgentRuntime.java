@@ -987,10 +987,16 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         Optional<AgentRunExecutionAttempt> active = attempts.activeFor(runId);
         if (active.isEmpty()) return false;
         AgentRunExecutionAttempt attempt = active.orElseThrow();
-        if (ownership.stillOwned(attempt)) return false;
-        Instant heartbeat = attempt.heartbeatAt().orElse(null);
-        if (heartbeat == null) return false;
-        if (Duration.between(heartbeat, time.now()).compareTo(heartbeatStaleness) < 0) return false;
+        ExecutionOwnershipPort.OwnerLiveness liveness = ownership.ownerLiveness(attempt);
+        if (liveness == ExecutionOwnershipPort.OwnerLiveness.OWNED
+                || liveness == ExecutionOwnershipPort.OwnerLiveness.ALIVE) {
+            return false;
+        }
+        if (liveness == ExecutionOwnershipPort.OwnerLiveness.UNKNOWN) {
+            Instant heartbeat = attempt.heartbeatAt().orElse(null);
+            if (heartbeat == null) return false;
+            if (Duration.between(heartbeat, time.now()).compareTo(heartbeatStaleness) < 0) return false;
+        }
         recover(runId);
         return true;
     }

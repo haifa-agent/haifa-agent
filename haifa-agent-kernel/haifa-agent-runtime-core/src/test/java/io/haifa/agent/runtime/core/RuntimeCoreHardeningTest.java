@@ -646,7 +646,7 @@ class RuntimeCoreHardeningTest {
             assertThat(trace.runId()).isEqualTo(accepted.runId());
             assertThat(trace.attemptId()).isPresent();
             assertThat(trace.sessionId()).isEqualTo(new AgentSessionId("session-1"));
-            assertThat(trace.workerId()).contains("worker-a");
+            assertThat(trace.workerId().orElseThrow()).startsWith("worker-a");
             assertThat(trace.safeAttributes().keySet())
                     .noneMatch(key -> key.toLowerCase().contains("prompt")
                             || key.toLowerCase().contains("secret"));

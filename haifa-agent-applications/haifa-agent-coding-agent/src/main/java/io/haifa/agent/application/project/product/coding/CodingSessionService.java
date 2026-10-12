@@ -564,7 +564,7 @@ public final class CodingSessionService {
     private boolean settleIfAbandoned(AgentRunId runId) {
         try {
             return runtime.recoverAbandoned(runId, abandonedRunHeartbeatStaleness);
-        } catch (UnsupportedOperationException | IllegalStateException exception) {
+        } catch (RuntimeException exception) {
             return false;
         }
     }

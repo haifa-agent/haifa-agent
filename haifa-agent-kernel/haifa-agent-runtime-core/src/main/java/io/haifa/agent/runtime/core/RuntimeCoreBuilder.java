@@ -487,8 +487,15 @@ public final class RuntimeCoreBuilder {
         messageRedactions.register(activeContexts);
         RuntimeEventFeed eventFeed = new RuntimeEventFeed(events, new RuntimeClientEventProjector(runs));
         RuntimeEventSubscriptions eventSubscriptions = new RuntimeEventSubscriptions(eventFeed, eventWakeups);
+        // Local ownership embeds the host process id so reconciliation can tell a dead owner from a live one
+        // without waiting out the heartbeat staleness window. A caller-supplied ownership port keeps its own id.
+        String effectiveWorkerId = ownership != null
+                ? workerId
+                : workerId
+                        + ExecutionOwnershipPort.HOST_PROCESS_MARKER
+                        + ProcessHandle.current().pid();
         ExecutionOwnershipPort configuredOwnership =
-                ownership != null ? ownership : ExecutionOwnershipPort.local(workerId);
+                ownership != null ? ownership : ExecutionOwnershipPort.local(effectiveWorkerId);
         RuntimeModelOutputPublisher modelOutput = new RuntimeModelOutputPublisher(time);
         MemoryRetriever configuredMemoryRetriever = memoryRetriever == null ? MemoryRetriever.none() : memoryRetriever;
         Set<String> toolNames = toolCatalog.snapshot().bindings().stream()
@@ -685,7 +692,16 @@ public final class RuntimeCoreBuilder {
                 runInputApplier,
                 compactionCoordinator);
         AttemptExecutor attemptExecutor = new AttemptExecutor(
-                attempts, loop, transitions, controls, time, workerId, trace, traceIds, ids, failureDiagnostics);
+                attempts,
+                loop,
+                transitions,
+                controls,
+                time,
+                effectiveWorkerId,
+                trace,
+                traceIds,
+                ids,
+                failureDiagnostics);
         if (childRuns != null) childRuns.bind(attemptExecutor);
         return new DefaultAgentRuntime(
                 callers,
