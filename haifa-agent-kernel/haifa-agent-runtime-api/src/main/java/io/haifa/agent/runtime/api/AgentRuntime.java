@@ -19,6 +19,19 @@ public interface AgentRuntime {
         throw new UnsupportedOperationException("durable Run recovery is not supported");
     }
 
+    /**
+     * Settles a Run abandoned by a previous Runtime instance when its execution lease is no longer owned and its
+     * heartbeat has been silent for at least {@code heartbeatStaleness}. Returns {@code true} when the Run is now
+     * terminal (just settled or already terminal) and {@code false} when it is still actively owned or fresh, so a
+     * caller can distinguish "safe to release" from "still executing". Runs waiting for a human are never settled
+     * here. Implementations without durable recovery return {@code false}.
+     */
+    default boolean recoverAbandoned(io.haifa.agent.core.run.AgentRunId runId, java.time.Duration heartbeatStaleness) {
+        java.util.Objects.requireNonNull(runId, "runId must not be null");
+        java.util.Objects.requireNonNull(heartbeatStaleness, "heartbeatStaleness must not be null");
+        return false;
+    }
+
     AgentRunSnapshot respond(InteractionResponse response);
 
     default InteractionResponseReceipt respond(InteractionResponseSubmission response) {

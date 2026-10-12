@@ -28,6 +28,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.HexFormat;
 import java.util.List;
@@ -45,6 +46,15 @@ public final class CodingSessionService {
     private static final String STEER = "steer";
     private static final String ABORT = "abort";
 
+    /**
+     * How long an active Run whose execution lease is no longer owned must have a silent heartbeat before
+     * reconciliation settles it as abandoned. The heartbeat advances once per agent-loop iteration, so the window
+     * is deliberately generous: a Run still owned by this process is never settled, and only a Run owned by a
+     * different, silent executor is. This keeps a live Run in a second process sharing the store from being
+     * mistaken for an orphan.
+     */
+    private static final Duration ABANDONED_RUN_HEARTBEAT_STALENESS = Duration.ofMinutes(30);
+
     private final ProjectProductService projectProducts;
     private final ProjectProductSessionStore productSessions;
     private final CodingSessionStore codingSessions;
@@ -55,6 +65,7 @@ public final class CodingSessionService {
     private final IdentifierGenerator identifiers;
     private final Clock clock;
     private final CodingModelCatalog models;
+    private final Duration abandonedRunHeartbeatStaleness;
 
     public CodingSessionService(
             ProjectProductService projectProducts,
@@ -90,6 +101,32 @@ public final class CodingSessionService {
             IdentifierGenerator identifiers,
             Clock clock,
             CodingModelCatalog models) {
+        this(
+                projectProducts,
+                productSessions,
+                codingSessions,
+                sessionLifecycle,
+                sessionCompactor,
+                callers,
+                runtime,
+                identifiers,
+                clock,
+                models,
+                ABANDONED_RUN_HEARTBEAT_STALENESS);
+    }
+
+    public CodingSessionService(
+            ProjectProductService projectProducts,
+            ProjectProductSessionStore productSessions,
+            CodingSessionStore codingSessions,
+            CodingSessionLifecycle sessionLifecycle,
+            CodingSessionCompactor sessionCompactor,
+            TrustedProductCallerProvider callers,
+            AgentRuntime runtime,
+            IdentifierGenerator identifiers,
+            Clock clock,
+            CodingModelCatalog models,
+            Duration abandonedRunHeartbeatStaleness) {
         this.projectProducts = Objects.requireNonNull(projectProducts, "projectProducts must not be null");
         this.productSessions = Objects.requireNonNull(productSessions, "productSessions must not be null");
         this.codingSessions = Objects.requireNonNull(codingSessions, "codingSessions must not be null");
@@ -100,6 +137,11 @@ public final class CodingSessionService {
         this.identifiers = Objects.requireNonNull(identifiers, "identifiers must not be null");
         this.clock = Objects.requireNonNull(clock, "clock must not be null");
         this.models = Objects.requireNonNull(models, "models must not be null");
+        this.abandonedRunHeartbeatStaleness = Objects.requireNonNull(
+                abandonedRunHeartbeatStaleness, "abandonedRunHeartbeatStaleness must not be null");
+        if (abandonedRunHeartbeatStaleness.isNegative() || abandonedRunHeartbeatStaleness.isZero()) {
+            throw new IllegalArgumentException("abandonedRunHeartbeatStaleness must be positive");
+        }
     }
 
     public CodingSessionView createSession(
@@ -452,10 +494,15 @@ public final class CodingSessionService {
         return codingSessions.saveEventCursor(sessionId, cursor, now());
     }
 
-    public RuntimeCommandResult abortActiveRun(AgentSessionId sessionId, String idempotencyKey) {
+    public Optional<RuntimeCommandResult> abortActiveRun(AgentSessionId sessionId, String idempotencyKey) {
         TrustedProductCaller caller = callers.current();
         ProjectProductSession product = requireProductSession(sessionId, caller);
         CodingSessionActivity activity = reconcile(requireActivity(sessionId, caller), caller);
+        if (activity.activeRunId().isEmpty()) {
+            // Reconciliation may have just settled an abandoned Run, or the Session was already idle; either way
+            // the caller's cancellation intent is satisfied and there is no live Run to command.
+            return Optional.empty();
+        }
         AgentRunSnapshot active = requireActive(activity, activity.activeRunId().orElseThrow());
         String keyDigest = digest(idempotencyKey(idempotencyKey));
         String dispatchKey = dispatchKey(ABORT, callerScope(caller) + "|" + keyDigest);
@@ -480,7 +527,7 @@ public final class CodingSessionService {
                 binding.dispatchKey(),
                 now()));
         codingSessions.completeCommand(binding.dispatchKey(), active.runId());
-        return result;
+        return Optional.of(result);
     }
 
     public CodingSessionView reconcileSession(AgentSessionId sessionId) {
@@ -496,7 +543,7 @@ public final class CodingSessionService {
             AgentRunId runId = current.activeRunId().orElseThrow();
             AgentRunSnapshot snapshot = runtime.find(runId)
                     .orElseThrow(() -> conflict("ACTIVE_RUN_UNAVAILABLE", "Active Run is unavailable"));
-            if (!snapshot.status().isTerminal()) return current;
+            if (!snapshot.status().isTerminal() && !settleIfAbandoned(runId)) return current;
             current = codingSessions.clearActive(current.sessionId(), runId, current.revision(), now());
         }
         if (current.activeDispatchKey().isPresent()) {
@@ -507,6 +554,19 @@ public final class CodingSessionService {
                 codingSessions.claimNextForDispatch(current.sessionId(), current.revision(), now());
         if (claimed.isEmpty()) return current;
         return dispatchFollowUp(claimed.orElseThrow());
+    }
+
+    /**
+     * Settles an active Run whose executor is gone so the Session can be used again. The Runtime decides ownership
+     * and heartbeat freshness; an unsupported or racing Runtime degrades to the previous "still active" behavior
+     * instead of surfacing an error, because reconciliation must never fail a user operation.
+     */
+    private boolean settleIfAbandoned(AgentRunId runId) {
+        try {
+            return runtime.recoverAbandoned(runId, abandonedRunHeartbeatStaleness);
+        } catch (UnsupportedOperationException | IllegalStateException exception) {
+            return false;
+        }
     }
 
     private CodingSessionActivity recoverReservedDispatch(CodingSessionActivity activity) {

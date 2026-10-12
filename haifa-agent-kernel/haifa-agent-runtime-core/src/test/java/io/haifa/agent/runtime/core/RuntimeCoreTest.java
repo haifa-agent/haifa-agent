@@ -2148,6 +2148,45 @@ class RuntimeCoreTest {
     }
 
     @Test
+    void recoverAbandonedSettlesOnlyUnownedStaleHeartbeats() {
+        AtomicBoolean owned = new AtomicBoolean(true);
+        AtomicReference<Instant> wallClock = new AtomicReference<>(Instant.parse("2026-07-21T00:00:00Z"));
+        AgentChatModel model = request -> {
+            throw new AssertionError("simulated process loss");
+        };
+        Fixture fixture = fixture(model, builder -> builder.executionOwnership(attempt -> owned.get()), wallClock::get);
+        var accepted = fixture.runtime.start(request("abandoned"));
+
+        assertThatThrownBy(fixture.scheduler::runNext).isInstanceOf(AssertionError.class);
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.RUNNING);
+
+        // Owned by this executor: never settled, even with a stale heartbeat.
+        wallClock.set(wallClock.get().plus(Duration.ofMinutes(31)));
+        assertThat(fixture.runtime.recoverAbandoned(accepted.runId(), Duration.ofMinutes(30)))
+                .isFalse();
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.RUNNING);
+
+        // Unowned but with a fresh heartbeat: not settled.
+        owned.set(false);
+        wallClock.set(Instant.parse("2026-07-21T00:00:00Z"));
+        assertThat(fixture.runtime.recoverAbandoned(accepted.runId(), Duration.ofMinutes(30)))
+                .isFalse();
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.RUNNING);
+
+        // Unowned and stale: settled to FAILED, then idempotent.
+        wallClock.set(Instant.parse("2026-07-21T00:00:00Z").plus(Duration.ofMinutes(31)));
+        assertThat(fixture.runtime.recoverAbandoned(accepted.runId(), Duration.ofMinutes(30)))
+                .isTrue();
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.FAILED);
+        assertThat(fixture.runtime.recoverAbandoned(accepted.runId(), Duration.ofMinutes(30)))
+                .isTrue();
+    }
+
+    @Test
     void settlesAbandonedAttemptWithoutAutomaticResume() {
         AtomicInteger calls = new AtomicInteger();
         AtomicBoolean owned = new AtomicBoolean(true);
