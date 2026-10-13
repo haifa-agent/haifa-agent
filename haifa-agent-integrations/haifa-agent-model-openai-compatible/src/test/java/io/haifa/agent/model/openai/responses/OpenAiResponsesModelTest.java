@@ -371,6 +371,34 @@ class OpenAiResponsesModelTest {
     }
 
     @Test
+    void replaysDeepSeekReasoningBeforeAssistantContentForMixedTurns() throws Exception {
+        response.set(
+                Response.json(
+                        200,
+                        """
+                {"id":"resp-mixed","status":"completed","model":"deepseek-v4-flash",
+                 "output":[{"id":"msg-1","type":"message","role":"assistant","status":"completed",
+                   "content":[{"type":"output_text","text":"done"}]}],
+                 "usage":{"input_tokens":9,"output_tokens":2}}
+                """));
+        var call = new ModelToolCall(new ProviderToolCallCorrelationId("call-deepseek-1"), "lookup", Map.of());
+        var request = request(
+                deepSeekSnapshot(),
+                List.of(
+                        ModelMessage.text(ModelMessageRole.USER, "go"),
+                        ModelMessage.assistant("assistant text", List.of(call), SensitiveModelReasoning.of("why"))),
+                List.of(),
+                Map.of());
+
+        model().invoke(request);
+
+        JsonNode input = json.readTree(requestBody.get()).path("input");
+        assertThat(input)
+                .extracting(item -> item.path("type").asText())
+                .containsExactly("message", "reasoning", "message", "function_call");
+    }
+
+    @Test
     void mapsFrozenRecordRequirementToResponsesTextFormatAndParsesTerminalOutput() throws Exception {
         response.set(Response.json(
                 200,
