@@ -417,11 +417,14 @@ public final class OpenAiResponsesModel implements AgentChatModel {
                         toolOutput(message)));
                 continue;
             }
+            // DeepSeek responses merges the reasoning item into the adjacent assistant message, so the reasoning
+            // item must precede the assistant content and its function calls.
+            if (message.role() == ModelMessageRole.ASSISTANT
+                    && message.reasoning().isPresent()) {
+                items.add(dialect.customizeReasoningInputItem(message).orElseThrow());
+            }
             if (!message.content().isEmpty() || !message.images().isEmpty()) items.add(messageItem(message));
             if (message.role() == ModelMessageRole.ASSISTANT) {
-                if (message.reasoning().isPresent()) {
-                    items.add(dialect.customizeReasoningInputItem(message).orElseThrow());
-                }
                 for (ModelToolCall call : message.toolCalls()) {
                     items.add(Map.of(
                             "type",
