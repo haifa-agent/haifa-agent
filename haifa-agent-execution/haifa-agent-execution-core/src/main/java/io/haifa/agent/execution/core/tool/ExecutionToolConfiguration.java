@@ -140,13 +140,22 @@ public record ExecutionToolConfiguration(
                 ToolOutputPreviewPublisher.noop());
     }
 
+    /**
+     * Product-neutral ceiling for the timeout a product may declare for the shared execution Tool.
+     *
+     * <p>Every product keeps its own definition below this ceiling: the Personal Assistant declares
+     * 30 seconds, and a product aligned with a longer reference Tool timeout, such as the frozen
+     * DeerFlow reference stack ({@code bash_command_timeout: 600}), may declare up to ten minutes.
+     */
+    public static final Duration MAXIMUM_DECLARED_TIMEOUT = Duration.ofMinutes(10);
+
     public ExecutionToolConfiguration {
         Objects.requireNonNull(environmentRef, "environmentRef must not be null");
         Objects.requireNonNull(sandboxProfileRef, "sandboxProfileRef must not be null");
         positive(defaultTimeout, "defaultTimeout");
         positive(maximumTimeout, "maximumTimeout");
-        if (defaultTimeout.compareTo(maximumTimeout) > 0 || maximumTimeout.compareTo(Duration.ofSeconds(30)) > 0) {
-            throw new IllegalArgumentException("execution tool timeout must be within 30 seconds");
+        if (defaultTimeout.compareTo(maximumTimeout) > 0 || maximumTimeout.compareTo(MAXIMUM_DECLARED_TIMEOUT) > 0) {
+            throw new IllegalArgumentException("execution tool timeout must be within 10 minutes");
         }
         if (maximumOutputBytes < 1024 || maximumOutputBytes > 1024 * 1024) {
             throw new IllegalArgumentException("maximumOutputBytes is out of range");

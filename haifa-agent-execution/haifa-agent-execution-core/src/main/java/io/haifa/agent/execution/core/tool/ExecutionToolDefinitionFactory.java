@@ -16,11 +16,17 @@ import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 /** Canonical v3 model-visible definition for command and script execution. */
 public final class ExecutionToolDefinitionFactory {
     public static final ToolAlias ALIAS = new ToolAlias("execution_run");
+    /**
+     * Declared maximum timeout of the default product definition: the Personal Assistant value. A
+     * product that owns a longer reference Tool timeout declares its own maximum instead.
+     */
+    public static final Duration DEFAULT_MAXIMUM_TIMEOUT = Duration.ofSeconds(30);
 
     private ExecutionToolDefinitionFactory() {}
 
@@ -60,6 +66,40 @@ public final class ExecutionToolDefinitionFactory {
             boolean networkAllowed,
             boolean workingDirectoryAllowed,
             Set<String> scriptLanguages) {
+        return create(
+                executionProfileIdentity,
+                configurationIdentity,
+                scratchSpecDigest,
+                DEFAULT_MAXIMUM_TIMEOUT,
+                networkAllowed,
+                workingDirectoryAllowed,
+                scriptLanguages);
+    }
+
+    /**
+     * Canonical definition whose model-visible timeout bound is declared by the product.
+     *
+     * <p>The declared maximum is a product definition, not a shared SDK policy: it becomes both the
+     * Tool's own timeout and the {@code timeoutMillis} maximum of the model-visible input schema.
+     * Passing {@link #DEFAULT_MAXIMUM_TIMEOUT} reproduces the default definition exactly, so a
+     * shorter product definition such as the Personal Assistant's keeps its frozen schema.
+     *
+     * @param maximumTimeout declared maximum the model may request; at least one second and at most
+     *     {@link ExecutionToolConfiguration#MAXIMUM_DECLARED_TIMEOUT}
+     */
+    public static ToolDefinition create(
+            String executionProfileIdentity,
+            String configurationIdentity,
+            String scratchSpecDigest,
+            Duration maximumTimeout,
+            boolean networkAllowed,
+            boolean workingDirectoryAllowed,
+            Set<String> scriptLanguages) {
+        Objects.requireNonNull(maximumTimeout, "maximumTimeout must not be null");
+        if (maximumTimeout.compareTo(Duration.ofSeconds(1)) < 0
+                || maximumTimeout.compareTo(ExecutionToolConfiguration.MAXIMUM_DECLARED_TIMEOUT) > 0) {
+            throw new IllegalArgumentException("maximumTimeout is out of range");
+        }
         Set<ToolSideEffect> effects = networkAllowed
                 ? Set.of(ToolSideEffect.PROCESS_EXECUTION, ToolSideEffect.NETWORK_ACCESS)
                 : Set.of(ToolSideEffect.PROCESS_EXECUTION);
@@ -77,11 +117,15 @@ public final class ExecutionToolDefinitionFactory {
                         "haifa.execution.run.input",
                         "3.0.0",
                         inputSchema(
-                                configurationIdentity, scratchSpecDigest, workingDirectoryAllowed, scriptLanguages)),
+                                configurationIdentity,
+                                scratchSpecDigest,
+                                maximumTimeout,
+                                workingDirectoryAllowed,
+                                scriptLanguages)),
                 new ToolSchema("haifa.execution.run.output", "3.0.0", outputSchema()),
                 ToolExecutionMode.HOST_PROCESS,
                 true,
-                Duration.ofSeconds(30),
+                maximumTimeout,
                 "per-workspace-execution",
                 ToolIdempotency.NON_IDEMPOTENT,
                 ToolRisk.HIGH,
@@ -100,6 +144,7 @@ public final class ExecutionToolDefinitionFactory {
     private static Map<String, Object> inputSchema(
             String configurationIdentity,
             String scratchSpecDigest,
+            Duration maximumTimeout,
             boolean workingDirectoryAllowed,
             Set<String> scriptLanguages) {
         if (scratchSpecDigest == null || !scratchSpecDigest.matches("[0-9a-f]{64}")) {
@@ -116,7 +161,7 @@ public final class ExecutionToolDefinitionFactory {
                         "description",
                         "COMMAND invokes the configured host shell and must omit language and args. SCRIPT requires "
                                 + "an explicitly configured language."));
-        commonProperties(properties);
+        commonProperties(properties, maximumTimeout);
         properties.put(
                 "language",
                 Map.of(
@@ -157,7 +202,7 @@ public final class ExecutionToolDefinitionFactory {
                 Map.entry("additionalProperties", false));
     }
 
-    private static void commonProperties(Map<String, Object> properties) {
+    private static void commonProperties(Map<String, Object> properties, Duration maximumTimeout) {
         properties.put(
                 "content",
                 Map.of(
@@ -188,7 +233,7 @@ public final class ExecutionToolDefinitionFactory {
                         "minimum",
                         1000,
                         "maximum",
-                        30_000,
+                        maximumTimeout.toMillis(),
                         "description",
                         "Optional execution timeout in milliseconds."));
     }
