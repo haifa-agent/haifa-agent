@@ -15,6 +15,13 @@ import java.util.Set;
  * <p>Invariant enforcement (text verbatim continuity, non-loss of sourceRefs, category
  * continuity, restoration of unresolved carry items) is guaranteed by construction on
  * the server side, preventing brittle string matching failures from failing agent runs.
+ *
+ * <p>Item identity is the {@link SemanticSummaryItem#stableItemId() stableItemId}: matching is id based (case
+ * insensitive) and the id's category prefix selects the target list. Consequently an item the model both relocates
+ * and re-identifies (a new id) is indistinguishable from a genuinely new item: the original carry item is still
+ * restored, but the renamed copy remains a separate entry. Stable ids therefore stay unique even though two entries
+ * may carry the same text. The compaction prompt asks the model to keep carry ids unchanged, which keeps this
+ * boundary rare.
  */
 public final class CarryForwardReconciler {
 

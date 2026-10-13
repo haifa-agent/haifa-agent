@@ -248,6 +248,41 @@ class CarryForwardReconcilerTest {
     }
 
     @Test
+    @DisplayName(
+            "Identity is the stableItemId: a relocated and re-identified carry item is restored without a duplicate id")
+    void relocatedAndReidentifiedCarryItemIsRestoredWithoutDuplicateId() {
+        SemanticSummaryItem carryConstraint = new SemanticSummaryItem(
+                "C-1", "Original strict rule: read-only mode required", List.of("m001"), SemanticConfidence.OBSERVED);
+        // The model both moved the constraint content into goals and re-identified it as G-9, omitting "C-1".
+        SemanticSummaryItem renamedCopy = new SemanticSummaryItem(
+                "G-9", "Original strict rule: read-only mode required", List.of("m001"), SemanticConfidence.OBSERVED);
+
+        SemanticConversationSummaryV1 candidate = new SemanticConversationSummaryV1(
+                "v1",
+                "en",
+                List.of(renamedCopy),
+                List.of(),
+                SemanticProgress.empty(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of());
+
+        SemanticConversationSummaryV1 reconciled =
+                CarryForwardReconciler.reconcile(candidate, List.of(carryConstraint), EMPTY_SOURCE);
+
+        // The id-based identity restores the original constraint verbatim; the renamed copy is a distinct item, so
+        // stable ids stay unique even though two entries now share the same text. This is the documented boundary.
+        assertThat(reconciled.constraints()).singleElement().satisfies(item -> {
+            assertThat(item.stableItemId()).isEqualTo("C-1");
+            assertThat(item.text()).isEqualTo("Original strict rule: read-only mode required");
+        });
+        assertThat(reconciled.goals())
+                .extracting(SemanticSummaryItem::stableItemId)
+                .containsExactly("G-9");
+    }
+
+    @Test
     @DisplayName("Reconciled candidate passes SemanticSummaryValidator without throwing validation exceptions")
     void reconciledCandidatePassesSemanticSummaryValidator() {
         SemanticSummaryItem carryConstraint = new SemanticSummaryItem(

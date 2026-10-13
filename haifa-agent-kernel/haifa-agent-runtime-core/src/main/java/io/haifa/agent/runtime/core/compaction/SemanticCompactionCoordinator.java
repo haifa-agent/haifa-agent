@@ -1055,6 +1055,16 @@ public final class SemanticCompactionCoordinator {
                 questions);
     }
 
+    /**
+     * Aligns a model-produced candidate before validation.
+     *
+     * <p>The ordering is deliberate. The first reconciliation must run <strong>before</strong>
+     * {@link #assignStableIds(SemanticConversationSummaryV1, List)}: a carry item the model placed in a category whose
+     * id prefix does not match is otherwise anonymous to id assignment and would be re-numbered, losing its identity.
+     * The second reconciliation runs after id assignment as an idempotent alignment pass that re-applies the verbatim
+     * text, merged sourceRefs, category continuity and confidence invariants to the now-canonically identified
+     * candidate.
+     */
     private SemanticConversationSummaryV1 prepareCandidate(
             SemanticConversationSummaryV1 rawCandidate,
             List<SemanticSummaryItem> carryForward,
