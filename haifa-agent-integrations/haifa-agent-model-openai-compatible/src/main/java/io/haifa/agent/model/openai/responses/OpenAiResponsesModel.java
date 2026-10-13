@@ -1129,12 +1129,47 @@ public final class OpenAiResponsesModel implements AgentChatModel {
                 mapping.retryable(),
                 status,
                 mapping.providerCode(),
-                mapping.safeMessage(),
+                diagnosticMessage(mapping.safeMessage(), body, request, dialect),
                 null,
                 mapping.retryAfter().orElse(null),
                 false,
                 mapping.providerRequestId().orElse(null));
     }
+
+    /**
+     * Operator-mandated diagnostic (no redaction): when {@code HAIFA_MODEL_RAW_ERROR_BODY} is set, append the raw
+     * provider error body and the outgoing input item-type sequence to the failure message so a rejected request can
+     * be diagnosed from the run's failure facts. Disabled by default; the standard projection and its tests are
+     * unchanged.
+     */
+    private String diagnosticMessage(
+            String safeMessage, byte[] body, AgentChatRequest request, OpenAiResponsesDialect dialect) {
+        String value = System.getProperty("haifa.model.rawErrorBody");
+        if (value == null) value = System.getenv("HAIFA_MODEL_RAW_ERROR_BODY");
+        if (value == null || value.isBlank() || value.equalsIgnoreCase("false") || value.equals("0")) {
+            return safeMessage;
+        }
+        StringBuilder message = new StringBuilder(safeMessage);
+        if (body != null && body.length > 0) {
+            String raw = new String(body, StandardCharsets.UTF_8);
+            message.append(" | providerBody=")
+                    .append(raw.length() > MAX_DIAGNOSTIC_CHARS ? raw.substring(0, MAX_DIAGNOSTIC_CHARS) : raw);
+        }
+        try {
+            List<String> types = new ArrayList<>();
+            for (Map<String, Object> item : inputItems(request, dialect)) {
+                types.add(String.valueOf(item.get("type")));
+            }
+            message.append(" | inputItems=").append(types);
+        } catch (RuntimeException exception) {
+            message.append(" | inputItems=<error:")
+                    .append(exception.getClass().getSimpleName())
+                    .append(">");
+        }
+        return message.toString();
+    }
+
+    private static final int MAX_DIAGNOSTIC_CHARS = 16_384;
 
     private static ModelInvocationException malformed(AgentChatRequest request, String message) {
         return failure(request, ModelErrorCategory.MALFORMED_RESPONSE, false, 0, "malformed_response", message, null);
