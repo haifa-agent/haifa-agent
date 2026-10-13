@@ -3,6 +3,7 @@ package io.haifa.agent.runtime.core.compaction;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.context.budget.HeuristicTokenEstimator;
+import io.haifa.agent.context.compression.CarryForwardReconciler;
 import io.haifa.agent.context.compression.CompactionPromptRenderer;
 import io.haifa.agent.context.compression.CompactionQuality;
 import io.haifa.agent.context.compression.CompactionSourceProjector;
@@ -585,8 +586,10 @@ public final class SemanticCompactionCoordinator {
                         ? CompactionPromptRenderer.userPromptFromConversationSummary(
                                 previousSummary, carryForward, projected)
                         : CompactionPromptRenderer.userPrompt(workingSemantic, carryForward, projected);
-                SemanticConversationSummaryV1 candidate = assignStableIds(
-                        invoker.invoke(binding, run, iteration, systemPrompt, userPrompt, physicalCalls++, false));
+                SemanticConversationSummaryV1 candidate = prepareCandidate(
+                        invoker.invoke(binding, run, iteration, systemPrompt, userPrompt, physicalCalls++, false),
+                        carryForward,
+                        projected);
                 try {
                     SemanticSummaryValidator.validate(
                             candidate, projected, carryForward, historicalDurableRefs, workingSemantic);
@@ -610,8 +613,10 @@ public final class SemanticCompactionCoordinator {
                                     workingSemantic,
                                     carryForward,
                                     projected);
-                    candidate = assignStableIds(
-                            invoker.invoke(binding, run, iteration, systemPrompt, repairPrompt, physicalCalls++, true));
+                    candidate = prepareCandidate(
+                            invoker.invoke(binding, run, iteration, systemPrompt, repairPrompt, physicalCalls++, true),
+                            carryForward,
+                            projected);
                     SemanticSummaryValidator.validate(
                             candidate, projected, carryForward, historicalDurableRefs, workingSemantic);
                 }
@@ -1050,7 +1055,40 @@ public final class SemanticCompactionCoordinator {
                 questions);
     }
 
+    /**
+     * Aligns a model-produced candidate before validation.
+     *
+     * <p>The ordering is deliberate. The first reconciliation must run <strong>before</strong>
+     * {@link #assignStableIds(SemanticConversationSummaryV1, List)}: a carry item the model placed in a category whose
+     * id prefix does not match is otherwise anonymous to id assignment and would be re-numbered, losing its identity.
+     * The second reconciliation runs after id assignment as an idempotent alignment pass that re-applies the verbatim
+     * text, merged sourceRefs, category continuity and confidence invariants to the now-canonically identified
+     * candidate.
+     */
+    private SemanticConversationSummaryV1 prepareCandidate(
+            SemanticConversationSummaryV1 rawCandidate,
+            List<SemanticSummaryItem> carryForward,
+            ProjectedCompactionSource projected) {
+        SemanticConversationSummaryV1 reconciled =
+                CarryForwardReconciler.reconcile(rawCandidate, carryForward, projected);
+        SemanticConversationSummaryV1 withIds = assignStableIds(reconciled, carryForward);
+        return CarryForwardReconciler.reconcile(withIds, carryForward, projected);
+    }
+
     private SemanticConversationSummaryV1 assignStableIds(SemanticConversationSummaryV1 original) {
+        return assignStableIds(original, List.of());
+    }
+
+    private SemanticConversationSummaryV1 assignStableIds(
+            SemanticConversationSummaryV1 original, List<SemanticSummaryItem> carryForwardItems) {
+        Set<String> reservedIds = new HashSet<>();
+        if (carryForwardItems != null) {
+            for (SemanticSummaryItem item : carryForwardItems) {
+                if (item.stableItemId() != null && !item.stableItemId().isBlank()) {
+                    reservedIds.add(item.stableItemId());
+                }
+            }
+        }
         Set<String> usedIds = new HashSet<>();
         AtomicInteger gIdx = new AtomicInteger(1);
         AtomicInteger cIdx = new AtomicInteger(1);
@@ -1064,47 +1102,47 @@ public final class SemanticCompactionCoordinator {
 
         List<SemanticSummaryItem> goals = new ArrayList<>();
         for (SemanticSummaryItem item : original.goals()) {
-            goals.add(canonicalizeItem(item, "G-", Set.of("G-"), gIdx, usedIds));
+            goals.add(canonicalizeItem(item, "G-", Set.of("G-"), gIdx, usedIds, reservedIds));
         }
 
         List<SemanticSummaryItem> constraints = new ArrayList<>();
         for (SemanticSummaryItem item : original.constraints()) {
-            constraints.add(canonicalizeItem(item, "C-", Set.of("C-"), cIdx, usedIds));
+            constraints.add(canonicalizeItem(item, "C-", Set.of("C-"), cIdx, usedIds, reservedIds));
         }
 
         List<SemanticSummaryItem> completed = new ArrayList<>();
         for (SemanticSummaryItem item : original.progress().completed()) {
-            completed.add(canonicalizeItem(item, "PC-", Set.of("PC-", "PA-", "PB-"), pcIdx, usedIds));
+            completed.add(canonicalizeItem(item, "PC-", Set.of("PC-", "PA-", "PB-"), pcIdx, usedIds, reservedIds));
         }
 
         List<SemanticSummaryItem> active = new ArrayList<>();
         for (SemanticSummaryItem item : original.progress().active()) {
-            active.add(canonicalizeItem(item, "PA-", Set.of("PA-", "PB-"), paIdx, usedIds));
+            active.add(canonicalizeItem(item, "PA-", Set.of("PA-", "PB-"), paIdx, usedIds, reservedIds));
         }
 
         List<SemanticSummaryItem> blocked = new ArrayList<>();
         for (SemanticSummaryItem item : original.progress().blocked()) {
-            blocked.add(canonicalizeItem(item, "PB-", Set.of("PB-", "PA-"), pbIdx, usedIds));
+            blocked.add(canonicalizeItem(item, "PB-", Set.of("PB-", "PA-"), pbIdx, usedIds, reservedIds));
         }
 
         List<SemanticDecisionItem> decisions = new ArrayList<>();
         for (SemanticDecisionItem item : original.decisions()) {
-            decisions.add(canonicalizeDecision(item, "D-", Set.of("D-"), dIdx, usedIds));
+            decisions.add(canonicalizeDecision(item, "D-", Set.of("D-"), dIdx, usedIds, reservedIds));
         }
 
         List<SemanticSummaryItem> nextSteps = new ArrayList<>();
         for (SemanticSummaryItem item : original.nextSteps()) {
-            nextSteps.add(canonicalizeItem(item, "N-", Set.of("N-"), nIdx, usedIds));
+            nextSteps.add(canonicalizeItem(item, "N-", Set.of("N-"), nIdx, usedIds, reservedIds));
         }
 
         List<SemanticSummaryItem> criticalContext = new ArrayList<>();
         for (SemanticSummaryItem item : original.criticalContext()) {
-            criticalContext.add(canonicalizeItem(item, "CC-", Set.of("CC-"), ccIdx, usedIds));
+            criticalContext.add(canonicalizeItem(item, "CC-", Set.of("CC-"), ccIdx, usedIds, reservedIds));
         }
 
         List<SemanticSummaryItem> questions = new ArrayList<>();
         for (SemanticSummaryItem item : original.unresolvedQuestions()) {
-            questions.add(canonicalizeItem(item, "Q-", Set.of("Q-"), qIdx, usedIds));
+            questions.add(canonicalizeItem(item, "Q-", Set.of("Q-"), qIdx, usedIds, reservedIds));
         }
 
         return new SemanticConversationSummaryV1(
@@ -1124,7 +1162,8 @@ public final class SemanticCompactionCoordinator {
             String defaultPrefix,
             Set<String> allowedPrefixes,
             AtomicInteger counter,
-            Set<String> usedIds) {
+            Set<String> usedIds,
+            Set<String> reservedIds) {
         String id = item.stableItemId();
         boolean valid = id != null
                 && !id.isBlank()
@@ -1133,7 +1172,7 @@ public final class SemanticCompactionCoordinator {
         if (!valid) {
             do {
                 id = defaultPrefix + (counter.getAndIncrement());
-            } while (usedIds.contains(id));
+            } while (usedIds.contains(id) || reservedIds.contains(id));
         }
         usedIds.add(id);
         return new SemanticSummaryItem(id, item.text(), item.sourceRefs(), item.confidence());
@@ -1144,7 +1183,8 @@ public final class SemanticCompactionCoordinator {
             String defaultPrefix,
             Set<String> allowedPrefixes,
             AtomicInteger counter,
-            Set<String> usedIds) {
+            Set<String> usedIds,
+            Set<String> reservedIds) {
         String id = item.stableItemId();
         boolean valid = id != null
                 && !id.isBlank()
@@ -1153,7 +1193,7 @@ public final class SemanticCompactionCoordinator {
         if (!valid) {
             do {
                 id = defaultPrefix + (counter.getAndIncrement());
-            } while (usedIds.contains(id));
+            } while (usedIds.contains(id) || reservedIds.contains(id));
         }
         usedIds.add(id);
         return new SemanticDecisionItem(id, item.statement(), item.rationale(), item.status(), item.sourceRefs());

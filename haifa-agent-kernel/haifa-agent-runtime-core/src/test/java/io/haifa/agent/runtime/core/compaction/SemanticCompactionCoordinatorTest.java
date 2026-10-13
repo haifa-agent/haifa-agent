@@ -2032,4 +2032,148 @@ class SemanticCompactionCoordinatorTest {
             assertThat(event.data().values().toString()).doesNotContain(sensitiveToken);
         }
     }
+
+    @Test
+    @DisplayName(
+            "Carry-forward reconciliation preserves verbatim text and restores dropped items when model paraphrases")
+    void testCarryForwardReconciliationPreservesVerbatimTextWhenModelParaphrases() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        RunControlRegistry controls = new RunControlRegistry();
+        AtomicInteger idGen = new AtomicInteger();
+        IdentifierGenerator ids = () -> "id-" + idGen.incrementAndGet();
+        TimeProvider time = () -> NOW;
+
+        CompressionPolicy policy =
+                CompressionPolicy.defaults().withSemanticCompactionEnabled(true).withTailTokenBounds(5, 50);
+
+        RunAwaiter awaiter = new RunAwaiter();
+        RunTransitionCoordinator transitions =
+                new RunTransitionCoordinator(store, store, store, store, ids, time, awaiter, store);
+
+        SummaryModelInvoker invoker = new SummaryModelInvoker(transitions, controls, ids, time, policy);
+        CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(policy);
+        DeterministicContextCompressor deterministic = new DeterministicContextCompressor();
+
+        SemanticCompactionCoordinator coordinator = new SemanticCompactionCoordinator(
+                store, store, invoker, evaluator, policy, deterministic, ids, time, store);
+
+        AgentRun run = createAndSaveRun(store);
+        AgentSessionId session = run.sessionId();
+
+        // 1. Pre-existing summary with C-1 and Q-1
+        AgentMessage m1 = store.appendSessionMessage(
+                draft("m-prev-1", session, run.id().value(), MessageRole.USER, "Old turn 1 user"));
+        AgentMessage m2 = store.appendSessionMessage(
+                draft("m-prev-2", session, run.id().value(), MessageRole.ASSISTANT, "Old turn 1 assistant"));
+
+        SemanticConversationSummaryV1 prevSemantic = new SemanticConversationSummaryV1(
+                "v1",
+                "en",
+                List.of(),
+                List.of(new io.haifa.agent.context.compression.SemanticSummaryItem(
+                        "C-1",
+                        "Original verbatim constraint: do not touch network",
+                        List.of("m-prev-1"),
+                        io.haifa.agent.context.compression.SemanticConfidence.OBSERVED)),
+                io.haifa.agent.context.compression.SemanticProgress.empty(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(new io.haifa.agent.context.compression.SemanticSummaryItem(
+                        "Q-1",
+                        "Original unresolved question: which DB to use",
+                        List.of("m-prev-1"),
+                        io.haifa.agent.context.compression.SemanticConfidence.OBSERVED)));
+
+        ConversationSummary existingSummary = new ConversationSummary(
+                new SummaryId("sum-prev"),
+                new SummaryVersion(1),
+                session,
+                m1.cursor(),
+                m2.cursor(),
+                List.of(m1.id(), m2.id()),
+                "hash",
+                List.of("Original verbatim constraint: do not touch network"),
+                List.of(),
+                List.of("Original unresolved question: which DB to use"),
+                List.of(),
+                50,
+                NOW,
+                policy.version(),
+                "semantic-v1",
+                java.util.Set.of("user_visible"),
+                true,
+                Optional.of(prevSemantic),
+                CompactionQuality.SEMANTIC_VALIDATED);
+        store.compareAndSetValid(existingSummary, 0L);
+
+        // 2. Next turn messages
+        store.appendSessionMessage(
+                draft("m-u2", session, run.id().value(), MessageRole.USER, "Second turn user message"));
+        store.appendSessionMessage(
+                draft("m-a2", session, run.id().value(), MessageRole.ASSISTANT, "Second turn assistant reply"));
+        store.appendSessionMessage(
+                draft("m-u3", session, run.id().value(), MessageRole.USER, "Third turn user tail message"));
+        store.appendSessionMessage(
+                draft("m-a3", session, run.id().value(), MessageRole.ASSISTANT, "Third turn assistant tail reply"));
+
+        // 3. Model returns summary where C-1 is paraphrased and Q-1 is omitted completely
+        String paraphrasedSummaryJson =
+                """
+                {
+                  "schemaVersion": "v1",
+                  "language": "en",
+                  "goals": [],
+                  "constraints": [
+                    {
+                      "stableItemId": "C-1",
+                      "text": "Paraphrased by LLM: network access is forbidden",
+                      "confidence": "OBSERVED",
+                      "sourceRefs": ["m001"]
+                    }
+                  ],
+                  "progress": {
+                    "completed": [],
+                    "active": [],
+                    "blocked": []
+                  },
+                  "decisions": [],
+                  "nextSteps": [],
+                  "criticalContext": [],
+                  "unresolvedQuestions": []
+                }
+                """;
+
+        AgentChatModel chatModel = request -> new AgentChatResponse(
+                "res-1",
+                "deepseek-v4-pro",
+                paraphrasedSummaryJson,
+                List.of(),
+                ModelFinishReason.STOP,
+                ModelUsage.unpriced(50, 20),
+                "",
+                Map.of());
+
+        FrozenModelBinding binding = createBinding(store, run, chatModel);
+
+        // Act: Force compaction on overflow
+        coordinator.forceCompactOnOverflow(run, 1, binding);
+
+        // Assert:
+        // Compaction succeeded with SEMANTIC_VALIDATED quality (not degraded)
+        ConversationSummary latest = store.latestValid(session).orElseThrow();
+        assertThat(latest.quality()).isEqualTo(CompactionQuality.SEMANTIC_VALIDATED);
+        assertThat(latest.version().value()).isEqualTo(2L);
+
+        SemanticConversationSummaryV1 sem = latest.semanticSummary().orElseThrow();
+        // C-1 text was restored to verbatim original
+        assertThat(sem.constraints()).hasSize(1);
+        assertThat(sem.constraints().get(0).stableItemId()).isEqualTo("C-1");
+        assertThat(sem.constraints().get(0).text()).isEqualTo("Original verbatim constraint: do not touch network");
+
+        // Q-1 was missing in candidate, but restored automatically by reconciler
+        assertThat(sem.unresolvedQuestions()).hasSize(1);
+        assertThat(sem.unresolvedQuestions().get(0).stableItemId()).isEqualTo("Q-1");
+        assertThat(sem.unresolvedQuestions().get(0).text()).isEqualTo("Original unresolved question: which DB to use");
+    }
 }
