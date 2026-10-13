@@ -160,7 +160,7 @@ Conversation/Run API。
 ```java
 var execution = HostExecutionPlatforms.hostGuarded(
         new HostExecutionPlatforms.HostExecutionSpec(
-                workspaceRoot, dataRoot, Duration.ofSeconds(120), Duration.ofMinutes(10), 65_536, 1_000, true),
+                workspaceRoot, dataRoot, Duration.ofSeconds(120), Duration.ofMinutes(10), 65_536, 1_000),
         caller.tenant(), caller.principal());
 HaifaAgentBuilder builder = HaifaAgents.builder(profile)
         .persistence(sqlite.persistence())
@@ -175,6 +175,15 @@ execution.applyTo(builder); // 注册 execution_run、managed resource 与宿主
   `timeoutMillis` 上限与 Tool 自身超时。Personal Assistant 的 30 秒产品定义不变。
 - **固定工作目录**：Tool 只在 `workspaceRoot` 注册的 Workspace 根目录执行，`workdir` 参数不暴露，
   模型不能选择 cwd。
+- **冻结身份绑定 workspace**：Tool definition 身份、`providerBindingReference`
+  （`host:execution:v1:sha256:<digest>`）与 Workspace revision 都包含宿主根的规范化路径指纹与物理目录指纹
+  （`HostWorkspaceLocationStore`）。换到另一个 `workspaceRoot`、或同一路径的目录被替换后，旧 Run 的冻结绑定
+  不再命中，装配差异 fail closed，不会把已批准的命令派发到另一个目录。
+- **网络声明不撒谎**：本入口无法隔离网络，进程就是普通宿主进程，因此声明的 Tool 始终带 `PROCESS_EXECUTION`
+  与 `NETWORK_ACCESS`，没有 `networkAllowed=false` 这种声明；标准审批策略据此要求审批。
+- **审批提示**：`applyTo` 同时安装 execution 专用 Approval 提示，显示 mode、语言、命令/脚本、参数、用途、
+  声明超时、输出上限、宿主 provider 与调用摘要；其它 Tool 委托默认格式器。自持 builder 路径的产品可调用
+  `approvalPromptFormatter()` 自行装配（同 Personal Assistant）。
 - **宿主环境与边界**：scratch 位于 `dataRoot` 下，宿主环境按基线 allowlist 解析；进程以当前 OS 用户、
   普通宿主网络、非隔离的宿主文件系统运行，每次调用仍需一次精确 Approval。
 - `applyTo` 只能调用一次，并把平台自身注册为 Agent 持有的 managed resource；`close()` 幂等。

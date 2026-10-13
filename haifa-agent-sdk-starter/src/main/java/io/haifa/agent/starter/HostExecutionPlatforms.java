@@ -5,6 +5,7 @@ import io.haifa.agent.common.id.UuidV7IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
+import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.execution.api.ExecutionEnvironmentRef;
 import io.haifa.agent.execution.api.ExecutionOrigin;
 import io.haifa.agent.execution.api.ExecutionOutputObserver;
@@ -34,6 +35,7 @@ import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
 import io.haifa.agent.project.workspace.Workspace;
 import io.haifa.agent.project.workspace.WorkspaceId;
 import io.haifa.agent.project.workspace.WorkspaceRevision;
+import io.haifa.agent.runtime.api.ApprovalPrompt;
 import io.haifa.agent.sandbox.api.SandboxConfigurationDigest;
 import io.haifa.agent.sandbox.api.SandboxException;
 import io.haifa.agent.sandbox.api.SandboxProfile;
@@ -43,7 +45,9 @@ import io.haifa.agent.sandbox.host.HostShell;
 import io.haifa.agent.sandbox.host.ResolvedHostEnvironment;
 import io.haifa.agent.sdk.api.HaifaAgentBuilder;
 import io.haifa.agent.sdk.api.HaifaAgentException;
+import io.haifa.agent.sdk.contribution.ProductApprovalPromptFormatter;
 import io.haifa.agent.sdk.contribution.ToolRegistration;
+import io.haifa.agent.tool.api.FrozenToolBinding;
 import io.haifa.agent.tool.api.ToolDefinition;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -57,6 +61,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.UnaryOperator;
+import java.util.stream.Collectors;
 
 /**
  * Assembles the trusted host execution capability into any {@link HaifaAgentBuilder}.
@@ -76,8 +81,7 @@ import java.util.function.UnaryOperator;
  *                 Duration.ofSeconds(120),
  *                 Duration.ofMinutes(10),
  *                 1_048_576,
- *                 2_000,
- *                 true),
+ *                 2_000),
  *         caller.tenant(),
  *         caller.principal());
  * HaifaAgentBuilder builder = HaifaAgents.builder(profile)
@@ -93,6 +97,20 @@ import java.util.function.UnaryOperator;
  * host environment is resolved once with the baseline allowlist, so unrelated host variables never
  * reach the process.
  *
+ * <p>The frozen identity of the declared Tool is bound to the declared host workspace: the Tool
+ * definition identity, the provider binding reference ({@code host:execution:v1:sha256:...}) and
+ * the Workspace revision all carry the canonical path fingerprint and the physical directory
+ * fingerprint of the host root. A resumed Run whose persisted binding was frozen against another
+ * - or a replaced - directory therefore fails closed instead of dispatching an approved command
+ * through a different workspace.
+ *
+ * <p>The entry cannot enforce network denial: the process is an ordinary host process. The
+ * declared Tool therefore always carries the host network side effect, the network is never
+ * reported as absent and the standard approval policy gates the invocation.
+ * {@link HostExecutionPlatform#applyTo} also installs the execution-aware Approval prompt, which
+ * shows what an approval would run as the current OS user; a product that owns its own builder
+ * path wires {@link HostExecutionPlatform#approvalPromptFormatter()} itself.
+ *
  * <p>The entry does not isolate the host: the process runs as the current OS user with the ordinary
  * host filesystem, network and kernel, exactly like the other host-guarded products. It also does
  * not install the execution-specific Tool schema validator, because the SDK freezes one Tool
@@ -106,7 +124,10 @@ public final class HostExecutionPlatforms {
     private static final String WORKSPACE_REVISION_DIGEST = "host-execution-v1";
     private static final String SANDBOX_PROFILE_ID = "host-guarded-execution";
     private static final String PROFILE_POLICY_VERSION = "host-execution-entry-v1";
-    private static final String BINDING_REFERENCE = "host-execution-v1";
+    private static final String BINDING_NAMESPACE = "io.haifa.agent.sdk.starter.host-execution/v1";
+    private static final String BINDING_REFERENCE_PREFIX = "host:execution:v1:";
+    private static final int MAX_APPROVAL_VALUE_LENGTH = 512;
+    private static final int MAX_APPROVAL_PROMPT_LENGTH = 4_000;
     private static final String SCRATCH_DIRECTORY_NAME = "host-execution-scratch";
     private static final Set<String> CAPABILITIES = Set.of("execution_run");
 
@@ -130,6 +151,7 @@ public final class HostExecutionPlatforms {
         Objects.requireNonNull(tenant, "tenant must not be null");
         Objects.requireNonNull(principal, "principal must not be null");
         Path workspaceRoot = spec.workspaceRoot();
+        String workspaceIdentity = workspaceIdentity(workspaceRoot);
         Path scratchRoot = scratchRoot(spec.dataRoot());
         IdentifierGenerator identifiers = new UuidV7IdentifierGenerator();
         TimeProvider time = Clock.systemUTC()::instant;
@@ -140,7 +162,7 @@ public final class HostExecutionPlatforms {
         workspaces.create(Workspace.provision(
                         workspaceId,
                         new ProjectId(PROJECT_ID),
-                        WorkspaceRevision.initial(WORKSPACE_REVISION_DIGEST),
+                        WorkspaceRevision.initial(WORKSPACE_REVISION_DIGEST + ":" + workspaceIdentity),
                         time.now())
                 .activate(time.now()));
         HostShell shell = hostShell();
@@ -187,19 +209,26 @@ public final class HostExecutionPlatforms {
                 time,
                 ignored -> new ExecutionInvocationScopeResolver.ExecutionInvocationScope(workspaceId, CAPABILITIES),
                 configuration);
+        String profileIdentity = profile.ref().value() + "@" + profile.ref().version() + "+" + workspaceIdentity;
+        // A host process cannot be network-isolated, so the host network side effect is always
+        // declared instead of letting a product declare a denial this Sandbox cannot enforce.
         ToolDefinition definition = ExecutionToolDefinitionFactory.create(
-                profile.ref().value() + "@" + profile.ref().version(),
+                profileIdentity,
                 provider.configurationIdentity(),
                 provider.scratchSpecDigest(),
                 spec.maximumTimeout(),
-                spec.networkAllowed(),
+                true,
                 false,
                 runtimes.languages());
         return new HostGuardedPlatform(
-                new ToolRegistration(ExecutionToolDefinitionFactory.ALIAS, definition, BINDING_REFERENCE, provider),
+                new ToolRegistration(
+                        ExecutionToolDefinitionFactory.ALIAS,
+                        definition,
+                        BINDING_REFERENCE_PREFIX + workspaceIdentity,
+                        provider),
                 previewPublisher,
-                spec.networkAllowed(),
-                profile.ref().value() + "@" + profile.ref().version(),
+                spec.defaultTimeout(),
+                profileIdentity,
                 shell.displayName());
     }
 
@@ -209,6 +238,10 @@ public final class HostExecutionPlatforms {
      * <p>Every value is a trusted product fact: the model never supplies a Host path, timeout bound
      * or network policy. Timeout and output bounds are validated by
      * {@link ExecutionToolConfiguration}, so the declaration has exactly one authority.
+     *
+     * <p>There is no network flag: this host-backed entry cannot enforce network denial, so the
+     * declared Tool always carries the host network side effect and the approval surface never
+     * reports the network as absent.
      *
      * @param workspaceRoot existing host directory the Agent may execute in; it becomes the single
      *     registered Workspace
@@ -220,7 +253,6 @@ public final class HostExecutionPlatforms {
      *     {@link ExecutionToolConfiguration#MAXIMUM_DECLARED_TIMEOUT}
      * @param maximumOutputBytes bounded output budget of one invocation
      * @param maximumOutputLines bounded output line budget of one invocation
-     * @param networkAllowed trusted product declaration of the network side effect
      */
     public record HostExecutionSpec(
             Path workspaceRoot,
@@ -228,8 +260,7 @@ public final class HostExecutionPlatforms {
             Duration defaultTimeout,
             Duration maximumTimeout,
             int maximumOutputBytes,
-            int maximumOutputLines,
-            boolean networkAllowed) {
+            int maximumOutputLines) {
         public HostExecutionSpec {
             workspaceRoot = hostDirectory(workspaceRoot, "workspaceRoot");
             dataRoot = Objects.requireNonNull(dataRoot, "dataRoot must not be null")
@@ -274,7 +305,25 @@ public final class HostExecutionPlatforms {
         String securitySummary();
 
         /**
-         * Wires the frozen Tool registration and the managed resource into a builder.
+         * Returns the execution-aware Approval prompt formatter of this platform.
+         *
+         * <p>{@link #applyTo} installs the same formatter on the builder, so one
+         * {@code execution_run} approval shows what will run as the current OS user: the mode, the
+         * language, the command or script, the arguments, the purpose, the declared timeout, the
+         * output bound, the host provider and the invocation digest. A product that owns its own
+         * builder path wires this formatter itself, exactly like the Personal Assistant wires its
+         * execution platform prompt.
+         */
+        ProductApprovalPromptFormatter approvalPromptFormatter();
+
+        /**
+         * Wires the frozen Tool registration, the execution-aware Approval prompt and the managed
+         * resource into a builder.
+         *
+         * <p>The execution-aware formatter claims the builder's single Approval-prompt slot and
+         * delegates every other Tool to {@link ProductApprovalPromptFormatter#defaultFormatter()}.
+         * A product that needs another presentation for other Tools sets its own
+         * {@code toolApprovalPrompts} after {@code applyTo}.
          *
          * @param builder builder that has not applied this platform yet
          * @throws IllegalStateException when called more than once
@@ -289,21 +338,23 @@ public final class HostExecutionPlatforms {
     private static final class HostGuardedPlatform implements HostExecutionPlatform {
         private final ToolRegistration registration;
         private final ToolOutputPreviewPublisher previewPublisher;
+        private final Duration declaredDefaultTimeout;
         private final String securitySummary;
         private final AtomicBoolean applied = new AtomicBoolean();
 
         private HostGuardedPlatform(
                 ToolRegistration registration,
                 ToolOutputPreviewPublisher previewPublisher,
-                boolean networkAllowed,
+                Duration declaredDefaultTimeout,
                 String profileIdentity,
                 String shellDisplayName) {
             this.registration = Objects.requireNonNull(registration, "registration must not be null");
             this.previewPublisher = Objects.requireNonNull(previewPublisher, "previewPublisher must not be null");
+            this.declaredDefaultTimeout =
+                    Objects.requireNonNull(declaredDefaultTimeout, "declaredDefaultTimeout must not be null");
             this.securitySummary = "host-guarded (current OS user, no strong isolation), shell="
                     + shellDisplayName
-                    + ", network="
-                    + (networkAllowed ? "host (ordinary local network)" : "not declared")
+                    + ", network=host (ordinary local network, not enforced by this sandbox)"
                     + ", profile=" + profileIdentity;
         }
 
@@ -333,7 +384,50 @@ public final class HostExecutionPlatforms {
             if (!applied.compareAndSet(false, true)) {
                 throw new IllegalStateException("host execution platform is already applied to a builder");
             }
-            builder.toolRegistrations(List.of(registration)).managedResource(this);
+            builder.toolRegistrations(List.of(registration))
+                    .managedResource(this)
+                    .toolApprovalPrompts(approvalPromptFormatter());
+        }
+
+        @Override
+        public ProductApprovalPromptFormatter approvalPromptFormatter() {
+            return this::approvalPrompt;
+        }
+
+        /** Presents exactly what one approved invocation runs as the current OS user. */
+        private ApprovalPrompt approvalPrompt(FrozenToolBinding binding, ToolCall call, boolean reauthentication) {
+            if (!registration
+                    .definition()
+                    .name()
+                    .value()
+                    .equals(binding.definition().name().value())) {
+                return ProductApprovalPromptFormatter.defaultFormatter().format(binding, call, reauthentication);
+            }
+            var arguments = call.arguments().values();
+            String mode = approvalValue(arguments.get("mode"));
+            String language = approvalValue(arguments.getOrDefault("language", "default-shell"));
+            String content = approvalValue(arguments.get("content"));
+            String args = approvalValue(arguments.getOrDefault("args", List.of()));
+            String purpose = approvalValue(arguments.get("purpose"));
+            String timeout = approvalValue(arguments.getOrDefault("timeoutMillis", declaredDefaultTimeout.toMillis()));
+            String digest = SandboxConfigurationDigest.sha256Fields(
+                            List.of(mode, language, content, args, purpose, timeout))
+                    .value();
+            String summary = (reauthentication ? "Reauthenticate and approve host execution" : "Approve host execution")
+                    + "\nMode: " + mode
+                    + "\nLanguage: " + language
+                    + "\n" + ("SCRIPT".equals(mode) ? "Script: " : "Command: ") + content
+                    + "\nArgs: " + args
+                    + "\nPurpose: " + purpose
+                    + "\nTimeout: " + timeout + " ms"
+                    + "\nOutput: bounded and redacted"
+                    + "\nWorkspace: the single registered host directory; the model cannot select the"
+                    + " working directory"
+                    + "\nProvider: trusted host process as the current OS user, no strong isolation"
+                    + "\nNetwork: ordinary host network; this sandbox cannot deny it"
+                    + "\nInvocation digest: " + digest
+                    + "\nRisks: HIGH, PROCESS_EXECUTION, NETWORK_ACCESS, NON_IDEMPOTENT, host file access";
+            return ApprovalPrompt.of(bounded(summary, MAX_APPROVAL_PROMPT_LENGTH));
         }
 
         /**
@@ -410,6 +504,48 @@ public final class HostExecutionPlatforms {
                     "no supported host shell is available",
                     exception);
         }
+    }
+
+    /**
+     * Stable identity of the declared host workspace: the canonical path fingerprint plus the
+     * physical directory fingerprint. It enters the frozen Tool identity, so a resumed Run whose
+     * persisted binding was frozen against another - or a replaced - directory fails closed.
+     */
+    private static String workspaceIdentity(Path workspaceRoot) {
+        try {
+            return SandboxConfigurationDigest.sha256Fields(List.of(
+                            BINDING_NAMESPACE,
+                            WORKSPACE_ID,
+                            HostWorkspaceLocationStore.fingerprintFor(workspaceRoot),
+                            HostWorkspaceLocationStore.physicalFingerprintFor(workspaceRoot)))
+                    .value();
+        } catch (IllegalStateException exception) {
+            throw new HaifaAgentException(
+                    "HOST_EXECUTION_UNAVAILABLE",
+                    "product.assemble",
+                    "execution",
+                    "the declared host workspace identity is unavailable",
+                    exception);
+        }
+    }
+
+    private static String approvalValue(Object value) {
+        if (value == null) {
+            return "(none)";
+        }
+        if (value instanceof List<?> list) {
+            return list.isEmpty()
+                    ? "(none)"
+                    : bounded(
+                            list.stream().map(String::valueOf).collect(Collectors.joining(" ")),
+                            MAX_APPROVAL_VALUE_LENGTH);
+        }
+        String rendered = bounded(String.valueOf(value).strip(), MAX_APPROVAL_VALUE_LENGTH);
+        return rendered.isEmpty() ? "(none)" : rendered;
+    }
+
+    private static String bounded(String value, int maximumLength) {
+        return value.length() <= maximumLength ? value : value.substring(0, maximumLength) + "...[truncated]";
     }
 
     private static SandboxProfile sandboxProfile(
