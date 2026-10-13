@@ -554,8 +554,9 @@ public final class OpenAiResponsesModel implements AgentChatModel {
             throw emptyResponse(request, "provider response contains no output");
         }
         boolean retainReasoning = !reasoning.isEmpty()
-                && !calls.isEmpty()
-                && OpenAiResponsesDialects.DEEPSEEK.equals(request.model().dialect());
+                && (requiresReasoningContinuation(request)
+                        || OpenAiResponsesDialects.DEEPSEEK.equals(
+                                request.model().dialect()));
         return new AgentChatResponse(
                 text(root, "id", true),
                 optionalText(root, "model", request.model().providerModelId()),
@@ -569,6 +570,10 @@ public final class OpenAiResponsesModel implements AgentChatModel {
                         ? java.util.Optional.of(SensitiveModelReasoning.of(reasoning.toString()))
                         : java.util.Optional.empty(),
                 structuredOutput(request, content.toString(), calls, finish, status));
+    }
+
+    private static boolean requiresReasoningContinuation(AgentChatRequest request) {
+        return Boolean.TRUE.equals(request.model().invocationOptions().get("requires_reasoning_continuation"));
     }
 
     private java.util.Optional<Map<String, Object>> structuredOutput(

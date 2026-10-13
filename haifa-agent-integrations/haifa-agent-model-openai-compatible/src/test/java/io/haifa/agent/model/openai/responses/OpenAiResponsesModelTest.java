@@ -349,6 +349,28 @@ class OpenAiResponsesModelTest {
     }
 
     @Test
+    void retainsDeepSeekReasoningForNonToolTurnsSoItCanBePassedBack() throws Exception {
+        response.set(
+                Response.json(
+                        200,
+                        """
+                {"id":"resp-reason-only","status":"completed","model":"deepseek-v4-flash",
+                 "output":[
+                   {"id":"r-1","type":"reasoning","content":[{"type":"reasoning_text","text":"deep thought"}]},
+                   {"id":"msg-1","type":"message","role":"assistant","status":"completed",
+                    "content":[{"type":"output_text","text":"answer"}]}],
+                 "usage":{"input_tokens":5,"output_tokens":3}}
+                """));
+
+        var actual = model().invoke(simpleRequest(deepSeekSnapshot()));
+
+        assertThat(actual.toolCalls()).isEmpty();
+        assertThat(actual.reasoning()).isPresent();
+        String reasoning = actual.reasoning().orElseThrow().use(text -> text);
+        assertThat(reasoning).isEqualTo("deep thought");
+    }
+
+    @Test
     void mapsFrozenRecordRequirementToResponsesTextFormatAndParsesTerminalOutput() throws Exception {
         response.set(Response.json(
                 200,
