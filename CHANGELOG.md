@@ -1,5 +1,20 @@
 # Changelog
 
+- Added the public host execution assembly entry `HostExecutionPlatforms.hostGuarded(...)`: one
+  static factory resolves the trusted host shell, host script runtimes, the guarded sandbox
+  provider, one registered host workspace and the SDK's own `execution_run` Tool, then registers
+  that Tool on any `HaifaAgentBuilder`. A product that must not declare the execution
+  implementation modules directly now runs commands and scripts through the single
+  Broker/Sandbox/Policy/Runtime path. The declared Tool timeout became a product definition
+  bounded by `ExecutionToolConfiguration.MAXIMUM_DECLARED_TIMEOUT` (ten minutes) instead of a
+  fixed SDK cap, and the existing 30 second product definition is unchanged. See
+  The frozen Tool identity, the provider binding reference and the Workspace revision are bound to
+  the declared host workspace (canonical path plus physical directory fingerprint), the declared
+  Tool always carries the host network side effect because this host-backed entry cannot enforce
+  network denial, and `applyTo` installs the execution-aware Approval prompt that shows the
+  command or script, the arguments, the timeout and the invocation digest.
+  [SDK starter](haifa-agent-sdk-starter/README.md).
+
 - Added optional safe RunMessageView.modelCallId() correlation with public output events for accepted
   model-backed assistant messages. The original constructor and legacy missing-field messages remain
   supported; internal metadata and reasoning are not exposed, and redaction clears the correlation.
