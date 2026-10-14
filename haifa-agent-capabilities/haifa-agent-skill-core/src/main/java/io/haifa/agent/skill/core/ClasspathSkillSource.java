@@ -8,6 +8,7 @@ import io.haifa.agent.skill.api.SkillDiagnosticSeverity;
 import io.haifa.agent.skill.api.SkillDiscoveryContext;
 import io.haifa.agent.skill.api.SkillDiscoveryResult;
 import io.haifa.agent.skill.api.SkillRegistration;
+import io.haifa.agent.skill.api.SkillResourceRef;
 import io.haifa.agent.skill.api.SkillSource;
 import io.haifa.agent.skill.api.SkillSourceDescriptor;
 import io.haifa.agent.skill.api.SkillVisibilityContext;
@@ -133,6 +134,35 @@ public final class ClasspathSkillSource implements SkillSource {
         }
     }
 
+    @Override
+    public java.util.Optional<byte[]> readResource(
+            FrozenSkillBinding binding, SkillVisibilityContext context, String relativePath) {
+        if (!visible(context)
+                || !descriptor.reference().equals(binding.coordinate().source())
+                || !descriptor.scope().equals(binding.coordinate().scope())) {
+            throw new SecurityException("frozen Skill is not visible to the current caller");
+        }
+        String packageName = locations.get(binding.coordinate().externalForm());
+        if (packageName == null) throw new IllegalStateException("frozen Skill was not discovered from this source");
+        String normalizedPath = java.util.Objects.requireNonNull(relativePath, "relativePath must not be null")
+                .replace('\\', '/');
+        SkillResourceRef indexed = binding.packageIndex().resources().stream()
+                .filter(resource -> resource.relativePath().equals(normalizedPath))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("resource is not indexed in the frozen Skill binding"));
+        try {
+            byte[] bytes = readPackageResource(packageName, normalizedPath);
+            if (bytes.length != indexed.byteSize()
+                    || !io.haifa.agent.skill.api.SkillTrustDigests.content(bytes)
+                            .equals(indexed.digest())) {
+                throw new IllegalStateException("frozen Skill resource has drifted");
+            }
+            return java.util.Optional.of(bytes);
+        } catch (IOException exception) {
+            throw new IllegalStateException("frozen Skill resource is unavailable", exception);
+        }
+    }
+
     private boolean visible(SkillVisibilityContext context) {
         return descriptor.scope().visibleTo(context)
                 && (!descriptor.projectTrustRequired() || context.projectTrusted());
@@ -141,13 +171,17 @@ public final class ClasspathSkillSource implements SkillSource {
     private Map<String, byte[]> readPackage(String packageName) throws IOException {
         Map<String, byte[]> files = new LinkedHashMap<>();
         for (String relative : packageResources.get(packageName)) {
-            String skillPath = root + "/" + packageName + "/" + relative;
-            try (var input = classLoader.getResourceAsStream(skillPath)) {
-                if (input == null) throw new IOException("missing Skill resource: " + relative);
-                files.put(relative, input.readAllBytes());
-            }
+            files.put(relative, readPackageResource(packageName, relative));
         }
         return files;
+    }
+
+    private byte[] readPackageResource(String packageName, String relative) throws IOException {
+        String skillPath = root + "/" + packageName + "/" + relative;
+        try (var input = classLoader.getResourceAsStream(skillPath)) {
+            if (input == null) throw new IOException("missing Skill resource: " + relative);
+            return input.readAllBytes();
+        }
     }
 
     private static Map<String, List<String>> normalizeResources(

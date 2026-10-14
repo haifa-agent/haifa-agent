@@ -397,7 +397,8 @@ class TrustedScriptExecutionToolProviderTest {
                 Set.of("execution_run"),
                 Duration.ofSeconds(5),
                 "fixed transform",
-                arguments -> TrustedScriptArguments.atWorkspaceRoot(List.of(String.valueOf(arguments.get("value")))));
+                arguments -> TrustedScriptArguments.atWorkspaceRoot(List.of(String.valueOf(arguments.get("value")))),
+                false);
         var provider = new TrustedSkillScriptToolProvider(
                 execution,
                 (binding, visibility) ->

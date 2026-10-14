@@ -60,6 +60,7 @@ class StarterArchitectureTest {
                         "McpServerSpec",
                         "McpServerRequirement",
                         "McpToolPlatforms",
-                        "HostExecutionPlatforms");
+                        "HostExecutionPlatforms",
+                        "SkillScriptPlatforms");
     }
 }

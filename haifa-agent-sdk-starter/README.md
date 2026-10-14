@@ -192,6 +192,41 @@ execution.applyTo(builder); // 注册 execution_run、managed resource 与宿主
 
 验证：`./mvnw -pl :haifa-agent-sdk-starter -am test`。
 
+### 冻结技能脚本执行（Trusted Skill script entry files）
+
+`SkillScriptPlatforms.trusted(...)` 把"产品声明的固定业务 Tool + 冻结 Skill 包脚本"装配进任意
+`HaifaAgentBuilder`（同 `HostExecutionPlatforms` 的形态，复用同一 038-30 装配，没有第二套
+Broker / Sandbox / Policy / Runtime）：
+
+```java
+var skills = SkillScriptPlatforms.trusted(
+        new SkillScriptPlatforms.SkillScriptSpec(
+                projectRef, workspaceRoot, dataRoot,
+                List.of(new SkillScriptPlatforms.SkillScriptRuntime("bun", Path.of("C:/run/bun.exe"))),
+                skillContentLoader,
+                List.of(new SkillScriptPlatforms.SkillScriptToolDeclaration(
+                        toolName, title, description, inputSchema, outputSchema,
+                        Duration.ofMinutes(2), frozenSkillBinding, "scripts/main.ts", "bun",
+                        Duration.ofSeconds(120), "purpose", argumentMapper,
+                        List.of(new SkillScriptPlatforms.SkillScriptOutput("image.png", "image/png")))),
+                artifactService, Duration.ofSeconds(30), Duration.ofMinutes(10), 1_048_576, 2_000),
+        caller.tenant(), caller.principal());
+skills.applyTo(builder);
+```
+
+- **入口文件执行**：每次调用把冻结 Skill 包的字节逐文件核验后物化到 Workspace 根下的一次性目录并
+  按路径执行声明入口文件，脚本相对导入与入口文件身份成立（标准输入模型无法表达）；执行后删除。
+  任何字节漂移 fail closed（`SecurityException`）。
+- **声明的 outputs 捕获**：把 Workspace 根下 `outputs/` 中的声明文件经产品现有 `ArtifactService`
+  发布为 Run Artifact（`skill-script-output` 类型），发布前清除上一次残留，发布后删除暂存文件，
+  所以一次 Run 的 outputs 不会泄漏给下一次 Run。
+- **声明式信任边界**：脚本路径、运行时可执行文件与全部脚本内容都来自产品冻结的 immutable
+  descriptor，模型只能提供映射后的业务参数；每个生成的 Tool 保持 `ALWAYS` Approval、
+  `execution_run` 能力与有界脱敏输出。运行时只接受产品声明显式可执行文件路径，并在装配时预检，
+  不会从宿主 PATH 猜测。
+
+`StarterArchitectureTest` 把 `SkillScriptPlatforms` 列为 Starter 公共面的一部分。
+
 运行前设置 `DEEPSEEK_API_KEY`。该入口会访问真实 DeepSeek API 并产生费用。Starter 的进程内状态在
 进程退出后丢失；生产系统应通过 `haifa-agent-sdk` 显式装配持久化、可信 Caller、Policy、Credential
 和所需 Capability。

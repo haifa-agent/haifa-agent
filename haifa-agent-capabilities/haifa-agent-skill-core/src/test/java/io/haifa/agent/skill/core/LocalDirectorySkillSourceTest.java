@@ -115,6 +115,60 @@ class LocalDirectorySkillSourceTest {
         });
     }
 
+    @Test
+    void readResourceServesFrozenBytesAndRejectsDriftOrUnknownPaths() throws Exception {
+        Path skillRoot = Files.createDirectory(sourceRoot.resolve("project-method"));
+        Files.writeString(skillRoot.resolve("SKILL.md"), skill("# Entry package"));
+        Files.createDirectories(skillRoot.resolve("refs"));
+        byte[] helperBytes = "helper marker".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        Files.write(skillRoot.resolve("refs/helper.txt"), helperBytes);
+        var tenant = new TenantRef("tenant");
+        var principal = new PrincipalRef("user", "human");
+        var project = new ProjectRef("project");
+        var descriptor = new SkillSourceDescriptor(
+                new SkillSourceRef("project-source", "1"),
+                SkillScopeRef.project(tenant, project),
+                SkillOrigin.CREATED,
+                0,
+                SkillParserMode.STRICT,
+                true,
+                true);
+        var source = new LocalDirectorySkillSource(
+                sourceRoot,
+                descriptor,
+                new SkillPackageParser(SkillPackageLimits.defaults()),
+                SkillAvailability.ENABLED);
+        var visible =
+                new SkillVisibilityContext(tenant, principal, Optional.of(project), true, Set.of(SkillScope.PROJECT));
+        var snapshot = new SkillCatalogBuilder(
+                        List.of(source), new SkillResolutionPolicy("project-only@1", List.of(SkillScope.PROJECT), true))
+                .build(new SkillDiscoveryContext(visible))
+                .snapshot();
+        var binding = snapshot.bindings().getFirst();
+
+        assertThat(new String(
+                        source.readResource(binding, visible, "refs/helper.txt").orElseThrow()))
+                .isEqualTo("helper marker");
+        assertThatThrownBy(() -> source.readResource(binding, visible, "refs/missing.txt"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("not indexed");
+
+        // An indexed resource that disappeared from the source after discovery resolves to empty;
+        // the entry-file materialization caller treats empty as its own fail-closed signal.
+        Files.delete(skillRoot.resolve("refs/helper.txt"));
+        assertThat(source.readResource(binding, visible, "refs/helper.txt")).isEmpty();
+
+        Files.writeString(skillRoot.resolve("refs/helper.txt"), "drifted marker");
+        assertThatThrownBy(() -> source.readResource(binding, visible, "refs/helper.txt"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("drifted");
+
+        var revoked =
+                new SkillVisibilityContext(tenant, principal, Optional.of(project), false, Set.of(SkillScope.PROJECT));
+        assertThatThrownBy(() -> source.readResource(binding, revoked, "refs/helper.txt"))
+                .isInstanceOf(SecurityException.class);
+    }
+
     private static String skill(String body) {
         return """
                 ---

@@ -191,6 +191,7 @@ public record ExecutionToolConfiguration(
         fields.add(Boolean.toString(workingDirectoryAllowed));
         fields.add(runtimes.operatingSystem().name());
         runtimes.languages().stream().sorted().forEach(fields::add);
+        runtimes.fileExecutionLanguages().stream().sorted().forEach(fields::add);
         runtimes.executableNames().stream().sorted().forEach(fields::add);
         fields.add(scratchSpace.canonicalDigest());
         return PolicyDigest.sha256Fields(fields);

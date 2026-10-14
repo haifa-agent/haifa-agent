@@ -22,7 +22,8 @@ public record TrustedSkillScriptToolSpec(
         Set<String> requiredCapabilities,
         Duration timeout,
         String purpose,
-        TrustedScriptArgumentMapper argumentMapper) {
+        TrustedScriptArgumentMapper argumentMapper,
+        boolean entryFileExecution) {
     private static final Set<String> FORBIDDEN_ARGUMENT_NAMES = Set.of(
             "executable",
             "content",

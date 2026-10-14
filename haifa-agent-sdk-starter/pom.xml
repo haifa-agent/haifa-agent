@@ -61,6 +61,10 @@
             <artifactId>haifa-agent-project-host</artifactId>
         </dependency>
         <dependency>
+            <groupId>io.haifa</groupId>
+            <artifactId>haifa-agent-artifact</artifactId>
+        </dependency>
+        <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
         </dependency>
