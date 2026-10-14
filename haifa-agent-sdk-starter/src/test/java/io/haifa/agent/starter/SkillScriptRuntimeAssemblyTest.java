@@ -1,18 +1,16 @@
 package io.haifa.agent.starter;
 
+import static io.haifa.agent.starter.SkillScriptTestSupport.*;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.agent.AgentDefinitionVersion;
-import io.haifa.agent.core.reference.PrincipalRef;
-import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunBudget;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import io.haifa.agent.core.tool.ToolCallStatus;
-import io.haifa.agent.execution.core.tool.TrustedScriptArguments;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.CredentialRef;
@@ -45,8 +43,6 @@ import io.haifa.agent.sdk.product.ProductId;
 import io.haifa.agent.sdk.product.ProductProfile;
 import io.haifa.agent.sdk.product.ProductRunProfileRef;
 import io.haifa.agent.sdk.product.ProductVersion;
-import io.haifa.agent.tool.api.ToolName;
-import io.haifa.agent.tool.api.ToolSchema;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -67,55 +63,20 @@ import org.junit.jupiter.api.io.TempDir;
  * file chain still owns the artifact.
  */
 class SkillScriptRuntimeAssemblyTest {
-    private static final TenantRef TENANT = new TenantRef("public");
-    private static final PrincipalRef PRINCIPAL = new PrincipalRef("default-public-user", "user");
-    private static final Duration MAXIMUM_TIMEOUT = Duration.ofMinutes(10);
 
     @Test
     void executesTheApprovedSkillScriptToolThroughTheRealRuntime(@TempDir Path temporary) throws Exception {
-        Path runtime = SkillScriptPlatformsTest.runtimeExecutable();
+        Path runtime = SkillScriptTestSupport.runtimeExecutable();
         if (!java.nio.file.Files.isRegularFile(runtime)) {
             return;
         }
-        Path workspace = SkillScriptPlatformsTest.createWorkspace(temporary, "workspace");
-        Path dataRoot = SkillScriptPlatformsTest.createWorkspace(temporary, "data");
-        var loader = new SkillScriptPlatformsTest.StaticLoader(
-                SkillScriptPlatformsTest.packageFiles(SkillScriptPlatformsTest.entryScript(false)));
-        SkillScriptPlatforms.SkillScriptToolDeclaration declaration =
-                new SkillScriptPlatforms.SkillScriptToolDeclaration(
-                        new ToolName("generate_note"),
-                        "Generate one bounded note",
-                        "Generates one bounded note artifact through the frozen skill package script.",
-                        new ToolSchema(
-                                "haifa.skillscript.note.input",
-                                "1.0.0",
-                                Map.of(
-                                        "$schema",
-                                        ToolSchema.DRAFT_2020_12,
-                                        "type",
-                                        "object",
-                                        "additionalProperties",
-                                        false,
-                                        "properties",
-                                        Map.of())),
-                        Duration.ofMinutes(2),
-                        loader.frozen,
-                        SkillScriptPlatformsTest.scriptRelative(),
-                        SkillScriptPlatformsTest.runtimeLanguage(),
-                        Duration.ofSeconds(60),
-                        "verify the runtime-approved skill script",
-                        arguments -> TrustedScriptArguments.atWorkspaceRoot(List.of()));
-        var spec = new SkillScriptPlatforms.SkillScriptSpec(
-                workspace,
-                dataRoot,
-                List.of(new SkillScriptPlatforms.SkillScriptRuntime(
-                        SkillScriptPlatformsTest.runtimeLanguage(), runtime)),
-                loader,
-                List.of(declaration),
-                Duration.ofSeconds(90),
-                MAXIMUM_TIMEOUT,
-                65_536,
-                1_000);
+        Path workspace = SkillScriptTestSupport.createWorkspace(temporary, "workspace");
+        Path dataRoot = SkillScriptTestSupport.createWorkspace(temporary, "data");
+        var loader = new SkillScriptTestSupport.SkillPackageLoader(
+                SkillScriptTestSupport.packageFiles(SkillScriptTestSupport.entryScript(false)));
+        var declaration = declaration(
+                loader.frozen, runtimeLanguage(), Duration.ofSeconds(60), "verify the runtime-approved skill script");
+        var spec = spec(workspace, dataRoot, loader, List.of(declaration));
 
         AtomicInteger modelCalls = new AtomicInteger();
         AgentChatModel model = request -> {
@@ -168,7 +129,7 @@ class SkillScriptRuntimeAssemblyTest {
             // The artifact the script wrote is still readable from the product file chain.
             assertThat(java.nio.file.Files.readString(
                             workspace.resolve("outputs").resolve("result.txt"), StandardCharsets.UTF_8))
-                    .isEqualTo(SkillScriptPlatformsTest.MARKER + "\n");
+                    .isEqualTo(SkillScriptTestSupport.MARKER + "\n");
         }
     }
 

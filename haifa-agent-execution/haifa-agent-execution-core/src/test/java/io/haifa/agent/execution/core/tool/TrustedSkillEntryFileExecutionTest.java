@@ -1,25 +1,14 @@
 package io.haifa.agent.execution.core.tool;
 
+import static io.haifa.agent.execution.core.tool.ExecutionToolTestSupport.*;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import io.haifa.agent.core.reference.PrincipalRef;
-import io.haifa.agent.core.reference.TenantRef;
-import io.haifa.agent.core.run.AgentRunId;
-import io.haifa.agent.core.tool.ToolArguments;
-import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.execution.api.ExecutionBroker;
 import io.haifa.agent.execution.api.ExecutionCommand;
-import io.haifa.agent.execution.api.ExecutionEnvironmentRef;
-import io.haifa.agent.execution.api.ExecutionId;
 import io.haifa.agent.execution.api.ExecutionInput;
-import io.haifa.agent.execution.api.ExecutionOutput;
 import io.haifa.agent.execution.api.ExecutionRequest;
-import io.haifa.agent.execution.api.ExecutionResult;
-import io.haifa.agent.execution.api.ExecutionStatus;
-import io.haifa.agent.execution.api.ResourceUsageSummary;
-import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.workspace.WorkspaceId;
 import io.haifa.agent.skill.api.FrozenSkillBinding;
@@ -47,8 +36,6 @@ import io.haifa.agent.tool.api.ToolDefinition;
 import io.haifa.agent.tool.api.ToolDefinitionHash;
 import io.haifa.agent.tool.api.ToolExecutionMode;
 import io.haifa.agent.tool.api.ToolIdempotency;
-import io.haifa.agent.tool.api.ToolInvocationObserver;
-import io.haifa.agent.tool.api.ToolInvocationRequest;
 import io.haifa.agent.tool.api.ToolName;
 import io.haifa.agent.tool.api.ToolResourceRequirements;
 import io.haifa.agent.tool.api.ToolRisk;
@@ -56,7 +43,6 @@ import io.haifa.agent.tool.api.ToolSchema;
 import io.haifa.agent.tool.api.ToolSideEffect;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -69,7 +55,6 @@ import org.junit.jupiter.api.Test;
 
 /** Entry-file trusted execution: materialization, drift rejection, cleanup and frozen argv. */
 class TrustedSkillEntryFileExecutionTest {
-    private static final Instant NOW = Instant.parse("2026-07-30T00:00:00Z");
     private static final byte[] HELPER = "HELPER".getBytes(StandardCharsets.UTF_8);
     private static final byte[] ENTRY = "ENTRY".getBytes(StandardCharsets.UTF_8);
     private static final Map<String, byte[]> PACKAGE_FILES = Map.of(
@@ -110,28 +95,6 @@ class TrustedSkillEntryFileExecutionTest {
             argv.add(workspaceRelativeEntryPath);
             argv.addAll(arguments);
             return new PreparedScript(ExecutionCommand.direct(argv), ExecutionInput.none());
-        }
-    };
-
-    private static final ScriptRuntimeAdapter STDIN_ADAPTER = new ScriptRuntimeAdapter() {
-        @Override
-        public String language() {
-            return "fixture-runtime";
-        }
-
-        @Override
-        public String executable() {
-            return "trusted-runtime";
-        }
-
-        @Override
-        public PreparedScript prepare(String content, List<String> arguments) {
-            List<String> argv = new ArrayList<>();
-            argv.add(executable());
-            argv.addAll(arguments);
-            return new PreparedScript(
-                    ExecutionCommand.direct(argv),
-                    ExecutionInput.utf8(content.endsWith("\n") ? content : content + "\n"));
         }
     };
 
@@ -445,83 +408,23 @@ class TrustedSkillEntryFileExecutionTest {
             Set<String> capabilities,
             boolean entryFileAdapter,
             TrustedWorkspacePathValidator validator) {
-        List<ScriptRuntimeAdapter> adapters = List.of(entryFileAdapter ? ENTRY_ADAPTER : STDIN_ADAPTER);
-        var runtimes = new ScriptRuntimeResolver(ExecutionOperatingSystem.LINUX, adapters);
-        var configuration = new ExecutionToolConfiguration(
-                ExecutionEnvironmentRef.empty(),
-                new SandboxProfileRef("sandbox", "1"),
-                Duration.ofSeconds(5),
-                Duration.ofSeconds(10),
-                4096,
-                100,
-                1,
-                false,
-                runtimes,
-                ignored -> {},
-                value -> value);
-        return new ExecutionToolProvider(
-                broker,
-                () -> "execution-id",
-                () -> NOW,
-                ignored -> new ExecutionInvocationScopeResolver.ExecutionInvocationScope(
-                        new WorkspaceId("workspace"), capabilities),
-                configuration,
-                validator);
+        return provider(broker, capabilities, validator, entryFileAdapter ? ENTRY_ADAPTER : stdinRuntime());
     }
 
     private static ExecutionBroker brokerCapturing(AtomicReference<ExecutionRequest> captured) {
-        return new ExecutionBroker() {
-            @Override
-            public ExecutionResult execute(ExecutionRequest request) {
-                captured.set(request);
-                return exited(request.id(), 0);
-            }
-
-            @Override
-            public boolean cancel(ExecutionId id) {
-                return false;
-            }
-
-            @Override
-            public Optional<ExecutionResult> find(ExecutionId id) {
-                return Optional.empty();
-            }
-        };
+        return broker(
+                request -> {
+                    captured.set(request);
+                    return exited(request.id(), 0);
+                },
+                false);
     }
 
     private static ExecutionBroker brokerFailing() {
-        return new ExecutionBroker() {
-            @Override
-            public ExecutionResult execute(ExecutionRequest request) {
-                throw new IllegalStateException("execution survived failure");
-            }
-
-            @Override
-            public boolean cancel(ExecutionId id) {
-                return false;
-            }
-
-            @Override
-            public Optional<ExecutionResult> find(ExecutionId id) {
-                return Optional.empty();
-            }
-        };
-    }
-
-    private static ExecutionResult exited(ExecutionId id, int exitCode) {
-        var output = new ExecutionOutput("ok", null, 2, "0".repeat(64), false, false);
-        var empty = new ExecutionOutput("", null, 0, "0".repeat(64), false, false);
-        return new ExecutionResult(
-                id,
-                ExecutionStatus.EXITED,
-                exitCode,
-                NOW,
-                NOW.plusMillis(10),
-                output,
-                empty,
-                "sandbox-session",
-                new ResourceUsageSummary(Duration.ofMillis(10), 1),
-                null,
+        return broker(
+                request -> {
+                    throw new IllegalStateException("execution survived failure");
+                },
                 false);
     }
 
@@ -618,21 +521,6 @@ class TrustedSkillEntryFileExecutionTest {
                 "test",
                 false,
                 Set.of());
-    }
-
-    private static ToolInvocationRequest invocation(FrozenToolBinding binding) {
-        return new ToolInvocationRequest(
-                binding,
-                new ToolCallId("entry-call-1"),
-                new AgentRunId("entry-run-1"),
-                new TenantRef("public"),
-                new PrincipalRef("default-public-user", "user"),
-                new ToolArguments("fixture.entry.input", "1.0.0", Map.of("value", "MODEL_VALUE")),
-                NOW.plus(Duration.ofMinutes(2)),
-                Optional.of("entry-invocation-1"),
-                () -> false,
-                Map.of(),
-                ToolInvocationObserver.noop());
     }
 
     private static byte[] bytesOf(List<TrustedSkillScriptPackageDirectory.PackageFile> files, String relativePath) {
