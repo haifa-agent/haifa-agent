@@ -974,6 +974,163 @@ class Tui4jTerminalViewTest {
         assertThat(rendered).contains("THINKING (3s)").contains("esc interrupt").contains("new output below");
     }
 
+    @Test
+    void rendersUserMessageAsLeftBorderCardWithoutEnclosingBoxLines() {
+        TerminalUiState base = TerminalUiState.initial(80, 24);
+        TerminalUiState state = new TerminalUiState(
+                base.header(),
+                base.loadedResources(),
+                List.of(item(
+                        "u-1",
+                        TranscriptItem.Kind.USER,
+                        "You",
+                        "Please fix the flaky test\nand check git status",
+                        "SENT",
+                        true)),
+                base.pending(),
+                base.status(),
+                base.editorBuffer(),
+                base.editorCursor(),
+                base.selector(),
+                base.footer(),
+                80,
+                24,
+                base.session(),
+                base.currentRunId(),
+                base.appliedCursor(),
+                base.seenEventIds(),
+                base.recoverableError(),
+                base.exitRequested());
+
+        String content = view.transcriptContent(state);
+        List<String> lines = content.lines().toList();
+
+        assertThat(lines).hasSize(3);
+        assertThat(lines.get(0)).startsWith("│ ❯ You");
+        assertThat(lines.get(1)).startsWith("│ Please fix the flaky test");
+        assertThat(lines.get(2)).startsWith("│ and check git status");
+
+        // Cell layout contract: every card line must have cell width equal to mainWidth (80)
+        for (String line : lines) {
+            assertThat(TextWidth.measureCellWidth(line)).isEqualTo(80);
+        }
+
+        // Viewport height preservation: no enclosing top/bottom borders or extra blank framing
+        assertThat(content).doesNotContain("┌", "└", "─", "━");
+    }
+
+    @Test
+    void rendersErrorMessageAsLeftBorderCardWithDualCuesAndPreservedDiagnostics() {
+        TerminalUiState base = TerminalUiState.initial(80, 24);
+        TerminalUiState state = new TerminalUiState(
+                base.header(),
+                base.loadedResources(),
+                List.of(item(
+                        "e-1",
+                        TranscriptItem.Kind.ERROR,
+                        "Process timeout",
+                        "Subprocess timed out after 30000ms\nExit code: -1",
+                        "FAILED",
+                        true)),
+                base.pending(),
+                base.status(),
+                base.editorBuffer(),
+                base.editorCursor(),
+                base.selector(),
+                base.footer(),
+                80,
+                24,
+                base.session(),
+                base.currentRunId(),
+                base.appliedCursor(),
+                base.seenEventIds(),
+                base.recoverableError(),
+                base.exitRequested());
+
+        String content = view.transcriptContent(state);
+        List<String> lines = content.lines().toList();
+
+        assertThat(lines).hasSize(3);
+        assertThat(lines.get(0)).startsWith("│ ✖ Error · Process timeout [failed]");
+        assertThat(lines.get(1)).startsWith("│ Subprocess timed out after 30000ms");
+        assertThat(lines.get(2)).startsWith("│ Exit code: -1");
+
+        for (String line : lines) {
+            assertThat(TextWidth.measureCellWidth(line)).isEqualTo(80);
+        }
+
+        assertThat(content).doesNotContain("┌", "└", "─", "━");
+    }
+
+    @Test
+    void degradesLeftBorderToSingleSpaceIndentInNarrowMode() {
+        TerminalUiState base = TerminalUiState.initial(36, 20);
+        TerminalUiState state = new TerminalUiState(
+                base.header(),
+                base.loadedResources(),
+                List.of(item("u-1", TranscriptItem.Kind.USER, "You", "Narrow terminal check", "SENT", true)),
+                base.pending(),
+                base.status(),
+                base.editorBuffer(),
+                base.editorCursor(),
+                base.selector(),
+                base.footer(),
+                36,
+                20,
+                base.session(),
+                base.currentRunId(),
+                base.appliedCursor(),
+                base.seenEventIds(),
+                base.recoverableError(),
+                base.exitRequested());
+
+        String content = view.transcriptContent(state);
+        List<String> lines = content.lines().toList();
+
+        assertThat(lines).hasSize(2);
+        // In narrow mode (< 40 cols), left vertical bar degrades to a single space
+        assertThat(lines.get(0)).startsWith(" ❯ You").doesNotStartWith("│");
+        assertThat(lines.get(1)).startsWith(" Narrow terminal check").doesNotStartWith("│");
+
+        for (String line : lines) {
+            assertThat(TextWidth.measureCellWidth(line)).isEqualTo(36);
+        }
+    }
+
+    @Test
+    void handlesMultilingualAndWideCharactersWithoutCellOverflow() {
+        TerminalUiState base = TerminalUiState.initial(80, 24);
+        TerminalUiState state = new TerminalUiState(
+                base.header(),
+                base.loadedResources(),
+                List.of(item("u-1", TranscriptItem.Kind.USER, "You", "用户需求：重构终端卡片渲染 🚀 包含 CJK 宽字符", "SENT", true)),
+                base.pending(),
+                base.status(),
+                base.editorBuffer(),
+                base.editorCursor(),
+                base.selector(),
+                base.footer(),
+                80,
+                24,
+                base.session(),
+                base.currentRunId(),
+                base.appliedCursor(),
+                base.seenEventIds(),
+                base.recoverableError(),
+                base.exitRequested());
+
+        String content = view.transcriptContent(state);
+        List<String> lines = content.lines().toList();
+
+        assertThat(lines).hasSize(2);
+        assertThat(lines.get(0)).startsWith("│ ❯ You");
+        assertThat(lines.get(1)).contains("用户需求：重构终端卡片渲染");
+
+        for (String line : lines) {
+            assertThat(TextWidth.measureCellWidth(line)).isEqualTo(80);
+        }
+    }
+
     private TranscriptItem item(
             String id, TranscriptItem.Kind kind, String title, String body, String status, boolean expanded) {
         return new TranscriptItem(id, kind, title, body, status, expanded);

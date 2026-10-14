@@ -89,4 +89,52 @@ class Tui4jTerminalThemeTest {
             assertThat(markdownStyles).contains("\u001B[");
         }
     }
+
+    @Test
+    void rendersUserAndErrorCardLinesWithAppropriateBordersAndNoColorGrace() {
+        renderer.setColorProfile(ColorProfile.Ascii);
+        renderer.setHasDarkBackground(false);
+
+        String userHeaderNormal = theme.userCardLine("❯ You          ", false, true);
+        String userBodyNormal = theme.userCardLine("Fix retry loop ", false, false);
+        String userHeaderNarrow = theme.userCardLine("❯ You          ", true, true);
+        String errorHeaderNormal = theme.errorCardLine("✖ Error · Failed", false, true);
+        String errorHeaderNarrow = theme.errorCardLine("✖ Error · Failed", true, true);
+
+        assertThat(userHeaderNormal).isEqualTo("│ ❯ You           ");
+        assertThat(userBodyNormal).isEqualTo("│ Fix retry loop  ");
+        assertThat(userHeaderNarrow).isEqualTo(" ❯ You           ");
+        assertThat(errorHeaderNormal).isEqualTo("│ ✖ Error · Failed ");
+        assertThat(errorHeaderNarrow).isEqualTo(" ✖ Error · Failed ");
+
+        assertThat(userHeaderNormal).doesNotContain("\u001B");
+        assertThat(errorHeaderNormal).doesNotContain("\u001B");
+    }
+
+    @Test
+    void stylesUserAndErrorCardLinesWithAdaptiveTrueColorAndClosesSequences() {
+        for (boolean dark : new boolean[] {true, false}) {
+            renderer.setColorProfile(ColorProfile.TrueColor);
+            renderer.setHasDarkBackground(dark);
+
+            String userHeader = theme.userCardLine("❯ You", false, true);
+            String userBody = theme.userCardLine("Fix loop", false, false);
+            String errorHeader = theme.errorCardLine("✖ Error", false, true);
+            String errorBody = theme.errorCardLine("Broken", false, false);
+
+            assertThat(userHeader).contains("\u001B[").isNotEqualTo(userBody);
+            assertThat(errorHeader).contains("\u001B[").isNotEqualTo(errorBody);
+            assertThat(userHeader).isNotEqualTo(errorHeader);
+
+            assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(userHeader))
+                    .isEqualTo("│ ❯ You ");
+            assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(errorHeader))
+                    .isEqualTo("│ ✖ Error ");
+
+            String subtle = theme.borderSubtle("│");
+            assertThat(subtle).contains("\u001B[");
+            assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(subtle))
+                    .isEqualTo("│");
+        }
+    }
 }
