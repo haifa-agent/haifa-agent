@@ -978,6 +978,60 @@ class Tui4jCodingTerminalModelTest {
         assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("model-provider");
     }
 
+    @Test
+    void opensCommandPaletteWhenTriggeredByShortcut() {
+        var fixture = fixture();
+
+        fixture.model.update(key(KeyType.keyDLE));
+
+        assertThat(fixture.controller.state().selector()).isPresent();
+        assertThat(fixture.controller.state().selector().get().title()).isEqualTo("Commands");
+    }
+
+    @Test
+    void togglesSidebarUsingLeaderKeyCombination() {
+        var fixture = fixture();
+        boolean initialVisible = fixture.controller.state().sidebarVisible();
+
+        fixture.model.update(key(KeyType.keyCAN));
+        fixture.model.update(runes('b'));
+        fixture.controller.drainEvents();
+
+        assertThat(fixture.controller.state().sidebarVisible()).isEqualTo(!initialVisible);
+
+        fixture.model.update(key(KeyType.keyCAN));
+        fixture.model.update(runes('b'));
+        fixture.controller.drainEvents();
+
+        assertThat(fixture.controller.state().sidebarVisible()).isEqualTo(initialVisible);
+    }
+
+    @Test
+    void externalEditorUpdatesEditorBufferViaLeaderE() {
+        var fixture = fixture();
+        fixture.model.setExternalEditorLauncher((draft, onSaved) -> onSaved.accept(draft + " edited-externally"));
+        fixture.model.update(new PasteMessage("draft-code"));
+
+        fixture.model.update(key(KeyType.keyCAN));
+        fixture.model.update(runes('e'));
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("draft-code edited-externally");
+    }
+
+    @Test
+    void leaderKeyTimesOutAfterInactivity() {
+        AtomicLong clock = new AtomicLong(1_000_000_000L);
+        var fixture = fixture(clock::get);
+        boolean initialVisible = fixture.controller.state().sidebarVisible();
+
+        fixture.model.update(key(KeyType.keyCAN));
+        clock.addAndGet(2_000_000_000L); // 2 seconds > 1500ms timeout
+        fixture.model.update(runes('b'));
+        fixture.controller.drainEvents();
+
+        assertThat(fixture.controller.state().sidebarVisible()).isEqualTo(initialVisible);
+    }
+
     private Fixture fixture() {
         return fixture(System::nanoTime);
     }

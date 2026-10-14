@@ -690,6 +690,18 @@ public final class CodingTerminalController implements AutoCloseable {
             openCompletionSelector(input.text(), input.cursor());
             return;
         }
+        if (input.kind() == TerminalInput.Kind.COMMAND_PALETTE) {
+            openCommandSelector();
+            return;
+        }
+        if (input.kind() == TerminalInput.Kind.CYCLE_MODEL_NEXT) {
+            cycleModel(1);
+            return;
+        }
+        if (input.kind() == TerminalInput.Kind.CYCLE_MODEL_PREVIOUS) {
+            cycleModel(-1);
+            return;
+        }
         if (input.kind() == TerminalInput.Kind.CANCEL_OR_CLOSE) {
             if (state.currentRunId().isPresent() && cancelCurrentRunIfPresent()) {
                 return;
@@ -1714,7 +1726,7 @@ public final class CodingTerminalController implements AutoCloseable {
                 0)));
     }
 
-    private void openCommandSelector() {
+    public void openCommandSelector() {
         completionContext = new CompletionContext("", 0, 0);
         apply(new TerminalUiAction.SelectorOpened(
                 new TerminalSelector("completion", "Commands", TerminalCompletionProvider.COMMANDS, 0)));
@@ -2287,6 +2299,38 @@ public final class CodingTerminalController implements AutoCloseable {
                                     existing.providerId(), existing.providerDisplayName(), existing.modelCount() + 1));
         }
         return List.copyOf(grouped.values());
+    }
+
+    public void cycleModel(int delta) {
+        if (modelOptions.isEmpty()) {
+            try {
+                modelOptions = List.copyOf(client.models());
+            } catch (RuntimeException e) {
+                apply(new TerminalUiAction.RecoverableFailure("MODEL_LIST_EMPTY"));
+                return;
+            }
+        }
+        if (modelOptions.isEmpty()) {
+            apply(new TerminalUiAction.RecoverableFailure("MODEL_LIST_EMPTY"));
+            return;
+        }
+        String currentModelId = state.session()
+                .map(s -> s.model().model().id())
+                .orElse(pendingNewSessionModelId);
+        int currentIndex = -1;
+        for (int i = 0; i < modelOptions.size(); i++) {
+            if (modelOptions.get(i).id().equals(currentModelId)) {
+                currentIndex = i;
+                break;
+            }
+        }
+        int nextIndex;
+        if (currentIndex < 0) {
+            nextIndex = delta >= 0 ? 0 : modelOptions.size() - 1;
+        } else {
+            nextIndex = Math.floorMod(currentIndex + delta, modelOptions.size());
+        }
+        confirmModelSelection(modelOptions.get(nextIndex));
     }
 
     private void confirmModelSelection(CodingModelOption option) {

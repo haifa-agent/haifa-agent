@@ -471,6 +471,28 @@ public final class TerminalUiReducer {
                     state.recoverableError(),
                     true);
         }
+        if (action instanceof TerminalUiAction.SidebarToggled) {
+            return new TerminalUiState(
+                    state.header(),
+                    state.loadedResources(),
+                    state.transcript(),
+                    state.pending(),
+                    state.status(),
+                    state.editorBuffer(),
+                    state.editorCursor(),
+                    state.selector(),
+                    state.footer(),
+                    state.columns(),
+                    state.rows(),
+                    state.session(),
+                    state.currentRunId(),
+                    state.appliedCursor(),
+                    state.seenEventIds(),
+                    state.recoverableError(),
+                    state.activity(),
+                    state.exitRequested(),
+                    !state.sidebarVisible());
+        }
         throw new IllegalArgumentException("Unsupported Terminal UI action");
     }
 
@@ -1233,6 +1255,7 @@ public final class TerminalUiReducer {
                 seen,
                 error,
                 activity,
-                exit);
+                exit,
+                state.sidebarVisible());
     }
 }

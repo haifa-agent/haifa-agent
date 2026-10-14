@@ -12,7 +12,11 @@ record TerminalShortcutProfile(
         String toggleExpansion,
         String followUp,
         String restoreQueuedMessage,
-        String newline) {
+        String newline,
+        String leader,
+        String commandPalette,
+        String modelCycle,
+        String sidebarToggle) {
     TerminalShortcutProfile {
         style = Objects.requireNonNull(style, "style must not be null");
         interrupt = required(interrupt, "interrupt");
@@ -21,17 +25,42 @@ record TerminalShortcutProfile(
         followUp = required(followUp, "followUp");
         restoreQueuedMessage = required(restoreQueuedMessage, "restoreQueuedMessage");
         newline = required(newline, "newline");
+        leader = required(leader, "leader");
+        commandPalette = required(commandPalette, "commandPalette");
+        modelCycle = required(modelCycle, "modelCycle");
+        sidebarToggle = required(sidebarToggle, "sidebarToggle");
     }
 
     static TerminalShortcutProfile standard() {
         return new TerminalShortcutProfile(
-                Style.STANDARD, "esc", "ctrl+c", "ctrl+o", "alt+enter", "alt+up", "shift+enter/ctrl+j");
+                Style.STANDARD,
+                "esc",
+                "ctrl+c",
+                "ctrl+o",
+                "alt+enter",
+                "alt+up",
+                "shift+enter/ctrl+j",
+                "ctrl+x",
+                "ctrl+p",
+                "f2",
+                "ctrl+x b");
     }
 
     static TerminalShortcutProfile forHost(TerminalHostInfo host) {
         Objects.requireNonNull(host, "host must not be null");
         if (host.operatingSystem() != TerminalHostInfo.OperatingSystem.MACOS) return standard();
-        return new TerminalShortcutProfile(Style.MAC_SPECIAL, "esc", "⌃C", "⌃O", "⌥↩", "⌥↑", "⇧↩/⌃J");
+        return new TerminalShortcutProfile(
+                Style.MAC_SPECIAL,
+                "esc",
+                "⌃C",
+                "⌃O",
+                "⌥↩",
+                "⌥↑",
+                "⇧↩/⌃J",
+                "⌃X",
+                "⌃P",
+                "F2",
+                "⌃X B");
     }
 
     boolean matchesToggleExpansion(KeyPressMessage key) {
@@ -44,6 +73,22 @@ record TerminalShortcutProfile(
 
     boolean matchesRestoreQueuedMessage(KeyPressMessage key) {
         return key.alt() && key.type() == KeyType.KeyUp;
+    }
+
+    boolean matchesLeader(KeyPressMessage key) {
+        return key.type() == KeyType.keyCAN;
+    }
+
+    boolean matchesCommandPalette(KeyPressMessage key) {
+        return key.type() == KeyType.keyDLE;
+    }
+
+    boolean matchesModelCycleNext(KeyPressMessage key) {
+        return key.type() == KeyType.KeyF2 && !key.alt();
+    }
+
+    boolean matchesModelCyclePrevious(KeyPressMessage key) {
+        return (key.type() == KeyType.KeyF2 && key.alt()) || key.type() == KeyType.KeyF14;
     }
 
     private static String required(String value, String name) {

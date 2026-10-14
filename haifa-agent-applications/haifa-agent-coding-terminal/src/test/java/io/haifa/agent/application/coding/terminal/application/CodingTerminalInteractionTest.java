@@ -9,6 +9,7 @@ import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiReducer;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
 import io.haifa.agent.application.project.product.ProjectProductException;
+import io.haifa.agent.application.project.product.coding.CodingModelOption;
 import io.haifa.agent.application.project.product.coding.CodingWorkspaceView;
 import io.haifa.agent.runtime.api.InteractionAction;
 import io.haifa.agent.runtime.api.InteractionView;
@@ -502,5 +503,32 @@ class CodingTerminalInteractionTest {
         assertThat(controller.state().selector()).isPresent();
         assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("completion");
         assertThat(controller.state().selector().orElseThrow().title()).isEqualTo("Commands");
+    }
+
+    @Test
+    void commandPaletteInputOpensTheCommandsSelector() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        var controller = controller(client);
+
+        controller.accept(input(TerminalInput.Kind.COMMAND_PALETTE, ""));
+
+        assertThat(controller.state().selector()).isPresent();
+        assertThat(controller.state().selector().orElseThrow().title()).isEqualTo("Commands");
+    }
+
+    @Test
+    void cycleModelNextAndPreviousSwitchesModelSelection() {
+        CodingModelOption model1 = model("deepseek-chat", "DeepSeek Chat");
+        CodingModelOption model2 = model("claude-sonnet", "Claude Sonnet");
+        FakeClient client = new FakeClient(view(Optional.empty(), 0, "session", model1));
+        client.models = List.of(model1, model2);
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+
+        controller.accept(input(TerminalInput.Kind.CYCLE_MODEL_NEXT, ""));
+        assertThat(client.selectedModelId).isEqualTo("claude-sonnet");
+
+        controller.accept(input(TerminalInput.Kind.CYCLE_MODEL_PREVIOUS, ""));
+        assertThat(client.selectedModelId).isEqualTo("deepseek-chat");
     }
 }

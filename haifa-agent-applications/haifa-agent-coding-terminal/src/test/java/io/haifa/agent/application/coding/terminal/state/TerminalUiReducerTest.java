@@ -1093,6 +1093,18 @@ class TerminalUiReducerTest {
         assertThat(state.footer().model()).endsWith(" · [登录已失效，请重新认证]");
     }
 
+    @Test
+    void sidebarToggledInvertsSidebarVisibility() {
+        TerminalUiState wide = TerminalUiState.initial(120, 40);
+        assertThat(wide.sidebarVisible()).isTrue();
+
+        TerminalUiState toggledOff = reducer.reduce(wide, new TerminalUiAction.SidebarToggled());
+        assertThat(toggledOff.sidebarVisible()).isFalse();
+
+        TerminalUiState toggledOn = reducer.reduce(toggledOff, new TerminalUiAction.SidebarToggled());
+        assertThat(toggledOn.sidebarVisible()).isTrue();
+    }
+
     private static AgentRunEvent event(long sequence, String id, AgentRunEvent.Payload payload) {
         return event(sequence, id, payload, Instant.parse("2026-07-27T00:00:00Z"));
     }
