@@ -412,6 +412,9 @@ public final class TerminalUiReducer {
             return copyWithTranscript(state, items);
         }
         if (action instanceof TerminalUiAction.TerminalResized resized) {
+            int newCols = Math.max(1, resized.columns());
+            int newRows = Math.max(1, resized.rows());
+            boolean sidebarVisible = state.sidebarExplicitlyToggled() ? state.sidebarVisible() : newCols >= 100;
             return copy(
                     state,
                     state.loadedResources(),
@@ -422,14 +425,17 @@ public final class TerminalUiReducer {
                     state.editorCursor(),
                     state.selector(),
                     state.footer(),
-                    Math.max(1, resized.columns()),
-                    Math.max(1, resized.rows()),
+                    newCols,
+                    newRows,
                     state.session(),
                     state.currentRunId(),
                     state.appliedCursor(),
                     state.seenEventIds(),
                     state.recoverableError(),
-                    state.exitRequested());
+                    state.activity(),
+                    state.exitRequested(),
+                    sidebarVisible,
+                    state.sidebarExplicitlyToggled());
         }
         if (action instanceof TerminalUiAction.RecoverableFailure failure) {
             return copy(
@@ -491,7 +497,8 @@ public final class TerminalUiReducer {
                     state.recoverableError(),
                     state.activity(),
                     state.exitRequested(),
-                    !state.sidebarVisible());
+                    !state.sidebarVisible(),
+                    true);
         }
         throw new IllegalArgumentException("Unsupported Terminal UI action");
     }
@@ -1237,6 +1244,50 @@ public final class TerminalUiReducer {
             Optional<String> error,
             TerminalActivity activity,
             boolean exit) {
+        return copy(
+                state,
+                resources,
+                transcript,
+                pending,
+                status,
+                buffer,
+                cursor,
+                selector,
+                footer,
+                columns,
+                rows,
+                session,
+                runId,
+                eventCursor,
+                seen,
+                error,
+                activity,
+                exit,
+                state.sidebarVisible(),
+                state.sidebarExplicitlyToggled());
+    }
+
+    private static TerminalUiState copy(
+            TerminalUiState state,
+            List<String> resources,
+            List<TranscriptItem> transcript,
+            List<PendingMessage> pending,
+            String status,
+            String buffer,
+            int cursor,
+            Optional<TerminalSelector> selector,
+            TerminalFooter footer,
+            int columns,
+            int rows,
+            Optional<io.haifa.agent.application.project.product.coding.CodingSessionView> session,
+            Optional<io.haifa.agent.core.run.AgentRunId> runId,
+            Optional<io.haifa.agent.runtime.api.RunEventCursor> eventCursor,
+            java.util.Set<String> seen,
+            Optional<String> error,
+            TerminalActivity activity,
+            boolean exit,
+            boolean sidebarVisible,
+            boolean sidebarExplicitlyToggled) {
         return new TerminalUiState(
                 state.header(),
                 resources,
@@ -1256,6 +1307,7 @@ public final class TerminalUiReducer {
                 error,
                 activity,
                 exit,
-                state.sidebarVisible());
+                sidebarVisible,
+                sidebarExplicitlyToggled);
     }
 }

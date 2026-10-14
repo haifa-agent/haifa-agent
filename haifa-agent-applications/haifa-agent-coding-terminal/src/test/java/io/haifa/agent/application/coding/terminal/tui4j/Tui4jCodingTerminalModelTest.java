@@ -1007,15 +1007,88 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
-    void externalEditorUpdatesEditorBufferViaLeaderE() {
+    void leaderEInformsUserThatExternalEditorIsDeferred() {
         var fixture = fixture();
-        fixture.model.setExternalEditorLauncher((draft, onSaved) -> onSaved.accept(draft + " edited-externally"));
         fixture.model.update(new PasteMessage("draft-code"));
 
         fixture.model.update(key(KeyType.keyCAN));
         fixture.model.update(runes('e'));
+        fixture.controller.drainEvents();
 
-        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("draft-code edited-externally");
+        assertThat(fixture.controller.state().status()).isEqualTo("External editor deferred in this version");
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("draft-code");
+    }
+
+    @Test
+    void approvalDialogRejectsLeaderKeysAndDoesNotAccidentallySubmit() {
+        var fixture = fixture();
+        fixture.pump.offer(new TerminalUiAction.SelectorOpened(
+                new TerminalSelector("interaction:approval-1", "Approval", List.of("reject", "approve"), 1)));
+        fixture.controller.drainEvents();
+
+        assertThat(fixture.controller.state().selector()).isPresent();
+        assertThat(fixture.controller.state().selector().orElseThrow().selected())
+                .isEqualTo(1);
+
+        fixture.model.update(key(KeyType.keyCAN));
+        fixture.model.update(runes('m'));
+        fixture.controller.drainEvents();
+
+        assertThat(fixture.controller.state().selector()).isPresent();
+        assertThat(fixture.controller.state().selector().orElseThrow().title()).isEqualTo("Approval");
+        assertThat(fixture.controller.state().selector().orElseThrow().selected())
+                .isEqualTo(1);
+    }
+
+    @Test
+    void commandPaletteAndLeaderActionsPreserveDraftAndPastedContent() {
+        var fixture = fixture();
+        String largeContent = "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7";
+        fixture.model.update(new PasteMessage(largeContent));
+        String originalBuffer = fixture.controller.state().editorBuffer();
+        assertThat(originalBuffer).startsWith("[Pasted #1 ~7 lines]");
+
+        fixture.model.update(key(KeyType.keyDLE));
+        assertThat(fixture.controller.state().selector()).isPresent();
+        assertThat(fixture.controller.state().selector().orElseThrow().kind()).isEqualTo("command-palette");
+
+        fixture.model.update(key(KeyType.keyESC));
+        assertThat(fixture.controller.state().selector()).isEmpty();
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo(originalBuffer);
+
+        fixture.model.update(key(KeyType.keyCAN));
+        fixture.model.update(runes('s'));
+        fixture.controller.drainEvents();
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo(originalBuffer);
+        fixture.model.update(key(KeyType.keyESC));
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo(originalBuffer);
+    }
+
+    @Test
+    void leaderRenamePromptPreservesDraftAndCancelsOnEsc() {
+        var fixture = fixture();
+        fixture.model.update(new PasteMessage("my draft before rename"));
+
+        fixture.model.update(key(KeyType.keyCAN));
+        fixture.model.update(runes('r'));
+        fixture.controller.drainEvents();
+
+        assertThat(fixture.controller.state().status()).isEqualTo("No active session to rename");
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("my draft before rename");
+    }
+
+    @Test
+    void f2ModelCyclingBlockedDuringActiveRun() {
+        var fixture = fixture();
+        fixture.pump.offer(new TerminalUiAction.RunEventReceived(
+                event(1, new RunEventPayloads.RunLifecycle("RUNNING", 1, "NONE"))));
+        fixture.controller.drainEvents();
+
+        fixture.model.update(key(KeyType.KeyF2));
+        fixture.controller.drainEvents();
+
+        assertThat(fixture.controller.state().status()).isEqualTo("Cannot switch model during active run");
     }
 
     @Test

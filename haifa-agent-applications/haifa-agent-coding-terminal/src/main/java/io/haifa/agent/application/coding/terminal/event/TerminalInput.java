@@ -19,7 +19,8 @@ public record TerminalInput(Kind kind, String text, int cursor) {
         EOF,
         COMMAND_PALETTE,
         CYCLE_MODEL_NEXT,
-        CYCLE_MODEL_PREVIOUS
+        CYCLE_MODEL_PREVIOUS,
+        EXECUTE_COMMAND
     }
 
     public TerminalInput {

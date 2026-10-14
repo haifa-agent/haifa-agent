@@ -50,17 +50,7 @@ record TerminalShortcutProfile(
         Objects.requireNonNull(host, "host must not be null");
         if (host.operatingSystem() != TerminalHostInfo.OperatingSystem.MACOS) return standard();
         return new TerminalShortcutProfile(
-                Style.MAC_SPECIAL,
-                "esc",
-                "⌃C",
-                "⌃O",
-                "⌥↩",
-                "⌥↑",
-                "⇧↩/⌃J",
-                "⌃X",
-                "⌃P",
-                "F2",
-                "⌃X B");
+                Style.MAC_SPECIAL, "esc", "⌃C", "⌃O", "⌥↩", "⌥↑", "⇧↩/⌃J", "⌃X", "⌃P", "F2", "⌃X B");
     }
 
     boolean matchesToggleExpansion(KeyPressMessage key) {

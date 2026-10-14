@@ -1105,6 +1105,25 @@ class TerminalUiReducerTest {
         assertThat(toggledOn.sidebarVisible()).isTrue();
     }
 
+    @Test
+    void resizingNarrowStartupToWideExpandsSidebarAutomaticallyIfNotExplicitlyToggled() {
+        TerminalUiState narrow = TerminalUiState.initial(80, 24);
+        assertThat(narrow.sidebarVisible()).isFalse();
+        assertThat(narrow.sidebarExplicitlyToggled()).isFalse();
+
+        TerminalUiState wideResized = reducer.reduce(narrow, new TerminalUiAction.TerminalResized(120, 40));
+        assertThat(wideResized.sidebarVisible()).isTrue();
+        assertThat(wideResized.sidebarExplicitlyToggled()).isFalse();
+
+        TerminalUiState toggledOff = reducer.reduce(wideResized, new TerminalUiAction.SidebarToggled());
+        assertThat(toggledOff.sidebarVisible()).isFalse();
+        assertThat(toggledOff.sidebarExplicitlyToggled()).isTrue();
+
+        TerminalUiState wideAgain = reducer.reduce(toggledOff, new TerminalUiAction.TerminalResized(140, 45));
+        assertThat(wideAgain.sidebarVisible()).isFalse();
+        assertThat(wideAgain.sidebarExplicitlyToggled()).isTrue();
+    }
+
     private static AgentRunEvent event(long sequence, String id, AgentRunEvent.Payload payload) {
         return event(sequence, id, payload, Instant.parse("2026-07-27T00:00:00Z"));
     }

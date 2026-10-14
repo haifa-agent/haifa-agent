@@ -29,7 +29,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
+import java.util.Optional;
 import java.util.function.LongSupplier;
 
 /** Production tui4j adapter around the authoritative terminal Controller and Reducer state. */
@@ -53,7 +53,6 @@ final class Tui4jCodingTerminalModel implements Model {
     private final Map<String, String> pastedContent = new LinkedHashMap<>();
     private final LongSupplier monotonicNanos;
     private final boolean pollWindowSize;
-    private volatile ExternalEditorLauncher editorLauncher;
 
     private String transcriptContent = "";
     private List<TranscriptItem> renderedTranscript = List.of();
@@ -77,11 +76,11 @@ final class Tui4jCodingTerminalModel implements Model {
     private long leaderActivatedNanos;
 
     Tui4jCodingTerminalModel(CodingTerminalController controller, TerminalEventPump pump) {
-        this(controller, pump, System::nanoTime, null, ExternalEditorLauncher.system());
+        this(controller, pump, System::nanoTime, null);
     }
 
     Tui4jCodingTerminalModel(CodingTerminalController controller, TerminalEventPump pump, LongSupplier monotonicNanos) {
-        this(controller, pump, monotonicNanos, null, ExternalEditorLauncher.system());
+        this(controller, pump, monotonicNanos, null);
     }
 
     Tui4jCodingTerminalModel(
@@ -89,15 +88,6 @@ final class Tui4jCodingTerminalModel implements Model {
             TerminalEventPump pump,
             LongSupplier monotonicNanos,
             TerminalHostInfo hostInfo) {
-        this(controller, pump, monotonicNanos, hostInfo, ExternalEditorLauncher.system());
-    }
-
-    Tui4jCodingTerminalModel(
-            CodingTerminalController controller,
-            TerminalEventPump pump,
-            LongSupplier monotonicNanos,
-            TerminalHostInfo hostInfo,
-            ExternalEditorLauncher editorLauncher) {
         this.controller = controller;
         this.pump = pump;
         this.monotonicNanos = monotonicNanos;
@@ -105,7 +95,6 @@ final class Tui4jCodingTerminalModel implements Model {
                 hostInfo == null || hostInfo.operatingSystem() == TerminalHostInfo.OperatingSystem.WINDOWS;
         this.shortcuts =
                 hostInfo == null ? TerminalShortcutProfile.standard() : TerminalShortcutProfile.forHost(hostInfo);
-        this.editorLauncher = Objects.requireNonNull(editorLauncher, "editorLauncher must not be null");
         this.view = new Tui4jTerminalView(shortcuts);
         TerminalUiState state = controller.state();
         this.editorCursor = state.editorCursor();
@@ -117,10 +106,6 @@ final class Tui4jCodingTerminalModel implements Model {
         editor.setPrompt("┃ ");
         editor.setPlaceholder("Type a message, /command, @file, !command, or !!command");
         editor.focus();
-    }
-
-    void setExternalEditorLauncher(ExternalEditorLauncher editorLauncher) {
-        this.editorLauncher = Objects.requireNonNull(editorLauncher, "editorLauncher must not be null");
     }
 
     @Override
@@ -256,6 +241,16 @@ final class Tui4jCodingTerminalModel implements Model {
                 return Command.none();
             }
         }
+        TerminalUiState state = controller.state();
+        if (state.selector().isPresent()) {
+            leaderActivatedNanos = 0;
+            if ("completion".equals(state.selector().orElseThrow().kind()) && editCompletion(key)) {
+                return Command.none();
+            }
+            selectorKey(key);
+            return Command.none();
+        }
+
         if (shortcuts.matchesCommandPalette(key)) {
             controller.openCommandSelector();
             return Command.none();
@@ -270,8 +265,7 @@ final class Tui4jCodingTerminalModel implements Model {
         }
 
         long now = monotonicNanos.getAsLong();
-        boolean leaderPending = leaderActivatedNanos > 0
-                && (now - leaderActivatedNanos) <= LEADER_TIMEOUT_NANOS;
+        boolean leaderPending = leaderActivatedNanos > 0 && (now - leaderActivatedNanos) <= LEADER_TIMEOUT_NANOS;
         if (leaderActivatedNanos > 0 && !leaderPending) {
             leaderActivatedNanos = 0;
         }
@@ -295,35 +289,35 @@ final class Tui4jCodingTerminalModel implements Model {
                         return Command.none();
                     }
                     case 's' -> {
-                        controller.accept(new TerminalInput(TerminalInput.Kind.SUBMIT, "/session"));
+                        controller.accept(new TerminalInput(TerminalInput.Kind.EXECUTE_COMMAND, "/session"));
                         return Command.none();
                     }
                     case 'e' -> {
-                        openExternalEditor();
+                        pump.offer(new TerminalUiAction.StatusChanged("External editor deferred in this version"));
                         return Command.none();
                     }
                     case 'm' -> {
-                        controller.accept(new TerminalInput(TerminalInput.Kind.SUBMIT, "/model"));
+                        controller.accept(new TerminalInput(TerminalInput.Kind.EXECUTE_COMMAND, "/model"));
                         return Command.none();
                     }
                     case 'n' -> {
-                        controller.accept(new TerminalInput(TerminalInput.Kind.SUBMIT, "/new"));
+                        controller.accept(new TerminalInput(TerminalInput.Kind.EXECUTE_COMMAND, "/new"));
                         return Command.none();
                     }
                     case 'l' -> {
-                        controller.accept(new TerminalInput(TerminalInput.Kind.SUBMIT, "/resume"));
+                        controller.accept(new TerminalInput(TerminalInput.Kind.EXECUTE_COMMAND, "/resume"));
                         return Command.none();
                     }
                     case 'c' -> {
-                        controller.accept(new TerminalInput(TerminalInput.Kind.SUBMIT, "/compact"));
+                        controller.accept(new TerminalInput(TerminalInput.Kind.EXECUTE_COMMAND, "/compact"));
                         return Command.none();
                     }
                     case 'r' -> {
-                        controller.accept(new TerminalInput(TerminalInput.Kind.SUBMIT, "/rename"));
+                        controller.accept(new TerminalInput(TerminalInput.Kind.EXECUTE_COMMAND, "/rename"));
                         return Command.none();
                     }
                     case 'q' -> {
-                        controller.accept(new TerminalInput(TerminalInput.Kind.SUBMIT, "/quit"));
+                        controller.accept(new TerminalInput(TerminalInput.Kind.EXECUTE_COMMAND, "/quit"));
                         return Command.none();
                     }
                     default -> {
@@ -333,16 +327,8 @@ final class Tui4jCodingTerminalModel implements Model {
             }
         }
 
-        TerminalUiState state = controller.state();
         if (shortcuts.matchesToggleExpansion(key)) {
             accept(TerminalInput.Kind.TOGGLE_EXPANSION);
-            return Command.none();
-        }
-        if (state.selector().isPresent()) {
-            if ("completion".equals(state.selector().orElseThrow().kind()) && editCompletion(key)) {
-                return Command.none();
-            }
-            selectorKey(key);
             return Command.none();
         }
         if (shortcuts.matchesRestoreQueuedMessage(key)) {
@@ -595,6 +581,10 @@ final class Tui4jCodingTerminalModel implements Model {
     }
 
     private void selectorKey(KeyPressMessage key) {
+        if (shortcuts.matchesToggleExpansion(key)) {
+            accept(TerminalInput.Kind.TOGGLE_EXPANSION);
+            return;
+        }
         if (key.type() == KeyType.KeyUp) {
             accept(TerminalInput.Kind.SELECT_PREVIOUS);
         } else if (key.type() == KeyType.KeyDown) {
@@ -771,7 +761,11 @@ final class Tui4jCodingTerminalModel implements Model {
     }
 
     private void pruneStalePastes(String buffer) {
-        pastedContent.keySet().removeIf(token -> !buffer.contains(token));
+        Optional<String> preserved = controller.preservedDraft();
+        pastedContent
+                .keySet()
+                .removeIf(token -> !buffer.contains(token)
+                        && preserved.map(p -> !p.contains(token)).orElse(true));
     }
 
     private String pastedTokenBefore(String buffer, int cursor) {
@@ -841,7 +835,8 @@ final class Tui4jCodingTerminalModel implements Model {
                 editor.setPlaceholder("Type a message, /command, @file, !command, or !!command");
                 secretPresentation = false;
             }
-            boolean isShell = state.editorBuffer().startsWith("!") || state.editorBuffer().startsWith("!!");
+            boolean isShell =
+                    state.editorBuffer().startsWith("!") || state.editorBuffer().startsWith("!!");
             editor.setPrompt(isShell ? "! " : "┃ ");
             if (!editor.value().equals(state.editorBuffer())) {
                 synchronizeEditor(state.editorBuffer(), state.editorCursor());
@@ -856,9 +851,8 @@ final class Tui4jCodingTerminalModel implements Model {
             editor.focus();
         }
 
-        int effectiveTranscriptColumns = (state.sidebarVisible() && state.columns() >= 100)
-                ? state.columns() - 42
-                : state.columns();
+        int effectiveTranscriptColumns =
+                (state.sidebarVisible() && state.columns() >= 100) ? state.columns() - 42 : state.columns();
         boolean transcriptChanged =
                 renderedTranscript != state.transcript() || renderedTranscriptColumns != effectiveTranscriptColumns;
         if (transcriptChanged) {
@@ -937,47 +931,6 @@ final class Tui4jCodingTerminalModel implements Model {
             }
         });
         return safe.toString();
-    }
-
-    private void openExternalEditor() {
-        String current = controller.state().editorBuffer();
-        editorLauncher.edit(current, updated -> {
-            replaceEditor(updated, updated.length());
-        });
-    }
-
-    @FunctionalInterface
-    interface ExternalEditorLauncher {
-        void edit(String currentText, java.util.function.Consumer<String> onSaved);
-
-        static ExternalEditorLauncher system() {
-            return (currentText, onSaved) -> {
-                String editor = System.getenv("EDITOR");
-                if (editor == null || editor.isBlank()) {
-                    editor = System.getenv("VISUAL");
-                }
-                if (editor == null || editor.isBlank()) {
-                    editor = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("win")
-                            ? "notepad"
-                            : "nano";
-                }
-                try {
-                    java.nio.file.Path temp = java.nio.file.Files.createTempFile("haifa-editor-", ".md");
-                    java.nio.file.Files.writeString(temp, currentText, java.nio.charset.StandardCharsets.UTF_8);
-                    Process process = new ProcessBuilder(editor, temp.toAbsolutePath().toString())
-                            .inheritIO()
-                            .start();
-                    int exitCode = process.waitFor();
-                    if (exitCode == 0) {
-                        String updated = java.nio.file.Files.readString(temp, java.nio.charset.StandardCharsets.UTF_8);
-                        onSaved.accept(updated);
-                    }
-                    java.nio.file.Files.deleteIfExists(temp);
-                } catch (Exception e) {
-                    // Gracefully ignore editor failure
-                }
-            };
-        }
     }
 
     record PollMessage() implements Message {}

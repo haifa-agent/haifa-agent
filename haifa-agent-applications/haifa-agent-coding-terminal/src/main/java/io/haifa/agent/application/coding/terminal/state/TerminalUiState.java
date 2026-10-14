@@ -27,7 +27,8 @@ public record TerminalUiState(
         Optional<String> recoverableError,
         TerminalActivity activity,
         boolean exitRequested,
-        boolean sidebarVisible) {
+        boolean sidebarVisible,
+        boolean sidebarExplicitlyToggled) {
     public TerminalUiState {
         header = Objects.requireNonNull(header, "header must not be null");
         loadedResources = List.copyOf(loadedResources);
@@ -47,6 +48,49 @@ public record TerminalUiState(
         seenEventIds = Set.copyOf(seenEventIds);
         recoverableError = Objects.requireNonNull(recoverableError, "recoverableError must not be null");
         activity = Objects.requireNonNull(activity, "activity must not be null");
+    }
+
+    public TerminalUiState(
+            String header,
+            List<String> loadedResources,
+            List<TranscriptItem> transcript,
+            List<PendingMessage> pending,
+            String status,
+            String editorBuffer,
+            int editorCursor,
+            Optional<TerminalSelector> selector,
+            TerminalFooter footer,
+            int columns,
+            int rows,
+            Optional<CodingSessionView> session,
+            Optional<AgentRunId> currentRunId,
+            Optional<RunEventCursor> appliedCursor,
+            Set<String> seenEventIds,
+            Optional<String> recoverableError,
+            TerminalActivity activity,
+            boolean exitRequested,
+            boolean sidebarVisible) {
+        this(
+                header,
+                loadedResources,
+                transcript,
+                pending,
+                status,
+                editorBuffer,
+                editorCursor,
+                selector,
+                footer,
+                columns,
+                rows,
+                session,
+                currentRunId,
+                appliedCursor,
+                seenEventIds,
+                recoverableError,
+                activity,
+                exitRequested,
+                sidebarVisible,
+                false);
     }
 
     public TerminalUiState(
@@ -87,7 +131,8 @@ public record TerminalUiState(
                 recoverableError,
                 activity,
                 exitRequested,
-                columns >= 100);
+                columns >= 100,
+                false);
     }
 
     public TerminalUiState(
@@ -127,7 +172,8 @@ public record TerminalUiState(
                 recoverableError,
                 TerminalActivity.initial(),
                 exitRequested,
-                columns >= 100);
+                columns >= 100,
+                false);
     }
 
     public static TerminalUiState initial(int columns, int rows) {
@@ -156,6 +202,7 @@ public record TerminalUiState(
                 Optional.empty(),
                 TerminalActivity.initial(),
                 false,
-                columns >= 100);
+                columns >= 100,
+                false);
     }
 }

@@ -352,33 +352,61 @@ final class Tui4jTerminalView {
         if (secureInput) {
             return theme.muted(editorHint(state, secureInput, isUpdate, secureInputHint));
         }
-        boolean isShell = state.editorBuffer().startsWith("!") || state.editorBuffer().startsWith("!!");
+        boolean isShell =
+                state.editorBuffer().startsWith("!") || state.editorBuffer().startsWith("!!");
         String mode = isShell ? (state.editorBuffer().startsWith("!!") ? "Shell (silent)" : "Shell") : "Normal";
-        String model = state.footer().model().isBlank() ? "" : " · " + state.footer().model();
-        String provider = state.footer().provider().isBlank() ? "" : " (" + state.footer().provider() + ")";
-        return theme.muted("  " + mode + model + provider);
+        String model =
+                state.footer().model().isBlank() ? "" : " · " + state.footer().model();
+        String provider =
+                state.footer().provider().isBlank() ? "" : " (" + state.footer().provider() + ")";
+        String leftMeta = "  " + mode + model + provider;
+        String hint = editorHint(state, false, false, null);
+        int available = Math.max(1, state.columns() - 1);
+        int leftWidth = TextWidth.measureCellWidth(leftMeta);
+        int hintWidth = TextWidth.measureCellWidth(hint);
+        if (leftWidth + hintWidth + 4 <= available) {
+            int spaces = available - leftWidth - hintWidth;
+            return theme.muted(leftMeta + " ".repeat(spaces) + hint);
+        }
+        return theme.muted(leftMeta);
     }
 
-    private String renderBottomStatusLine(
-            TerminalUiState state, boolean newOutputPending, Duration activityElapsed) {
-        String left;
+    private String renderBottomStatusLine(TerminalUiState state, boolean newOutputPending, Duration activityElapsed) {
         String alert = newOutputPending ? theme.queued("new output below") : "";
+        String left;
         if (state.currentRunId().isPresent()) {
-            String act = timedActivityStatus(state.status(), activityElapsed, state.activity().label());
+            String act = timedActivityStatus(
+                    state.status(), activityElapsed, state.activity().label());
             left = theme.pending("⠋ " + act) + theme.muted(" · " + shortcuts.interrupt() + " interrupt");
-        } else {
-            String path = state.footer().project().isBlank() ? "" : state.footer().project();
-            if (path.isEmpty()) path = "Haifa Coding Agent";
-            left = theme.muted(path);
             if (!alert.isEmpty()) {
                 left = left + " · " + alert;
+            }
+        } else {
+            String opStatus = sanitize(state.status().strip());
+            boolean hasOpFeedback = !opStatus.isBlank()
+                    && !opStatus.equalsIgnoreCase("idle")
+                    && !(state.recoverableError().isPresent() && opStatus.equalsIgnoreCase("Recovery required"));
+            String path = state.footer().project().isBlank()
+                    ? "Haifa Coding Agent"
+                    : state.footer().project();
+            if (hasOpFeedback) {
+                left = theme.accent(opStatus);
+                if (!alert.isEmpty()) {
+                    left = left + " · " + alert;
+                }
+            } else {
+                left = theme.muted(path);
+                if (!alert.isEmpty()) {
+                    left = left + " · " + alert;
+                }
             }
         }
 
         int available = Math.max(1, state.columns() - 1);
-        int leftLen = TextWidth.measureCellWidth(left);
         String shortcutsHint = "[" + shortcuts.modelCycle() + "] models  [" + shortcuts.commandPalette() + "] commands";
         int shortcutsLen = TextWidth.measureCellWidth(shortcutsHint);
+        int leftLen = TextWidth.measureCellWidth(left);
+
         List<String> rightParts = new ArrayList<>();
         if (!state.footer().metrics().isBlank()) {
             int metricsLen = TextWidth.measureCellWidth(state.footer().metrics());
@@ -388,25 +416,24 @@ final class Tui4jTerminalView {
         }
         rightParts.add(shortcutsHint);
         String right = theme.muted(String.join(" · ", rightParts));
-
         int rightLen = TextWidth.measureCellWidth(right);
+
         if (leftLen + rightLen + 2 <= available) {
             int spaces = available - leftLen - rightLen;
             return left + " ".repeat(spaces) + right;
         }
 
-        if (!alert.isEmpty()) {
-            int alertLen = TextWidth.measureCellWidth(alert) + 3;
-            int maxPath = Math.max(3, available - rightLen - alertLen - 2);
-            String path = state.footer().project().isBlank() ? "Haifa Coding Agent" : state.footer().project();
-            String truncatedPath = Truncate.truncate(path, maxPath, "…");
-            left = theme.muted(truncatedPath) + " · " + alert;
-            int newLeftLen = TextWidth.measureCellWidth(left);
-            int spaces = Math.max(1, available - newLeftLen - rightLen);
+        right = theme.muted(shortcutsHint);
+        rightLen = shortcutsLen;
+        if (leftLen + rightLen + 2 <= available) {
+            int spaces = available - leftLen - rightLen;
             return left + " ".repeat(spaces) + right;
         }
 
         int maxLeft = Math.max(10, available - rightLen - 2);
+        if (maxLeft < leftLen && available > leftLen) {
+            return left;
+        }
         String truncatedLeft = Truncate.truncate(left, maxLeft, "…");
         int truncatedLeftLen = TextWidth.measureCellWidth(truncatedLeft);
         int spaces = Math.max(1, available - truncatedLeftLen - rightLen);

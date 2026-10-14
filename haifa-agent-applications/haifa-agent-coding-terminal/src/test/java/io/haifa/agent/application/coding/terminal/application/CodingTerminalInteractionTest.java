@@ -501,7 +501,7 @@ class CodingTerminalInteractionTest {
         controller.accept(input(TerminalInput.Kind.SUBMIT, "/command"));
 
         assertThat(controller.state().selector()).isPresent();
-        assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("completion");
+        assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("command-palette");
         assertThat(controller.state().selector().orElseThrow().title()).isEqualTo("Commands");
     }
 
