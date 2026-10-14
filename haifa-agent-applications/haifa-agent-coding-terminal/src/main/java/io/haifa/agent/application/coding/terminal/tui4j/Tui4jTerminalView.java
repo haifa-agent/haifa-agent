@@ -499,13 +499,27 @@ final class Tui4jTerminalView {
         }
         String body =
                 item.expanded() ? item.body() : item.body().lines().limit(5).collect(Collectors.joining("\n"));
-        String content =
-                title + "\n" + body.lines().map(value -> "  " + sanitize(value)).collect(Collectors.joining("\n"));
+        String content = title + "\n" + renderToolBody(item, body);
         if (item.expanded() && isToolLike(item)) {
             String metadata = metadata(item);
             if (!metadata.isBlank()) content = content + "\n" + theme.muted("  " + metadata);
         }
         return style(item, content);
+    }
+
+    private String renderToolBody(TranscriptItem item, String body) {
+        return body.lines()
+                .map(raw -> {
+                    String clean = sanitize(raw);
+                    if (isToolLike(item) && TerminalDiffHighlighter.isDiffLine(clean)) {
+                        return "  " + TerminalDiffHighlighter.highlightLine(theme, clean);
+                    }
+                    if (clean.startsWith(ToolBodyLines.OUTCOME_PREFIX + " UNKNOWN")) {
+                        return "  " + theme.warning(clean);
+                    }
+                    return "  " + clean;
+                })
+                .collect(Collectors.joining("\n"));
     }
 
     private String renderUserMessage(TranscriptItem item, int availableWidth) {
@@ -658,8 +672,9 @@ final class Tui4jTerminalView {
                 .orElse("");
     }
 
-    private static String metadata(TranscriptItem item) {
+    private String metadata(TranscriptItem item) {
         List<String> parts = new ArrayList<>();
+        parts.add(theme.toolBadge(ToolCategory.fromToolName(item.title())));
         item.durationMillis().ifPresent(value -> parts.add("Duration " + TerminalDurations.human(value)));
         long lines = item.body().lines().filter(line -> !line.isBlank()).count();
         if (lines > 0) parts.add(lines + (lines == 1 ? " line" : " lines"));
@@ -741,6 +756,7 @@ final class Tui4jTerminalView {
                 || TIMED_RUN_STATUSES.stream().anyMatch(candidate -> normalized.startsWith(candidate + " ("))) {
             return theme.pending(content);
         }
+        if (UNKNOWN_STATUSES.contains(normalized)) return theme.pending(content);
         if (ERROR_STATUSES.contains(normalized)) return theme.error(content);
         return content;
     }

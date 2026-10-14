@@ -126,4 +126,49 @@ class TerminalSyntaxHighlighterTest {
 
         assertThat(rendered).isEqualTo(code);
     }
+
+    @Test
+    void preservesNonBmpCharactersWithoutCorruptingSurrogates() {
+        String codeWithEmoji = "String message = \"🚀 rocket \uD83D\uDE00 smiling\"; // 🌟 star";
+        String highlighted = TerminalSyntaxHighlighter.highlight(theme, "java", codeWithEmoji);
+
+        assertThat(highlighted).contains("\u001B[");
+        assertThat(Strip.strip(highlighted)).isEqualTo(codeWithEmoji);
+
+        // Also test non-BMP code point directly in expression
+        String bareEmoji = "call(🚀);";
+        String highlightedBare = TerminalSyntaxHighlighter.highlight(theme, "java", bareEmoji);
+        assertThat(Strip.strip(highlightedBare)).isEqualTo(bareEmoji);
+    }
+
+    @Test
+    void recognizesBlockCommentEndOnSameLine() {
+        String line = "int x = /* inline comment */ 42;";
+        TerminalSyntaxHighlighter.HighlightResult res = TerminalSyntaxHighlighter.highlight(theme, "java", line, false);
+
+        assertThat(res.inBlockComment()).isFalse();
+        assertThat(Strip.strip(res.highlighted())).isEqualTo(line);
+        assertThat(res.highlighted()).contains("\u001B[");
+    }
+
+    @Test
+    void recognizesMultilineBlockCommentsAcrossLines() {
+        String line1 = "    /* start of comment";
+        TerminalSyntaxHighlighter.HighlightResult res1 =
+                TerminalSyntaxHighlighter.highlight(theme, "java", line1, false);
+        assertThat(res1.inBlockComment()).isTrue();
+        assertThat(Strip.strip(res1.highlighted())).isEqualTo(line1);
+
+        String line2 = "     * middle line";
+        TerminalSyntaxHighlighter.HighlightResult res2 =
+                TerminalSyntaxHighlighter.highlight(theme, "java", line2, true);
+        assertThat(res2.inBlockComment()).isTrue();
+        assertThat(Strip.strip(res2.highlighted())).isEqualTo(line2);
+
+        String line3 = "     */ int result = 100;";
+        TerminalSyntaxHighlighter.HighlightResult res3 =
+                TerminalSyntaxHighlighter.highlight(theme, "java", line3, true);
+        assertThat(res3.inBlockComment()).isFalse();
+        assertThat(Strip.strip(res3.highlighted())).isEqualTo(line3);
+    }
 }

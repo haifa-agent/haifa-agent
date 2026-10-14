@@ -371,18 +371,25 @@ final class TerminalSyntaxHighlighter {
 
     private TerminalSyntaxHighlighter() {}
 
+    record HighlightResult(String highlighted, boolean inBlockComment) {}
+
     static String highlight(Tui4jTerminalTheme theme, String language, String rawLine) {
+        return highlight(theme, language, rawLine, false).highlighted();
+    }
+
+    static HighlightResult highlight(
+            Tui4jTerminalTheme theme, String language, String rawLine, boolean inBlockComment) {
         if (rawLine == null || rawLine.isEmpty()) {
-            return "";
+            return new HighlightResult("", inBlockComment);
         }
         String lang = normalizeLanguage(language);
         if (lang.isEmpty() || "plaintext".equals(lang) || "text".equals(lang)) {
-            return theme.codeBlock(rawLine);
+            return new HighlightResult(theme.codeBlock(rawLine), false);
         }
         try {
-            return scanAndRender(theme, lang, rawLine);
+            return scanAndRender(theme, lang, rawLine, inBlockComment);
         } catch (Exception ignored) {
-            return theme.codeBlock(rawLine);
+            return new HighlightResult(theme.codeBlock(rawLine), false);
         }
     }
 
@@ -411,19 +418,48 @@ final class TerminalSyntaxHighlighter {
         };
     }
 
-    private static String scanAndRender(Tui4jTerminalTheme theme, String lang, String line) {
+    private static HighlightResult scanAndRender(
+            Tui4jTerminalTheme theme, String lang, String line, boolean inBlockComment) {
         StringBuilder sb = new StringBuilder(line.length() * 2);
         int i = 0;
         int len = line.length();
 
+        if (inBlockComment) {
+            int closeIdx = line.indexOf("*/");
+            if (closeIdx != -1) {
+                String comment = line.substring(0, closeIdx + 2);
+                sb.append(theme.syntaxComment(comment));
+                i = closeIdx + 2;
+                inBlockComment = false;
+            } else {
+                sb.append(theme.syntaxComment(line));
+                return new HighlightResult(sb.toString(), true);
+            }
+        }
+
         while (i < len) {
             char c = line.charAt(i);
 
-            // Comments
-            if (isCommentStart(lang, line, i)) {
+            // Line comments
+            if (isLineCommentStart(lang, line, i)) {
                 String comment = line.substring(i);
                 sb.append(theme.syntaxComment(comment));
-                break;
+                return new HighlightResult(sb.toString(), false);
+            }
+
+            // Block comments
+            if (isBlockCommentStart(lang, line, i)) {
+                int closeIdx = line.indexOf("*/", i + 2);
+                if (closeIdx != -1) {
+                    String comment = line.substring(i, closeIdx + 2);
+                    sb.append(theme.syntaxComment(comment));
+                    i = closeIdx + 2;
+                    continue;
+                } else {
+                    String comment = line.substring(i);
+                    sb.append(theme.syntaxComment(comment));
+                    return new HighlightResult(sb.toString(), true);
+                }
             }
 
             // Whitespace
@@ -550,22 +586,24 @@ final class TerminalSyntaxHighlighter {
                 continue;
             }
 
-            // Punctuation / Operators
-            if (isPunctuation(c)) {
+            // Punctuation / Operators (BMP only)
+            if (!Character.isSurrogate(c) && isPunctuation(c)) {
                 sb.append(theme.syntaxPunctuation(String.valueOf(c)));
                 i++;
                 continue;
             }
 
-            // Default fallback for any other characters
-            sb.append(theme.syntaxPlain(String.valueOf(c)));
-            i++;
+            // Default fallback for any other characters (supports non-BMP code points like Emoji)
+            int codePoint = line.codePointAt(i);
+            int charCount = Character.charCount(codePoint);
+            sb.append(theme.syntaxPlain(line.substring(i, i + charCount)));
+            i += charCount;
         }
 
-        return sb.toString();
+        return new HighlightResult(sb.toString(), inBlockComment);
     }
 
-    private static boolean isCommentStart(String lang, String line, int index) {
+    private static boolean isLineCommentStart(String lang, String line, int index) {
         if (line.startsWith("//", index)) {
             return "java".equals(lang)
                     || "javascript".equals(lang)
@@ -574,6 +612,16 @@ final class TerminalSyntaxHighlighter {
                     || "cpp".equals(lang)
                     || "rust".equals(lang);
         }
+        if (line.charAt(index) == '#') {
+            return "python".equals(lang) || "shell".equals(lang) || "yaml".equals(lang);
+        }
+        if (line.startsWith("--", index)) {
+            return "sql".equals(lang);
+        }
+        return false;
+    }
+
+    private static boolean isBlockCommentStart(String lang, String line, int index) {
         if (line.startsWith("/*", index)) {
             return "java".equals(lang)
                     || "javascript".equals(lang)
@@ -582,12 +630,6 @@ final class TerminalSyntaxHighlighter {
                     || "cpp".equals(lang)
                     || "rust".equals(lang)
                     || "sql".equals(lang);
-        }
-        if (line.charAt(index) == '#') {
-            return "python".equals(lang) || "shell".equals(lang) || "yaml".equals(lang);
-        }
-        if (line.startsWith("--", index)) {
-            return "sql".equals(lang);
         }
         return false;
     }

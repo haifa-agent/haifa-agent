@@ -176,4 +176,29 @@ class IncrementalTerminalMarkdownRendererTest {
 
         assertThat(markdownRenderer.metrics("doc-1").totalParsedCharacters()).isZero();
     }
+
+    @Test
+    void handlesMultilineBlockCommentsInStreamingCodeFence() {
+        renderer.setColorProfile(ColorProfile.TrueColor);
+        renderer.setHasDarkBackground(true);
+
+        String doc = "```java\n/*\n * Comment\n */\nint a = 1;\n```";
+        String rendered = markdownRenderer.render("doc-comment", doc, 80);
+
+        assertThat(rendered).contains("\u001B[");
+        assertThat(Strip.strip(rendered)).contains("/*", "* Comment", "*/", "int a = 1;");
+    }
+
+    @Test
+    void resizeWithPendingUncompletedLineReusesCachedLine() {
+        String chunk = "```java\nint x = 10;\nString s = \"pending";
+        String initial = markdownRenderer.render("doc-pending", chunk, 80);
+        long charsBeforeResize = markdownRenderer.metrics("doc-pending").totalParsedCharacters();
+
+        String resized = markdownRenderer.render("doc-pending", chunk, 100);
+        long charsAfterResize = markdownRenderer.metrics("doc-pending").totalParsedCharacters();
+
+        assertThat(charsAfterResize).isEqualTo(charsBeforeResize);
+        assertThat(Strip.strip(resized)).contains("String s = \"pending");
+    }
 }

@@ -183,4 +183,23 @@ class Tui4jTerminalThemeTest {
         assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(string)).isEqualTo("\"hello\"");
         assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(comment)).isEqualTo("// comment");
     }
+
+    @Test
+    void nordThemeAdaptsColorsForLightAndDarkHostTerminals() {
+        theme.switchTheme("nord");
+        renderer.setColorProfile(ColorProfile.TrueColor);
+
+        renderer.setHasDarkBackground(true);
+        String darkText = theme.syntaxPlain("text");
+        String darkKeyword = theme.syntaxKeyword("class");
+
+        renderer.setHasDarkBackground(false);
+        String lightText = theme.syntaxPlain("text");
+        String lightKeyword = theme.syntaxKeyword("class");
+
+        assertThat(darkText).isNotEqualTo(lightText);
+        assertThat(darkKeyword).isNotEqualTo(lightKeyword);
+        assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(lightText))
+                .isEqualTo("text");
+    }
 }

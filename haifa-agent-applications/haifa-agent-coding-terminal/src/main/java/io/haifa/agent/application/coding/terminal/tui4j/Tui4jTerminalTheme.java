@@ -1,7 +1,9 @@
 package io.haifa.agent.application.coding.terminal.tui4j;
 
+import com.williamcallahan.tui4j.compat.lipgloss.Renderer;
 import com.williamcallahan.tui4j.compat.lipgloss.Style;
 import com.williamcallahan.tui4j.compat.lipgloss.color.AdaptiveColor;
+import com.williamcallahan.tui4j.compat.lipgloss.color.ColorProfile;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -139,34 +141,34 @@ final class Tui4jTerminalTheme {
 
     private static final Palette NORD_PALETTE = new Palette(
             "nord",
-            new AdaptiveColor("#88C0D0", "#88C0D0"),
-            new AdaptiveColor("#D8DEE9", "#D8DEE9"),
-            new AdaptiveColor("#3B4252", "#3B4252"),
-            new AdaptiveColor("#434C5E", "#434C5E"),
-            new AdaptiveColor("#4C566A", "#4C566A"),
-            new AdaptiveColor("#ECEFF4", "#ECEFF4"),
-            new AdaptiveColor("#ECEFF4", "#ECEFF4"),
-            new AdaptiveColor("#3B4252", "#3B4252"),
-            new AdaptiveColor("#A3BE8C", "#A3BE8C"),
-            new AdaptiveColor("#2E3440", "#2E3440"),
-            new AdaptiveColor("#EBCB8B", "#EBCB8B"),
-            new AdaptiveColor("#2E3440", "#2E3440"),
-            new AdaptiveColor("#BF616A", "#BF616A"),
-            new AdaptiveColor("#BF616A", "#BF616A"),
-            new AdaptiveColor("#3B282A", "#3B282A"),
-            new AdaptiveColor("#81A1C1", "#81A1C1"),
-            new AdaptiveColor("#2E3440", "#2E3440"),
-            new AdaptiveColor("#434C5E", "#434C5E"),
-            new AdaptiveColor("#B48EAD", "#B48EAD"),
-            new AdaptiveColor("#2E3440", "#2E3440"),
-            new AdaptiveColor("#88C0D0", "#88C0D0"),
-            new AdaptiveColor("#81A1C1", "#81A1C1"),
-            new AdaptiveColor("#A3BE8C", "#A3BE8C"),
-            new AdaptiveColor("#616E88", "#616E88"),
-            new AdaptiveColor("#B48EAD", "#B48EAD"),
-            new AdaptiveColor("#8FBCBB", "#8FBCBB"),
-            new AdaptiveColor("#88C0D0", "#88C0D0"),
-            new AdaptiveColor("#ECEFF4", "#ECEFF4"));
+            new AdaptiveColor("#5E81AC", "#88C0D0"), // accent
+            new AdaptiveColor("#4C566A", "#D8DEE9"), // muted
+            new AdaptiveColor("#E5E9F0", "#3B4252"), // surfacePanel
+            new AdaptiveColor("#D8DEE9", "#434C5E"), // surfaceElement
+            new AdaptiveColor("#D8DEE9", "#4C566A"), // borderSubtle
+            new AdaptiveColor("#2E3440", "#ECEFF4"), // text
+            new AdaptiveColor("#2E3440", "#ECEFF4"), // userForeground
+            new AdaptiveColor("#E5E9F0", "#3B4252"), // userBackground
+            new AdaptiveColor("#4E8752", "#A3BE8C"), // successForeground
+            new AdaptiveColor("#EBF5EA", "#2E3830"), // successBackground
+            new AdaptiveColor("#946300", "#EBCB8B"), // pendingForeground
+            new AdaptiveColor("#FEF9E7", "#3B3828"), // pendingBackground
+            new AdaptiveColor("#BF616A", "#BF616A"), // errorAccent
+            new AdaptiveColor("#A53B44", "#D08770"), // errorForeground
+            new AdaptiveColor("#FDF2F2", "#3B282A"), // errorBackground
+            new AdaptiveColor("#436685", "#81A1C1"), // queuedForeground
+            new AdaptiveColor("#EAF2F8", "#2E3440"), // queuedBackground
+            new AdaptiveColor("#E5E9F0", "#434C5E"), // editorBackground
+            new AdaptiveColor("#8F4F82", "#B48EAD"), // focus
+            new AdaptiveColor("#ECEFF4", "#2E3440"), // selectionForeground
+            new AdaptiveColor("#5E81AC", "#88C0D0"), // selectionBackground
+            new AdaptiveColor("#5E81AC", "#81A1C1"), // syntaxKeyword
+            new AdaptiveColor("#4E8752", "#A3BE8C"), // syntaxString
+            new AdaptiveColor("#616E88", "#7B88A1"), // syntaxComment
+            new AdaptiveColor("#995886", "#B48EAD"), // syntaxNumber
+            new AdaptiveColor("#2E6F7D", "#8FBCBB"), // syntaxType
+            new AdaptiveColor("#3B728C", "#88C0D0"), // syntaxLiteral
+            new AdaptiveColor("#2E3440", "#ECEFF4")); // syntaxPunctuation
 
     private static final Map<String, Palette> PALETTES = Map.of(
             "dark", DARK_PALETTE,
@@ -392,6 +394,70 @@ final class Tui4jTerminalTheme {
 
     AdaptiveColor codeBlockForeground() {
         return palette.userForeground();
+    }
+
+    private static boolean isColorDisabled() {
+        return Renderer.defaultRenderer().colorProfile() == ColorProfile.Ascii;
+    }
+
+    String diffAdded(String value) {
+        if (isColorDisabled()) {
+            return value;
+        }
+        return Style.newStyle().foreground(palette.successForeground()).render(value);
+    }
+
+    String diffRemoved(String value) {
+        if (isColorDisabled()) {
+            return value;
+        }
+        return Style.newStyle().foreground(palette.errorForeground()).render(value);
+    }
+
+    String diffHunk(String value) {
+        if (isColorDisabled()) {
+            return value;
+        }
+        return Style.newStyle().foreground(palette.accent()).bold(true).render(value);
+    }
+
+    String diffHeader(String value) {
+        if (isColorDisabled()) {
+            return value;
+        }
+        return Style.newStyle()
+                .foreground(palette.queuedForeground())
+                .bold(true)
+                .render(value);
+    }
+
+    String toolBadge(ToolCategory category) {
+        if (isColorDisabled()) {
+            return "[" + category.label().toLowerCase(Locale.ROOT) + "]";
+        }
+        AdaptiveColor fg =
+                switch (category) {
+                    case READ -> palette.queuedForeground();
+                    case EDIT -> palette.focus();
+                    case EXEC -> palette.pendingForeground();
+                    case SEARCH -> palette.accent();
+                    case TOOL -> palette.muted();
+                };
+        AdaptiveColor bg =
+                switch (category) {
+                    case READ -> palette.queuedBackground();
+                    case EDIT -> palette.surfaceElement();
+                    case EXEC -> palette.pendingBackground();
+                    case SEARCH -> palette.surfaceElement();
+                    case TOOL -> palette.surfaceElement();
+                };
+        return Style.newStyle()
+                .foreground(fg)
+                .background(bg)
+                .paddingLeft(1)
+                .paddingRight(1)
+                .bold(true)
+                .render(category.label());
     }
 
     private String block(String value, AdaptiveColor foreground, AdaptiveColor background) {

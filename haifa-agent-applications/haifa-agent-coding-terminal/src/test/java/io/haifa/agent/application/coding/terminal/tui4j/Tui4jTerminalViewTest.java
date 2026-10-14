@@ -5,7 +5,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.williamcallahan.tui4j.ansi.TextWidth;
 import com.williamcallahan.tui4j.compat.bubbles.textarea.Textarea;
 import com.williamcallahan.tui4j.compat.bubbles.viewport.Viewport;
+import com.williamcallahan.tui4j.compat.lipgloss.Renderer;
+import com.williamcallahan.tui4j.compat.lipgloss.color.ColorProfile;
 import com.williamcallahan.tui4j.compat.lipgloss.color.NoColor;
+import com.williamcallahan.tui4j.compat.x.ansi.Strip;
 import com.williamcallahan.tui4j.term.TerminalInfo;
 import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
 import io.haifa.agent.application.coding.terminal.state.ApprovalDetails;
@@ -737,6 +740,73 @@ class Tui4jTerminalViewTest {
                         "Duration 300 ms · 2 lines",
                         "✓ Run completed · 4s · ctrl+o expand")
                 .doesNotContain("Status: COMPLETED");
+    }
+
+    @Test
+    void highlightsUnifiedDiffOutputInsideExpandedToolBody() {
+        Renderer renderer = Renderer.defaultRenderer();
+        renderer.setColorProfile(ColorProfile.TrueColor);
+        renderer.setHasDarkBackground(true);
+        try {
+
+            String diffBody =
+                    """
+                Target: src/App.java
+                Output:
+                --- a/src/App.java
+                +++ b/src/App.java
+                @@ -1,3 +1,3 @@
+                -int counter = 0;
+                +int counter = 1;
+                 return counter;
+                Result: ok""";
+
+            TerminalUiState initial = TerminalUiState.initial(100, 30);
+            TerminalUiState state = new TerminalUiState(
+                    initial.header(),
+                    initial.loadedResources(),
+                    List.of(new TranscriptItem(
+                            "tool-patch-1",
+                            TranscriptItem.Kind.TOOL,
+                            "file_patch · src/App.java",
+                            diffBody,
+                            "SUCCEEDED",
+                            true,
+                            Optional.empty(),
+                            Optional.of(1_000L),
+                            Optional.of(150L))),
+                    initial.pending(),
+                    initial.status(),
+                    initial.editorBuffer(),
+                    initial.editorCursor(),
+                    initial.selector(),
+                    initial.footer(),
+                    initial.columns(),
+                    initial.rows(),
+                    initial.session(),
+                    initial.currentRunId(),
+                    initial.appliedCursor(),
+                    initial.seenEventIds(),
+                    initial.recoverableError(),
+                    initial.exitRequested());
+
+            String content = view.transcriptContent(state);
+
+            assertThat(content).contains("\u001B[");
+            String stripped = Strip.strip(content);
+            assertThat(stripped)
+                    .contains(
+                            "--- a/src/App.java",
+                            "+++ b/src/App.java",
+                            "@@ -1,3 +1,3 @@",
+                            "-int counter = 0;",
+                            "+int counter = 1;",
+                            " return counter;");
+            assertThat(stripped).contains("Duration 150 ms");
+        } finally {
+            renderer.setColorProfile(ColorProfile.Ascii);
+            renderer.setHasDarkBackground(false);
+        }
     }
 
     @Test
