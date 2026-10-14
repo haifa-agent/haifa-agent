@@ -8,6 +8,7 @@ import io.haifa.agent.skill.api.SkillDiagnosticSeverity;
 import io.haifa.agent.skill.api.SkillDiscoveryContext;
 import io.haifa.agent.skill.api.SkillDiscoveryResult;
 import io.haifa.agent.skill.api.SkillRegistration;
+import io.haifa.agent.skill.api.SkillResourceRef;
 import io.haifa.agent.skill.api.SkillSource;
 import io.haifa.agent.skill.api.SkillSourceDescriptor;
 import io.haifa.agent.skill.api.SkillVisibilityContext;
@@ -157,6 +158,39 @@ public final class LocalDirectorySkillSource implements SkillSource {
                 .parsed()
                 .orElseThrow(() -> new IllegalStateException("frozen Skill package is no longer valid"));
         return exactContent(binding, parsed);
+    }
+
+    @Override
+    public java.util.Optional<byte[]> readResource(
+            FrozenSkillBinding binding, SkillVisibilityContext context, String relativePath) {
+        requireVisible(binding, context);
+        Path packageRoot = locations.get(binding.coordinate().externalForm());
+        if (packageRoot == null) throw new IllegalStateException("frozen Skill was not discovered from this source");
+        String normalizedPath = java.util.Objects.requireNonNull(relativePath, "relativePath must not be null")
+                .replace('\\', '/');
+        SkillResourceRef indexed = binding.packageIndex().resources().stream()
+                .filter(resource -> resource.relativePath().equals(normalizedPath))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("resource is not indexed in the frozen Skill binding"));
+        if (normalizedPath.startsWith("/") || normalizedPath.contains("../") || normalizedPath.contains(":")) {
+            throw new IllegalArgumentException("resource path is not package-relative");
+        }
+        Path file = packageRoot.resolve(normalizedPath).normalize();
+        if (!file.startsWith(packageRoot) || !Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) {
+            return java.util.Optional.empty();
+        }
+        try {
+            if (Files.isSymbolicLink(file)) return java.util.Optional.empty();
+            byte[] bytes = Files.readAllBytes(file);
+            if (bytes.length != indexed.byteSize()
+                    || !io.haifa.agent.skill.api.SkillTrustDigests.content(bytes)
+                            .equals(indexed.digest())) {
+                throw new IllegalStateException("frozen Skill resource has drifted");
+            }
+            return java.util.Optional.of(bytes);
+        } catch (IOException exception) {
+            throw new IllegalStateException("frozen Skill resource is unavailable", exception);
+        }
     }
 
     private boolean visible(SkillVisibilityContext context) {

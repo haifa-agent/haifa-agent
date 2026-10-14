@@ -107,6 +107,17 @@ public final class ExecutionToolProvider implements ToolProvider {
                 + configuration.sandboxProfileRef().version();
     }
 
+    /**
+     * Whether one declared runtime executes a frozen package entry file by path. Fails closed when
+     * the runtime is not declared, so providers can order their checks before package work.
+     */
+    public boolean runtimeSupportsFileExecution(String language) {
+        Objects.requireNonNull(language, "language must not be null");
+        String normalized = language.trim().toLowerCase(Locale.ROOT);
+        if (normalized.isEmpty()) throw new IllegalArgumentException("language must not be blank");
+        return configuration.runtimes().resolve(normalized).supportsFileExecution();
+    }
+
     @Override
     public ToolResult invoke(ToolInvocationRequest invocation) {
         Objects.requireNonNull(invocation, "invocation must not be null");
@@ -203,6 +214,65 @@ public final class ExecutionToolProvider implements ToolProvider {
                         timeout,
                         prepared.command(),
                         prepared.input()));
+    }
+
+    /**
+     * Executes one materialized frozen Skill package entry file for a trusted Skill Tool. The entry
+     * path and bytes come from the product-owned immutable descriptor; models can neither select the
+     * runtime nor the path, and this method never reads console-supplied code.
+     */
+    public ToolResult invokeTrustedPackageScript(
+            ToolInvocationRequest invocation,
+            String language,
+            String workspaceRelativeEntryPath,
+            List<String> arguments,
+            String purpose,
+            Duration requestedTimeout,
+            java.util.Set<String> requiredCapabilities,
+            List<ProjectPath> workspaceInputPaths) {
+        Objects.requireNonNull(invocation, "invocation must not be null");
+        Objects.requireNonNull(requiredCapabilities, "requiredCapabilities must not be null");
+        var scope = scopes.resolve(invocation);
+        if (!scope.capabilities().containsAll(requiredCapabilities)) {
+            throw new SecurityException("trusted script capabilities are not authorized by the invocation scope");
+        }
+        trustedWorkspacePaths.validate(
+                scope.workspaceId(),
+                List.copyOf(Objects.requireNonNull(workspaceInputPaths, "workspaceInputPaths must not be null")));
+        String runtime = Objects.requireNonNull(language, "language must not be null")
+                .trim()
+                .toLowerCase(Locale.ROOT);
+        if (runtime.isEmpty()) throw new IllegalArgumentException("language must not be blank");
+        ScriptRuntimeAdapter adapter = configuration.runtimes().resolve(runtime);
+        if (!adapter.supportsFileExecution()) {
+            throw new IllegalArgumentException("trusted script runtime does not support entry-file execution");
+        }
+        String entryPath = ScriptRuntimeResolver.requireWorkspaceRelativeEntryPath(workspaceRelativeEntryPath);
+        List<String> safeArguments =
+                arguments(List.copyOf(Objects.requireNonNull(arguments, "arguments must not be null")));
+        String safePurpose = trustedPurpose(purpose);
+        Duration timeout = trustedTimeout(requestedTimeout);
+        ScriptRuntimeAdapter.PreparedScript prepared = adapter.prepareFile(entryPath, safeArguments);
+        return invokeParsed(
+                invocation,
+                scope,
+                new ParsedInvocation(
+                        "SCRIPT", runtime, entryPath, safePurpose, ".", timeout, prepared.command(), prepared.input()));
+    }
+
+    private String trustedPurpose(String purpose) {
+        String value =
+                Objects.requireNonNull(purpose, "purpose must not be null").trim();
+        if (value.isEmpty() || value.length() > 256) throw new IllegalArgumentException("purpose is invalid");
+        return value;
+    }
+
+    private Duration trustedTimeout(Duration requestedTimeout) {
+        Duration timeout = Objects.requireNonNull(requestedTimeout, "requestedTimeout must not be null");
+        if (timeout.isZero() || timeout.isNegative() || timeout.compareTo(configuration.maximumTimeout()) > 0) {
+            throw new IllegalArgumentException("trusted script timeout is out of range");
+        }
+        return timeout;
     }
 
     private ToolResult invokeParsed(
@@ -492,6 +562,23 @@ public final class ExecutionToolProvider implements ToolProvider {
             throw new IllegalArgumentException("timeoutMillis is out of range");
         }
         return result;
+    }
+
+    /**
+     * Validates a Workspace-root relative slash path and returns its normalized form; trusted
+     * materialization callers share this single validator so no second path model exists.
+     */
+    public static String requireRelativeSegmentPath(String value, String field) {
+        String path = Objects.requireNonNull(value, field + " must not be null").replace('\\', '/');
+        if (path.indexOf('\0') >= 0 || path.startsWith("/") || path.matches("[A-Za-z]:.*")) {
+            throw new IllegalArgumentException(field + " is not workspace-relative");
+        }
+        for (String segment : path.split("/")) {
+            if (segment.isEmpty() || "..".equals(segment) || ".".equals(segment)) {
+                throw new IllegalArgumentException(field + " has an invalid segment");
+            }
+        }
+        return path;
     }
 
     private record ParsedInvocation(

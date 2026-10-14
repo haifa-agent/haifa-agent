@@ -6,6 +6,7 @@ import io.haifa.agent.skill.api.SkillContent;
 import io.haifa.agent.skill.api.SkillDiscoveryContext;
 import io.haifa.agent.skill.api.SkillDiscoveryResult;
 import io.haifa.agent.skill.api.SkillRegistration;
+import io.haifa.agent.skill.api.SkillResourceRef;
 import io.haifa.agent.skill.api.SkillSource;
 import io.haifa.agent.skill.api.SkillSourceDescriptor;
 import io.haifa.agent.skill.api.SkillVisibilityContext;
@@ -14,6 +15,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class InMemorySkillSource implements SkillSource {
@@ -66,17 +68,9 @@ public final class InMemorySkillSource implements SkillSource {
     }
 
     @Override
-    public SkillContent load(FrozenSkillBinding binding, SkillVisibilityContext context) {
-        if (!visible(context)
-                || !descriptor.reference().equals(binding.coordinate().source())
-                || !descriptor.scope().equals(binding.coordinate().scope())) {
-            throw new SecurityException("frozen Skill is not visible to the current caller");
-        }
-        String packageName = locations.get(binding.coordinate().externalForm());
-        if (packageName == null) throw new IllegalStateException("frozen Skill was not discovered from this source");
-        ParsedSkillPackage parsed = parser.parseFiles(packageName, packages.get(packageName), descriptor)
-                .parsed()
-                .orElseThrow(() -> new IllegalStateException("frozen Skill package is no longer valid"));
+    public io.haifa.agent.skill.api.SkillContent load(FrozenSkillBinding binding, SkillVisibilityContext context) {
+        requireVisible(binding, context);
+        ParsedSkillPackage parsed = parsedPackage(binding);
         if (!binding.coordinate().contentDigest().equals(parsed.packageIndex().digest())) {
             throw new IllegalStateException("frozen Skill content has drifted");
         }
@@ -85,6 +79,51 @@ public final class InMemorySkillSource implements SkillSource {
                 parsed.instructions(),
                 parsed.readableResources(),
                 Math.max(1, (parsed.instructions().length() + 3) / 4));
+    }
+
+    @Override
+    public Optional<byte[]> readResource(
+            FrozenSkillBinding binding, SkillVisibilityContext context, String relativePath) {
+        requireVisible(binding, context);
+        String normalizedPath = java.util.Objects.requireNonNull(relativePath, "relativePath must not be null")
+                .replace('\\', '/');
+        SkillResourceRef indexed = binding.packageIndex().resources().stream()
+                .filter(resource -> resource.relativePath().equals(normalizedPath))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("resource is not indexed in the frozen Skill binding"));
+        parsedPackage(binding);
+        byte[] bytes = packages.get(packageName(binding)).get(normalizedPath);
+        if (bytes == null) throw new IllegalStateException("frozen Skill resource is unavailable");
+        if (bytes.length != indexed.byteSize()
+                || !io.haifa.agent.skill.api.SkillTrustDigests.content(bytes).equals(indexed.digest())) {
+            throw new IllegalStateException("frozen Skill resource has drifted");
+        }
+        return Optional.of(bytes.clone());
+    }
+
+    private String packageName(FrozenSkillBinding binding) {
+        String packageName = locations.get(binding.coordinate().externalForm());
+        if (packageName == null) {
+            throw new IllegalStateException("frozen Skill was not discovered from this source");
+        }
+        if (packages.get(packageName) == null) {
+            throw new IllegalStateException("frozen Skill package is no longer valid");
+        }
+        return packageName;
+    }
+
+    private ParsedSkillPackage parsedPackage(FrozenSkillBinding binding) {
+        return parser.parseFiles(packageName(binding), packages.get(packageName(binding)), descriptor)
+                .parsed()
+                .orElseThrow(() -> new IllegalStateException("frozen Skill package is no longer valid"));
+    }
+
+    private void requireVisible(FrozenSkillBinding binding, SkillVisibilityContext context) {
+        if (!visible(context)
+                || !descriptor.reference().equals(binding.coordinate().source())
+                || !descriptor.scope().equals(binding.coordinate().scope())) {
+            throw new SecurityException("frozen Skill is not visible to the current caller");
+        }
     }
 
     private boolean visible(SkillVisibilityContext context) {

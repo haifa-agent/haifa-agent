@@ -37,11 +37,15 @@ public final class SkillTrustDigests {
 
     public static SkillContentDigest content(String content) {
         Objects.requireNonNull(content, "content must not be null");
+        return content(content.getBytes(StandardCharsets.UTF_8));
+    }
+
+    public static SkillContentDigest content(byte[] content) {
+        Objects.requireNonNull(content, "content must not be null");
         try {
             return new SkillContentDigest("sha256:"
                     + HexFormat.of()
-                            .formatHex(MessageDigest.getInstance("SHA-256")
-                                    .digest(content.getBytes(StandardCharsets.UTF_8))));
+                            .formatHex(MessageDigest.getInstance("SHA-256").digest(content)));
         } catch (NoSuchAlgorithmException exception) {
             throw new IllegalStateException("SHA-256 is unavailable", exception);
         }

@@ -7,17 +7,12 @@ import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.execution.api.ExecutionEnvironmentRef;
-import io.haifa.agent.execution.api.ExecutionOrigin;
 import io.haifa.agent.execution.api.ExecutionOutputObserver;
-import io.haifa.agent.execution.api.ExecutionRequest;
 import io.haifa.agent.execution.api.ExecutionScratchSpaceSpec;
 import io.haifa.agent.execution.api.ResolvedExecutionEnvironment;
 import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.execution.api.ToolOutputPreviewPublisher;
 import io.haifa.agent.execution.core.DefaultExecutionBroker;
-import io.haifa.agent.execution.core.ExecutionPolicy;
-import io.haifa.agent.execution.core.ExecutionPolicyEntryPoint;
-import io.haifa.agent.execution.core.ExecutionRejectedException;
 import io.haifa.agent.execution.core.ImmutableSandboxProfileRegistry;
 import io.haifa.agent.execution.core.ImmutableSandboxProviderRegistry;
 import io.haifa.agent.execution.core.TransientToolOutputPreviewPublisher;
@@ -199,7 +194,7 @@ public final class HostExecutionPlatforms {
                 new InMemoryExecutionStore(),
                 new InMemoryExecutionOutputStore(),
                 ignored -> ResolvedExecutionEnvironment.of(environment),
-                new FrozenAssemblyPolicy(configuration, tenant, principal, workspaceId),
+                new FrozenHostExecutionPolicy(configuration, tenant, principal, workspaceId),
                 new ImmutableSandboxProfileRegistry(List.of(profile)),
                 new ImmutableSandboxProviderRegistry(List.of(host)),
                 workspaces);
@@ -439,60 +434,6 @@ public final class HostExecutionPlatforms {
         public void close() {}
     }
 
-    /**
-     * Trusted-local policy: only an exactly reconstructed Runtime Tool request against this frozen
-     * assembly reaches the Sandbox. It cannot prove the Tool Call source, because that verification
-     * lives in the Runtime and the process-local entry has no Runtime component; the model boundary
-     * stays the Tool provider, the Approval and the frozen invocation digest.
-     */
-    private static final class FrozenAssemblyPolicy implements ExecutionPolicy {
-        private final ExecutionToolConfiguration configuration;
-        private final TenantRef tenant;
-        private final PrincipalRef principal;
-        private final WorkspaceId workspaceId;
-
-        private FrozenAssemblyPolicy(
-                ExecutionToolConfiguration configuration,
-                TenantRef tenant,
-                PrincipalRef principal,
-                WorkspaceId workspaceId) {
-            this.configuration = Objects.requireNonNull(configuration, "configuration must not be null");
-            this.tenant = Objects.requireNonNull(tenant, "tenant must not be null");
-            this.principal = Objects.requireNonNull(principal, "principal must not be null");
-            this.workspaceId = Objects.requireNonNull(workspaceId, "workspaceId must not be null");
-        }
-
-        @Override
-        public void authorize(ExecutionRequest request, ExecutionPolicyEntryPoint entryPoint) {
-            Objects.requireNonNull(request, "request must not be null");
-            Objects.requireNonNull(entryPoint, "entryPoint must not be null");
-            if (entryPoint == ExecutionPolicyEntryPoint.MANAGED_SESSION) {
-                throw denied("HOST_EXECUTION_MANAGED_SESSION_DENIED", "host execution has no managed session");
-            }
-            if (request.context().origin() != ExecutionOrigin.RUNTIME_TOOL
-                    || request.context().sourceToolCallId().isEmpty()
-                    || !request.context().allows("execution_run")) {
-                throw denied("HOST_EXECUTION_ORIGIN_DENIED", "host execution requires a Runtime Tool source");
-            }
-            if (!request.context().tenant().equals(tenant)
-                    || !request.context().actor().equals(principal)
-                    || !request.workspaceId().equals(workspaceId)
-                    || !request.workingDirectory().workspaceId().equals(workspaceId)
-                    || !request.workingDirectory().projectPath().isRoot()
-                    || !request.environmentRef().equals(configuration.environmentRef())
-                    || !request.sandboxProfileRef().equals(configuration.sandboxProfileRef())
-                    || !request.scratchSpace().equals(configuration.scratchSpace())
-                    || request.limits().timeout().compareTo(configuration.maximumTimeout()) > 0
-                    || !Objects.equals(request.limits().maxProcesses(), configuration.maximumProcesses())) {
-                throw denied("HOST_EXECUTION_ASSEMBLY_DENIED", "host execution target is not the frozen assembly");
-            }
-        }
-
-        private static ExecutionRejectedException denied(String code, String message) {
-            return new ExecutionRejectedException(code, message);
-        }
-    }
-
     private static HostShell hostShell() {
         try {
             return HostShell.auto();
@@ -512,6 +453,10 @@ public final class HostExecutionPlatforms {
      * persisted binding was frozen against another - or a replaced - directory fails closed.
      */
     private static String workspaceIdentity(Path workspaceRoot) {
+        return workspaceIdentity(BINDING_NAMESPACE, WORKSPACE_ID, workspaceRoot, "HOST_EXECUTION_UNAVAILABLE");
+    }
+
+    static String workspaceIdentity(String namespace, String workspaceId, Path workspaceRoot, String errorCode) {
         try {
             return SandboxConfigurationDigest.sha256Fields(List.of(
                             BINDING_NAMESPACE,
@@ -521,7 +466,7 @@ public final class HostExecutionPlatforms {
                     .value();
         } catch (IllegalStateException exception) {
             throw new HaifaAgentException(
-                    "HOST_EXECUTION_UNAVAILABLE",
+                    errorCode,
                     "product.assemble",
                     "execution",
                     "the declared host workspace identity is unavailable",
@@ -529,7 +474,7 @@ public final class HostExecutionPlatforms {
         }
     }
 
-    private static String approvalValue(Object value) {
+    static String approvalValue(Object value) {
         if (value == null) {
             return "(none)";
         }
@@ -544,21 +489,30 @@ public final class HostExecutionPlatforms {
         return rendered.isEmpty() ? "(none)" : rendered;
     }
 
-    private static String bounded(String value, int maximumLength) {
+    static String bounded(String value, int maximumLength) {
         return value.length() <= maximumLength ? value : value.substring(0, maximumLength) + "...[truncated]";
     }
 
     private static SandboxProfile sandboxProfile(
             HostGuardedSandboxProvider host, ScriptRuntimeResolver runtimes, Set<String> environmentNames) {
+        return sandboxProfile(host, runtimes, environmentNames, SANDBOX_PROFILE_ID, PROFILE_POLICY_VERSION);
+    }
+
+    static SandboxProfile sandboxProfile(
+            HostGuardedSandboxProvider host,
+            ScriptRuntimeResolver runtimes,
+            Set<String> environmentNames,
+            String sandboxProfileId,
+            String profilePolicyVersion) {
         String version = "1-"
                 + SandboxConfigurationDigest.sha256Fields(List.of(
-                                PROFILE_POLICY_VERSION,
+                                profilePolicyVersion,
                                 HostExecutionEnvironmentResolver.POLICY_VERSION,
                                 host.configurationDigest().value()))
                         .value()
                         .substring("sha256:".length());
         return SandboxProfile.hostGuarded(
-                new SandboxProfileRef(SANDBOX_PROFILE_ID, version),
+                new SandboxProfileRef(sandboxProfileId, version),
                 host.configurationDigest(),
                 runtimes.executableNames(),
                 environmentNames,
@@ -566,31 +520,34 @@ public final class HostExecutionPlatforms {
     }
 
     private static void preflight(HostGuardedSandboxProvider host, SandboxProfile profile) {
+        preflight(host, profile, "HOST_EXECUTION_UNAVAILABLE");
+    }
+
+    static void preflight(HostGuardedSandboxProvider host, SandboxProfile profile, String errorCode) {
         try {
             host.preflight(profile);
         } catch (SandboxException exception) {
-            throw new HaifaAgentException(
-                    "HOST_EXECUTION_UNAVAILABLE", "product.assemble", "execution", exception.code(), exception);
+            throw new HaifaAgentException(errorCode, "product.assemble", "execution", exception.code(), exception);
         }
     }
 
     private static Path scratchRoot(Path dataRoot) {
+        return scratchRoot(dataRoot, SCRATCH_DIRECTORY_NAME, "HOST_EXECUTION_UNAVAILABLE");
+    }
+
+    static Path scratchRoot(Path dataRoot, String scratchDirectoryName, String errorCode) {
         Path scratchRoot =
-                dataRoot.resolve(SCRATCH_DIRECTORY_NAME).toAbsolutePath().normalize();
+                dataRoot.resolve(scratchDirectoryName).toAbsolutePath().normalize();
         try {
             Files.createDirectories(scratchRoot);
         } catch (IOException exception) {
             throw new HaifaAgentException(
-                    "HOST_EXECUTION_UNAVAILABLE",
-                    "product.assemble",
-                    "execution",
-                    "host scratch space is unavailable",
-                    exception);
+                    errorCode, "product.assemble", "execution", "host scratch space is unavailable", exception);
         }
         return scratchRoot;
     }
 
-    private static Path hostDirectory(Path value, String field) {
+    static Path hostDirectory(Path value, String field) {
         Path directory = Objects.requireNonNull(value, field + " must not be null")
                 .toAbsolutePath()
                 .normalize();
