@@ -34,6 +34,7 @@ import io.haifa.agent.runtime.api.RunEventSubscription;
 import io.haifa.agent.runtime.api.RunOutputCursor;
 import io.haifa.agent.runtime.api.RunOutputSubscription;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -126,6 +127,10 @@ public final class CodingTerminalController implements AutoCloseable {
     private List<CodingAuthenticationView> authenticationOptions = List.of();
     private CompletionContext completionContext;
     private CodingShellPlan pendingShellPlan;
+    private String preservedDraftBuffer;
+    private int preservedDraftCursor;
+    private boolean renamingSession;
+    private boolean modelSwitchInProgress;
 
     public enum BailianConfigStep {
         NONE,
@@ -336,6 +341,7 @@ public final class CodingTerminalController implements AutoCloseable {
         Objects.requireNonNull(routingText, "routingText must not be null");
         drainEvents();
         if ((input.kind() != TerminalInput.Kind.SUBMIT && input.kind() != TerminalInput.Kind.FOLLOW_UP)
+                || renamingSession
                 || state.selector().isPresent()
                 || input.text().isBlank()
                 || routingText.startsWith("!")
@@ -677,9 +683,65 @@ public final class CodingTerminalController implements AutoCloseable {
         }
     }
 
+    private void preserveDraft() {
+        if (preservedDraftBuffer == null) {
+            preservedDraftBuffer = state.editorBuffer();
+            preservedDraftCursor = state.editorCursor();
+        }
+    }
+
+    public Optional<String> preservedDraft() {
+        return Optional.ofNullable(preservedDraftBuffer);
+    }
+
+    public boolean isRenamingSession() {
+        return renamingSession;
+    }
+
+    private void restorePreservedDraft() {
+        if (preservedDraftBuffer != null) {
+            String text = preservedDraftBuffer;
+            int cursor = preservedDraftCursor;
+            preservedDraftBuffer = null;
+            preservedDraftCursor = 0;
+            apply(new TerminalUiAction.EditorChanged(text, cursor));
+        }
+    }
+
     private void acceptGuarded(TerminalInput input) {
         drainEvents();
         if (input.kind() == TerminalInput.Kind.TICK) {
+            return;
+        }
+        if (renamingSession) {
+            if (input.kind() == TerminalInput.Kind.CANCEL_OR_CLOSE || input.kind() == TerminalInput.Kind.INTERRUPT) {
+                renamingSession = false;
+                restorePreservedDraft();
+                apply(new TerminalUiAction.StatusChanged("Rename cancelled"));
+                return;
+            }
+            if (input.kind() == TerminalInput.Kind.SUBMIT) {
+                renamingSession = false;
+                String newName = input.text().strip();
+                restorePreservedDraft();
+                if (newName.isBlank()) {
+                    apply(new TerminalUiAction.StatusChanged("Rename cancelled"));
+                    return;
+                }
+                executeRename(newName);
+                return;
+            }
+            if (input.kind() == TerminalInput.Kind.EDITOR_CHANGED) {
+                apply(new TerminalUiAction.EditorChanged(input.text(), input.cursor()));
+                return;
+            }
+            return;
+        }
+        if (input.kind() == TerminalInput.Kind.EXECUTE_COMMAND) {
+            if (state.selector().isPresent()) {
+                return;
+            }
+            executeNonDraftCommand(input.text());
             return;
         }
         if (input.kind() == TerminalInput.Kind.EDITOR_CHANGED) {
@@ -690,6 +752,27 @@ public final class CodingTerminalController implements AutoCloseable {
             openCompletionSelector(input.text(), input.cursor());
             return;
         }
+        if (input.kind() == TerminalInput.Kind.COMMAND_PALETTE) {
+            if (state.selector().isPresent()) {
+                return;
+            }
+            openCommandSelector();
+            return;
+        }
+        if (input.kind() == TerminalInput.Kind.CYCLE_MODEL_NEXT) {
+            if (state.selector().isPresent()) {
+                return;
+            }
+            cycleModel(1);
+            return;
+        }
+        if (input.kind() == TerminalInput.Kind.CYCLE_MODEL_PREVIOUS) {
+            if (state.selector().isPresent()) {
+                return;
+            }
+            cycleModel(-1);
+            return;
+        }
         if (input.kind() == TerminalInput.Kind.CANCEL_OR_CLOSE) {
             if (state.currentRunId().isPresent() && cancelCurrentRunIfPresent()) {
                 return;
@@ -698,6 +781,7 @@ public final class CodingTerminalController implements AutoCloseable {
                 discardPendingShell();
                 apply(new TerminalUiAction.SelectorClosed());
                 completionContext = null;
+                restorePreservedDraft();
                 return;
             }
             if (cancelCurrentRunIfPresent()) {
@@ -925,6 +1009,7 @@ public final class CodingTerminalController implements AutoCloseable {
             case NEW -> {
                 detachSubscriptions();
                 awaitingNewSessionMessage = true;
+                pendingNewSessionModelId = null;
                 apply(new TerminalUiAction.StatusChanged("New session: enter the first message"));
             }
             case RESUME -> {
@@ -937,27 +1022,20 @@ public final class CodingTerminalController implements AutoCloseable {
                         code -> apply(new TerminalUiAction.RecoverableFailure(code)));
             }
             case RENAME -> {
-                CodingSessionView current = requireCurrentSession();
-                apply(new TerminalUiAction.StatusChanged("Renaming session"));
-                submitEffect(
-                        () -> {
-                            CodingSessionView reconciled =
-                                    client.reconcile(current.summary().sessionId());
-                            CodingSessionSummary renamed = client.rename(
-                                    reconciled.summary().sessionId(),
-                                    argument,
-                                    reconciled.summary().revision());
-                            LoadedSession loaded = readSession(
-                                    client.open(renamed.sessionId()),
-                                    Optional.empty(),
-                                    null,
-                                    RunOutputCursor.BEFORE_FIRST);
-                            return () -> {
-                                applyLoadedSession(loaded);
-                                apply(new TerminalUiAction.StatusChanged("Session renamed"));
-                            };
-                        },
-                        code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+                if (state.session().isEmpty()) {
+                    apply(new TerminalUiAction.StatusChanged("No active session to rename"));
+                    return;
+                }
+                if (argument.isBlank()) {
+                    preserveDraft();
+                    renamingSession = true;
+                    String currentTitle =
+                            state.session().orElseThrow().summary().displayName();
+                    apply(new TerminalUiAction.EditorChanged(currentTitle, currentTitle.length()));
+                    apply(new TerminalUiAction.StatusChanged("Rename session · Enter to confirm · Esc to cancel"));
+                    return;
+                }
+                executeRename(argument);
             }
             case ARCHIVE -> {
                 requireCurrentSession();
@@ -1042,12 +1120,35 @@ public final class CodingTerminalController implements AutoCloseable {
                 apply(new TerminalUiAction.RecoverableFailure(TerminalCommandRouter.CAPABILITY_NOT_IMPLEMENTED));
             case TRUST -> workspaceTrust(argument);
             case SESSION -> {
-                List<String> options = state.session()
-                        .map(value -> List.of(
-                                "session " + value.summary().sessionId().value(),
-                                "profile " + value.productProfileRef()))
-                        .orElseGet(() -> List.of("No active session"));
-                apply(new TerminalUiAction.SelectorOpened(new TerminalSelector("session", "Session", options, 0)));
+                List<String> options = new ArrayList<>();
+                state.session()
+                        .ifPresentOrElse(
+                                value -> {
+                                    options.add("Session: " + value.summary().displayName());
+                                    options.add(
+                                            "ID: " + value.summary().sessionId().value());
+                                    if (!state.footer().project().isBlank()) {
+                                        options.add(
+                                                "Directory: " + state.footer().project());
+                                    }
+                                    if (!state.footer().gitBranch().isBlank()) {
+                                        options.add(
+                                                "Git branch: " + state.footer().gitBranch());
+                                    }
+                                    if (!state.footer().model().isBlank()) {
+                                        options.add("Model: " + state.footer().model()
+                                                + (state.footer().provider().isBlank()
+                                                        ? ""
+                                                        : " (" + state.footer().provider() + ")"));
+                                    }
+                                    if (!state.loadedResources().isEmpty()) {
+                                        options.add("Resources: " + String.join(", ", state.loadedResources()));
+                                    }
+                                    options.add("Profile: " + value.productProfileRef());
+                                },
+                                () -> options.add("No active session"));
+                apply(new TerminalUiAction.SelectorOpened(
+                        new TerminalSelector("session", "Session & Environment", options, 0)));
             }
             case COMMANDS -> openCommandSelector();
             case QUIT -> apply(new TerminalUiAction.ExitRequested());
@@ -1056,6 +1157,38 @@ public final class CodingTerminalController implements AutoCloseable {
             case UNKNOWN -> apply(new TerminalUiAction.RecoverableFailure(TerminalCommandRouter.COMMAND_UNKNOWN));
             case MESSAGE -> throw new IllegalStateException("message must be routed separately");
         }
+    }
+
+    private void executeRename(String newTitle) {
+        CodingSessionView current = requireCurrentSession();
+        apply(new TerminalUiAction.StatusChanged("Renaming session"));
+        submitEffect(
+                () -> {
+                    CodingSessionView reconciled =
+                            client.reconcile(current.summary().sessionId());
+                    CodingSessionSummary renamed = client.rename(
+                            reconciled.summary().sessionId(),
+                            newTitle,
+                            reconciled.summary().revision());
+                    LoadedSession loaded = readSession(
+                            client.open(renamed.sessionId()), Optional.empty(), null, RunOutputCursor.BEFORE_FIRST);
+                    return () -> {
+                        applyLoadedSession(loaded);
+                        apply(new TerminalUiAction.StatusChanged("Session renamed"));
+                    };
+                },
+                code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+    }
+
+    private void executeNonDraftCommand(String text) {
+        if (text == null || text.isBlank()) {
+            return;
+        }
+        TerminalCommand command = commands.route(text);
+        if (command == TerminalCommand.MESSAGE) {
+            return;
+        }
+        command(command, text);
     }
 
     private boolean cancelCurrentRunIfPresent() {
@@ -1714,10 +1847,10 @@ public final class CodingTerminalController implements AutoCloseable {
                 0)));
     }
 
-    private void openCommandSelector() {
-        completionContext = new CompletionContext("", 0, 0);
+    public void openCommandSelector() {
+        preserveDraft();
         apply(new TerminalUiAction.SelectorOpened(
-                new TerminalSelector("completion", "Commands", TerminalCompletionProvider.COMMANDS, 0)));
+                new TerminalSelector("command-palette", "Commands", TerminalCompletionProvider.COMMANDS, 0)));
     }
 
     private void openCompletionSelector(String buffer, int cursor) {
@@ -1775,6 +1908,7 @@ public final class CodingTerminalController implements AutoCloseable {
             apply(new TerminalUiAction.SelectorClosed());
             discardPendingShell();
             completionContext = null;
+            restorePreservedDraft();
             return;
         }
         if (input.kind() == TerminalInput.Kind.SELECT_PREVIOUS) {
@@ -1792,6 +1926,7 @@ public final class CodingTerminalController implements AutoCloseable {
         if (input.kind() == TerminalInput.Kind.EOF) {
             apply(new TerminalUiAction.SelectorClosed());
             completionContext = null;
+            restorePreservedDraft();
             return;
         }
         if (input.kind() != TerminalInput.Kind.SUBMIT) {
@@ -1800,6 +1935,12 @@ public final class CodingTerminalController implements AutoCloseable {
         TerminalSelector selector = state.selector().orElseThrow();
         int selected = selector.selected();
         switch (selector.kind()) {
+            case "command-palette" -> {
+                String selectedCommand = selector.options().get(selected);
+                apply(new TerminalUiAction.SelectorClosed());
+                restorePreservedDraft();
+                executeNonDraftCommand(selectedCommand);
+            }
             case "completion" -> {
                 CompletionContext context = Objects.requireNonNull(completionContext, "completion context is required");
                 String replacement = selector.options().get(selected);
@@ -2289,20 +2430,114 @@ public final class CodingTerminalController implements AutoCloseable {
         return List.copyOf(grouped.values());
     }
 
+    public void cycleModel(int delta) {
+        if (state.currentRunId().isPresent()) {
+            apply(new TerminalUiAction.StatusChanged("Cannot switch model during active run"));
+            return;
+        }
+        if (state.selector().isPresent() || renamingSession) {
+            return;
+        }
+        if (modelSwitchInProgress) {
+            return;
+        }
+        if (modelOptions.isEmpty()) {
+            modelSwitchInProgress = true;
+            apply(new TerminalUiAction.StatusChanged("Loading models"));
+            Optional<AgentSessionId> requestSessionId =
+                    state.session().map(s -> s.summary().sessionId());
+            boolean requestAwaitingNew = awaitingNewSessionMessage;
+            submitEffect(
+                    () -> {
+                        List<CodingModelOption> loaded = client.models();
+                        return () -> {
+                            modelOptions = List.copyOf(loaded);
+                            modelSwitchInProgress = false;
+                            if (state.selector().isPresent()
+                                    || state.currentRunId().isPresent()
+                                    || renamingSession
+                                    || !Objects.equals(
+                                            state.session().map(s -> s.summary().sessionId()), requestSessionId)
+                                    || awaitingNewSessionMessage != requestAwaitingNew) {
+                                return;
+                            }
+                            performModelCycle(delta);
+                        };
+                    },
+                    code -> {
+                        modelSwitchInProgress = false;
+                        apply(new TerminalUiAction.RecoverableFailure(code));
+                    });
+            return;
+        }
+        performModelCycle(delta);
+    }
+
+    private void performModelCycle(int delta) {
+        if (state.selector().isPresent() || state.currentRunId().isPresent() || renamingSession) {
+            return;
+        }
+        List<CodingModelOption> available = modelOptions.stream()
+                .filter(option ->
+                        option.state().bindingAvailability() == CodingModelState.BindingAvailability.AVAILABLE)
+                .toList();
+        if (available.isEmpty()) {
+            apply(new TerminalUiAction.RecoverableFailure("MODEL_LIST_EMPTY"));
+            return;
+        }
+        String currentModelId = (awaitingNewSessionMessage || state.session().isEmpty())
+                ? (pendingNewSessionModelId != null
+                        ? pendingNewSessionModelId
+                        : state.session().map(s -> s.model().model().id()).orElse(null))
+                : state.session().map(s -> s.model().model().id()).orElse(pendingNewSessionModelId);
+        int currentIndex = -1;
+        for (int i = 0; i < available.size(); i++) {
+            if (available.get(i).id().equals(currentModelId)) {
+                currentIndex = i;
+                break;
+            }
+        }
+        int nextIndex;
+        if (currentIndex < 0) {
+            nextIndex = delta >= 0 ? 0 : available.size() - 1;
+        } else {
+            nextIndex = Math.floorMod(currentIndex + delta, available.size());
+        }
+        CodingModelOption target = available.get(nextIndex);
+        if (target.id().equals(currentModelId)) {
+            return;
+        }
+        confirmModelSelection(target);
+    }
+
     private void confirmModelSelection(CodingModelOption option) {
         Optional<RunEventCursor> cursor = state.appliedCursor();
         AgentRunId previousOutputRunId = outputRunId;
         RunOutputCursor previousOutputCursor = outputCursor;
-        apply(new TerminalUiAction.SelectorClosed());
+        if (state.selector().map(s -> s.kind().startsWith("model")).orElse(false)) {
+            apply(new TerminalUiAction.SelectorClosed());
+        }
         if (awaitingNewSessionMessage || state.session().isEmpty()) {
             pendingNewSessionModelId = option.id();
+            modelSwitchInProgress = false;
             apply(new TerminalUiAction.StatusChanged("Model selected for next session"));
         } else {
             CodingSessionView current = state.session().orElseThrow();
+            modelSwitchInProgress = true;
             apply(new TerminalUiAction.StatusChanged("Changing model"));
             submitEffect(
-                    () -> selectModel(current, option.id(), cursor, previousOutputRunId, previousOutputCursor),
-                    code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+                    () -> {
+                        Runnable select =
+                                selectModel(current, option.id(), cursor, previousOutputRunId, previousOutputCursor);
+                        return () -> {
+                            modelSwitchInProgress = false;
+                            select.run();
+                        };
+                    },
+                    code -> {
+                        modelSwitchInProgress = false;
+                        apply(new TerminalUiAction.RecoverableFailure(code));
+                    });
         }
     }
 

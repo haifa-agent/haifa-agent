@@ -1,5 +1,6 @@
 package io.haifa.agent.application.coding.terminal.tui4j;
 
+import com.williamcallahan.tui4j.ansi.TextWidth;
 import com.williamcallahan.tui4j.ansi.Truncate;
 import com.williamcallahan.tui4j.compat.bubbles.textarea.Textarea;
 import com.williamcallahan.tui4j.compat.bubbles.viewport.Viewport;
@@ -173,7 +174,10 @@ final class Tui4jTerminalView {
         }
 
         boolean compact = state.rows() < 24;
-        List<String> before = header(state, compact);
+        boolean showSidebar = state.sidebarVisible() && state.columns() >= 100;
+        int sidebarWidth = showSidebar ? 42 : 0;
+        int mainWidth = state.columns() - sidebarWidth;
+
         List<String> after = lowerRegions(
                 state,
                 editor,
@@ -183,8 +187,8 @@ final class Tui4jTerminalView {
                 secureInput,
                 isUpdate,
                 secureInputHint);
-        int viewportRows = Math.max(1, state.rows() - visualRows(before) - visualRows(after));
-        transcript.setWidth(state.columns());
+        int viewportRows = Math.max(1, state.rows() - visualRows(after));
+        transcript.setWidth(showSidebar ? Math.max(12, mainWidth - 1) : Math.max(12, mainWidth));
         transcript.setHeight(viewportRows);
         if (followTranscript) {
             transcript.gotoBottom();
@@ -196,8 +200,40 @@ final class Tui4jTerminalView {
         }
 
         List<String> lines = new ArrayList<>(state.rows());
-        lines.addAll(before);
-        lines.add(transcript.view());
+        if (!showSidebar) {
+            lines.add(transcript.view());
+        } else {
+            int leftWidth = Math.max(1, mainWidth - 1);
+            int rightWidth = Math.max(1, sidebarWidth - 1);
+            List<String> sidebarLines = renderSidebar(state, viewportRows, rightWidth);
+            String[] leftRows = transcript.view().split("\n", -1);
+            StringBuilder combined = new StringBuilder();
+            for (int row = 0; row < viewportRows; row++) {
+                String left = row < leftRows.length ? leftRows[row] : "";
+                String right = row < sidebarLines.size() ? sidebarLines.get(row) : "";
+                int leftLen = TextWidth.measureCellWidth(left);
+                String leftPadded;
+                if (leftLen < leftWidth) {
+                    leftPadded = left + " ".repeat(leftWidth - leftLen);
+                } else if (leftLen > leftWidth) {
+                    leftPadded = Truncate.truncate(left, leftWidth, "");
+                } else {
+                    leftPadded = left;
+                }
+                int rightLen = TextWidth.measureCellWidth(right);
+                String rightPadded;
+                if (rightLen < rightWidth) {
+                    rightPadded = right + " ".repeat(rightWidth - rightLen);
+                } else if (rightLen > rightWidth) {
+                    rightPadded = Truncate.truncate(right, rightWidth, "");
+                } else {
+                    rightPadded = right;
+                }
+                if (row > 0) combined.append('\n');
+                combined.append(leftPadded).append(theme.muted("│")).append(rightPadded);
+            }
+            lines.add(combined.toString());
+        }
         lines.addAll(after);
         return lines.stream().map(value -> clip(value, state.columns())).collect(Collectors.joining("\n"));
     }
@@ -214,41 +250,62 @@ final class Tui4jTerminalView {
                 .forEach(assistantIds::add);
         markdown.retain(assistantIds);
 
+        boolean showSidebar = state.sidebarVisible() && state.columns() >= 100;
+        int mainWidth = showSidebar ? state.columns() - 42 : state.columns();
+
         StringBuilder content = new StringBuilder();
         TranscriptItem previous = null;
         for (TranscriptItem item : state.transcript()) {
             if (previous != null) {
                 content.append(isCompactTool(previous) && isCompactTool(item) ? '\n' : "\n\n");
             }
-            content.append(transcriptItem(item, Math.max(12, state.columns() - 2)));
+            content.append(transcriptItem(item, Math.max(12, mainWidth - 2)));
             previous = item;
         }
         return content.toString();
     }
 
-    private List<String> header(TerminalUiState state, boolean compact) {
+    private List<String> renderSidebar(TerminalUiState state, int height, int width) {
         List<String> lines = new ArrayList<>();
-        lines.add(theme.accent(state.header()) + theme.muted("  v0.1"));
-        if (compact) {
-            lines.add(
-                    theme.muted("tab complete · " + submitHint(state) + " · " + shortcuts.interrupt() + " interrupt"));
+        if (state.session().isPresent()) {
+            var summary = state.session().get().summary();
+            lines.add(theme.strong(clip(summary.displayName(), width)));
+            lines.add(theme.muted(clip(summary.sessionId().value(), width)));
         } else {
-            lines.add(theme.muted(shortcuts.interrupt()
-                    + " interrupt · "
-                    + shortcuts.clear()
-                    + " clear · "
-                    + shortcuts.toggleExpansion()
-                    + " expand/collapse · tab complete · "
-                    + submitHint(state)));
-            if (state.currentRunId().isPresent()) {
-                lines.add(theme.muted(shortcuts.followUp()
-                        + " follow-up · "
-                        + shortcuts.restoreQueuedMessage()
-                        + " restore queued message"));
-            }
-            lines.add(theme.muted("page up/down scroll · drag select/copy"));
+            lines.add(theme.strong("Haifa Coding Agent"));
+            lines.add(theme.muted("No active session"));
         }
-        resources(state).ifPresent(lines::add);
+        lines.add("");
+
+        var footer = state.footer();
+        if (!footer.project().isBlank()) {
+            lines.add(theme.muted("📁 " + clip(footer.project(), width - 3)));
+        }
+        if (!footer.gitBranch().isBlank()) {
+            lines.add(theme.muted("🌿 " + clip(footer.gitBranch(), width - 3)));
+        }
+        lines.add("");
+
+        lines.add(theme.focus("Resources"));
+        List<String> meaningful = state.loadedResources().stream()
+                .map(Tui4jTerminalView::sanitize)
+                .filter(this::isMeaningfulResource)
+                .toList();
+        if (meaningful.isEmpty()) {
+            lines.add(theme.muted("  • None loaded"));
+        } else {
+            for (String res : meaningful) {
+                lines.add(theme.muted("  • " + clip(res, width - 4)));
+            }
+        }
+        lines.add("");
+
+        lines.add(theme.muted("• Haifa Agent v0.1.2"));
+        lines.add(theme.muted("• " + shortcuts.sidebarToggle() + " toggle"));
+
+        while (lines.size() < height) {
+            lines.add("");
+        }
         return lines;
     }
 
@@ -271,7 +328,6 @@ final class Tui4jTerminalView {
                     .map(theme::queued)
                     .forEach(lines::add);
         }
-        status(state, newOutputPending, activityElapsed).ifPresent(lines::add);
         state.recoverableError().ifPresent(value -> {
             TerminalRecovery recovery = TerminalRecovery.fromCode(value);
             java.util.function.Function<String, String> recoveryStyle =
@@ -279,25 +335,109 @@ final class Tui4jTerminalView {
             lines.add(recoveryStyle.apply(recovery.displayTitle()));
             if (!compact) lines.add(recoveryStyle.apply("  " + recovery.action()));
         });
-        state.selector()
-                .ifPresentOrElse(
-                        selector -> lines.addAll(selector(selector, compact ? 1 : 4)),
-                        () -> lines.add(theme.editor(editor.view(), Math.max(1, state.columns() - 1), 3)));
-        lines.add(theme.muted(editorHint(state, secureInput, isUpdate, secureInputHint)));
-        var footer = state.footer();
-        List<String> workspace = new ArrayList<>();
-        if (!footer.model().isBlank()) addMeaningful(workspace, "model: " + footer.model());
-        if (!footer.project().isBlank()) addMeaningful(workspace, "cwd: " + footer.project());
-        if (!footer.gitBranch().isBlank()) addMeaningful(workspace, "git: " + footer.gitBranch());
-        if (!workspace.isEmpty()) lines.add(theme.muted(String.join(" · ", workspace)));
-        List<String> context = new ArrayList<>();
-        addMeaningful(context, footer.runStatus());
-        addMeaningful(context, footer.session());
-        if (!compact) {
-            addMeaningful(context, footer.metrics());
+        if (state.selector().isPresent()) {
+            lines.addAll(selector(state.selector().get(), compact ? 1 : 4));
+        } else {
+            lines.add(theme.editor(editor.view(), Math.max(1, state.columns() - 1), 3));
+            if (!compact) {
+                lines.add(promptMetaStrip(state, secureInput, isUpdate, secureInputHint));
+            }
         }
-        if (!context.isEmpty()) lines.add(theme.muted(String.join(" · ", context)));
+        lines.add(renderBottomStatusLine(state, newOutputPending, activityElapsed));
         return lines;
+    }
+
+    private String promptMetaStrip(
+            TerminalUiState state, boolean secureInput, boolean isUpdate, String secureInputHint) {
+        if (secureInput) {
+            return theme.muted(editorHint(state, secureInput, isUpdate, secureInputHint));
+        }
+        boolean isShell =
+                state.editorBuffer().startsWith("!") || state.editorBuffer().startsWith("!!");
+        String mode = isShell ? (state.editorBuffer().startsWith("!!") ? "Shell (silent)" : "Shell") : "Normal";
+        String model =
+                state.footer().model().isBlank() ? "" : " · " + state.footer().model();
+        String provider =
+                state.footer().provider().isBlank() ? "" : " (" + state.footer().provider() + ")";
+        String leftMeta = "  " + mode + model + provider;
+        String hint = editorHint(state, false, false, null);
+        int available = Math.max(1, state.columns() - 1);
+        int leftWidth = TextWidth.measureCellWidth(leftMeta);
+        int hintWidth = TextWidth.measureCellWidth(hint);
+        if (leftWidth + hintWidth + 4 <= available) {
+            int spaces = available - leftWidth - hintWidth;
+            return theme.muted(leftMeta + " ".repeat(spaces) + hint);
+        }
+        return theme.muted(leftMeta);
+    }
+
+    private String renderBottomStatusLine(TerminalUiState state, boolean newOutputPending, Duration activityElapsed) {
+        String alert = newOutputPending ? theme.queued("new output below") : "";
+        String left;
+        if (state.currentRunId().isPresent()) {
+            String act = timedActivityStatus(
+                    state.status(), activityElapsed, state.activity().label());
+            left = theme.pending("⠋ " + act) + theme.muted(" · " + shortcuts.interrupt() + " interrupt");
+            if (!alert.isEmpty()) {
+                left = left + " · " + alert;
+            }
+        } else {
+            String opStatus = sanitize(state.status().strip());
+            boolean hasOpFeedback = !opStatus.isBlank()
+                    && !opStatus.equalsIgnoreCase("idle")
+                    && !(state.recoverableError().isPresent() && opStatus.equalsIgnoreCase("Recovery required"));
+            String path = state.footer().project().isBlank()
+                    ? "Haifa Coding Agent"
+                    : state.footer().project();
+            if (hasOpFeedback) {
+                left = theme.accent(opStatus);
+                if (!alert.isEmpty()) {
+                    left = left + " · " + alert;
+                }
+            } else {
+                left = theme.muted(path);
+                if (!alert.isEmpty()) {
+                    left = left + " · " + alert;
+                }
+            }
+        }
+
+        int available = Math.max(1, state.columns() - 1);
+        String shortcutsHint = "[" + shortcuts.modelCycle() + "] models  [" + shortcuts.commandPalette() + "] commands";
+        int shortcutsLen = TextWidth.measureCellWidth(shortcutsHint);
+        int leftLen = TextWidth.measureCellWidth(left);
+
+        List<String> rightParts = new ArrayList<>();
+        if (!state.footer().metrics().isBlank()) {
+            int metricsLen = TextWidth.measureCellWidth(state.footer().metrics());
+            if (leftLen + metricsLen + shortcutsLen + 5 <= available) {
+                rightParts.add(state.footer().metrics());
+            }
+        }
+        rightParts.add(shortcutsHint);
+        String right = theme.muted(String.join(" · ", rightParts));
+        int rightLen = TextWidth.measureCellWidth(right);
+
+        if (leftLen + rightLen + 2 <= available) {
+            int spaces = available - leftLen - rightLen;
+            return left + " ".repeat(spaces) + right;
+        }
+
+        right = theme.muted(shortcutsHint);
+        rightLen = shortcutsLen;
+        if (leftLen + rightLen + 2 <= available) {
+            int spaces = available - leftLen - rightLen;
+            return left + " ".repeat(spaces) + right;
+        }
+
+        int maxLeft = Math.max(10, available - rightLen - 2);
+        if (maxLeft < leftLen && available > leftLen) {
+            return left;
+        }
+        String truncatedLeft = Truncate.truncate(left, maxLeft, "…");
+        int truncatedLeftLen = TextWidth.measureCellWidth(truncatedLeft);
+        int spaces = Math.max(1, available - truncatedLeftLen - rightLen);
+        return truncatedLeft + " ".repeat(spaces) + right;
     }
 
     private String transcriptItem(TranscriptItem item, int bodyWidth) {
@@ -476,35 +616,6 @@ final class Tui4jTerminalView {
         }
         lines.add(theme.muted("└─ enter select · escape close (editor preserved)"));
         return lines;
-    }
-
-    private java.util.Optional<String> resources(TerminalUiState state) {
-        List<String> values = state.loadedResources().stream()
-                .map(Tui4jTerminalView::sanitize)
-                .filter(this::isMeaningfulResource)
-                .toList();
-        if (values.isEmpty()) return java.util.Optional.empty();
-        return java.util.Optional.of(theme.muted("resources · " + String.join(" · ", values)));
-    }
-
-    private java.util.Optional<String> status(
-            TerminalUiState state, boolean newOutputPending, Duration activityElapsed) {
-        List<String> parts = new ArrayList<>();
-        String value = sanitize(state.status().strip());
-        if (state.currentRunId().isPresent() && TIMED_RUN_STATUSES.contains(value.toUpperCase(Locale.ROOT))) {
-            value = timedActivityStatus(value, activityElapsed, state.activity().label());
-        }
-        if (!value.equalsIgnoreCase("idle")
-                && !(state.recoverableError().isPresent() && value.equalsIgnoreCase("Recovery required"))) {
-            parts.add(value);
-        }
-        if (newOutputPending) parts.add("new output below");
-        if (parts.isEmpty()) return java.util.Optional.empty();
-        String content = String.join(" · ", parts);
-        if (parts.size() == 1 && newOutputPending) {
-            return java.util.Optional.of(theme.queued(content));
-        }
-        return java.util.Optional.of(statusStyle(value, content));
     }
 
     private String timedActivityStatus(String status, Duration elapsed, String activityLabel) {

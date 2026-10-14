@@ -26,4 +26,36 @@ class CodingTerminalArchitectureTest {
                         "java.sql..")
                 .check(classes);
     }
+
+    @Test
+    void productionCodeDoesNotSpawnProcessesDirectly() {
+        var classes = new ClassFileImporter()
+                .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
+                .importPackages("io.haifa.agent.application.coding.terminal");
+
+        noClasses()
+                .should()
+                .dependOnClassesThat()
+                .haveFullyQualifiedName(ProcessBuilder.class.getName())
+                .orShould()
+                .dependOnClassesThat()
+                .haveFullyQualifiedName(Process.class.getName())
+                .check(classes);
+    }
+
+    @Test
+    void productionCodeDoesNotPerformDirectFileIo() {
+        var classes = new ClassFileImporter()
+                .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
+                .importPackages("io.haifa.agent.application.coding.terminal");
+
+        noClasses()
+                .should()
+                .dependOnClassesThat()
+                .resideInAnyPackage("java.nio.file..")
+                .orShould()
+                .dependOnClassesThat()
+                .haveFullyQualifiedName("java.io.File")
+                .check(classes);
+    }
 }
