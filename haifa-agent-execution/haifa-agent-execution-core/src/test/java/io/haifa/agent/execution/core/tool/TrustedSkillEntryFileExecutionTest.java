@@ -136,7 +136,7 @@ class TrustedSkillEntryFileExecutionTest {
     };
 
     @Test
-    void materializesTheFrozenPackageAndExecutesTheEntryFileByPath() {
+    void preparesTheFrozenPackageOnceAndExecutesTheEntryFileByPath() {
         var captured = new AtomicReference<ExecutionRequest>();
         RecordingMaterialization materialization = new RecordingMaterialization();
         TrustedFixture fixture = assemble(
@@ -149,17 +149,19 @@ class TrustedSkillEntryFileExecutionTest {
                 materialization,
                 List.of());
 
-        ToolResult result = fixture.provider().invoke(invocation(fixture.binding()));
+        ToolResult first = fixture.provider().invoke(invocation(fixture.binding()));
+        ToolResult second = fixture.provider().invoke(invocation(fixture.binding()));
 
-        assertThat(result.successful()).isTrue();
-        assertThat(materialization.released.get()).isEqualTo(1);
-        assertThat(materialization.staged.get()).isNotNull();
-        assertThat(materialization.staged.get().materializationKey()).matches("[0-9a-f]{64}");
-        assertThat(materialization.staged.get().workspaceRelativeEntryPath())
+        assertThat(first.successful()).isTrue();
+        assertThat(second.successful()).isTrue();
+        // One prepared version directory: bytes are loaded exactly once and reused afterwards.
+        assertThat(materialization.loads.get()).isEqualTo(1);
+        assertThat(materialization.prepared.get().versionKey()).matches("[0-9a-f]{64}");
+        assertThat(materialization.prepared.get().workspaceRelativeEntryPath())
                 .startsWith(".haifa-trusted-skills/")
                 .endsWith("/scripts/main");
         assertThat(materialization.filesReceived)
-                .extracting(TrustedSkillScriptMaterialization.PackageFile::relativePath)
+                .extracting(TrustedSkillScriptPackageDirectory.PackageFile::relativePath)
                 .containsExactlyInAnyOrder("SKILL.md", "helpers/util.txt", "scripts/main");
         assertThat(TrustedSkillEntryFileExecutionTest.bytesOf(materialization.filesReceived, "scripts/main"))
                 .isEqualTo(ENTRY);
@@ -169,7 +171,7 @@ class TrustedSkillEntryFileExecutionTest {
         ExecutionRequest request = captured.get();
         assertThat(request.command().argv())
                 .containsExactly(
-                        "trusted-runtime", materialization.staged.get().workspaceRelativeEntryPath(), "MODEL_VALUE");
+                        "trusted-runtime", materialization.prepared.get().workspaceRelativeEntryPath(), "MODEL_VALUE");
         assertThat(request.input().isEmpty()).isTrue();
         assertThat(request.workingDirectory().projectPath().isRoot()).isTrue();
         assertThat(request.limits().timeout()).isEqualTo(Duration.ofSeconds(5));
@@ -194,8 +196,8 @@ class TrustedSkillEntryFileExecutionTest {
         assertThatThrownBy(() -> fixture.provider().invoke(invocation(fixture.binding())))
                 .isInstanceOf(SecurityException.class)
                 .hasMessageContaining("package content has drifted");
-        assertThat(materialization.staged.get()).isNull();
-        assertThat(materialization.released.get()).isEqualTo(0);
+        assertThat(materialization.prepared.get()).isNull();
+        assertThat(materialization.loads.get()).isEqualTo(1);
         assertThat(captured.get()).isNull();
     }
 
@@ -216,12 +218,12 @@ class TrustedSkillEntryFileExecutionTest {
         assertThatThrownBy(() -> fixture.provider().invoke(invocation(fixture.binding())))
                 .isInstanceOf(SecurityException.class)
                 .hasMessageContaining("package bytes are unavailable");
-        assertThat(materialization.staged.get()).isNull();
+        assertThat(materialization.prepared.get()).isNull();
         assertThat(captured.get()).isNull();
     }
 
     @Test
-    void releasesTheMaterializedPackageEvenWhenExecutionFails() {
+    void keepsThePreparedVersionDirectoryWhenExecutionFails() {
         RecordingMaterialization materialization = new RecordingMaterialization();
         TrustedFixture fixture = assemble(
                 executionProvider(
@@ -233,7 +235,8 @@ class TrustedSkillEntryFileExecutionTest {
         assertThatThrownBy(() -> fixture.provider().invoke(invocation(fixture.binding())))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("execution survived failure");
-        assertThat(materialization.released.get()).isEqualTo(1);
+        // The prepared version directory was not released with the failed invocation.
+        assertThat(materialization.prepared.get()).isNotNull();
     }
 
     @Test
@@ -252,7 +255,8 @@ class TrustedSkillEntryFileExecutionTest {
 
         assertThatThrownBy(() -> fixture.provider().invoke(invocation(fixture.binding())))
                 .hasMessageContaining("does not support entry-file execution");
-        assertThat(materialization.staged.get()).isNull();
+        assertThat(materialization.prepared.get()).isNull();
+        assertThat(materialization.loads.get()).isEqualTo(0);
         assertThat(captured.get()).isNull();
     }
 
@@ -278,6 +282,20 @@ class TrustedSkillEntryFileExecutionTest {
         assertThat(captured.get().workingDirectory().projectPath().isRoot()).isTrue();
     }
 
+    /** The frozen Skill execution-profile reference distinguishes two different package versions. */
+    @Test
+    void differentSkillPackageVersionsProduceDifferentToolIdentities() {
+        byte[] updatedEntry = "NEW ENTRY".getBytes(StandardCharsets.UTF_8);
+        SkillContentDigest updatedDigest = SkillTrustDigests.content(updatedEntry);
+        assertThat(updatedDigest).isNotEqualTo(SkillTrustDigests.content(ENTRY));
+
+        // Two different Skill package versions must never share a frozen identity reference.
+        String original = TrustedSkillScriptToolSpec.skillProfileReference(
+                binding(), "scripts/main", SkillTrustDigests.content(ENTRY));
+        String updated = TrustedSkillScriptToolSpec.skillProfileReference(binding(), "scripts/main", updatedDigest);
+        assertThat(updated).isNotEqualTo(original);
+    }
+
     private record TrustedFixture(
             TrustedSkillScriptToolProvider provider,
             FrozenToolBinding binding,
@@ -290,7 +308,11 @@ class TrustedSkillEntryFileExecutionTest {
             List<ProjectPath> workspaceInputs) {
         String executionDigest = execution.configurationIdentity();
         String sandboxDigest = SkillTrustDigests.sandbox(execution.sandboxProfileIdentity());
-        ToolDefinition definition = definition(executionDigest, sandboxDigest);
+        ToolDefinition definition = definition(List.of(
+                executionDigest,
+                "sandbox@" + sandboxDigest,
+                TrustedSkillScriptToolSpec.skillProfileReference(
+                        binding(), "scripts/main", SkillTrustDigests.content(ENTRY))));
         TrustedSkillScriptToolSpec spec = new TrustedSkillScriptToolSpec(
                 definition,
                 binding(),
@@ -464,7 +486,7 @@ class TrustedSkillEntryFileExecutionTest {
         return new SkillResourceRef(path, kind, mediaType, SkillTrustDigests.content(bytes), bytes.length, true);
     }
 
-    private static ToolDefinition definition(String executionDigest, String sandboxDigest) {
+    private static ToolDefinition definition(List<String> executionProfiles) {
         ToolName name = new ToolName("trusted_entry_tool");
         Map<String, Object> input = Map.of(
                 "$schema",
@@ -492,8 +514,7 @@ class TrustedSkillEntryFileExecutionTest {
                 ToolIdempotency.NON_IDEMPOTENT,
                 ToolRisk.HIGH,
                 Set.of(ToolSideEffect.PROCESS_EXECUTION),
-                new ToolResourceRequirements(
-                        Set.of("execution_run"), Set.of(), Set.of(executionDigest, "sandbox@" + sandboxDigest)),
+                new ToolResourceRequirements(Set.of("execution_run"), Set.of(), Set.copyOf(executionProfiles)),
                 List.of(),
                 ToolApprovalRequirement.ALWAYS,
                 "test",
@@ -516,36 +537,36 @@ class TrustedSkillEntryFileExecutionTest {
                 ToolInvocationObserver.noop());
     }
 
-    private static byte[] bytesOf(List<TrustedSkillScriptMaterialization.PackageFile> files, String relativePath) {
+    private static byte[] bytesOf(List<TrustedSkillScriptPackageDirectory.PackageFile> files, String relativePath) {
         return files.stream()
                 .filter(file -> file.relativePath().equals(relativePath))
-                .map(TrustedSkillScriptMaterialization.PackageFile::content)
+                .map(TrustedSkillScriptPackageDirectory.PackageFile::content)
                 .findFirst()
                 .orElseThrow();
     }
 
-    /** Records stage/release proof for entry-file execution. */
-    private static final class RecordingMaterialization implements TrustedSkillScriptMaterialization {
-        final List<TrustedSkillScriptMaterialization.PackageFile> filesReceived = new ArrayList<>();
-        final AtomicReference<StagedSkillPackage> staged = new AtomicReference<>();
-        final AtomicInteger released = new AtomicInteger();
+    /**
+     * Records the version-directory seam: received files, how often frozen bytes were loaded and
+     * how often the prepared directory was reused without loading bytes again.
+     */
+    private static final class RecordingMaterialization implements TrustedSkillScriptPackageDirectory {
+        final List<TrustedSkillScriptPackageDirectory.PackageFile> filesReceived = new ArrayList<>();
+        final AtomicInteger loads = new AtomicInteger();
+        final AtomicReference<PreparedSkillPackage> prepared = new AtomicReference<>();
 
         @Override
-        public StagedSkillPackage stage(String key, List<PackageFile> files, String entryRelativePath) {
-            TrustedSkillScriptMaterialization.requireTrustedKey(key);
+        public PreparedSkillPackage prepareIfAbsent(
+                String key, java.util.function.Supplier<List<PackageFile>> files, String entryRelativePath) {
+            TrustedSkillScriptPackageDirectory.requireVersionKey(key);
+            PreparedSkillPackage existing = prepared.get();
+            if (existing != null && existing.versionKey().equals(key)) return existing;
+            loads.incrementAndGet();
             filesReceived.clear();
-            filesReceived.addAll(files);
-            StagedSkillPackage value = new StagedSkillPackage(
-                    key,
-                    ".haifa-trusted-skills/" + key + "/" + entryRelativePath,
-                    files.stream().map(PackageFile::relativePath).toList());
-            staged.set(value);
+            filesReceived.addAll(files.get());
+            PreparedSkillPackage value =
+                    new PreparedSkillPackage(key, ".haifa-trusted-skills/" + key + "/" + entryRelativePath);
+            prepared.set(value);
             return value;
-        }
-
-        @Override
-        public void release(StagedSkillPackage value) {
-            released.incrementAndGet();
         }
     }
 }

@@ -385,7 +385,10 @@ class TrustedScriptExecutionToolProviderTest {
         FrozenSkillBinding skill = skill();
         String script = "print('FROZEN_RESOURCE')";
         ToolDefinition definition = trustedDefinition(
-                execution.configurationIdentity(), SkillTrustDigests.sandbox(execution.sandboxProfileIdentity()));
+                execution.configurationIdentity(),
+                SkillTrustDigests.sandbox(execution.sandboxProfileIdentity()),
+                TrustedSkillScriptToolSpec.skillProfileReference(
+                        skill(), "scripts/transform", SkillTrustDigests.content(script)));
         TrustedSkillScriptToolSpec spec = new TrustedSkillScriptToolSpec(
                 definition,
                 skill,
@@ -570,7 +573,7 @@ class TrustedScriptExecutionToolProviderTest {
                 "catalog");
     }
 
-    private static ToolDefinition trustedDefinition(String executionDigest, String sandboxDigest) {
+    private static ToolDefinition trustedDefinition(String executionDigest, String sandboxDigest, String skillProfile) {
         ToolName name = new ToolName("trusted_transform");
         Map<String, Object> input = Map.of(
                 "$schema",
@@ -599,7 +602,9 @@ class TrustedScriptExecutionToolProviderTest {
                 ToolRisk.HIGH,
                 Set.of(ToolSideEffect.PROCESS_EXECUTION),
                 new ToolResourceRequirements(
-                        Set.of("execution_run"), Set.of(), Set.of(executionDigest, "sandbox@" + sandboxDigest)),
+                        Set.of("execution_run"),
+                        Set.of(),
+                        Set.of(executionDigest, "sandbox@" + sandboxDigest, skillProfile)),
                 List.of(),
                 ToolApprovalRequirement.ALWAYS,
                 "test",

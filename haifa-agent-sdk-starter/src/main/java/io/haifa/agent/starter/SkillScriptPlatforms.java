@@ -1,11 +1,9 @@
 package io.haifa.agent.starter;
 
-import io.haifa.agent.artifact.ArtifactService;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.id.UuidV7IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.reference.PrincipalRef;
-import io.haifa.agent.core.reference.ProjectRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.execution.api.ExecutionEnvironmentRef;
@@ -21,6 +19,7 @@ import io.haifa.agent.execution.core.store.InMemoryExecutionOutputStore;
 import io.haifa.agent.execution.core.store.InMemoryExecutionStore;
 import io.haifa.agent.execution.core.tool.ExecutionInvocationScopeResolver;
 import io.haifa.agent.execution.core.tool.ExecutionToolConfiguration;
+import io.haifa.agent.execution.core.tool.ExecutionToolDefinitionFactory;
 import io.haifa.agent.execution.core.tool.ExecutionToolProvider;
 import io.haifa.agent.execution.core.tool.ScriptRuntimeAdapter;
 import io.haifa.agent.execution.core.tool.ScriptRuntimeResolver;
@@ -97,7 +96,6 @@ import java.util.stream.Stream;
  * <pre>{@code
  * var skills = SkillScriptPlatforms.trusted(
  *         new SkillScriptPlatforms.SkillScriptSpec(
- *                 projectRef,
  *                 workspaceRoot,
  *                 dataRoot,
  *                 List.of(new SkillScriptPlatforms.SkillScriptRuntime("bun", Path.of("C:/run/bun.exe"))),
@@ -107,15 +105,13 @@ import java.util.stream.Stream;
  *                         "Generate one image",
  *                         "Generates one PNG image through the frozen skill package script.",
  *                         inputSchema,
- *                         outputSchema,
  *                         Duration.ofMinutes(2),
  *                         frozenSkillBinding,
  *                         "scripts/main.ts",
  *                         "bun",
  *                         Duration.ofSeconds(120),
  *                         "generate a reviewed image artifact",
- *                         arguments -> TrustedScriptArguments.atWorkspaceRoot(List.of((String) arguments.get("prompt"))),
- *                         List.of(new SkillScriptPlatforms.SkillScriptOutput("image.png", "image/png")))),
+ *                         arguments -> TrustedScriptArguments.atWorkspaceRoot(List.of((String) arguments.get("prompt"))))),
  *                 Duration.ofSeconds(30),
  *                 Duration.ofMinutes(10),
  *                 1_048_576,
@@ -125,20 +121,22 @@ import java.util.stream.Stream;
  * skills.applyTo(builder);
  * }</pre>
  *
- * <p>The declared Tool runs one frozen multi-file Skill package: the platform materializes every
- * frozen package file into a per-invocation directory below the Workspace root (byte-verified
- * against the frozen resource index, any drift rejected), executes the declared entry file by
- * path, and deletes the materialized directory afterwards. Entry-file identity therefore holds:
- * relative imports resolve and entry detection works, which the standard-input model cannot
- * express.
+ * <p>The declared Tool runs one frozen multi-file Skill package: the platform prepares the
+ * immutable execution directory of the frozen package version once below the Workspace root
+ * (every frozen package byte is verified against the resource index on preparation; any drift is
+ * rejected), reuses that directory on every later invocation of the same version, and executes the
+ * declared entry file by path. Entry-file identity therefore holds: relative imports resolve and
+ * entry detection works, which the standard-input model cannot express. Prepared directories are
+ * never deleted per invocation.
  *
  * <p>Trusted runtimes are declared by the product with an explicit executable path and are
- * preflighted (existence, exact file, version probe) at assembly; nothing is guessed from the
- * host {@code PATH} at runtime. Declared outputs are captured from {@code outputs/} below the
- * Workspace root, published through the product's {@link ArtifactService}, and their staged files
- * are removed after capture, so one Run's outputs never leak into another Run. The declared
+ * preflighted (existence, exact file, deadline-bounded version probe) at assembly; nothing is
+ * guessed from the host {@code PATH} at runtime. Script output stays in the ordinary
+ * {@code outputs/} directory below the Workspace root and the product's existing Artifact chain
+ * publishes it - this entry adds no output capture, publication or deletion layer. The declared
  * Tool keeps the ordinary Runtime boundary for every invocation: one exact Approval, the frozen
- * invocation digest, capability {@code execution_run}, and bounded, redacted output.
+ * invocation digest, capability {@code execution_run}, the canonical execution result schema, and
+ * bounded, redacted output.
  */
 public final class SkillScriptPlatforms {
     private static final String WORKSPACE_ID = "trusted-skill-script";
@@ -253,13 +251,12 @@ public final class SkillScriptPlatforms {
                 ignored -> new ExecutionInvocationScopeResolver.ExecutionInvocationScope(workspaceId, CAPABILITIES),
                 configuration);
         var access = new SkillScriptPlatformWorkspaceAccess(locations, workspaceId, UNAVAILABLE_CODE);
-        var materializer = new SkillScriptPackageMaterializer(access);
+        var packageDirectory = new SkillScriptPackageDirectory(access);
         String executionDigest = execution.configurationIdentity();
         String sandboxDigest = SkillTrustDigests.sandbox(execution.sandboxProfileIdentity());
         List<TrustedSkillScriptToolSpec> innerSpecs = new ArrayList<>();
         List<ToolDefinition> definitions = new ArrayList<>();
         List<String> toolNames = new ArrayList<>();
-        Map<String, List<SkillScriptOutput>> outputsByTool = new LinkedHashMap<>();
         Map<String, PromptFacts> promptFacts = new LinkedHashMap<>();
         for (SkillScriptToolDeclaration declaration : spec.tools()) {
             ToolDefinition definition = declaration.toDefinition(executionDigest, sandboxDigest);
@@ -278,33 +275,22 @@ public final class SkillScriptPlatforms {
                     true));
             definitions.add(definition);
             toolNames.add(definition.name().value());
-            outputsByTool.put(definition.name().value(), declaration.outputs());
             promptFacts.put(
                     definition.name().value(),
                     new PromptFacts(
                             declaration.scriptRelativePath(),
                             declaration.scriptRuntimeRef(),
                             declaration.timeout(),
-                            declaration.purpose(),
-                            declaration.outputs().stream()
-                                    .map(SkillScriptOutput::name)
-                                    .toList()));
+                            declaration.purpose()));
         }
         TrustedSkillScriptToolProvider trustedProvider =
-                new TrustedSkillScriptToolProvider(execution, spec.skillContentLoader(), materializer, innerSpecs);
-        SkillScriptOutputsPublisher wrapper = new SkillScriptOutputsPublisher(
-                trustedProvider,
-                access,
-                outputsByTool,
-                spec.artifacts(),
-                spec.project(),
-                BINDING_REFERENCE_PREFIX + workspaceIdentity);
+                new TrustedSkillScriptToolProvider(execution, spec.skillContentLoader(), packageDirectory, innerSpecs);
         List<ToolRegistration> wired = definitions.stream()
                 .map(definition -> new ToolRegistration(
                         new ToolAlias(definition.name().value()),
                         definition,
                         BINDING_REFERENCE_PREFIX + workspaceIdentity,
-                        wrapper))
+                        trustedProvider))
                 .toList();
         String profileIdentity = profile.ref().value() + "@" + profile.ref().version() + "+" + workspaceIdentity;
         return new SkillScriptedPlatform(
@@ -337,8 +323,12 @@ public final class SkillScriptPlatforms {
             Objects.requireNonNull(executable, "executable must not be null");
         }
 
-        /** Existence, exact file and version probe; nothing is guessed from the host PATH. */
+        /** Existence, exact file and deadline-bounded version probe; nothing is guessed from PATH. */
         void preflight() {
+            preflight(Duration.ofSeconds(15));
+        }
+
+        void preflight(Duration probeDeadline) {
             String normalized = language.trim().toLowerCase(Locale.ROOT);
             if (!SkillScriptPlatforms.SUPPORTED_LANGUAGES.contains(normalized)) {
                 throw new HaifaAgentException(
@@ -363,34 +353,43 @@ public final class SkillScriptPlatforms {
             }
             List<String> probe = SkillScriptPlatforms.probeArguments(normalized);
             if (probe.isEmpty()) return;
-            boolean expectsOutput = SkillScriptPlatforms.probeExpectsOutput(normalized);
+            runProbe(probe, SkillScriptPlatforms.probeExpectsOutput(normalized), probeDeadline);
+        }
+
+        /**
+         * One shared bounded deadline covers merged output consumption and process waiting: both
+         * streams are drained on one merged pipe (a filled stderr can never deadlock the probe),
+         * only the first probe output bound is retained, and a run that does not exit within the
+         * deadline - or a probe that is interrupted - is destroyed and reaped. No budget is added
+         * and there is no retry.
+         */
+        private void runProbe(List<String> arguments, boolean expectsOutput, Duration deadline) {
+            final int retainedOutputBytes = 4_096;
+            byte[] probeOutput = new byte[] {};
+            Process process = start(arguments);
             try {
-                var process = new ProcessBuilder(Stream.concat(Stream.of(executable.toString()), probe.stream())
-                                .toList())
-                        .start();
-                byte[] output;
-                try (var stream = process.getInputStream()) {
-                    output = stream.readNBytes(256);
+                var merged = new java.io.ByteArrayOutputStream();
+                Thread drain = new Thread(() -> drain(process, merged, retainedOutputBytes));
+                drain.setDaemon(true);
+                drain.start();
+                long deadlineNanos = System.nanoTime() + deadline.toNanos();
+                long remainingNanos = deadlineNanos - System.nanoTime();
+                boolean exited = remainingNanos > 0 && process.waitFor(remainingNanos, TimeUnit.NANOSECONDS);
+                if (!exited) {
+                    destroy(process);
+                    throw unavailable("trusted script runtime probe did not exit within its deadline");
                 }
-                boolean exited = process.waitFor(15, TimeUnit.SECONDS);
-                boolean success = exited && process.exitValue() == 0 && (!expectsOutput || output.length > 0);
-                process.destroyForcibly();
-                if (!success) {
-                    throw new HaifaAgentException(
-                            SkillScriptPlatforms.RUNTIME_UNAVAILABLE_CODE,
-                            "product.assemble",
-                            "execution",
-                            "trusted script runtime probe failed for language " + normalized);
+                drain.join(TimeUnit.SECONDS.toMillis(1));
+                synchronized (merged) {
+                    probeOutput = merged.toByteArray();
                 }
-            } catch (IOException exception) {
-                throw new HaifaAgentException(
-                        SkillScriptPlatforms.RUNTIME_UNAVAILABLE_CODE,
-                        "product.assemble",
-                        "execution",
-                        "trusted script runtime executable cannot be launched",
-                        exception);
+                destroy(process);
+                if (process.exitValue() != 0 || (expectsOutput && probeOutput.length == 0)) {
+                    throw unavailable("trusted script runtime probe failed for language " + normalizedLanguage());
+                }
             } catch (InterruptedException exception) {
                 Thread.currentThread().interrupt();
+                destroy(process);
                 throw new HaifaAgentException(
                         SkillScriptPlatforms.RUNTIME_UNAVAILABLE_CODE,
                         "product.assemble",
@@ -398,6 +397,64 @@ public final class SkillScriptPlatforms {
                         "trusted script runtime probe was interrupted",
                         exception);
             }
+        }
+
+        private void drain(Process process, java.io.ByteArrayOutputStream merged, int retainedOutputBytes) {
+            byte[] buffer = new byte[512];
+            int retained = 0;
+            // Draining runs to EOF so the merged pipe can never fill and block the child, while
+            // only the first bound of bytes is retained for the version diagnostic check.
+            try (var stream = process.getInputStream()) {
+                int read;
+                while ((read = stream.read(buffer)) >= 0) {
+                    synchronized (merged) {
+                        int copy = Math.min(read, Math.max(0, retainedOutputBytes - merged.size()));
+                        if (copy > 0) merged.write(buffer, 0, copy);
+                        retained += read;
+                    }
+                }
+            } catch (IOException ignored) {
+                // The child was destroyed or its pipe was closed; the deadline decides the outcome.
+            }
+        }
+
+        private Process start(List<String> arguments) {
+            try {
+                return new ProcessBuilder(Stream.concat(Stream.of(executable.toString()), arguments.stream())
+                                .toList())
+                        .redirectErrorStream(true)
+                        .start();
+            } catch (IOException exception) {
+                throw new HaifaAgentException(
+                        SkillScriptPlatforms.RUNTIME_UNAVAILABLE_CODE,
+                        "product.assemble",
+                        "execution",
+                        "trusted script runtime executable cannot be launched",
+                        exception);
+            }
+        }
+
+        private static void destroy(Process process) {
+            if (!process.isAlive()) return;
+            process.destroy();
+            try {
+                if (!process.waitFor(5, TimeUnit.SECONDS)) {
+                    process.destroyForcibly();
+                    process.waitFor(1, TimeUnit.SECONDS);
+                }
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                process.destroyForcibly();
+            }
+        }
+
+        private HaifaAgentException unavailable(String message) {
+            return new HaifaAgentException(
+                    SkillScriptPlatforms.RUNTIME_UNAVAILABLE_CODE, "product.assemble", "execution", message);
+        }
+
+        private String normalizedLanguage() {
+            return language.trim().toLowerCase(Locale.ROOT);
         }
     }
 
@@ -442,49 +499,30 @@ public final class SkillScriptPlatforms {
         return new ScriptRuntimeResolver(HostScriptRuntimeResolver.currentOperatingSystem(), adapters);
     }
 
-    /** One declared, captured output file of a trusted Skill script Tool. */
-    public record SkillScriptOutput(String name, String mediaType) {
-        public SkillScriptOutput {
-            Objects.requireNonNull(name, "name must not be null");
-            Objects.requireNonNull(mediaType, "mediaType must not be null");
-            if (!name.matches("[A-Za-z0-9][A-Za-z0-9._-]{0,63}") || name.equals(".") || name.equals("..")) {
-                throw new IllegalArgumentException("trusted script output names must be plain file names");
-            }
-            if (name.endsWith(".sha256")) {
-                // Reserved by the capture summary key space; guarded in the artifact record only.
-                throw new IllegalArgumentException("trusted script output name is reserved");
-            }
-            if (!mediaType.matches("[a-zA-Z0-9][a-zA-Z0-9/+.-]{0,63}")) {
-                throw new IllegalArgumentException("trusted script output media type is invalid");
-            }
-        }
-    }
-
     /**
      * Product declaration of one fixed business Tool backed by the frozen entry script of one
      * frozen Skill package. Inputs are trusted facts; the model supplies only the mapped business
-     * arguments, and every other script identity stays frozen.
+     * arguments, and every other script identity stays frozen. The Tool result contract is the
+     * canonical execution result schema of the shared Execution module, so the declared schema
+     * always accepts the envelope the Runtime actually returns.
      */
     public record SkillScriptToolDeclaration(
             ToolName name,
             String title,
             String description,
             ToolSchema inputSchema,
-            ToolSchema outputSchema,
             Duration definitionTimeout,
             FrozenSkillBinding skillBinding,
             String scriptRelativePath,
             String scriptRuntimeRef,
             Duration timeout,
             String purpose,
-            TrustedScriptArgumentMapper argumentMapper,
-            List<SkillScriptOutput> outputs) {
+            TrustedScriptArgumentMapper argumentMapper) {
         public SkillScriptToolDeclaration {
             Objects.requireNonNull(name, "name must not be null");
             Objects.requireNonNull(title, "title must not be null");
             Objects.requireNonNull(description, "description must not be null");
             Objects.requireNonNull(inputSchema, "inputSchema must not be null");
-            Objects.requireNonNull(outputSchema, "outputSchema must not be null");
             definitionTimeout = Objects.requireNonNull(definitionTimeout, "definitionTimeout must not be null");
             Objects.requireNonNull(skillBinding, "skillBinding must not be null");
             scriptRelativePath = Objects.requireNonNull(scriptRelativePath, "scriptRelativePath must not be null")
@@ -494,10 +532,6 @@ public final class SkillScriptPlatforms {
             Objects.requireNonNull(timeout, "timeout must not be null");
             Objects.requireNonNull(purpose, "purpose must not be null");
             Objects.requireNonNull(argumentMapper, "argumentMapper must not be null");
-            outputs = List.copyOf(Objects.requireNonNull(outputs, "outputs must not be null"));
-            if (outputs.size() > 16) {
-                throw new IllegalArgumentException("trusted script outputs exceed the capture limit");
-            }
         }
 
         SkillContentDigest scriptDigest() {
@@ -521,7 +555,7 @@ public final class SkillScriptPlatforms {
                     title,
                     description,
                     inputSchema,
-                    outputSchema,
+                    ExecutionToolDefinitionFactory.executionResultSchema(),
                     ToolExecutionMode.HOST_PROCESS,
                     true,
                     definitionTimeout,
@@ -532,7 +566,11 @@ public final class SkillScriptPlatforms {
                     new ToolResourceRequirements(
                             Set.of("execution_run"),
                             Set.of("unrestricted-network"),
-                            Set.of(executionConfigurationDigest, "sandbox@" + sandboxDigest)),
+                            Set.of(
+                                    executionConfigurationDigest,
+                                    "sandbox@" + sandboxDigest,
+                                    TrustedSkillScriptToolSpec.skillProfileReference(
+                                            skillBinding, scriptRelativePath, scriptDigest()))),
                     List.of(),
                     ToolApprovalRequirement.ALWAYS,
                     "io.haifa.agent.sdk.starter",
@@ -543,19 +581,16 @@ public final class SkillScriptPlatforms {
 
     /** Product declaration of one trusted Skill script platform. */
     public record SkillScriptSpec(
-            ProjectRef project,
             Path workspaceRoot,
             Path dataRoot,
             List<SkillScriptRuntime> runtimes,
             SkillContentLoader skillContentLoader,
             List<SkillScriptToolDeclaration> tools,
-            ArtifactService artifacts,
             Duration defaultTimeout,
             Duration maximumTimeout,
             int maximumOutputBytes,
             int maximumOutputLines) {
         public SkillScriptSpec {
-            Objects.requireNonNull(project, "project must not be null");
             workspaceRoot = HostExecutionPlatforms.hostDirectory(workspaceRoot, "workspaceRoot");
             dataRoot = Objects.requireNonNull(dataRoot, "dataRoot must not be null")
                     .toAbsolutePath()
@@ -574,7 +609,6 @@ public final class SkillScriptPlatforms {
             if (tools.isEmpty()) {
                 throw new IllegalArgumentException("at least one trusted script Tool declaration is required");
             }
-            artifacts = Objects.requireNonNull(artifacts, "artifacts must not be null");
             defaultTimeout = Objects.requireNonNull(defaultTimeout, "defaultTimeout must not be null");
             maximumTimeout = Objects.requireNonNull(maximumTimeout, "maximumTimeout must not be null");
         }
@@ -622,12 +656,7 @@ public final class SkillScriptPlatforms {
         void close();
     }
 
-    private record PromptFacts(
-            String scriptRelativePath,
-            String scriptRuntimeRef,
-            Duration timeout,
-            String purpose,
-            List<String> outputNames) {}
+    private record PromptFacts(String scriptRelativePath, String scriptRuntimeRef, Duration timeout, String purpose) {}
 
     private static final class SkillScriptedPlatform implements SkillScriptPlatform {
         private final List<ToolRegistration> registrations;
@@ -724,12 +753,8 @@ public final class SkillScriptPlatforms {
                     + "\nPurpose: " + facts.purpose
                     + "\nArguments:\n  " + (arguments.isBlank() ? "(none)" : arguments)
                     + "\nTimeout: " + facts.timeout.toMillis() + " ms"
-                    + "\nOutputs: "
-                    + (facts.outputNames().isEmpty()
-                            ? "(none)"
-                            : facts.outputNames().stream().collect(Collectors.joining(", "))
-                                    + " (published as run artifacts)")
-                    + "\nOutput: bounded and redacted"
+                    + "\nOutput: bounded and redacted; script files stay under the workspace"
+                    + " outputs/ directory and the product's existing artifact chain publishes them"
                     + "\nWorkspace: the single registered host directory; the model cannot select the"
                     + " working directory"
                     + "\nProvider: trusted host process as the current OS user, no strong isolation"
@@ -752,10 +777,10 @@ public final class SkillScriptPlatforms {
         }
 
         /**
-         * Releases nothing today: every process lease is opened and closed per invocation, and every
-         * materialized package directory is released with the invocation, exactly like the host
-         * execution entry. The method exists so a caller that abandons a build releases the
-         * contribution.
+         * Releases nothing today: every process lease is opened and closed per invocation, and the
+         * prepared Skill package directories persist below their workspace for reuse, exactly like
+         * the host execution entry. The method exists so a caller that abandons a build releases
+         * the contribution.
          */
         @Override
         public void close() {}

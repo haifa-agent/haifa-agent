@@ -3,9 +3,11 @@ package io.haifa.agent.execution.core.tool;
 import io.haifa.agent.skill.api.FrozenSkillBinding;
 import io.haifa.agent.skill.api.SkillContentDigest;
 import io.haifa.agent.skill.api.SkillResourceKind;
+import io.haifa.agent.skill.api.SkillTrustDigests;
 import io.haifa.agent.tool.api.ToolApprovalRequirement;
 import io.haifa.agent.tool.api.ToolDefinition;
 import java.time.Duration;
+import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
@@ -36,6 +38,8 @@ public record TrustedSkillScriptToolSpec(
             "language",
             "endpoint",
             "proxy");
+    private static final String IDENTITY_NAMESPACE = "trusted-skill-script-tool-identity-v1";
+    private static final String SKILL_EXECUTION_PROFILE_PREFIX = "skill@";
 
     public TrustedSkillScriptToolSpec {
         definition = Objects.requireNonNull(definition, "definition must not be null");
@@ -85,11 +89,40 @@ public record TrustedSkillScriptToolSpec(
         }
         purpose = requireText(purpose, "purpose", 256);
         argumentMapper = Objects.requireNonNull(argumentMapper, "argumentMapper must not be null");
-        Set<String> expectedProfileReferences = Set.of(executionConfigurationDigest, "sandbox@" + sandboxDigest);
+        Set<String> expectedProfileReferences = Set.of(
+                executionConfigurationDigest,
+                "sandbox@" + sandboxDigest,
+                skillProfileReference(skillBinding, normalizedScriptPath, expectedScriptDigest));
         if (!definition.resources().executionProfiles().equals(expectedProfileReferences)) {
             throw new IllegalArgumentException(
-                    "Tool execution profile must bind the exact execution and sandbox digests");
+                    "Tool execution profile must bind the exact execution, sandbox and Skill identities");
         }
+    }
+
+    /**
+     * Frozen execution-profile reference of this exact Skill package and entry. It is carried in
+     * the existing Tool definition identity ({@code executionProfiles}), so two different Skill
+     * package versions or entries can never produce the same frozen Tool coordinate and a resumed
+     * Run cannot silently dispatch an approved trust context into changed script identity.
+     */
+    public String skillProfileReference() {
+        return skillProfileReference(skillBinding, scriptRelativePath, scriptDigest);
+    }
+
+    /**
+     * Computes the one Skill execution-profile reference for a frozen binding and entry. Defining
+     * the Tool and validating its spec share this single function so there is no second identity
+     * ledger.
+     */
+    public static String skillProfileReference(
+            FrozenSkillBinding binding, String scriptRelativePath, SkillContentDigest digest) {
+        String sha = SkillTrustDigests.sha256(List.of(
+                IDENTITY_NAMESPACE,
+                binding.coordinate().externalForm(),
+                binding.registrationDigest().value(),
+                scriptRelativePath,
+                digest.value()));
+        return SKILL_EXECUTION_PROFILE_PREFIX + sha.substring("sha256:".length());
     }
 
     private static String requireText(String value, String field, int maximum) {

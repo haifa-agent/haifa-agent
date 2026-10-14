@@ -20,21 +20,21 @@ import java.util.Set;
 
 /**
  * Provider for product-defined fixed Tools; it never accepts script identity or content from a
- * model. A spec either pipes one frozen script through standard input, or materializes the whole
- * frozen package below the Workspace root and executes the frozen entry file.
+ * model. A spec either pipes one frozen script through standard input, or prepares the reusable
+ * immutable directory of the frozen Skill package version once and executes the frozen entry file
+ * of that prepared directory.
  */
 public final class TrustedSkillScriptToolProvider implements ToolProvider {
     public static final ToolProviderId PROVIDER_ID = new ToolProviderId("haifa-trusted-skill-script");
 
-    /** Total frozen package bytes one invocation may materialize. */
+    /** Total frozen package bytes one version preparation may load. */
     static final long MAXIMUM_PACKAGE_BYTES = 16L * 1024 * 1024;
 
-    private static final String MATERIALIZATION_NAMSPACE = "trusted-skill-script-materialization-v1";
+    private static final String VERSION_KEY_NAMESPACE = "trusted-skill-script-package-directory-v1";
 
     private final ExecutionToolProvider execution;
     private final SkillContentLoader contentLoader;
-    private final boolean requiresMaterialization;
-    private final TrustedSkillScriptMaterialization materialization;
+    private final TrustedSkillScriptPackageDirectory packageDirectory;
     private final Map<String, TrustedSkillScriptToolSpec> specs;
 
     public TrustedSkillScriptToolProvider(
@@ -45,7 +45,7 @@ public final class TrustedSkillScriptToolProvider implements ToolProvider {
     public TrustedSkillScriptToolProvider(
             ExecutionToolProvider execution,
             SkillContentLoader contentLoader,
-            TrustedSkillScriptMaterialization materialization,
+            TrustedSkillScriptPackageDirectory packageDirectory,
             List<TrustedSkillScriptToolSpec> specs) {
         this.execution = Objects.requireNonNull(execution, "execution must not be null");
         this.contentLoader = Objects.requireNonNull(contentLoader, "contentLoader must not be null");
@@ -60,17 +60,16 @@ public final class TrustedSkillScriptToolProvider implements ToolProvider {
             anyEntryFile = anyEntryFile || spec.entryFileExecution();
         }
         if (indexed.isEmpty()) throw new IllegalArgumentException("at least one trusted script Tool is required");
-        this.requiresMaterialization = anyEntryFile;
         if (!anyEntryFile) {
-            if (materialization != null) {
+            if (packageDirectory != null) {
                 throw new IllegalArgumentException(
-                        "trusted script materialization is only declared with entry-file execution");
+                        "trusted Skill package directories are only declared with entry-file execution");
             }
-            this.materialization = TrustedSkillScriptMaterialization.ofNothingStaged();
-        } else if (materialization == null) {
-            throw new IllegalArgumentException("entry-file trusted script Tools require a materialization seam");
+            this.packageDirectory = TrustedSkillScriptPackageDirectory.unsupported();
+        } else if (packageDirectory == null) {
+            throw new IllegalArgumentException("entry-file trusted script Tools require a package directory seam");
         } else {
-            this.materialization = Objects.requireNonNull(materialization, "materialization must not be null");
+            this.packageDirectory = Objects.requireNonNull(packageDirectory, "packageDirectory must not be null");
         }
         this.specs = Map.copyOf(indexed);
     }
@@ -140,28 +139,26 @@ public final class TrustedSkillScriptToolProvider implements ToolProvider {
         if (!execution.runtimeSupportsFileExecution(spec.scriptRuntimeRef())) {
             throw new IllegalArgumentException("trusted script runtime does not support entry-file execution");
         }
-        List<TrustedSkillScriptMaterialization.PackageFile> files = frozenPackageFiles(spec.skillBinding(), visibility);
-        String key = materializationKey(invocation, spec);
-        var staged = materialization.stage(key, files, spec.scriptRelativePath());
-        try {
-            return execution.invokeTrustedPackageScript(
-                    invocation,
-                    spec.scriptRuntimeRef(),
-                    staged.workspaceRelativeEntryPath(),
-                    mapped.argv(),
-                    spec.purpose(),
-                    spec.timeout(),
-                    spec.requiredCapabilities(),
-                    mapped.workspaceInputPaths());
-        } finally {
-            materialization.release(staged);
-        }
+        // The version directory is prepared once with byte-verified frozen bytes and reused for
+        // every later invocation of the same Skill package version; entry-file identity therefore
+        // holds (relative imports, entry detection) without per-call package copies.
+        TrustedSkillScriptPackageDirectory.PreparedSkillPackage prepared = packageDirectory.prepareIfAbsent(
+                versionKey(spec), () -> frozenPackageFiles(spec.skillBinding(), visibility), spec.scriptRelativePath());
+        return execution.invokeTrustedPackageScript(
+                invocation,
+                spec.scriptRuntimeRef(),
+                prepared.workspaceRelativeEntryPath(),
+                mapped.argv(),
+                spec.purpose(),
+                spec.timeout(),
+                spec.requiredCapabilities(),
+                mapped.workspaceInputPaths());
     }
 
     /** Loads every frozen package file as bytes and rejects any drift before placement. */
-    private List<TrustedSkillScriptMaterialization.PackageFile> frozenPackageFiles(
+    private List<TrustedSkillScriptPackageDirectory.PackageFile> frozenPackageFiles(
             FrozenSkillBinding binding, SkillVisibilityContext visibility) {
-        List<TrustedSkillScriptMaterialization.PackageFile> files = new ArrayList<>();
+        List<TrustedSkillScriptPackageDirectory.PackageFile> files = new ArrayList<>();
         long totalBytes = 0;
         for (SkillResourceRef resource : binding.packageIndex().resources()) {
             byte[] bytes = contentLoader
@@ -173,20 +170,19 @@ public final class TrustedSkillScriptToolProvider implements ToolProvider {
             }
             totalBytes += bytes.length;
             if (totalBytes > MAXIMUM_PACKAGE_BYTES) {
-                throw new IllegalArgumentException("trusted script package exceeds the materialization budget");
+                throw new IllegalArgumentException("trusted script package exceeds the preparation budget");
             }
-            files.add(new TrustedSkillScriptMaterialization.PackageFile(resource.relativePath(), bytes));
+            files.add(new TrustedSkillScriptPackageDirectory.PackageFile(resource.relativePath(), bytes));
         }
         return files;
     }
 
-    private static String materializationKey(ToolInvocationRequest invocation, TrustedSkillScriptToolSpec spec) {
-        String digest = SkillTrustDigests.sha256(List.of(
-                MATERIALIZATION_NAMSPACE,
-                invocation.runId().value(),
-                invocation.toolCallId().value(),
-                spec.skillBinding().coordinate().externalForm(),
-                spec.scriptDigest().value()));
-        return digest.substring("sha256:".length());
+    /** Stable version-directory key of one frozen Skill package binding. */
+    private static String versionKey(TrustedSkillScriptToolSpec spec) {
+        return SkillTrustDigests.sha256(List.of(
+                        VERSION_KEY_NAMESPACE,
+                        spec.skillBinding().coordinate().externalForm(),
+                        spec.skillBinding().registrationDigest().value()))
+                .substring("sha256:".length());
     }
 }
