@@ -297,27 +297,27 @@ final class Tui4jCodingTerminalModel implements Model {
                         return Command.none();
                     }
                     case 'm' -> {
-                        controller.accept(new TerminalInput(TerminalInput.Kind.EXECUTE_COMMAND, "/model"));
+                        executeCommand("/model");
                         return Command.none();
                     }
                     case 'n' -> {
-                        controller.accept(new TerminalInput(TerminalInput.Kind.EXECUTE_COMMAND, "/new"));
+                        executeCommand("/new");
                         return Command.none();
                     }
                     case 'l' -> {
-                        controller.accept(new TerminalInput(TerminalInput.Kind.EXECUTE_COMMAND, "/resume"));
+                        executeCommand("/resume");
                         return Command.none();
                     }
                     case 'c' -> {
-                        controller.accept(new TerminalInput(TerminalInput.Kind.EXECUTE_COMMAND, "/compact"));
+                        executeCommand("/compact");
                         return Command.none();
                     }
                     case 'r' -> {
-                        controller.accept(new TerminalInput(TerminalInput.Kind.EXECUTE_COMMAND, "/rename"));
+                        executeCommand("/rename");
                         return Command.none();
                     }
                     case 'q' -> {
-                        controller.accept(new TerminalInput(TerminalInput.Kind.EXECUTE_COMMAND, "/quit"));
+                        executeCommand("/quit");
                         return Command.none();
                     }
                     default -> {
@@ -644,13 +644,19 @@ final class Tui4jCodingTerminalModel implements Model {
         syncComponents();
     }
 
+    private void executeCommand(String command) {
+        controller.accept(new TerminalInput(TerminalInput.Kind.EXECUTE_COMMAND, command));
+        syncComponents();
+        pruneStalePastes(controller.state().editorBuffer());
+    }
+
     private Command submit(TerminalInput.Kind kind) {
         TerminalUiState state = controller.state();
         if (pendingSubmission != null) {
             return Command.none();
         }
         String expanded = expandPastedContent(state.editorBuffer());
-        if (!expanded.isBlank()) {
+        if (!expanded.isBlank() && !controller.isRenamingSession()) {
             resumeTranscriptFollowing();
             history.add(expanded);
         }

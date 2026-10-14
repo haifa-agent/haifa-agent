@@ -1,5 +1,6 @@
 package io.haifa.agent.application.coding.terminal.tui4j;
 
+import static io.haifa.agent.application.coding.terminal.application.CodingTerminalTestSupport.view;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.williamcallahan.tui4j.compat.bubbletea.BatchMessage;
@@ -34,6 +35,7 @@ import io.haifa.agent.application.project.product.coding.client.CodingAuthentica
 import io.haifa.agent.application.project.product.coding.client.CodingSessionClient;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.core.session.AgentSessionStatus;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.AgentRunEventListener;
@@ -47,6 +49,7 @@ import io.haifa.agent.runtime.api.RunEventPayloads;
 import io.haifa.agent.runtime.api.RunEventSubscription;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -1079,6 +1082,63 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
+    void leaderRenameWithActiveSessionConfirmsOnEnterWithoutSubmittingMessage() {
+        var client = new UnusedClient();
+        client.currentSession = sessionView("Original Name");
+        var fixture = activeFixture(client);
+
+        fixture.model.update(new PasteMessage("important draft message"));
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("important draft message");
+
+        fixture.model.update(key(KeyType.keyCAN));
+        fixture.model.update(runes('r'));
+        fixture.controller.drainEvents();
+
+        assertThat(fixture.controller.isRenamingSession()).isTrue();
+        assertThat(fixture.controller.state().status()).contains("Rename session");
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("Original Name");
+
+        // Type updated name
+        fixture.model.update(runes('2'));
+        fixture.controller.drainEvents();
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("Original Name2");
+
+        // Hit Enter to confirm
+        commitPlainEnter(fixture);
+        fixture.controller.drainEvents();
+
+        assertThat(client.renamedTitle).isEqualTo("Original Name2");
+        assertThat(client.submittedMessages).isEmpty();
+        assertThat(fixture.controller.isRenamingSession()).isFalse();
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("important draft message");
+    }
+
+    @Test
+    void leaderRenameWithActiveSessionCancelsOnEscRestoringDraft() {
+        var client = new UnusedClient();
+        client.currentSession = sessionView("Original Name");
+        var fixture = activeFixture(client);
+
+        fixture.model.update(new PasteMessage("important draft message"));
+
+        fixture.model.update(key(KeyType.keyCAN));
+        fixture.model.update(runes('r'));
+        fixture.controller.drainEvents();
+
+        assertThat(fixture.controller.isRenamingSession()).isTrue();
+        fixture.model.update(runes('2'));
+
+        fixture.model.update(key(KeyType.keyESC));
+        fixture.controller.drainEvents();
+
+        assertThat(fixture.controller.isRenamingSession()).isFalse();
+        assertThat(fixture.controller.state().status()).isEqualTo("Rename cancelled");
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("important draft message");
+        assertThat(client.renamedTitle).isNull();
+        assertThat(client.submittedMessages).isEmpty();
+    }
+
+    @Test
     void f2ModelCyclingBlockedDuringActiveRun() {
         var fixture = fixture();
         fixture.pump.offer(new TerminalUiAction.RunEventReceived(
@@ -1107,6 +1167,26 @@ class Tui4jCodingTerminalModelTest {
 
     private Fixture fixture() {
         return fixture(System::nanoTime);
+    }
+
+    private Fixture activeFixture(UnusedClient client) {
+        var pump = new TerminalEventPump(64);
+        var controller = new CodingTerminalController(
+                new ProjectId("project-1"),
+                client,
+                pump,
+                new TerminalUiReducer(),
+                TerminalUiState.initial(80, 24),
+                Runnable::run);
+        if (client.currentSession != null) {
+            controller.open(client.currentSession.summary().sessionId());
+            controller.drainEvents();
+        }
+        return new Fixture(controller, pump, new Tui4jCodingTerminalModel(controller, pump));
+    }
+
+    private static CodingSessionView sessionView(String displayName) {
+        return view(Optional.empty(), 0, displayName);
     }
 
     private Fixture fixture(java.util.function.LongSupplier monotonicNanos) {
@@ -1243,6 +1323,10 @@ class Tui4jCodingTerminalModelTest {
             throw new UnsupportedOperationException();
         }
 
+        CodingSessionView currentSession;
+        String renamedTitle;
+        final List<String> submittedMessages = new ArrayList<>();
+
         @Override
         public List<CodingSessionSummary> list(ProjectId projectId, int limit) {
             return List.of();
@@ -1250,12 +1334,40 @@ class Tui4jCodingTerminalModelTest {
 
         @Override
         public CodingSessionView open(AgentSessionId sessionId) {
+            if (currentSession != null) return currentSession;
             throw new UnsupportedOperationException();
         }
 
         @Override
         public CodingSessionView reconcile(AgentSessionId sessionId) {
+            if (currentSession != null) return currentSession;
             throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public CodingSessionSummary rename(AgentSessionId sessionId, String displayName, long expectedRevision) {
+            renamedTitle = displayName;
+            CodingSessionSummary updated = new CodingSessionSummary(
+                    sessionId,
+                    new ProjectId("project-1"),
+                    displayName,
+                    AgentSessionStatus.ACTIVE,
+                    Optional.empty(),
+                    Optional.empty(),
+                    0,
+                    Instant.EPOCH,
+                    expectedRevision + 1);
+            if (currentSession != null) {
+                currentSession = new CodingSessionView(
+                        updated,
+                        currentSession.activeRun(),
+                        currentSession.pendingInteraction(),
+                        currentSession.eventCursor(),
+                        currentSession.configurationDigest(),
+                        currentSession.productProfileRef(),
+                        currentSession.model());
+            }
+            return updated;
         }
 
         @Override
@@ -1265,7 +1377,7 @@ class Tui4jCodingTerminalModelTest {
 
         @Override
         public void submit(AgentSessionId sessionId, String message, String idempotencyKey) {
-            throw new UnsupportedOperationException();
+            submittedMessages.add(message);
         }
 
         @Override

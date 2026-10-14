@@ -531,4 +531,75 @@ class CodingTerminalInteractionTest {
         controller.accept(input(TerminalInput.Kind.CYCLE_MODEL_PREVIOUS, ""));
         assertThat(client.selectedModelId).isEqualTo("deepseek-chat");
     }
+
+    @Test
+    void asyncModelLoadingDoesNotCloseModalSelectorOpenedWhileLoading() {
+        CodingModelOption model1 = model("deepseek-chat", "DeepSeek Chat");
+        CodingModelOption model2 = model("claude-sonnet", "Claude Sonnet");
+        FakeClient client = new FakeClient(view(Optional.empty(), 0, "session", model1));
+        client.models = List.of(model1, model2);
+        var queuedEffects = new ArrayDeque<Runnable>();
+        var controller = new CodingTerminalController(
+                PROJECT_ID,
+                client,
+                new TerminalEventPump(32),
+                new TerminalUiReducer(),
+                TerminalUiState.initial(120, 40),
+                queuedEffects::add);
+        controller.open(SESSION_ID);
+
+        // User triggers model cycle, which schedules async model loading
+        controller.accept(input(TerminalInput.Kind.CYCLE_MODEL_NEXT, ""));
+        assertThat(controller.state().status()).isEqualTo("Loading models");
+        assertThat(queuedEffects).hasSize(1);
+
+        // While loading, user edits draft and opens command palette
+        controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, "user draft", 10));
+        controller.accept(input(TerminalInput.Kind.COMMAND_PALETTE, ""));
+        assertThat(controller.state().selector()).isPresent();
+        assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("command-palette");
+        assertThat(controller.preservedDraft()).contains("user draft");
+
+        // Background effect completes
+        queuedEffects.remove().run();
+        controller.drainEvents();
+
+        // Modal selector must remain open, model must not be changed, draft preserved
+        assertThat(controller.state().selector()).isPresent();
+        assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("command-palette");
+        assertThat(client.selectedModelId).isNull();
+        assertThat(controller.preservedDraft()).contains("user draft");
+
+        // Cancel modal restores draft cleanly
+        controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
+        assertThat(controller.state().selector()).isEmpty();
+        assertThat(controller.state().editorBuffer()).isEqualTo("user draft");
+    }
+
+    @Test
+    void newSessionConsecutiveModelCyclesAdvanceThroughAvailableModels() {
+        CodingModelOption modelA = model("model-a", "Model A");
+        CodingModelOption modelB = model("model-b", "Model B");
+        CodingModelOption modelC = model("model-c", "Model C");
+        FakeClient client = new FakeClient(view(Optional.empty(), 0, "session", modelA));
+        client.models = List.of(modelA, modelB, modelC);
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+
+        // User enters /new
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "/new"));
+        assertThat(controller.state().status()).isEqualTo("New session: enter the first message");
+
+        // First cycle in /new selects Model B
+        controller.accept(input(TerminalInput.Kind.CYCLE_MODEL_NEXT, ""));
+        assertThat(controller.state().status()).isEqualTo("Model selected for next session");
+
+        // Second cycle in /new must select Model C (not repeat Model B!)
+        controller.accept(input(TerminalInput.Kind.CYCLE_MODEL_NEXT, ""));
+        assertThat(controller.state().status()).isEqualTo("Model selected for next session");
+
+        // First turn submission creates session with Model C
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "first turn"));
+        assertThat(client.createOptions.initialModelId()).contains("model-c");
+    }
 }

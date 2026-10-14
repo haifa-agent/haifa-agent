@@ -341,6 +341,7 @@ public final class CodingTerminalController implements AutoCloseable {
         Objects.requireNonNull(routingText, "routingText must not be null");
         drainEvents();
         if ((input.kind() != TerminalInput.Kind.SUBMIT && input.kind() != TerminalInput.Kind.FOLLOW_UP)
+                || renamingSession
                 || state.selector().isPresent()
                 || input.text().isBlank()
                 || routingText.startsWith("!")
@@ -693,6 +694,10 @@ public final class CodingTerminalController implements AutoCloseable {
         return Optional.ofNullable(preservedDraftBuffer);
     }
 
+    public boolean isRenamingSession() {
+        return renamingSession;
+    }
+
     private void restorePreservedDraft() {
         if (preservedDraftBuffer != null) {
             String text = preservedDraftBuffer;
@@ -1004,6 +1009,7 @@ public final class CodingTerminalController implements AutoCloseable {
             case NEW -> {
                 detachSubscriptions();
                 awaitingNewSessionMessage = true;
+                pendingNewSessionModelId = null;
                 apply(new TerminalUiAction.StatusChanged("New session: enter the first message"));
             }
             case RESUME -> {
@@ -2429,18 +2435,32 @@ public final class CodingTerminalController implements AutoCloseable {
             apply(new TerminalUiAction.StatusChanged("Cannot switch model during active run"));
             return;
         }
+        if (state.selector().isPresent() || renamingSession) {
+            return;
+        }
         if (modelSwitchInProgress) {
             return;
         }
         if (modelOptions.isEmpty()) {
             modelSwitchInProgress = true;
             apply(new TerminalUiAction.StatusChanged("Loading models"));
+            Optional<AgentSessionId> requestSessionId =
+                    state.session().map(s -> s.summary().sessionId());
+            boolean requestAwaitingNew = awaitingNewSessionMessage;
             submitEffect(
                     () -> {
                         List<CodingModelOption> loaded = client.models();
                         return () -> {
                             modelOptions = List.copyOf(loaded);
                             modelSwitchInProgress = false;
+                            if (state.selector().isPresent()
+                                    || state.currentRunId().isPresent()
+                                    || renamingSession
+                                    || !Objects.equals(
+                                            state.session().map(s -> s.summary().sessionId()), requestSessionId)
+                                    || awaitingNewSessionMessage != requestAwaitingNew) {
+                                return;
+                            }
                             performModelCycle(delta);
                         };
                     },
@@ -2454,6 +2474,9 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void performModelCycle(int delta) {
+        if (state.selector().isPresent() || state.currentRunId().isPresent() || renamingSession) {
+            return;
+        }
         List<CodingModelOption> available = modelOptions.stream()
                 .filter(option ->
                         option.state().bindingAvailability() == CodingModelState.BindingAvailability.AVAILABLE)
@@ -2462,7 +2485,11 @@ public final class CodingTerminalController implements AutoCloseable {
             apply(new TerminalUiAction.RecoverableFailure("MODEL_LIST_EMPTY"));
             return;
         }
-        String currentModelId = state.session().map(s -> s.model().model().id()).orElse(pendingNewSessionModelId);
+        String currentModelId = (awaitingNewSessionMessage || state.session().isEmpty())
+                ? (pendingNewSessionModelId != null
+                        ? pendingNewSessionModelId
+                        : state.session().map(s -> s.model().model().id()).orElse(null))
+                : state.session().map(s -> s.model().model().id()).orElse(pendingNewSessionModelId);
         int currentIndex = -1;
         for (int i = 0; i < available.size(); i++) {
             if (available.get(i).id().equals(currentModelId)) {
@@ -2487,7 +2514,9 @@ public final class CodingTerminalController implements AutoCloseable {
         Optional<RunEventCursor> cursor = state.appliedCursor();
         AgentRunId previousOutputRunId = outputRunId;
         RunOutputCursor previousOutputCursor = outputCursor;
-        apply(new TerminalUiAction.SelectorClosed());
+        if (state.selector().map(s -> s.kind().startsWith("model")).orElse(false)) {
+            apply(new TerminalUiAction.SelectorClosed());
+        }
         if (awaitingNewSessionMessage || state.session().isEmpty()) {
             pendingNewSessionModelId = option.id();
             modelSwitchInProgress = false;
