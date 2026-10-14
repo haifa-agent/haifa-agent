@@ -192,6 +192,53 @@ execution.applyTo(builder); // 注册 execution_run、managed resource 与宿主
 
 验证：`./mvnw -pl :haifa-agent-sdk-starter -am test`。
 
+### 冻结技能脚本执行（Trusted Skill script entry files）
+
+`SkillScriptPlatforms.trusted(...)` 把"产品声明的固定业务 Tool + 冻结 Skill 包脚本"装配进任意
+`HaifaAgentBuilder`。它的形态与 `HostExecutionPlatforms` 一致，实现类与部分辅助方法来自 038-30
+（`HostGuardedSandboxProvider` + `DefaultExecutionBroker` + `ExecutionToolProvider` 等），但本入口
+自行创建一份 workspace store/sandbox/broker/execution provider，**不消费某个已创建的**
+`HostExecutionPlatform`/provider **实例**；同一平台没有共享的第二套 Broker/Sandbox/Policy/Runtime
+实现类。当前不支持同一 Agent 把普通执行 Tool 与可信技能脚本 Tool 装配到共享的 workspace/服务
+资源；确有该需求时需另行评审一个显式共享装配入口。
+
+```java
+var skills = SkillScriptPlatforms.trusted(
+        new SkillScriptPlatforms.SkillScriptSpec(
+                workspaceRoot, dataRoot,
+                List.of(new SkillScriptPlatforms.SkillScriptRuntime("bun", Path.of("C:/run/bun.exe"))),
+                skillContentLoader,
+                List.of(new SkillScriptPlatforms.SkillScriptToolDeclaration(
+                        toolName, title, description, inputSchema,
+                        Duration.ofMinutes(2), frozenSkillBinding, "scripts/main.ts", "bun",
+                        Duration.ofSeconds(120), "purpose", argumentMapper)),
+                Duration.ofSeconds(30), Duration.ofMinutes(10), 1_048_576, 2_000),
+        caller.tenant(), caller.principal());
+skills.applyTo(builder);
+```
+
+- **入口文件执行**：平台在 Workspace 根下为冻结 Skill 包版本准备一个可复用的不可变执行目录
+  （`.haifa-trusted-skills/<版本密钥>/`）：首次执行前把冻结包字节逐文件校验后落盘（完整校验写入
+  临时目录后一次性原子发布，绝不删除已完成的版本目录；被中断的准备不会留下可误认为完整的目录），
+  之后每次调用直接复用该版本目录并按路径执行声明入口文件，脚本相对导入与入口文件身份成立
+  （标准输入模型无法表达）。目录不随调用删除；准备阶段的文件字节漂移 fail closed
+  （`SecurityException`），拒绝时不会落盘任何包内容。注意：复用阶段只信任 prepared 标记与声明的
+  入口是 regular file，不把它们当作持续不可变性证明，也不在调用时重新核验其余依赖文件；已准备
+  版本目录一直保留，直到产品显式清理该版本目录，因此该目录的维护/失效由产品侧策略决定。
+- **输出仍走产品链**：本入口不新增输出声明、捕获、发布或删除层。脚本与普通 host 执行一样把产物
+  写进 Workspace 根下的 `outputs/`，由产品现有的 Artifact 发布/下载链读取与归属，执行成功与否
+  都不会清理历史输出。
+- **声明式信任边界**：脚本路径、运行时可执行文件与全部脚本内容都来自产品冻结的 immutable
+  descriptor，模型只能提供映射后的业务参数；每个生成的 Tool 保持 `ALWAYS` Approval、
+  `execution_run` 能力与有界脱敏输出。输出合同是共享 Execution 模块的规范化执行结果 schema；
+  冻结 Skill 包身份、入口声明以及**所选 runtime 引用、实际脚本 timeout 和审批 purpose** 进入
+  既有 Tool definition 身份（`executionProfiles` 的 `skill@sha256:` 引用），任一执行声明变化
+  都必然产生不同冻结 Tool 坐标，旧 Run 按既有恢复契约失败关闭。运行时只接受产品声明显式可执行
+  文件路径，并在装配时用共享的一个有界 deadline 预检（合并消费 stdout/stderr、温和/强制终止都
+  按同一截止时间安排回收，不另加清理窗口），不会从宿主 PATH 猜测。
+
+`StarterArchitectureTest` 把 `SkillScriptPlatforms` 列为 Starter 公共面的一部分。
+
 运行前设置 `DEEPSEEK_API_KEY`。该入口会访问真实 DeepSeek API 并产生费用。Starter 的进程内状态在
 进程退出后丢失；生产系统应通过 `haifa-agent-sdk` 显式装配持久化、可信 Caller、Policy、Credential
 和所需 Capability。

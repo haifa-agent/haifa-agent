@@ -250,6 +250,15 @@ public final class ExecutionToolDefinitionFactory {
                 "Optional product-authorized workspace-relative working directory.");
     }
 
+    /**
+     * The one canonical result contract of an execution Tool. Trusted script Tools reuse this exact
+     * frozen schema instead of declaring their own, so a model-visible output schema always accepts
+     * the envelope {@link ExecutionToolProvider} actually returns.
+     */
+    public static ToolSchema executionResultSchema() {
+        return new ToolSchema("haifa.execution.run.output", "3.0.0", outputSchema());
+    }
+
     private static Map<String, Object> outputSchema() {
         return Map.of(
                 "$schema",

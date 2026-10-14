@@ -3,9 +3,11 @@ package io.haifa.agent.execution.core.tool;
 import io.haifa.agent.skill.api.FrozenSkillBinding;
 import io.haifa.agent.skill.api.SkillContentDigest;
 import io.haifa.agent.skill.api.SkillResourceKind;
+import io.haifa.agent.skill.api.SkillTrustDigests;
 import io.haifa.agent.tool.api.ToolApprovalRequirement;
 import io.haifa.agent.tool.api.ToolDefinition;
 import java.time.Duration;
+import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
@@ -22,7 +24,8 @@ public record TrustedSkillScriptToolSpec(
         Set<String> requiredCapabilities,
         Duration timeout,
         String purpose,
-        TrustedScriptArgumentMapper argumentMapper) {
+        TrustedScriptArgumentMapper argumentMapper,
+        boolean entryFileExecution) {
     private static final Set<String> FORBIDDEN_ARGUMENT_NAMES = Set.of(
             "executable",
             "content",
@@ -35,6 +38,8 @@ public record TrustedSkillScriptToolSpec(
             "language",
             "endpoint",
             "proxy");
+    private static final String IDENTITY_NAMESPACE = "trusted-skill-script-tool-identity-v1";
+    private static final String SKILL_EXECUTION_PROFILE_PREFIX = "skill@";
 
     public TrustedSkillScriptToolSpec {
         definition = Objects.requireNonNull(definition, "definition must not be null");
@@ -84,11 +89,56 @@ public record TrustedSkillScriptToolSpec(
         }
         purpose = requireText(purpose, "purpose", 256);
         argumentMapper = Objects.requireNonNull(argumentMapper, "argumentMapper must not be null");
-        Set<String> expectedProfileReferences = Set.of(executionConfigurationDigest, "sandbox@" + sandboxDigest);
+        Set<String> expectedProfileReferences = Set.of(
+                executionConfigurationDigest,
+                "sandbox@" + sandboxDigest,
+                skillProfileReference(
+                        skillBinding, normalizedScriptPath, expectedScriptDigest, scriptRuntimeRef, timeout, purpose));
         if (!definition.resources().executionProfiles().equals(expectedProfileReferences)) {
             throw new IllegalArgumentException(
-                    "Tool execution profile must bind the exact execution and sandbox digests");
+                    "Tool execution profile must bind the exact execution, sandbox and Skill identities");
         }
+    }
+
+    /**
+     * Frozen execution-profile reference of this exact Skill package, entry and actual execution
+     * declaration. It is carried in the existing Tool definition identity ({@code
+     * executionProfiles}), so two different Skill package versions, entries, selected runtimes or
+     * actual timeout/purpose declarations can never produce the same frozen Tool coordinate and a
+     * resumed Run cannot silently dispatch an approved trust context into changed execution facts.
+     */
+    public String skillProfileReference() {
+        return skillProfileReference(
+                skillBinding, scriptRelativePath, scriptDigest, scriptRuntimeRef, timeout, purpose);
+    }
+
+    /**
+     * Computes the one Skill execution-profile reference for a frozen binding, entry and actual
+     * execution declaration (selected runtime reference, actual script timeout and approval
+     * purpose). Defining the Tool and validating its spec share this single function so there is
+     * no second identity ledger.
+     */
+    public static String skillProfileReference(
+            FrozenSkillBinding binding,
+            String scriptRelativePath,
+            SkillContentDigest digest,
+            String scriptRuntimeRef,
+            Duration timeout,
+            String purpose) {
+        String normalizedRuntime = requireText(scriptRuntimeRef, "scriptRuntimeRef", 128);
+        if (Objects.requireNonNull(timeout, "timeout must not be null").isZero() || timeout.isNegative()) {
+            throw new IllegalArgumentException("timeout must be positive");
+        }
+        String sha = SkillTrustDigests.sha256(List.of(
+                IDENTITY_NAMESPACE,
+                binding.coordinate().externalForm(),
+                binding.registrationDigest().value(),
+                scriptRelativePath,
+                digest.value(),
+                normalizedRuntime,
+                Long.toString(timeout.toNanos()),
+                requireText(purpose, "purpose", 256)));
+        return SKILL_EXECUTION_PROFILE_PREFIX + sha.substring("sha256:".length());
     }
 
     private static String requireText(String value, String field, int maximum) {

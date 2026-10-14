@@ -1,24 +1,14 @@
 package io.haifa.agent.execution.core.tool;
 
+import static io.haifa.agent.execution.core.tool.ExecutionToolTestSupport.*;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import io.haifa.agent.core.reference.PrincipalRef;
-import io.haifa.agent.core.reference.TenantRef;
-import io.haifa.agent.core.run.AgentRunId;
-import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.execution.api.ExecutionBroker;
-import io.haifa.agent.execution.api.ExecutionCommand;
-import io.haifa.agent.execution.api.ExecutionEnvironmentRef;
 import io.haifa.agent.execution.api.ExecutionId;
-import io.haifa.agent.execution.api.ExecutionInput;
-import io.haifa.agent.execution.api.ExecutionOutput;
 import io.haifa.agent.execution.api.ExecutionRequest;
 import io.haifa.agent.execution.api.ExecutionResult;
-import io.haifa.agent.execution.api.ExecutionStatus;
-import io.haifa.agent.execution.api.ResourceUsageSummary;
-import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.policy.api.PolicyDigest;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.workspace.WorkspaceId;
@@ -46,7 +36,6 @@ import io.haifa.agent.tool.api.ToolDispatchEvidence;
 import io.haifa.agent.tool.api.ToolExecutionMode;
 import io.haifa.agent.tool.api.ToolIdempotency;
 import io.haifa.agent.tool.api.ToolInvocationObserver;
-import io.haifa.agent.tool.api.ToolInvocationRequest;
 import io.haifa.agent.tool.api.ToolName;
 import io.haifa.agent.tool.api.ToolProviderId;
 import io.haifa.agent.tool.api.ToolResourceRequirements;
@@ -55,7 +44,6 @@ import io.haifa.agent.tool.api.ToolSchema;
 import io.haifa.agent.tool.api.ToolSideEffect;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -64,7 +52,6 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class TrustedScriptExecutionToolProviderTest {
-    private static final Instant NOW = Instant.parse("2026-07-30T00:00:00Z");
 
     @Test
     void fixedScriptUsesBrokerWithHostOwnedContentRuntimeAndValidatedWorkspaceInput() {
@@ -76,7 +63,7 @@ class TrustedScriptExecutionToolProviderTest {
         });
 
         var result = provider.invokeTrustedScript(
-                invocation(),
+                invocation(binding()),
                 "fixture-runtime",
                 "print('FROZEN_SCRIPT')",
                 List.of("MODEL_VALUE"),
@@ -107,7 +94,7 @@ class TrustedScriptExecutionToolProviderTest {
                     exitCode);
 
             var result = provider.invokeTrustedScript(
-                    invocation(),
+                    invocation(binding()),
                     "fixture-runtime",
                     "safe",
                     List.of(),
@@ -132,7 +119,7 @@ class TrustedScriptExecutionToolProviderTest {
         var missingCapability = provider(captured, Set.of(), TrustedWorkspacePathValidator.rejectWorkspaceInputs());
 
         assertThatThrownBy(() -> missingCapability.invokeTrustedScript(
-                        invocation(),
+                        invocation(binding()),
                         "fixture-runtime",
                         "safe",
                         List.of(),
@@ -148,7 +135,7 @@ class TrustedScriptExecutionToolProviderTest {
         var noPathValidator =
                 provider(captured, Set.of("execution_run"), TrustedWorkspacePathValidator.rejectWorkspaceInputs());
         assertThatThrownBy(() -> noPathValidator.invokeTrustedScript(
-                        invocation(),
+                        invocation(binding()),
                         "fixture-runtime",
                         "safe",
                         List.of(),
@@ -185,7 +172,7 @@ class TrustedScriptExecutionToolProviderTest {
                 provider(broker, Set.of("execution_run"), TrustedWorkspacePathValidator.rejectWorkspaceInputs());
 
         assertThatThrownBy(() -> provider.invokeTrustedScript(
-                        invocation(),
+                        invocation(binding()),
                         "fixture-runtime",
                         "safe",
                         List.of(),
@@ -225,7 +212,7 @@ class TrustedScriptExecutionToolProviderTest {
                 provider(broker, Set.of("execution_run"), TrustedWorkspacePathValidator.rejectWorkspaceInputs());
 
         assertThatThrownBy(() -> provider.invokeTrustedScript(
-                        invocation(),
+                        invocation(binding()),
                         "fixture-runtime",
                         "safe",
                         List.of(),
@@ -261,7 +248,7 @@ class TrustedScriptExecutionToolProviderTest {
                 provider(broker, Set.of("execution_run"), TrustedWorkspacePathValidator.rejectWorkspaceInputs());
 
         assertThatThrownBy(() -> provider.invokeTrustedScript(
-                        invocation(),
+                        invocation(binding()),
                         "fixture-runtime",
                         "safe",
                         List.of(),
@@ -303,7 +290,7 @@ class TrustedScriptExecutionToolProviderTest {
                 provider(broker, Set.of("execution_run"), TrustedWorkspacePathValidator.rejectWorkspaceInputs());
 
         assertThatThrownBy(() -> provider.invokeTrustedScript(
-                        invocation(),
+                        invocation(binding()),
                         "fixture-runtime",
                         "safe",
                         List.of(),
@@ -385,7 +372,15 @@ class TrustedScriptExecutionToolProviderTest {
         FrozenSkillBinding skill = skill();
         String script = "print('FROZEN_RESOURCE')";
         ToolDefinition definition = trustedDefinition(
-                execution.configurationIdentity(), SkillTrustDigests.sandbox(execution.sandboxProfileIdentity()));
+                execution.configurationIdentity(),
+                SkillTrustDigests.sandbox(execution.sandboxProfileIdentity()),
+                TrustedSkillScriptToolSpec.skillProfileReference(
+                        skill(),
+                        "scripts/transform",
+                        SkillTrustDigests.content(script),
+                        "fixture-runtime",
+                        Duration.ofSeconds(5),
+                        "fixed transform"));
         TrustedSkillScriptToolSpec spec = new TrustedSkillScriptToolSpec(
                 definition,
                 skill,
@@ -397,7 +392,8 @@ class TrustedScriptExecutionToolProviderTest {
                 Set.of("execution_run"),
                 Duration.ofSeconds(5),
                 "fixed transform",
-                arguments -> TrustedScriptArguments.atWorkspaceRoot(List.of(String.valueOf(arguments.get("value")))));
+                arguments -> TrustedScriptArguments.atWorkspaceRoot(List.of(String.valueOf(arguments.get("value")))),
+                false);
         var provider = new TrustedSkillScriptToolProvider(
                 execution,
                 (binding, visibility) ->
@@ -419,106 +415,6 @@ class TrustedScriptExecutionToolProviderTest {
         assertThatThrownBy(() -> drifted.invoke(invocation(binding(definition))))
                 .isInstanceOf(SecurityException.class)
                 .hasMessageContaining("content has drifted");
-    }
-
-    private static ExecutionToolProvider provider(
-            AtomicReference<ExecutionRequest> captured,
-            Set<String> capabilities,
-            TrustedWorkspacePathValidator validator) {
-        return provider(captured, capabilities, validator, 0);
-    }
-
-    private static ExecutionToolProvider provider(
-            AtomicReference<ExecutionRequest> captured,
-            Set<String> capabilities,
-            TrustedWorkspacePathValidator validator,
-            int exitCode) {
-        ExecutionBroker broker = new ExecutionBroker() {
-            @Override
-            public ExecutionResult execute(ExecutionRequest request) {
-                captured.set(request);
-                return exited(request.id(), exitCode);
-            }
-
-            @Override
-            public boolean cancel(ExecutionId id) {
-                return true;
-            }
-
-            @Override
-            public Optional<ExecutionResult> find(ExecutionId id) {
-                return Optional.empty();
-            }
-        };
-        return provider(broker, capabilities, validator);
-    }
-
-    private static ExecutionToolProvider provider(
-            ExecutionBroker broker, Set<String> capabilities, TrustedWorkspacePathValidator validator) {
-        var runtimes = new ScriptRuntimeResolver(ExecutionOperatingSystem.LINUX, List.of(new ScriptRuntimeAdapter() {
-            @Override
-            public String language() {
-                return "fixture-runtime";
-            }
-
-            @Override
-            public String executable() {
-                return "trusted-runtime";
-            }
-
-            @Override
-            public PreparedScript prepare(String content, List<String> arguments) {
-                var argv = new java.util.ArrayList<String>();
-                argv.add(executable());
-                argv.addAll(arguments);
-                return new PreparedScript(
-                        ExecutionCommand.direct(argv),
-                        ExecutionInput.utf8(content.endsWith("\n") ? content : content + "\n"));
-            }
-        }));
-        var configuration = new ExecutionToolConfiguration(
-                ExecutionEnvironmentRef.empty(),
-                new SandboxProfileRef("sandbox", "1"),
-                Duration.ofSeconds(5),
-                Duration.ofSeconds(10),
-                4096,
-                100,
-                1,
-                false,
-                runtimes,
-                ignored -> {},
-                value -> value);
-        return new ExecutionToolProvider(
-                broker,
-                () -> "execution-id",
-                () -> NOW,
-                ignored -> new ExecutionInvocationScopeResolver.ExecutionInvocationScope(
-                        new WorkspaceId("workspace"), capabilities),
-                configuration,
-                validator);
-    }
-
-    private static ToolInvocationRequest invocation() {
-        return invocation(binding());
-    }
-
-    private static ToolInvocationRequest invocation(FrozenToolBinding binding) {
-        return invocation(binding, ToolInvocationObserver.noop());
-    }
-
-    private static ToolInvocationRequest invocation(FrozenToolBinding binding, ToolInvocationObserver observer) {
-        return new ToolInvocationRequest(
-                binding,
-                new ToolCallId("call"),
-                new AgentRunId("run"),
-                new TenantRef("tenant"),
-                new PrincipalRef("principal", "human"),
-                new ToolArguments("fixture.input", "1.0.0", Map.of("value", "MODEL_VALUE")),
-                NOW.plusSeconds(30),
-                Optional.of("idempotency"),
-                () -> false,
-                Map.of(),
-                observer);
     }
 
     private static FrozenToolBinding binding() {
@@ -569,7 +465,7 @@ class TrustedScriptExecutionToolProviderTest {
                 "catalog");
     }
 
-    private static ToolDefinition trustedDefinition(String executionDigest, String sandboxDigest) {
+    private static ToolDefinition trustedDefinition(String executionDigest, String sandboxDigest, String skillProfile) {
         ToolName name = new ToolName("trusted_transform");
         Map<String, Object> input = Map.of(
                 "$schema",
@@ -598,7 +494,9 @@ class TrustedScriptExecutionToolProviderTest {
                 ToolRisk.HIGH,
                 Set.of(ToolSideEffect.PROCESS_EXECUTION),
                 new ToolResourceRequirements(
-                        Set.of("execution_run"), Set.of(), Set.of(executionDigest, "sandbox@" + sandboxDigest)),
+                        Set.of("execution_run"),
+                        Set.of(),
+                        Set.of(executionDigest, "sandbox@" + sandboxDigest, skillProfile)),
                 List.of(),
                 ToolApprovalRequirement.ALWAYS,
                 "test",
@@ -649,22 +547,5 @@ class TrustedScriptExecutionToolProviderTest {
 
     private static ExecutionResult success(ExecutionId id) {
         return exited(id, 0);
-    }
-
-    private static ExecutionResult exited(ExecutionId id, int exitCode) {
-        var output = new ExecutionOutput("ok", null, 2, "0".repeat(64), false, false);
-        var empty = new ExecutionOutput("", null, 0, "0".repeat(64), false, false);
-        return new ExecutionResult(
-                id,
-                ExecutionStatus.EXITED,
-                exitCode,
-                NOW,
-                NOW.plusMillis(10),
-                output,
-                empty,
-                "sandbox-session",
-                new ResourceUsageSummary(Duration.ofMillis(10), 1),
-                null,
-                false);
     }
 }
