@@ -36,7 +36,6 @@ class SkillScriptPackageDirectoryTest {
     @TempDir
     Path temporary;
 
-    private final HostWorkspaceLocationStore locations = new HostWorkspaceLocationStore();
     private final List<PackageFile> files = List.of(
             new PackageFile(ENTRY, "echo ok".getBytes(StandardCharsets.UTF_8)),
             new PackageFile(HELPER, MARKER.getBytes(StandardCharsets.UTF_8)));
@@ -129,13 +128,14 @@ class SkillScriptPackageDirectoryTest {
         assertThat(Files.isRegularFile(versionDirectory.resolve(ENTRY))).isTrue();
     }
 
+    private HostWorkspaceLocationStore locations;
+    private WorkspaceId workspaceId;
+
     private SkillScriptPackageDirectory directory(Path workspace) {
-        WorkspaceId workspaceId = new WorkspaceId("race-test");
-        try {
+        if (locations == null) {
+            locations = new HostWorkspaceLocationStore();
+            workspaceId = new WorkspaceId("race-test");
             locations.register(workspaceId, workspace);
-        } catch (IllegalStateException alreadyRegistered) {
-            Path registered = locations.resolveForTrustedProvider(workspaceId);
-            if (!registered.equals(workspace)) throw alreadyRegistered;
         }
         return new SkillScriptPackageDirectory(
                 new SkillScriptPlatformWorkspaceAccess(locations, workspaceId, "SKILL_SCRIPT_UNAVAILABLE"));
