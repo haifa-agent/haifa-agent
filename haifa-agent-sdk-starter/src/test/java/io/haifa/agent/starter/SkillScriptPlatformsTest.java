@@ -44,6 +44,7 @@ import io.haifa.agent.tool.api.ToolSchema;
 import io.haifa.agent.tool.core.ToolCatalogBuilder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
@@ -463,6 +464,26 @@ class SkillScriptPlatformsTest {
         if (isWindows()) {
             return Path.of(System.getenv("SystemRoot"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
         }
-        return Path.of("/bin/sh");
+        return resolveUnixShellRuntime();
+    }
+
+    /**
+     * Resolves one exact, executable Unix shell file for the declared trusted runtime, mirroring
+     * the product contract: {@code /bin/sh} is a symlink to dash on Debian and Ubuntu, and the
+     * runtime preflight requires an explicit absolute path naming a real regular file, so the
+     * declared executable is the canonicalized target instead of a platform-hardcoded symlink.
+     */
+    private static Path resolveUnixShellRuntime() {
+        for (String candidate : List.of("/bin/sh", "/usr/bin/sh", "/bin/bash", "/usr/bin/bash")) {
+            try {
+                Path declared = Path.of(candidate).toRealPath();
+                if (Files.isRegularFile(declared, LinkOption.NOFOLLOW_LINKS) && Files.isExecutable(declared)) {
+                    return declared;
+                }
+            } catch (java.io.IOException ignored) {
+                // Try the next candidate; a missing or dangling shell is not itself a test failure.
+            }
+        }
+        throw new IllegalStateException("no exact executable Unix shell runtime was found for this host");
     }
 }
