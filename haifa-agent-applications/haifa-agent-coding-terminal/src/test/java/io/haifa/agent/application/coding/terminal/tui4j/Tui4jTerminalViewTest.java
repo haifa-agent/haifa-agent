@@ -42,7 +42,11 @@ class Tui4jTerminalViewTest {
 
         assertThat(rendered)
                 .containsSubsequence(
-                        "Haifa Coding Agent", "Start a task or use /commands.", "Type a message", "enter send", "IDLE")
+                        "Start a task or use /commands.",
+                        "Type a message",
+                        "Normal",
+                        "[f2] models",
+                        "[ctrl+p] commands")
                 .doesNotContain(
                         "Diagnostics",
                         "Pending messages  none",
@@ -58,19 +62,18 @@ class Tui4jTerminalViewTest {
     void keepsTheEmptyEditorAtThreeRowsAndRendersOneMutedEditorHint() {
         TerminalUiState state = TerminalUiState.initial(80, 24);
         String rendered = view.render(state, transcript(state), editor(80), true, false);
-        String hint = "enter send · shift+enter/ctrl+j newline · tab complete";
         List<String> lines = rendered.lines().toList();
         int editorLine = IntStream.range(0, lines.size())
                 .filter(index -> lines.get(index).contains("Type a message"))
                 .findFirst()
                 .orElseThrow();
-        int hintLine = IntStream.range(0, lines.size())
-                .filter(index -> lines.get(index).contains(hint))
+        int metaLine = IntStream.range(0, lines.size())
+                .filter(index -> lines.get(index).contains("Normal"))
                 .findFirst()
                 .orElseThrow();
 
-        assertThat(hintLine - editorLine).isEqualTo(3);
-        assertThat(rendered.indexOf(hint)).isEqualTo(rendered.lastIndexOf(hint));
+        assertThat(metaLine - editorLine).isEqualTo(3);
+        assertThat(rendered).contains("[f2] models", "[ctrl+p] commands");
     }
 
     @Test
@@ -88,8 +91,8 @@ class Tui4jTerminalViewTest {
         String rendered = macView.render(state, transcript(state), editor(100), true, false);
 
         assertThat(rendered)
-                .contains("⌃C clear", "⌃O expand/collapse", "⇧↩/⌃J newline")
-                .doesNotContain("ctrl+o", "alt/option");
+                .contains("⌃X B toggle", "[F2] models", "[⌃P] commands")
+                .doesNotContain("ctrl+p", "ctrl+x b");
     }
 
     @Test
@@ -136,15 +139,9 @@ class Tui4jTerminalViewTest {
         String rendered = view.render(state, transcript, editor(60), true, false);
 
         assertThat(rendered)
-                .containsSubsequence(
-                        "Haifa Coding Agent",
-                        "Start a task or use /commands.",
-                        "Commands",
-                        "/reload",
-                        "enter select",
-                        "IDLE")
+                .containsSubsequence("Start a task or use /commands.", "Commands", "/reload", "enter select")
                 .doesNotContain("Diagnostics", "Pending messages  none", "Widgets above", "Widgets below");
-        assertThat(rendered).contains("5-5 of 6", "editor preserved");
+        assertThat(rendered).contains("5-5 of 6", "editor preserved", "[f2] models", "[ctrl+p] commands");
         assertThat(rendered.lines()).hasSizeLessThanOrEqualTo(16);
     }
 
@@ -224,9 +221,7 @@ class Tui4jTerminalViewTest {
 
         assertThat(rendered.lines()).hasSizeLessThanOrEqualTo(40);
         assertThat(rendered.lines()).allMatch(line -> TextWidth.measureCellWidth(line) <= 119);
-        assertThat(rendered)
-                .contains("COMPLETED", "model: frozen-model", "git: fea")
-                .doesNotContain("provider: frozen", "sandbox: frozen");
+        assertThat(rendered).contains("frozen-model", "feat-long-footer").doesNotContain("sandbox: frozen profile");
     }
 
     @Test
@@ -241,11 +236,11 @@ class Tui4jTerminalViewTest {
         String rendered = view.render(state, transcript, editor(120), true, false);
 
         assertThat(rendered.lines()).hasSizeLessThanOrEqualTo(40);
-        assertThat(rendered).contains("STUB-LONG-LINE-40", "enter send", "IDLE");
+        assertThat(rendered).contains("STUB-LONG-LINE-40", "Type a message", "[f2] models");
     }
 
     @Test
-    void changesTheEditorHintWhenARunIsActive() {
+    void changesStatusWhenARunIsActive() {
         TerminalUiState initial = TerminalUiState.initial(80, 24);
         TerminalUiState active = new TerminalUiState(
                 initial.header(),
@@ -268,9 +263,7 @@ class Tui4jTerminalViewTest {
 
         String rendered = view.render(active, transcript(active), editor(80), true, false, Duration.ofSeconds(125));
 
-        assertThat(rendered)
-                .contains("enter steer", "alt+enter follow-up", "alt+up restore queued message", "THINKING (2m 5s)")
-                .doesNotContain("enter send");
+        assertThat(rendered).contains("THINKING (2m 5s)", "interrupt").doesNotContain("enter send");
     }
 
     @Test
@@ -373,9 +366,7 @@ class Tui4jTerminalViewTest {
         String rendered = view.render(state, transcript(state), editor(120), true, false);
 
         assertThat(rendered)
-                .containsSubsequence(
-                        "enter send",
-                        "model: DeepSeek V4 Flash · cwd: D:\\workspace\\haifa-agent · git: feat-coding-terminal-mouse-scroll");
+                .contains("📁 D:\\workspace\\haifa-agent", "🌿 feat-coding-terminal-mouse-scroll", "DeepSeek V4 Flash");
     }
 
     @Test
@@ -413,19 +404,20 @@ class Tui4jTerminalViewTest {
         String rendered = view.render(state, transcript(state), editor(100), true, false);
 
         assertThat(rendered)
-                .containsSubsequence(
-                        "resources · AGENTS.md · 14 tools · 2 skills",
+                .contains(
+                        "• AGENTS.md",
+                        "• 14 tools",
+                        "• 2 skills",
                         "Pending · 2",
                         "[steer] Check the diff",
                         "[follow_up] Run tests",
                         "Retryable · ACTIVE_RUN_MISMATCH",
                         "The session changed while submitting; retry the message.",
                         "Type a message",
-                        "enter steer",
-                        "model: frozen-model · cwd: project-1",
-                        "RUNNING · retry task · queue: 2")
+                        "frozen-model",
+                        "queue: 2")
                 .containsOnlyOnce("Retryable")
-                .doesNotContain("provider: frozen", "sandbox: frozen profile");
+                .doesNotContain("sandbox: frozen profile");
     }
 
     @Test
@@ -917,6 +909,69 @@ class Tui4jTerminalViewTest {
                 Optional.empty(),
                 Optional.of(1_000L),
                 Optional.of(durationMillis));
+    }
+
+    @Test
+    void showsSidebarOnWideTerminalWhenVisible() {
+        TerminalUiState state = TerminalUiState.initial(120, 30);
+        assertThat(state.sidebarVisible()).isTrue();
+
+        String rendered = view.render(state, transcript(state), editor(120), true, false);
+
+        assertThat(rendered).contains("Resources", "Haifa Agent v0.1.2", "ctrl+x b toggle");
+    }
+
+    @Test
+    void hidesSidebarWhenToggledOffOrOnNarrowTerminal() {
+        TerminalUiState wideToggledOff =
+                new TerminalUiReducer().reduce(TerminalUiState.initial(120, 30), new TerminalUiAction.SidebarToggled());
+
+        String wideHidden = view.render(wideToggledOff, transcript(wideToggledOff), editor(120), true, false);
+        assertThat(wideHidden).doesNotContain("ctrl+x b toggle");
+
+        TerminalUiState narrow = TerminalUiState.initial(80, 24);
+        String narrowRendered = view.render(narrow, transcript(narrow), editor(80), true, false);
+        assertThat(narrowRendered).doesNotContain("ctrl+x b toggle");
+    }
+
+    @Test
+    void bottomStatusLineShowsOperationFeedbackWhenIdle() {
+        TerminalUiState state = new TerminalUiReducer()
+                .reduce(
+                        TerminalUiState.initial(80, 24),
+                        new TerminalUiAction.StatusChanged("Type first message to start session"));
+
+        String rendered = view.render(state, transcript(state), editor(80), true, false);
+        assertThat(rendered).contains("Type first message to start session");
+    }
+
+    @Test
+    void bottomStatusLineShowsRunningActivityAndNewOutputBelowAlert() {
+        TerminalUiState base = TerminalUiState.initial(100, 30);
+        TerminalUiState state = new TerminalUiState(
+                base.header(),
+                base.loadedResources(),
+                base.transcript(),
+                base.pending(),
+                "Thinking",
+                base.editorBuffer(),
+                base.editorCursor(),
+                base.selector(),
+                base.footer(),
+                100,
+                30,
+                base.session(),
+                Optional.of(new AgentRunId("run-1")),
+                base.appliedCursor(),
+                base.seenEventIds(),
+                base.recoverableError(),
+                new TerminalActivity(1, "Thinking"),
+                base.exitRequested(),
+                base.sidebarVisible(),
+                base.sidebarExplicitlyToggled());
+
+        String rendered = view.render(state, transcript(state), editor(100), false, true, Duration.ofSeconds(3));
+        assertThat(rendered).contains("THINKING (3s)").contains("esc interrupt").contains("new output below");
     }
 
     private TranscriptItem item(

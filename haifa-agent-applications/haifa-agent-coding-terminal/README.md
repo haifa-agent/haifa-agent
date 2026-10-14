@@ -3,8 +3,7 @@
 Coding Agent 的 tui4j 交互产品层。布局、信息层级和交互以
 `docs/prd/pi-coding-agent-terminal-low-fi-prototype` 评审原型及
 `docs/prompts/19-coding-agent-terminal-ui-ux-refactor-prompt.md` 为准；模型连接流程同时遵守
-`docs/prd/28-coding-agent-model-authentication-and-codex-subscription-login-prd.md`，不自行发明 Sidebar、
-Dashboard、Scenario toolbar 或另一套产品 UI。
+`docs/prd/28-coding-agent-model-authentication-and-codex-subscription-login-prd.md`；界面支持响应式双栏工作区与可折叠信息侧栏（Ctrl+X B 切换），不自行发明无序扩展 UI。
 
 ## 自主交付状态
 
@@ -69,12 +68,8 @@ Bracketed paste 达到 3 行或超过 150 字符（`strip` 后）时，Editor �
 完整正文按原样（仅做换行/控制字符归一化）保存在进程内的当前草稿映射中；占位符按整体单元处理（左右键跨界、
 退格/删除一次清除，任何会破坏占位符的编辑被拒绝并提示 `PASTE_PLACEHOLDER_ATOMIC`），提交时再展开为完整
 原文后进入 Session 与输入历史。提交路由基于可见文本，隐藏正文不会触发 `/` 命令或 `!` shell。阈值与
-opencode 的 paste summary 一致；较小粘贴仍原样插入。
+多行长文本折叠策略一致；较小粘贴仍原样插入。
 
-生产 Model 初始化时主动请求一次真实 Window Size，避免在用户没有手工 Resize 时一直停留在
-`80x24` 启动尺寸。tui4j `0.3.3` 不全局启用 Kitty keyboard protocol；该版本只为修饰 Enter
-提供显式映射，全局启用会让部分 CSI-u 控制键残留字符进入编辑器。`Ctrl+O` 因此保持传统 `SI`
-输入并稳定切换最近 Tool 卡片的展开状态。
 生产 Model 初始化时主动请求一次真实 Window Size，并在 Windows 上约每 500ms 重新查询，避免停留在
 `80x24` 启动尺寸或在窗口缩放、跨显示器移动后与实际终端尺寸不一致。尺寸未变化时 `Tui4jTerminalIo` 在
 消息进入 tui4j 渲染器前丢弃该 `WindowSizeMessage`，避免渲染器清空行缓存导致整屏重绘。tui4j `0.3.3`
@@ -91,24 +86,66 @@ Windows ConPTY Gate B。
 
 ## 原型映射与交互
 
-Phase A 将原型映射收敛为固定单列顺序：
+终端采用响应式双栏工作区（主会话视口 + 可折叠信息侧栏）与一体化输入卡片架构：
 
 ```text
-Header
-Resources summary（仅有真实资源时）
-Transcript
-Pending Messages（仅非空）
-Active Status / Recoverable Error（仅需要感知时）
-Editor or Selector
-Footer
+┌─────────────────────────────────────────────────────────────┬────────────────────────────────┐
+│ [主会话视口 (Sticky to bottom)]                             │ [右侧侧边栏 Sidebar (40列宽)]  │
+│                                                             │  (快捷键: ctrl+x b 折叠/展开)  │
+│  User / Assistant 消息流                                    │  Session: <title>              │
+│  Tool 执行与调用详情                                        │  ID: session_01...             │
+│                                                             │  Directory: /path/to/workdir   │
+│                                                             │  Git branch: main              │
+│                                                             │  Model: <model> (<provider>)   │
+│                                                             │  Resources: skills, MCP        │
+│                                                             │  Haifa Agent v0.1.2            │
+├─────────────────────────────────────────────────────────────┴────────────────────────────────┤
+│ [交互卡片槽位] (审批确认 Approval / 交互选择器 Selector / 命令面板)                          │
+├──────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ┌─ Integrated Prompt Box (一体化输入框) ──────────────────────────────────────────────────┐  │
+│ │ ▌ [Textarea 输入区, 3行紧凑高度]                                                         │  │
+│ │ ▌                                                                                       │  │
+│ │ ▌ Normal  auto · claude-3-5-sonnet (anthropic)          enter send · shift+enter newline│  │
+│ └─▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀┘  │
+│  ~/workspace/haifa-agent (空闲为路径/执行中为Spinner)    5.2k · 35s     [f2] models  [ctrl+p] commands │
+└──────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-不再常驻渲染 Diagnostics、空 Pending、`Widgets above/below none` 或 `Footer` 标签。Editor hint
-下方显示已有真实来源的当前模型、Workspace 绝对路径和 Git 分支；后续状态行显示 Session、
-Context/Queue 和 Run 状态；
-Provider/Model 来自 Coding Product Facade 的脱敏投影，Terminal 不读取 Model Core、Provider 配置或
-SQLite。未就绪模型在页脚显式展示凭据状态（`[需要登录]` 或 `[登录已失效，请重新认证]`）。`git: via safe read model`、`sandbox: frozen profile` 等实现占位字段不进入
-产品界面。
+不再常驻渲染顶部 Header、Diagnostics、空 Pending、`Widgets above/below none` 或 `Footer` 标签。
+主视口高度最大化释放给核心对话与工具调用流。
+
+### 核心交互与生命周期契约
+
+1. **响应式双栏与侧栏 (Sidebar)**：
+   - 宽屏（终端宽度 >= 100 列）：启用双栏布局，左侧为主交互区，右侧为 40 列固定宽度的信息侧栏；
+   - 窄屏（终端宽度 < 100 列）：自动隐藏侧栏，保持专注单栏编辑与浏览；
+   - 窄屏信息可达性：窄屏用户无需展开侧栏，即可通过 `<leader>s`（`/session`）弹层随时查看同等详尽的环境、Session、Git、模型与资源摘要；
+   - 布局自适应与用户显式折叠偏好：首次启动或窗口 Resize 时，终端根据当前列宽（>=100 列）自动计算侧栏展示；一旦用户使用 `<leader>b` 显式折叠或展开侧栏，终端锁定用户的显式偏好（`sidebarExplicitlyToggled`），后续窗口缩放事件不会强行覆盖用户的偏好选择。
+
+2. **焦点与弹层优先级契约 (Focus & Modal Priority Contract)**：
+   - 任何选择器弹层（审批 Approval、Shell 确认、命令面板 Command Palette、模型选择、Session 摘要等）处于激活状态时，输入焦点完全移至弹层（Editor blur），编辑器失焦并禁用一切普通文本输入；
+   - 弹层处于激活状态时，所有按键均按弹层事件处理（上下移动选中项、Enter 确认当前项、Esc/Ctrl+C 取消关闭）；
+   - 弹层打开期间，所有全局 Leader 快捷操作（如 `<leader>m`、`<leader>s` 等）均被严格忽略（`Kind.EXECUTE_COMMAND` 语义完全与弹层的 `Kind.SUBMIT` 隔离），严禁借用编辑器的 SUBMIT 事件意外确认审批或执行未预期的全局命令；
+   - 弹层处于激活状态时，允许 `Ctrl+O` 展开/折叠后台关联工具详情供审查，但不会触发审批提交；
+   - 弹层关闭或取消后，Editor 自动重新获取焦点（Editor focus）。
+
+3. **草稿与粘贴映射保护契约 (Draft & Paste Preservation Contract)**：
+   - 用户在输入框中编写的草稿内容、光标位置（Cursor），以及因多行/长文本粘贴而生成的占位符映射（`[Pasted #N ~M lines]` -> 原文正文映射 `pastedContent`），受到全局严格保护；
+   - 打开命令面板（`Ctrl+P`）、Session 摘要（`<leader>s`）、交互式重命名（`<leader>r`）等辅助弹层时，Controller 自动暂存当前草稿与光标；
+   - 弹层完成或被取消（Esc/Ctrl+C）后，完整恢复用户原有的草稿正文与光标位置，不被命令替换为空或 `/command`；
+   - 即使在输入框临时用于交互式重命名期间，粘贴占位符映射也不会被垃圾回收，草稿恢复后完整保留粘贴映射；
+   - 交互式 Session 重命名（`<leader>r` 或 `/rename` 不带参数）：无活动 Session 时提示友好错误；有活动 Session 时在编辑器展示当前 Session 名称供修改，Enter 确认重命名并在后台异步执行，Esc 取消并恢复草稿。
+
+4. **异步后台执行与模块边界契约 (Background Execution & Boundary Contract)**：
+   - Terminal 遵守纯 Java 与无直接进程/文件 I/O 约束（由 ArchUnit 架构测试阻止 `ProcessBuilder`、`Process`、`java.io.File` 及 `java.nio.file..` 直接调用）；
+   - 外部编辑器唤起（`<leader>e`）在当前版本明确延期：不引入子进程 `ProcessBuilder` 阻塞 UI 线程；按下 `<leader>e` 仅提供友好提示，不破坏界面事件循环；
+   - 模型目录读取与轮换（`F2` / `Shift+F2`）：模型列表通过后台 Effect 异步加载并防抖，按键轮换仅在已绑定且可用的模型间循环；活动 Run 期间严格禁止切模。
+
+5. **状态栏信息与提示层级契约 (Status Bar & Feedback Contract)**：
+   - 活动 Run 期间：底部状态栏左侧显示单调计时的运行状态 `⠋ <timedActivity> · esc interrupt`；新输出在视口外产生时追加 ` · new output below`，严禁使用路径文字覆盖活动状态指示；
+   - 空闲（Idle）期间：左侧优先显示操作反馈与引导状态（如 `/new` 提示、切模成功反馈、重命名状态等）；无反馈时显示当前工程路径；
+   - 右侧展示快捷键提示（`[f2] models  [ctrl+p] commands`）及 Session 性能指标；空间受限时优先丢弃指标、次选裁剪工程路径，核心操作反馈与活动运行状态具有最高显示优先级；
+   - 输入框上方 Meta 条右侧保持显示编辑器操作提示（如 `enter steer · alt+enter follow-up` 或 `enter send · shift+enter newline`）。
 
 Theme 使用 tui4j Lip Gloss 的 Adaptive Color 表达 Accent、Muted、User、Success、Pending、
 Error、Queued 和 Focus。TrueColor 参考色会按明暗背景自适应；NoColor 环境仍依靠稳定标题、状态文字、

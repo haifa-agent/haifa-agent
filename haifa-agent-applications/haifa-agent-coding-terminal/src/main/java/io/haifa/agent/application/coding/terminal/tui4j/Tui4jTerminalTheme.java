@@ -109,6 +109,10 @@ final class Tui4jTerminalTheme {
         return block(value, QUEUED_FOREGROUND, QUEUED_BACKGROUND);
     }
 
+    String warning(String value) {
+        return Style.newStyle().foreground(PENDING_FOREGROUND).bold(true).render(value);
+    }
+
     private String block(String value, AdaptiveColor foreground, AdaptiveColor background) {
         return Style.newStyle()
                 .foreground(foreground)

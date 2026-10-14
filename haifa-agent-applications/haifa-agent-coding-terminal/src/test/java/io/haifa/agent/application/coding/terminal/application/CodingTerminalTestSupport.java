@@ -52,9 +52,9 @@ import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
 
-final class CodingTerminalTestSupport {
-    static final ProjectId PROJECT_ID = new ProjectId("project-1");
-    static final AgentSessionId SESSION_ID = new AgentSessionId("session-1");
+public final class CodingTerminalTestSupport {
+    public static final ProjectId PROJECT_ID = new ProjectId("project-1");
+    public static final AgentSessionId SESSION_ID = new AgentSessionId("session-1");
 
     private CodingTerminalTestSupport() {}
 
@@ -108,7 +108,7 @@ final class CodingTerminalTestSupport {
         }
     }
 
-    static CodingModelOption model(String id, String displayName) {
+    public static CodingModelOption model(String id, String displayName) {
         return model(id, displayName, "provider", "Provider");
     }
 
@@ -208,15 +208,15 @@ final class CodingTerminalTestSupport {
                 new InteractionConsequenceView("Run tool", "Reject tool", "Expire request"));
     }
 
-    static CodingSessionView view(Optional<InteractionView> interaction) {
+    public static CodingSessionView view(Optional<InteractionView> interaction) {
         return view(interaction, 0, "session");
     }
 
-    static CodingSessionView view(Optional<InteractionView> interaction, long revision, String displayName) {
+    public static CodingSessionView view(Optional<InteractionView> interaction, long revision, String displayName) {
         return view(interaction, revision, displayName, model("cli-coding@1.0.0", "cli-coding@1.0.0"));
     }
 
-    static CodingSessionView view(
+    public static CodingSessionView view(
             Optional<InteractionView> interaction, long revision, String displayName, CodingModelOption modelOption) {
         return new CodingSessionView(
                 new CodingSessionSummary(

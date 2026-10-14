@@ -29,6 +29,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.LongSupplier;
 
 /** Production tui4j adapter around the authoritative terminal Controller and Reducer state. */
@@ -39,6 +40,7 @@ final class Tui4jCodingTerminalModel implements Model {
     private static final int PASTE_SUMMARY_MAX_CHARACTERS = 150;
     static final int WINDOW_SIZE_POLL_TICKS = 10;
     private static final int MAX_SECRET_CHARACTERS = 65_536;
+    private static final long LEADER_TIMEOUT_NANOS = Duration.ofMillis(1500).toNanos();
 
     private final CodingTerminalController controller;
     private final TerminalEventPump pump;
@@ -71,6 +73,7 @@ final class Tui4jCodingTerminalModel implements Model {
     private boolean secretPresentation;
     private int pasteSequence;
     private int windowSizePollTicks;
+    private long leaderActivatedNanos;
 
     Tui4jCodingTerminalModel(CodingTerminalController controller, TerminalEventPump pump) {
         this(controller, pump, System::nanoTime, null);
@@ -239,15 +242,93 @@ final class Tui4jCodingTerminalModel implements Model {
             }
         }
         TerminalUiState state = controller.state();
-        if (shortcuts.matchesToggleExpansion(key)) {
-            accept(TerminalInput.Kind.TOGGLE_EXPANSION);
-            return Command.none();
-        }
         if (state.selector().isPresent()) {
+            leaderActivatedNanos = 0;
             if ("completion".equals(state.selector().orElseThrow().kind()) && editCompletion(key)) {
                 return Command.none();
             }
             selectorKey(key);
+            return Command.none();
+        }
+
+        if (shortcuts.matchesCommandPalette(key)) {
+            controller.openCommandSelector();
+            return Command.none();
+        }
+        if (shortcuts.matchesModelCycleNext(key)) {
+            controller.cycleModel(1);
+            return Command.none();
+        }
+        if (shortcuts.matchesModelCyclePrevious(key)) {
+            controller.cycleModel(-1);
+            return Command.none();
+        }
+
+        long now = monotonicNanos.getAsLong();
+        boolean leaderPending = leaderActivatedNanos > 0 && (now - leaderActivatedNanos) <= LEADER_TIMEOUT_NANOS;
+        if (leaderActivatedNanos > 0 && !leaderPending) {
+            leaderActivatedNanos = 0;
+        }
+
+        if (shortcuts.matchesLeader(key)) {
+            leaderActivatedNanos = now;
+            return Command.none();
+        }
+
+        if (leaderPending) {
+            leaderActivatedNanos = 0;
+            if (key.type() == KeyType.keyESC || key.type() == KeyType.keyETX) {
+                return Command.none();
+            }
+            String keyChar = key.key();
+            if (keyChar != null && !keyChar.isEmpty()) {
+                char ch = Character.toLowerCase(keyChar.charAt(0));
+                switch (ch) {
+                    case 'b' -> {
+                        pump.offer(new TerminalUiAction.SidebarToggled());
+                        return Command.none();
+                    }
+                    case 's' -> {
+                        controller.accept(new TerminalInput(TerminalInput.Kind.EXECUTE_COMMAND, "/session"));
+                        return Command.none();
+                    }
+                    case 'e' -> {
+                        pump.offer(new TerminalUiAction.StatusChanged("External editor deferred in this version"));
+                        return Command.none();
+                    }
+                    case 'm' -> {
+                        executeCommand("/model");
+                        return Command.none();
+                    }
+                    case 'n' -> {
+                        executeCommand("/new");
+                        return Command.none();
+                    }
+                    case 'l' -> {
+                        executeCommand("/resume");
+                        return Command.none();
+                    }
+                    case 'c' -> {
+                        executeCommand("/compact");
+                        return Command.none();
+                    }
+                    case 'r' -> {
+                        executeCommand("/rename");
+                        return Command.none();
+                    }
+                    case 'q' -> {
+                        executeCommand("/quit");
+                        return Command.none();
+                    }
+                    default -> {
+                        return Command.none();
+                    }
+                }
+            }
+        }
+
+        if (shortcuts.matchesToggleExpansion(key)) {
+            accept(TerminalInput.Kind.TOGGLE_EXPANSION);
             return Command.none();
         }
         if (shortcuts.matchesRestoreQueuedMessage(key)) {
@@ -500,6 +581,10 @@ final class Tui4jCodingTerminalModel implements Model {
     }
 
     private void selectorKey(KeyPressMessage key) {
+        if (shortcuts.matchesToggleExpansion(key)) {
+            accept(TerminalInput.Kind.TOGGLE_EXPANSION);
+            return;
+        }
         if (key.type() == KeyType.KeyUp) {
             accept(TerminalInput.Kind.SELECT_PREVIOUS);
         } else if (key.type() == KeyType.KeyDown) {
@@ -559,13 +644,19 @@ final class Tui4jCodingTerminalModel implements Model {
         syncComponents();
     }
 
+    private void executeCommand(String command) {
+        controller.accept(new TerminalInput(TerminalInput.Kind.EXECUTE_COMMAND, command));
+        syncComponents();
+        pruneStalePastes(controller.state().editorBuffer());
+    }
+
     private Command submit(TerminalInput.Kind kind) {
         TerminalUiState state = controller.state();
         if (pendingSubmission != null) {
             return Command.none();
         }
         String expanded = expandPastedContent(state.editorBuffer());
-        if (!expanded.isBlank()) {
+        if (!expanded.isBlank() && !controller.isRenamingSession()) {
             resumeTranscriptFollowing();
             history.add(expanded);
         }
@@ -676,7 +767,11 @@ final class Tui4jCodingTerminalModel implements Model {
     }
 
     private void pruneStalePastes(String buffer) {
-        pastedContent.keySet().removeIf(token -> !buffer.contains(token));
+        Optional<String> preserved = controller.preservedDraft();
+        pastedContent
+                .keySet()
+                .removeIf(token -> !buffer.contains(token)
+                        && preserved.map(p -> !p.contains(token)).orElse(true));
     }
 
     private String pastedTokenBefore(String buffer, int cursor) {
@@ -743,10 +838,12 @@ final class Tui4jCodingTerminalModel implements Model {
                 clearSecretBuffer();
                 editor.setHeight(3);
                 editor.setMaxHeight(3);
-                editor.setPrompt("┃ ");
                 editor.setPlaceholder("Type a message, /command, @file, !command, or !!command");
                 secretPresentation = false;
             }
+            boolean isShell =
+                    state.editorBuffer().startsWith("!") || state.editorBuffer().startsWith("!!");
+            editor.setPrompt(isShell ? "! " : "┃ ");
             if (!editor.value().equals(state.editorBuffer())) {
                 synchronizeEditor(state.editorBuffer(), state.editorCursor());
             } else if (editorCursor != state.editorCursor()) {
@@ -760,8 +857,10 @@ final class Tui4jCodingTerminalModel implements Model {
             editor.focus();
         }
 
+        int effectiveTranscriptColumns =
+                (state.sidebarVisible() && state.columns() >= 100) ? state.columns() - 42 : state.columns();
         boolean transcriptChanged =
-                renderedTranscript != state.transcript() || renderedTranscriptColumns != state.columns();
+                renderedTranscript != state.transcript() || renderedTranscriptColumns != effectiveTranscriptColumns;
         if (transcriptChanged) {
             String nextTranscript = view.transcriptContent(state);
             if (!nextTranscript.equals(transcriptContent)) {
@@ -775,7 +874,7 @@ final class Tui4jCodingTerminalModel implements Model {
                 }
             }
             renderedTranscript = state.transcript();
-            renderedTranscriptColumns = state.columns();
+            renderedTranscriptColumns = effectiveTranscriptColumns;
         }
     }
 
