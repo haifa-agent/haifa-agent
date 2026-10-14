@@ -35,7 +35,7 @@ final class IncrementalTerminalMarkdownRenderer {
     }
 
     String render(String id, String markdown, int width) {
-        DocumentState document = documents.computeIfAbsent(id, ignored -> new DocumentState());
+        DocumentState document = documents.computeIfAbsent(id, ignored -> new DocumentState(theme));
         document.update(sanitize(markdown));
         int safeWidth = Math.max(12, width);
         return document.lines().stream()
@@ -46,6 +46,10 @@ final class IncrementalTerminalMarkdownRenderer {
 
     void retain(Set<String> ids) {
         documents.keySet().retainAll(ids);
+    }
+
+    void resetAll() {
+        documents.clear();
     }
 
     ParseMetrics metrics(String id) {
@@ -66,7 +70,8 @@ final class IncrementalTerminalMarkdownRenderer {
             case LIST_ITEM -> wrap(renderInline(line.content()), width, line.prefix());
             case CODE_HEADER ->
                 line.content().isBlank() ? theme.muted("code") : theme.muted("code · " + line.content());
-            case CODE -> wrap(theme.codeBlock(line.content()), width, "  ");
+            case CODE ->
+                wrap(line.highlighted().isEmpty() ? theme.codeBlock(line.content()) : line.highlighted(), width, "  ");
         };
     }
 
@@ -171,17 +176,7 @@ final class IncrementalTerminalMarkdownRenderer {
         }
     }
 
-    private static MarkdownLine parseLine(String raw, boolean insideFence) {
-        String trimmed = raw.strip();
-        if (trimmed.startsWith(FENCE)) {
-            return insideFence
-                    ? new MarkdownLine(LineKind.HIDDEN, "", "")
-                    : new MarkdownLine(
-                            LineKind.CODE_HEADER,
-                            trimmed.substring(FENCE.length()).strip(),
-                            "");
-        }
-        if (insideFence) return new MarkdownLine(LineKind.CODE, raw, "");
+    private static MarkdownLine parseLine(String raw) {
         if (raw.isBlank()) return new MarkdownLine(LineKind.BLANK, "", "");
 
         Matcher heading = HEADING.matcher(raw);
@@ -235,16 +230,26 @@ final class IncrementalTerminalMarkdownRenderer {
         CODE
     }
 
-    private record MarkdownLine(LineKind kind, String content, String prefix) {}
+    private record MarkdownLine(LineKind kind, String content, String prefix, String language, String highlighted) {
+        MarkdownLine(LineKind kind, String content, String prefix) {
+            this(kind, content, prefix, "", "");
+        }
+    }
 
     private static final class DocumentState {
+        private final Tui4jTerminalTheme theme;
         private final List<MarkdownLine> completed = new ArrayList<>();
         private final StringBuilder pending = new StringBuilder();
         private String source = "";
         private boolean insideFence;
+        private String currentLanguage = "";
         private int fullParseCount = 1;
         private int lastDeltaCharacters;
         private long totalParsedCharacters;
+
+        DocumentState(Tui4jTerminalTheme theme) {
+            this.theme = theme;
+        }
 
         private void update(String next) {
             if (!next.startsWith(source)) {
@@ -261,6 +266,7 @@ final class IncrementalTerminalMarkdownRenderer {
             pending.setLength(0);
             source = "";
             insideFence = false;
+            currentLanguage = "";
             fullParseCount++;
         }
 
@@ -279,9 +285,23 @@ final class IncrementalTerminalMarkdownRenderer {
         private void finishLine() {
             String raw = pending.toString();
             if (raw.endsWith("\r")) raw = raw.substring(0, raw.length() - 1);
-            MarkdownLine line = parseLine(raw, insideFence);
-            completed.add(line);
-            if (raw.strip().startsWith(FENCE)) insideFence = !insideFence;
+            String trimmed = raw.strip();
+            if (trimmed.startsWith(FENCE)) {
+                if (insideFence) {
+                    completed.add(new MarkdownLine(LineKind.HIDDEN, "", "", currentLanguage, ""));
+                    insideFence = false;
+                    currentLanguage = "";
+                } else {
+                    currentLanguage = trimmed.substring(FENCE.length()).strip();
+                    completed.add(new MarkdownLine(LineKind.CODE_HEADER, currentLanguage, "", currentLanguage, ""));
+                    insideFence = true;
+                }
+            } else if (insideFence) {
+                String highlighted = TerminalSyntaxHighlighter.highlight(theme, currentLanguage, raw);
+                completed.add(new MarkdownLine(LineKind.CODE, raw, "", currentLanguage, highlighted));
+            } else {
+                completed.add(parseLine(raw));
+            }
             pending.setLength(0);
         }
 
@@ -289,7 +309,21 @@ final class IncrementalTerminalMarkdownRenderer {
             if (pending.isEmpty()) return List.copyOf(completed);
             List<MarkdownLine> values = new ArrayList<>(completed.size() + 1);
             values.addAll(completed);
-            values.add(parseLine(pending.toString(), insideFence));
+            String raw = pending.toString();
+            String trimmed = raw.strip();
+            if (trimmed.startsWith(FENCE)) {
+                if (insideFence) {
+                    values.add(new MarkdownLine(LineKind.HIDDEN, "", "", currentLanguage, ""));
+                } else {
+                    String lang = trimmed.substring(FENCE.length()).strip();
+                    values.add(new MarkdownLine(LineKind.CODE_HEADER, lang, "", lang, ""));
+                }
+            } else if (insideFence) {
+                String highlighted = TerminalSyntaxHighlighter.highlight(theme, currentLanguage, raw);
+                values.add(new MarkdownLine(LineKind.CODE, raw, "", currentLanguage, highlighted));
+            } else {
+                values.add(parseLine(raw));
+            }
             return values;
         }
     }

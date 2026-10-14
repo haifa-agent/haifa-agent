@@ -92,6 +92,15 @@ final class Tui4jTerminalView {
         this.shortcuts = java.util.Objects.requireNonNull(shortcuts, "shortcuts must not be null");
     }
 
+    void setTheme(String themeName) {
+        theme.switchTheme(themeName);
+        markdown.resetAll();
+    }
+
+    Tui4jTerminalTheme theme() {
+        return theme;
+    }
+
     String render(
             TerminalUiState state,
             Viewport transcript,

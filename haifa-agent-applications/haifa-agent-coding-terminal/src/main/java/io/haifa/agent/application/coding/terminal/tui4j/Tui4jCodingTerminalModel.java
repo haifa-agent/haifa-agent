@@ -74,6 +74,7 @@ final class Tui4jCodingTerminalModel implements Model {
     private int pasteSequence;
     private int windowSizePollTicks;
     private long leaderActivatedNanos;
+    private String currentThemeName = Tui4jTerminalTheme.DEFAULT_THEME;
 
     Tui4jCodingTerminalModel(CodingTerminalController controller, TerminalEventPump pump) {
         this(controller, pump, System::nanoTime, null);
@@ -97,6 +98,8 @@ final class Tui4jCodingTerminalModel implements Model {
                 hostInfo == null ? TerminalShortcutProfile.standard() : TerminalShortcutProfile.forHost(hostInfo);
         this.view = new Tui4jTerminalView(shortcuts);
         TerminalUiState state = controller.state();
+        this.currentThemeName = state.themeName();
+        this.view.setTheme(this.currentThemeName);
         this.editorCursor = state.editorCursor();
         this.transcript = Viewport.create(state.columns(), 2);
         editor.setWidth(state.columns());
@@ -857,6 +860,14 @@ final class Tui4jCodingTerminalModel implements Model {
             editor.focus();
         }
 
+        boolean themeSwitched = false;
+        if (!state.themeName().equals(currentThemeName)) {
+            currentThemeName = state.themeName();
+            view.setTheme(currentThemeName);
+            renderedTranscript = List.of();
+            themeSwitched = true;
+        }
+
         int effectiveTranscriptColumns =
                 (state.sidebarVisible() && state.columns() >= 100) ? state.columns() - 42 : state.columns();
         boolean transcriptChanged =
@@ -869,7 +880,7 @@ final class Tui4jCodingTerminalModel implements Model {
                 if (followTranscript) {
                     transcript.gotoBottom();
                     newOutputPending = false;
-                } else {
+                } else if (!themeSwitched) {
                     newOutputPending = true;
                 }
             }

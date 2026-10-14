@@ -137,4 +137,50 @@ class Tui4jTerminalThemeTest {
                     .isEqualTo("│");
         }
     }
+
+    @Test
+    void supportsSwitchingBetweenBuiltinThemes() {
+        assertThat(Tui4jTerminalTheme.availableThemeNames()).containsExactly("dark", "light", "high-contrast", "nord");
+
+        assertThat(theme.currentThemeName()).isEqualTo("dark");
+
+        boolean switchedToLight = theme.switchTheme("light");
+        assertThat(switchedToLight).isTrue();
+        assertThat(theme.currentThemeName()).isEqualTo("light");
+
+        boolean switchedToHc = theme.switchTheme("high-contrast");
+        assertThat(switchedToHc).isTrue();
+        assertThat(theme.currentThemeName()).isEqualTo("high-contrast");
+
+        boolean switchedToNord = theme.switchTheme("nord");
+        assertThat(switchedToNord).isTrue();
+        assertThat(theme.currentThemeName()).isEqualTo("nord");
+
+        boolean switchedInvalid = theme.switchTheme("nonexistent");
+        assertThat(switchedInvalid).isFalse();
+        assertThat(theme.currentThemeName()).isEqualTo("nord");
+    }
+
+    @Test
+    void stylesSyntaxTokensWithConsistentBackgroundAcrossThemes() {
+        renderer.setColorProfile(ColorProfile.TrueColor);
+        renderer.setHasDarkBackground(true);
+
+        String keyword = theme.syntaxKeyword("public");
+        String string = theme.syntaxString("\"hello\"");
+        String comment = theme.syntaxComment("// comment");
+        String number = theme.syntaxNumber("42");
+        String type = theme.syntaxType("String");
+        String literal = theme.syntaxLiteral("true");
+        String punctuation = theme.syntaxPunctuation(";");
+
+        assertThat(keyword).contains("\u001B[").isNotEqualTo(string);
+        assertThat(string).contains("\u001B[").isNotEqualTo(comment);
+        assertThat(number).contains("\u001B[").isNotEqualTo(type);
+        assertThat(literal).contains("\u001B[").isNotEqualTo(punctuation);
+
+        assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(keyword)).isEqualTo("public");
+        assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(string)).isEqualTo("\"hello\"");
+        assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(comment)).isEqualTo("// comment");
+    }
 }
