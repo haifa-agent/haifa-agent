@@ -92,7 +92,8 @@ public record TrustedSkillScriptToolSpec(
         Set<String> expectedProfileReferences = Set.of(
                 executionConfigurationDigest,
                 "sandbox@" + sandboxDigest,
-                skillProfileReference(skillBinding, normalizedScriptPath, expectedScriptDigest));
+                skillProfileReference(
+                        skillBinding, normalizedScriptPath, expectedScriptDigest, scriptRuntimeRef, timeout, purpose));
         if (!definition.resources().executionProfiles().equals(expectedProfileReferences)) {
             throw new IllegalArgumentException(
                     "Tool execution profile must bind the exact execution, sandbox and Skill identities");
@@ -100,28 +101,43 @@ public record TrustedSkillScriptToolSpec(
     }
 
     /**
-     * Frozen execution-profile reference of this exact Skill package and entry. It is carried in
-     * the existing Tool definition identity ({@code executionProfiles}), so two different Skill
-     * package versions or entries can never produce the same frozen Tool coordinate and a resumed
-     * Run cannot silently dispatch an approved trust context into changed script identity.
+     * Frozen execution-profile reference of this exact Skill package, entry and actual execution
+     * declaration. It is carried in the existing Tool definition identity ({@code
+     * executionProfiles}), so two different Skill package versions, entries, selected runtimes or
+     * actual timeout/purpose declarations can never produce the same frozen Tool coordinate and a
+     * resumed Run cannot silently dispatch an approved trust context into changed execution facts.
      */
     public String skillProfileReference() {
-        return skillProfileReference(skillBinding, scriptRelativePath, scriptDigest);
+        return skillProfileReference(
+                skillBinding, scriptRelativePath, scriptDigest, scriptRuntimeRef, timeout, purpose);
     }
 
     /**
-     * Computes the one Skill execution-profile reference for a frozen binding and entry. Defining
-     * the Tool and validating its spec share this single function so there is no second identity
-     * ledger.
+     * Computes the one Skill execution-profile reference for a frozen binding, entry and actual
+     * execution declaration (selected runtime reference, actual script timeout and approval
+     * purpose). Defining the Tool and validating its spec share this single function so there is
+     * no second identity ledger.
      */
     public static String skillProfileReference(
-            FrozenSkillBinding binding, String scriptRelativePath, SkillContentDigest digest) {
+            FrozenSkillBinding binding,
+            String scriptRelativePath,
+            SkillContentDigest digest,
+            String scriptRuntimeRef,
+            Duration timeout,
+            String purpose) {
+        String normalizedRuntime = requireText(scriptRuntimeRef, "scriptRuntimeRef", 128);
+        if (Objects.requireNonNull(timeout, "timeout must not be null").isZero() || timeout.isNegative()) {
+            throw new IllegalArgumentException("timeout must be positive");
+        }
         String sha = SkillTrustDigests.sha256(List.of(
                 IDENTITY_NAMESPACE,
                 binding.coordinate().externalForm(),
                 binding.registrationDigest().value(),
                 scriptRelativePath,
-                digest.value()));
+                digest.value(),
+                normalizedRuntime,
+                Long.toString(timeout.toNanos()),
+                requireText(purpose, "purpose", 256)));
         return SKILL_EXECUTION_PROFILE_PREFIX + sha.substring("sha256:".length());
     }
 

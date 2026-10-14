@@ -124,10 +124,18 @@ import java.util.stream.Stream;
  * <p>The declared Tool runs one frozen multi-file Skill package: the platform prepares the
  * immutable execution directory of the frozen package version once below the Workspace root
  * (every frozen package byte is verified against the resource index on preparation; any drift is
- * rejected), reuses that directory on every later invocation of the same version, and executes the
- * declared entry file by path. Entry-file identity therefore holds: relative imports resolve and
- * entry detection works, which the standard-input model cannot express. Prepared directories are
- * never deleted per invocation.
+ * rejected; the fully verified package is written to a process-unique temporary directory and
+ * published with one atomic rename, so independent platforms that declare the same workspace can
+ * concurrently prepare the same version without ever deleting a completed directory), reuses that
+ * directory on every later invocation of the same version, and executes the declared entry file by
+ * path. Entry-file identity therefore holds: relative imports resolve and entry detection works,
+ * which the standard-input model cannot express. Prepared directories are never deleted per
+ * invocation; an interrupted preparation leaves no final directory behind.
+ *
+ * <p>Every frozen Tool identity additionally carries the selected runtime reference and the
+ * actual script timeout and approval purpose through the existing Tool definition identity, so a
+ * changed execution declaration always produces a different frozen Tool coordinate that an old
+ * Run cannot silently match.
  *
  * <p>Trusted runtimes are declared by the product with an explicit executable path and are
  * preflighted (existence, exact file, deadline-bounded version probe) at assembly; nothing is
@@ -357,11 +365,12 @@ public final class SkillScriptPlatforms {
         }
 
         /**
-         * One shared bounded deadline covers merged output consumption and process waiting: both
-         * streams are drained on one merged pipe (a filled stderr can never deadlock the probe),
-         * only the first probe output bound is retained, and a run that does not exit within the
-         * deadline - or a probe that is interrupted - is destroyed and reaped. No budget is added
-         * and there is no retry.
+         * One shared bounded deadline covers merged output consumption, the process wait and the
+         * cleanup of a runtime that ignores graceful termination: both streams are drained on one
+         * merged pipe (a filled stderr can never deadlock the probe), only the first probe output
+         * bound is retained, and cleanup is scheduled on the remaining time of the same deadline -
+         * when the budget is exhausted the runtime is destroyed forcibly at once. No extra window
+         * is added and there is no retry.
          */
         private void runProbe(List<String> arguments, boolean expectsOutput, Duration deadline) {
             final int retainedOutputBytes = 4_096;
@@ -376,10 +385,10 @@ public final class SkillScriptPlatforms {
                 long remainingNanos = deadlineNanos - System.nanoTime();
                 boolean exited = remainingNanos > 0 && process.waitFor(remainingNanos, TimeUnit.NANOSECONDS);
                 if (!exited) {
-                    destroy(process);
+                    cleanupRemainingTime(process, deadlineNanos);
                     throw unavailable("trusted script runtime probe did not exit within its deadline");
                 }
-                drain.join(TimeUnit.SECONDS.toMillis(1));
+                drain.join(Math.max(0L, deadlineNanos - System.nanoTime()) / 1_000_000L);
                 synchronized (merged) {
                     probeOutput = merged.toByteArray();
                 }
@@ -389,7 +398,7 @@ public final class SkillScriptPlatforms {
                 }
             } catch (InterruptedException exception) {
                 Thread.currentThread().interrupt();
-                destroy(process);
+                process.destroyForcibly();
                 throw new HaifaAgentException(
                         SkillScriptPlatforms.RUNTIME_UNAVAILABLE_CODE,
                         "product.assemble",
@@ -437,10 +446,24 @@ public final class SkillScriptPlatforms {
         private static void destroy(Process process) {
             if (!process.isAlive()) return;
             process.destroy();
+        }
+
+        /**
+         * Terminates a runtime that ignored the shared deadline. Graceful termination first, but
+         * only within the remaining time of the same deadline; when that budget is exhausted (or
+         * was already spent) the runtime is destroyed forcibly at once - no extra cleanup window.
+         */
+        private static void cleanupRemainingTime(Process process, long deadlineNanos) {
+            if (!process.isAlive()) return;
+            process.destroy();
+            long remainingNanos = deadlineNanos - System.nanoTime();
+            if (remainingNanos <= 0) {
+                process.destroyForcibly();
+                return;
+            }
             try {
-                if (!process.waitFor(5, TimeUnit.SECONDS)) {
+                if (!process.waitFor(remainingNanos, TimeUnit.NANOSECONDS)) {
                     process.destroyForcibly();
-                    process.waitFor(1, TimeUnit.SECONDS);
                 }
             } catch (InterruptedException exception) {
                 Thread.currentThread().interrupt();
@@ -570,7 +593,12 @@ public final class SkillScriptPlatforms {
                                     executionConfigurationDigest,
                                     "sandbox@" + sandboxDigest,
                                     TrustedSkillScriptToolSpec.skillProfileReference(
-                                            skillBinding, scriptRelativePath, scriptDigest()))),
+                                            skillBinding,
+                                            scriptRelativePath,
+                                            scriptDigest(),
+                                            scriptRuntimeRef.trim(),
+                                            timeout,
+                                            purpose.trim()))),
                     List.of(),
                     ToolApprovalRequirement.ALWAYS,
                     "io.haifa.agent.sdk.starter",

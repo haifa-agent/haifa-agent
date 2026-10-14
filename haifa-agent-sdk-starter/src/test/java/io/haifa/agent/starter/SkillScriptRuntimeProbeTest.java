@@ -17,9 +17,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * R5: the runtime probe has one shared bounded deadline - merged stdout and stderr consumption and
- * the process wait both finish or fail within the deadline, a hanging runtime is destroyed and
- * reaped (no residual writes), and an interrupted assembly thread stops waiting immediately.
+ * R5/R9: the runtime probe has one shared bounded deadline - merged stdout and stderr consumption,
+ * the process wait and the cleanup of a runtime that ignores graceful termination are all bounded
+ * by the same deadline (no extra 5s/1s windows), a hanging runtime is destroyed and reaped (no
+ * residual writes), and an interrupted assembly thread stops waiting immediately.
  */
 class SkillScriptRuntimeProbeTest {
     private static final Duration TEST_DEADLINE = Duration.ofSeconds(2);
@@ -43,8 +44,8 @@ class SkillScriptRuntimeProbeTest {
                 .hasFieldOrPropertyWithValue("code", "SKILL_SCRIPT_RUNTIME_UNAVAILABLE")
                 .hasMessageContaining("deadline");
         assertThat(Duration.ofNanos(System.nanoTime() - startedAt).getSeconds())
-                .as("the shared deadline - not the sleep - bounded the preflight")
-                .isLessThanOrEqualTo(9);
+                .as("the shared deadline - not a fixed cleanup window - bounded the preflight")
+                .isLessThanOrEqualTo(3);
 
         // The probe destroyed the hanging child: it never got to write its residue marker.
         for (int attempt = 0; attempt < 40; attempt++) {

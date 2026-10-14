@@ -9,6 +9,7 @@ import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.core.tool.ToolCallId;
+import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.execution.core.tool.ExecutionToolDefinitionFactory;
 import io.haifa.agent.execution.core.tool.TrustedScriptArguments;
 import io.haifa.agent.sdk.api.HaifaAgentException;
@@ -49,7 +50,10 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -190,6 +194,80 @@ class SkillScriptPlatformsTest {
                 .hasFieldOrPropertyWithValue("code", "SKILL_SCRIPT_RUNTIME_UNAVAILABLE");
     }
 
+    /**
+     * R8: two independent platform instances that declare the same workspace concurrently prepare
+     * the same Skill version - each invocation obtains a stable valid entry and the published
+     * directory of the winning preparer is never removed by the other instance.
+     */
+    @Test
+    void twoIndependentPlatformsResolveTheSameVersionConcurrently(@TempDir Path temporary) throws Exception {
+        assumeThat(runtimeExecutable()).matches(path -> path.toFile().isFile());
+        Path workspace = createWorkspace(temporary, "shared-workspace");
+        Path dataRoot = createWorkspace(temporary, "data");
+        Files.createDirectories(workspace.resolve("outputs"));
+        Files.writeString(workspace.resolve("outputs").resolve("result.txt"), STALE, StandardCharsets.UTF_8);
+        Map<String, byte[]> files = packageFiles(entryScript(false));
+        FrozenSkillBinding binding = loaderBinding(files);
+        PausedLoader pausedLoader = new PausedLoader(files, binding);
+        StaticLoader plainLoader = new StaticLoader(files, binding);
+
+        try (SkillScriptPlatforms.SkillScriptPlatform platformA = SkillScriptPlatforms.trusted(
+                        spec(workspace, dataRoot, pausedLoader, List.of(declaration(binding))), TENANT, PRINCIPAL);
+                SkillScriptPlatforms.SkillScriptPlatform platformB = SkillScriptPlatforms.trusted(
+                        spec(workspace, dataRoot, plainLoader, List.of(declaration(binding))), TENANT, PRINCIPAL)) {
+            var registrationA = platformA.registrations().get(0);
+            var registrationB = platformB.registrations().get(0);
+            CountDownLatch enteredByA = new CountDownLatch(1);
+            CountDownLatch preparedByB = new CountDownLatch(1);
+            pausedLoader.beginFirstRead(enteredByA, preparedByB);
+
+            AtomicReference<ToolResult> resultA = new AtomicReference<>();
+            AtomicReference<Throwable> failureA = new AtomicReference<>();
+            Thread invocationA = new Thread(() -> {
+                try {
+                    resultA.set(registrationA.provider().invoke(invocation(registrationA, "concurrent-a")));
+                } catch (Throwable thrown) {
+                    failureA.set(thrown);
+                }
+            });
+            invocationA.setDaemon(true);
+            invocationA.start();
+            assertThat(enteredByA.await(30, TimeUnit.SECONDS)).isTrue();
+
+            var resultB = registrationB.provider().invoke(invocation(registrationB, "concurrent-b"));
+            // B has now published the version; A resumes on top of it.
+            preparedByB.countDown();
+            invocationA.join(TimeUnit.SECONDS.toMillis(120));
+
+            if (resultA.get() == null || !resultA.get().successful()) {
+                throw (failureA.get() == null
+                        ? new AssertionError("platform A did not succeed")
+                        : new AssertionError("platform A failed", failureA.get()));
+            }
+            assertThat(resultB.successful()).isTrue();
+            // B's published directory survived A's losing preparation, byte for byte.
+            Path versionDirectory =
+                    workspace.resolve(SkillScriptPackageDirectory.DIRECTORY).resolve(onlyVersionKey(workspace));
+            assertThat(Files.isRegularFile(versionDirectory.resolve(SkillScriptPackageDirectory.PREPARED_MARKER)))
+                    .isTrue();
+            assertThat(Files.readString(versionDirectory.resolve(scriptRelative()), StandardCharsets.UTF_8))
+                    .isEqualTo(new String(files.get(scriptRelative()), StandardCharsets.UTF_8));
+            assertThat(Files.readString(workspace.resolve("outputs").resolve("result.txt"), StandardCharsets.UTF_8))
+                    .contains("stale prefix")
+                    .endsWith(MARKER + "\n");
+        }
+    }
+
+    /** The 64-hex directory name of the single prepared version directory. */
+    private static String onlyVersionKey(Path workspace) throws java.io.IOException {
+        try (var entries = Files.list(workspace.resolve(SkillScriptPackageDirectory.DIRECTORY))) {
+            return entries.filter(Files::isDirectory)
+                    .map(path -> path.getFileName().toString())
+                    .findFirst()
+                    .orElseThrow();
+        }
+    }
+
     /** R3: different Skill package versions or entries produce different frozen Tool identities. */
     @Test
     void differentSkillPackagesAndEntriesBindToDifferentFrozenToolIdentities(@TempDir Path temporary)
@@ -234,6 +312,150 @@ class SkillScriptPlatformsTest {
             assertThat(bindingsA).anyMatch(b -> b.coordinate().equals(coordinate(definitionA, canonicalizer)));
             assertThat(bindingsA).noneMatch(b -> b.coordinate().equals(coordinate(definitionB, canonicalizer)));
         }
+    }
+
+    /**
+     * R7: with the same package, entry, input schema and platform runtime set, only changing the
+     * declared actual execution facts changes the frozen Tool identity.
+     */
+    @Test
+    void actualExecutionDeclarationsChangeTheFrozenToolIdentity(@TempDir Path temporary) throws java.io.IOException {
+        Path workspace = createWorkspace(temporary, "workspace");
+        Path dataRoot = createWorkspace(temporary, "data");
+        Map<String, byte[]> files = packageFiles(entryScript(false));
+        FrozenSkillBinding binding = loaderBinding(files);
+        StaticLoader loader = new StaticLoader(files, binding);
+        var canonicalizer = new ToolDefinitionCanonicalizer();
+
+        String scriptRelative = scriptRelative();
+        try (var base = SkillScriptPlatforms.trusted(
+                        spec(
+                                workspace,
+                                dataRoot,
+                                loader,
+                                List.of(scriptDeclaration(
+                                        binding,
+                                        scriptRelative,
+                                        Duration.ofSeconds(60),
+                                        "verify the trusted package entry run"))),
+                        TENANT,
+                        PRINCIPAL);
+                var changedTimeout = SkillScriptPlatforms.trusted(
+                        spec(
+                                workspace,
+                                dataRoot,
+                                loader,
+                                List.of(scriptDeclaration(
+                                        binding,
+                                        scriptRelative,
+                                        Duration.ofSeconds(61),
+                                        "verify the trusted package entry run"))),
+                        TENANT,
+                        PRINCIPAL);
+                var changedPurpose = SkillScriptPlatforms.trusted(
+                        spec(
+                                workspace,
+                                dataRoot,
+                                loader,
+                                List.of(scriptDeclaration(
+                                        binding,
+                                        scriptRelative,
+                                        Duration.ofSeconds(60),
+                                        "a different declared purpose"))),
+                        TENANT,
+                        PRINCIPAL)) {
+            ToolDefinition baseline = base.registrations().get(0).definition();
+            assertThat(canonicalizer.hash(changedTimeout.registrations().get(0).definition()))
+                    .isNotEqualTo(canonicalizer.hash(baseline));
+            assertThat(canonicalizer.hash(changedPurpose.registrations().get(0).definition()))
+                    .isNotEqualTo(canonicalizer.hash(baseline));
+        }
+
+        // On hosts with a second resolvable runtime, changing the declared selected runtime within
+        // the same platform runtime set changes the identity as well.
+        assumeThat(isWindows()).isFalse();
+        Path bash = bashRuntimeExecutable();
+        assumeThat(bash).matches(path -> path.toFile().isFile());
+        List<SkillScriptPlatforms.SkillScriptRuntime> twoRuntimes = List.of(
+                new SkillScriptPlatforms.SkillScriptRuntime("bash", bash),
+                new SkillScriptPlatforms.SkillScriptRuntime("sh", runtimeExecutable()));
+        try (var withBash = SkillScriptPlatforms.trusted(
+                        new SkillScriptPlatforms.SkillScriptSpec(
+                                workspace,
+                                dataRoot,
+                                twoRuntimes,
+                                loader,
+                                List.of(runtimeDeclaration(binding, "bash")),
+                                Duration.ofSeconds(90),
+                                MAXIMUM_TIMEOUT,
+                                65_536,
+                                1_000),
+                        TENANT,
+                        PRINCIPAL);
+                var withSh = SkillScriptPlatforms.trusted(
+                        new SkillScriptPlatforms.SkillScriptSpec(
+                                workspace,
+                                dataRoot,
+                                twoRuntimes,
+                                loader,
+                                List.of(runtimeDeclaration(binding, "sh")),
+                                Duration.ofSeconds(90),
+                                MAXIMUM_TIMEOUT,
+                                65_536,
+                                1_000),
+                        TENANT,
+                        PRINCIPAL)) {
+            assertThat(canonicalizer.hash(withBash.registrations().get(0).definition()))
+                    .isNotEqualTo(
+                            canonicalizer.hash(withSh.registrations().get(0).definition()));
+        }
+    }
+
+    private static SkillScriptPlatforms.SkillScriptToolDeclaration scriptDeclaration(
+            FrozenSkillBinding binding, String scriptRelative, Duration timeout, String purpose) {
+        return new SkillScriptPlatforms.SkillScriptToolDeclaration(
+                new ToolName("generate_note"),
+                "Generate one bounded note",
+                "Generates one bounded note artifact through the frozen skill package script.",
+                inputSchema(),
+                Duration.ofMinutes(2),
+                binding,
+                scriptRelative,
+                runtimeLanguage(),
+                timeout,
+                purpose,
+                arguments -> TrustedScriptArguments.atWorkspaceRoot(List.of()));
+    }
+
+    private static SkillScriptPlatforms.SkillScriptToolDeclaration runtimeDeclaration(
+            FrozenSkillBinding binding, String scriptRuntimeRef) {
+        return new SkillScriptPlatforms.SkillScriptToolDeclaration(
+                new ToolName("generate_note"),
+                "Generate one bounded note",
+                "Generates one bounded note artifact through the frozen skill package script.",
+                inputSchema(),
+                Duration.ofMinutes(2),
+                binding,
+                scriptRelative(),
+                scriptRuntimeRef,
+                Duration.ofSeconds(60),
+                "verify the trusted package entry run",
+                arguments -> TrustedScriptArguments.atWorkspaceRoot(List.of()));
+    }
+
+    /** Exact bash executable of this host; absent bash lets the platform test be skipped. */
+    private static Path bashRuntimeExecutable() {
+        for (String candidate : List.of("/bin/bash", "/usr/bin/bash")) {
+            try {
+                Path declared = Path.of(candidate).toRealPath();
+                if (Files.isRegularFile(declared, LinkOption.NOFOLLOW_LINKS) && Files.isExecutable(declared)) {
+                    return declared;
+                }
+            } catch (java.io.IOException ignored) {
+                // Try the next candidate; a missing bash is not itself a test failure.
+            }
+        }
+        return Path.of("no-bash-on-this-host");
     }
 
     private static SkillScriptPlatforms.SkillScriptSpec otherEntrySpec(
@@ -420,6 +642,50 @@ class SkillScriptPlatformsTest {
         }
     }
 
+    /** Loader fixture that serves one fixed file map and pauses its first byte read. */
+    static final class PausedLoader implements SkillContentLoader {
+        final Map<String, byte[]> files;
+        final FrozenSkillBinding frozen;
+        private CountDownLatch entered;
+        private CountDownLatch released;
+        private boolean paused = false;
+
+        PausedLoader(Map<String, byte[]> files, FrozenSkillBinding frozen) {
+            this.files = files;
+            this.frozen = frozen;
+        }
+
+        /** The first byte read announces itself on {@code entered} and waits on {@code released}. */
+        void beginFirstRead(CountDownLatch entered, CountDownLatch released) {
+            this.entered = entered;
+            this.released = released;
+            paused = true;
+        }
+
+        @Override
+        public SkillContent load(FrozenSkillBinding binding, SkillVisibilityContext ignored) {
+            return new SkillContent(binding, "# fixture", Map.of("SKILL.md", "# fixture"), 4);
+        }
+
+        @Override
+        public Optional<byte[]> loadResourceBytes(
+                FrozenSkillBinding ignoredBinding, SkillVisibilityContext ignored, String relativePath) {
+            if (paused) {
+                paused = false;
+                entered.countDown();
+                try {
+                    if (!released.await(60, TimeUnit.SECONDS)) {
+                        throw new IllegalStateException("the competing platform never prepared the version");
+                    }
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("interrupted while paused", interrupted);
+                }
+            }
+            return Optional.ofNullable(files.get(relativePath));
+        }
+    }
+
     /** Loader fixture that serves exactly one fixed file map for one fixed binding. */
     static final class StaticLoader implements SkillContentLoader {
         final Map<String, byte[]> files;
@@ -495,6 +761,10 @@ class SkillScriptPlatformsTest {
                 registration.providerBindingReference(),
                 registration.provider());
         return catalog.freeze().snapshot().bindings().getFirst();
+    }
+
+    private static ToolInvocationRequest invocation(ToolRegistration registration, String key) {
+        return invocation(freeze(registration), registration.definition(), key);
     }
 
     private static ToolInvocationRequest invocation(FrozenToolBinding binding, ToolDefinition definition, String key) {

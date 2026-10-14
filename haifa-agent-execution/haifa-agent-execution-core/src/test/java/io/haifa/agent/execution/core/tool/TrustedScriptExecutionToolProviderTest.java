@@ -388,7 +388,12 @@ class TrustedScriptExecutionToolProviderTest {
                 execution.configurationIdentity(),
                 SkillTrustDigests.sandbox(execution.sandboxProfileIdentity()),
                 TrustedSkillScriptToolSpec.skillProfileReference(
-                        skill(), "scripts/transform", SkillTrustDigests.content(script)));
+                        skill(),
+                        "scripts/transform",
+                        SkillTrustDigests.content(script),
+                        "fixture-runtime",
+                        Duration.ofSeconds(5),
+                        "fixed transform"));
         TrustedSkillScriptToolSpec spec = new TrustedSkillScriptToolSpec(
                 definition,
                 skill,

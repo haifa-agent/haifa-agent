@@ -48,8 +48,10 @@ public interface TrustedSkillScriptPackageDirectory {
     /**
      * Reuses the already prepared immutable directory of one Skill package version, or prepares it
      * exactly once from verified frozen bytes. The file supplier is invoked only when the version
-     * directory is still missing, so repeated invocations never re-read the package bytes, and a
-     * directory that exists but was never completed is replaced atomically for this key.
+     * directory is still missing, so repeated invocations never re-read the package bytes. The
+     * implementation publishes a fully verified package atomically (write to a temporary location
+     * first, publish when complete) and never deletes, truncates or rebuilds a completed directory;
+     * an interrupted preparation never leaves a final directory that could be mistaken for one.
      */
     PreparedSkillPackage prepareIfAbsent(
             String versionKey, Supplier<List<PackageFile>> files, String entryRelativePath);

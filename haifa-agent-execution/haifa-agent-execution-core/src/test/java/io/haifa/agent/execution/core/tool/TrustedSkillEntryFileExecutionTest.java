@@ -282,7 +282,9 @@ class TrustedSkillEntryFileExecutionTest {
         assertThat(captured.get().workingDirectory().projectPath().isRoot()).isTrue();
     }
 
-    /** The frozen Skill execution-profile reference distinguishes two different package versions. */
+    /**
+     * The frozen Skill execution-profile reference distinguishes two different package versions.
+     */
     @Test
     void differentSkillPackageVersionsProduceDifferentToolIdentities() {
         byte[] updatedEntry = "NEW ENTRY".getBytes(StandardCharsets.UTF_8);
@@ -291,9 +293,100 @@ class TrustedSkillEntryFileExecutionTest {
 
         // Two different Skill package versions must never share a frozen identity reference.
         String original = TrustedSkillScriptToolSpec.skillProfileReference(
-                binding(), "scripts/main", SkillTrustDigests.content(ENTRY));
-        String updated = TrustedSkillScriptToolSpec.skillProfileReference(binding(), "scripts/main", updatedDigest);
+                binding(),
+                "scripts/main",
+                SkillTrustDigests.content(ENTRY),
+                "fixture-runtime",
+                Duration.ofSeconds(5),
+                "entry fixture");
+        String updated = TrustedSkillScriptToolSpec.skillProfileReference(
+                binding(), "scripts/main", updatedDigest, "fixture-runtime", Duration.ofSeconds(5), "entry fixture");
         assertThat(updated).isNotEqualTo(original);
+    }
+
+    /**
+     * R7: with the same package, entry and platform runtime set, changing the declared selected
+     * runtime, the actual script timeout or the approval purpose changes the Tool identity - the
+     * actual execution declaration cannot silently alias an old frozen Tool.
+     */
+    @Test
+    void selectedRuntimeTimeoutAndPurposeChangeTheToolIdentity() {
+        Duration timeout = Duration.ofSeconds(5);
+        String original = TrustedSkillScriptToolSpec.skillProfileReference(
+                binding(),
+                "scripts/main",
+                SkillTrustDigests.content(ENTRY),
+                "fixture-runtime",
+                timeout,
+                "entry fixture");
+
+        assertThat(TrustedSkillScriptToolSpec.skillProfileReference(
+                        binding(),
+                        "scripts/main",
+                        SkillTrustDigests.content(ENTRY),
+                        "other-runtime",
+                        timeout,
+                        "entry fixture"))
+                .isNotEqualTo(original);
+        assertThat(TrustedSkillScriptToolSpec.skillProfileReference(
+                        binding(),
+                        "scripts/main",
+                        SkillTrustDigests.content(ENTRY),
+                        "fixture-runtime",
+                        timeout.plusMillis(1),
+                        "entry fixture"))
+                .isNotEqualTo(original);
+        assertThat(TrustedSkillScriptToolSpec.skillProfileReference(
+                        binding(),
+                        "scripts/main",
+                        SkillTrustDigests.content(ENTRY),
+                        "fixture-runtime",
+                        timeout,
+                        "changed purpose"))
+                .isNotEqualTo(original);
+        // Trimmed purpose/runtime are one identity, not two.
+        assertThat(TrustedSkillScriptToolSpec.skillProfileReference(
+                        binding(),
+                        "scripts/main",
+                        SkillTrustDigests.content(ENTRY),
+                        " fixture-runtime ",
+                        timeout,
+                        " entry fixture "))
+                .isEqualTo(original);
+    }
+
+    /**
+     * R7 recovery contract: an old frozen definition identity (computed for the declared facts of
+     * an earlier configuration) can never validate a spec whose actual execution facts changed -
+     * the mismatch fails closed in the existing spec validation instead of silently matching.
+     */
+    @Test
+    void aStaleIdentityCannotMatchChangedExecutionDeclarations() {
+        Duration timeout = Duration.ofSeconds(5);
+        String staleIdentity = TrustedSkillScriptToolSpec.skillProfileReference(
+                binding(),
+                "scripts/main",
+                SkillTrustDigests.content(ENTRY),
+                "fixture-runtime",
+                timeout,
+                "entry fixture");
+        ToolDefinition staleDefinition =
+                definition(List.of("d".repeat(64), "sandbox@sha256:" + "a".repeat(64), staleIdentity));
+
+        assertThatThrownBy(() -> new TrustedSkillScriptToolSpec(
+                        staleDefinition,
+                        binding(),
+                        "scripts/main",
+                        SkillTrustDigests.content(ENTRY),
+                        "fixture-runtime",
+                        "d".repeat(64),
+                        "sha256:" + "a".repeat(64),
+                        Set.of("execution_run"),
+                        timeout,
+                        "changed purpose",
+                        arguments -> TrustedScriptArguments.atWorkspaceRoot(List.of()),
+                        true))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     private record TrustedFixture(
@@ -312,7 +405,12 @@ class TrustedSkillEntryFileExecutionTest {
                 executionDigest,
                 "sandbox@" + sandboxDigest,
                 TrustedSkillScriptToolSpec.skillProfileReference(
-                        binding(), "scripts/main", SkillTrustDigests.content(ENTRY))));
+                        binding(),
+                        "scripts/main",
+                        SkillTrustDigests.content(ENTRY),
+                        "fixture-runtime",
+                        Duration.ofSeconds(5),
+                        "entry fixture")));
         TrustedSkillScriptToolSpec spec = new TrustedSkillScriptToolSpec(
                 definition,
                 binding(),
