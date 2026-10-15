@@ -276,11 +276,17 @@ final class Tui4jTerminalTheme {
     }
 
     String success(String value) {
-        return block(value, palette.successForeground(), palette.successBackground());
+        return Style.newStyle()
+                .foreground(palette.successForeground())
+                .bold(true)
+                .render(value);
     }
 
     String pending(String value) {
-        return block(value, palette.pendingForeground(), palette.pendingBackground());
+        return Style.newStyle()
+                .foreground(palette.pendingForeground())
+                .bold(true)
+                .render(value);
     }
 
     String error(String value) {

@@ -572,6 +572,49 @@ class Tui4jTerminalViewTest {
     }
 
     @Test
+    void rendersToolCardsWithNeutralBackgroundAndLocalizedStatusGlyph() {
+        Renderer renderer = Renderer.defaultRenderer();
+        renderer.setColorProfile(ColorProfile.TrueColor);
+        renderer.setHasDarkBackground(true);
+        try {
+            TerminalUiState state = withTranscript(
+                    defaultState(),
+                    List.of(
+                            item(
+                                    "tool-1",
+                                    TranscriptItem.Kind.TOOL,
+                                    "file_stat · local-tmp/test.log",
+                                    "Inspected local-tmp/test.log",
+                                    "SUCCEEDED",
+                                    false),
+                            item(
+                                    "exec-1",
+                                    TranscriptItem.Kind.EXECUTION,
+                                    "execution_run · ./mvnw test",
+                                    "Command exited (exit 0)",
+                                    "SUCCEEDED",
+                                    false)));
+
+            String content = view.transcriptContent(state);
+
+            String stripped = com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(content);
+            assertThat(stripped)
+                    .contains("file_stat · local-tmp/test.log · ctrl+o expand")
+                    .contains("Inspected local-tmp/test.log")
+                    .contains("execution_run · ./mvnw test · ctrl+o expand")
+                    .contains("Command exited (exit 0)");
+
+            // Must have foreground color for glyph (e.g. \u001B[38 or \u001B[32)
+            assertThat(content).contains("\u001B[3");
+            // Must NOT have any background fill (no [4 or [10)
+            assertThat(content).doesNotContain("\u001B[4").doesNotContain("\u001B[10");
+        } finally {
+            renderer.setColorProfile(ColorProfile.Ascii);
+            renderer.setHasDarkBackground(false);
+        }
+    }
+
+    @Test
     void omitsThePreviewWhenEveryBodyLineIsStructural() {
         TerminalUiState state = withTranscript(
                 defaultState(),

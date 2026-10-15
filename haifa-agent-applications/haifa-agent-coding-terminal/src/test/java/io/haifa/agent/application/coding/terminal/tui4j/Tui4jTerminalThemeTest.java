@@ -48,8 +48,8 @@ class Tui4jTerminalThemeTest {
         renderer.setColorProfile(ColorProfile.Ascii);
         renderer.setHasDarkBackground(false);
 
-        assertThat(theme.success("success")).isEqualTo(" success ");
-        assertThat(theme.pending("pending")).isEqualTo(" pending ");
+        assertThat(theme.success("success")).isEqualTo("success");
+        assertThat(theme.pending("pending")).isEqualTo("pending");
         assertThat(theme.error("error")).isEqualTo("error");
         assertThat(theme.queued("queued")).isEqualTo(" queued ");
         assertThat(theme.focus("focus")).isEqualTo("focus");
@@ -139,7 +139,7 @@ class Tui4jTerminalThemeTest {
     }
 
     @Test
-    void errorStylesNeverContainBackgroundSequencesAcrossThemesAndProfiles() {
+    void statusStylesNeverContainBackgroundSequencesAcrossThemesAndProfiles() {
         for (String themeName : Tui4jTerminalTheme.availableThemeNames()) {
             theme.switchTheme(themeName);
             for (ColorProfile profile : new ColorProfile[] {
@@ -149,17 +149,29 @@ class Tui4jTerminalThemeTest {
                     renderer.setColorProfile(profile);
                     renderer.setHasDarkBackground(dark);
 
+                    String succ = theme.success("Operation succeeded");
+                    String pend = theme.pending("Operation pending");
                     String err = theme.error("Operation failed");
+                    String warn = theme.warning("Warning message");
                     String errHeader = theme.errorCardLine("✖ Error · Failed", false, true);
                     String errBody = theme.errorCardLine("Reason: detail", false, false);
 
                     // SGR background codes begin with [4 or [10
+                    assertThat(succ).doesNotContain("\u001B[4").doesNotContain("\u001B[10");
+                    assertThat(pend).doesNotContain("\u001B[4").doesNotContain("\u001B[10");
                     assertThat(err).doesNotContain("\u001B[4").doesNotContain("\u001B[10");
+                    assertThat(warn).doesNotContain("\u001B[4").doesNotContain("\u001B[10");
                     assertThat(errHeader).doesNotContain("\u001B[4").doesNotContain("\u001B[10");
                     assertThat(errBody).doesNotContain("\u001B[4").doesNotContain("\u001B[10");
 
+                    assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(succ))
+                            .isEqualTo("Operation succeeded");
+                    assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(pend))
+                            .isEqualTo("Operation pending");
                     assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(err))
                             .isEqualTo("Operation failed");
+                    assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(warn))
+                            .isEqualTo("Warning message");
                     assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(errHeader))
                             .isEqualTo("│ ✖ Error · Failed");
                     assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(errBody))

@@ -461,6 +461,9 @@ final class Tui4jTerminalView {
         if (item.kind() == TranscriptItem.Kind.ERROR) {
             return renderErrorMessage(item, availableWidth);
         }
+        if (isToolLike(item)) {
+            return renderToolItem(item, availableWidth);
+        }
         String title = sanitize(
                 switch (item.kind()) {
                     case USER -> "You";
@@ -482,42 +485,53 @@ final class Tui4jTerminalView {
             return style(item, approval(title, item.approvalDetails().orElseThrow(), item.expanded()));
         }
         if (collapsed) {
-            String styledTitle = isToolLike(item) && isErrorStatus(item.status()) ? theme.error(title) : title;
             StringBuilder content =
-                    new StringBuilder(styledTitle).append(theme.muted(" · " + shortcuts.toggleExpansion() + " expand"));
+                    new StringBuilder(title).append(theme.muted(" · " + shortcuts.toggleExpansion() + " expand"));
+            return style(item, content.toString());
+        }
+        String body =
+                item.expanded() ? item.body() : item.body().lines().limit(5).collect(Collectors.joining("\n"));
+        String content = title + "\n" + body;
+        return style(item, content);
+    }
+
+    private String renderToolItem(TranscriptItem item, int availableWidth) {
+        boolean collapsed = item.collapsible();
+        String glyph = styledGlyph(item.status());
+        String duration = durationSuffix(item, collapsed);
+        String headerTitle = glyph + " " + sanitize(item.title()) + duration;
+
+        if (collapsed) {
+            StringBuilder content =
+                    new StringBuilder(headerTitle).append(theme.muted(" · " + shortcuts.toggleExpansion() + " expand"));
             if (isErrorStatus(item.status()) || isUnknownStatus(item.status())) {
                 String details = item.body()
                         .lines()
                         .limit(2)
                         .map(value -> "  " + sanitize(value))
                         .collect(Collectors.joining("\n"));
-                if (!details.isBlank()) content.append('\n').append(details);
-            } else if (isToolLike(item)) {
+                if (!details.isBlank()) {
+                    content.append('\n').append(details);
+                }
+            } else {
                 String preview = previewLine(item.body(), availableWidth);
-                if (!preview.isBlank()) content.append('\n').append(theme.muted("  " + preview));
+                if (!preview.isBlank()) {
+                    content.append('\n').append(theme.muted("  " + preview));
+                }
             }
-            if (isToolLike(item) && isErrorStatus(item.status())) {
-                return content.toString();
-            }
-            return style(item, content.toString());
+            return content.toString();
         }
+
         String body =
                 item.expanded() ? item.body() : item.body().lines().limit(5).collect(Collectors.joining("\n"));
-        if (isToolLike(item) && isErrorStatus(item.status())) {
-            String styledTitle = theme.error(title);
-            String content = styledTitle + "\n" + renderToolBody(item, body);
-            if (item.expanded()) {
-                String metadata = metadata(item);
-                if (!metadata.isBlank()) content = content + "\n" + theme.muted("  " + metadata);
-            }
-            return content;
-        }
-        String content = title + "\n" + renderToolBody(item, body);
-        if (item.expanded() && isToolLike(item)) {
+        String content = headerTitle + "\n" + renderToolBody(item, body);
+        if (item.expanded()) {
             String metadata = metadata(item);
-            if (!metadata.isBlank()) content = content + "\n" + theme.muted("  " + metadata);
+            if (!metadata.isBlank()) {
+                content = content + "\n" + theme.muted("  " + metadata);
+            }
         }
-        return style(item, content);
+        return content;
     }
 
     private String renderToolBody(TranscriptItem item, String body) {
@@ -676,6 +690,14 @@ final class Tui4jTerminalView {
         if (SUCCESS_STATUSES.contains(normalized)) return "✓";
         if (ERROR_STATUSES.contains(normalized)) return "✗";
         return "●";
+    }
+
+    private String styledGlyph(String status) {
+        String normalized = status.strip().toUpperCase(Locale.ROOT);
+        if (UNKNOWN_STATUSES.contains(normalized)) return theme.warning("?");
+        if (SUCCESS_STATUSES.contains(normalized)) return theme.success("✓");
+        if (ERROR_STATUSES.contains(normalized)) return theme.error("✗");
+        return theme.pending("●");
     }
 
     private static String durationSuffix(TranscriptItem item, boolean collapsed) {
