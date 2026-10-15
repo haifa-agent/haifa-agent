@@ -1,5 +1,7 @@
 # Changelog
 
+## Unreleased - 0.1.3-SNAPSHOT
+
 ## 0.1.2 - 2026-10-15
 
 - Release distributions now include a complete SDK Maven file repository with resolved parent/BOM POMs,

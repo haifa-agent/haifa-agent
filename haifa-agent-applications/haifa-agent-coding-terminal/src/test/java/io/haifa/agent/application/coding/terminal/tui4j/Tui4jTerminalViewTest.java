@@ -1090,7 +1090,7 @@ class Tui4jTerminalViewTest {
 
         String rendered = view.render(state, transcript(state), editor(120), true, false);
 
-        assertThat(rendered).contains("Resources", "Haifa Agent v0.1.2", "ctrl+x b toggle");
+        assertThat(rendered).contains("Resources", "Haifa Agent v0.1.3-SNAPSHOT", "ctrl+x b toggle");
     }
 
     @Test
