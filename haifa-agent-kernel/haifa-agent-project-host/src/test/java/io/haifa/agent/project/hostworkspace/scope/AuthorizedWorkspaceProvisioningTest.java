@@ -268,6 +268,48 @@ class AuthorizedWorkspaceProvisioningTest {
     }
 
     @Test
+    void reattachingTheSameActiveRootEscalatesReadToDevelop() {
+        ProvisioningResult read = provisioning.authorizeApprovedAttach(additionalRoot, WorkspaceAccessMode.READ);
+        WorkspaceId workspaceId = read.directory().workspaceId();
+        assertThatThrownBy(
+                        () -> provisioning.requireAuthorized(tenant, owner, workspaceId, WorkspaceAccessMode.DEVELOP))
+                .isInstanceOf(SecurityException.class)
+                .hasMessage("WORKSPACE_ACCESS_MODE_DENIED");
+        assertThat(provisioning.scope().allowedDirectories()).hasSize(2);
+
+        ProvisioningResult escalated =
+                provisioning.authorizeApprovedAttach(additionalRoot, WorkspaceAccessMode.DEVELOP);
+
+        assertThat(escalated.reusedExistingBoundary()).isTrue();
+        assertThat(escalated.directory().workspaceId()).isEqualTo(workspaceId);
+        assertThat(escalated.directoryView().mode()).isEqualTo(WorkspaceAccessMode.DEVELOP);
+        assertThat(provisioning
+                        .requireAuthorized(tenant, owner, workspaceId, WorkspaceAccessMode.DEVELOP)
+                        .mode())
+                .isEqualTo(WorkspaceAccessMode.DEVELOP);
+        assertThat(provisioning.scope().allowedDirectories()).hasSize(2);
+        assertThat(registry.find(projectId, workspaceId)).get().satisfies(entry -> {
+            assertThat(entry.mode()).isEqualTo(WorkspaceAccessMode.DEVELOP);
+            assertThat(entry.status()).isEqualTo(AuthorizedDirectoryStatus.ACTIVE);
+        });
+    }
+
+    @Test
+    void reattachingTheSameActiveRootNeverDowngradesDevelopToRead() {
+        ProvisioningResult develop = provisioning.authorizeApprovedAttach(additionalRoot, WorkspaceAccessMode.DEVELOP);
+        WorkspaceId workspaceId = develop.directory().workspaceId();
+
+        ProvisioningResult reused = provisioning.authorizeApprovedAttach(additionalRoot, WorkspaceAccessMode.READ);
+
+        assertThat(reused.reusedExistingBoundary()).isTrue();
+        assertThat(reused.directoryView().mode()).isEqualTo(WorkspaceAccessMode.DEVELOP);
+        assertThat(registry.find(projectId, workspaceId))
+                .get()
+                .extracting(AuthorizedDirectoryEntry::mode)
+                .isEqualTo(WorkspaceAccessMode.DEVELOP);
+    }
+
+    @Test
     void persistsApprovedAttachAndRestoresItIntoANewScope() throws IOException {
         ProvisioningResult result = provisioning.authorize(additionalRoot);
 
@@ -515,7 +557,7 @@ class AuthorizedWorkspaceProvisioningTest {
                 .contains(identity.workspaceId());
         assertThat(registry.find(projectId, identity.workspaceId())).get().satisfies(entry -> {
             assertThat(entry.status()).isEqualTo(AuthorizedDirectoryStatus.ACTIVE);
-            assertThat(entry.mode()).isEqualTo(WorkspaceAccessMode.READ);
+            assertThat(entry.mode()).isEqualTo(WorkspaceAccessMode.DEVELOP);
             assertThat(entry.version()).isEqualTo(1L);
         });
     }

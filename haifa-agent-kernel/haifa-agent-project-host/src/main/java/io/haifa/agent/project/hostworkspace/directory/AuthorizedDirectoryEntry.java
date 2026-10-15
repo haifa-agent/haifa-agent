@@ -88,9 +88,27 @@ public record AuthorizedDirectoryEntry(
                 0);
     }
 
+    /**
+     * Revalidates the active entry at its current mode. Restart recovery uses this form because it
+     * must never change the user-approved access mode.
+     */
     public AuthorizedDirectoryEntry revalidated(Path verifiedRealPath, String currentPhysicalFingerprint, Instant at) {
+        return revalidated(verifiedRealPath, currentPhysicalFingerprint, mode, at);
+    }
+
+    /**
+     * Revalidates the active entry while adopting {@code revalidatedMode}. A user-approved re-attach
+     * may raise READ to DEVELOP, so this form accepts a stronger mode; a downgrade is rejected so a
+     * lower-mode request can never shrink an already approved boundary.
+     */
+    public AuthorizedDirectoryEntry revalidated(
+            Path verifiedRealPath, String currentPhysicalFingerprint, WorkspaceAccessMode revalidatedMode, Instant at) {
         if (status != AuthorizedDirectoryStatus.ACTIVE) {
             throw new IllegalStateException("only an active authorized directory can be revalidated");
+        }
+        WorkspaceAccessMode nextMode = Objects.requireNonNull(revalidatedMode, "revalidatedMode must not be null");
+        if (!nextMode.allows(mode)) {
+            throw new IllegalArgumentException("revalidation must not weaken the authorized access mode");
         }
         requireNotBefore(at, validatedAt, "revalidation");
         return new AuthorizedDirectoryEntry(
@@ -98,7 +116,7 @@ public record AuthorizedDirectoryEntry(
                 workspaceRef,
                 tenant,
                 owner,
-                mode,
+                nextMode,
                 safeDisplayName,
                 AuthorizedDirectoryStatus.ACTIVE,
                 verifiedRealPath,

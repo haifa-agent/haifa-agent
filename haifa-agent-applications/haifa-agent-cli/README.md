@@ -617,7 +617,8 @@ Run 不会向模型披露它；范围外路径应报告工作区范围不足，�
 与附加目录的后续文件操作都直接使用主机绝对路径，并统一映射到各自的 `WorkspaceId + WorkspacePath` 后进入同一
 文件服务与 mutation 服务。
 相对路径和 root alias 不再接受；跨授权目录的 patch 与 move 仍明确拒绝。已被现有授权目录覆盖的重复授权
-复用原边界，不创建第二份目录身份；无法确认物理路径边界时拒绝操作。
+复用原边界，不创建第二份目录身份；对同一规范根的重复批准（`workspace_attach`）可在批准后把 mode 由 `READ`
+提升为 `DEVELOP`，但绝不降级，也不会因更窄的请求扩大或收窄已授权父边界。无法确认物理路径边界时拒绝操作。
 
 CLI 不为受管文件写入建立仓库基线或 Git/Plain Change Review，也不为交付证据执行隐藏的 Git 读取。
 本地文件适配器仍记录既有 Session mutation ledger，但 Runtime 与 Coding 产品都不再据此判定任务
