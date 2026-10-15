@@ -63,6 +63,25 @@ def artifact_label(version: str) -> str:
     return f"v{normalized}"
 
 
+def sdk_modules(repo_root: Path) -> list[tuple[Path, str, str]]:
+    """Public Reactor artifacts, including their parent POMs; applications/testing are not SDKs."""
+    ns = {"m": "http://maven.apache.org/POM/4.0.0"}
+    result = []
+
+    def visit(directory: Path) -> None:
+        pom = ET.parse(directory / "pom.xml").getroot()
+        artifact = pom.findtext("m:artifactId", namespaces=ns)
+        packaging = pom.findtext("m:packaging", default="jar", namespaces=ns)
+        result.append((directory, artifact, packaging))
+        for module in pom.findall("m:modules/m:module", ns):
+            if directory == repo_root and module.text in ("haifa-agent-applications", "haifa-agent-testing"):
+                continue
+            visit(directory / module.text)
+
+    visit(repo_root)
+    return result
+
+
 def compute_sha256(file_path: Path) -> str:
     sha = hashlib.sha256()
     with open(file_path, "rb") as f:
@@ -133,28 +152,11 @@ def ensure_jre(repo_root: Path, work_dir: Path, force_rebuild: bool = False) -> 
     return jre_dir
 
 
-def find_jar(directory: Path, prefix: str) -> Path:
-    candidates = [
-        f
-        for f in directory.glob(f"{prefix}*.jar")
-        if not f.name.startswith("original-")
-        and not f.name.endswith("-sources.jar")
-        and not f.name.endswith("-javadoc.jar")
-        and not f.name.endswith("-shaded.jar")
-    ]
-    if not candidates:
-        # Fallback to shaded if only shaded exists
-        shaded = [
-            f
-            for f in directory.glob(f"{prefix}*.jar")
-            if not f.name.startswith("original-")
-            and not f.name.endswith("-sources.jar")
-            and not f.name.endswith("-javadoc.jar")
-        ]
-        if shaded:
-            return shaded[0]
-        raise FileNotFoundError(f"Could not find jar with prefix '{prefix}' in {directory}")
-    return candidates[0]
+def find_jar(directory: Path, artifact: str, version: str) -> Path:
+    candidate = directory / f"{artifact}-{version}.jar"
+    if not candidate.is_file():
+        raise FileNotFoundError(f"Build the exact release artifact before packaging: {candidate}")
+    return candidate
 
 
 def validate_model_configuration(content: str) -> None:
@@ -271,7 +273,7 @@ def package_ca(repo_root: Path, work_dir: Path, output_dir: Path, version: str, 
     print("=" * 70)
 
     cli_target_dir = repo_root / "haifa-agent-applications" / "haifa-agent-cli" / "target"
-    cli_jar = find_jar(cli_target_dir, "haifa-agent-cli")
+    cli_jar = find_jar(cli_target_dir, "haifa-agent-cli", version)
     print(f"[INFO] Found Coding Agent CLI JAR: {cli_jar.name}")
 
     label = artifact_label(version)
@@ -363,7 +365,7 @@ def package_pa(
         print("[INFO] PA Web frontend built successfully.")
 
     server_target_dir = repo_root / "haifa-agent-applications" / "haifa-agent-personal-assistant-server" / "target"
-    server_jar = find_jar(server_target_dir, "haifa-agent-personal-assistant-server")
+    server_jar = find_jar(server_target_dir, "haifa-agent-personal-assistant-server", version)
     print(f"[INFO] Found Personal Assistant Server JAR: {server_jar.name}")
 
     label = artifact_label(version)
@@ -415,36 +417,27 @@ def package_sdk(repo_root: Path, work_dir: Path, output_dir: Path, version: str)
     template_dir = repo_root / "dist-support" / "templates" / "sdk"
     shutil.copy2(template_dir / "README.txt", stage_dir / "README.txt")
 
-    libs_dir = stage_dir / "libs"
-    libs_dir.mkdir(exist_ok=True)
-
-    # Collect SDK artifacts
-    sdk_modules = [
-        repo_root / "haifa-agent-sdk" / "target",
-        repo_root / "haifa-agent-sdk-starter" / "target",
-        repo_root / "haifa-agent-spring" / "haifa-agent-spring-boot-starter" / "target",
-        repo_root / "haifa-agent-spring" / "haifa-agent-spring-boot-autoconfigure" / "target",
-    ]
-
+    repository = stage_dir / "repository" / "io" / "haifa"
+    ns = {"m": "http://maven.apache.org/POM/4.0.0"}
     collected_count = 0
-    for mod_dir in sdk_modules:
-        if not mod_dir.exists():
+    for directory, artifact, packaging in sdk_modules(repo_root):
+        pom = directory / ".flattened-pom.xml"
+        content = pom.read_text(encoding="utf-8")
+        parsed = ET.fromstring(content)
+        actual_version = parsed.findtext("m:version", namespaces=ns) or parsed.findtext(
+            "m:parent/m:version", namespaces=ns
+        )
+        if "${revision}" in content or actual_version != version:
+            raise ValueError(f"Rebuild {artifact}: expected flattened POM version {version}, got {actual_version}")
+        destination = repository / artifact / version
+        destination.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(pom, destination / f"{artifact}-{version}.pom")
+        collected_count += 1
+        if packaging == "pom":
             continue
-        for jar in mod_dir.glob("*.jar"):
-            if jar.name.startswith("original-"):
-                continue
-            shutil.copy2(jar, libs_dir / jar.name)
-            collected_count += 1
-
-    # BOM poms
-    bom_paths = [
-        repo_root / "build-support" / "haifa-agent-bom" / "pom.xml",
-        repo_root / "build-support" / "haifa-agent-spring-bom" / "pom.xml",
-    ]
-    for bom in bom_paths:
-        if bom.exists():
-            dest_name = f"{bom.parent.name}-{version}.pom"
-            shutil.copy2(bom, libs_dir / dest_name)
+        for suffix in (".jar", "-sources.jar", "-javadoc.jar"):
+            name = f"{artifact}-{version}{suffix}"
+            shutil.copy2(directory / "target" / name, destination / name)
             collected_count += 1
 
     print(f"[INFO] Collected {collected_count} SDK artifacts.")
@@ -485,7 +478,7 @@ def main():
         "action",
         nargs="?",
         default="all",
-        choices=["all", "ca", "pa", "sdk", "jre"],
+        choices=["all", "ca", "pa", "sdk", "jre", "sdk-modules"],
         help="Target package to build (default: all)",
     )
     parser.add_argument("--version", dest="version", default=None, help="Explicit release version")
@@ -501,6 +494,11 @@ def main():
 
     repo_root = get_repo_root()
     version = args.version or get_pom_version(repo_root)
+    if args.action == "sdk-modules":
+        print(",".join(":" + artifact for _, artifact, _ in sdk_modules(repo_root)))
+        return
+    if version != get_pom_version(repo_root):
+        raise ValueError("Release version must match the root POM revision; rebuild before packaging")
 
     dist_support_dir = repo_root / "dist-support"
     work_dir = dist_support_dir / "dist-work"

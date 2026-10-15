@@ -1,0 +1,75 @@
+import importlib.util
+from pathlib import Path
+import tempfile
+import unittest
+import zipfile
+
+
+SCRIPT = Path(__file__).resolve().parents[2] / "dist-support/scripts/package_distributions.py"
+SPEC = importlib.util.spec_from_file_location("release_distributions", SCRIPT)
+MODULE = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(MODULE)
+
+
+class ReleaseDistributionsTest(unittest.TestCase):
+    def fixture(self, root):
+        def pom(artifact, packaging="jar", modules="", version="0.1.2"):
+            return (
+                '<project xmlns="http://maven.apache.org/POM/4.0.0">'
+                f'<artifactId>{artifact}</artifactId><version>{version}</version>'
+                f'<packaging>{packaging}</packaging>{modules}</project>'
+            )
+
+        for path, artifact, packaging, modules in (
+            (root, "parent", "pom", '<modules><module>common</module><module>sdk</module>'
+             '<module>haifa-agent-applications</module><module>haifa-agent-testing</module></modules>'),
+            (root / "common", "common", "jar", ""),
+            (root / "sdk", "sdk", "jar", ""),
+        ):
+            path.mkdir(parents=True, exist_ok=True)
+            text = pom(artifact, packaging, modules)
+            (path / "pom.xml").write_text(text, encoding="utf-8")
+            (path / ".flattened-pom.xml").write_text(text, encoding="utf-8")
+            if packaging == "jar":
+                (path / "target").mkdir()
+                for suffix in (".jar", "-sources.jar", "-javadoc.jar"):
+                    (path / "target" / f"{artifact}-0.1.2{suffix}").write_bytes(b"artifact")
+        template = root / "dist-support/templates/sdk"
+        template.mkdir(parents=True)
+        (template / "README.txt").write_text("SDK", encoding="utf-8")
+        (root / "work").mkdir()
+        (root / "output").mkdir()
+
+    def test_bundle_contains_dependency_parent_and_classifier_artifacts_without_products(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.fixture(root)
+            archive = MODULE.package_sdk(root, root / "work", root / "output", "0.1.2")
+            with zipfile.ZipFile(archive) as bundle:
+                files = bundle.namelist()
+                prefix = "haifa-agent-sdk-v0.1.2/repository/io/haifa/"
+                self.assertIn(prefix + "parent/0.1.2/parent-0.1.2.pom", files)
+                self.assertIn(prefix + "common/0.1.2/common-0.1.2.jar", files)
+                self.assertIn(prefix + "sdk/0.1.2/sdk-0.1.2-sources.jar", files)
+                self.assertIn(prefix + "sdk/0.1.2/sdk-0.1.2-javadoc.jar", files)
+                self.assertEqual(len(files), 10)
+
+    def test_missing_dependency_or_unresolved_pom_refuses_bundle(self):
+        for problem in ("missing-jar", "unresolved-pom", "wrong-version"):
+            with self.subTest(problem=problem), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                self.fixture(root)
+                if problem == "missing-jar":
+                    (root / "common/target/common-0.1.2.jar").unlink()
+                    error = FileNotFoundError
+                else:
+                    p = root / "common/.flattened-pom.xml"
+                    p.write_text(p.read_text().replace("0.1.2", "${revision}" if problem == "unresolved-pom" else "0.1.1"), encoding="utf-8")
+                    error = ValueError
+                with self.assertRaises(error):
+                    MODULE.package_sdk(root, root / "work", root / "output", "0.1.2")
+                self.assertEqual(list((root / "output").glob("*.zip")), [])
+
+
+if __name__ == "__main__":
+    unittest.main()

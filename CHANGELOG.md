@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.2 - 2026-10-15
+
+- Release distributions now include a complete SDK Maven file repository with resolved parent/BOM POMs,
+  binary/source/Javadoc artifacts and standalone consumer verification.
+- Upgrade requires recompiling applications that use the retired Memory candidate/review API. SQLite V15
+  refuses databases with ACTIVE memories or PENDING candidates; preserve a full backup and follow
+  [the upgrade guide](docs/reference/upgrading.md).
+- The SQLite recovery fixture explicitly models its logical worker identity, retaining same-owner rejection
+  and abandoned-execution settlement assertions after production worker IDs gained host PID markers.
+
 - Added the public host execution assembly entry `HostExecutionPlatforms.hostGuarded(...)`: one
   static factory resolves the trusted host shell, host script runtimes, the guarded sandbox
   provider, one registered host workspace and the SDK's own `execution_run` Tool, then registers
@@ -187,6 +197,8 @@
   terminal `child.run.*` event is written by the child's own terminal transition, exactly once, including when the
   child ends after the parent stopped or is settled by recovery. The HTTP transport does not project `child.run.*`
   (`ChildRunLifecycle`) payloads in 0.1.2; SDK event consumers receive them.
+
+## 0.1.1
 
 - The Personal Assistant real environment starts again. The catalog migration hardcoded
   `haifa.personal.execution.trusted-host-enabled: false` and dropped the `HAIFA_PERSONAL_EXECUTION_TRUSTED_HOST_ENABLED`

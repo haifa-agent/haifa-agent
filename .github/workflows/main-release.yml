@@ -34,6 +34,8 @@ jobs:
                   distribution: temurin
                   java-version: "21"
                   cache: maven
+            - name: SDK packaging contracts
+              run: python3 -m unittest scripts.tests.test_release_distributions
             - name: Fast release verification
               run: sh ./mvnw --batch-mode --no-transfer-progress -T 2 -Pci-fast clean verify
 
@@ -50,6 +52,8 @@ jobs:
                   distribution: temurin
                   java-version: "21"
                   cache: maven
+            - name: Slow release verification
+              run: sh ./mvnw --batch-mode --no-transfer-progress -T 2 -Pslow-tests test
             - name: Integration verification without unit rerun
               run: sh ./mvnw --batch-mode --no-transfer-progress -T 2 -Pci-integration-only verify
 
@@ -71,13 +75,18 @@ jobs:
                   gradle-version: "8.14"
             - name: Build SDK and CLI release artifacts without test rerun
               run: |
+                  sdk_modules=$(python3 dist-support/scripts/package_distributions.py sdk-modules)
                   sh ./mvnw --batch-mode --no-transfer-progress -T 2 \
-                    -pl ':haifa-agent-bom,:haifa-agent-spring-bom,:haifa-agent-sdk,:haifa-agent-sdk-starter,:haifa-agent-spring-boot-autoconfigure,:haifa-agent-spring-boot-starter,:haifa-agent-cli' \
-                    -am -Prelease-artifacts install
+                    -pl "${sdk_modules},:haifa-agent-cli" -am -Prelease-artifacts verify
+            - name: Package and unpack the SDK repository
+              run: |
+                  python3 dist-support/scripts/package_distributions.py sdk
+                  python3 -m zipfile -e dist-support/output/haifa-agent-sdk-*.zip dist-support/sdk-smoke
             - name: External Maven, Gradle, and Spring consumer smoke
-              run: bash build-support/sdk-consumer-smoke/verify.sh
-            - name: Standalone Java and Spring example applications
-              run: examples/haifa-agent-example/mvnw -f examples/haifa-agent-example/pom.xml clean verify
+              run: |
+                  version=$(sed -n 's/.*<revision>\(.*\)<\/revision>.*/\1/p' pom.xml | head -n1)
+                  python3 build-support/sdk-consumer-smoke/verify.py \
+                    --repository "dist-support/sdk-smoke/haifa-agent-sdk-v${version}/repository" --version "$version"
             - name: CLI entrypoint smoke
               run: |
                   version=$(sed -n 's/.*<revision>\(.*\)<\/revision>.*/\1/p' pom.xml | head -n1)
@@ -127,9 +136,10 @@ jobs:
                   cache-dependency-path: haifa-agent-applications/haifa-agent-personal-assistant-web/package-lock.json
             - name: Build CLI, Personal Assistant, and SDK artifacts
               run: |
+                  $sdkModules = python dist-support/scripts/package_distributions.py sdk-modules
                   .\mvnw.cmd --batch-mode --no-transfer-progress -T 2 `
-                    -pl ':haifa-agent-bom,:haifa-agent-spring-bom,:haifa-agent-sdk,:haifa-agent-sdk-starter,:haifa-agent-spring-boot-autoconfigure,:haifa-agent-spring-boot-starter,:haifa-agent-cli,:haifa-agent-personal-assistant-server' `
-                    -am -Prelease-artifacts install
+                    -pl "$sdkModules,:haifa-agent-cli,:haifa-agent-personal-assistant-server" `
+                    -am -Prelease-artifacts verify
             - name: Install Personal Assistant Web dependencies
               working-directory: haifa-agent-applications/haifa-agent-personal-assistant-web
               run: npm ci

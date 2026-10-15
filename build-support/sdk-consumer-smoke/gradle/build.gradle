@@ -6,11 +6,19 @@ group = "io.haifa.smoke"
 version = "1.0.0"
 
 repositories {
-    mavenLocal()
+    if (project.hasProperty("haifaRepository")) {
+        exclusiveContent {
+            forRepository { maven { url = uri(project.property("haifaRepository")) } }
+            filter { includeGroup("io.haifa") }
+        }
+    } else {
+        mavenLocal()
+    }
+    mavenCentral()
 }
 
 dependencies {
-    implementation platform("io.haifa:haifa-agent-bom:0.1.2-SNAPSHOT")
+    implementation platform("io.haifa:haifa-agent-bom:${findProperty('haifaVersion') ?: '0.1.2'}")
     implementation "io.haifa:haifa-agent-sdk-starter"
 }
 
