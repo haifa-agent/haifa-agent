@@ -16,18 +16,29 @@
 ## 仓库与交付边界
 
 - 根仓功能开发必须使用 `feat-` 开头的特性分支，不得直接在 `main` 或 `dev` 上开发；默认向 `dev`
-  发起 Pull Request。
+  发起 Pull Request。`0.1.2-SNAPSHOT` 开发线默认不设 baseline 分支：每个功能从最新 `origin/dev` 拉 `feat-*`，
+  验证通过后向 `dev` 发起 PR。例外：相互交叉的多个任务可由主控智能体从 `dev` 拉一个 `feat-*` 集成分支统一汇合，
+  子分支由主控验收后合入集成分支，集成分支再向 `dev` 发起 PR 并由人工合并；该集成分支只服务指定任务，合并进
+  `dev` 后即删除。当前集成分支为 `feat-012-sh-sdk-gaps`（038-01、038-02）和 `feat-w08-runtime-integration`（038-16～22）。
 - Git Commit Message 和 GitHub Pull Request 说明必须使用英文。大任务 PR 说明最多 7 条；小修改最多
   2 条，验证结果也计入上限。
 - GitHub 平台操作必须使用 GitHub CLI（`gh`）；本地 Git 和远端分支操作使用 `git`。
 - `docs/` 是主仓公开文档目录，必须与相关代码通过同一分支和 Pull Request 演进；内部设计历史、Prompt、PRD、复盘和未定型方案继续保留在独立私有文档仓 `haifa-agent-internal-docs`，不复制进公开 `docs/`。
 - `private-docs/` 是独立私有文档仓 `haifa-agent-internal-docs`；使用 `git -C private-docs ...` 并遵守其
-  `AGENTS.md`。
+  `AGENTS.md`，直接在其 `main` 上提交并推送，不建特性分支、不走 PR。
 - `test-config/` 是独立私有仓库 `haifa-agent-test-config`；使用 `git -C test-config ...`并遵守其
   `AGENTS.md`，默认在其 `main` 上直接提交并推送。
 - 根仓（含 `docs/`）、`private-docs/` 与 `test-config/` 必须分别检查、暂存、提交和推送；禁止把私有文档或
   私有测试配置混入主仓。
 - 建立git worktree使用父目录统一在../haifa-agent-worktrees/
+- 向本地 Maven 仓库发布 SDK 只能通过 `scripts/publish-local-sdk.ps1`，禁止直接运行 `mvn install`。
+  基线坐标 `0.1.2-SNAPSHOT` 只在 PR 合入 `dev` 后由主检出在 `dev` 分支上发布；各 `feat-*` worktree
+  发布到各自带 worktree 目录名的坐标 `0.1.2-<worktree 目录名>-SNAPSHOT` 并生成发布清单。
+  一个下游功能同时需要多个 SDK 分支的改动时，先在上游合并到一个集成 worktree，再从该 worktree 发布。
+- Haifa Agent Super Harness（`../haifa-agent-super-harness`）是独立产品仓，只消费本地 Maven 仓库中的公开
+  JAR/BOM。为其补 SDK 缺口时，以
+  `private-docs/prompts/038-sdk-012-super-harness-gaps/README.md` 为需求索引，每项按上述 `feat-*` → `dev`
+  流程交付；完成后须通过发布脚本发布并记录 SDK commit、PR 与验证状态。这类 PR 由人工审查合并，智能体不得自行合并。
 
 ## 事实源与任务路由
 
@@ -75,6 +86,16 @@
   小写位置动作和 `--kebab-case` 长参数。
 - 修改公共行为时补充相邻单元测试；修改依赖边界时更新 ArchUnit/Maven Enforcer 约束。Surefire/Failsafe
   命名与分层见 [`build-support/README.md`](build-support/README.md)。
+- 测试只证明本次变更引入的行为。每个不变量只在能表达它的最低层断言一次；上层（SDK、Store、Application）
+  只保留一个接线用例，不重复下层已覆盖的权限、损坏、失败关闭等矩阵，也不重新证明既有行为。
+- 重启与恢复用例通过同进程重新打开 Store 验证；只有行为确实依赖进程边界（文件锁、进程树、退出码）时才
+  启动子 JVM，并在测试类注释中写明理由。
+- 提交的测试只断言领域状态和返回值：不解析控制台或日志文本，不带耗时/轮询探针等排障埋点，不向 `target/`
+  或 `@TempDir` 之外写文件。任务要求的验收证据写入私有文档仓的开发报告，不进入测试代码。
+- 新增测试辅助方法或夹具前先搜索所在模块及相邻测试的现有夹具；同一辅助代码出现第二份拷贝时抽取到该模块的
+  共享夹具，不得复制相邻测试文件的装配段。不为单一消费者预建通用测试 Harness 或 DSL。
+- PR 说明须列出 `src/main` 与 `src/test` 的新增行数；测试新增超过主代码 2 倍且超过 300 行时，用一句话
+  说明原因。该数字只用于自查与评审，不是门禁，也不得为压低行数删除安全、恢复或产品语义的断言。
 - 先运行受影响模块，再运行与 CI 一致的全仓验证。行为、边界或用法变化时同步更新模块
   `README.md`；对用户可见的版本变化再更新 `CHANGELOG.md`。
 - 不修改生成目录 `target/`，不提交日志、IDE 配置、运行产物或密钥文件。

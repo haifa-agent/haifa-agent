@@ -17,6 +17,10 @@ public final class SqliteSdkPersistenceContribution implements SdkPersistenceCon
         this.ports = foundation.persistencePorts(Objects.requireNonNull(protector, "protector must not be null"));
     }
 
+    SqliteStoreFoundation foundation() {
+        return foundation;
+    }
+
     @Override
     public RuntimePersistencePorts runtimePersistence() {
         return ports;

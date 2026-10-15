@@ -40,8 +40,6 @@ import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.memory.api.MemoryId;
 import io.haifa.agent.memory.api.MemoryScope;
 import io.haifa.agent.memory.api.MemoryScopeType;
-import io.haifa.agent.memory.api.MemoryVersion;
-import io.haifa.agent.memory.api.MemoryVisibility;
 import io.haifa.agent.model.api.ApiStyleId;
 import io.haifa.agent.model.api.CredentialRef;
 import io.haifa.agent.model.api.ModelCapability;
@@ -82,10 +80,16 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import javax.crypto.spec.SecretKeySpec;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class SqliteExtendedRuntimeStateTest {
+    @AfterEach
+    void closeStores() throws Exception {
+        SqliteTestSupport.closeOpenedStores();
+    }
+
     private static final Instant NOW = SqliteAggregateTestData.NOW;
     private static final byte[] KEY = "0123456789abcdef0123456789abcdef".getBytes(StandardCharsets.UTF_8);
 
@@ -120,14 +124,12 @@ class SqliteExtendedRuntimeStateTest {
         RuntimeMemorySelection memorySelection = new RuntimeMemorySelection(
                 List.of(new MemoryCheckpointRef(
                         new MemoryId("memory"),
-                        new MemoryVersion(2),
+                        2,
                         new MemoryScope(
                                 run.tenant(),
                                 run.principal(),
                                 MemoryScopeType.USER,
-                                run.principal().principalId(),
-                                MemoryVisibility.OWNER_ONLY,
-                                Set.of()))),
+                                run.principal().principalId()))),
                 "memory-policy-2",
                 "sha256:query");
         state.saveMemorySelection(run.id(), memorySelection);

@@ -412,6 +412,9 @@ public final class TerminalUiReducer {
             return copyWithTranscript(state, items);
         }
         if (action instanceof TerminalUiAction.TerminalResized resized) {
+            int newCols = Math.max(1, resized.columns());
+            int newRows = Math.max(1, resized.rows());
+            boolean sidebarVisible = state.sidebarExplicitlyToggled() ? state.sidebarVisible() : newCols >= 100;
             return copy(
                     state,
                     state.loadedResources(),
@@ -422,14 +425,17 @@ public final class TerminalUiReducer {
                     state.editorCursor(),
                     state.selector(),
                     state.footer(),
-                    Math.max(1, resized.columns()),
-                    Math.max(1, resized.rows()),
+                    newCols,
+                    newRows,
                     state.session(),
                     state.currentRunId(),
                     state.appliedCursor(),
                     state.seenEventIds(),
                     state.recoverableError(),
-                    state.exitRequested());
+                    state.activity(),
+                    state.exitRequested(),
+                    sidebarVisible,
+                    state.sidebarExplicitlyToggled());
         }
         if (action instanceof TerminalUiAction.RecoverableFailure failure) {
             return copy(
@@ -471,19 +477,46 @@ public final class TerminalUiReducer {
                     state.recoverableError(),
                     true);
         }
+        if (action instanceof TerminalUiAction.SidebarToggled) {
+            return new TerminalUiState(
+                    state.header(),
+                    state.loadedResources(),
+                    state.transcript(),
+                    state.pending(),
+                    state.status(),
+                    state.editorBuffer(),
+                    state.editorCursor(),
+                    state.selector(),
+                    state.footer(),
+                    state.columns(),
+                    state.rows(),
+                    state.session(),
+                    state.currentRunId(),
+                    state.appliedCursor(),
+                    state.seenEventIds(),
+                    state.recoverableError(),
+                    state.activity(),
+                    state.exitRequested(),
+                    !state.sidebarVisible(),
+                    true);
+        }
+        if (action instanceof TerminalUiAction.ThemeChanged theme) {
+            return state.withThemeName(theme.themeName());
+        }
         throw new IllegalArgumentException("Unsupported Terminal UI action");
     }
 
     private static TranscriptItem appendToolPreview(TranscriptItem current, ToolOutputPreview preview) {
-        final String heading = "\nOutput (streaming):\n";
+        final String heading = "\n" + ToolBodyLines.OUTPUT_STREAMING + "\n";
         int headingIndex = current.body().indexOf(heading);
         String prefix = headingIndex >= 0
                 ? current.body().substring(0, headingIndex + heading.length())
                 : current.body() + heading;
         String previous = headingIndex >= 0 ? current.body().substring(headingIndex + heading.length()) : "";
         String channel = previewChannelMarker(previous, preview.channel());
-        String outputTruncated = preview.outputTruncated() ? "\n[execution output truncated]\n" : "";
-        String previewDropped = preview.previewDropped() ? "\n[preview output dropped]\n" : "";
+        String outputTruncated =
+                preview.outputTruncated() ? "\n" + ToolBodyLines.EXECUTION_OUTPUT_TRUNCATED + "\n" : "";
+        String previewDropped = preview.previewDropped() ? "\n" + ToolBodyLines.PREVIEW_OUTPUT_DROPPED + "\n" : "";
         String output = previous + channel + preview.text() + outputTruncated + previewDropped;
         int maximumOutput = Math.max(0, 16_384 - prefix.length());
         if (output.length() > maximumOutput) output = output.substring(output.length() - maximumOutput);
@@ -491,12 +524,14 @@ public final class TerminalUiReducer {
     }
 
     private static String previewChannelMarker(String previous, ExecutionOutputChannel channel) {
-        if (previous.isEmpty()) return channel == ExecutionOutputChannel.STDERR ? "[stderr]\n" : "";
-        int stdoutMarker = previous.lastIndexOf("[stdout]\n");
-        int stderrMarker = previous.lastIndexOf("[stderr]\n");
+        if (previous.isEmpty()) return channel == ExecutionOutputChannel.STDERR ? ToolBodyLines.STDERR + "\n" : "";
+        int stdoutMarker = previous.lastIndexOf(ToolBodyLines.STDOUT + "\n");
+        int stderrMarker = previous.lastIndexOf(ToolBodyLines.STDERR + "\n");
         ExecutionOutputChannel previousChannel =
                 stderrMarker > stdoutMarker ? ExecutionOutputChannel.STDERR : ExecutionOutputChannel.STDOUT;
-        return previousChannel == channel ? "" : "\n[" + channel.name().toLowerCase(Locale.ROOT) + "]\n";
+        if (previousChannel == channel) return "";
+        String marker = channel == ExecutionOutputChannel.STDERR ? ToolBodyLines.STDERR : ToolBodyLines.STDOUT;
+        return "\n" + marker + "\n";
     }
 
     private TerminalUiState event(TerminalUiState state, AgentRunEvent event) {
@@ -858,36 +893,36 @@ public final class TerminalUiReducer {
     private static String toolBody(RunEventPayloads.ToolLifecycle lifecycle) {
         List<String> lines = new ArrayList<>();
         String target = boundedTarget(lifecycle.targetSummary());
-        if (!target.isBlank()) lines.add("Target: " + target);
+        if (!target.isBlank()) lines.add(ToolBodyLines.TARGET_PREFIX + " " + target);
         Optional<String> reasonCode = normalizedReasonCode(lifecycle.reasonCode());
         if (isOutcomeUnknown(lifecycle.status(), lifecycle.reasonCode())) {
-            lines.add("Outcome: UNKNOWN");
+            lines.add(ToolBodyLines.OUTCOME_PREFIX + " UNKNOWN");
             if (!OUTCOME_UNKNOWN_STATUS.equalsIgnoreCase(lifecycle.status())) {
-                lines.add("Status: " + lifecycle.status());
+                lines.add(ToolBodyLines.STATUS_PREFIX + " " + lifecycle.status());
             }
-            reasonCode.ifPresent(reason -> lines.add("Reason: " + reason));
-            lines.add("Next: " + OUTCOME_UNKNOWN_NEXT_ACTION);
+            reasonCode.ifPresent(reason -> lines.add(ToolBodyLines.REASON_PREFIX + " " + reason));
+            lines.add(ToolBodyLines.NEXT_PREFIX + " " + OUTCOME_UNKNOWN_NEXT_ACTION);
         } else {
             reasonCode.ifPresent(reason -> {
-                lines.add("Reason: " + reason);
+                lines.add(ToolBodyLines.REASON_PREFIX + " " + reason);
                 String nextAction = nextAction(reason);
-                if (!nextAction.isBlank()) lines.add("Next: " + nextAction);
+                if (!nextAction.isBlank()) lines.add(ToolBodyLines.NEXT_PREFIX + " " + nextAction);
             });
         }
         lifecycle
                 .observation()
                 .flatMap(RunEventPayloads.ToolObservation::outputPreview)
                 .ifPresent(preview -> {
-                    lines.add("Output" + (preview.truncated() ? " (truncated)" : "") + ":");
+                    lines.add(preview.truncated() ? ToolBodyLines.OUTPUT_TRUNCATED : ToolBodyLines.OUTPUT);
                     lines.add(preview.text());
                     if (preview.truncated()) {
-                        lines.add("Output truncated · " + preview.byteCount() + " bytes · " + preview.lineCount()
-                                + " lines");
+                        lines.add(ToolBodyLines.OUTPUT_TRUNCATED_SUMMARY_PREFIX + preview.byteCount() + " bytes · "
+                                + preview.lineCount() + " lines");
                     }
                 });
         String resultRef =
                 lifecycle.resultRef() == null ? "" : lifecycle.resultRef().strip();
-        if (!resultRef.isBlank()) lines.add("Result: " + resultRef);
+        if (!resultRef.isBlank()) lines.add(ToolBodyLines.RESULT_PREFIX + " " + resultRef);
         return String.join("\n", lines);
     }
 
@@ -1212,6 +1247,50 @@ public final class TerminalUiReducer {
             Optional<String> error,
             TerminalActivity activity,
             boolean exit) {
+        return copy(
+                state,
+                resources,
+                transcript,
+                pending,
+                status,
+                buffer,
+                cursor,
+                selector,
+                footer,
+                columns,
+                rows,
+                session,
+                runId,
+                eventCursor,
+                seen,
+                error,
+                activity,
+                exit,
+                state.sidebarVisible(),
+                state.sidebarExplicitlyToggled());
+    }
+
+    private static TerminalUiState copy(
+            TerminalUiState state,
+            List<String> resources,
+            List<TranscriptItem> transcript,
+            List<PendingMessage> pending,
+            String status,
+            String buffer,
+            int cursor,
+            Optional<TerminalSelector> selector,
+            TerminalFooter footer,
+            int columns,
+            int rows,
+            Optional<io.haifa.agent.application.project.product.coding.CodingSessionView> session,
+            Optional<io.haifa.agent.core.run.AgentRunId> runId,
+            Optional<io.haifa.agent.runtime.api.RunEventCursor> eventCursor,
+            java.util.Set<String> seen,
+            Optional<String> error,
+            TerminalActivity activity,
+            boolean exit,
+            boolean sidebarVisible,
+            boolean sidebarExplicitlyToggled) {
         return new TerminalUiState(
                 state.header(),
                 resources,
@@ -1230,6 +1309,9 @@ public final class TerminalUiReducer {
                 seen,
                 error,
                 activity,
-                exit);
+                exit,
+                sidebarVisible,
+                sidebarExplicitlyToggled,
+                state.themeName());
     }
 }

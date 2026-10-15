@@ -45,6 +45,7 @@ import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 /** Thread-safe deterministic store used by local embeddings and tests. */
@@ -104,6 +105,7 @@ public final class InMemoryRuntimeStore
     private int remainingToolResultAssetWriteFailures;
     private boolean failNextCompletedToolCallWrite;
     private final List<MessageRedactionListener> messageRedactionListeners = new ArrayList<>();
+    private final List<Consumer<AgentRunId>> messageCommitListeners = new ArrayList<>();
 
     public InMemoryRuntimeStore() {
         this(RuntimeEventIdFactory.deterministic());
@@ -162,6 +164,17 @@ public final class InMemoryRuntimeStore
     @Override
     public synchronized Optional<AgentRun> find(AgentRunId runId) {
         return Optional.ofNullable(runs.get(runId)).map(Versioned::value);
+    }
+
+    @Override
+    public synchronized List<AgentRun> children(AgentRunId parentRunId) {
+        Objects.requireNonNull(parentRunId, "parentRunId must not be null");
+        return runs.values().stream()
+                .map(Versioned::value)
+                .filter(run -> run.parentRunId().filter(parentRunId::equals).isPresent())
+                .sorted(java.util.Comparator.comparing(AgentRun::createdAt)
+                        .thenComparing(run -> run.id().value()))
+                .toList();
     }
 
     @Override
@@ -438,7 +451,48 @@ public final class InMemoryRuntimeStore
         messagesById.put(message.id(), message);
         message.runId().ifPresent(runId -> messages.computeIfAbsent(runId, ignored -> new ArrayList<>())
                 .add(message));
+        if (RunMessageVisibility.projectable(message)) {
+            message.runId().ifPresent(runId -> {
+                append(
+                        runId,
+                        "message.committed",
+                        Map.of("messageId", message.id().value(), "messageSequence", message.sequence()),
+                        message.createdAt());
+                afterCommit(() -> messageCommitListeners.forEach(listener -> listener.accept(runId)));
+            });
+        }
         return message;
+    }
+
+    @Override
+    public synchronized List<AgentMessage> runMessagesAfter(AgentRunId runId, long after, long head, int limit) {
+        if (after < 0 || head < after || limit < 1) throw new IllegalArgumentException("invalid message bounds");
+        return messages.getOrDefault(runId, List.of()).stream()
+                .filter(RunMessageVisibility::projectable)
+                .filter(message -> message.sequence() > after && message.sequence() <= head)
+                .limit(limit)
+                .toList();
+    }
+
+    @Override
+    public synchronized long runMessageCountThrough(AgentRunId runId, long sequence) {
+        return messages.getOrDefault(runId, List.of()).stream()
+                .filter(RunMessageVisibility::projectable)
+                .filter(message -> message.sequence() <= sequence)
+                .count();
+    }
+
+    @Override
+    public synchronized OptionalLong runMessageHead(AgentRunId runId) {
+        return messages.getOrDefault(runId, List.of()).stream()
+                .filter(RunMessageVisibility::projectable)
+                .mapToLong(AgentMessage::sequence)
+                .max();
+    }
+
+    @Override
+    public synchronized void registerMessageCommitListener(Consumer<AgentRunId> listener) {
+        messageCommitListeners.add(Objects.requireNonNull(listener));
     }
 
     @Override
@@ -614,7 +668,9 @@ public final class InMemoryRuntimeStore
                 MessageVisibility.REDACTED,
                 current.sequence(),
                 List.of(new TextPart("[REDACTED]", "plain")),
-                Map.of("redacted", true),
+                RunMessageVisibility.projectable(current)
+                        ? Map.of("redacted", true, "runMessageProjected", true)
+                        : Map.of("redacted", true),
                 current.createdAt());
         replaceMessage(current, redacted);
         invalidateContaining(current.sessionId(), id);

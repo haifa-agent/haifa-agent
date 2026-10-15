@@ -417,11 +417,14 @@ public final class OpenAiResponsesModel implements AgentChatModel {
                         toolOutput(message)));
                 continue;
             }
+            // DeepSeek responses merges the reasoning item into the adjacent assistant message, so the reasoning
+            // item must precede the assistant content and its function calls.
+            if (message.role() == ModelMessageRole.ASSISTANT
+                    && message.reasoning().isPresent()) {
+                items.add(dialect.customizeReasoningInputItem(message).orElseThrow());
+            }
             if (!message.content().isEmpty() || !message.images().isEmpty()) items.add(messageItem(message));
             if (message.role() == ModelMessageRole.ASSISTANT) {
-                if (message.reasoning().isPresent()) {
-                    items.add(dialect.customizeReasoningInputItem(message).orElseThrow());
-                }
                 for (ModelToolCall call : message.toolCalls()) {
                     items.add(Map.of(
                             "type",
@@ -554,8 +557,9 @@ public final class OpenAiResponsesModel implements AgentChatModel {
             throw emptyResponse(request, "provider response contains no output");
         }
         boolean retainReasoning = !reasoning.isEmpty()
-                && !calls.isEmpty()
-                && OpenAiResponsesDialects.DEEPSEEK.equals(request.model().dialect());
+                && (requiresReasoningContinuation(request)
+                        || OpenAiResponsesDialects.DEEPSEEK.equals(
+                                request.model().dialect()));
         return new AgentChatResponse(
                 text(root, "id", true),
                 optionalText(root, "model", request.model().providerModelId()),
@@ -569,6 +573,10 @@ public final class OpenAiResponsesModel implements AgentChatModel {
                         ? java.util.Optional.of(SensitiveModelReasoning.of(reasoning.toString()))
                         : java.util.Optional.empty(),
                 structuredOutput(request, content.toString(), calls, finish, status));
+    }
+
+    private static boolean requiresReasoningContinuation(AgentChatRequest request) {
+        return Boolean.TRUE.equals(request.model().invocationOptions().get("requires_reasoning_continuation"));
     }
 
     private java.util.Optional<Map<String, Object>> structuredOutput(

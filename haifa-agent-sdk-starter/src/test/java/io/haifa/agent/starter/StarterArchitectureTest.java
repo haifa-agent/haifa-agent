@@ -41,9 +41,9 @@ class StarterArchitectureTest {
     }
 
     /**
-     * The Starter's public surface is the entry point plus the MCP Client declaration types. Assembly
-     * details such as {@code NativeMcpToolPlatform} stay package-private so they never become an
-     * accidental extension point with a compatibility cost.
+     * The Starter's public surface is the entry points plus the declaration types they accept.
+     * Assembly details such as {@code NativeMcpToolPlatform} stay package-private so they never
+     * become an accidental extension point with a compatibility cost.
      */
     @Test
     void keepsThePublicSurfaceToTheEntryPointAndTheMcpDeclarationTypes() {
@@ -55,6 +55,12 @@ class StarterArchitectureTest {
 
         assertThat(publicTypes)
                 .containsExactlyInAnyOrder(
-                        "HaifaAgentStarter", "HaifaAgentStarterBuilder", "McpServerSpec", "McpServerRequirement");
+                        "HaifaAgentStarter",
+                        "HaifaAgentStarterBuilder",
+                        "McpServerSpec",
+                        "McpServerRequirement",
+                        "McpToolPlatforms",
+                        "HostExecutionPlatforms",
+                        "SkillScriptPlatforms");
     }
 }

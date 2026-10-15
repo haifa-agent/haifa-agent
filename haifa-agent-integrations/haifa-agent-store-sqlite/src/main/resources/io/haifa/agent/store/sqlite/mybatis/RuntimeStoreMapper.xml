@@ -244,6 +244,11 @@
         SELECT <include refid="runColumns"/> FROM run WHERE run_id = #{runId}
     </select>
 
+    <select id="findChildRuns" resultMap="runRow">
+        SELECT <include refid="runColumns"/> FROM run WHERE parent_run_id = #{parentRunId}
+        ORDER BY created_at, run_id
+    </select>
+
     <select id="configurationHash" resultType="java.lang.String">
         SELECT content_hash FROM configuration_snapshot WHERE configuration_ref = #{configurationRef}
     </select>
@@ -382,6 +387,39 @@
     <select id="messagesForRun" resultMap="sessionMessageRow">
         SELECT <include refid="messageColumns"/> FROM session_message
         WHERE run_id = #{runId} ORDER BY sequence ASC
+    </select>
+
+    <!-- Same predicate for bounded pages, head and rank; filtering happens before LIMIT. -->
+    <sql id="projectableRunMessage">
+        ((status = 'COMPLETED' AND
+            ((role = 'ASSISTANT' AND visibility = 'USER_VISIBLE' AND EXISTS
+                (SELECT 1 FROM json_each(CAST(content_payload AS TEXT), '$.parts') part
+                 WHERE json_extract(part.value, '$.kind') IN ('text', 'tool-call-ref')))
+             OR (role = 'ASSISTANT' AND visibility = 'AGENT_VISIBLE' AND EXISTS
+                (SELECT 1 FROM json_each(CAST(content_payload AS TEXT), '$.parts') part
+                 WHERE json_extract(part.value, '$.kind') = 'tool-call-ref'))
+             OR (role = 'TOOL' AND visibility IN ('USER_VISIBLE', 'AGENT_VISIBLE') AND EXISTS
+                (SELECT 1 FROM json_each(CAST(content_payload AS TEXT), '$.parts') part
+                 WHERE json_extract(part.value, '$.kind') = 'tool-result-ref'))))
+         OR (status = 'REDACTED' AND visibility = 'REDACTED' AND role IN ('ASSISTANT', 'TOOL')
+             AND json_type(CAST(metadata_payload AS TEXT), '$.values.runMessageProjected') = 'true'))
+    </sql>
+
+    <select id="runMessagesAfter" resultMap="sessionMessageRow">
+        SELECT <include refid="messageColumns"/> FROM session_message
+        WHERE run_id = #{runId} AND sequence &gt; #{after} AND sequence &lt;= #{head}
+          AND <include refid="projectableRunMessage"/>
+        ORDER BY sequence ASC LIMIT #{limit}
+    </select>
+
+    <select id="runMessageCountThrough" resultType="long">
+        SELECT COUNT(*) FROM session_message WHERE run_id = #{runId} AND sequence &lt;= #{sequence}
+          AND <include refid="projectableRunMessage"/>
+    </select>
+
+    <select id="runMessageHead" resultType="java.lang.Long">
+        SELECT MAX(sequence) FROM session_message WHERE run_id = #{runId}
+          AND <include refid="projectableRunMessage"/>
     </select>
 
     <update id="redactMessage">
@@ -1255,6 +1293,12 @@
         UPDATE run_input
         SET status = 'APPLIED', applied_at = #{appliedAt},
             attempt_id = #{attemptId}, iteration = #{iteration}
+        WHERE input_id = #{inputId} AND status = 'ACCEPTED'
+    </update>
+
+    <update id="markRunInputRejected">
+        UPDATE run_input
+        SET status = 'REJECTED', reason_code = #{reasonCode}
         WHERE input_id = #{inputId} AND status = 'ACCEPTED'
     </update>
 

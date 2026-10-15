@@ -23,6 +23,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Supplier;
 
 /**
  * Declaration of one remote MCP server this Agent consumes as an MCP Client.
@@ -297,6 +298,46 @@ public final class McpServerSpec {
         return header("Authorization", environmentVariableName, "Bearer ");
     }
 
+    /**
+     * Injects a dynamically resolved Bearer token into the {@code Authorization} header.
+     *
+     * <p>The token supplier is invoked dynamically on every discovery and Tool-call request, allowing
+     * tokens to be refreshed across long-running agent sessions or retrieved from dynamic sources.
+     * If the supplier returns a token with a redundant {@code Bearer } prefix, it is normalized safely.
+     *
+     * @param tokenSupplier supplier returning the bearer token
+     * @return a new spec injecting this bearer token
+     */
+    public McpServerSpec bearerToken(Supplier<String> tokenSupplier) {
+        Objects.requireNonNull(tokenSupplier, "tokenSupplier must not be null");
+        return header(
+                "Authorization",
+                () -> {
+                    String token = tokenSupplier.get();
+                    if (token == null) return null;
+                    String trimmed = token.trim();
+                    if (trimmed.regionMatches(true, 0, "Bearer ", 0, 7)) {
+                        return trimmed.substring(7).trim();
+                    }
+                    return trimmed;
+                },
+                "Bearer ");
+    }
+
+    /**
+     * Injects one dynamically resolved HTTP header.
+     *
+     * <p>The supplier is invoked on every discovery and Tool-call request. Headers owned by the HTTP
+     * or MCP transport are rejected.
+     *
+     * @param headerName HTTP header name
+     * @param valueSupplier supplier returning the header value
+     * @return a new spec injecting this header
+     */
+    public McpServerSpec header(String headerName, Supplier<String> valueSupplier) {
+        return header(headerName, valueSupplier, "");
+    }
+
     /** The stable connection name; the server's identity in diagnostics and Tool provenance. */
     public String name() {
         return name;
@@ -412,7 +453,7 @@ public final class McpServerSpec {
                 .toList();
     }
 
-    private McpServerSpec header(String headerName, String environmentVariableName, String valuePrefix) {
+    private static String validateHeaderName(String headerName) {
         String header = Objects.requireNonNull(headerName, "headerName must not be null")
                 .trim();
         if (!header.matches("[A-Za-z][A-Za-z0-9_-]{0,127}")) {
@@ -422,6 +463,11 @@ public final class McpServerSpec {
             throw new IllegalArgumentException(
                     "headerName " + header + " is owned by the HTTP or MCP transport and cannot carry a credential");
         }
+        return header;
+    }
+
+    private McpServerSpec header(String headerName, String environmentVariableName, String valuePrefix) {
+        String header = validateHeaderName(headerName);
         String variable = Objects.requireNonNull(environmentVariableName, "environmentVariableName must not be null")
                 .trim();
         if (!variable.matches("[A-Za-z_][A-Za-z0-9_]*")) {
@@ -429,7 +475,25 @@ public final class McpServerSpec {
         }
         Map<String, HeaderCredential> merged = new LinkedHashMap<>(headerCredentials);
         String key = header.toLowerCase(Locale.ROOT);
-        merged.put(key, new HeaderCredential("mcp:" + name + ":" + key, header, valuePrefix, variable));
+        merged.put(key, new HeaderCredential("mcp:" + name + ":" + key, header, valuePrefix, variable, null));
+        return copy(
+                allowedTools,
+                toolNamePrefix,
+                requirement,
+                readOnly,
+                connectTimeout,
+                requestTimeout,
+                allowLoopbackHttp,
+                protocolVersion,
+                Map.copyOf(merged));
+    }
+
+    private McpServerSpec header(String headerName, Supplier<String> valueSupplier, String valuePrefix) {
+        String header = validateHeaderName(headerName);
+        Objects.requireNonNull(valueSupplier, "valueSupplier must not be null");
+        Map<String, HeaderCredential> merged = new LinkedHashMap<>(headerCredentials);
+        String key = header.toLowerCase(Locale.ROOT);
+        merged.put(key, new HeaderCredential("mcp:" + name + ":" + key, header, valuePrefix, null, valueSupplier));
         return copy(
                 allowedTools,
                 toolNamePrefix,
@@ -617,6 +681,11 @@ public final class McpServerSpec {
         return value;
     }
 
-    /** One header credential resolved from the environment at assembly and call time. */
-    record HeaderCredential(String credentialId, String headerName, String valuePrefix, String environmentVariable) {}
+    /** One header credential resolved from the environment or a dynamic supplier at assembly and call time. */
+    record HeaderCredential(
+            String credentialId,
+            String headerName,
+            String valuePrefix,
+            String environmentVariable,
+            Supplier<String> valueSupplier) {}
 }

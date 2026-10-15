@@ -1,12 +1,15 @@
 # Haifa Agent Tool API
 
-Provider-neutral Tool contracts. A tool's immutable identity is `name + semanticVersion + providerId + definitionHash`; the model-visible alias remains a separately typed frozen field but must contain the same name. Public JSON values are represented as deeply immutable JDK maps/lists/scalars.
+Provider-neutral Tool contracts. A tool's immutable identity is `name + semanticVersion + providerId + definitionHash`; the model-visible alias remains a separately typed frozen field but must contain the same name. Public JSON values are represented as deeply immutable JDK maps/lists/scalars, with integral numbers canonicalised to the exact boxed type a JSON round trip produces (`Integer` in the `int` range, otherwise `Long`, otherwise `BigInteger`, fractional values as `Double`), so a persisted Tool definition stays equal to the declared one.
 
 Canonical names use the model-safe function-name intersection directly: 1-64 ASCII letters, digits, or underscores, starting with a letter or digit. Built-in names use lowercase underscore-separated values such as `file_read`. Catalog freeze rejects any alias that differs from its Tool definition name, so disclosure, persistence, policy, recovery, and Provider invocation use one value without name conversion.
 
 Model tool specifications use non-strict JSON Schema by default. Strict provider modes remain opt-in until their endpoint and supported-schema constraints are verified end to end.
 
 Providers receive only the exact frozen binding, validated Core arguments, trusted caller/run references, deadline/cancellation data, idempotency key, and short-lived credential leases.
+Runtime-owned invocations also carry the authoritative Session ID when available and the persisted Tool Call ID.
+Legacy callers that cannot supply a trusted Session explicitly use an empty optional value; providers must never
+derive it from model arguments or fabricate an identity.
 
 ## Recovery reconciliation
 

@@ -9,6 +9,7 @@ import io.haifa.agent.runtime.api.RuntimeContractException;
 import io.haifa.agent.runtime.core.idempotency.CanonicalRequestDigest;
 import io.haifa.agent.runtime.core.input.RunInputAcceptance;
 import io.haifa.agent.runtime.core.input.RunInputPort;
+import io.haifa.agent.runtime.core.input.RunInputReasonCodes;
 import io.haifa.agent.runtime.core.input.RunInputRecord;
 import io.haifa.agent.store.sqlite.codec.EncodedPayload;
 import io.haifa.agent.store.sqlite.codec.VersionedPayloadCodecRegistry;
@@ -45,11 +46,8 @@ public final class SqliteRunInputPort implements RunInputPort {
         String digest = CanonicalRequestDigest.runInput(submission);
         return execute(() -> {
             RuntimeStoreMapper mapper = unitOfWork.mapper(RuntimeStoreMapper.class);
-            RunInputRow existing = mapper.findRunInputByIdempotency(
-                    normalizedScope, submission.runId().value(), submission.idempotencyKey());
-            if (existing != null) return duplicate(existing, digest);
-            existing = mapper.findRunInput(submission.inputId().value());
-            if (existing != null) return duplicate(existing, digest);
+            Optional<RunInputRecord> existing = existing(mapper, submission, normalizedScope);
+            if (existing.isPresent()) return new RunInputAcceptance(existing.orElseThrow(), false);
             EncodedPayload contents = codecs.encode(
                     SqliteRuntimePayloadTypes.CONTENT_PARTS, ContentPartsPayload.from(submission.contents()));
             mapper.insertRunInput(new RunInputRow(
@@ -82,6 +80,13 @@ public final class SqliteRunInputPort implements RunInputPort {
                             Optional.empty()),
                     true);
         });
+    }
+
+    @Override
+    public Optional<RunInputRecord> findExisting(RunInputSubmission submission, String callerScope) {
+        Objects.requireNonNull(submission, "submission must not be null");
+        String normalizedScope = requireText(callerScope, "callerScope");
+        return execute(() -> existing(unitOfWork.mapper(RuntimeStoreMapper.class), submission, normalizedScope));
     }
 
     @Override
@@ -128,13 +133,45 @@ public final class SqliteRunInputPort implements RunInputPort {
         });
     }
 
-    private RunInputAcceptance duplicate(RunInputRow existing, String digest) {
-        if (!existing.canonicalDigest().equals(digest)) {
+    @Override
+    public RunInputRecord markRejected(RunInputId inputId, String reasonCode) {
+        Objects.requireNonNull(inputId, "inputId must not be null");
+        String reason = RunInputReasonCodes.require(reasonCode);
+        return execute(() -> {
+            RuntimeStoreMapper mapper = unitOfWork.mapper(RuntimeStoreMapper.class);
+            RunInputRow current = mapper.findRunInput(inputId.value());
+            if (current == null) throw new IllegalArgumentException("unknown run input");
+            RunInputReceiptStatus status = RunInputReceiptStatus.valueOf(current.status());
+            if (status == RunInputReceiptStatus.REJECTED) return fromRow(current);
+            if (status != RunInputReceiptStatus.ACCEPTED) {
+                throw new IllegalStateException("only accepted run input can be rejected");
+            }
+            if (mapper.markRunInputRejected(inputId.value(), reason) != 1) {
+                throw new IllegalStateException("run input state changed concurrently");
+            }
+            return fromRow(mapper.findRunInput(inputId.value()));
+        });
+    }
+
+    /**
+     * Resolves the bound input by caller-scoped idempotency key, then by input id. Duplicates compare the request
+     * intent, so a retry with a fresh submission time is the same input; the stored canonical digest keeps guarding
+     * the integrity of the persisted submission itself.
+     */
+    private Optional<RunInputRecord> existing(
+            RuntimeStoreMapper mapper, RunInputSubmission submission, String callerScope) {
+        RunInputRow row =
+                mapper.findRunInputByIdempotency(callerScope, submission.runId().value(), submission.idempotencyKey());
+        if (row == null) row = mapper.findRunInput(submission.inputId().value());
+        if (row == null) return Optional.empty();
+        RunInputRecord record = fromRow(row);
+        if (!CanonicalRequestDigest.runInputIntent(record.submission())
+                .equals(CanonicalRequestDigest.runInputIntent(submission))) {
             throw new RuntimeContractException(
                     RuntimeApiErrorCode.IDEMPOTENCY_CONFLICT,
                     "The idempotency key or input id is already bound to different content");
         }
-        return new RunInputAcceptance(fromRow(existing), false);
+        return Optional.of(record);
     }
 
     private RunInputRecord fromRow(RunInputRow row) {

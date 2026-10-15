@@ -26,7 +26,10 @@ public record TerminalUiState(
         Set<String> seenEventIds,
         Optional<String> recoverableError,
         TerminalActivity activity,
-        boolean exitRequested) {
+        boolean exitRequested,
+        boolean sidebarVisible,
+        boolean sidebarExplicitlyToggled,
+        String themeName) {
     public TerminalUiState {
         header = Objects.requireNonNull(header, "header must not be null");
         loadedResources = List.copyOf(loadedResources);
@@ -46,6 +49,164 @@ public record TerminalUiState(
         seenEventIds = Set.copyOf(seenEventIds);
         recoverableError = Objects.requireNonNull(recoverableError, "recoverableError must not be null");
         activity = Objects.requireNonNull(activity, "activity must not be null");
+        themeName = (themeName == null || themeName.isBlank())
+                ? "dark"
+                : themeName.strip().toLowerCase(java.util.Locale.ROOT);
+    }
+
+    public TerminalUiState withThemeName(String newThemeName) {
+        return new TerminalUiState(
+                header,
+                loadedResources,
+                transcript,
+                pending,
+                status,
+                editorBuffer,
+                editorCursor,
+                selector,
+                footer,
+                columns,
+                rows,
+                session,
+                currentRunId,
+                appliedCursor,
+                seenEventIds,
+                recoverableError,
+                activity,
+                exitRequested,
+                sidebarVisible,
+                sidebarExplicitlyToggled,
+                newThemeName);
+    }
+
+    public TerminalUiState(
+            String header,
+            List<String> loadedResources,
+            List<TranscriptItem> transcript,
+            List<PendingMessage> pending,
+            String status,
+            String editorBuffer,
+            int editorCursor,
+            Optional<TerminalSelector> selector,
+            TerminalFooter footer,
+            int columns,
+            int rows,
+            Optional<CodingSessionView> session,
+            Optional<AgentRunId> currentRunId,
+            Optional<RunEventCursor> appliedCursor,
+            Set<String> seenEventIds,
+            Optional<String> recoverableError,
+            TerminalActivity activity,
+            boolean exitRequested,
+            boolean sidebarVisible,
+            boolean sidebarExplicitlyToggled) {
+        this(
+                header,
+                loadedResources,
+                transcript,
+                pending,
+                status,
+                editorBuffer,
+                editorCursor,
+                selector,
+                footer,
+                columns,
+                rows,
+                session,
+                currentRunId,
+                appliedCursor,
+                seenEventIds,
+                recoverableError,
+                activity,
+                exitRequested,
+                sidebarVisible,
+                sidebarExplicitlyToggled,
+                "dark");
+    }
+
+    public TerminalUiState(
+            String header,
+            List<String> loadedResources,
+            List<TranscriptItem> transcript,
+            List<PendingMessage> pending,
+            String status,
+            String editorBuffer,
+            int editorCursor,
+            Optional<TerminalSelector> selector,
+            TerminalFooter footer,
+            int columns,
+            int rows,
+            Optional<CodingSessionView> session,
+            Optional<AgentRunId> currentRunId,
+            Optional<RunEventCursor> appliedCursor,
+            Set<String> seenEventIds,
+            Optional<String> recoverableError,
+            TerminalActivity activity,
+            boolean exitRequested,
+            boolean sidebarVisible) {
+        this(
+                header,
+                loadedResources,
+                transcript,
+                pending,
+                status,
+                editorBuffer,
+                editorCursor,
+                selector,
+                footer,
+                columns,
+                rows,
+                session,
+                currentRunId,
+                appliedCursor,
+                seenEventIds,
+                recoverableError,
+                activity,
+                exitRequested,
+                sidebarVisible,
+                false);
+    }
+
+    public TerminalUiState(
+            String header,
+            List<String> loadedResources,
+            List<TranscriptItem> transcript,
+            List<PendingMessage> pending,
+            String status,
+            String editorBuffer,
+            int editorCursor,
+            Optional<TerminalSelector> selector,
+            TerminalFooter footer,
+            int columns,
+            int rows,
+            Optional<CodingSessionView> session,
+            Optional<AgentRunId> currentRunId,
+            Optional<RunEventCursor> appliedCursor,
+            Set<String> seenEventIds,
+            Optional<String> recoverableError,
+            TerminalActivity activity,
+            boolean exitRequested) {
+        this(
+                header,
+                loadedResources,
+                transcript,
+                pending,
+                status,
+                editorBuffer,
+                editorCursor,
+                selector,
+                footer,
+                columns,
+                rows,
+                session,
+                currentRunId,
+                appliedCursor,
+                seenEventIds,
+                recoverableError,
+                activity,
+                exitRequested,
+                columns >= 100,
+                false);
     }
 
     public TerminalUiState(
@@ -84,7 +245,9 @@ public record TerminalUiState(
                 seenEventIds,
                 recoverableError,
                 TerminalActivity.initial(),
-                exitRequested);
+                exitRequested,
+                columns >= 100,
+                false);
     }
 
     public static TerminalUiState initial(int columns, int rows) {
@@ -112,6 +275,8 @@ public record TerminalUiState(
                 Set.of(),
                 Optional.empty(),
                 TerminalActivity.initial(),
+                false,
+                columns >= 100,
                 false);
     }
 }

@@ -549,6 +549,7 @@ runtime:
   maxModelCalls: 64
   maxToolCalls: 32
   maxWallTimeMillis: 300000
+  abandonedRunStalenessMillis: 1800000
 persistence:
   mode: MEMORY
 ```
@@ -557,6 +558,7 @@ persistence:
 `ExecutionLimits.MAXIMUM_ALLOWED_TIMEOUT`（2 小时），最终值还会被当前 Run 剩余 wall-time 收紧。
 显式的较短 `timeoutMillis` 继续生效。
 旧 `execution.defaultTimeoutMillis` 已删除，继续配置会在启动时明确失败，避免把固定缺省误认为仍有效。
+`runtime.abandonedRunStalenessMillis`（默认 1800000，即 30 分钟）是 Coding Agent 判定“活跃 Run 的执行者已丢失”的宽限期：当该 Run 不再由当前进程拥有时，若其拥有进程在本机已不存在则立即结算，否则以 Attempt 心跳静默超过该值为判据。结算会把该 Run 标记为失败并解除 Session 阻塞；仍被本机存活进程拥有、心跳新鲜或等待人工的 Run 不受影响。
 
 `persistence.mode` 只允许 `MEMORY`、`SQLITE` 和 `SQLITE_WITH_JSONL`；CLI 内置配置默认
 `MEMORY`，由打包脚本生成的 Haifa Coding Agent 发行配置默认 `SQLITE_WITH_JSONL`。持久模式示例：
@@ -615,7 +617,8 @@ Run 不会向模型披露它；范围外路径应报告工作区范围不足，�
 与附加目录的后续文件操作都直接使用主机绝对路径，并统一映射到各自的 `WorkspaceId + WorkspacePath` 后进入同一
 文件服务与 mutation 服务。
 相对路径和 root alias 不再接受；跨授权目录的 patch 与 move 仍明确拒绝。已被现有授权目录覆盖的重复授权
-复用原边界，不创建第二份目录身份；无法确认物理路径边界时拒绝操作。
+复用原边界，不创建第二份目录身份；对同一规范根的重复批准（`workspace_attach`）可在批准后把 mode 由 `READ`
+提升为 `DEVELOP`，但绝不降级，也不会因更窄的请求扩大或收窄已授权父边界。无法确认物理路径边界时拒绝操作。
 
 CLI 不为受管文件写入建立仓库基线或 Git/Plain Change Review，也不为交付证据执行隐藏的 Git 读取。
 本地文件适配器仍记录既有 Session mutation ledger，但 Runtime 与 Coding 产品都不再据此判定任务
@@ -655,8 +658,8 @@ CPU/内存/Kernel 均未隔离。Host Guarded 以当前 OS 用户身份运行，
 
 CLI Coding Profile 显式允许 `task-planning` 与 `result-verification` 两个 SDK 基础 Skill，并把
 `skill_load`、`skill_resource_read` 注册到同一个 Runtime Tool Pipeline。模型开始时只看到 Skill
-名称、描述和摘要；调用 `skill_load` 后，精确冻结版本的指令才进入后续上下文。资源必须再通过
-`skill_resource_read` 按需读取。基础 Skill 不含外部 Tool、网络、Credential 或脚本依赖，运行时也不执行
+名称、描述和摘要；调用 `skill_load` 后，精确冻结版本的指令才进入后续上下文。只有激活了包含可读资源的
+Skill，`skill_resource_read` 才会向模型披露，并用于按需读取这些资源。基础 Skill 不含外部 Tool、网络、Credential 或脚本依赖，运行时也不执行
 Skill 包中的脚本。
 
 `skills.localDirectories` 是 CLI 可信控制面配置，不接受模型或 Run 参数提供目录。每个 `root` 必须是

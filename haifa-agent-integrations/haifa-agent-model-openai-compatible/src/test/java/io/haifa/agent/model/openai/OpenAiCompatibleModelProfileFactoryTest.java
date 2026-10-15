@@ -29,7 +29,7 @@ class OpenAiCompatibleModelProfileFactoryTest {
     @Test
     void verifiesEverySingleAdmittedBindingAcrossAllOpenAiCompatibleRegistries() {
         var openAiChatAdmissions = OpenAiCompatibleBindingRegistry.admissions();
-        assertThat(openAiChatAdmissions).hasSize(39);
+        assertThat(openAiChatAdmissions).hasSize(40);
         for (var admission : openAiChatAdmissions) {
             verifyAdmittedBinding(
                     admission.key().providerId(),
@@ -54,6 +54,27 @@ class OpenAiCompatibleModelProfileFactoryTest {
                     admission.allowedReasoningModes(),
                     admission.allowedReasoningEfforts(),
                     admission.toolReasoningContinuationRequired());
+        }
+    }
+
+    @Test
+    void admitsCurrentDeepSeekLowWithoutAdmittingUnknownBindings() {
+        for (String model : Set.of("deepseek-flash", "deepseek-v4-flash", "deepseek-v4-pro", "deepseek-unknown")) {
+            var profile = profile(snapshot(
+                    "deepseek",
+                    model,
+                    model,
+                    ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                    OpenAiCompatibleDialects.DEEPSEEK,
+                    "https://api.deepseek.com"));
+            if (model.equals("deepseek-unknown")) {
+                assertThat(profile.status()).isEqualTo(ModelProfileStatus.UNVERIFIED);
+            } else {
+                assertThat(profile.status()).isEqualTo(ModelProfileStatus.VERIFIED);
+                assertThat(profile.allowedReasoningEfforts())
+                        .containsExactlyInAnyOrder(
+                                ModelReasoningEffort.LOW, ModelReasoningEffort.HIGH, ModelReasoningEffort.MAX);
+            }
         }
     }
 
@@ -246,7 +267,8 @@ class OpenAiCompatibleModelProfileFactoryTest {
         assertThat(profile.allowedReasoningModes())
                 .containsExactlyInAnyOrder(ModelReasoningMode.DISABLED, ModelReasoningMode.ENABLED);
         assertThat(profile.allowedReasoningEfforts())
-                .containsExactlyInAnyOrder(ModelReasoningEffort.HIGH, ModelReasoningEffort.MAX);
+                .containsExactlyInAnyOrder(
+                        ModelReasoningEffort.LOW, ModelReasoningEffort.HIGH, ModelReasoningEffort.MAX);
         assertThat(profile.toolReasoningContinuationRequired()).isTrue();
         assertThat(profile.executionLimits().contextWindowTokens()).isEqualTo(snapshot.contextWindow());
         assertThat(profile.streaming().usageStreaming()).isTrue();

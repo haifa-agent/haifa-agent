@@ -1,68 +1,26 @@
 package io.haifa.agent.memory.api;
 
-import java.time.Instant;
-import java.util.EnumSet;
 import java.util.List;
-import java.util.Optional;
-import java.util.Set;
+import java.util.Objects;
+import java.util.function.Predicate;
 
+/** Selects bounded, authorized Memory snippets for one model turn. */
+@FunctionalInterface
 public interface MemoryRetriever {
-    MemoryRetrieval retrieve(MemoryQuery query);
+    String DISABLED_POLICY_VERSION = "memory-recall-disabled";
 
-    default MemoryContext contextFor(MemoryContextRequest request) {
-        var scopes = List.of(
-                new MemoryScope(
-                        request.tenant(),
-                        request.owner(),
-                        MemoryScopeType.RUN,
-                        request.runId(),
-                        MemoryVisibility.OWNER_ONLY,
-                        Set.of()),
-                new MemoryScope(
-                        request.tenant(),
-                        request.owner(),
-                        MemoryScopeType.SESSION,
-                        request.sessionId(),
-                        MemoryVisibility.OWNER_ONLY,
-                        Set.of()),
-                new MemoryScope(
-                        request.tenant(),
-                        request.owner(),
-                        MemoryScopeType.USER,
-                        request.owner().principalId(),
-                        MemoryVisibility.OWNER_ONLY,
-                        Set.of()));
-        MemoryRetrieval retrieval = retrieve(new MemoryQuery(
-                request.tenant(),
-                request.owner(),
-                scopes,
-                request.queryText(),
-                EnumSet.allOf(MemoryKind.class),
-                Set.of(MemorySecurityLabel.INTERNAL, MemorySecurityLabel.CONFIDENTIAL),
-                8,
-                request.tokenBudget(),
-                request.now()));
-        return new MemoryContext(
-                retrieval.results().stream()
-                        .map(result -> {
-                            Memory memory = result.memory();
-                            return new MemorySnippet(
-                                    memory.id(),
-                                    memory.version(),
-                                    memory.scope(),
-                                    memory.content().orElseThrow().boundedText(),
-                                    result.estimatedTokens(),
-                                    memory.normalizedDigest());
-                        })
-                        .toList(),
-                retrieval.policyVersion(),
-                retrieval.queryDigest());
+    MemoryContext contextFor(MemoryContextRequest request);
+
+    /** Recall that never returns memories. */
+    static MemoryRetriever none() {
+        return request -> new MemoryContext(List.of(), DISABLED_POLICY_VERSION, "none");
     }
 
-    Optional<Memory> findAuthorized(
-            MemoryId id,
-            MemoryVersion version,
-            io.haifa.agent.core.reference.TenantRef tenant,
-            io.haifa.agent.core.reference.PrincipalRef owner,
-            Instant now);
+    /** Recalls only for requests accepted by {@code enabled}, for example to switch recall off per Run or Agent. */
+    default MemoryRetriever onlyWhen(Predicate<MemoryContextRequest> enabled) {
+        Objects.requireNonNull(enabled, "enabled must not be null");
+        MemoryRetriever delegate = this;
+        MemoryRetriever disabled = none();
+        return request -> enabled.test(request) ? delegate.contextFor(request) : disabled.contextFor(request);
+    }
 }

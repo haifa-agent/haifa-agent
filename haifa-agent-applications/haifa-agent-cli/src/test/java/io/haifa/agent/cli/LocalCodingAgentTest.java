@@ -75,24 +75,14 @@ class LocalCodingAgentTest {
     @Test
     void denyRemovesExecutionBeforeToolCatalogDisclosure() {
         CliConfiguration defaults = CliConfiguration.defaults();
-        var denied = new CliConfiguration(
-                defaults.model(),
-                defaults.enabledTools(),
-                defaults.mcpServers(),
-                hostExecution(defaults.execution()),
-                ApprovalMode.DENY,
-                defaults.timeout(),
-                defaults.maxIterations(),
-                defaults.maxToolCalls());
-        var asking = new CliConfiguration(
-                defaults.model(),
-                defaults.enabledTools(),
-                defaults.mcpServers(),
-                hostExecution(defaults.execution()),
-                ApprovalMode.ASK,
-                defaults.timeout(),
-                defaults.maxIterations(),
-                defaults.maxToolCalls());
+        var denied = CliConfigurationBuilder.from(defaults)
+                .execution(hostExecution(defaults.execution()))
+                .approval(ApprovalMode.DENY)
+                .build();
+        var asking = CliConfigurationBuilder.from(defaults)
+                .execution(hostExecution(defaults.execution()))
+                .approval(ApprovalMode.ASK)
+                .build();
 
         assertThat(LocalCodingAgent.effectiveBuiltInTools(denied))
                 .doesNotContain("execution_run", "execution.request_permissions");
@@ -139,15 +129,10 @@ class LocalCodingAgentTest {
             return answer("workspace-environment", "done");
         };
         CliConfiguration defaults = CliConfiguration.defaults();
-        var denied = new CliConfiguration(
-                defaults.model(),
-                defaults.enabledTools(),
-                defaults.mcpServers(),
-                hostExecution(defaults.execution()),
-                ApprovalMode.DENY,
-                defaults.timeout(),
-                defaults.maxIterations(),
-                defaults.maxToolCalls());
+        var denied = CliConfigurationBuilder.from(defaults)
+                .execution(hostExecution(defaults.execution()))
+                .approval(ApprovalMode.DENY)
+                .build();
 
         try (var agent = LocalCodingAgent.create(
                 workspace, denied, new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8), model)) {
@@ -298,19 +283,11 @@ class LocalCodingAgentTest {
         Path database = configuredSkillRoot.resolve("cli-runtime.db");
         Path transcripts = Files.createDirectory(configuredSkillRoot.resolve("transcripts"));
         CliConfiguration defaults = CliConfiguration.defaults();
-        var configuration = new CliConfiguration(
-                defaults.model(),
-                defaults.enabledTools(),
-                defaults.mcpServers(),
-                defaults.web(),
-                defaults.skills(),
-                hostExecution(defaults.execution()),
-                defaults.approval(),
-                defaults.timeout(),
-                defaults.maxIterations(),
-                defaults.maxToolCalls(),
-                ProjectPersistenceConfiguration.sqliteWithJsonl(
-                        database, transcripts, "env://HAIFA_TEST_CONTINUATION_KEY"));
+        var configuration = CliConfigurationBuilder.from(defaults)
+                .execution(hostExecution(defaults.execution()))
+                .persistence(ProjectPersistenceConfiguration.sqliteWithJsonl(
+                        database, transcripts, "env://HAIFA_TEST_CONTINUATION_KEY"))
+                .build();
         AtomicInteger modelCalls = new AtomicInteger();
         var model = (io.haifa.agent.model.api.AgentChatModel) request -> {
             int call = modelCalls.incrementAndGet();
@@ -365,19 +342,13 @@ class LocalCodingAgentTest {
         Path transcripts = Files.createDirectory(configuredSkillRoot.resolve("approval-transcripts"));
         Path attachedDirectory = configuredSkillRoot.resolve("approval-attached");
         CliConfiguration defaults = CliConfiguration.defaults();
-        var configuration = new CliConfiguration(
-                defaults.model(),
-                defaults.enabledTools(),
-                defaults.mcpServers(),
-                defaults.web(),
-                defaults.skills(),
-                hostExecution(defaults.execution()),
-                ApprovalMode.ASK,
-                Duration.ofSeconds(60),
-                defaults.maxIterations(),
-                defaults.maxToolCalls(),
-                ProjectPersistenceConfiguration.sqliteWithJsonl(
-                        database, transcripts, "env://HAIFA_TEST_CONTINUATION_KEY"));
+        var configuration = CliConfigurationBuilder.from(defaults)
+                .execution(hostExecution(defaults.execution()))
+                .approval(ApprovalMode.ASK)
+                .timeout(Duration.ofSeconds(60))
+                .persistence(ProjectPersistenceConfiguration.sqliteWithJsonl(
+                        database, transcripts, "env://HAIFA_TEST_CONTINUATION_KEY"))
+                .build();
         AtomicInteger calls = new AtomicInteger();
         var traces = new CopyOnWriteArrayList<io.haifa.agent.runtime.core.trace.RuntimeTraceEvent>();
         io.haifa.agent.core.run.AgentRunId runId;
@@ -431,7 +402,7 @@ class LocalCodingAgentTest {
                     .contains("Attach additional workspace directory")
                     .contains("Path: " + attachedDirectory)
                     .contains("Mode: read")
-                    .contains("this local Coding Agent registry")
+                    .contains("this local Coding Agent's authorized directories")
                     .contains("persisted locally and remains revocable");
             awaitCondition(
                     () -> agent.executionSettled(accepted.runId()),
@@ -474,19 +445,14 @@ class LocalCodingAgentTest {
         Path database = configuredSkillRoot.resolve("workspace-registry-recovery.db");
         Path attachedDirectory = Files.createDirectory(configuredSkillRoot.resolve("persistent-attached"));
         Path attachedFile = Files.writeString(attachedDirectory.resolve("restored.txt"), "restored-content");
+        String expectedAttachedPath = attachedDirectory.toRealPath().toString();
         CliConfiguration defaults = CliConfiguration.defaults();
-        var configuration = new CliConfiguration(
-                defaults.model(),
-                defaults.enabledTools(),
-                defaults.mcpServers(),
-                defaults.web(),
-                defaults.skills(),
-                hostExecution(defaults.execution()),
-                ApprovalMode.ASK,
-                Duration.ofSeconds(60),
-                defaults.maxIterations(),
-                defaults.maxToolCalls(),
-                ProjectPersistenceConfiguration.sqlite(database, "env://HAIFA_TEST_CONTINUATION_KEY"));
+        var configuration = CliConfigurationBuilder.from(defaults)
+                .execution(hostExecution(defaults.execution()))
+                .approval(ApprovalMode.ASK)
+                .timeout(Duration.ofSeconds(60))
+                .persistence(ProjectPersistenceConfiguration.sqlite(database, "env://HAIFA_TEST_CONTINUATION_KEY"))
+                .build();
         AtomicReference<String> workspaceRef = new AtomicReference<>();
         AtomicInteger attachCalls = new AtomicInteger();
         var attachModel = (io.haifa.agent.model.api.AgentChatModel) request -> {
@@ -501,10 +467,10 @@ class LocalCodingAgentTest {
                     .findFirst()
                     .orElseThrow();
             assertThat(result.toolResultData())
-                    .containsKeys("workspaceRef", "safeDisplayName", "mode", "source", "status")
+                    .containsKeys("workspaceRef", "safeDisplayName", "mode", "rootPath", "status")
+                    .containsEntry("rootPath", expectedAttachedPath)
                     .doesNotContainKeys("path", "realPath", "locationRef", "workspaceId");
             workspaceRef.set(String.valueOf(result.toolResultData().get("workspaceRef")));
-            assertThat(result.content()).doesNotContain(attachedDirectory.toString());
             return answer("persistent-attach-complete", "attachment persisted");
         };
         var protector = new AesGcmModelContinuationProtector(
@@ -541,7 +507,6 @@ class LocalCodingAgentTest {
                     });
         }
 
-        String expectedAttachedPath = attachedDirectory.toRealPath().toString();
         AtomicInteger readCalls = new AtomicInteger();
         AtomicReference<String> restoredWorkspacePaths = new AtomicReference<>();
         var readModel = (io.haifa.agent.model.api.AgentChatModel) request -> {
@@ -666,19 +631,13 @@ class LocalCodingAgentTest {
         Path database = configuredSkillRoot.resolve("session-client-approval.db");
         Path transcripts = Files.createDirectory(configuredSkillRoot.resolve("session-client-approval-transcripts"));
         CliConfiguration defaults = CliConfiguration.defaults();
-        var configuration = new CliConfiguration(
-                defaults.model(),
-                defaults.enabledTools(),
-                defaults.mcpServers(),
-                defaults.web(),
-                defaults.skills(),
-                hostExecution(defaults.execution()),
-                ApprovalMode.ASK,
-                Duration.ofSeconds(60),
-                defaults.maxIterations(),
-                defaults.maxToolCalls(),
-                ProjectPersistenceConfiguration.sqliteWithJsonl(
-                        database, transcripts, "env://HAIFA_TEST_CONTINUATION_KEY"));
+        var configuration = CliConfigurationBuilder.from(defaults)
+                .execution(hostExecution(defaults.execution()))
+                .approval(ApprovalMode.ASK)
+                .timeout(Duration.ofSeconds(60))
+                .persistence(ProjectPersistenceConfiguration.sqliteWithJsonl(
+                        database, transcripts, "env://HAIFA_TEST_CONTINUATION_KEY"))
+                .build();
         AtomicInteger calls = new AtomicInteger();
         var model = (io.haifa.agent.model.api.AgentChatModel) request -> calls.incrementAndGet() == 1
                 ? toolResponse(
@@ -727,20 +686,12 @@ class LocalCodingAgentTest {
     @Test
     void sqliteStartupFailsClosedWhenStableProtectorSecretIsUnavailable() {
         CliConfiguration defaults = CliConfiguration.defaults();
-        var configuration = new CliConfiguration(
-                defaults.model(),
-                defaults.enabledTools(),
-                defaults.mcpServers(),
-                defaults.web(),
-                defaults.skills(),
-                hostExecution(defaults.execution()),
-                defaults.approval(),
-                defaults.timeout(),
-                defaults.maxIterations(),
-                defaults.maxToolCalls(),
-                ProjectPersistenceConfiguration.sqlite(
+        var configuration = CliConfigurationBuilder.from(defaults)
+                .execution(hostExecution(defaults.execution()))
+                .persistence(ProjectPersistenceConfiguration.sqlite(
                         configuredSkillRoot.resolve("unopened.db"),
-                        "env://HAIFA_TEST_SECRET_THAT_MUST_NOT_EXIST_7E8297"));
+                        "env://HAIFA_TEST_SECRET_THAT_MUST_NOT_EXIST_7E8297"))
+                .build();
 
         assertThatThrownBy(() -> LocalCodingAgent.create(
                         workspace, configuration, new PrintStream(new ByteArrayOutputStream()), request -> {
@@ -761,7 +712,7 @@ class LocalCodingAgentTest {
             if (call == 1) {
                 assertThat(request.tools())
                         .extracting(io.haifa.agent.model.api.ModelToolSpecification::name)
-                        .contains("execution_run", "skill_load", "skill_resource_read")
+                        .contains("execution_run", "skill_load")
                         .doesNotContain("file_search");
                 return toolResponse(
                         "shell-call-1",
@@ -817,15 +768,11 @@ class LocalCodingAgentTest {
             return answer("cli-shell-complete", "shell complete");
         };
         CliConfiguration defaults = CliConfiguration.defaults();
-        var automatic = new CliConfiguration(
-                defaults.model(),
-                defaults.enabledTools(),
-                defaults.mcpServers(),
-                hostExecution(defaults.execution()),
-                ApprovalMode.AUTO,
-                Duration.ofSeconds(15),
-                defaults.maxIterations(),
-                defaults.maxToolCalls());
+        var automatic = CliConfigurationBuilder.from(defaults)
+                .execution(hostExecution(defaults.execution()))
+                .approval(ApprovalMode.AUTO)
+                .timeout(Duration.ofSeconds(15))
+                .build();
         var renderedOutput = new ByteArrayOutputStream();
 
         try (var agent = LocalCodingAgent.create(
@@ -1074,15 +1021,11 @@ class LocalCodingAgentTest {
             return answer("gradle-cache-validation-complete", "validation completed");
         };
         CliConfiguration defaults = CliConfiguration.defaults();
-        var automatic = new CliConfiguration(
-                defaults.model(),
-                defaults.enabledTools(),
-                defaults.mcpServers(),
-                hostExecution(defaults.execution()),
-                ApprovalMode.AUTO,
-                Duration.ofSeconds(15),
-                defaults.maxIterations(),
-                defaults.maxToolCalls());
+        var automatic = CliConfigurationBuilder.from(defaults)
+                .execution(hostExecution(defaults.execution()))
+                .approval(ApprovalMode.AUTO)
+                .timeout(Duration.ofSeconds(15))
+                .build();
 
         try (var agent = LocalCodingAgent.create(
                 workspace,
@@ -1315,9 +1258,7 @@ class LocalCodingAgentTest {
                                 && message.content().contains("task-planning")
                                 && message.content().contains("metadata-only"))
                         .noneMatch(message -> message.content().contains("# Task planning"));
-                assertThat(request.tools())
-                        .extracting(tool -> tool.name())
-                        .contains("skill_load", "skill_resource_read");
+                assertThat(request.tools()).extracting(tool -> tool.name()).contains("skill_load");
                 return new AgentChatResponse(
                         "cli-skill-1",
                         "stub-model",
@@ -1390,17 +1331,10 @@ class LocalCodingAgentTest {
                 Set.of("local-procedure"),
                 List.of(new CliConfiguration.LocalSkillDirectory(
                         "personal", configuredSkillRoot, 100, SkillParserMode.STRICT, SkillOrigin.CREATED)));
-        var configuration = new CliConfiguration(
-                defaults.model(),
-                defaults.enabledTools(),
-                defaults.mcpServers(),
-                defaults.web(),
-                skills,
-                hostExecution(defaults.execution()),
-                defaults.approval(),
-                defaults.timeout(),
-                defaults.maxIterations(),
-                defaults.maxToolCalls());
+        var configuration = CliConfigurationBuilder.from(defaults)
+                .skills(skills)
+                .execution(hostExecution(defaults.execution()))
+                .build();
         AtomicInteger calls = new AtomicInteger();
         var model = (io.haifa.agent.model.api.AgentChatModel) request -> {
             if (calls.incrementAndGet() == 1) {
@@ -1452,17 +1386,10 @@ class LocalCodingAgentTest {
     @Test
     void emptySkillAllowlistOmitsSkillDisclosureAndTools() throws Exception {
         CliConfiguration defaults = CliConfiguration.defaults();
-        var configuration = new CliConfiguration(
-                defaults.model(),
-                defaults.enabledTools(),
-                defaults.mcpServers(),
-                defaults.web(),
-                new CliConfiguration.Skills(Set.of(), List.of()),
-                hostExecution(defaults.execution()),
-                defaults.approval(),
-                defaults.timeout(),
-                defaults.maxIterations(),
-                defaults.maxToolCalls());
+        var configuration = CliConfigurationBuilder.from(defaults)
+                .skills(new CliConfiguration.Skills(Set.of(), List.of()))
+                .execution(hostExecution(defaults.execution()))
+                .build();
         AtomicInteger calls = new AtomicInteger();
         var model = (io.haifa.agent.model.api.AgentChatModel) request -> {
             int call = calls.incrementAndGet();
@@ -1495,20 +1422,13 @@ class LocalCodingAgentTest {
     void localSkillDirectoryCannotOverlapWorkspaceFileToolRoot() throws Exception {
         Path nestedSkillRoot = Files.createDirectory(workspace.resolve("skills"));
         CliConfiguration defaults = CliConfiguration.defaults();
-        var configuration = new CliConfiguration(
-                defaults.model(),
-                defaults.enabledTools(),
-                defaults.mcpServers(),
-                defaults.web(),
-                new CliConfiguration.Skills(
+        var configuration = CliConfigurationBuilder.from(defaults)
+                .skills(new CliConfiguration.Skills(
                         Set.of("local-test"),
                         List.of(new CliConfiguration.LocalSkillDirectory(
-                                "personal", nestedSkillRoot, 100, SkillParserMode.STRICT, SkillOrigin.CREATED))),
-                hostExecution(defaults.execution()),
-                defaults.approval(),
-                defaults.timeout(),
-                defaults.maxIterations(),
-                defaults.maxToolCalls());
+                                "personal", nestedSkillRoot, 100, SkillParserMode.STRICT, SkillOrigin.CREATED))))
+                .execution(hostExecution(defaults.execution()))
+                .build();
 
         assertThatThrownBy(() -> LocalCodingAgent.create(
                         workspace, configuration, new PrintStream(new ByteArrayOutputStream()), request -> {
@@ -1680,36 +1600,13 @@ class LocalCodingAgentTest {
 
     private static CliConfiguration automaticHostConfiguration() {
         CliConfiguration trusted = trustedHostConfiguration(CliConfiguration.defaults());
-        return new CliConfiguration(
-                trusted.model(),
-                trusted.enabledTools(),
-                trusted.mcpServers(),
-                trusted.web(),
-                trusted.skills(),
-                trusted.execution(),
-                ApprovalMode.AUTO,
-                trusted.timeout(),
-                trusted.maxIterations(),
-                trusted.maxToolCalls(),
-                trusted.persistence());
+        return CliConfigurationBuilder.from(trusted).approval(ApprovalMode.AUTO).build();
     }
 
     private static CliConfiguration withSqlitePersistence(CliConfiguration configuration, Path database) {
-        return new CliConfiguration(
-                configuration.model(),
-                configuration.availableModels(),
-                configuration.enabledTools(),
-                configuration.mcpServers(),
-                configuration.web(),
-                configuration.skills(),
-                configuration.execution(),
-                configuration.approval(),
-                configuration.approvalThreshold(),
-                configuration.timeout(),
-                configuration.maxIterations(),
-                configuration.maxModelCalls(),
-                configuration.maxToolCalls(),
-                ProjectPersistenceConfiguration.sqlite(database, "env://TEST_KEY"));
+        return CliConfigurationBuilder.from(configuration)
+                .persistence(ProjectPersistenceConfiguration.sqlite(database, "env://TEST_KEY"))
+                .build();
     }
 
     private static int countRows(Path database, String table) throws Exception {
@@ -1760,50 +1657,34 @@ class LocalCodingAgentTest {
     }
 
     private static CliConfiguration trustedHostConfiguration(CliConfiguration configuration) {
-        return new CliConfiguration(
-                configuration.model(),
-                configuration.enabledTools(),
-                configuration.mcpServers(),
-                configuration.web(),
-                configuration.skills(),
-                hostExecution(configuration.execution()),
-                configuration.approval(),
-                configuration.timeout(),
-                configuration.maxIterations(),
-                configuration.maxToolCalls(),
-                configuration.persistence());
+        return CliConfigurationBuilder.from(configuration)
+                .execution(hostExecution(configuration.execution()))
+                .build();
     }
 
     private static CliConfiguration withModelEndpoint(CliConfiguration configuration, URI endpoint) {
         CliConfiguration.Model model = configuration.model();
-        return new CliConfiguration(
-                new CliConfiguration.Model(
-                        model.providerId(),
-                        model.providerDisplayName(),
-                        model.modelId(),
-                        endpoint,
-                        endpoint,
-                        model.credentialRef(),
-                        model.style(),
-                        model.dialect(),
-                        model.nativeStreaming(),
-                        model.workspaceId(),
-                        model.region(),
-                        model.id(),
-                        model.displayName(),
-                        model.capabilities(),
-                        model.contextWindow(),
-                        model.maxOutputTokens()),
-                configuration.enabledTools(),
-                configuration.mcpServers(),
-                configuration.web(),
-                configuration.skills(),
-                configuration.execution(),
-                configuration.approval(),
-                configuration.timeout(),
-                configuration.maxIterations(),
-                configuration.maxToolCalls(),
-                configuration.persistence());
+        CliConfiguration.Model modified = new CliConfiguration.Model(
+                model.providerId(),
+                model.providerDisplayName(),
+                model.modelId(),
+                endpoint,
+                endpoint,
+                model.credentialRef(),
+                model.style(),
+                model.dialect(),
+                model.nativeStreaming(),
+                model.workspaceId(),
+                model.region(),
+                model.id(),
+                model.displayName(),
+                model.capabilities(),
+                model.contextWindow(),
+                model.maxOutputTokens());
+        return CliConfigurationBuilder.from(configuration)
+                .model(modified)
+                .availableModels(List.of(modified))
+                .build();
     }
 
     private static CliConfiguration withModelWindow(
@@ -1829,18 +1710,10 @@ class LocalCodingAgentTest {
                 selected.reasoningMode(),
                 selected.originator(),
                 selected.userAgent());
-        return new CliConfiguration(
-                modified,
-                configuration.enabledTools(),
-                configuration.mcpServers(),
-                configuration.web(),
-                configuration.skills(),
-                configuration.execution(),
-                configuration.approval(),
-                configuration.timeout(),
-                configuration.maxIterations(),
-                configuration.maxToolCalls(),
-                configuration.persistence());
+        return CliConfigurationBuilder.from(configuration)
+                .model(modified)
+                .availableModels(List.of(modified))
+                .build();
     }
 
     private static CliConfiguration.Execution hostExecution(CliConfiguration.Execution execution) {

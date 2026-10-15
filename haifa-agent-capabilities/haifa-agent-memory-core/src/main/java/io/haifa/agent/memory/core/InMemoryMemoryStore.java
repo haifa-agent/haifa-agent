@@ -1,321 +1,141 @@
 package io.haifa.agent.memory.core;
 
 import io.haifa.agent.memory.api.Memory;
-import io.haifa.agent.memory.api.MemoryActor;
-import io.haifa.agent.memory.api.MemoryAuditEvent;
-import io.haifa.agent.memory.api.MemoryAuditStore;
-import io.haifa.agent.memory.api.MemoryCandidate;
-import io.haifa.agent.memory.api.MemoryCandidateId;
-import io.haifa.agent.memory.api.MemoryCandidatePage;
-import io.haifa.agent.memory.api.MemoryCandidateQuery;
-import io.haifa.agent.memory.api.MemoryCandidateRepository;
-import io.haifa.agent.memory.api.MemoryCandidateStatus;
-import io.haifa.agent.memory.api.MemoryConflict;
 import io.haifa.agent.memory.api.MemoryCursorCodec;
+import io.haifa.agent.memory.api.MemoryDraft;
 import io.haifa.agent.memory.api.MemoryId;
 import io.haifa.agent.memory.api.MemoryKind;
+import io.haifa.agent.memory.api.MemoryOperationException;
 import io.haifa.agent.memory.api.MemoryPage;
 import io.haifa.agent.memory.api.MemoryQuery;
-import io.haifa.agent.memory.api.MemoryRecordQuery;
-import io.haifa.agent.memory.api.MemoryRef;
 import io.haifa.agent.memory.api.MemoryRepository;
 import io.haifa.agent.memory.api.MemoryScope;
-import io.haifa.agent.memory.api.MemoryStatus;
-import io.haifa.agent.memory.api.MemoryTombstone;
-import io.haifa.agent.memory.api.MemoryVersion;
-import java.util.ArrayList;
+import io.haifa.agent.memory.api.MemorySourceRef;
+import java.time.Instant;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/** Thread-safe in-memory implementation of the candidate, memory, conflict, tombstone, and audit stores. */
-public final class InMemoryMemoryStore
-        implements MemoryCandidateRepository, MemoryRepository, MemoryAuditStore, AutoCloseable {
-    private final Map<MemoryCandidateId, MemoryCandidate> candidates = new HashMap<>();
-    private final Map<MemoryRef, Memory> memories = new HashMap<>();
-    private final Map<MemoryId, MemoryVersion> latestVersions = new HashMap<>();
-    private final Map<String, MemoryConflict> conflicts = new HashMap<>();
-    private final List<MemoryTombstone> tombstones = new ArrayList<>();
-    private final List<MemoryAuditEvent> auditEvents = new ArrayList<>();
+/** Thread-safe in-memory Memory repository for tests and local runtime assembly. */
+public final class InMemoryMemoryStore implements MemoryRepository, AutoCloseable {
+    private static final Comparator<Memory> NEWEST_FIRST = Comparator.comparing(Memory::updatedAt)
+            .reversed()
+            .thenComparing(memory -> memory.id().value(), Comparator.reverseOrder());
+
+    private final Map<MemoryId, Row> rows = new LinkedHashMap<>();
+    private final Map<MemoryScope, Instant> clearWatermarks = new HashMap<>();
     private final AtomicBoolean closed = new AtomicBoolean();
 
     @Override
-    public synchronized MemoryCandidate save(MemoryCandidate candidate) {
+    public synchronized Memory upsert(MemoryDraft draft, MemoryId newId, Instant now) {
         requireOpen();
-        MemoryCandidate existing = candidates.get(candidate.id());
-        if (existing != null && candidate.revision() > existing.revision() + 1) {
-            throw new IllegalStateException("MEMORY_CANDIDATE_REVISION_STALE");
-        }
-        if (existing != null && candidate.revision() <= existing.revision() && !candidate.equals(existing)) {
-            throw new IllegalStateException("MEMORY_CANDIDATE_REVISION_STALE");
-        }
-        candidates.put(candidate.id(), candidate);
-        return candidate;
-    }
-
-    @Override
-    public synchronized Optional<MemoryCandidate> find(MemoryCandidateId id) {
-        requireOpen();
-        return Optional.ofNullable(candidates.get(id));
-    }
-
-    @Override
-    public synchronized Optional<MemoryCandidate> findAuthorized(MemoryCandidateId id, MemoryActor actor) {
-        requireOpen();
-        return Optional.ofNullable(candidates.get(id))
-                .filter(candidate -> candidate.scope().tenant().equals(actor.tenant())
-                        && candidate.scope().owner().equals(actor.principal()));
-    }
-
-    @Override
-    public synchronized Optional<MemoryCandidate> findByRequestKey(MemoryScope scope, String requestKey) {
-        requireOpen();
-        return candidates.values().stream()
-                .filter(candidate -> candidate.scope().equals(scope)
-                        && candidate.requestKey().equals(requestKey))
+        Instant watermark = clearWatermarks.get(draft.scope());
+        if (watermark != null && draft.observedNoLaterThan(watermark)) throw stale();
+        Optional<Row> existing = rows.values().stream()
+                .filter(row -> row.scope.equals(draft.scope())
+                        && row.kind == draft.kind()
+                        && row.subjectKey.equals(draft.subjectKey()))
                 .findFirst();
+        if (existing.isEmpty()) {
+            Row row = new Row(
+                    newId,
+                    draft.scope(),
+                    draft.kind(),
+                    draft.subjectKey(),
+                    1,
+                    draft.content(),
+                    draft.source(),
+                    now,
+                    now,
+                    null);
+            rows.put(newId, row);
+            return row.memory();
+        }
+        Row row = existing.orElseThrow();
+        if (row.deletedAt != null) {
+            if (draft.observedNoLaterThan(row.deletedAt)) throw stale();
+            row.revive(draft.content(), draft.source(), now);
+            return row.memory();
+        }
+        if (row.memory().sameContent(draft.content())) return row.memory();
+        row.replace(draft.content(), draft.source(), now);
+        return row.memory();
     }
 
     @Override
-    public synchronized Optional<MemoryCandidate> findEquivalentPending(
-            MemoryScope scope, MemoryKind kind, String normalizedDigest) {
+    public synchronized Optional<Memory> find(MemoryId id) {
         requireOpen();
-        return candidates.values().stream()
-                .filter(candidate -> candidate.scope().equals(scope)
-                        && candidate.kind() == kind
-                        && candidate.status() == MemoryCandidateStatus.PENDING
-                        && candidate.normalizedDigest().equals(normalizedDigest))
-                .findFirst();
+        return live(id).map(Row::memory);
     }
 
     @Override
-    public synchronized List<MemoryCandidate> allCandidates() {
+    public synchronized Optional<Memory> update(MemoryId id, long expectedRevision, String content, Instant now) {
         requireOpen();
-        return List.copyOf(candidates.values());
+        Optional<Row> row = live(id).filter(value -> value.revision == expectedRevision);
+        row.ifPresent(value -> value.replace(content, value.source, now));
+        return row.map(Row::memory);
     }
 
     @Override
-    public synchronized MemoryCandidatePage query(MemoryCandidateQuery query) {
+    public synchronized boolean delete(MemoryId id, long expectedRevision, Instant now) {
+        requireOpen();
+        Optional<Row> row = live(id).filter(value -> value.revision == expectedRevision);
+        row.ifPresent(value -> value.delete(now));
+        return row.isPresent();
+    }
+
+    @Override
+    public synchronized Optional<MemoryScope> deletedFrom(MemoryId id, long expectedRevision) {
+        requireOpen();
+        return Optional.ofNullable(rows.get(Objects.requireNonNull(id, "id must not be null")))
+                .filter(row -> row.deletedAt != null && row.revision == expectedRevision + 1)
+                .map(row -> row.scope);
+    }
+
+    @Override
+    public synchronized MemoryPage list(MemoryQuery query) {
         requireOpen();
         var after = query.after().map(MemoryCursorCodec::decode);
-        List<MemoryCandidate> ordered = candidates.values().stream()
-                .filter(candidate -> candidate.scope().equals(query.scope()))
-                .filter(candidate ->
-                        query.statuses().isEmpty() || query.statuses().contains(candidate.status()))
-                .filter(candidate -> query.kinds().isEmpty() || query.kinds().contains(candidate.kind()))
-                .filter(candidate -> query.updatedBefore()
-                        .map(before -> candidate.updatedAt().isBefore(before))
-                        .orElse(true))
-                .filter(candidate -> after.map(position -> candidate.updatedAt().isBefore(position.updatedAt())
-                                || (candidate.updatedAt().equals(position.updatedAt())
-                                        && candidate.id().value().compareTo(position.logicalId()) < 0))
-                        .orElse(true))
-                .sorted(java.util.Comparator.comparing(MemoryCandidate::updatedAt)
-                        .reversed()
-                        .thenComparing(candidate -> candidate.id().value(), java.util.Comparator.reverseOrder()))
-                .limit((long) query.limit() + 1)
-                .toList();
-        boolean more = ordered.size() > query.limit();
-        List<MemoryCandidate> items = more ? ordered.subList(0, query.limit()) : ordered;
-        return new MemoryCandidatePage(
-                items,
-                more
-                        ? Optional.of(MemoryCursorCodec.encode(
-                                items.get(items.size() - 1).updatedAt(),
-                                items.get(items.size() - 1).id().value(),
-                                items.get(items.size() - 1).revision()))
-                        : Optional.empty());
-    }
-
-    @Override
-    public synchronized void purgeScope(MemoryScope scope) {
-        requireOpen();
-        candidates.entrySet().removeIf(entry -> entry.getValue().scope().equals(scope));
-    }
-
-    @Override
-    public synchronized Memory save(Memory memory) {
-        requireOpen();
-        MemoryRef key = new MemoryRef(memory.id(), memory.version());
-        memories.put(key, memory);
-        MemoryVersion current = latestVersions.get(memory.id());
-        if (current == null || memory.version().compareTo(current) >= 0)
-            latestVersions.put(memory.id(), memory.version());
-        return memory;
-    }
-
-    @Override
-    public synchronized Optional<Memory> find(MemoryId id, MemoryVersion version) {
-        requireOpen();
-        return Optional.ofNullable(memories.get(new MemoryRef(id, version)));
-    }
-
-    @Override
-    public synchronized Optional<Memory> findAuthorized(MemoryId id, MemoryVersion version, MemoryActor actor) {
-        requireOpen();
-        return Optional.ofNullable(memories.get(new MemoryRef(id, version)))
-                .filter(memory -> memory.scope().tenant().equals(actor.tenant())
-                        && memory.scope().owner().equals(actor.principal()));
-    }
-
-    @Override
-    public synchronized Optional<Memory> latest(MemoryId id) {
-        requireOpen();
-        return Optional.ofNullable(latestVersions.get(id)).flatMap(version -> find(id, version));
-    }
-
-    @Override
-    public synchronized Optional<Memory> findActiveEquivalent(
-            MemoryScope scope, MemoryKind kind, String normalizedDigest) {
-        requireOpen();
-        return memories.values().stream()
-                .filter(memory -> memory.scope().equals(scope)
-                        && memory.kind() == kind
-                        && memory.status() == MemoryStatus.ACTIVE
-                        && memory.normalizedDigest().equals(normalizedDigest))
-                .findFirst();
-    }
-
-    @Override
-    public synchronized Optional<Memory> findActiveBySubject(MemoryScope scope, MemoryKind kind, String subjectKey) {
-        requireOpen();
-        return memories.values().stream()
-                .filter(memory -> memory.scope().equals(scope)
-                        && memory.kind() == kind
-                        && memory.status() == MemoryStatus.ACTIVE
-                        && memory.subjectKey().equals(subjectKey))
-                .findFirst();
-    }
-
-    @Override
-    public synchronized List<Memory> allMemories() {
-        requireOpen();
-        return List.copyOf(memories.values());
-    }
-
-    @Override
-    public synchronized List<Memory> searchAuthorizedActive(MemoryQuery query, int fetchLimit) {
-        requireOpen();
-        if (fetchLimit < 1 || fetchLimit > 10_000) throw new IllegalArgumentException("fetchLimit is invalid");
-        return memories.values().stream()
-                .filter(memory -> memory.status() == MemoryStatus.ACTIVE)
-                .filter(memory -> memory.scope().tenant().equals(query.tenant()))
-                .filter(memory -> memory.scope().owner().equals(query.owner()))
-                .filter(memory -> query.scopes().contains(memory.scope()))
-                .filter(memory -> query.allowedSecurityLabels().containsAll(memory.securityLabels()))
-                .filter(memory -> query.kinds().isEmpty() || query.kinds().contains(memory.kind()))
-                .sorted(java.util.Comparator.comparing(Memory::updatedAt)
-                        .reversed()
-                        .thenComparing(memory -> memory.id().value(), java.util.Comparator.reverseOrder())
-                        .thenComparing(Memory::version, java.util.Comparator.reverseOrder()))
-                .limit(fetchLimit)
-                .toList();
-    }
-
-    @Override
-    public synchronized MemoryPage query(MemoryRecordQuery query) {
-        requireOpen();
-        var after = query.after().map(MemoryCursorCodec::decode);
-        List<Memory> ordered = memories.values().stream()
+        List<Memory> ordered = liveMemories()
                 .filter(memory -> memory.scope().equals(query.scope()))
-                .filter(memory -> query.statuses().isEmpty() || query.statuses().contains(memory.status()))
-                .filter(memory -> query.kinds().isEmpty() || query.kinds().contains(memory.kind()))
-                .filter(memory -> query.updatedBefore()
-                        .map(before -> memory.updatedAt().isBefore(before))
-                        .orElse(true))
+                .filter(query::matches)
                 .filter(memory -> after.map(position -> memory.updatedAt().isBefore(position.updatedAt())
                                 || (memory.updatedAt().equals(position.updatedAt())
-                                        && (memory.id().value().compareTo(position.logicalId()) < 0
-                                                || (memory.id().value().equals(position.logicalId())
-                                                        && memory.version().value() < position.sequence()))))
+                                        && memory.id().value().compareTo(position.logicalId()) < 0))
                         .orElse(true))
-                .sorted(java.util.Comparator.comparing(Memory::updatedAt)
-                        .reversed()
-                        .thenComparing(memory -> memory.id().value(), java.util.Comparator.reverseOrder())
-                        .thenComparing(Memory::version, java.util.Comparator.reverseOrder()))
+                .sorted(NEWEST_FIRST)
                 .limit((long) query.limit() + 1)
                 .toList();
         boolean more = ordered.size() > query.limit();
         List<Memory> items = more ? ordered.subList(0, query.limit()) : ordered;
-        return new MemoryPage(
-                items,
-                more
-                        ? Optional.of(MemoryCursorCodec.encode(
-                                items.get(items.size() - 1).updatedAt(),
-                                items.get(items.size() - 1).id().value(),
-                                items.get(items.size() - 1).version().value()))
-                        : Optional.empty());
+        return new MemoryPage(items, more ? Optional.of(cursor(items.get(items.size() - 1))) : Optional.empty());
     }
 
     @Override
-    public synchronized MemoryConflict saveConflict(MemoryConflict conflict) {
+    public synchronized int clear(MemoryScope scope, Instant now) {
         requireOpen();
-        conflicts.put(conflict.id(), conflict);
-        return conflict;
+        long live = rows.values().stream()
+                .filter(row -> row.scope.equals(scope) && row.deletedAt == null)
+                .count();
+        rows.values().removeIf(row -> row.scope.equals(scope));
+        clearWatermarks.merge(scope, now, (left, right) -> left.isAfter(right) ? left : right);
+        return Math.toIntExact(live);
     }
 
     @Override
-    public synchronized Optional<MemoryConflict> conflictFor(MemoryCandidateId candidateId) {
+    public synchronized List<Memory> recent(List<MemoryScope> scopes, int limit) {
         requireOpen();
-        return conflicts.values().stream()
-                .filter(conflict -> conflict.candidateId().equals(candidateId))
-                .findFirst();
-    }
-
-    @Override
-    public synchronized List<MemoryConflict> conflicts() {
-        requireOpen();
-        return List.copyOf(conflicts.values());
-    }
-
-    @Override
-    public synchronized void saveTombstone(MemoryTombstone tombstone) {
-        requireOpen();
-        tombstones.add(tombstone);
-    }
-
-    @Override
-    public synchronized List<MemoryTombstone> tombstones() {
-        requireOpen();
-        return List.copyOf(tombstones);
-    }
-
-    @Override
-    public synchronized void record(MemoryAuditEvent event) {
-        requireOpen();
-        if (event.idempotencyKeyDigest().isPresent()) {
-            Optional<MemoryAuditEvent> existing = findByIdempotency(
-                    event.scope(),
-                    event.operation(),
-                    event.idempotencyKeyDigest().orElseThrow());
-            if (existing.isPresent()) {
-                if (!existing.orElseThrow().requestDigest().equals(event.requestDigest())) {
-                    throw new IllegalStateException("MEMORY_IDEMPOTENCY_CONFLICT");
-                }
-                return;
-            }
-        }
-        auditEvents.add(event);
-    }
-
-    @Override
-    public synchronized Optional<MemoryAuditEvent> findByIdempotency(
-            MemoryScope scope, String operation, String idempotencyKeyDigest) {
-        requireOpen();
-        return auditEvents.stream()
-                .filter(event -> event.scope().equals(scope)
-                        && event.operation().equals(operation)
-                        && event.idempotencyKeyDigest()
-                                .filter(idempotencyKeyDigest::equals)
-                                .isPresent())
-                .findFirst();
-    }
-
-    public synchronized List<MemoryAuditEvent> auditEvents() {
-        requireOpen();
-        return List.copyOf(auditEvents);
+        if (limit < 1) throw new IllegalArgumentException("limit must be positive");
+        return liveMemories()
+                .filter(memory -> scopes.contains(memory.scope()))
+                .sorted(NEWEST_FIRST)
+                .limit(limit)
+                .toList();
     }
 
     @Override
@@ -323,7 +143,89 @@ public final class InMemoryMemoryStore
         closed.set(true);
     }
 
+    static io.haifa.agent.memory.api.MemoryPageCursor cursor(Memory memory) {
+        return MemoryCursorCodec.encode(memory.updatedAt(), memory.id().value(), memory.revision());
+    }
+
+    private java.util.stream.Stream<Memory> liveMemories() {
+        return rows.values().stream().filter(row -> row.deletedAt == null).map(Row::memory);
+    }
+
+    private Optional<Row> live(MemoryId id) {
+        return Optional.ofNullable(rows.get(Objects.requireNonNull(id, "id must not be null")))
+                .filter(row -> row.deletedAt == null);
+    }
+
     private void requireOpen() {
         if (closed.get()) throw new IllegalStateException("MEMORY_STORE_CLOSED");
+    }
+
+    private static MemoryOperationException stale() {
+        return new MemoryOperationException(DefaultMemoryService.WRITE_STALE);
+    }
+
+    private static final class Row {
+        private final MemoryId id;
+        private final MemoryScope scope;
+        private final MemoryKind kind;
+        private final String subjectKey;
+        private long revision;
+        private String content;
+        private Optional<MemorySourceRef> source;
+        private Instant createdAt;
+        private Instant updatedAt;
+        private Instant deletedAt;
+
+        private Row(
+                MemoryId id,
+                MemoryScope scope,
+                MemoryKind kind,
+                String subjectKey,
+                long revision,
+                String content,
+                Optional<MemorySourceRef> source,
+                Instant createdAt,
+                Instant updatedAt,
+                Instant deletedAt) {
+            this.id = id;
+            this.scope = scope;
+            this.kind = kind;
+            this.subjectKey = subjectKey;
+            this.revision = revision;
+            this.content = content;
+            this.source = source;
+            this.createdAt = createdAt;
+            this.updatedAt = updatedAt;
+            this.deletedAt = deletedAt;
+        }
+
+        private void replace(String newContent, Optional<MemorySourceRef> newSource, Instant now) {
+            content = newContent;
+            source = newSource;
+            revision++;
+            updatedAt = later(now);
+        }
+
+        private void revive(String newContent, Optional<MemorySourceRef> newSource, Instant now) {
+            replace(newContent, newSource, now);
+            createdAt = updatedAt;
+            deletedAt = null;
+        }
+
+        private void delete(Instant now) {
+            content = null;
+            source = Optional.empty();
+            revision++;
+            updatedAt = later(now);
+            deletedAt = updatedAt;
+        }
+
+        private Instant later(Instant now) {
+            return now.isBefore(updatedAt) ? updatedAt : now;
+        }
+
+        private Memory memory() {
+            return new Memory(id, revision, scope, kind, subjectKey, content, source, createdAt, updatedAt);
+        }
     }
 }

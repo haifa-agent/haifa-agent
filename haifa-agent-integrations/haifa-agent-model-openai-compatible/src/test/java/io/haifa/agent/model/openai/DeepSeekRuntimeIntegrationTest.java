@@ -67,11 +67,20 @@ import org.junit.jupiter.api.Test;
 class DeepSeekRuntimeIntegrationTest {
     @Test
     void realAdapterDrivesRuntimeToolLoopAgainstLocalStub() throws Exception {
+        runToolTrajectory(false);
+    }
+
+    @Test
+    void ordinaryAssistantSurvivesIntoTheNextToolTurn() throws Exception {
+        runToolTrajectory(true);
+    }
+
+    private void runToolTrajectory(boolean ordinaryFirst) throws Exception {
         ObjectMapper json = new ObjectMapper();
         AtomicInteger calls = new AtomicInteger();
         List<JsonNode> requests = new CopyOnWriteArrayList<>();
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        server.createContext("/chat/completions", exchange -> handle(exchange, json, calls, requests));
+        server.createContext("/chat/completions", exchange -> handle(exchange, json, calls, requests, ordinaryFirst));
         server.start();
         try {
             URI endpoint = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
@@ -200,19 +209,37 @@ class DeepSeekRuntimeIntegrationTest {
                     .timeProvider(time)
                     .build();
 
+            if (ordinaryFirst) {
+                var previous = runtime.start(request("ordinary-first"));
+                scheduler.runAll();
+                assertThat(runtime.find(previous.runId()).orElseThrow().status())
+                        .isEqualTo(AgentRunStatus.COMPLETED);
+                assertThat(store.modelContinuations(previous.runId())).hasSize(1);
+            }
             var accepted = runtime.start(request());
             scheduler.runAll();
 
             assertThat(runtime.find(accepted.runId()).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
             assertThat(runtime.find(accepted.runId()).orElseThrow().output()).contains("adapter done");
-            assertThat(calls).hasValue(2);
-            assertThat(requests).hasSize(2).allSatisfy(request -> {
+            assertThat(calls).hasValue(ordinaryFirst ? 3 : 2);
+            assertThat(requests).hasSize(ordinaryFirst ? 3 : 2).allSatisfy(request -> {
                 assertThat(request.path("model").asText()).isEqualTo("deepseek-v4-pro");
                 assertThat(request.path("stream").asBoolean()).isTrue();
                 assertThat(request.path("thinking").path("type").asText()).isEqualTo("enabled");
                 assertThat(request.path("reasoning_effort").asText()).isEqualTo("high");
             });
-            JsonNode second = requests.get(1);
+            JsonNode second = requests.getLast();
+            if (ordinaryFirst) {
+                assertThat(java.util.stream.StreamSupport.stream(
+                                        second.path("messages").spliterator(), false)
+                                .filter(message -> message.path("role").asText().equals("assistant"))
+                                .map(message ->
+                                        message.path("reasoning_content").asText())
+                                .toList())
+                        .contains("ordinary synthetic reasoning", "private runtime reasoning");
+                assertThat(store.messages(accepted.runId()).toString())
+                        .doesNotContain("ordinary synthetic reasoning", "private runtime reasoning");
+            }
             assertThat(second.path("messages").toString()).contains("provider-tool-1");
             assertThat(second.path("messages").toString()).contains("echoed: hello");
             assertThat(second.path("messages").toString()).contains("private runtime reasoning");
@@ -230,8 +257,12 @@ class DeepSeekRuntimeIntegrationTest {
     }
 
     private static AgentRunRequest request() {
+        return request("deepseek-adapter-runtime-it");
+    }
+
+    private static AgentRunRequest request(String key) {
         return new AgentRunRequest(
-                "deepseek-adapter-runtime-it",
+                key,
                 new AgentDefinitionId("deepseek-agent"),
                 Optional.empty(),
                 "default",
@@ -255,12 +286,26 @@ class DeepSeekRuntimeIntegrationTest {
         return PolicyRuleSet.of(List.of(allowLocalEcho), Optional.empty(), ApprovalMode.DENY);
     }
 
-    private static void handle(HttpExchange exchange, ObjectMapper json, AtomicInteger calls, List<JsonNode> requests)
+    private static void handle(
+            HttpExchange exchange,
+            ObjectMapper json,
+            AtomicInteger calls,
+            List<JsonNode> requests,
+            boolean ordinaryFirst)
             throws IOException {
         requests.add(json.readTree(exchange.getRequestBody()));
         int call = calls.incrementAndGet();
-        String body = call == 1
+        String body = ordinaryFirst && call == 1
                 ? """
+                  data: {"id":"ordinary","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"reasoning_content":"ordinary synthetic reasoning","content":"ordinary answer"},"finish_reason":"stop"}]}
+
+                  data: {"id":"ordinary","model":"deepseek-v4-pro","choices":[],"usage":{"prompt_tokens":2,"completion_tokens":3}}
+
+                  data: [DONE]
+
+                  """
+                : call == (ordinaryFirst ? 2 : 1)
+                        ? """
                   data: {"id":"stub-1","model":"deepseek-v4-pro","choices":[{"index":0,"finish_reason":null,"delta":{"reasoning_content":"private runtime reasoning"}}]}
 
                   data: {"id":"stub-1","model":"deepseek-v4-pro","choices":[{"index":0,"finish_reason":"tool_calls","delta":{"tool_calls":[{"index":0,"id":"provider-tool-1","type":"function","function":{"name":"echo","arguments":"{\\"text\\":\\"hello\\"}"}}]}}]}
@@ -270,7 +315,7 @@ class DeepSeekRuntimeIntegrationTest {
                   data: [DONE]
 
                   """
-                : """
+                        : """
                   data: {"id":"stub-2","model":"deepseek-v4-pro","choices":[{"index":0,"finish_reason":"stop","delta":{"content":"adapter done"}}]}
 
                   data: {"id":"stub-2","model":"deepseek-v4-pro","choices":[],"usage":{"prompt_tokens":15,"completion_tokens":4}}

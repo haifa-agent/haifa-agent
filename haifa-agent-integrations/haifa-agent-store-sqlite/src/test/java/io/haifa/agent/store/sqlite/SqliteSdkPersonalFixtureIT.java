@@ -7,12 +7,9 @@ import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.agent.AgentDefinitionVersion;
 import io.haifa.agent.core.run.AgentRunBudget;
 import io.haifa.agent.core.run.AgentRunLimits;
-import io.haifa.agent.memory.api.MemoryEvidenceRef;
 import io.haifa.agent.memory.api.MemoryKind;
 import io.haifa.agent.memory.api.MemorySourceRef;
 import io.haifa.agent.memory.api.MemorySourceType;
-import io.haifa.agent.memory.api.MemoryStatus;
-import io.haifa.agent.memory.api.TextMemoryContent;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.ApiStyleId;
@@ -34,8 +31,7 @@ import io.haifa.agent.sdk.conversation.StartConversationCommand;
 import io.haifa.agent.sdk.conversation.SubmitConversationTurnCommand;
 import io.haifa.agent.sdk.memory.MemoryListQuery;
 import io.haifa.agent.sdk.memory.MemoryScopeSpec;
-import io.haifa.agent.sdk.memory.ProposeMemoryCommand;
-import io.haifa.agent.sdk.memory.ReviewMemoryCandidateCommand;
+import io.haifa.agent.sdk.memory.PutMemoryCommand;
 import io.haifa.agent.sdk.product.ProductId;
 import io.haifa.agent.sdk.product.ProductProfile;
 import io.haifa.agent.sdk.product.ProductVersion;
@@ -57,7 +53,7 @@ import org.junit.jupiter.api.io.TempDir;
 class SqliteSdkPersonalFixtureIT {
 
     @Test
-    void promotesConversationEvidenceToMemoryAndRecoversItThroughSdk(@TempDir Path directory) throws Exception {
+    void storesConversationMemoryWithProvenanceAndRecoversItThroughSdk(@TempDir Path directory) throws Exception {
         ProductProfile profile = personalMemoryProfile();
         var protector =
                 new AesGcmModelContinuationProtector(new SecretKeySpec(new byte[32], "AES"), new SecureRandom());
@@ -80,24 +76,17 @@ class SqliteSdkPersonalFixtureIT {
             var turn = agent.conversations()
                     .turns(conversation.record().sessionId())
                     .getFirst();
-            String contentDigest = messageDigest(directory, turn.messageId());
-            MemorySourceRef source = new MemorySourceRef(MemorySourceType.MESSAGE, turn.messageId(), Optional.empty());
-            var candidate = agent.memories()
+            var memory = agent.memories()
                     .orElseThrow()
-                    .propose(new ProposeMemoryCommand(
-                            "memory-propose",
+                    .put(new PutMemoryCommand(
                             MemoryScopeSpec.session(
                                     conversation.record().sessionId().value()),
                             MemoryKind.PREFERENCE,
                             "language",
-                            new TextMemoryContent("Java"),
-                            List.of(source),
-                            List.of(new MemoryEvidenceRef(source, contentDigest)),
-                            Optional.empty()));
-            assertThat(candidate.status()).isEqualTo(io.haifa.agent.memory.api.MemoryCandidateStatus.PENDING);
-            agent.memories()
-                    .orElseThrow()
-                    .approve(new ReviewMemoryCandidateCommand(candidate.id(), candidate.revision(), "memory-approve"));
+                            "Java",
+                            Optional.of(new MemorySourceRef(MemorySourceType.MESSAGE, turn.messageId())),
+                            Optional.of(SqliteTestSupport.NOW)));
+            assertThat(memory.revision()).isEqualTo(1);
             sessionId = conversation.record().sessionId().value();
         }
 
@@ -113,16 +102,15 @@ class SqliteSdkPersonalFixtureIT {
                 .build()) {
             var page = reopened.memories()
                     .orElseThrow()
-                    .memories(new MemoryListQuery(
+                    .list(new MemoryListQuery(
                             MemoryScopeSpec.session(sessionId),
-                            Set.of(MemoryStatus.ACTIVE),
                             Set.of(MemoryKind.PREFERENCE),
                             Optional.empty(),
                             Optional.empty(),
                             10));
             assertThat(page.items()).singleElement().satisfies(memory -> {
-                assertThat(memory.status()).isEqualTo(MemoryStatus.ACTIVE);
-                assertThat(memory.content().orElseThrow().boundedText()).isEqualTo("Java");
+                assertThat(memory.content()).isEqualTo("Java");
+                assertThat(memory.source()).isPresent();
             });
         }
     }
@@ -324,24 +312,7 @@ class SqliteSdkPersonalFixtureIT {
     }
 
     private static SdkCaller memoryReviewer() {
-        SdkCaller base = SdkCaller.defaultPublicUser();
-        return new SdkCaller(base.tenant(), base.principal(), Set.of("memory:read", "memory:propose", "memory:review"));
-    }
-
-    private static String messageDigest(Path directory, String messageId) throws Exception {
-        try (SqliteConnectionFactory connections =
-                new SqliteConnectionFactory(SqliteTestSupport.configuration(directory))) {
-            connections.initialize();
-            try (var connection = connections.openConnection();
-                    var statement = connection.prepareStatement(
-                            "SELECT content_hash FROM session_message WHERE message_id=?")) {
-                statement.setString(1, messageId);
-                try (ResultSet result = statement.executeQuery()) {
-                    assertThat(result.next()).isTrue();
-                    return result.getString(1);
-                }
-            }
-        }
+        return SdkCaller.defaultPublicUser();
     }
 
     private static void assertNoCodingProductState(Path directory) throws Exception {

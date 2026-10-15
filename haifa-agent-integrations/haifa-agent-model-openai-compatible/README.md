@@ -150,7 +150,7 @@ profile allowlist；默认模型不继承 DeepSeek thinking。响应中的 actua
 | Provider profile | Sync/SSE | Tool Calls | Thinking | Tool reasoning continuation | Live |
 | --- | --- | --- | --- | --- | --- |
 | OpenAI-compatible `standard` | 是 | 是 | 无厂商扩展 | 否 | 未提供 |
-| DeepSeek | 是 | 是 | enabled/high|max | 必须 | opt-in |
+| DeepSeek | 是 | 是 | enabled/low|high|max | 必须 | opt-in |
 | Bailian | 是 | 是 | profile-gated | profile-gated | opt-in |
 | Kimi | 是 | 是 | model-gated | 必须 | opt-in |
 | Zhipu | 是 | 是 | dynamic/forced profile | 必须 | opt-in |
@@ -345,3 +345,9 @@ mvn -pl :haifa-agent-model-openai-compatible -am verify -DskipITs=false
 ```
 
 测试和运行日志不得输出 API Key、完整 Prompt 或原始供应商响应。
+
+DeepSeek Chat 的精确 Binding 包含 `deepseek-flash`、兼容别名 `deepseek-v4-flash` 与
+`deepseek-v4-pro`，允许 `LOW/HIGH/MAX`。开启思考时默认 `HIGH`，关闭时不发送 effort；
+开启思考与 temperature、强制 `tool_choice` 组合会在 HTTP dispatch 前拒绝。
+带 tools 时复用受保护 continuation 回传同 Binding 的普通与 Tool assistant 历史；
+不带 tools 的 DeepSeek 请求省略历史 reasoning，不提供思考正文展示。

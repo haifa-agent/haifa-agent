@@ -297,6 +297,76 @@ class ModelMessageAssemblerTest {
     }
 
     @Test
+    void keepsDelegationDisplayMetadataOutOfModelMessagesButPreservesOrdinaryToolData() {
+        for (String name : List.of("task", "utility_search")) {
+            InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+            ToolCallId callId = new ToolCallId("tool-call-display");
+            ProviderToolCallCorrelationId correlation = new ProviderToolCallCorrelationId("provider-display");
+            ToolCall call = new ToolCall(
+                    callId,
+                    RUN_ID,
+                    new AgentStepId("step-display"),
+                    correlation,
+                    new RuntimeIdempotencyKey("idempotency-display"),
+                    name,
+                    "1.0.0",
+                    new ToolArguments("display.input", "1.0.0", Map.of()),
+                    Instant.parse("2026-07-21T00:00:00Z"));
+            call.beginValidation();
+            call.beginPolicyCheck();
+            call.start(Instant.parse("2026-07-21T00:00:01Z"));
+            Map<String, Object> data = Map.of(
+                    "status",
+                    "COMPLETED",
+                    "outputPreview",
+                    "display-only output",
+                    "outputSha256",
+                    "a".repeat(64),
+                    "outputTruncated",
+                    false);
+            call.complete(
+                    new io.haifa.agent.core.tool.ToolResult(
+                            true, "original summary", data, List.of(), List.of(), false),
+                    Instant.parse("2026-07-21T00:00:02Z"));
+            store.appendToolCall(call);
+            AgentSessionId session = new AgentSessionId("session-display");
+            AgentMessage assistant = message(
+                    "assistant-display",
+                    session,
+                    RUN_ID,
+                    MessageRole.ASSISTANT,
+                    1,
+                    List.of(new ToolCallPart(callId, correlation, name, "1.0.0")));
+            AgentMessage result = message(
+                    "result-display",
+                    session,
+                    RUN_ID,
+                    MessageRole.TOOL,
+                    2,
+                    List.of(new ToolResultPart(callId, correlation, "original summary")));
+            AgentContext context = new AgentContext(
+                    List.of(prompt()),
+                    List.of(item(
+                            "display-group",
+                            ContextItemType.MESSAGE,
+                            new MessageGroupContextContent(List.of(assistant, result)))),
+                    List.of(),
+                    budget(),
+                    30);
+
+            ModelMessage projected =
+                    new ModelMessageAssembler(store).assemble(RUN_ID, context).getLast();
+            assertThat(projected.content()).isEqualTo("original summary");
+            assertThat(projected.providerCorrelationId()).contains(correlation);
+            assertThat(projected.toolResultTruncated()).isFalse();
+            assertThat(projected.toolResultData())
+                    .isEqualTo(name.equals("task") ? Map.of("status", "COMPLETED") : data);
+            assertThat(store.toolCalls(RUN_ID).getFirst().result().orElseThrow().structuredData())
+                    .isEqualTo(data);
+        }
+    }
+
+    @Test
     void passesCanonicalBoundedExecutionFailureFactsIntoTheModelToolMessage() {
         InMemoryRuntimeStore store = new InMemoryRuntimeStore();
         AgentSessionId sessionId = new AgentSessionId("session-1");
@@ -1072,6 +1142,76 @@ class ModelMessageAssemblerTest {
                 .findFirst()
                 .orElseThrow();
         assertThat(persistedCall.arguments().values().get("codeContent")).isEqualTo(massiveCode);
+    }
+
+    @Test
+    void ordinaryAssistantUsesProtectedContinuationAndDoesNotMoveItAcrossBindings() {
+        var model = DefaultResolvedModelSnapshots.deepSeekV4Pro();
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        var reasoning = SensitiveModelReasoning.of("synthetic ordinary continuation");
+        var assistant = store.appendSessionMessageWithContinuation(
+                new SessionMessageDraft(
+                        new AgentMessageId("ordinary"),
+                        new AgentSessionId("session-1"),
+                        Optional.of(RUN_ID),
+                        Optional.empty(),
+                        MessageRole.ASSISTANT,
+                        MessageStatus.COMPLETED,
+                        MessageVisibility.USER_VISIBLE,
+                        List.of(new TextPart("answer", "plain")),
+                        Map.of("modelContinuationId", "ordinary-continuation"),
+                        Instant.EPOCH),
+                new ModelContinuationDraft(
+                        new ModelContinuationRef(
+                                "ordinary-continuation", "1.0", reasoning.digest(), reasoning.byteLength()),
+                        RUN_ID,
+                        new AgentSessionId("session-1"),
+                        "ordinary-call",
+                        model.providerId().value(),
+                        model.providerModelId(),
+                        model.configurationDigest(),
+                        Set.of(),
+                        reasoning,
+                        Instant.EPOCH));
+        var context = new AgentContext(
+                List.of(prompt()),
+                List.of(item("ordinary", ContextItemType.MESSAGE, new MessageGroupContextContent(List.of(assistant)))),
+                List.of(),
+                budget(),
+                20);
+        var assembled = new ModelMessageAssembler(store)
+                .assemble(RUN_ID, context, model)
+                .getLast();
+        assertThat(assembled.reasoning().orElseThrow().digest()).isEqualTo(reasoning.digest());
+        var other = ResolvedModelSnapshot.create(
+                model.providerId(),
+                model.providerVersion(),
+                model.modelId(),
+                model.modelVersion(),
+                model.providerModelId(),
+                model.adapterType(),
+                model.adapterVersion(),
+                model.apiStyle(),
+                model.dialect(),
+                model.endpoint(),
+                model.credentialRef(),
+                model.nativeStreaming(),
+                model.capabilities(),
+                model.contextWindow(),
+                model.maxOutputTokens(),
+                model.providerOptions(),
+                Map.of("thinking", "disabled"));
+        assertThat(new ModelMessageAssembler(store)
+                        .assemble(RUN_ID, context, other)
+                        .getLast()
+                        .reasoning())
+                .isEmpty();
+        assertThatThrownBy(() -> new ModelMessageAssembler(new InMemoryRuntimeStore()).assemble(RUN_ID, context, model))
+                .isInstanceOf(io.haifa.agent.runtime.core.model.continuation.ModelContinuationException.class)
+                .satisfies(error -> assertThat(
+                                ((io.haifa.agent.runtime.core.model.continuation.ModelContinuationException) error)
+                                        .failure())
+                        .isEqualTo(io.haifa.agent.runtime.core.model.continuation.ModelContinuationFailure.MISSING));
     }
 
     private static AgentMessage message(

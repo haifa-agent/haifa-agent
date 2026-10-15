@@ -789,7 +789,8 @@ final class LocalCodingAgent implements AutoCloseable {
                     runtime,
                     identifiers,
                     clock,
-                    new CliCodingModelCatalog(configuration, connectionState));
+                    new CliCodingModelCatalog(configuration, connectionState),
+                    configuration.abandonedRunStaleness());
             var sessionHistory = new CodingSessionHistoryService(
                     codingSessions,
                     persistence.ports().state(),
@@ -1323,6 +1324,12 @@ final class LocalCodingAgent implements AutoCloseable {
         if (OpenAiResponsesDialects.OPENAI_CODEX.equals(model.dialect())) {
             providerOptions.put("codex_originator", model.originator());
             providerOptions.put("codex_user_agent", model.userAgent());
+        }
+        if (OpenAiResponsesDialects.DEEPSEEK.equals(model.dialect())
+                && model.reasoningMode() != ModelReasoningMode.DISABLED) {
+            // DeepSeek Responses thinking mode requires the previous assistant reasoning_text to be passed back.
+            // Retain and replay reasoning for every assistant message, not only tool-call turns.
+            invocationOptions.put("requires_reasoning_continuation", true);
         }
         ResolvedModelSnapshot snapshot = ResolvedModelSnapshot.create(
                 new ModelProviderId(model.providerId()),

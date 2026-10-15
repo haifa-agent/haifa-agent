@@ -37,9 +37,11 @@ record CliConfiguration(
         long maxModelCalls,
         long maxToolCalls,
         ProjectPersistenceConfiguration persistence,
-        int modelMaxResponseBytes) {
+        int modelMaxResponseBytes,
+        Duration abandonedRunStaleness) {
     private static final long DEFAULT_MAX_MODEL_CALLS = 64L;
     static final int DEFAULT_MODEL_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
+    static final Duration DEFAULT_ABANDONED_RUN_STALENESS = Duration.ofMinutes(30);
     private static final Set<String> DEFAULT_TOOLS = Set.of(
             "file_list",
             "file_stat",
@@ -96,6 +98,10 @@ record CliConfiguration(
             throw new IllegalArgumentException("runtime limits must be positive");
         if (modelMaxResponseBytes < 1024 * 1024 || modelMaxResponseBytes > 32 * 1024 * 1024) {
             throw new IllegalArgumentException("models.maxResponseBytes must be between 1048576 and 33554432");
+        }
+        abandonedRunStaleness = Objects.requireNonNull(abandonedRunStaleness, "abandonedRunStaleness must not be null");
+        if (abandonedRunStaleness.isNegative() || abandonedRunStaleness.isZero()) {
+            throw new IllegalArgumentException("runtime.abandonedRunStalenessMillis must be positive");
         }
     }
 
@@ -165,204 +171,8 @@ record CliConfiguration(
                 DEFAULT_MAX_MODEL_CALLS,
                 32,
                 ProjectPersistenceConfiguration.memory(),
-                DEFAULT_MODEL_MAX_RESPONSE_BYTES);
-    }
-
-    CliConfiguration(
-            Model model,
-            List<Model> availableModels,
-            Set<String> enabledTools,
-            List<McpServer> mcpServers,
-            Web web,
-            Skills skills,
-            Execution execution,
-            ApprovalMode approval,
-            CodingApprovalThreshold approvalThreshold,
-            Duration timeout,
-            int maxIterations,
-            long maxModelCalls,
-            long maxToolCalls,
-            ProjectPersistenceConfiguration persistence) {
-        this(
-                model,
-                availableModels,
-                enabledTools,
-                mcpServers,
-                web,
-                skills,
-                execution,
-                approval,
-                approvalThreshold,
-                timeout,
-                maxIterations,
-                maxModelCalls,
-                maxToolCalls,
-                persistence,
-                DEFAULT_MODEL_MAX_RESPONSE_BYTES);
-    }
-
-    CliConfiguration(
-            Model model,
-            List<Model> availableModels,
-            Set<String> enabledTools,
-            List<McpServer> mcpServers,
-            Web web,
-            Skills skills,
-            Execution execution,
-            ApprovalMode approval,
-            CodingApprovalThreshold approvalThreshold,
-            Duration timeout,
-            int maxIterations,
-            long maxToolCalls,
-            ProjectPersistenceConfiguration persistence) {
-        this(
-                model,
-                availableModels,
-                enabledTools,
-                mcpServers,
-                web,
-                skills,
-                execution,
-                approval,
-                approvalThreshold,
-                timeout,
-                maxIterations,
-                DEFAULT_MAX_MODEL_CALLS,
-                maxToolCalls,
-                persistence,
-                DEFAULT_MODEL_MAX_RESPONSE_BYTES);
-    }
-
-    CliConfiguration(
-            Model model,
-            List<Model> availableModels,
-            Set<String> enabledTools,
-            List<McpServer> mcpServers,
-            Web web,
-            Skills skills,
-            Execution execution,
-            ApprovalMode approval,
-            Duration timeout,
-            int maxIterations,
-            long maxToolCalls,
-            ProjectPersistenceConfiguration persistence) {
-        this(
-                model,
-                availableModels,
-                enabledTools,
-                mcpServers,
-                web,
-                skills,
-                execution,
-                approval,
-                CodingApprovalThreshold.compatibleWith(policyMode(approval)),
-                timeout,
-                maxIterations,
-                maxToolCalls,
-                persistence);
-    }
-
-    CliConfiguration(
-            Model model,
-            Set<String> enabledTools,
-            List<McpServer> mcpServers,
-            Web web,
-            Skills skills,
-            Execution execution,
-            ApprovalMode approval,
-            Duration timeout,
-            int maxIterations,
-            long maxToolCalls) {
-        this(
-                model,
-                List.of(model),
-                enabledTools,
-                mcpServers,
-                web,
-                skills,
-                execution,
-                approval,
-                CodingApprovalThreshold.compatibleWith(policyMode(approval)),
-                timeout,
-                maxIterations,
-                maxToolCalls,
-                ProjectPersistenceConfiguration.memory());
-    }
-
-    CliConfiguration(
-            Model model,
-            Set<String> enabledTools,
-            List<McpServer> mcpServers,
-            Execution execution,
-            ApprovalMode approval,
-            Duration timeout,
-            int maxIterations,
-            long maxToolCalls) {
-        this(
-                model,
-                enabledTools,
-                mcpServers,
-                Web.defaults(),
-                Skills.defaults(),
-                execution,
-                approval,
-                timeout,
-                maxIterations,
-                maxToolCalls);
-    }
-
-    CliConfiguration(
-            Model model,
-            Set<String> enabledTools,
-            List<McpServer> mcpServers,
-            Web web,
-            Execution execution,
-            ApprovalMode approval,
-            Duration timeout,
-            int maxIterations,
-            long maxToolCalls) {
-        this(
-                model,
-                enabledTools,
-                mcpServers,
-                web,
-                Skills.defaults(),
-                execution,
-                approval,
-                timeout,
-                maxIterations,
-                maxToolCalls);
-    }
-
-    CliConfiguration(
-            Model model,
-            Set<String> enabledTools,
-            List<McpServer> mcpServers,
-            Web web,
-            Skills skills,
-            Execution execution,
-            ApprovalMode approval,
-            Duration timeout,
-            int maxIterations,
-            long maxToolCalls,
-            ProjectPersistenceConfiguration persistence) {
-        this(
-                model,
-                List.of(model),
-                enabledTools,
-                mcpServers,
-                web,
-                skills,
-                execution,
-                approval,
-                timeout,
-                maxIterations,
-                maxToolCalls,
-                persistence);
-    }
-
-    private static io.haifa.agent.policy.api.ApprovalMode policyMode(ApprovalMode mode) {
-        return io.haifa.agent.policy.api.ApprovalMode.valueOf(mode.name());
+                DEFAULT_MODEL_MAX_RESPONSE_BYTES,
+                DEFAULT_ABANDONED_RUN_STALENESS);
     }
 
     record Model(

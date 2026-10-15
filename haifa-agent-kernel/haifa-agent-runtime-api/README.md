@@ -1,5 +1,33 @@
 # Haifa Agent Runtime API
 
+## 持久消息分页
+
+`AgentRuntime.messages(runId, RunMessageCursor.beforeFirst(runId), limit)` 返回可信 Caller 可见 Run 的
+已提交 Assistant/Tool 消息（`limit` 为 1–500）。`RunMessagePage` 的 `nextCursor`/`headCursor` 使用既有
+SessionMessage sequence，允许 User/internal 消息造成序号空洞；`messageIndex` 是过滤后从 1 开始的稳定编号。
+筛选在分页前完成，不因内部消息前缀返回假短页。消息正文只从既有 ContentPart/权威 ToolResult 读取，
+不返回内部 metadata、reasoning 或 continuation。`AGENT_VISIBLE` Assistant 只公开 ToolCall 引用，
+不输出该 visibility 的 TextPart；User-visible Assistant text 与 ToolResult 正文安全脱敏但不应用 Tool 展示预算；来源结果本身已截断时
+`textTruncated=true`。`toolCalls` 按该消息 parts 顺序精确绑定，arguments 的 `truncated` 仍表示公开 Tool
+视图的大小限制，`toolCorrelations` 将 SDK ToolCall ID 映射到 Provider correlation ID。
+
+模型产生且已提交的 Assistant 消息提供 `RunMessageView.modelCallId()`，其值与对应公开输出事件的
+`modelCallId`/`generationId` 一致。旧消息、非模型消息、Tool 消息及 redacted 消息返回空值；原九参数
+构造器保留。只公开这个安全标识，不公开 metadata 集合；不能用消息序号推测缺失的关联。
+
+现有 Run Event Feed 的 `message.committed` 只携带 `MessageCommitted(messageId,messageSequence)` 引用；
+正文通过消息分页读取。消息与引用在同一事务提交，既有 `subscribe` 在 afterCommit 唤醒，订阅必须关闭。
+历史未发该通知的非 redacted 消息也可分页；旧版已经 redacted 且缺少原展示资格标记的消息不会猜测其原内容。
+新版 redaction 保留原展示资格与角色、原编号，并返回 `[REDACTED]`，Journal 清理不影响该编号。
+
+## 冻结指令摘要
+
+`AgentRuntime.frozenInstructionDiagnostic(runId)` 将既有已准入 Run 的冻结 configuration 投影为
+`Optional<FrozenInstructionDiagnostic>`，仅公开 Run、Definition/version、opaque configuration reference
+及 UTF-8 SHA-256 `instructionContentHash`。没有正文、当前 Profile、Store 或 Runtime Core 类型。
+查询沿用 Run 的 Tenant/Principal 可见性；未知及不可见 Run 返回空，可见但快照不可读或绑定错误时固定失败关闭。
+兼容默认方法返回空，表示该 Runtime 实现尚未支持；默认本地 Runtime 对成功准入的可见 Run 必须提供摘要。
+
 ## Authoritative plan view
 
 `AgentRuntime.plan(runId)` exposes an immutable, caller-scoped `AgentPlanView` when the
@@ -27,6 +55,17 @@ Journal maps or provider messages.
 有内部进展，不能据此重建 reasoning。`RunOutputSubscription` 必须关闭；订阅按 Run 隔离，
 Listener 失败不会中断 AgentLoop。
 
+## Tool Call 只读投影
+
+`AgentRuntime.toolCalls(runId)` 返回当前可信 Caller 可见 Run 的权威 Tool Call 只读副本，按请求时间与
+Tool Call ID 稳定排序。投影包含 canonical arguments、现有生命周期状态、完成结果和时间；它不暴露
+Runtime Store 或内部可变聚合，也不会写事件、缓存或第二套 transcript 状态。未知 Run 与其他
+Tenant/Principal 的 Run 都统一返回 `RUN_NOT_FOUND`，避免泄露资源是否存在。
+
+arguments、structured result 与 summary 在投影时执行敏感字段脱敏和显式大小限制；API key、credential、
+continuation、签名、密文等值不会原样返回。失败只投影稳定 `AgentErrorCode`，不外发内部错误 details。
+SQLite 与 InMemory 使用同一 Runtime 投影，因此重启后仍从权威持久 Tool Call 得到相同视图。
+
 `RunOutputCursor` 只在当前进程、当前活动 Run 的有界内存缓冲内单调有效；它不是持久化 Cursor，不能在
 进程重启后恢复未完成 Delta。Run 终态提交后缓冲与 Listener 会被清理，调用方应从权威
 `session_message`/Turns 查询完整 Assistant Message。Assistant text delta 按 Provider chunk 原样保留；
@@ -47,6 +86,7 @@ Listener 失败不会中断 AgentLoop。
   Resume 与 Command 可携带 expected Run version，供 HTTP `If-Match` 映射；版本检查仍由
   Runtime 事实执行，Transport 不维护第二份版本。
 - `recover(runId)` 将失去执行者的旧 Run 收敛为中断／结果未知，不调度新的 Attempt，也不重放工具；当前仍被拥有的执行会被拒绝。正常暂停和批准仍通过 resume/respond 继续。
+- `recoverAbandoned(runId, heartbeatStaleness)` 在 `recover` 之上判定“执行者已丢失”：本地 Runtime 的 worker 身份带宿主进程号，宿主进程已不存在时立即结算（无需等满 `heartbeatStaleness`），宿主进程仍存活时绝不结算（避免误杀同机另一进程的活 Run），无法判定归属时回退到心跳静默门槛。仍被本实例拥有、等待人工的 Run 不结算；未实现持久恢复的 Runtime 返回 `false`。客户端（如 Coding Agent 的 Session 调和）据此清理进程丢失留下的活跃 Run。
 - 公共命令只有 `PAUSE`、`CANCEL`、`TERMINATE_CHILDREN`；`CANCEL` 的 `RunCancellation` 明确区分
   `USER_REQUEST` 与 Host 已判定的 `DEADLINE_EXCEEDED`，并将实际时限写入终止说明。旧的空参数取消仍按
   用户请求解释。`InteractionResponse` 以 Request/Response ID 关联 Clarification 或 Approval，并从可信
@@ -78,3 +118,12 @@ Listener 失败不会中断 AgentLoop。
 `RuntimeApiErrorCode` 只表达提交、查询、命令、Interaction、Cursor 和协议失败；异步执行中的
 Run/Attempt/Step 失败继续使用 Core `AgentErrorCode`。失败 Run 的生命周期事件携带稳定执行
 错误码、安全默认文案和同一个可选 `diagnosticId`，调用方不需要解析异常消息。
+
+## Shared Child capacity
+
+`ChildRunCapacity` is caller-owned and may be shared across Agents using
+`HaifaAgentBuilder.childRunCapacity(capacity)` (or `RuntimeCoreBuilder.childRunCapacity(capacity)`).
+Its maximum takes precedence over `maxConcurrentChildRuns`; no shared capacity is installed by default.
+A Child keeps its slot while waiting for approval and until its terminal Run and actual execution tasks
+have settled. Releasing a slot wakes waiting parents across all participating Agents. Cancelling a
+parent waiting for admission creates no Child. Closing one Agent does not close the shared capacity.

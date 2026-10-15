@@ -15,12 +15,15 @@ import io.haifa.agent.model.api.ModelRequestId;
 import io.haifa.agent.model.api.ModelStreamControl;
 import io.haifa.agent.model.api.ModelStreamEvent;
 import io.haifa.agent.model.api.ModelToolSpecification;
+import io.haifa.agent.runtime.core.bootstrap.DefinitionResolver;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeConfigurationSnapshot;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions;
 import io.haifa.agent.runtime.core.context.ActiveContextSnapshots;
 import io.haifa.agent.runtime.core.control.CancellationObservedException;
 import io.haifa.agent.runtime.core.control.RunControlRegistry;
 import io.haifa.agent.runtime.core.control.RunControlSignal;
+import io.haifa.agent.runtime.core.delegation.DelegationTool;
+import io.haifa.agent.runtime.core.skill.SkillToolProvider;
 import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import io.haifa.agent.tool.api.FrozenToolBinding;
@@ -42,6 +45,7 @@ public final class FrozenModelInvoker {
     private final RunControlRegistry controls;
     private final RuntimeEventAppender events;
     private final TimeProvider time;
+    private final DefinitionResolver childDefinitions;
 
     public FrozenModelInvoker(
             RuntimeStateRepository state,
@@ -67,6 +71,26 @@ public final class FrozenModelInvoker {
             ModelImageResolver imageResolver,
             ModelAudioResolver audioResolver,
             ActiveContextSnapshots activeContexts) {
+        this(state, adapters, ids, output, controls, events, time, imageResolver, audioResolver, activeContexts, null);
+    }
+
+    /**
+     * @param childDefinitions resolves allowed child agents for the Runtime delegation Tool; {@code null} never
+     *     discloses delegation
+     */
+    public FrozenModelInvoker(
+            RuntimeStateRepository state,
+            Map<ModelAdapterKey, AgentChatModel> adapters,
+            IdentifierGenerator ids,
+            RuntimeModelOutputPublisher output,
+            RunControlRegistry controls,
+            RuntimeEventAppender events,
+            TimeProvider time,
+            ModelImageResolver imageResolver,
+            ModelAudioResolver audioResolver,
+            ActiveContextSnapshots activeContexts,
+            DefinitionResolver childDefinitions) {
+        this.childDefinitions = childDefinitions;
         this.state = Objects.requireNonNull(state, "state must not be null");
         this.adapters = Map.copyOf(Objects.requireNonNull(adapters, "adapters must not be null"));
         this.ids = Objects.requireNonNull(ids, "ids must not be null");
@@ -90,10 +114,18 @@ public final class FrozenModelInvoker {
             throw new IllegalStateException(
                     "frozen model adapter is unavailable: " + key.adapterType() + "@" + key.adapterVersion());
         }
-        List<ModelToolSpecification> tools = configuration.toolBindings().stream()
+        List<ModelToolSpecification> tools = new java.util.ArrayList<>(configuration.toolBindings().stream()
                 .map(FrozenModelInvoker::toModelSpecification)
-                .toList();
-        return new FrozenModelBinding(configuration, adapter, tools);
+                .toList());
+        if (childDefinitions != null) {
+            DelegationTool.specification(run, configuration, childDefinitions).ifPresent(delegation -> {
+                if (tools.stream().anyMatch(tool -> tool.name().equals(delegation.name()))) {
+                    throw new IllegalStateException("a frozen tool alias collides with the Runtime delegation tool");
+                }
+                tools.add(delegation);
+            });
+        }
+        return new FrozenModelBinding(configuration, adapter, List.copyOf(tools));
     }
 
     private static ModelToolSpecification toModelSpecification(FrozenToolBinding binding) {
@@ -107,6 +139,37 @@ public final class FrozenModelInvoker {
                 schema.version(),
                 schema.document(),
                 false);
+    }
+
+    /**
+     * Returns the frozen built-in Skill reader specification when the current request hid it only because no Skill was
+     * activated yet. A model that follows earlier Run history may still name the reader; the existing activation guard
+     * then rejects it as a normal {@code SKILL_NOT_ACTIVATED} Tool failure instead of an invalid model response.
+     *
+     * <p>The fallback is deliberately narrow: it never applies to requests that disclose no tools at all, never
+     * duplicates an already disclosed reader, and only covers the built-in Skill provider alias. Host tools sharing the
+     * alias with another provider and other hidden tools keep their existing undisclosed behavior.
+     */
+    static List<ModelToolSpecification> repairableSkillReadTools(
+            List<FrozenToolBinding> frozenBindings,
+            List<ModelToolSpecification> frozenTools,
+            List<ModelToolSpecification> disclosedTools) {
+        if (disclosedTools.isEmpty()) {
+            return List.of();
+        }
+        if (disclosedTools.stream()
+                .anyMatch(tool -> tool.name().equals(SkillToolProvider.RESOURCE_READ_ALIAS.value()))) {
+            return List.of();
+        }
+        boolean builtInReader = frozenBindings.stream()
+                .anyMatch(binding -> binding.alias().equals(SkillToolProvider.RESOURCE_READ_ALIAS)
+                        && binding.definition().providerId().equals(SkillToolProvider.PROVIDER_ID));
+        if (!builtInReader) {
+            return List.of();
+        }
+        return frozenTools.stream()
+                .filter(tool -> tool.name().equals(SkillToolProvider.RESOURCE_READ_ALIAS.value()))
+                .toList();
     }
 
     public ModelInvocationResult invoke(FrozenModelBinding binding, AgentRun run, int iteration, AgentContext context) {
@@ -243,7 +306,12 @@ public final class FrozenModelInvoker {
                 }
                 throw new CancellationObservedException(completedSignal);
             }
-            var decision = responses.map(request, response, disclosedTools);
+            var decision = responses.map(
+                    request,
+                    response,
+                    disclosedTools,
+                    repairableSkillReadTools(binding.configuration().toolBindings(), binding.tools(), disclosedTools),
+                    binding.configuration().truncatedOutputPolicy());
             var invocation = new ModelInvocationResult(
                     decision,
                     response.usage().inputTokens(),
@@ -277,7 +345,8 @@ public final class FrozenModelInvoker {
                     callId.value(),
                     physicalAttempt,
                     binding.configuration().model(),
-                    response.reasoning());
+                    response.reasoning(),
+                    response.content());
             appendLifecycle(
                     binding,
                     run,

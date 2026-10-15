@@ -25,6 +25,7 @@ class TerminalCompletionProviderTest {
                         "/archive",
                         "/delete",
                         "/commands",
+                        "/theme",
                         "/help",
                         "/quit");
     }

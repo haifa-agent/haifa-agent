@@ -72,10 +72,31 @@ public final class SqliteRunStateRepository implements RunStateRepository {
     }
 
     @Override
+    public java.util.List<AgentRun> children(AgentRunId parentRunId) {
+        Objects.requireNonNull(parentRunId, "parentRunId must not be null");
+        return execute(() -> unitOfWork.mapper(RuntimeStoreMapper.class).findChildRuns(parentRunId.value()).stream()
+                .map(this::fromRow)
+                .toList());
+    }
+
+    @Override
     public Optional<AgentRun> find(AgentRunId runId) {
         Objects.requireNonNull(runId, "runId must not be null");
         return execute(() -> Optional.ofNullable(
                         unitOfWork.mapper(RuntimeStoreMapper.class).findRun(runId.value()))
+                .map(this::fromRow));
+    }
+
+    @Override
+    public Optional<AgentRun> findVisible(AgentRunId runId, TenantRef tenant, PrincipalRef principal) {
+        Objects.requireNonNull(runId, "runId must not be null");
+        Objects.requireNonNull(tenant, "tenant must not be null");
+        Objects.requireNonNull(principal, "principal must not be null");
+        return execute(() -> Optional.ofNullable(
+                        unitOfWork.mapper(RuntimeStoreMapper.class).findRun(runId.value()))
+                .filter(row -> tenant.tenantId().equals(row.tenantId())
+                        && principal.principalId().equals(row.principalId())
+                        && principal.principalType().equals(row.principalType()))
                 .map(this::fromRow));
     }
 

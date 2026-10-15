@@ -19,10 +19,19 @@ class TerminalShortcutProfileTest {
         assertThat(profile.followUp()).isEqualTo("⌥↩");
         assertThat(profile.restoreQueuedMessage()).isEqualTo("⌥↑");
         assertThat(profile.newline()).isEqualTo("⇧↩/⌃J");
+        assertThat(profile.leader()).isEqualTo("⌃X");
+        assertThat(profile.commandPalette()).isEqualTo("⌃P");
+        assertThat(profile.modelCycle()).isEqualTo("F2");
+        assertThat(profile.sidebarToggle()).isEqualTo("⌃X B");
         assertThat(profile.matchesToggleExpansion(key(KeyType.keySI))).isTrue();
         assertThat(profile.matchesFollowUp(alt(KeyType.keyCR))).isTrue();
         assertThat(profile.matchesRestoreQueuedMessage(alt(KeyType.KeyUp))).isTrue();
         assertThat(profile.matchesFollowUp(key(KeyType.keyCR))).isFalse();
+        assertThat(profile.matchesLeader(key(KeyType.keyCAN))).isTrue();
+        assertThat(profile.matchesCommandPalette(key(KeyType.keyDLE))).isTrue();
+        assertThat(profile.matchesModelCycleNext(key(KeyType.KeyF2))).isTrue();
+        assertThat(profile.matchesModelCyclePrevious(alt(KeyType.KeyF2))).isTrue();
+        assertThat(profile.matchesModelCyclePrevious(key(KeyType.KeyF14))).isTrue();
     }
 
     @Test
@@ -33,8 +42,16 @@ class TerminalShortcutProfileTest {
         assertThat(profile.toggleExpansion()).isEqualTo("ctrl+o");
         assertThat(profile.followUp()).isEqualTo("alt+enter");
         assertThat(profile.restoreQueuedMessage()).isEqualTo("alt+up");
+        assertThat(profile.leader()).isEqualTo("ctrl+x");
+        assertThat(profile.commandPalette()).isEqualTo("ctrl+p");
+        assertThat(profile.modelCycle()).isEqualTo("f2");
+        assertThat(profile.sidebarToggle()).isEqualTo("ctrl+x b");
         assertThat(profile.matchesToggleExpansion(key(KeyType.keySI))).isTrue();
         assertThat(profile.matchesFollowUp(alt(KeyType.keyCR))).isTrue();
+        assertThat(profile.matchesLeader(key(KeyType.keyCAN))).isTrue();
+        assertThat(profile.matchesCommandPalette(key(KeyType.keyDLE))).isTrue();
+        assertThat(profile.matchesModelCycleNext(key(KeyType.KeyF2))).isTrue();
+        assertThat(profile.matchesModelCyclePrevious(alt(KeyType.KeyF2))).isTrue();
     }
 
     private static TerminalHostInfo host(String osName) {

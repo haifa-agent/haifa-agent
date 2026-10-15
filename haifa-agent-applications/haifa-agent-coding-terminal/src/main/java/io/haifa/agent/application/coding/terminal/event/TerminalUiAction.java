@@ -95,4 +95,8 @@ public sealed interface TerminalUiAction {
     record RecoverableFailure(String code) implements TerminalUiAction {}
 
     record ExitRequested() implements TerminalUiAction {}
+
+    record SidebarToggled() implements TerminalUiAction {}
+
+    record ThemeChanged(String themeName) implements TerminalUiAction {}
 }

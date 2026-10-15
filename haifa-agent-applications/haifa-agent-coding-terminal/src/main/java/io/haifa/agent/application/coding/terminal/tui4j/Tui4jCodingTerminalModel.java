@@ -26,14 +26,21 @@ import io.haifa.agent.application.coding.terminal.state.TranscriptItem;
 import io.haifa.agent.core.run.AgentRunId;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.function.LongSupplier;
 
 /** Production tui4j adapter around the authoritative terminal Controller and Reducer state. */
 final class Tui4jCodingTerminalModel implements Model {
     private static final Duration EVENT_POLL_INTERVAL = Duration.ofMillis(50);
     private static final Duration UNBRACKETED_PASTE_GUARD_INTERVAL = Duration.ofMillis(100);
+    private static final int PASTE_SUMMARY_MIN_LINES = 3;
+    private static final int PASTE_SUMMARY_MAX_CHARACTERS = 150;
+    static final int WINDOW_SIZE_POLL_TICKS = 10;
     private static final int MAX_SECRET_CHARACTERS = 65_536;
+    private static final long LEADER_TIMEOUT_NANOS = Duration.ofMillis(1500).toNanos();
 
     private final CodingTerminalController controller;
     private final TerminalEventPump pump;
@@ -43,7 +50,9 @@ final class Tui4jCodingTerminalModel implements Model {
     private final Tui4jTerminalView view;
     private final List<String> history = new ArrayList<>();
     private final StringBuilder secretBuffer = new StringBuilder();
+    private final Map<String, String> pastedContent = new LinkedHashMap<>();
     private final LongSupplier monotonicNanos;
+    private final boolean pollWindowSize;
 
     private String transcriptContent = "";
     private List<TranscriptItem> renderedTranscript = List.of();
@@ -62,6 +71,10 @@ final class Tui4jCodingTerminalModel implements Model {
     private long deferredEnterSequence;
     private DeferredEnter pendingEnter;
     private boolean secretPresentation;
+    private int pasteSequence;
+    private int windowSizePollTicks;
+    private long leaderActivatedNanos;
+    private String currentThemeName = Tui4jTerminalTheme.DEFAULT_THEME;
 
     Tui4jCodingTerminalModel(CodingTerminalController controller, TerminalEventPump pump) {
         this(controller, pump, System::nanoTime, null);
@@ -79,10 +92,14 @@ final class Tui4jCodingTerminalModel implements Model {
         this.controller = controller;
         this.pump = pump;
         this.monotonicNanos = monotonicNanos;
+        this.pollWindowSize =
+                hostInfo == null || hostInfo.operatingSystem() == TerminalHostInfo.OperatingSystem.WINDOWS;
         this.shortcuts =
                 hostInfo == null ? TerminalShortcutProfile.standard() : TerminalShortcutProfile.forHost(hostInfo);
         this.view = new Tui4jTerminalView(shortcuts);
         TerminalUiState state = controller.state();
+        this.currentThemeName = state.themeName();
+        this.view.setTheme(this.currentThemeName);
         this.editorCursor = state.editorCursor();
         this.transcript = Viewport.create(state.columns(), 2);
         editor.setWidth(state.columns());
@@ -97,8 +114,10 @@ final class Tui4jCodingTerminalModel implements Model {
     @Override
     public Command init() {
         syncComponents();
-        // tui4j does not emit the initial size until explicitly requested. Without this,
-        // the production terminal stays at the 80x24 bootstrap size until the user resizes it.
+        // tui4j only reports the size when explicitly requested, and its automatic resize path
+        // relies on the POSIX WINCH signal, which does not exist on Windows. On Windows the 50ms
+        // poll carries a bounded size re-check; Tui4jTerminalIo drops unchanged sizes before the
+        // renderer, so an unchanged poll does not reset the renderer cache and repaint every row.
         return Command.batch(Command.checkWindowSize(), nextTick());
     }
 
@@ -109,6 +128,11 @@ final class Tui4jCodingTerminalModel implements Model {
             controller.drainEvents();
             syncComponents();
             command = nextTick();
+            if (pollWindowSize && ++windowSizePollTicks >= WINDOW_SIZE_POLL_TICKS) {
+                windowSizePollTicks = 0;
+                // checkWindowSize first so observers can detect the request without running the tick.
+                command = Command.batch(Command.checkWindowSize(), command);
+            }
         } else if (message instanceof DeferredEnterMessage deferred) {
             command = commitDeferredEnter(deferred);
         } else if (message instanceof SubmissionCompletedMessage completed) {
@@ -118,7 +142,10 @@ final class Tui4jCodingTerminalModel implements Model {
                 syncComponents();
             }
         } else if (message instanceof WindowSizeMessage resized) {
-            pump.offer(new TerminalUiAction.TerminalResized(resized.width(), resized.height()));
+            TerminalUiState state = controller.state();
+            if (resized.width() != state.columns() || resized.height() != state.rows()) {
+                pump.offer(new TerminalUiAction.TerminalResized(resized.width(), resized.height()));
+            }
             controller.drainEvents();
             syncComponents();
         } else if (controller.secureInputRequested() && message instanceof KeyPressMessage key) {
@@ -138,7 +165,7 @@ final class Tui4jCodingTerminalModel implements Model {
             command = key(key);
         } else if (message instanceof PasteMessage paste) {
             resolvePendingEnterAsNewline();
-            edit(new PasteMessage(sanitizeEditorInput(paste.content())));
+            pasteContent(paste.content());
         } else {
             editor.update(message);
         }
@@ -218,15 +245,93 @@ final class Tui4jCodingTerminalModel implements Model {
             }
         }
         TerminalUiState state = controller.state();
-        if (shortcuts.matchesToggleExpansion(key)) {
-            accept(TerminalInput.Kind.TOGGLE_EXPANSION);
-            return Command.none();
-        }
         if (state.selector().isPresent()) {
+            leaderActivatedNanos = 0;
             if ("completion".equals(state.selector().orElseThrow().kind()) && editCompletion(key)) {
                 return Command.none();
             }
             selectorKey(key);
+            return Command.none();
+        }
+
+        if (shortcuts.matchesCommandPalette(key)) {
+            controller.openCommandSelector();
+            return Command.none();
+        }
+        if (shortcuts.matchesModelCycleNext(key)) {
+            controller.cycleModel(1);
+            return Command.none();
+        }
+        if (shortcuts.matchesModelCyclePrevious(key)) {
+            controller.cycleModel(-1);
+            return Command.none();
+        }
+
+        long now = monotonicNanos.getAsLong();
+        boolean leaderPending = leaderActivatedNanos > 0 && (now - leaderActivatedNanos) <= LEADER_TIMEOUT_NANOS;
+        if (leaderActivatedNanos > 0 && !leaderPending) {
+            leaderActivatedNanos = 0;
+        }
+
+        if (shortcuts.matchesLeader(key)) {
+            leaderActivatedNanos = now;
+            return Command.none();
+        }
+
+        if (leaderPending) {
+            leaderActivatedNanos = 0;
+            if (key.type() == KeyType.keyESC || key.type() == KeyType.keyETX) {
+                return Command.none();
+            }
+            String keyChar = key.key();
+            if (keyChar != null && !keyChar.isEmpty()) {
+                char ch = Character.toLowerCase(keyChar.charAt(0));
+                switch (ch) {
+                    case 'b' -> {
+                        pump.offer(new TerminalUiAction.SidebarToggled());
+                        return Command.none();
+                    }
+                    case 's' -> {
+                        controller.accept(new TerminalInput(TerminalInput.Kind.EXECUTE_COMMAND, "/session"));
+                        return Command.none();
+                    }
+                    case 'e' -> {
+                        pump.offer(new TerminalUiAction.StatusChanged("External editor deferred in this version"));
+                        return Command.none();
+                    }
+                    case 'm' -> {
+                        executeCommand("/model");
+                        return Command.none();
+                    }
+                    case 'n' -> {
+                        executeCommand("/new");
+                        return Command.none();
+                    }
+                    case 'l' -> {
+                        executeCommand("/resume");
+                        return Command.none();
+                    }
+                    case 'c' -> {
+                        executeCommand("/compact");
+                        return Command.none();
+                    }
+                    case 'r' -> {
+                        executeCommand("/rename");
+                        return Command.none();
+                    }
+                    case 'q' -> {
+                        executeCommand("/quit");
+                        return Command.none();
+                    }
+                    default -> {
+                        return Command.none();
+                    }
+                }
+            }
+        }
+
+        if (shortcuts.matchesToggleExpansion(key)) {
+            accept(TerminalInput.Kind.TOGGLE_EXPANSION);
             return Command.none();
         }
         if (shortcuts.matchesRestoreQueuedMessage(key)) {
@@ -284,11 +389,21 @@ final class Tui4jCodingTerminalModel implements Model {
             return Command.none();
         }
         if (key.type() == KeyType.KeyLeft) {
-            moveCursor(TerminalTextCursor.previous(state.editorBuffer(), state.editorCursor()));
+            String token = pastedTokenBefore(state.editorBuffer(), state.editorCursor());
+            if (token != null) {
+                moveCursor(state.editorBuffer().indexOf(token));
+            } else {
+                moveCursor(TerminalTextCursor.previous(state.editorBuffer(), state.editorCursor()));
+            }
             return Command.none();
         }
         if (key.type() == KeyType.KeyRight) {
-            moveCursor(TerminalTextCursor.next(state.editorBuffer(), state.editorCursor()));
+            String token = pastedTokenAfter(state.editorBuffer(), state.editorCursor());
+            if (token != null) {
+                moveCursor(state.editorBuffer().indexOf(token) + token.length());
+            } else {
+                moveCursor(TerminalTextCursor.next(state.editorBuffer(), state.editorCursor()));
+            }
             return Command.none();
         }
         if (key.type() == KeyType.KeyHome) {
@@ -300,12 +415,30 @@ final class Tui4jCodingTerminalModel implements Model {
             return Command.none();
         }
         if (key.type() == KeyType.keyBS || key.type() == KeyType.keyDEL) {
-            int cursor = TerminalTextCursor.previous(state.editorBuffer(), state.editorCursor());
-            replaceEditor(TerminalTextCursor.backspace(state.editorBuffer(), state.editorCursor()), cursor);
+            String buffer = state.editorBuffer();
+            int cursor = state.editorCursor();
+            String token = pastedTokenBefore(buffer, cursor);
+            if (token != null) {
+                int start = buffer.indexOf(token);
+                pastedContent.remove(token);
+                replaceEditor(buffer.substring(0, start) + buffer.substring(start + token.length()), start);
+                return Command.none();
+            }
+            int previous = TerminalTextCursor.previous(buffer, cursor);
+            replaceEditor(TerminalTextCursor.backspace(buffer, cursor), previous);
             return Command.none();
         }
         if (key.type() == KeyType.KeyDelete) {
-            replaceEditor(TerminalTextCursor.delete(state.editorBuffer(), state.editorCursor()), state.editorCursor());
+            String buffer = state.editorBuffer();
+            int cursor = state.editorCursor();
+            String token = pastedTokenAfter(buffer, cursor);
+            if (token != null) {
+                int start = buffer.indexOf(token);
+                pastedContent.remove(token);
+                replaceEditor(buffer.substring(0, start) + buffer.substring(start + token.length()), start);
+                return Command.none();
+            }
+            replaceEditor(TerminalTextCursor.delete(buffer, cursor), cursor);
             return Command.none();
         }
         return edit(key);
@@ -440,6 +573,10 @@ final class Tui4jCodingTerminalModel implements Model {
         } else {
             return false;
         }
+        if (lostPastedToken(buffer, updated)) {
+            rejectProtectedPaste(buffer, cursor);
+            return true;
+        }
         controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, updated, updatedCursor));
         controller.accept(new TerminalInput(TerminalInput.Kind.COMPLETION_REQUESTED, updated, updatedCursor));
         syncComponents();
@@ -447,6 +584,10 @@ final class Tui4jCodingTerminalModel implements Model {
     }
 
     private void selectorKey(KeyPressMessage key) {
+        if (shortcuts.matchesToggleExpansion(key)) {
+            accept(TerminalInput.Kind.TOGGLE_EXPANSION);
+            return;
+        }
         if (key.type() == KeyType.KeyUp) {
             accept(TerminalInput.Kind.SELECT_PREVIOUS);
         } else if (key.type() == KeyType.KeyDown) {
@@ -468,7 +609,12 @@ final class Tui4jCodingTerminalModel implements Model {
         int beforeCursor = editorCursor;
         UpdateResult<Textarea> result = editor.update(message);
         String after = editor.value();
-        editorCursor = cursorAfter(message, before, beforeCursor, after);
+        int afterCursor = cursorAfter(message, before, beforeCursor, after);
+        if (lostPastedToken(before, after)) {
+            rejectProtectedPaste(before, beforeCursor);
+            return Command.none();
+        }
+        editorCursor = afterCursor;
         controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, after, editorCursor));
         if (startsCompletion(message, before, beforeCursor, after, editorCursor)) {
             controller.accept(new TerminalInput(TerminalInput.Kind.COMPLETION_REQUESTED, after, editorCursor));
@@ -497,7 +643,14 @@ final class Tui4jCodingTerminalModel implements Model {
         if (!state.editorBuffer().equals(controller.state().editorBuffer())) {
             resetHistoryNavigation();
         }
+        pruneStalePastes(controller.state().editorBuffer());
         syncComponents();
+    }
+
+    private void executeCommand(String command) {
+        controller.accept(new TerminalInput(TerminalInput.Kind.EXECUTE_COMMAND, command));
+        syncComponents();
+        pruneStalePastes(controller.state().editorBuffer());
     }
 
     private Command submit(TerminalInput.Kind kind) {
@@ -505,20 +658,24 @@ final class Tui4jCodingTerminalModel implements Model {
         if (pendingSubmission != null) {
             return Command.none();
         }
-        if (!state.editorBuffer().isBlank()) {
+        String expanded = expandPastedContent(state.editorBuffer());
+        if (!expanded.isBlank() && !controller.isRenamingSession()) {
             resumeTranscriptFollowing();
-            history.add(state.editorBuffer());
+            history.add(expanded);
         }
         resetHistoryNavigation();
-        TerminalInput input = new TerminalInput(kind, state.editorBuffer(), state.editorCursor());
-        var prepared = controller.prepareMessageSubmission(input);
+        TerminalInput input =
+                new TerminalInput(kind, expanded, TerminalTextCursor.clamp(expanded, state.editorCursor()));
+        var prepared = controller.prepareMessageSubmission(input, state.editorBuffer());
         if (prepared.isEmpty()) {
             controller.accept(input);
             syncComponents();
+            pruneStalePastes(controller.state().editorBuffer());
             return Command.none();
         }
         pendingSubmission = prepared.orElseThrow();
         syncComponents();
+        pruneStalePastes(controller.state().editorBuffer());
         PreparedMessageSubmission submission = pendingSubmission;
         return () -> new SubmissionCompletedMessage(controller.executeMessageSubmission(submission));
     }
@@ -572,6 +729,91 @@ final class Tui4jCodingTerminalModel implements Model {
         syncComponents();
     }
 
+    private void pasteContent(String content) {
+        String normalized = sanitizeEditorInput(content);
+        String trimmed = normalized.strip();
+        pruneStalePastes(controller.state().editorBuffer());
+        int lines = (int) trimmed.chars().filter(character -> character == '\n').count() + 1;
+        if (!trimmed.isEmpty()
+                && (lines >= PASTE_SUMMARY_MIN_LINES || trimmed.length() > PASTE_SUMMARY_MAX_CHARACTERS)) {
+            String token = "[Pasted #" + (++pasteSequence) + " ~" + lines + " lines]";
+            pastedContent.put(token, normalized);
+            edit(new PasteMessage(token));
+            return;
+        }
+        edit(new PasteMessage(normalized));
+    }
+
+    private String expandPastedContent(String buffer) {
+        StringBuilder expanded = new StringBuilder(buffer.length());
+        int index = 0;
+        while (index < buffer.length()) {
+            String token = tokenStartingAt(buffer, index);
+            if (token != null) {
+                expanded.append(pastedContent.get(token));
+                index += token.length();
+            } else {
+                expanded.append(buffer.charAt(index));
+                index++;
+            }
+        }
+        return expanded.toString();
+    }
+
+    private String tokenStartingAt(String buffer, int index) {
+        for (String token : pastedContent.keySet()) {
+            if (buffer.startsWith(token, index)) {
+                return token;
+            }
+        }
+        return null;
+    }
+
+    private void pruneStalePastes(String buffer) {
+        Optional<String> preserved = controller.preservedDraft();
+        pastedContent
+                .keySet()
+                .removeIf(token -> !buffer.contains(token)
+                        && preserved.map(p -> !p.contains(token)).orElse(true));
+    }
+
+    private String pastedTokenBefore(String buffer, int cursor) {
+        for (String token : pastedContent.keySet()) {
+            int start = buffer.indexOf(token);
+            if (start >= 0 && start < cursor && cursor <= start + token.length()) {
+                return token;
+            }
+        }
+        return null;
+    }
+
+    private String pastedTokenAfter(String buffer, int cursor) {
+        for (String token : pastedContent.keySet()) {
+            int start = buffer.indexOf(token);
+            if (start >= 0 && start <= cursor && cursor < start + token.length()) {
+                return token;
+            }
+        }
+        return null;
+    }
+
+    private boolean lostPastedToken(String before, String after) {
+        for (String token : pastedContent.keySet()) {
+            if (before.contains(token) && !after.contains(token)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void rejectProtectedPaste(String before, int cursor) {
+        editorCursor = cursor;
+        controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, before, cursor));
+        pump.offer(new TerminalUiAction.RecoverableFailure("PASTE_PLACEHOLDER_ATOMIC"));
+        controller.drainEvents();
+        syncComponents();
+    }
+
     private void resetHistoryNavigation() {
         browsingHistory = false;
         historyDraft = "";
@@ -599,10 +841,12 @@ final class Tui4jCodingTerminalModel implements Model {
                 clearSecretBuffer();
                 editor.setHeight(3);
                 editor.setMaxHeight(3);
-                editor.setPrompt("┃ ");
                 editor.setPlaceholder("Type a message, /command, @file, !command, or !!command");
                 secretPresentation = false;
             }
+            boolean isShell =
+                    state.editorBuffer().startsWith("!") || state.editorBuffer().startsWith("!!");
+            editor.setPrompt(isShell ? "! " : "┃ ");
             if (!editor.value().equals(state.editorBuffer())) {
                 synchronizeEditor(state.editorBuffer(), state.editorCursor());
             } else if (editorCursor != state.editorCursor()) {
@@ -616,8 +860,18 @@ final class Tui4jCodingTerminalModel implements Model {
             editor.focus();
         }
 
+        boolean themeSwitched = false;
+        if (!state.themeName().equals(currentThemeName)) {
+            currentThemeName = state.themeName();
+            view.setTheme(currentThemeName);
+            renderedTranscript = List.of();
+            themeSwitched = true;
+        }
+
+        int effectiveTranscriptColumns =
+                (state.sidebarVisible() && state.columns() >= 100) ? state.columns() - 42 : state.columns();
         boolean transcriptChanged =
-                renderedTranscript != state.transcript() || renderedTranscriptColumns != state.columns();
+                renderedTranscript != state.transcript() || renderedTranscriptColumns != effectiveTranscriptColumns;
         if (transcriptChanged) {
             String nextTranscript = view.transcriptContent(state);
             if (!nextTranscript.equals(transcriptContent)) {
@@ -626,12 +880,12 @@ final class Tui4jCodingTerminalModel implements Model {
                 if (followTranscript) {
                     transcript.gotoBottom();
                     newOutputPending = false;
-                } else {
+                } else if (!themeSwitched) {
                     newOutputPending = true;
                 }
             }
             renderedTranscript = state.transcript();
-            renderedTranscriptColumns = state.columns();
+            renderedTranscriptColumns = effectiveTranscriptColumns;
         }
     }
 
@@ -668,6 +922,19 @@ final class Tui4jCodingTerminalModel implements Model {
         return Command.tick(EVENT_POLL_INTERVAL, ignored -> new PollMessage());
     }
 
+    /**
+     * Drops a window-size report that matches the current state so a periodic or signal-driven
+     * resize with no change does not make the tui4j renderer clear its line cache and repaint.
+     */
+    Message filterMessage(Message message) {
+        if (message instanceof WindowSizeMessage size
+                && size.width() == controller.state().columns()
+                && size.height() == controller.state().rows()) {
+            return null;
+        }
+        return message;
+    }
+
     private String sanitizeEditorInput(String value) {
         String normalized = value.replace("\r\n", "\n").replace('\r', '\n');
         StringBuilder safe = new StringBuilder(normalized.length());
@@ -683,7 +950,7 @@ final class Tui4jCodingTerminalModel implements Model {
         return safe.toString();
     }
 
-    private record PollMessage() implements Message {}
+    record PollMessage() implements Message {}
 
     private record DeferredEnter(long sequence, TerminalInput.Kind kind) {}
 

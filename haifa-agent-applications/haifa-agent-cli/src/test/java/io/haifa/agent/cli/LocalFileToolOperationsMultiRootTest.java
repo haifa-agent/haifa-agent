@@ -283,6 +283,34 @@ class LocalFileToolOperationsMultiRootTest {
     }
 
     @Test
+    void reattachingTheSameReadDirectoryEscalatesToDevelopWithoutRevocation() throws IOException {
+        var resolver = CliExecutionPlatform.workspaceTargetResolver(provisioning, tenant, owner);
+        RunWorkspaceAccess runAccess = new RunWorkspaceAccess(workspaceId, Set.of("execution_run"));
+
+        assertThatThrownBy(() -> resolver.resolve(runAccess, docsWorkspaceId.value(), "."))
+                .isInstanceOf(SecurityException.class)
+                .hasMessage("WORKSPACE_ACCESS_MODE_DENIED");
+
+        ToolResult escalated = operations.execute(
+                "workspace_attach",
+                workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                arguments(Map.of("path", docsDir.toString(), "mode", "develop")));
+
+        assertThat(escalated.successful()).isTrue();
+        assertThat(escalated.structuredData())
+                .containsEntry("mode", "DEVELOP")
+                .containsEntry("rootPath", docsDir.toRealPath().toString());
+        assertThat(registry.find(projectId, docsWorkspaceId))
+                .get()
+                .extracting(AuthorizedDirectoryEntry::mode)
+                .isEqualTo(WorkspaceAccessMode.DEVELOP);
+        assertThat(resolver.resolve(runAccess, docsWorkspaceId.value(), ".").workspaceId())
+                .isEqualTo(docsWorkspaceId);
+    }
+
+    @Test
     void explicitReauthorizationUpgradesReadDirectoryToDevelop() throws IOException {
         var resolver = CliExecutionPlatform.workspaceTargetResolver(provisioning, tenant, owner);
         RunWorkspaceAccess runAccess = new RunWorkspaceAccess(workspaceId, Set.of("execution_run"));

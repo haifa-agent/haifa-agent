@@ -12,6 +12,7 @@ import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.runtime.core.storage.MessageRedactionListener;
 import io.haifa.agent.runtime.core.storage.MessageRedactionListenerRegistry;
 import io.haifa.agent.runtime.core.storage.RecentMessageWindow;
+import io.haifa.agent.runtime.core.storage.RunMessageVisibility;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
 import io.haifa.agent.runtime.core.storage.SessionMessageRepository;
 import io.haifa.agent.store.sqlite.codec.EncodedPayload;
@@ -25,7 +26,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 import org.apache.ibatis.exceptions.PersistenceException;
 
@@ -36,10 +39,13 @@ public final class SqliteSessionMessageRepository
     private final SqliteRuntimeUnitOfWork unitOfWork;
     private final VersionedPayloadCodecRegistry codecs;
     private final List<MessageRedactionListener> listeners = new CopyOnWriteArrayList<>();
+    private final List<Consumer<AgentRunId>> messageCommitListeners = new CopyOnWriteArrayList<>();
+    private final SqliteRuntimeEventAppender journal;
 
     public SqliteSessionMessageRepository(SqliteRuntimeUnitOfWork unitOfWork, VersionedPayloadCodecRegistry codecs) {
         this.unitOfWork = Objects.requireNonNull(unitOfWork, "unitOfWork must not be null");
         this.codecs = Objects.requireNonNull(codecs, "codecs must not be null");
+        this.journal = new SqliteRuntimeEventAppender(unitOfWork, codecs);
     }
 
     @Override
@@ -54,7 +60,17 @@ public final class SqliteSessionMessageRepository
             } catch (PersistenceException exception) {
                 throw new IllegalStateException("message already exists or has invalid references", exception);
             }
-            return fromRow(row);
+            AgentMessage message = fromRow(row);
+            if (RunMessageVisibility.projectable(message))
+                message.runId().ifPresent(runId -> {
+                    journal.append(
+                            runId,
+                            "message.committed",
+                            Map.of("messageId", message.id().value(), "messageSequence", message.sequence()),
+                            message.createdAt());
+                    unitOfWork.afterCommit(() -> messageCommitListeners.forEach(listener -> listener.accept(runId)));
+                });
+            return message;
         });
     }
 
@@ -110,6 +126,33 @@ public final class SqliteSessionMessageRepository
     }
 
     @Override
+    public List<AgentMessage> runMessagesAfter(AgentRunId runId, long after, long head, int limit) {
+        requireLimit(limit);
+        if (after < 0 || head < after) throw new IllegalArgumentException("invalid message window");
+        return execute(() ->
+                unitOfWork.mapper(RuntimeStoreMapper.class).runMessagesAfter(runId.value(), after, head, limit).stream()
+                        .map(this::fromRow)
+                        .toList());
+    }
+
+    @Override
+    public long runMessageCountThrough(AgentRunId runId, long sequence) {
+        return execute(
+                () -> unitOfWork.mapper(RuntimeStoreMapper.class).runMessageCountThrough(runId.value(), sequence));
+    }
+
+    @Override
+    public OptionalLong runMessageHead(AgentRunId runId) {
+        Long head = execute(() -> unitOfWork.mapper(RuntimeStoreMapper.class).runMessageHead(runId.value()));
+        return head == null ? OptionalLong.empty() : OptionalLong.of(head);
+    }
+
+    @Override
+    public void registerMessageCommitListener(Consumer<AgentRunId> listener) {
+        messageCommitListeners.add(Objects.requireNonNull(listener));
+    }
+
+    @Override
     public AgentMessage redactMessage(AgentMessageId id) {
         return execute(() -> {
             RuntimeStoreMapper mapper = unitOfWork.mapper(RuntimeStoreMapper.class);
@@ -126,7 +169,9 @@ public final class SqliteSessionMessageRepository
                     MessageVisibility.REDACTED,
                     current.sequence(),
                     List.of(new TextPart("[REDACTED]", "plain")),
-                    Map.of("redacted", true),
+                    RunMessageVisibility.projectable(current)
+                            ? Map.of("redacted", true, "runMessageProjected", true)
+                            : Map.of("redacted", true),
                     current.createdAt());
             if (mapper.redactMessage(toRow(redacted)) != 1) {
                 throw new IllegalStateException("message redaction was not applied");

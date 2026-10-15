@@ -77,7 +77,7 @@ class AgentRunTest {
         AgentRun child = AgentRun.createChild(
                 new AgentRunId("child"), root, AgentInvocationMode.AGENT_AS_TOOL, runSpec(2), NOW.plusSeconds(1));
         AgentRun grandchild = AgentRun.createChild(
-                new AgentRunId("grandchild"), child, AgentInvocationMode.FORK_JOIN, runSpec(2), NOW.plusSeconds(2));
+                new AgentRunId("grandchild"), child, AgentInvocationMode.AGENT_AS_TOOL, runSpec(2), NOW.plusSeconds(2));
 
         assertThat(root.rootRunId()).isEqualTo(root.id());
         assertThat(root.parentRunId()).isEmpty();

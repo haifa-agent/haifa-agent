@@ -3,6 +3,7 @@ package io.haifa.agent.tool.api;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.core.tool.ToolCallId;
 import java.time.Instant;
@@ -14,6 +15,7 @@ public record ToolInvocationRequest(
         FrozenToolBinding binding,
         ToolCallId toolCallId,
         AgentRunId runId,
+        Optional<AgentSessionId> sessionId,
         TenantRef tenant,
         PrincipalRef principal,
         ToolArguments arguments,
@@ -26,6 +28,7 @@ public record ToolInvocationRequest(
         Objects.requireNonNull(binding, "binding");
         Objects.requireNonNull(toolCallId, "toolCallId");
         Objects.requireNonNull(runId, "runId");
+        sessionId = Objects.requireNonNull(sessionId, "sessionId");
         Objects.requireNonNull(tenant, "tenant");
         Objects.requireNonNull(principal, "principal");
         Objects.requireNonNull(arguments, "arguments");
@@ -46,11 +49,39 @@ public record ToolInvocationRequest(
             Instant deadline,
             Optional<String> idempotencyKey,
             ToolCancellation cancellation,
+            Map<String, String> credentials,
+            ToolInvocationObserver observer) {
+        this(
+                binding,
+                toolCallId,
+                runId,
+                Optional.empty(),
+                tenant,
+                principal,
+                arguments,
+                deadline,
+                idempotencyKey,
+                cancellation,
+                credentials,
+                observer);
+    }
+
+    public ToolInvocationRequest(
+            FrozenToolBinding binding,
+            ToolCallId toolCallId,
+            AgentRunId runId,
+            TenantRef tenant,
+            PrincipalRef principal,
+            ToolArguments arguments,
+            Instant deadline,
+            Optional<String> idempotencyKey,
+            ToolCancellation cancellation,
             Map<String, String> credentials) {
         this(
                 binding,
                 toolCallId,
                 runId,
+                Optional.empty(),
                 tenant,
                 principal,
                 arguments,
