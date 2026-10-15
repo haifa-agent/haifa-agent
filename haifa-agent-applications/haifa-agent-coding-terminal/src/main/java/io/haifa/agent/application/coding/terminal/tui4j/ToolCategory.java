@@ -35,39 +35,38 @@ enum ToolCategory {
         if (colon > 0) {
             lower = lower.substring(0, colon);
         }
+        int slash = lower.indexOf('/');
+        if (slash > 0) {
+            lower = lower.substring(slash + 1);
+        }
         lower = lower.strip();
 
-        if (lower.startsWith("file_read")
-                || lower.startsWith("read_file")
-                || lower.startsWith("view_file")
-                || lower.startsWith("file_stat")
-                || lower.startsWith("list_directory")
-                || lower.startsWith("glob_find")
-                || lower.equals("workspace.read")) {
-            return READ;
-        }
-        if (lower.startsWith("file_patch")
-                || lower.startsWith("patch_file")
-                || lower.startsWith("replace_file_content")
-                || lower.startsWith("write_to_file")
-                || lower.startsWith("file_write")
-                || lower.startsWith("file_edit")) {
-            return EDIT;
-        }
-        if (lower.startsWith("execution_run")
-                || lower.startsWith("run_command")
-                || lower.startsWith("shell_exec")
-                || lower.startsWith("terminal_exec")
-                || lower.startsWith("exec_")) {
-            return EXEC;
-        }
-        if (lower.startsWith("grep_search")
-                || lower.startsWith("search_code")
-                || lower.startsWith("code_search")
-                || lower.startsWith("web_search")
-                || lower.contains("search")) {
-            return SEARCH;
-        }
-        return TOOL;
+        return switch (lower) {
+            case "file_read",
+                    "file_stat",
+                    "file_list",
+                    "file_diff",
+                    "read_file",
+                    "view_file",
+                    "list_directory",
+                    "glob_find",
+                    "web_fetch" -> READ;
+
+            case "file_patch",
+                    "file_write",
+                    "file_create",
+                    "file_delete",
+                    "file_move",
+                    "patch_file",
+                    "replace_file_content",
+                    "write_to_file",
+                    "edit_file" -> EDIT;
+
+            case "execution_run", "run_command", "shell_exec", "terminal_exec" -> EXEC;
+
+            case "file_search", "web_search", "grep_search", "search_code", "code_search" -> SEARCH;
+
+            default -> TOOL;
+        };
     }
 }

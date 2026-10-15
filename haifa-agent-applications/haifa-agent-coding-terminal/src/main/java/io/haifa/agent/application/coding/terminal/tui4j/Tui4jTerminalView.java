@@ -508,18 +508,18 @@ final class Tui4jTerminalView {
     }
 
     private String renderToolBody(TranscriptItem item, String body) {
-        return body.lines()
-                .map(raw -> {
-                    String clean = sanitize(raw);
-                    if (isToolLike(item) && TerminalDiffHighlighter.isDiffLine(clean)) {
-                        return "  " + TerminalDiffHighlighter.highlightLine(theme, clean);
-                    }
-                    if (clean.startsWith(ToolBodyLines.OUTCOME_PREFIX + " UNKNOWN")) {
-                        return "  " + theme.warning(clean);
-                    }
-                    return "  " + clean;
-                })
-                .collect(Collectors.joining("\n"));
+        if (!isToolLike(item) || !TerminalDiffHighlighter.containsDiff(body)) {
+            return body.lines()
+                    .map(raw -> {
+                        String clean = sanitize(raw);
+                        if (clean.startsWith(ToolBodyLines.OUTCOME_PREFIX + " UNKNOWN")) {
+                            return "  " + theme.warning(clean);
+                        }
+                        return "  " + clean;
+                    })
+                    .collect(Collectors.joining("\n"));
+        }
+        return TerminalDiffHighlighter.highlightToolBody(theme, body);
     }
 
     private String renderUserMessage(TranscriptItem item, int availableWidth) {
@@ -813,7 +813,7 @@ final class Tui4jTerminalView {
                 .collect(Collectors.joining("\n"));
     }
 
-    private static String sanitize(String value) {
+    static String sanitize(String value) {
         StringBuilder safe = new StringBuilder(value.length());
         value.codePoints().forEach(codePoint -> {
             if (codePoint == '\t') {

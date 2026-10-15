@@ -810,6 +810,65 @@ class Tui4jTerminalViewTest {
     }
 
     @Test
+    void doesNotMiscolorOrdinaryToolOutputsAsDiff() {
+        Renderer renderer = Renderer.defaultRenderer();
+        renderer.setColorProfile(ColorProfile.TrueColor);
+        renderer.setHasDarkBackground(true);
+        try {
+            String ordinaryBody =
+                    """
+                    Target: README.md
+                    Output:
+                    - item 1
+                    - item 2
+                    + note on addition
+                    Result: ok""";
+
+            TerminalUiState initial = TerminalUiState.initial(100, 30);
+            TerminalUiState state = new TerminalUiState(
+                    initial.header(),
+                    initial.loadedResources(),
+                    List.of(new TranscriptItem(
+                            "tool-read-1",
+                            TranscriptItem.Kind.TOOL,
+                            "file_read · README.md",
+                            ordinaryBody,
+                            "SUCCEEDED",
+                            true,
+                            Optional.empty(),
+                            Optional.of(1_000L),
+                            Optional.of(150L))),
+                    initial.pending(),
+                    initial.status(),
+                    initial.editorBuffer(),
+                    initial.editorCursor(),
+                    initial.selector(),
+                    initial.footer(),
+                    initial.columns(),
+                    initial.rows(),
+                    initial.session(),
+                    initial.currentRunId(),
+                    initial.appliedCursor(),
+                    initial.seenEventIds(),
+                    initial.recoverableError(),
+                    initial.exitRequested());
+
+            String content = view.transcriptContent(state);
+
+            // Lines with bullet lists (- item) should NOT be diff-colored in red or green
+            assertThat(content).contains("  - item 1");
+            assertThat(content).contains("  - item 2");
+            assertThat(content).contains("  + note on addition");
+            Tui4jTerminalTheme theme = new Tui4jTerminalTheme();
+            assertThat(content).doesNotContain(theme.diffRemoved("- item 1"));
+            assertThat(content).doesNotContain(theme.diffAdded("+ note on addition"));
+        } finally {
+            renderer.setColorProfile(ColorProfile.Ascii);
+            renderer.setHasDarkBackground(false);
+        }
+    }
+
+    @Test
     void rendersAssistantMarkdownWithoutPersistingTerminalStylesInState() {
         TerminalUiState initial = TerminalUiState.initial(100, 30);
         TranscriptItem assistant = item(
