@@ -10,7 +10,7 @@ Reactor 版本由根 `pom.xml` 的 `revision` 属性单点定义，全部模块 
 <version>${revision}</version>
 ...
 <properties>
-    <revision>0.1.2</revision>
+    <revision>0.1.3-SNAPSHOT</revision>
 </properties>
 ```
 
@@ -22,8 +22,8 @@ Reactor 版本由根 `pom.xml` 的 `revision` 属性单点定义，全部模块 
 ## 本地 SDK 版本化发布
 
 向本地 Maven 仓库发布 SDK 统一使用 `scripts/publish-local-sdk.ps1`，禁止直接执行 `mvn install`：
-- 主检出在 `dev` 分支上发布基线 `0.1.2-SNAPSHOT`；
-- 各 `feat-*` worktree 自动发布到 `0.1.2-<worktree 目录名>-SNAPSHOT`；
+- 主检出在 `dev` 分支上发布基线 `0.1.3-SNAPSHOT`；
+- 各 `feat-*` worktree 自动发布到 `0.1.3-<worktree 目录名>-SNAPSHOT`；
 - 发布过程核对所有公开 JAR/POM 的 SHA-256 和版本展开，并在 `io/haifa/haifa-agent-bom/<version>/haifa-sdk-publish-manifest.json` 写出发布清单。
 
 ## 分层 Maven 入口
