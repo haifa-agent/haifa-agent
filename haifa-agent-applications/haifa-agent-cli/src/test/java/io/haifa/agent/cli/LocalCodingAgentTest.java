@@ -402,7 +402,7 @@ class LocalCodingAgentTest {
                     .contains("Attach additional workspace directory")
                     .contains("Path: " + attachedDirectory)
                     .contains("Mode: read")
-                    .contains("this local Coding Agent registry")
+                    .contains("this local Coding Agent's authorized directories")
                     .contains("persisted locally and remains revocable");
             awaitCondition(
                     () -> agent.executionSettled(accepted.runId()),
@@ -445,6 +445,7 @@ class LocalCodingAgentTest {
         Path database = configuredSkillRoot.resolve("workspace-registry-recovery.db");
         Path attachedDirectory = Files.createDirectory(configuredSkillRoot.resolve("persistent-attached"));
         Path attachedFile = Files.writeString(attachedDirectory.resolve("restored.txt"), "restored-content");
+        String expectedAttachedPath = attachedDirectory.toRealPath().toString();
         CliConfiguration defaults = CliConfiguration.defaults();
         var configuration = CliConfigurationBuilder.from(defaults)
                 .execution(hostExecution(defaults.execution()))
@@ -466,10 +467,10 @@ class LocalCodingAgentTest {
                     .findFirst()
                     .orElseThrow();
             assertThat(result.toolResultData())
-                    .containsKeys("workspaceRef", "safeDisplayName", "mode", "source", "status")
+                    .containsKeys("workspaceRef", "safeDisplayName", "mode", "rootPath", "status")
+                    .containsEntry("rootPath", expectedAttachedPath)
                     .doesNotContainKeys("path", "realPath", "locationRef", "workspaceId");
             workspaceRef.set(String.valueOf(result.toolResultData().get("workspaceRef")));
-            assertThat(result.content()).doesNotContain(attachedDirectory.toString());
             return answer("persistent-attach-complete", "attachment persisted");
         };
         var protector = new AesGcmModelContinuationProtector(
@@ -506,7 +507,6 @@ class LocalCodingAgentTest {
                     });
         }
 
-        String expectedAttachedPath = attachedDirectory.toRealPath().toString();
         AtomicInteger readCalls = new AtomicInteger();
         AtomicReference<String> restoredWorkspacePaths = new AtomicReference<>();
         var readModel = (io.haifa.agent.model.api.AgentChatModel) request -> {
@@ -712,7 +712,7 @@ class LocalCodingAgentTest {
             if (call == 1) {
                 assertThat(request.tools())
                         .extracting(io.haifa.agent.model.api.ModelToolSpecification::name)
-                        .contains("execution_run", "skill_load", "skill_resource_read")
+                        .contains("execution_run", "skill_load")
                         .doesNotContain("file_search");
                 return toolResponse(
                         "shell-call-1",
@@ -1258,9 +1258,7 @@ class LocalCodingAgentTest {
                                 && message.content().contains("task-planning")
                                 && message.content().contains("metadata-only"))
                         .noneMatch(message -> message.content().contains("# Task planning"));
-                assertThat(request.tools())
-                        .extracting(tool -> tool.name())
-                        .contains("skill_load", "skill_resource_read");
+                assertThat(request.tools()).extracting(tool -> tool.name()).contains("skill_load");
                 return new AgentChatResponse(
                         "cli-skill-1",
                         "stub-model",
