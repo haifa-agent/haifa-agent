@@ -284,7 +284,7 @@ final class Tui4jTerminalTheme {
     }
 
     String error(String value) {
-        return block(value, palette.errorForeground(), palette.errorBackground());
+        return Style.newStyle().foreground(palette.errorAccent()).bold(true).render(value);
     }
 
     String queued(String value) {
@@ -316,18 +316,16 @@ final class Tui4jTerminalTheme {
         return styledBorder + styledContent + " ";
     }
 
-    String errorCardLine(String paddedContent, boolean narrow, boolean isHeader) {
+    String errorCardLine(String content, boolean narrow, boolean isHeader) {
         String border = narrow ? " " : "│ ";
         String styledBorder =
                 Style.newStyle().foreground(palette.errorAccent()).bold(true).render(border);
-        Style contentStyle = Style.newStyle()
-                .foreground(isHeader ? palette.errorAccent() : palette.errorForeground())
-                .background(palette.errorBackground());
+        Style contentStyle = Style.newStyle().foreground(isHeader ? palette.errorAccent() : palette.text());
         if (isHeader) {
             contentStyle = contentStyle.bold(true);
         }
-        String styledContent = contentStyle.render(paddedContent);
-        return styledBorder + styledContent + " ";
+        String styledContent = content.isEmpty() ? "" : contentStyle.render(content);
+        return styledBorder + styledContent;
     }
 
     String syntaxKeyword(String value) {

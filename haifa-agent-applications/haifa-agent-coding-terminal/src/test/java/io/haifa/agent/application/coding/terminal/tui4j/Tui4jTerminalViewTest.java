@@ -1180,15 +1180,51 @@ class Tui4jTerminalViewTest {
         List<String> lines = content.lines().toList();
 
         assertThat(lines).hasSize(3);
-        assertThat(lines.get(0)).startsWith("│ ✖ Error · Process timeout [failed]");
-        assertThat(lines.get(1)).startsWith("│ Subprocess timed out after 30000ms");
-        assertThat(lines.get(2)).startsWith("│ Exit code: -1");
+        assertThat(lines.get(0)).isEqualTo("│ ✖ Error · Process timeout [failed]");
+        assertThat(lines.get(1)).isEqualTo("│ Subprocess timed out after 30000ms");
+        assertThat(lines.get(2)).isEqualTo("│ Exit code: -1");
 
         for (String line : lines) {
-            assertThat(TextWidth.measureCellWidth(line)).isEqualTo(80);
+            assertThat(TextWidth.measureCellWidth(line)).isLessThanOrEqualTo(80);
         }
 
         assertThat(content).doesNotContain("┌", "└", "─", "━");
+    }
+
+    @Test
+    void rendersFailedToolCardWithLocalizedErrorTitleAndCleanBody() {
+        TerminalUiState initial = TerminalUiState.initial(100, 30);
+        TerminalUiState state = new TerminalUiState(
+                initial.header(),
+                initial.loadedResources(),
+                List.of(item(
+                        "tool-1",
+                        TranscriptItem.Kind.TOOL,
+                        "file_patch · src/App.java",
+                        "--- a/src/App.java\n+++ b/src/App.java\n@@ -1,2 +1,2 @@\n-old\n+new",
+                        "FAILED",
+                        true)),
+                initial.pending(),
+                initial.status(),
+                initial.editorBuffer(),
+                initial.editorCursor(),
+                initial.selector(),
+                initial.footer(),
+                initial.columns(),
+                initial.rows(),
+                initial.session(),
+                initial.currentRunId(),
+                initial.appliedCursor(),
+                initial.seenEventIds(),
+                initial.recoverableError(),
+                initial.exitRequested());
+
+        String content = view.transcriptContent(state);
+
+        assertThat(content).contains("✗ file_patch · src/App.java");
+        assertThat(content).contains("-old", "+new");
+        // No background sequence anywhere in tool error output
+        assertThat(content).doesNotContain("\u001B[4").doesNotContain("\u001B[10");
     }
 
     @Test

@@ -482,8 +482,9 @@ final class Tui4jTerminalView {
             return style(item, approval(title, item.approvalDetails().orElseThrow(), item.expanded()));
         }
         if (collapsed) {
+            String styledTitle = isToolLike(item) && isErrorStatus(item.status()) ? theme.error(title) : title;
             StringBuilder content =
-                    new StringBuilder(title).append(theme.muted(" · " + shortcuts.toggleExpansion() + " expand"));
+                    new StringBuilder(styledTitle).append(theme.muted(" · " + shortcuts.toggleExpansion() + " expand"));
             if (isErrorStatus(item.status()) || isUnknownStatus(item.status())) {
                 String details = item.body()
                         .lines()
@@ -495,10 +496,22 @@ final class Tui4jTerminalView {
                 String preview = previewLine(item.body(), availableWidth);
                 if (!preview.isBlank()) content.append('\n').append(theme.muted("  " + preview));
             }
+            if (isToolLike(item) && isErrorStatus(item.status())) {
+                return content.toString();
+            }
             return style(item, content.toString());
         }
         String body =
                 item.expanded() ? item.body() : item.body().lines().limit(5).collect(Collectors.joining("\n"));
+        if (isToolLike(item) && isErrorStatus(item.status())) {
+            String styledTitle = theme.error(title);
+            String content = styledTitle + "\n" + renderToolBody(item, body);
+            if (item.expanded()) {
+                String metadata = metadata(item);
+                if (!metadata.isBlank()) content = content + "\n" + theme.muted("  " + metadata);
+            }
+            return content;
+        }
         String content = title + "\n" + renderToolBody(item, body);
         if (item.expanded() && isToolLike(item)) {
             String metadata = metadata(item);
@@ -561,7 +574,7 @@ final class Tui4jTerminalView {
         String wrappedHeader = textWrapper.wrap(headerText, contentWidth, true);
         boolean isFirst = true;
         for (String hLine : wrappedHeader.split("\n", -1)) {
-            lines.add(theme.errorCardLine(padToWidth(hLine, contentWidth), narrow, isFirst));
+            lines.add(theme.errorCardLine(hLine, narrow, isFirst));
             isFirst = false;
         }
 
@@ -572,17 +585,17 @@ final class Tui4jTerminalView {
             for (int i = 0; i < maxLines; i++) {
                 String cleanLine = sanitize(rawLines[i]);
                 if (cleanLine.isEmpty()) {
-                    lines.add(theme.errorCardLine(" ".repeat(contentWidth), narrow, false));
+                    lines.add(theme.errorCardLine("", narrow, false));
                 } else {
                     String wrapped = textWrapper.wrap(cleanLine, contentWidth, true);
                     for (String wLine : wrapped.split("\n", -1)) {
-                        lines.add(theme.errorCardLine(padToWidth(wLine, contentWidth), narrow, false));
+                        lines.add(theme.errorCardLine(wLine, narrow, false));
                     }
                 }
             }
             if (!item.expanded() && rawLines.length > maxLines) {
                 String more = "… " + (rawLines.length - maxLines) + " more lines";
-                lines.add(theme.errorCardLine(padToWidth(more, contentWidth), narrow, false));
+                lines.add(theme.errorCardLine(more, narrow, false));
             }
         }
         return String.join("\n", lines);

@@ -50,7 +50,7 @@ class Tui4jTerminalThemeTest {
 
         assertThat(theme.success("success")).isEqualTo(" success ");
         assertThat(theme.pending("pending")).isEqualTo(" pending ");
-        assertThat(theme.error("error")).isEqualTo(" error ");
+        assertThat(theme.error("error")).isEqualTo("error");
         assertThat(theme.queued("queued")).isEqualTo(" queued ");
         assertThat(theme.focus("focus")).isEqualTo("focus");
         assertThat(theme.selected("selected")).isEqualTo("selected");
@@ -74,7 +74,7 @@ class Tui4jTerminalThemeTest {
             String rendered = theme.error("错误 🚀");
 
             assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(rendered))
-                    .isEqualTo(" 错误 🚀 ");
+                    .isEqualTo("错误 🚀");
             assertThat(rendered).contains("\u001B[").endsWith("\u001B[0m");
 
             String markdownStyles = theme.heading("heading")
@@ -104,8 +104,8 @@ class Tui4jTerminalThemeTest {
         assertThat(userHeaderNormal).isEqualTo("│ ❯ You           ");
         assertThat(userBodyNormal).isEqualTo("│ Fix retry loop  ");
         assertThat(userHeaderNarrow).isEqualTo(" ❯ You           ");
-        assertThat(errorHeaderNormal).isEqualTo("│ ✖ Error · Failed ");
-        assertThat(errorHeaderNarrow).isEqualTo(" ✖ Error · Failed ");
+        assertThat(errorHeaderNormal).isEqualTo("│ ✖ Error · Failed");
+        assertThat(errorHeaderNarrow).isEqualTo(" ✖ Error · Failed");
 
         assertThat(userHeaderNormal).doesNotContain("\u001B");
         assertThat(errorHeaderNormal).doesNotContain("\u001B");
@@ -129,12 +129,43 @@ class Tui4jTerminalThemeTest {
             assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(userHeader))
                     .isEqualTo("│ ❯ You ");
             assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(errorHeader))
-                    .isEqualTo("│ ✖ Error ");
+                    .isEqualTo("│ ✖ Error");
 
             String subtle = theme.borderSubtle("│");
             assertThat(subtle).contains("\u001B[");
             assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(subtle))
                     .isEqualTo("│");
+        }
+    }
+
+    @Test
+    void errorStylesNeverContainBackgroundSequencesAcrossThemesAndProfiles() {
+        for (String themeName : Tui4jTerminalTheme.availableThemeNames()) {
+            theme.switchTheme(themeName);
+            for (ColorProfile profile : new ColorProfile[] {
+                ColorProfile.Ascii, ColorProfile.ANSI, ColorProfile.ANSI256, ColorProfile.TrueColor
+            }) {
+                for (boolean dark : new boolean[] {true, false}) {
+                    renderer.setColorProfile(profile);
+                    renderer.setHasDarkBackground(dark);
+
+                    String err = theme.error("Operation failed");
+                    String errHeader = theme.errorCardLine("✖ Error · Failed", false, true);
+                    String errBody = theme.errorCardLine("Reason: detail", false, false);
+
+                    // SGR background codes begin with [4 or [10
+                    assertThat(err).doesNotContain("\u001B[4").doesNotContain("\u001B[10");
+                    assertThat(errHeader).doesNotContain("\u001B[4").doesNotContain("\u001B[10");
+                    assertThat(errBody).doesNotContain("\u001B[4").doesNotContain("\u001B[10");
+
+                    assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(err))
+                            .isEqualTo("Operation failed");
+                    assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(errHeader))
+                            .isEqualTo("│ ✖ Error · Failed");
+                    assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(errBody))
+                            .isEqualTo("│ Reason: detail");
+                }
+            }
         }
     }
 
