@@ -1,6 +1,7 @@
 package io.haifa.agent.application.coding.terminal.tui4j;
 
 import com.williamcallahan.tui4j.ansi.TextWidth;
+import com.williamcallahan.tui4j.ansi.TextWrapper;
 import com.williamcallahan.tui4j.ansi.Truncate;
 import com.williamcallahan.tui4j.compat.bubbles.textarea.Textarea;
 import com.williamcallahan.tui4j.compat.bubbles.viewport.Viewport;
@@ -80,6 +81,7 @@ final class Tui4jTerminalView {
 
     private final Tui4jTerminalTheme theme = new Tui4jTerminalTheme();
     private final IncrementalTerminalMarkdownRenderer markdown = new IncrementalTerminalMarkdownRenderer(theme);
+    private final TextWrapper textWrapper = new TextWrapper();
     private final TerminalShortcutProfile shortcuts;
 
     Tui4jTerminalView() {
@@ -88,6 +90,15 @@ final class Tui4jTerminalView {
 
     Tui4jTerminalView(TerminalShortcutProfile shortcuts) {
         this.shortcuts = java.util.Objects.requireNonNull(shortcuts, "shortcuts must not be null");
+    }
+
+    void setTheme(String themeName) {
+        theme.switchTheme(themeName);
+        markdown.resetAll();
+    }
+
+    Tui4jTerminalTheme theme() {
+        return theme;
     }
 
     String render(
@@ -230,7 +241,7 @@ final class Tui4jTerminalView {
                     rightPadded = right;
                 }
                 if (row > 0) combined.append('\n');
-                combined.append(leftPadded).append(theme.muted("│")).append(rightPadded);
+                combined.append(leftPadded).append(theme.borderSubtle("│")).append(rightPadded);
             }
             lines.add(combined.toString());
         }
@@ -252,6 +263,7 @@ final class Tui4jTerminalView {
 
         boolean showSidebar = state.sidebarVisible() && state.columns() >= 100;
         int mainWidth = showSidebar ? state.columns() - 42 : state.columns();
+        int availableWidth = showSidebar ? Math.max(12, mainWidth - 1) : Math.max(12, mainWidth);
 
         StringBuilder content = new StringBuilder();
         TranscriptItem previous = null;
@@ -259,7 +271,7 @@ final class Tui4jTerminalView {
             if (previous != null) {
                 content.append(isCompactTool(previous) && isCompactTool(item) ? '\n' : "\n\n");
             }
-            content.append(transcriptItem(item, Math.max(12, mainWidth - 2)));
+            content.append(transcriptItem(item, availableWidth));
             previous = item;
         }
         return content.toString();
@@ -440,9 +452,18 @@ final class Tui4jTerminalView {
         return truncatedLeft + " ".repeat(spaces) + right;
     }
 
-    private String transcriptItem(TranscriptItem item, int bodyWidth) {
+    private String transcriptItem(TranscriptItem item, int availableWidth) {
         String status = item.status().toLowerCase(Locale.ROOT);
         boolean collapsed = item.collapsible();
+        if (item.kind() == TranscriptItem.Kind.USER) {
+            return renderUserMessage(item, availableWidth);
+        }
+        if (item.kind() == TranscriptItem.Kind.ERROR) {
+            return renderErrorMessage(item, availableWidth);
+        }
+        if (isToolLike(item)) {
+            return renderToolItem(item, availableWidth);
+        }
         String title = sanitize(
                 switch (item.kind()) {
                     case USER -> "You";
@@ -454,6 +475,7 @@ final class Tui4jTerminalView {
                     case ERROR -> "Error · " + item.title() + " [" + status + "]";
                 });
         if (item.kind() == TranscriptItem.Kind.ASSISTANT) {
+            int bodyWidth = Math.max(12, availableWidth - 2);
             String rendered = markdown.render(item.id(), item.body(), bodyWidth);
             String content = rendered.isEmpty() ? title : title + "\n" + indent(rendered);
             return style(item, content);
@@ -465,28 +487,145 @@ final class Tui4jTerminalView {
         if (collapsed) {
             StringBuilder content =
                     new StringBuilder(title).append(theme.muted(" · " + shortcuts.toggleExpansion() + " expand"));
+            return style(item, content.toString());
+        }
+        String body =
+                item.expanded() ? item.body() : item.body().lines().limit(5).collect(Collectors.joining("\n"));
+        String content = title + "\n" + body;
+        return style(item, content);
+    }
+
+    private String renderToolItem(TranscriptItem item, int availableWidth) {
+        boolean collapsed = item.collapsible();
+        String glyph = styledGlyph(item.status());
+        String duration = durationSuffix(item, collapsed);
+        String headerTitle = glyph + " " + sanitize(item.title()) + duration;
+
+        if (collapsed) {
+            StringBuilder content =
+                    new StringBuilder(headerTitle).append(theme.muted(" · " + shortcuts.toggleExpansion() + " expand"));
             if (isErrorStatus(item.status()) || isUnknownStatus(item.status())) {
                 String details = item.body()
                         .lines()
                         .limit(2)
                         .map(value -> "  " + sanitize(value))
                         .collect(Collectors.joining("\n"));
-                if (!details.isBlank()) content.append('\n').append(details);
-            } else if (isToolLike(item)) {
-                String preview = previewLine(item.body(), bodyWidth);
-                if (!preview.isBlank()) content.append('\n').append(theme.muted("  " + preview));
+                if (!details.isBlank()) {
+                    content.append('\n').append(details);
+                }
+            } else {
+                String preview = previewLine(item.body(), availableWidth);
+                if (!preview.isBlank()) {
+                    content.append('\n').append(theme.muted("  " + preview));
+                }
             }
-            return style(item, content.toString());
+            return content.toString();
         }
+
         String body =
                 item.expanded() ? item.body() : item.body().lines().limit(5).collect(Collectors.joining("\n"));
-        String content =
-                title + "\n" + body.lines().map(value -> "  " + sanitize(value)).collect(Collectors.joining("\n"));
-        if (item.expanded() && isToolLike(item)) {
+        String content = headerTitle + "\n" + renderToolBody(item, body);
+        if (item.expanded()) {
             String metadata = metadata(item);
-            if (!metadata.isBlank()) content = content + "\n" + theme.muted("  " + metadata);
+            if (!metadata.isBlank()) {
+                content = content + "\n" + theme.muted("  " + metadata);
+            }
         }
-        return style(item, content);
+        return content;
+    }
+
+    private String renderToolBody(TranscriptItem item, String body) {
+        if (!isToolLike(item) || !TerminalDiffHighlighter.containsDiff(body)) {
+            return body.lines()
+                    .map(raw -> {
+                        String clean = sanitize(raw);
+                        if (clean.startsWith(ToolBodyLines.OUTCOME_PREFIX + " UNKNOWN")) {
+                            return "  " + theme.warning(clean);
+                        }
+                        return "  " + clean;
+                    })
+                    .collect(Collectors.joining("\n"));
+        }
+        return TerminalDiffHighlighter.highlightToolBody(theme, body);
+    }
+
+    private String renderUserMessage(TranscriptItem item, int availableWidth) {
+        boolean narrow = availableWidth < 40;
+        int contentWidth = narrow ? Math.max(12, availableWidth - 2) : Math.max(16, availableWidth - 3);
+
+        List<String> lines = new ArrayList<>();
+        String headerText = "❯ You";
+        lines.add(theme.userCardLine(padToWidth(headerText, contentWidth), narrow, true));
+
+        String body = item.body().replace("\r\n", "\n").replace('\r', '\n');
+        if (!body.isEmpty()) {
+            for (String rawLine : body.split("\n", -1)) {
+                String cleanLine = sanitize(rawLine);
+                if (cleanLine.isEmpty()) {
+                    lines.add(theme.userCardLine(" ".repeat(contentWidth), narrow, false));
+                } else {
+                    String wrapped = textWrapper.wrap(cleanLine, contentWidth, true);
+                    for (String wLine : wrapped.split("\n", -1)) {
+                        lines.add(theme.userCardLine(padToWidth(wLine, contentWidth), narrow, false));
+                    }
+                }
+            }
+        }
+        return String.join("\n", lines);
+    }
+
+    private String renderErrorMessage(TranscriptItem item, int availableWidth) {
+        boolean narrow = availableWidth < 40;
+        int contentWidth = narrow ? Math.max(12, availableWidth - 2) : Math.max(16, availableWidth - 3);
+
+        String status = item.status().toLowerCase(Locale.ROOT);
+        String titleText = sanitize(item.title());
+        String headerText = titleText.toLowerCase(Locale.ROOT).startsWith("error")
+                ? "✖ " + titleText + " [" + status + "]"
+                : "✖ Error · " + titleText + " [" + status + "]";
+
+        List<String> lines = new ArrayList<>();
+        String wrappedHeader = textWrapper.wrap(headerText, contentWidth, true);
+        boolean isFirst = true;
+        for (String hLine : wrappedHeader.split("\n", -1)) {
+            lines.add(theme.errorCardLine(hLine, narrow, isFirst));
+            isFirst = false;
+        }
+
+        String body = item.body().replace("\r\n", "\n").replace('\r', '\n');
+        if (!body.isEmpty()) {
+            String[] rawLines = body.split("\n", -1);
+            int maxLines = item.expanded() ? rawLines.length : Math.min(rawLines.length, 5);
+            for (int i = 0; i < maxLines; i++) {
+                String cleanLine = sanitize(rawLines[i]);
+                if (cleanLine.isEmpty()) {
+                    lines.add(theme.errorCardLine("", narrow, false));
+                } else {
+                    String wrapped = textWrapper.wrap(cleanLine, contentWidth, true);
+                    for (String wLine : wrapped.split("\n", -1)) {
+                        lines.add(theme.errorCardLine(wLine, narrow, false));
+                    }
+                }
+            }
+            if (!item.expanded() && rawLines.length > maxLines) {
+                String more = "… " + (rawLines.length - maxLines) + " more lines";
+                lines.add(theme.errorCardLine(more, narrow, false));
+            }
+        }
+        return String.join("\n", lines);
+    }
+
+    private static String padToWidth(String text, int targetWidth) {
+        int width = TextWidth.measureCellWidth(text);
+        if (width < targetWidth) {
+            return text + " ".repeat(targetWidth - width);
+        }
+        if (width > targetWidth) {
+            String truncated = Truncate.truncate(text, targetWidth, "");
+            int truncatedWidth = TextWidth.measureCellWidth(truncated);
+            return truncatedWidth < targetWidth ? truncated + " ".repeat(targetWidth - truncatedWidth) : truncated;
+        }
+        return text;
     }
 
     private static String previewLine(String body, int bodyWidth) {
@@ -553,6 +692,14 @@ final class Tui4jTerminalView {
         return "●";
     }
 
+    private String styledGlyph(String status) {
+        String normalized = status.strip().toUpperCase(Locale.ROOT);
+        if (UNKNOWN_STATUSES.contains(normalized)) return theme.warning("?");
+        if (SUCCESS_STATUSES.contains(normalized)) return theme.success("✓");
+        if (ERROR_STATUSES.contains(normalized)) return theme.error("✗");
+        return theme.pending("●");
+    }
+
     private static String durationSuffix(TranscriptItem item, boolean collapsed) {
         return item.durationMillis()
                 .filter(value -> !collapsed || value > COLLAPSED_DURATION_HIDE_MILLIS)
@@ -560,8 +707,9 @@ final class Tui4jTerminalView {
                 .orElse("");
     }
 
-    private static String metadata(TranscriptItem item) {
+    private String metadata(TranscriptItem item) {
         List<String> parts = new ArrayList<>();
+        parts.add(theme.toolBadge(ToolCategory.fromToolName(item.title())));
         item.durationMillis().ifPresent(value -> parts.add("Duration " + TerminalDurations.human(value)));
         long lines = item.body().lines().filter(line -> !line.isBlank()).count();
         if (lines > 0) parts.add(lines + (lines == 1 ? " line" : " lines"));
@@ -643,6 +791,7 @@ final class Tui4jTerminalView {
                 || TIMED_RUN_STATUSES.stream().anyMatch(candidate -> normalized.startsWith(candidate + " ("))) {
             return theme.pending(content);
         }
+        if (UNKNOWN_STATUSES.contains(normalized)) return theme.pending(content);
         if (ERROR_STATUSES.contains(normalized)) return theme.error(content);
         return content;
     }
@@ -699,7 +848,7 @@ final class Tui4jTerminalView {
                 .collect(Collectors.joining("\n"));
     }
 
-    private static String sanitize(String value) {
+    static String sanitize(String value) {
         StringBuilder safe = new StringBuilder(value.length());
         value.codePoints().forEach(codePoint -> {
             if (codePoint == '\t') {

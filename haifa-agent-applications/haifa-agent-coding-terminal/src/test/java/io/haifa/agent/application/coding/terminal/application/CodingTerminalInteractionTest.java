@@ -602,4 +602,40 @@ class CodingTerminalInteractionTest {
         controller.accept(input(TerminalInput.Kind.SUBMIT, "first turn"));
         assertThat(client.createOptions.initialModelId()).contains("model-c");
     }
+
+    @Test
+    void themeCommandSwitchesThemeDirectlyOrViaSelector() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+
+        assertThat(controller.state().themeName()).isEqualTo("dark");
+
+        // Direct theme switch
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "/theme nord"));
+        assertThat(controller.state().themeName()).isEqualTo("nord");
+        assertThat(controller.state().status()).isEqualTo("Theme set to nord");
+
+        // Invalid theme does not change theme and reports available options
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "/theme unknown_palette"));
+        assertThat(controller.state().themeName()).isEqualTo("nord");
+        assertThat(controller.state().status()).contains("Unknown theme", "dark, light, high-contrast, nord");
+
+        // /theme with no arguments opens selector
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "/theme"));
+        assertThat(controller.state().selector()).hasValueSatisfying(selector -> {
+            assertThat(selector.kind()).isEqualTo("theme-selector");
+            assertThat(selector.options()).containsExactly("dark", "light", "high-contrast", "nord");
+            assertThat(selector.selected()).isEqualTo(3); // "nord" is at index 3
+        });
+
+        // Select "light" (move up twice from 3 to 1) and confirm
+        controller.accept(input(TerminalInput.Kind.SELECT_PREVIOUS, ""));
+        controller.accept(input(TerminalInput.Kind.SELECT_PREVIOUS, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+
+        assertThat(controller.state().selector()).isEmpty();
+        assertThat(controller.state().themeName()).isEqualTo("light");
+        assertThat(controller.state().status()).isEqualTo("Theme set to light");
+    }
 }

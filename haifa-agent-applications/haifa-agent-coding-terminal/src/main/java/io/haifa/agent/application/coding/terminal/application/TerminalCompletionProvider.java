@@ -22,6 +22,7 @@ public final class TerminalCompletionProvider {
             "/archive",
             "/delete",
             "/commands",
+            "/theme",
             "/help",
             "/quit");
     private static final int MAX_CANDIDATES = 20;

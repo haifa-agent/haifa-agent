@@ -6,6 +6,7 @@ import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
 import io.haifa.agent.application.coding.terminal.state.PendingMessage;
 import io.haifa.agent.application.coding.terminal.state.TerminalRecovery;
 import io.haifa.agent.application.coding.terminal.state.TerminalSelector;
+import io.haifa.agent.application.coding.terminal.state.TerminalThemes;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiReducer;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
 import io.haifa.agent.application.project.product.ProjectProductException;
@@ -1151,11 +1152,31 @@ public final class CodingTerminalController implements AutoCloseable {
                         new TerminalSelector("session", "Session & Environment", options, 0)));
             }
             case COMMANDS -> openCommandSelector();
+            case THEME -> handleThemeCommand(argument);
             case QUIT -> apply(new TerminalUiAction.ExitRequested());
             case NOT_IMPLEMENTED ->
                 apply(new TerminalUiAction.RecoverableFailure(TerminalCommandRouter.CAPABILITY_NOT_IMPLEMENTED));
             case UNKNOWN -> apply(new TerminalUiAction.RecoverableFailure(TerminalCommandRouter.COMMAND_UNKNOWN));
             case MESSAGE -> throw new IllegalStateException("message must be routed separately");
+        }
+    }
+
+    private void handleThemeCommand(String argument) {
+        if (argument.isBlank()) {
+            preserveDraft();
+            List<String> options = TerminalThemes.AVAILABLE;
+            int selected = Math.max(0, options.indexOf(state.themeName()));
+            apply(new TerminalUiAction.SelectorOpened(
+                    new TerminalSelector("theme-selector", "Theme", options, selected)));
+            return;
+        }
+        String canonical = argument.strip().toLowerCase(java.util.Locale.ROOT);
+        if (TerminalThemes.isValid(canonical)) {
+            apply(new TerminalUiAction.ThemeChanged(canonical));
+            apply(new TerminalUiAction.StatusChanged("Theme set to " + canonical));
+        } else {
+            apply(new TerminalUiAction.StatusChanged(
+                    "Unknown theme: " + argument + ". Available: " + String.join(", ", TerminalThemes.AVAILABLE)));
         }
     }
 
@@ -2037,6 +2058,13 @@ public final class CodingTerminalController implements AutoCloseable {
                                     removed ? "Model account disconnected" : "Model account was already absent"));
                         },
                         code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+            }
+            case "theme-selector" -> {
+                String selectedTheme = selector.options().get(selected);
+                apply(new TerminalUiAction.SelectorClosed());
+                restorePreservedDraft();
+                apply(new TerminalUiAction.ThemeChanged(selectedTheme));
+                apply(new TerminalUiAction.StatusChanged("Theme set to " + selectedTheme));
             }
             case "archive-session" -> {
                 apply(new TerminalUiAction.SelectorClosed());

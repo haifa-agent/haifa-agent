@@ -25,6 +25,8 @@ class TerminalCommandRouterTest {
         assertThat(router.route("/command")).isEqualTo(TerminalCommand.COMMANDS);
         assertThat(router.route("/commands")).isEqualTo(TerminalCommand.COMMANDS);
         assertThat(router.route("/help")).isEqualTo(TerminalCommand.COMMANDS);
+        assertThat(router.route("/theme")).isEqualTo(TerminalCommand.THEME);
+        assertThat(router.route("/theme nord")).isEqualTo(TerminalCommand.THEME);
         assertThat(router.route("/quit")).isEqualTo(TerminalCommand.QUIT);
     }
 

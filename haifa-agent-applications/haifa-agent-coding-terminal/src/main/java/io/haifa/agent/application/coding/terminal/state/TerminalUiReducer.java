@@ -500,6 +500,9 @@ public final class TerminalUiReducer {
                     !state.sidebarVisible(),
                     true);
         }
+        if (action instanceof TerminalUiAction.ThemeChanged theme) {
+            return state.withThemeName(theme.themeName());
+        }
         throw new IllegalArgumentException("Unsupported Terminal UI action");
     }
 
@@ -1308,6 +1311,7 @@ public final class TerminalUiReducer {
                 activity,
                 exit,
                 sidebarVisible,
-                sidebarExplicitlyToggled);
+                sidebarExplicitlyToggled,
+                state.themeName());
     }
 }
