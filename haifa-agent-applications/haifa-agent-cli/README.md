@@ -658,8 +658,8 @@ CPU/内存/Kernel 均未隔离。Host Guarded 以当前 OS 用户身份运行，
 
 CLI Coding Profile 显式允许 `task-planning` 与 `result-verification` 两个 SDK 基础 Skill，并把
 `skill_load`、`skill_resource_read` 注册到同一个 Runtime Tool Pipeline。模型开始时只看到 Skill
-名称、描述和摘要；调用 `skill_load` 后，精确冻结版本的指令才进入后续上下文。资源必须再通过
-`skill_resource_read` 按需读取。基础 Skill 不含外部 Tool、网络、Credential 或脚本依赖，运行时也不执行
+名称、描述和摘要；调用 `skill_load` 后，精确冻结版本的指令才进入后续上下文。只有激活了包含可读资源的
+Skill，`skill_resource_read` 才会向模型披露，并用于按需读取这些资源。基础 Skill 不含外部 Tool、网络、Credential 或脚本依赖，运行时也不执行
 Skill 包中的脚本。
 
 `skills.localDirectories` 是 CLI 可信控制面配置，不接受模型或 Run 参数提供目录。每个 `root` 必须是

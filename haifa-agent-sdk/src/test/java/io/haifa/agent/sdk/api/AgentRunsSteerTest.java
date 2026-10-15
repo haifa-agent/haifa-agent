@@ -110,7 +110,6 @@ public class AgentRunsSteerTest {
     @Test
     void inputSubmittedDuringAToolCallDoesNotTouchTheToolAndAppliesAfterItReturns() throws Exception {
         AtomicReference<HaifaAgent> agentRef = new AtomicReference<>();
-        AtomicReference<AgentRunId> runRef = new AtomicReference<>();
         AtomicReference<RunInputResult> duringTool = new AtomicReference<>();
         AtomicReference<CityRequest> toolInput = new AtomicReference<>();
         List<AgentChatRequest> requests = new CopyOnWriteArrayList<>();
@@ -127,7 +126,7 @@ public class AgentRunsSteerTest {
             public CityResponse invoke(CityRequest input, JavaToolContext context) {
                 duringTool.set(agentRef.get()
                         .runs()
-                        .submitInput(new RunInputCommand(runRef.get(), "during-tool", "Prefer trains")));
+                        .submitInput(new RunInputCommand(context.runId(), "during-tool", "Prefer trains")));
                 toolInput.set(input);
                 return new CityResponse("Shanghai is sunny");
             }
@@ -157,7 +156,6 @@ public class AgentRunsSteerTest {
             AgentRunId runId = agent.conversations()
                     .start(new StartConversationCommand("start-tool", "Tool", "How do I travel?"))
                     .runId();
-            runRef.set(runId);
             var completed = agent.runs().await(runId, AWAIT).orElseThrow();
 
             assertThat(completed.status())

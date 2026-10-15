@@ -7,6 +7,8 @@
 - Upgrade requires recompiling applications that use the retired Memory candidate/review API. SQLite V15
   refuses databases with ACTIVE memories or PENDING candidates; preserve a full backup and follow
   [the upgrade guide](docs/reference/upgrading.md).
+- CLI slow tests now follow the current approved workspace path and progressive Skill Tool disclosure
+  contracts. The SDK Steer fixture uses the trusted Tool context Run ID instead of racing start() return.
 - The SQLite recovery fixture explicitly models its logical worker identity, retaining same-owner rejection
   and abandoned-execution settlement assertions after production worker IDs gained host PID markers.
 
