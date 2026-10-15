@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise extracted Windows distributions without a Provider request or user data."""
 import argparse
+from contextlib import closing
 import hashlib
 import json
 import os
@@ -53,7 +54,8 @@ def main() -> None:
         ca = packages["coding-agent"]
         # The actual portable launcher checks its bundled configuration and JRE without changing PATH.
         subprocess.run([str(ca / "bin" / "haifa.bat"), "--help"], env=environment,
-                       cwd=directory, check=True, stdout=subprocess.DEVNULL, timeout=60)
+                       cwd=directory, check=True, stdout=subprocess.DEVNULL, timeout=60,
+                       creationflags=subprocess.CREATE_NO_WINDOW)
         pa = packages["personal-assistant"]
         jar, = (pa / "lib").glob("*.jar")
         for attempt in (1, 2):
@@ -93,7 +95,7 @@ def main() -> None:
                     if not databases:
                         raise RuntimeError("Personal Assistant did not create a durable SQLite store")
                     for database in databases:
-                        with sqlite3.connect(database) as connection:
+                        with closing(sqlite3.connect(database)) as connection:
                             if connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
                                 raise RuntimeError("Packaged database failed its integrity check")
                 finally:
