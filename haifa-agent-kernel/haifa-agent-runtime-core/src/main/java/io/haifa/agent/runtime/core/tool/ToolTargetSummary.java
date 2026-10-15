@@ -77,15 +77,7 @@ public final class ToolTargetSummary {
         String queryOrNet = extractQueryOrNetworkTarget(values);
         if (queryOrNet != null) return boundAndSanitize(queryOrNet, fallback);
 
-        // 7. Descriptive target
-        String descriptive = extractDescriptiveTarget(values);
-        if (descriptive != null) return boundAndSanitize(descriptive, fallback);
-
-        // 8. Single argument fallback
-        String singleArg = extractSingleArgumentFallback(values);
-        if (singleArg != null) return boundAndSanitize(singleArg, fallback);
-
-        // 9. Fallback to tool name
+        // 7. Fallback to tool name
         return fallback;
     }
 
@@ -174,39 +166,6 @@ public final class ToolTargetSummary {
     private static String extractQueryOrNetworkTarget(Map<String, Object> values) {
         return stringValue(
                 findValue(values, "query", "q", "url", "uri", "pattern", "role", "agent", "subagent", "agentId"));
-    }
-
-    private static String extractDescriptiveTarget(Map<String, Object> values) {
-        return stringValue(findValue(
-                values,
-                "command",
-                "CommandLine",
-                "commandLine",
-                "command_line",
-                "cmd",
-                "description",
-                "purpose",
-                "summary",
-                "prompt",
-                "message",
-                "instruction",
-                "title",
-                "goal",
-                "objective"));
-    }
-
-    private static String extractSingleArgumentFallback(Map<String, Object> values) {
-        String single = null;
-        for (Map.Entry<String, Object> entry : values.entrySet()) {
-            String val = stringValue(entry.getValue());
-            if (val != null) {
-                if (single != null) {
-                    return null;
-                }
-                single = val;
-            }
-        }
-        return single;
     }
 
     private static boolean hasKey(Map<String, Object> values, String key) {

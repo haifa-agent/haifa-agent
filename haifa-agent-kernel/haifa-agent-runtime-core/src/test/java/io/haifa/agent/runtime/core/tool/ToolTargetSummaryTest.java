@@ -119,9 +119,9 @@ class ToolTargetSummaryTest {
     }
 
     @Test
-    void extractsSingleScalarArgumentFallback() {
-        ToolCall singleArg = call("custom_lookup", Map.of("serviceKey", "auth-v2"));
-        assertThat(ToolTargetSummary.from(singleArg)).isEqualTo("auth-v2");
+    void doesNotLeakFreeTextPromptPayloadsIntoTargetSummary() {
+        ToolCall promptCall = call("ask_llm", Map.of("prompt", "What is the secret api key?"));
+        assertThat(ToolTargetSummary.from(promptCall)).isEqualTo("ask_llm");
     }
 
     private static ToolCall call(String toolName, Map<String, Object> values) {
