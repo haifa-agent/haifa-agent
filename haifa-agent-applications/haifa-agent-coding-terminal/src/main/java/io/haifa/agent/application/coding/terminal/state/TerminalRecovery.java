@@ -70,6 +70,10 @@ public record TerminalRecovery(Category category, String code, String action) {
                     "WORKSPACE_MANIFEST_UNAVAILABLE",
                     "Fix or ignore the inaccessible workspace path, then retry the command."),
             entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "PASTE_PLACEHOLDER_ATOMIC",
+                    "A pasted block is kept whole; delete it from its edge in one step and retry."),
+            entry(
                     Category.TERMINAL_FAILURE,
                     "TERMINAL_FAILURE",
                     "Restart the terminal; the session remains recoverable."));

@@ -1,5 +1,11 @@
 # Haifa Agent SDK Starter
 
+`McpToolPlatforms.McpToolPlatform.toolNames()` 返回连接时完成协议协商、发现及 allowlist 筛选后
+实际注册的 SDK Tool alias（包含真实 prefix 映射）的不可变 `Set<String>`。读取不重新连接、发现或
+调用 `applyTo`，关闭后该快照仍可读取；空声明与 optional 失败均返回空集。旧第三方实现默认拒绝该
+查询，不能用猜测名称替代真实注册事实。该方法只公开名称，不公开 schema、Provider 或凭据；
+已发现名称不等于执行授权，调用仍进入既有 Runtime/Policy 边界。
+
 面向首次接入者的纯 Java 安全默认装配。Starter 默认使用 DeepSeek V4 Flash、环境变量
 `DEEPSEEK_API_KEY`、进程内 Runtime Persistence 和 Conversation Store，不启用文件、Shell、Git、
 Web、Memory、Artifact 或 Execution。MCP 默认同样不启用，只有显式声明 `mcpServer(...)` 时才作为
@@ -88,9 +94,9 @@ MCP Client 的公共面只有 `McpServerSpec`、`McpServerRequirement` 和
 - **HTTPS**。非 loopback 端点必须是 HTTPS；本地开发可用 `allowLoopbackHttp()`。endpoint 不接受
   query 和 fragment：2025 线 Transport 按 origin + raw path 路由，带 query 会被静默丢弃。
 - **Credential 不入 Spec**。`bearerTokenFromEnvironment("PARTNER_MCP_TOKEN")` 或
-  `header(name, environmentVariable)` 只保存环境变量名。密钥在装配时读取一次、交由 Credential 边界
-  持有，再注入 discovery 与 Tool 调用；事后修改环境变量不会热轮换 Token。密钥不进入 Tool Definition、
-  诊断或日志。
+  `header(name, environmentVariable)` 只保存环境变量名；亦支持动态凭据供应 `bearerToken(Supplier<String>)`
+  与 `header(name, Supplier<String>)`。密钥交由 Credential 边界持有，动态 Token 通过 Scoped Redaction
+  随轮换动态纳管与卸载，并在 Agent 关闭时统一清理。密钥不进入 Tool Definition、诊断或日志。
 - **保留 Header**。Transport 自己拥有 `Content-Type`、`Accept`、`MCP-Protocol-Version`、`Mcp-Method`、
   `Mcp-Session-Id`、`Last-Event-ID`、`Host`、`Content-Length`、`Connection` 等头，Credential API 不能
   覆盖或追加它们；`X-Api-Key` 这类自定义头正常可用。
@@ -108,13 +114,130 @@ Starter 的 `standardApproval()` preset 对任何带 NETWORK_ACCESS 的 Tool 都
 调用会产生一次 Interaction。宿主用 `agent.runs().pendingInteraction(runId)` 和
 `agent.runs().respond(...)` 响应；需要无人值守时应通过 `haifa-agent-sdk` 显式装配自己的 Policy 规则。
 
-0.1.1 Native MCP Client 只提供 Streamable HTTP；stdio 需要 Execution Broker，暂不在 Starter 公开。
+0.1.2-SNAPSHOT Native MCP Client 只提供 Streamable HTTP；stdio 需要 Execution Broker，暂不在 Starter 公开。
+
+### 自定义装配：把声明式 MCP 接入任意 Builder
+
+进程内 `HaifaAgentStarter` 固定装配内存 Persistence/Conversation。产品若已自有持久化与 Conversation
+组件（例如 SQLite），可用 `McpToolPlatforms.connect(...)` 得到同一个声明式 MCP 贡献，再接入任意
+`HaifaAgentBuilder`：
+
+```java
+var mcp = McpToolPlatforms.connect(List.of(search, jobs), tenant, principal);
+try {
+    HaifaAgentBuilder builder = HaifaAgents.builder(profile)
+            .persistence(sqlite.persistence())
+            .conversation(sqlite.conversation());
+    mcp.applyTo(builder); // Tool registration、managed resource、Credential 与诊断一次完成
+    return builder.build();
+} catch (RuntimeException | Error failure) {
+    mcp.close();
+    throw failure;
+}
+```
+
+`connect` 走与 Starter 相同的 `SdkMcpClientFactory` 与同一个 package-private 装配路径，返回值只暴露
+`applyTo(HaifaAgentBuilder)` 与 `close()`；空列表是 no-op，不覆盖调用方已有的 Credential。required Server
+失败时释放已开连接并抛出，optional Server 失败只贡献安全诊断。成功构建后由 Agent 持有并在 `close()` 释放；
+`applyTo` 只能调用一次。
+
+`applyTo` 会占用 builder 唯一的 Credential 槽：若 builder 已设置了另一个 Credential 贡献，`applyTo` 在添加任何
+Tool、resource 或诊断之前抛 `IllegalStateException`，builder 保持原状，平台仍未应用、可交给其它 builder 或关闭；
+`applyTo` 之后再设置不同的 Credential 贡献同样失败。需要与宿主自有凭据并存时，请提供一个组合 broker，不要依赖
+后写覆盖。若 `HaifaAgentBuilder.build()` 在装配中途失败，平台不会被自动关闭，调用方须自行 `close()`。
 
 默认 instructions 只是 Quickstart fallback；使用它时 `agent.diagnostics()` 包含
 `DEFAULT_INSTRUCTIONS_IN_USE`，显式调用 `instructions(...)` 后该诊断消失。`name` 仅用于展示和
 Conversation display name，不进入 Prompt 或选择逻辑；Agent `description` 暂不暴露。多轮、重试、
 revision、取消和事件订阅继续使用显式
 Conversation/Run API。
+
+## 宿主执行（Host execution）
+
+`HostExecutionPlatforms.hostGuarded(...)` 把 SDK 自己的 `execution_run` Tool 装配进任意
+`HaifaAgentBuilder`，形态对齐 `McpToolPlatforms`：
+
+```java
+var execution = HostExecutionPlatforms.hostGuarded(
+        new HostExecutionPlatforms.HostExecutionSpec(
+                workspaceRoot, dataRoot, Duration.ofSeconds(120), Duration.ofMinutes(10), 65_536, 1_000),
+        caller.tenant(), caller.principal());
+HaifaAgentBuilder builder = HaifaAgents.builder(profile)
+        .persistence(sqlite.persistence())
+        .conversation(sqlite.conversation());
+execution.applyTo(builder); // 注册 execution_run、managed resource 与宿主执行边界
+```
+
+- **单一实现路径**：`HostGuardedSandboxProvider` + `DefaultExecutionBroker` + `ExecutionToolProvider`，
+  不新增第二套 Broker / Sandbox / Policy / Runtime。
+- **超时是产品定义**：`defaultTimeout` / `maximumTimeout` 由产品给出，上限为
+  `ExecutionToolConfiguration.MAXIMUM_DECLARED_TIMEOUT`（10 分钟）；二者逐字进入模型可见的
+  `timeoutMillis` 上限与 Tool 自身超时。Personal Assistant 的 30 秒产品定义不变。
+- **固定工作目录**：Tool 只在 `workspaceRoot` 注册的 Workspace 根目录执行，`workdir` 参数不暴露，
+  模型不能选择 cwd。
+- **冻结身份绑定 workspace**：Tool definition 身份、`providerBindingReference`
+  （`host:execution:v1:sha256:<digest>`）与 Workspace revision 都包含宿主根的规范化路径指纹与物理目录指纹
+  （`HostWorkspaceLocationStore`）。换到另一个 `workspaceRoot`、或同一路径的目录被替换后，旧 Run 的冻结绑定
+  不再命中，装配差异 fail closed，不会把已批准的命令派发到另一个目录。
+- **网络声明不撒谎**：本入口无法隔离网络，进程就是普通宿主进程，因此声明的 Tool 始终带 `PROCESS_EXECUTION`
+  与 `NETWORK_ACCESS`，没有 `networkAllowed=false` 这种声明；标准审批策略据此要求审批。
+- **审批提示**：`applyTo` 同时安装 execution 专用 Approval 提示，显示 mode、语言、命令/脚本、参数、用途、
+  声明超时、输出上限、宿主 provider 与调用摘要；其它 Tool 委托默认格式器。自持 builder 路径的产品可调用
+  `approvalPromptFormatter()` 自行装配（同 Personal Assistant）。
+- **宿主环境与边界**：scratch 位于 `dataRoot` 下，宿主环境按基线 allowlist 解析；进程以当前 OS 用户、
+  普通宿主网络、非隔离的宿主文件系统运行，每次调用仍需一次精确 Approval。
+- `applyTo` 只能调用一次，并把平台自身注册为 Agent 持有的 managed resource；`close()` 幂等。
+- 本入口不安装 execution 专用 schema 校验器：自持 Tool platform 的产品应把 `registration()`
+  注册到自己的 platform，并按 Personal Assistant 的方式用 `ExecutionToolSchemaValidator` 包裹校验器。
+
+验证：`./mvnw -pl :haifa-agent-sdk-starter -am test`。
+
+### 冻结技能脚本执行（Trusted Skill script entry files）
+
+`SkillScriptPlatforms.trusted(...)` 把"产品声明的固定业务 Tool + 冻结 Skill 包脚本"装配进任意
+`HaifaAgentBuilder`。它的形态与 `HostExecutionPlatforms` 一致，实现类与部分辅助方法来自 038-30
+（`HostGuardedSandboxProvider` + `DefaultExecutionBroker` + `ExecutionToolProvider` 等），但本入口
+自行创建一份 workspace store/sandbox/broker/execution provider，**不消费某个已创建的**
+`HostExecutionPlatform`/provider **实例**；同一平台没有共享的第二套 Broker/Sandbox/Policy/Runtime
+实现类。当前不支持同一 Agent 把普通执行 Tool 与可信技能脚本 Tool 装配到共享的 workspace/服务
+资源；确有该需求时需另行评审一个显式共享装配入口。
+
+```java
+var skills = SkillScriptPlatforms.trusted(
+        new SkillScriptPlatforms.SkillScriptSpec(
+                workspaceRoot, dataRoot,
+                List.of(new SkillScriptPlatforms.SkillScriptRuntime("bun", Path.of("C:/run/bun.exe"))),
+                skillContentLoader,
+                List.of(new SkillScriptPlatforms.SkillScriptToolDeclaration(
+                        toolName, title, description, inputSchema,
+                        Duration.ofMinutes(2), frozenSkillBinding, "scripts/main.ts", "bun",
+                        Duration.ofSeconds(120), "purpose", argumentMapper)),
+                Duration.ofSeconds(30), Duration.ofMinutes(10), 1_048_576, 2_000),
+        caller.tenant(), caller.principal());
+skills.applyTo(builder);
+```
+
+- **入口文件执行**：平台在 Workspace 根下为冻结 Skill 包版本准备一个可复用的不可变执行目录
+  （`.haifa-trusted-skills/<版本密钥>/`）：首次执行前把冻结包字节逐文件校验后落盘（完整校验写入
+  临时目录后一次性原子发布，绝不删除已完成的版本目录；被中断的准备不会留下可误认为完整的目录），
+  之后每次调用直接复用该版本目录并按路径执行声明入口文件，脚本相对导入与入口文件身份成立
+  （标准输入模型无法表达）。目录不随调用删除；准备阶段的文件字节漂移 fail closed
+  （`SecurityException`），拒绝时不会落盘任何包内容。注意：复用阶段只信任 prepared 标记与声明的
+  入口是 regular file，不把它们当作持续不可变性证明，也不在调用时重新核验其余依赖文件；已准备
+  版本目录一直保留，直到产品显式清理该版本目录，因此该目录的维护/失效由产品侧策略决定。
+- **输出仍走产品链**：本入口不新增输出声明、捕获、发布或删除层。脚本与普通 host 执行一样把产物
+  写进 Workspace 根下的 `outputs/`，由产品现有的 Artifact 发布/下载链读取与归属，执行成功与否
+  都不会清理历史输出。
+- **声明式信任边界**：脚本路径、运行时可执行文件与全部脚本内容都来自产品冻结的 immutable
+  descriptor，模型只能提供映射后的业务参数；每个生成的 Tool 保持 `ALWAYS` Approval、
+  `execution_run` 能力与有界脱敏输出。输出合同是共享 Execution 模块的规范化执行结果 schema；
+  冻结 Skill 包身份、入口声明以及**所选 runtime 引用、实际脚本 timeout 和审批 purpose** 进入
+  既有 Tool definition 身份（`executionProfiles` 的 `skill@sha256:` 引用），任一执行声明变化
+  都必然产生不同冻结 Tool 坐标，旧 Run 按既有恢复契约失败关闭。运行时只接受产品声明显式可执行
+  文件路径，并在装配时用共享的一个有界 deadline 预检（合并消费 stdout/stderr、温和/强制终止都
+  按同一截止时间安排回收，不另加清理窗口），不会从宿主 PATH 猜测。
+
+`StarterArchitectureTest` 把 `SkillScriptPlatforms` 列为 Starter 公共面的一部分。
 
 运行前设置 `DEEPSEEK_API_KEY`。该入口会访问真实 DeepSeek API 并产生费用。Starter 的进程内状态在
 进程退出后丢失；生产系统应通过 `haifa-agent-sdk` 显式装配持久化、可信 Caller、Policy、Credential

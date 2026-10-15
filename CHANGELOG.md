@@ -1,5 +1,207 @@
 # Changelog
 
+## 0.1.2 - 2026-10-15
+
+- Release distributions now include a complete SDK Maven file repository with resolved parent/BOM POMs,
+  binary/source/Javadoc artifacts and standalone consumer verification.
+- Upgrade requires recompiling applications that use the retired Memory candidate/review API. SQLite V15
+  refuses databases with ACTIVE memories or PENDING candidates; preserve a full backup and follow
+  [the upgrade guide](docs/reference/upgrading.md).
+- CLI slow tests now follow the current approved workspace path and progressive Skill Tool disclosure
+  contracts. The SDK Steer fixture uses the trusted Tool context Run ID instead of racing start() return.
+- The SQLite recovery fixture explicitly models its logical worker identity, retaining same-owner rejection
+  and abandoned-execution settlement assertions after production worker IDs gained host PID markers.
+
+- Added the public host execution assembly entry `HostExecutionPlatforms.hostGuarded(...)`: one
+  static factory resolves the trusted host shell, host script runtimes, the guarded sandbox
+  provider, one registered host workspace and the SDK's own `execution_run` Tool, then registers
+  that Tool on any `HaifaAgentBuilder`. A product that must not declare the execution
+  implementation modules directly now runs commands and scripts through the single
+  Broker/Sandbox/Policy/Runtime path. The declared Tool timeout became a product definition
+  bounded by `ExecutionToolConfiguration.MAXIMUM_DECLARED_TIMEOUT` (ten minutes) instead of a
+  fixed SDK cap, and the existing 30 second product definition is unchanged. See
+  The frozen Tool identity, the provider binding reference and the Workspace revision are bound to
+  the declared host workspace (canonical path plus physical directory fingerprint), the declared
+  Tool always carries the host network side effect because this host-backed entry cannot enforce
+  network denial, and `applyTo` installs the execution-aware Approval prompt that shows the
+  command or script, the arguments, the timeout and the invocation digest.
+  [SDK starter](haifa-agent-sdk-starter/README.md).
+
+- Added optional safe RunMessageView.modelCallId() correlation with public output events for accepted
+  model-backed assistant messages. The original constructor and legacy missing-field messages remain
+  supported; internal metadata and reasoning are not exposed, and redaction clears the correlation.
+- Added opt-in `TruncatedOutputPolicy.ACCEPT_NONEMPTY_PLAIN_TEXT` on `ProductRunProfile` for nonempty
+  ordinary LENGTH output. Opted-in Runs complete with `TRUNCATED:LENGTH`, preserve Provider finish reason
+  and usage, and reject incomplete Tool or structured responses. Child task metadata distinguishes model
+  output truncation from summary clipping. Default profiles retain their existing behavior; legacy frozen
+  configuration hashes and JSON remain compatible. See [SDK run profiles](haifa-agent-sdk/README.md).
+
+- Added caller-owned `ChildRunCapacity` to share Child admission and wakeups across independently built
+  Agents without changing their Run/Attempt settlement, cancellation or approval behavior.
+
+- Added complete-output preview, SHA-256 and truncation metadata to completed delegation results. Public
+  display projection marks further preview changes and omits the digest on redaction; parent model input
+  excludes these display fields. See [delegation result metadata](docs/runtime/delegation-result-metadata.md).
+- Added authorized durable Run message pagination and reference-only `message.committed` notifications,
+  opt-in non-interactive Child Tool ASK denial, and MCP Tool name snapshots. Child names and instruction
+  text no longer have arbitrary SDK character limits; existing identifier syntax and runtime budgets remain.
+
+- Haifa Coding Terminal collapsed Tool/Execution cards now show one muted body preview line (the first
+  meaningful output line; structural metadata such as `Target:`, `Reason:`, `Result:` and `Output:` headings
+  is skipped) so results are visible without `Ctrl+O`. The writer and preview filter share `ToolBodyLines`.
+  Collapsed durations are hidden at or below 10s to reduce noise; expanding always shows the duration and
+  the bounded detail metadata.
+
+- Typed wall-time exhaustion at an execution guard now settles a non-terminal Run as
+  `TIMEOUT / WALL_TIME_EXCEEDED`, including delegation children. Undispatched Tools retain their
+  `FAILED / RUN_BUDGET_EXCEEDED` record, and the failed Attempt retains its safe error and diagnostic ID.
+
+- Added `HaifaAgentBuilder.autoApproveStandardFileWriteTools(Set<ToolName>)` for exact registered Java
+  bindings with only FILE_WRITE, POLICY approval and non-high/critical risk. A configuration-only marker
+  freezes the list into the policy digest; request-local removal of the unchanged standard FILE_WRITE ASK
+  reuses the original evaluator and preserves custom ASK/DENY, defaults and approval modes. Integration
+  bindings cannot substitute for Java registrations. The list composes with read-only network approval
+  without exempting mixed effects; products retain responsibility for their Tool arguments and write scope.
+
+- Added `AgentRuns.frozenInstructionDiagnostic(runId)` and the corresponding Runtime query, returning only
+  Run/Definition identifiers, the opaque frozen configuration reference, and a strict UTF-8 SHA-256 instruction
+  digest. The query uses the existing caller-visible admission snapshot before Context construction, during waits,
+  after completion and across durable restarts; it does not consult the current Profile, dispatch work or add storage.
+  Unreadable or mismatched visible snapshots fail closed with a fixed body-free error and no payload-bearing cause.
+
+- Follow-up to the credential-conflict change (PR #258 review): `HaifaAgentBuilder.credentials(...)` compares
+  contributions by equality, so a new `CredentialPlatformContribution` wrapping the same broker is accepted;
+  `McpToolPlatform.applyTo` claims the credential boundary before adding Tools, the managed resource or diagnostics,
+  so a rejected apply leaves the builder unchanged and the platform unapplied; the SDK and Starter READMEs document
+  the single-credential-broker contract.
+
+- `HaifaAgentBuilder.credentials(...)` now rejects a second, different `CredentialPlatformContribution` with
+  `IllegalStateException` instead of silently replacing the first (passing the same contribution again is still
+  allowed). This closes the PR #257 review finding: `McpToolPlatform.applyTo(builder)` sets the builder's credential
+  broker, so a host that had already set its own broker lost it, and a host that set one afterwards broke the MCP
+  Tools. Callers that need several credential sources supply one broker that composes them; no composite broker is
+  added to the SDK.
+
+- Added the public `McpToolPlatforms.connect(List<McpServerSpec>, TenantRef, PrincipalRef)` facade and its opaque
+  `McpToolPlatform` contribution (`applyTo(HaifaAgentBuilder)` / `close()`), so an external package can assemble the
+  Tools, credential boundary, diagnostics and managed connections of declared MCP servers into any
+  `HaifaAgentBuilder`, including a persistent SQLite assembly. `HaifaAgentStarterBuilder.build()` now reuses the same
+  single assembly path, so the Starter and a product-owned builder share one implementation. The facade exposes no MCP
+  Integration internals (the `NativeMcpToolPlatform` and client/connection types stay package-private); an empty
+  declaration is an owned no-op that leaves a caller's own credentials untouched, applying one contribution twice is
+  rejected, a required server that fails closes every connection opened so far, and an optional failure contributes a
+  safe diagnostic instead.
+
+- `DefaultMemoryRetriever` refines recall by removing the zero-score candidate filter: memories matching query terms
+  take priority, and remaining slots are filled by recency up to `MAX_ITEMS` (increased from 8 to 16) within the token
+  budget. Selected snippets are stably ordered by creation timestamp and ID to maximize LLM prompt cache hit rates.
+
+- Memory collapses to direct CRUD with an `AGENT` scope; the candidate/approval path is removed with no compatibility
+  layer. `MemoryService` is now `put` / `update(id, expectedRevision, content)` / `delete(id, expectedRevision)` /
+  `find` / `list(MemoryQuery)` / `clear(scope)`, bounded by a trusted `MemoryActor(tenant, principal)`; `put` replaces
+  the memory with the same scope, kind and subject and leaves identical content untouched, and `MemoryQuery` offers a
+  bounded case-insensitive text match. `MemoryScopeType` is `USER` / `AGENT` / `SESSION` (`RUN` had no writer and is
+  removed); `AGENT` targets an Agent Definition id and Runtime recalls it from the Run's definition. `Memory` holds
+  plain text content, a `revision`, an optional `MemorySourceRef` and timestamps only. A `MemoryDraft.observedAt`
+  older than a scope clear or the deletion of the same subject is refused with `MEMORY_WRITE_STALE`, so late
+  asynchronous writes cannot resurrect content. `SensitiveMemoryFilter` rejects credential, payment and precise
+  identity content with `MEMORY_CONTENT_SENSITIVE` instead of labelling it. `MemoryRetriever` keeps only
+  `contextFor`, plus `none()` and `onlyWhen(predicate)` to switch recall off per Run or Agent;
+  `MemoryPlatformContribution` gains `withRecallWhen` and `withoutRecall`. Removed public types: every
+  `MemoryCandidate*` type, `MemoryStatus`, `MemoryVersion`, `MemoryRef`, `MemoryRecordQuery`, `MemoryContent` and its
+  `TextMemoryContent`/`StructuredMemoryContent`/`DerivedTextMemoryContent`/`DerivedTextType` implementations,
+  `MemoryPolicy`, `MemoryPolicyDecision`, `MemorySecurityLabel`, `MemoryVisibility`, `MemoryRetentionPolicy`,
+  `MemoryEvidenceRef`, `MemoryEvidenceVerifier`, `MemoryAuditEvent`, `MemoryAuditStore`, `MemoryUnitOfWork`,
+  `MemoryDerivedDataInvalidator`, `MemoryRetrieval`, `MemorySearchResult`, `DefaultMemoryPolicy`,
+  `DeterministicMemoryCandidateExtractor`, `MemoryObservation`, `InMemoryMemoryEvidenceVerifier`,
+  `SqliteMemoryEvidenceVerifier`, and the SDK `ProposeMemoryCommand`, `ReviseMemoryCandidateCommand`,
+  `ReviewMemoryCandidateCommand`, `RejectMemoryCandidateCommand`, `InvalidateMemoryCommand` and
+  `MemoryCandidateListQuery`. `AgentMemories` exposes `put(PutMemoryCommand)`, `update`, `delete`, `find`,
+  `list(MemoryListQuery)` and `clear(MemoryScopeSpec)`; `MemoryScopeSpec` offers `user()`, `agent(id)` and
+  `session(id)` and never carries a tenant or owner. `ProductMemoryPolicy` becomes
+  `(maxContentChars, maxQueryLimit)` with content capped at 4096 characters. `RuntimeCoreBuilder.memory(service,
+  retriever)`, `MemoryService.invalidateSource`, `MemoryRepository.allMemories` and the message-redaction Memory
+  listener are removed (nothing in production redacted messages); Runtime defaults to `MemoryRetriever.none()`.
+  `SqliteSdkContributions.memory(policy)` provides the SQLite Memory component over the same file. SQLite migration
+  V15 is a clean cut: it drops `memory_candidate`, `memory_audit_event` and the old `memory_record`, clears the
+  derived `memory_selection` rows, and creates a single `memory_record` table plus `memory_scope_clear` watermarks;
+  it aborts instead of dropping data when the old tables still hold ACTIVE memories or PENDING candidates (every
+  audited Personal Assistant database held none). Personal Assistant removes the candidate REST endpoints
+  (`/memory/candidates*`) and `/memory/{id}/versions/{version}/invalidate`, adds `PATCH` and `DELETE
+  /memory/{memoryId}` (If-Match revision) and `POST /memory/clear`, and its Memory dialog drops the pending-candidate
+  column in favour of edit, delete and clear on the active memories.
+
+- Memory mutations are idempotent by intent instead of by key. Personal Assistant `PATCH /memory/{memoryId}`,
+  `DELETE /memory/{memoryId}` and `POST /memory/clear` no longer take an `Idempotency-Key` (it was only
+  format-checked, so a retried delete returned 404); the web client stops sending it. Retrying an update with the same
+  If-Match revision and content after the first attempt committed returns the current memory and ETag, retrying a
+  delete with the same revision returns 204, and a retried clear reports `deleted: 0`; any other stale revision still
+  returns 409 (404 for a deleted memory). `DefaultMemoryService` applies these rules for every caller, identical
+  content now only counts as already applied at the expected revision or the one after it, and
+  `MemoryRepository` gains `deletedFrom(id, expectedRevision)` to recognise the tombstone a delete left behind.
+  `SqliteMemoryStore` text queries now fold case like the in-memory store (`Locale.ROOT`, including `Ä/ä` and
+  `Σ/σ`) by scanning candidate rows in bounded keyset batches and matching in Java, instead of the ASCII-only SQLite
+  `lower()` that silently dropped non-ASCII matches.
+
+- Memory drops governance entry points that no product called. Removed public types: `MemoryConflict`,
+  `MemoryConflictResolution`, `MemoryTombstone` and `MemoryAuditSink` (`MemoryAuditStore` now declares `record`
+  itself). Removed methods: `MemoryService.resolveConflict`, `evaluateExpiry`, `requestPurge` and `executePurge`;
+  `MemoryRepository.saveConflict`, `conflictFor`, `conflicts`, `saveTombstone` and `tombstones`;
+  `MemoryCandidateRepository.allCandidates` and `purgeScope`; `MemoryPolicy.canPurge`; `Memory.transition` and
+  `Memory.expiredAt`; `MemoryCandidate.expire`; and the `DefaultMemoryService` constructor that took a bare sink
+  (pass a `MemoryAuditStore` and a `MemoryUnitOfWork`). Every removed operation either always failed
+  (`resolveConflict`) or was rejected by the SQLite store with `MEMORY_DEFERRED_OPERATION`, so SDK and Personal
+  Assistant behavior, the SQLite schema and stored payloads are unchanged. `MemoryRetentionPolicy` and the
+  `EXPIRED`/`PURGE_PENDING`/`PURGED` status values remain until the Memory record is reshaped.
+- SDK applications can steer an active Run. `AgentRuns.submitInput(RunInputCommand)` returns an SDK-owned
+  `RunInputResult` with `RunInputStatus` (`ACCEPTED`, `DUPLICATE`, `APPLIED`, `REJECTED`); the caller identity still
+  comes only from the SDK caller provider, and the input reaches the model at the next `BEFORE_ITERATION`, never
+  inside Tool execution or model request construction. Accepted input is no longer silently lost when the model
+  finishes first: input acceptance and the final commit now share one Unit of Work, a final answer produced while
+  input is pending is deferred (`completion.deferred` with `PENDING_RUN_INPUT`) until the model has seen it, and any
+  terminal transition, including recovery after a restart, rejects still-pending input with a lower-kebab reason such
+  as `run-cancelled` and a new public `run.input.rejected` event. A Run that is completing or terminal returns
+  `REJECTED` (`run-not-accepting-input`) through the SDK. Runtime behavior change: steer retries are matched by
+  intent (target Run and contents), so retrying the same idempotency key with a fresh submission time or Run version
+  is a duplicate instead of `IDEMPOTENCY_CONFLICT`, and a retry after settlement reports `APPLIED` or `REJECTED`.
+  No SQLite migration is needed; the existing `run_input` `REJECTED` state is now used.
+- Minimal Parent–Child Delegation (Agent-as-Tool): parent runs can delegate to child agents with a Tool Call,
+  mirroring DeerFlow's `task`; this is not a parent–child communication protocol (no agent messages, child steer or
+  event-driven waiting). When the Product Profile
+  lists `allowedChildAgents`, the Runtime discloses one model-visible `task` Tool (`agent`, `objective`, optional
+  `context` and `expected_output`); every call in a response becomes one ordinary child `AgentRun` in its own
+  ephemeral session, the calls run in parallel within `maxParallelChildren` and a process cap (default 3,
+  `HaifaAgentBuilder.maxConcurrentChildRuns`), and each Tool Result returns after its child is terminal with the child
+  Run ID, Runtime status, bounded summary, the child's own usage and artifact references. When a response mixes `task`
+  with ordinary Tools, the delegations run first and the ordinary Tools then run in model order. The child Run ID is
+  derived from the parent Run ID and the Tool Call ID, so a retried call re-attaches instead of creating a second
+  child; `maxChildRuns` converges through the existing budget-limited completion; each child enforces its own
+  `maxWallTimeMillis`; delegation depth is fixed at one; waiting for children no longer counts as parent idle time but
+  still counts toward the parent's wall time; a child that needs approval keeps the parent waiting and is approved
+  through `pendingInteraction(childRunId)`/`respond`; parent cancel, timeout or recovery terminates its children, and
+  recovery settles unfinished children as interrupted without replay. Children neither recall nor write long-term
+  Memory, and the parent's usage only counts `childRuns`, never child tokens. Public API changes: new
+  `ChildAgentSpec`, `ProductProfile.allowedChildAgents` (the previous ten-argument constructor and `create` keep an
+  empty set) and `withAllowedChildAgents`, `HaifaAgentBuilder.childAgent`, `AgentRuns.children` returning the new
+  `ChildRunView`, `AgentRuntime.children`, and parent events `child.run.started`, `child.run.completed`,
+  `child.run.failed`, `child.run.cancelled` and `child.run.timed-out` carrying `RunEventPayloads.ChildRunLifecycle`.
+  Child sessions never appear in the Conversation list. `AgentInvocationMode` keeps only `ROOT` and `AGENT_AS_TOOL`
+  (`HANDOFF`, `FORK_JOIN`, `SUBGRAPH`, `SCHEDULED` and `EVENT_TRIGGERED` had no producer). Runtime internals:
+  `DelegationPort.executeChild` is replaced by the batch `executeChildren`, `DelegationDecision` now carries every Tool
+  request of the response, `RunStateRepository` gains `children(parentRunId)`, and `ResolvedDefinition` gains a
+  description and an optional child run profile. No Store or relation table is added; SQLite migration V14 adds
+  the `run(parent_run_id, created_at)` index used to list children. A child inherits an immutable snapshot of the
+  non-text references in the parent's `AgentRunRequest.inputs` (stored images and audio, image URLs, asset and artifact
+  references) but not its free text; the model cannot add or widen them. A process slot is held from child creation
+  until the child is terminal and its execution tasks (including one resumed after approval) have ended, so a parent
+  that stops waiting never lets more than `maxConcurrentChildRuns` children execute; a child the scheduler rejects is
+  failed at once with `RUNTIME_EXECUTION_FAILED` (`CHILD_NOT_SCHEDULED`) instead of staying QUEUED. The parent's
+  terminal `child.run.*` event is written by the child's own terminal transition, exactly once, including when the
+  child ends after the parent stopped or is settled by recovery. The HTTP transport does not project `child.run.*`
+  (`ChildRunLifecycle`) payloads in 0.1.2; SDK event consumers receive them.
+
+## 0.1.1
+
 - The Personal Assistant real environment starts again. The catalog migration hardcoded
   `haifa.personal.execution.trusted-host-enabled: false` and dropped the `HAIFA_PERSONAL_EXECUTION_TRUSTED_HOST_ENABLED`
   override, so the fail-closed guard rejected every startup; `application.yml` reads the variable again, and
@@ -33,9 +235,9 @@
 
 - Pure Java applications now consume remote MCP servers by declaration instead of by assembling the MCP Integration
   themselves. `McpServerSpec` (named connection, Streamable HTTP endpoint, explicit Tool allowlist, stable
-  `toolNamePrefix`, `readOnly()` governance preset, `required()`/`optional()`, timeouts and environment-backed header
-  credentials) plus `HaifaAgentStarter.builder().mcpServer(...)` replace the previous 100+ lines of
-  `McpServerDefinition`/`McpConnectionManager`/`McpToolDiscoveryService`/`McpToolDefinitionMapper`/`McpToolProvider`
+  `toolNamePrefix`, `readOnly()` governance preset, `required()`/`optional()`, timeouts, environment-backed or dynamic header
+  credentials, and lightweight `McpOAuthClientCredentials` refresh with scoped redaction lifecycle) plus `HaifaAgentStarter.builder().mcpServer(...)`
+  replace the previous 100+ lines of `McpServerDefinition`/`McpConnectionManager`/`McpToolDiscoveryService`/`McpToolDefinitionMapper`/`McpToolProvider`
   wiring; the MCP Integration itself is unchanged and stays the only MCP Runtime. The SDK's `JavaToolAssembly` is
   renamed to `ToolAssembly` and now registers Java Tools and Integration `ToolRegistration`s on one
   `ToolCatalogBuilder` with one freeze, so a Tool name contributed twice (MCP ↔ MCP or MCP ↔ Java Tool) fails the build

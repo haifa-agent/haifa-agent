@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.haifa.agent.core.run.AgentRunBudget;
 import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.core.run.AgentRunType;
+import io.haifa.agent.runtime.api.TruncatedOutputPolicy;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -69,6 +70,52 @@ final class ProductRunProfileTest {
                                 Optional.of(Set.of()))
                         .allowedTools())
                 .contains(Set.of());
+    }
+
+    @Test
+    void defaultsTruncatedOutputPolicyToFailClosed() {
+        assertThat(profile(Map.of()).truncatedOutputPolicy()).isEqualTo(TruncatedOutputPolicy.FAIL_CLOSED);
+    }
+
+    @Test
+    void supportsOptInTruncatedOutputPolicy() {
+        assertThat(childProfile(TruncatedOutputPolicy.ACCEPT_NONEMPTY_PLAIN_TEXT)
+                        .truncatedOutputPolicy())
+                .isEqualTo(TruncatedOutputPolicy.ACCEPT_NONEMPTY_PLAIN_TEXT);
+        assertThat(profile(Map.of())
+                        .withTruncatedOutputPolicy(TruncatedOutputPolicy.ACCEPT_NONEMPTY_PLAIN_TEXT)
+                        .truncatedOutputPolicy())
+                .isEqualTo(TruncatedOutputPolicy.ACCEPT_NONEMPTY_PLAIN_TEXT);
+    }
+
+    @Test
+    void rejectsExplicitNullTruncatedOutputPolicy() {
+        assertThatThrownBy(() -> new ProductRunProfile(
+                        "child-agent",
+                        "v1",
+                        "model",
+                        AgentRunType.CHAT,
+                        childBudget(),
+                        childLimits(),
+                        Map.of(),
+                        Optional.empty(),
+                        Optional.empty(),
+                        null))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("truncatedOutputPolicy");
+    }
+
+    private static ProductRunProfile childProfile(TruncatedOutputPolicy policy) {
+        return new ProductRunProfile(
+                "child-agent", "v1", "model", AgentRunType.CHAT, childBudget(), childLimits(), Map.of(), policy);
+    }
+
+    private static AgentRunBudget childBudget() {
+        return new AgentRunBudget(1_000, 1_000, 1_000, 0, 1, 0, "USD", 100);
+    }
+
+    private static AgentRunLimits childLimits() {
+        return new AgentRunLimits(2, 0, 1, 10_000, 10_000);
     }
 
     private static ProductRunProfile profile(Map<String, Object> options) {

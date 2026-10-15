@@ -11,10 +11,16 @@ import java.sql.ResultSet;
 import java.time.Instant;
 import java.util.Map;
 import java.util.OptionalLong;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class RuntimeEventJournalContractTest {
+    @AfterEach
+    void closeStores() throws Exception {
+        SqliteTestSupport.closeOpenedStores();
+    }
+
     private static final Instant NOW = SqliteAggregateTestData.NOW;
 
     @Test

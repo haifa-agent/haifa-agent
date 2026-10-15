@@ -25,10 +25,15 @@ import java.sql.PreparedStatement;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class SqliteAggregateRepositoriesTest {
+    @AfterEach
+    void closeStores() throws Exception {
+        SqliteTestSupport.closeOpenedStores();
+    }
 
     private static final Instant NOW = Instant.parse("2026-07-25T00:00:00Z");
 
@@ -103,6 +108,35 @@ class SqliteAggregateRepositoriesTest {
             assertThat(restored.budget().maxCostCurrency()).isEqualTo("USD");
             assertThat(restored.quotaPolicy().mode()).isEqualTo(mode);
         }
+    }
+
+    @Test
+    void childRunsAreListedByParentFromTheRunRowItself(@TempDir java.nio.file.Path directory) {
+        SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory);
+        prepareParents(foundation);
+        AgentRun parent = AgentRun.createRoot(new AgentRunId("parent"), runSpec(), NOW);
+        foundation.runs().insert(parent);
+        AgentRun second = AgentRun.createChild(
+                new AgentRunId("child-b"),
+                parent,
+                io.haifa.agent.core.run.AgentInvocationMode.AGENT_AS_TOOL,
+                runSpec(),
+                NOW.plusSeconds(2));
+        AgentRun first = AgentRun.createChild(
+                new AgentRunId("child-a"),
+                parent,
+                io.haifa.agent.core.run.AgentInvocationMode.AGENT_AS_TOOL,
+                runSpec(),
+                NOW.plusSeconds(1));
+        foundation.runs().insert(second);
+        foundation.runs().insert(first);
+
+        assertThat(foundation.runs().children(parent.id()))
+                .extracting(AgentRun::id)
+                .containsExactly(first.id(), second.id());
+        assertThat(foundation.runs().children(parent.id()).getFirst().parentRunId())
+                .contains(parent.id());
+        assertThat(foundation.runs().children(first.id())).isEmpty();
     }
 
     private static void prepareParents(SqliteStoreFoundation foundation) {

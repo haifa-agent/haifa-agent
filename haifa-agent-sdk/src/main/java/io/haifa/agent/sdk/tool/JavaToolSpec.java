@@ -7,9 +7,11 @@ import io.haifa.agent.tool.api.ToolIdempotency;
 import io.haifa.agent.tool.api.ToolName;
 import io.haifa.agent.tool.api.ToolRisk;
 import io.haifa.agent.tool.api.ToolSideEffect;
+import java.net.IDN;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.LinkedHashSet;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
 
@@ -19,7 +21,7 @@ import java.util.Set;
  * <p>This is the ordinary SDK entry for typed in-process Java Tools: it declares the Tool name,
  * input/output record types, a human title and description, a timeout, and whether the Tool is a pure
  * function or declares side effects. Everything else a {@link io.haifa.agent.tool.api.ToolDefinition}
- * can carry (provider identity, concurrency policy, resource requirements, credential requirements,
+ * can carry (provider identity, concurrency policy, resource requirements other than network hosts, credential requirements,
  * approval requirement, provenance, tags) is fixed by the SDK Tool platform and is not mirrored here;
  * a Tool that needs those fields registers itself through the Tool API instead.
  *
@@ -27,6 +29,13 @@ import java.util.Set;
  * approval requirement. Any other declaration keeps the conservative defaults: medium risk, unknown
  * idempotency and policy-decided approval. Declaring side effects also drops the pure declaration, so
  * a side-effecting Tool can never keep the "never needs approval" state.
+ *
+ * <p>{@link Builder#networkAccess(String...)} declares logical service hosts for a read-oriented Tool.
+ * This metadata does not intercept a Tool's own HTTP client. It always declares
+ * {@link ToolSideEffect#NETWORK_ACCESS}, is never pure, and keeps the
+ * same conservative defaults. Hosts are exact, lowercase DNS names; empty, blank, wildcard and
+ * otherwise invalid hosts fail closed, and {@code pure()} removes the declaration so no contradictory
+ * network metadata survives.
  */
 public final class JavaToolSpec<I extends Record, O extends Record> {
     private final ToolName name;
@@ -39,6 +48,7 @@ public final class JavaToolSpec<I extends Record, O extends Record> {
     private final Duration timeout;
     private final boolean pure;
     private final Set<ToolSideEffect> sideEffects;
+    private final Set<String> networkHosts;
 
     private JavaToolSpec(Builder<I, O> builder) {
         name = new ToolName(builder.name);
@@ -54,6 +64,10 @@ public final class JavaToolSpec<I extends Record, O extends Record> {
         }
         pure = builder.pure;
         sideEffects = Set.copyOf(builder.sideEffects);
+        networkHosts = Set.copyOf(builder.networkHosts);
+        if (sideEffects.contains(ToolSideEffect.NETWORK_ACCESS) && networkHosts.isEmpty()) {
+            throw new IllegalArgumentException("NETWORK_ACCESS requires constrained hosts");
+        }
     }
 
     public static <I extends Record, O extends Record> Builder<I, O> builder(
@@ -101,6 +115,14 @@ public final class JavaToolSpec<I extends Record, O extends Record> {
         return sideEffects;
     }
 
+    /**
+     * Exact hosts a {@link Builder#networkAccess(String...)} Tool may reach, or an empty set when the
+     * Tool declares no network access.
+     */
+    public Set<String> networkHosts() {
+        return networkHosts;
+    }
+
     /** A pure Tool is {@code PURE}; every other Tool keeps the conservative {@code UNKNOWN}. */
     public ToolIdempotency idempotency() {
         return pure ? ToolIdempotency.PURE : ToolIdempotency.UNKNOWN;
@@ -141,6 +163,7 @@ public final class JavaToolSpec<I extends Record, O extends Record> {
         private Duration timeout = Duration.ofSeconds(30);
         private boolean pure;
         private final Set<ToolSideEffect> sideEffects = new LinkedHashSet<>();
+        private Set<String> networkHosts = Set.of();
 
         private Builder(String name, Class<I> inputType, Class<O> outputType) {
             this.name = text(name, "name");
@@ -170,30 +193,89 @@ public final class JavaToolSpec<I extends Record, O extends Record> {
             return this;
         }
 
-        /** Declares a deterministic, side-effect-free function. */
+        /** Declares a deterministic, side-effect-free function; it also clears any network declaration. */
         public Builder<I, O> pure() {
             pure = true;
             sideEffects.clear();
+            networkHosts = Set.of();
+            return this;
+        }
+
+        /**
+         * Declares a read-oriented Tool that reaches exactly the named hosts. It always declares
+         * {@link ToolSideEffect#NETWORK_ACCESS}, is never pure, and keeps the conservative risk,
+         * idempotency and approval defaults. Empty, blank, wildcard and invalid hosts fail closed.
+         *
+         * <p>Declaring this alongside a writing side effect is allowed but the Tool is not a read-only
+         * network Tool, so it is not eligible for read-only auto approval.
+         */
+        public Builder<I, O> networkAccess(String... hosts) {
+            Set<String> validated = validateNetworkHosts(hosts);
+            networkHosts = validated;
+            sideEffects.remove(ToolSideEffect.NETWORK_ACCESS);
+            sideEffects.add(ToolSideEffect.NETWORK_ACCESS);
+            pure = false;
             return this;
         }
 
         /**
          * Declares the Tool's side effects. Any declared side effect also drops the pure declaration,
-         * so the Tool keeps policy-decided approval.
+         * so the Tool keeps policy-decided approval. {@link ToolSideEffect#NETWORK_ACCESS} is only
+         * accepted when constrained hosts were declared with {@link #networkAccess(String...)}.
          */
         public Builder<I, O> sideEffects(ToolSideEffect... values) {
             sideEffects.clear();
             sideEffects.addAll(Arrays.asList(values));
-            if (sideEffects.contains(ToolSideEffect.NETWORK_ACCESS)) {
+            if (sideEffects.contains(ToolSideEffect.NETWORK_ACCESS) && networkHosts.isEmpty()) {
                 throw new IllegalArgumentException(
-                        "Java Tools cannot declare NETWORK_ACCESS; register through the Tool API with constrained hosts");
+                        "Java Tools cannot declare NETWORK_ACCESS without constrained hosts; use networkAccess(hosts)");
             }
+            if (!sideEffects.contains(ToolSideEffect.NETWORK_ACCESS)) networkHosts = Set.of();
             if (!sideEffects.isEmpty()) pure = false;
             return this;
         }
 
         public JavaToolSpec<I, O> build() {
             return new JavaToolSpec<>(this);
+        }
+
+        private static Set<String> validateNetworkHosts(String... hosts) {
+            if (hosts == null || hosts.length == 0) {
+                throw new IllegalArgumentException("networkAccess requires at least one host");
+            }
+            Set<String> validated = new LinkedHashSet<>();
+            for (String host : hosts) {
+                if (host == null) {
+                    throw new IllegalArgumentException("networkAccess host must not be null");
+                }
+                String candidate = host.trim();
+                if (candidate.isEmpty()) {
+                    throw new IllegalArgumentException("networkAccess host must not be blank");
+                }
+                if (candidate.indexOf('*') >= 0) {
+                    throw new IllegalArgumentException("networkAccess host must be an exact host, not a wildcard");
+                }
+                if (candidate.contains("://")
+                        || candidate.contains("/")
+                        || candidate.contains(":")
+                        || candidate.contains("@")
+                        || candidate.chars().anyMatch(Character::isWhitespace)
+                        || candidate.startsWith(".")
+                        || candidate.endsWith(".")) {
+                    throw new IllegalArgumentException("networkAccess host is invalid");
+                }
+                String ascii;
+                try {
+                    ascii = IDN.toASCII(candidate, IDN.USE_STD3_ASCII_RULES).toLowerCase(Locale.ROOT);
+                } catch (IllegalArgumentException exception) {
+                    throw new IllegalArgumentException("networkAccess host is invalid", exception);
+                }
+                if (ascii.isEmpty() || ascii.length() > 253) {
+                    throw new IllegalArgumentException("networkAccess host is invalid");
+                }
+                validated.add(ascii);
+            }
+            return Set.copyOf(validated);
         }
     }
 }

@@ -29,6 +29,12 @@ public final class RuntimeClientEventProjector {
         }
         Projection projection =
                 switch (event.type()) {
+                    case "message.committed" ->
+                        new Projection(
+                                "message.committed",
+                                new RunEventPayloads.MessageCommitted(
+                                        text(event.data(), "messageId", ""),
+                                        number(event.data(), "messageSequence", 0)));
                     case "run.created" ->
                         new Projection(
                                 "run.accepted",
@@ -66,6 +72,13 @@ public final class RuntimeClientEventProjector {
                                         requiredText(event.data(), "inputId"),
                                         "APPLIED",
                                         text(event.data(), "applicationPoint", "BEFORE_ITERATION")));
+                    case "run.input.rejected" ->
+                        new Projection(
+                                "run.input.rejected",
+                                new RunEventPayloads.RunInputLifecycle(
+                                        requiredText(event.data(), "inputId"),
+                                        "REJECTED",
+                                        requiredText(event.data(), "reasonCode")));
                     case "model.call.started" -> model("model.call.started", event, "STARTED");
                     case "model.call.succeeded" -> model("model.call.succeeded", event, "SUCCEEDED");
                     case "model.call.failed" -> model("model.call.failed", event, "FAILED");
@@ -92,6 +105,11 @@ public final class RuntimeClientEventProjector {
                                 integer(event.data(), "remainingPercent", 0),
                                 integer(event.data(), "attempt", 0));
                     case "loop.budget-snapshot" -> budgetThreshold(event);
+                    case "child.run.started",
+                            "child.run.completed",
+                            "child.run.failed",
+                            "child.run.cancelled",
+                            "child.run.timed-out" -> childRun(event);
                     default -> outputOrLifecycle(event);
                 };
         if (projection == null) return Optional.empty();
@@ -114,6 +132,7 @@ public final class RuntimeClientEventProjector {
     private static boolean isKnownClientFact(RuntimeEvent event) {
         return event.type().startsWith("runtime.command-")
                 || java.util.Set.of(
+                                "message.committed",
                                 "tool.requested",
                                 "tool.started",
                                 "tool.succeeded",
@@ -129,7 +148,12 @@ public final class RuntimeClientEventProjector {
                                 "model.attempt.exhausted",
                                 "workspace.change-set.available",
                                 "artifact.available",
-                                "checkpoint.available")
+                                "checkpoint.available",
+                                "child.run.started",
+                                "child.run.completed",
+                                "child.run.failed",
+                                "child.run.cancelled",
+                                "child.run.timed-out")
                         .contains(event.type())
                 || event.type().equals("completion.deferred")
                 || event.type().equals("loop.budget-snapshot")
@@ -142,6 +166,7 @@ public final class RuntimeClientEventProjector {
                 || event.type().equals("interaction.invalidated")
                 || event.type().equals("run.input.accepted")
                 || event.type().equals("run.input.applied")
+                || event.type().equals("run.input.rejected")
                 || (event.type().startsWith("run.") && event.data().containsKey("status"));
     }
 
@@ -255,6 +280,17 @@ public final class RuntimeClientEventProjector {
                         requiredText(event.data(), "title"),
                         requiredText(event.data(), "status"),
                         text(event.data(), "action", "inspect")));
+    }
+
+    private static Projection childRun(RuntimeEvent event) {
+        return new Projection(
+                event.type(),
+                new RunEventPayloads.ChildRunLifecycle(
+                        requiredText(event.data(), "childRunId"),
+                        requiredText(event.data(), "toolCallId"),
+                        requiredText(event.data(), "childAgent"),
+                        requiredText(event.data(), "status"),
+                        text(event.data(), "reasonCode", "NONE")));
     }
 
     private static Projection budgetThreshold(RuntimeEvent event) {

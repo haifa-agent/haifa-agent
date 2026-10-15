@@ -18,6 +18,8 @@ public interface RuntimeStoreMapper {
 
     RunRow findRun(@Param("runId") String runId);
 
+    java.util.List<RunRow> findChildRuns(@Param("parentRunId") String parentRunId);
+
     String configurationHash(@Param("configurationRef") String configurationRef);
 
     int insertAttempt(@Param("row") ExecutionAttemptRow row);
@@ -45,6 +47,16 @@ public interface RuntimeStoreMapper {
     Long latestMessageSequence(@Param("sessionId") String sessionId);
 
     List<SessionMessageRow> messagesForRun(@Param("runId") String runId);
+
+    List<SessionMessageRow> runMessagesAfter(
+            @Param("runId") String runId,
+            @Param("after") long after,
+            @Param("head") long head,
+            @Param("limit") int limit);
+
+    long runMessageCountThrough(@Param("runId") String runId, @Param("sequence") long sequence);
+
+    Long runMessageHead(@Param("runId") String runId);
 
     int redactMessage(@Param("row") SessionMessageRow row);
 
@@ -219,6 +231,8 @@ public interface RuntimeStoreMapper {
             @Param("idempotencyKey") String idempotencyKey);
 
     List<RunInputRow> pendingRunInputs(@Param("runId") String runId, @Param("limit") int limit);
+
+    int markRunInputRejected(@Param("inputId") String inputId, @Param("reasonCode") String reasonCode);
 
     int markRunInputApplied(
             @Param("inputId") String inputId,

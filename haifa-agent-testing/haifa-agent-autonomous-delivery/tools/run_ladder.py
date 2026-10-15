@@ -868,8 +868,13 @@ def agent_argv(settings: Settings, workspace: Path, prompt: str, budget_seconds:
     self_limit = max(60, int(budget_seconds * AGENT_SELF_LIMIT_RATIO))
     prefix, _ = launcher_argv(str(settings.agent))
     configuration = agent_configuration(settings, budget_seconds)
-    if configuration and "--config" in prefix:
-        prefix[prefix.index("--config") + 1] = str(configuration)
+    if configuration:
+        if "--config" in prefix:
+            prefix[prefix.index("--config") + 1] = str(configuration)
+        else:
+            # A POSIX launcher runs the JAR with its own --config before forwarding "$@"; appending
+            # ours makes the later argument win, so the rewritten credential source takes effect.
+            prefix = [*prefix, "--config", str(configuration)]
     argv = [
         *prefix,
         "--workspace",

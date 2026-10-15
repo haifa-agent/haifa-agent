@@ -3,8 +3,7 @@
 Coding Agent 的 tui4j 交互产品层。布局、信息层级和交互以
 `docs/prd/pi-coding-agent-terminal-low-fi-prototype` 评审原型及
 `docs/prompts/19-coding-agent-terminal-ui-ux-refactor-prompt.md` 为准；模型连接流程同时遵守
-`docs/prd/28-coding-agent-model-authentication-and-codex-subscription-login-prd.md`，不自行发明 Sidebar、
-Dashboard、Scenario toolbar 或另一套产品 UI。
+`docs/prd/28-coding-agent-model-authentication-and-codex-subscription-login-prd.md`；界面支持响应式双栏工作区与可折叠信息侧栏（Ctrl+X B 切换），不自行发明无序扩展 UI。
 
 ## 自主交付状态
 
@@ -45,7 +44,7 @@ haifa-agent-applications/haifa-agent-cli/target/haifa-agent-cli-0.1.0.jar
 
 ## tui4j 迁移状态
 
-迁移采用三阶段和两次人工门禁。人工已批准在动态 Resize 延期的前提下进入 Stage B；当前生产
+迁移采用三阶段和两次人工门禁。人工已批准进入 Stage B（tui4j 事件驱动的动态 Resize 仍延期，见下）；当前生产
 `CodingTerminalApplication` 和 CLI Terminal 路由只使用 tui4j `Program / Model / update / view`。
 旧 JLine 生命周期、编辑器、KeyMap、Completer、Display、Renderer、测试和直接依赖均已删除。
 项目代码不得导入 `org.jline`；架构测试和 Maven Enforcer 会阻止旧实现回流。
@@ -54,19 +53,32 @@ tui4j `0.3.3` 由本模块直接依赖。该第三方库内部仍使用 `jline-t
 项目依赖管理仅把这一传递后端收敛到 `3.30.0`；这不是项目保留的 JLine UI 实现。
 
 Windows ConPTY Spike 已证明 `Program / Model / update / view`、viewport、textarea、
-`Program.send()`、alternate screen、Unicode 粘贴及正常/Escape/Ctrl+C/异常退出可以运行；但动态
-Resize 在三次调整后仍会丢失 Header/Diagnostics/Transcript 区域，已标记
-`SKIPPED_AFTER_3_ATTEMPTS` 并延期。当前没有旧实现回退路径。
+`Program.send()`、alternate screen、Unicode 粘贴及正常/Escape/Ctrl+C/异常退出可以运行；但 tui4j 事件
+驱动的动态 Resize 在三次调整后仍会丢失 Header/Diagnostics/Transcript 区域，已标记
+`SKIPPED_AFTER_3_ATTEMPTS` 并延期。tui4j `0.3.3` 的自动 Resize 只依赖 POSIX `WINCH` 信号，而 Windows
+JVM 不支持该信号，因此生产 Model 在 Windows 上以 50ms 轮询每计数 10 次（约 500ms）重新查询真实
+Window Size 作为兜底；该兜底尚未在真实 Windows 终端上人工验收。旧 JLine 实现没有回退路径。
 
 Terminal 默认启用 bracketed paste；完整 `PasteMessage` 中的 CRLF 会归一化为换行且不会提交。对于
 没有发送 bracketed-paste 标记、而把剪贴板内容拆成普通按键的宿主，普通 Enter 经过 100ms 输入稳定
 门禁：紧随其后的字符、CR 或 LF 会把该 Enter 归并为编辑器换行，只有独立 Enter 才提交。该门禁只
 覆盖普通 Editor Enter；Shift/Ctrl+Enter、Alt+Enter 和 Selector/Approval Enter 保持各自既有语义。
 
-生产 Model 初始化时主动请求一次真实 Window Size，避免在用户没有手工 Resize 时一直停留在
-`80x24` 启动尺寸。tui4j `0.3.3` 不全局启用 Kitty keyboard protocol；该版本只为修饰 Enter
-提供显式映射，全局启用会让部分 CSI-u 控制键残留字符进入编辑器。`Ctrl+O` 因此保持传统 `SI`
-输入并稳定切换最近 Tool 卡片的展开状态。
+Bracketed paste 达到 3 行或超过 150 字符（`strip` 后）时，Editor 只插入 `[Pasted #N ~M lines]` 占位符，
+完整正文按原样（仅做换行/控制字符归一化）保存在进程内的当前草稿映射中；占位符按整体单元处理（左右键跨界、
+退格/删除一次清除，任何会破坏占位符的编辑被拒绝并提示 `PASTE_PLACEHOLDER_ATOMIC`），提交时再展开为完整
+原文后进入 Session 与输入历史。提交路由基于可见文本，隐藏正文不会触发 `/` 命令或 `!` shell。阈值与
+多行长文本折叠策略一致；较小粘贴仍原样插入。
+
+生产 Model 初始化时主动请求一次真实 Window Size，并在 Windows 上约每 500ms 重新查询，避免停留在
+`80x24` 启动尺寸或在窗口缩放、跨显示器移动后与实际终端尺寸不一致。尺寸未变化时 `Tui4jTerminalIo` 在
+消息进入 tui4j 渲染器前丢弃该 `WindowSizeMessage`，避免渲染器清空行缓存导致整屏重绘。tui4j `0.3.3`
+不全局启用 Kitty keyboard protocol；该版本只为修饰 Enter 提供显式映射，全局启用会让部分 CSI-u 控制键
+残留字符进入编辑器。`Ctrl+O` 因此保持传统 `SI` 输入并稳定切换最近 Tool 卡片的展开状态。
+
+启动 UI 时把宿主窗口标题压栈（`CSI 22;2t`）并设为 `Haifa Coding Agent`，退出时弹栈恢复（`CSI 23;2t`）；
+支持 xterm 标题栈的终端会恢复原标题，不支持时保留应用标题。标题只影响宿主终端显示，不写入 Session、
+Transcript 或任何持久化事实。
 
 非 TTY 自定义流会被 tui4j 内部终端后端报告为 `1x1`，导致多帧 Renderer 输出被截断。该自动化路径
 连续三轮调整仍未通过，已按规则跳过；输入语义由 Model/Reducer 测试覆盖，真实显示与退出恢复留给
@@ -74,36 +86,87 @@ Windows ConPTY Gate B。
 
 ## 原型映射与交互
 
-Phase A 将原型映射收敛为固定单列顺序：
+终端采用响应式双栏工作区（主会话视口 + 可折叠信息侧栏）与一体化输入卡片架构：
 
 ```text
-Header
-Resources summary（仅有真实资源时）
-Transcript
-Pending Messages（仅非空）
-Active Status / Recoverable Error（仅需要感知时）
-Editor or Selector
-Footer
+┌─────────────────────────────────────────────────────────────┬────────────────────────────────┐
+│ [主会话视口 (Sticky to bottom)]                             │ [右侧侧边栏 Sidebar (40列宽)]  │
+│                                                             │  (快捷键: ctrl+x b 折叠/展开)  │
+│  User / Assistant 消息流                                    │  Session: <title>              │
+│  Tool 执行与调用详情                                        │  ID: session_01...             │
+│                                                             │  Directory: /path/to/workdir   │
+│                                                             │  Git branch: main              │
+│                                                             │  Model: <model> (<provider>)   │
+│                                                             │  Resources: skills, MCP        │
+│                                                             │  Haifa Agent v0.1.2            │
+├─────────────────────────────────────────────────────────────┴────────────────────────────────┤
+│ [交互卡片槽位] (审批确认 Approval / 交互选择器 Selector / 命令面板)                          │
+├──────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ┌─ Integrated Prompt Box (一体化输入框) ──────────────────────────────────────────────────┐  │
+│ │ ▌ [Textarea 输入区, 3行紧凑高度]                                                         │  │
+│ │ ▌                                                                                       │  │
+│ │ ▌ Normal  auto · claude-3-5-sonnet (anthropic)          enter send · shift+enter newline│  │
+│ └─▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀┘  │
+│  ~/workspace/haifa-agent (空闲为路径/执行中为Spinner)    5.2k · 35s     [f2] models  [ctrl+p] commands │
+└──────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-不再常驻渲染 Diagnostics、空 Pending、`Widgets above/below none` 或 `Footer` 标签。Editor hint
-下方显示已有真实来源的当前模型、Workspace 绝对路径和 Git 分支；后续状态行显示 Session、
-Context/Queue 和 Run 状态；
-Provider/Model 来自 Coding Product Facade 的脱敏投影，Terminal 不读取 Model Core、Provider 配置或
-SQLite。未就绪模型在页脚显式展示凭据状态（`[需要登录]` 或 `[登录已失效，请重新认证]`）。`git: via safe read model`、`sandbox: frozen profile` 等实现占位字段不进入
-产品界面。
+不再常驻渲染顶部 Header、Diagnostics、空 Pending、`Widgets above/below none` 或 `Footer` 标签。
+主视口高度最大化释放给核心对话与工具调用流。
 
-Theme 使用 tui4j Lip Gloss 的 Adaptive Color 表达 Accent、Muted、User、Success、Pending、
+### 核心交互与生命周期契约
+
+1. **响应式双栏与侧栏 (Sidebar)**：
+   - 宽屏（终端宽度 >= 100 列）：启用双栏布局，左侧为主交互区，右侧为 40 列固定宽度的信息侧栏；
+   - 窄屏（终端宽度 < 100 列）：自动隐藏侧栏，保持专注单栏编辑与浏览；
+   - 窄屏信息可达性：窄屏用户无需展开侧栏，即可通过 `<leader>s`（`/session`）弹层随时查看同等详尽的环境、Session、Git、模型与资源摘要；
+   - 布局自适应与用户显式折叠偏好：首次启动或窗口 Resize 时，终端根据当前列宽（>=100 列）自动计算侧栏展示；一旦用户使用 `<leader>b` 显式折叠或展开侧栏，终端锁定用户的显式偏好（`sidebarExplicitlyToggled`），后续窗口缩放事件不会强行覆盖用户的偏好选择。
+
+2. **焦点与弹层优先级契约 (Focus & Modal Priority Contract)**：
+   - 任何选择器弹层（审批 Approval、Shell 确认、命令面板 Command Palette、模型选择、Session 摘要等）处于激活状态时，输入焦点完全移至弹层（Editor blur），编辑器失焦并禁用一切普通文本输入；
+   - 弹层处于激活状态时，所有按键均按弹层事件处理（上下移动选中项、Enter 确认当前项、Esc/Ctrl+C 取消关闭）；
+   - 弹层打开期间，所有全局 Leader 快捷操作（如 `<leader>m`、`<leader>s` 等）均被严格忽略（`Kind.EXECUTE_COMMAND` 语义完全与弹层的 `Kind.SUBMIT` 隔离），严禁借用编辑器的 SUBMIT 事件意外确认审批或执行未预期的全局命令；
+   - 弹层处于激活状态时，允许 `Ctrl+O` 展开/折叠后台关联工具详情供审查，但不会触发审批提交；
+   - 弹层关闭或取消后，Editor 自动重新获取焦点（Editor focus）。
+
+3. **草稿与粘贴映射保护契约 (Draft & Paste Preservation Contract)**：
+   - 用户在输入框中编写的草稿内容、光标位置（Cursor），以及因多行/长文本粘贴而生成的占位符映射（`[Pasted #N ~M lines]` -> 原文正文映射 `pastedContent`），受到全局严格保护；
+   - 打开命令面板（`Ctrl+P`）、Session 摘要（`<leader>s`）、交互式重命名（`<leader>r`）等辅助弹层时，Controller 自动暂存当前草稿与光标；
+   - 弹层完成或被取消（Esc/Ctrl+C）后，完整恢复用户原有的草稿正文与光标位置，不被命令替换为空或 `/command`；
+   - 即使在输入框临时用于交互式重命名期间，粘贴占位符映射也不会被垃圾回收，草稿恢复后完整保留粘贴映射；
+   - 交互式 Session 重命名（`<leader>r` 或 `/rename` 不带参数）：无活动 Session 时提示友好错误；有活动 Session 时在编辑器展示当前 Session 名称供修改，Enter 确认重命名并在后台异步执行，Esc 取消并恢复草稿。
+
+4. **异步后台执行与模块边界契约 (Background Execution & Boundary Contract)**：
+   - Terminal 遵守纯 Java 与无直接进程/文件 I/O 约束（由 ArchUnit 架构测试阻止 `ProcessBuilder`、`Process`、`java.io.File` 及 `java.nio.file..` 直接调用）；
+   - 外部编辑器唤起（`<leader>e`）在当前版本明确延期：不引入子进程 `ProcessBuilder` 阻塞 UI 线程；按下 `<leader>e` 仅提供友好提示，不破坏界面事件循环；
+   - 模型目录读取与轮换（`F2` / `Shift+F2`）：模型列表通过后台 Effect 异步加载并防抖，按键轮换仅在已绑定且可用的模型间循环；活动 Run 期间严格禁止切模。
+
+5. **状态栏信息与提示层级契约 (Status Bar & Feedback Contract)**：
+   - 活动 Run 期间：底部状态栏左侧显示单调计时的运行状态 `⠋ <timedActivity> · esc interrupt`；新输出在视口外产生时追加 ` · new output below`，严禁使用路径文字覆盖活动状态指示；
+   - 空闲（Idle）期间：左侧优先显示操作反馈与引导状态（如 `/new` 提示、切模成功反馈、重命名状态等）；无反馈时显示当前工程路径；
+   - 右侧展示快捷键提示（`[f2] models  [ctrl+p] commands`）及 Session 性能指标；空间受限时优先丢弃指标、次选裁剪工程路径，核心操作反馈与活动运行状态具有最高显示优先级；
+   - 输入框上方 Meta 条右侧保持显示编辑器操作提示（如 `enter steer · alt+enter follow-up` 或 `enter send · shift+enter newline`）。
+
+Theme 使用 tui4j Lip Gloss 的 Adaptive Color 表达 Accent、Muted、Surface Panel、Surface Element、Border Subtle、User、Success、Pending、
 Error、Queued 和 Focus。TrueColor 参考色会按明暗背景自适应；NoColor 环境仍依靠稳定标题、状态文字、
-边界和顺序区分：
+边线字符和顺序区分：
 
-- User 使用低对比消息块，便于定位用户意图；
-- Assistant 正文直接进入对话流，不使用厚卡片；高频 Markdown 子集只在 View 层转换为终端样式，
-  `TranscriptItem`、Session 与持久化继续保留原始 Markdown；
-- Tool 根据 `requested/started/succeeded/failed/cancelled` 使用状态色。折叠项只占一行：
-  以 `✓`/`✗`/`●` 状态符号开头，随后是 `名称 · 目标` 与完成耗时（如 `✓ file_read · README.md · 0.3s`），
-  并把 `ctrl+o expand` 放在同一行；连续折叠项之间不插入空行。失败项在折叠状态额外保留
-  最多两行安全原因，展开后才显示既有有界详情和 `Duration … · N lines · X KB` 元数据尾行；
+- User 消息采用左侧竖线装饰（`│ `，窄屏 `<40` 列自动降级为单空格缩进）与平滑面板底色（Surface Panel），
+  首行带有 `❯ You` 双重角色线索；文本按可用宽度（`contentWidth = Math.max(16, mainWidth - 3)`）严格软折行，
+  单行 cell 宽度严格闭合，**不增加上下封闭框线与额外空行**以保持最大垂直视口高度；
+- Error 消息采用统一的左侧红色竖线装饰（`│ `）与弱化红底，首行带有 `✖ Error` 双重结构化标签，
+  完整保留错误原因、上下文与恢复建议诊断文本；
+- Assistant 正文保持 2-cell 左对齐以与 User 边线气泡形成清晰的视觉层级；输入框 Prompt Box 适配
+  Surface Element 底色，侧栏垂直分割线统一使用 Border Subtle，消除界面视觉断层；
+- 高频 Markdown 子集只在 View 层转换为终端样式，`TranscriptItem`、Session 与持久化继续保留原始 Markdown；
+- Tool 根据 `requested/started/succeeded/failed/cancelled` 使用状态色。折叠项默认占一行：
+  以 `✓`/`✗`/`●` 状态符号开头，随后是 `名称 · 目标`，并把 `ctrl+o expand` 放在同一行；连续折叠项
+  之间不插入空行。成功的 Tool/Execution 折叠时再追加一行灰色正文预览（取正文里第一条有效内容；
+  流式长输出只保留尾部窗口时，预览取该窗口首行），结构行统一由 `ToolBodyLines` 判定并跳过：`Target:`、`Reason:`、`Next:`、`Outcome:`、`Status:`、
+  `Result:`、`Output:`、`Output (truncated):`、`Output (streaming):`、`Output truncated · …`、
+  `[stdout]`/`[stderr]` 以及预览截断/丢弃标记；正文全为结构行时不显示预览。失败/未决项在折叠
+  状态保留最多两行安全原因。折叠时完成耗时只在超过 10s 时显示，避免短调用刷屏；按 `ctrl+o`
+  展开后始终显示既有有界详情和 `Duration … · N lines · X KB` 元数据尾行；
 - 运行中的执行工具通过进程内 transient publisher 增量刷新同一 Tool Call 卡片的
   `Output (streaming):` 段；每批最多 4 KiB，卡片正文最多保留 16 KiB 尾部，stderr 和 preview
   丢弃会显式标记；执行侧达到输出上限时使用独立截断标记，避免与预览丢批混淆。该内容不持久化、
@@ -302,8 +365,9 @@ key，并在所有重启间保持不变。
 10. Terminal 模式使用 `--trace detail` 但不提供 `--trace-file`，确认 Trace 不写入 TUI；提供
     `--trace-file` 后确认诊断仅进入文件。
 11. 用 Stub/Fake Tool 走通 requested → started → succeeded/failed/cancelled，确认同一 Tool
-    只更新一张卡片，折叠行带 `✓`/`✗`/`●` 状态符号与耗时，Ctrl+O 可折叠/展开最近项（含 Run Summary
-    与可折叠 Resource 项）；Run 终态确认追加 Run Summary 卡片。
+    只更新一张卡片，折叠行带 `✓`/`✗`/`●` 状态符号、成功/运行项的一行正文预览行和（超过 10s 的）
+    耗时，Ctrl+O 可折叠/展开最近项（含 Run Summary 与可折叠 Resource 项）；Run 终态确认追加 Run
+    Summary 卡片。
 12. 用 Stub/Fake Approval 检查结构化字段、approve/reject 回执与 editor 草稿恢复；审批期间输入只由
     Selector 消费。
 13. Active Enter 后观察 Steer 从 accepted 保持到 applied；Alt+Enter 后观察持久 Follow-up Queue，

@@ -16,9 +16,12 @@ import io.haifa.agent.core.plan.TodoItemId;
 import io.haifa.agent.core.plan.TodoPriority;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
+import io.haifa.agent.core.run.AgentRunBudget;
 import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.core.run.AgentRunOutcome;
 import io.haifa.agent.core.run.AgentRunStatus;
+import io.haifa.agent.core.run.AgentRunType;
 import io.haifa.agent.core.run.AgentRunUsageDelta;
 import io.haifa.agent.core.run.StructuredOutputRequirement;
 import io.haifa.agent.core.session.AgentSessionId;
@@ -35,6 +38,8 @@ import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.model.api.ModelUsage;
+import io.haifa.agent.model.api.ResolvedModelSnapshot;
+import io.haifa.agent.model.api.SensitiveModelReasoning;
 import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.InteractionRequestId;
 import io.haifa.agent.runtime.api.InteractionResponse;
@@ -48,6 +53,8 @@ import io.haifa.agent.runtime.api.RuntimeCommandType;
 import io.haifa.agent.runtime.api.RuntimeOverrides;
 import io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt;
 import io.haifa.agent.runtime.core.attempt.ExecutionAttemptId;
+import io.haifa.agent.runtime.core.bootstrap.DefaultResolvedModelSnapshots;
+import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext;
 import io.haifa.agent.runtime.core.control.RunControlRegistry;
 import io.haifa.agent.runtime.core.control.RunControlSignal;
@@ -86,6 +93,81 @@ import org.junit.jupiter.api.Test;
 
 class RuntimeCoreHardeningTest {
     private static final Instant NOW = Instant.parse("2026-07-21T00:00:00Z");
+
+    @Test
+    void nativeToolTurnRetainsOrdinaryTextInAuthoritativeMessageContextAndPublicSteps() {
+        verifyNativeToolTurnText("ordinary tool narration");
+        verifyNativeToolTurnText("");
+    }
+
+    private void verifyNativeToolTurnText(String text) {
+        AtomicInteger modelCalls = new AtomicInteger();
+        AtomicInteger executions = new AtomicInteger();
+        AtomicReference<AgentChatRequest> next = new AtomicReference<>();
+        Fixture fixture = fixture(
+                request -> {
+                    if (modelCalls.incrementAndGet() == 1) {
+                        return new AgentChatResponse(
+                                "native-tool",
+                                "deepseek-v4-pro",
+                                text,
+                                List.of(new ModelToolCall(
+                                        new ProviderToolCallCorrelationId("native-correlation"), "read", Map.of())),
+                                ModelFinishReason.TOOL_CALLS,
+                                ModelUsage.unpriced(1, 1),
+                                "",
+                                Map.of(),
+                                Optional.of(SensitiveModelReasoning.of("PRIVATE_TOOL_REASONING")));
+                    }
+                    next.set(request);
+                    return response(finalDecision("done"));
+                },
+                builder -> TestToolPlatform.install(builder, "read", "1.0.0", "read.input", false, request -> {
+                    executions.incrementAndGet();
+                    return new ToolResult(true, "read result", Map.of(), List.of(), List.of(), false);
+                }));
+        var accepted = fixture.runtime.start(request("native-text-" + text.length()));
+        fixture.scheduler.runAll();
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(executions).hasValue(1);
+        var assistant = fixture.store.messages(accepted.runId()).stream()
+                .filter(message -> message.contents().stream()
+                        .anyMatch(io.haifa.agent.core.content.ToolCallPart.class::isInstance))
+                .toList();
+        assertThat(assistant).singleElement().satisfies(message -> {
+            assertThat(message.visibility())
+                    .isEqualTo(
+                            text.isEmpty()
+                                    ? io.haifa.agent.core.message.MessageVisibility.AGENT_VISIBLE
+                                    : io.haifa.agent.core.message.MessageVisibility.USER_VISIBLE);
+            assertThat(message.contents()).hasSize(text.isEmpty() ? 1 : 2);
+            if (!text.isEmpty()) assertThat(message.contents().getFirst()).isEqualTo(new TextPart(text, "plain"));
+            assertThat(message.contents().getLast()).isInstanceOf(io.haifa.agent.core.content.ToolCallPart.class);
+        });
+        assertThat(next.get().messages().stream()
+                        .filter(message -> !message.toolCalls().isEmpty())
+                        .toList())
+                .singleElement()
+                .satisfies(message -> {
+                    assertThat(message.content()).isEqualTo(text);
+                    assertThat(message.toolCalls()).singleElement().satisfies(call -> assertThat(
+                                    call.providerCorrelationId().value())
+                            .isEqualTo("native-correlation"));
+                });
+        var publicSteps = fixture.runtime.messages(
+                accepted.runId(), io.haifa.agent.runtime.api.RunMessageCursor.beforeFirst(accepted.runId()), 50);
+        assertThat(publicSteps.items().stream()
+                        .filter(message -> "ASSISTANT".equals(message.role())
+                                && !message.toolCalls().isEmpty())
+                        .toList())
+                .singleElement()
+                .satisfies(message -> {
+                    assertThat(message.text()).isEqualTo(text);
+                    assertThat(message.toolCorrelations()).containsValue("native-correlation");
+                });
+        assertThat(publicSteps.toString()).doesNotContain("PRIVATE_TOOL_REASONING");
+    }
 
     @Test
     void callerIdentityScopesVisibilityAndStartIdempotency() {
@@ -564,7 +646,7 @@ class RuntimeCoreHardeningTest {
             assertThat(trace.runId()).isEqualTo(accepted.runId());
             assertThat(trace.attemptId()).isPresent();
             assertThat(trace.sessionId()).isEqualTo(new AgentSessionId("session-1"));
-            assertThat(trace.workerId()).contains("worker-a");
+            assertThat(trace.workerId().orElseThrow()).startsWith("worker-a");
             assertThat(trace.safeAttributes().keySet())
                     .noneMatch(key -> key.toLowerCase().contains("prompt")
                             || key.toLowerCase().contains("secret"));
@@ -794,6 +876,38 @@ class RuntimeCoreHardeningTest {
     }
 
     @Test
+    void largeToolBudgetDoesNotInventConvergenceAndKeepsExactThresholdRounding() {
+        AtomicReference<List<String>> messages = new AtomicReference<>();
+        Fixture largeBudget = fixture(
+                request -> {
+                    messages.set(request.messages().stream()
+                            .map(message -> message.content())
+                            .toList());
+                    return response(finalDecision("done"));
+                },
+                builder -> builder.profiles((id, overrides) -> new ResolvedProfile(
+                        id,
+                        "1.0.0",
+                        AgentRunType.CHAT,
+                        new AgentRunBudget(1_000_000, 1_000_000, 1_000_000, Long.MAX_VALUE, 150, 6, "USD", 1_000_000),
+                        new AgentRunLimits(150, 4, 1, 900_000, 600_000, 150, Long.MAX_VALUE, 6))));
+        var accepted = largeBudget.runtime.start(request("large-tool-budget"));
+        var run = largeBudget.store.find(accepted.runId()).orElseThrow();
+        var fresh = io.haifa.agent.runtime.core.recovery.RunBudgetSnapshot.from(run, 1, NOW);
+        assertThat(fresh.remainingPercent()).isEqualTo(100);
+        assertThat(fresh.crossedThresholds()).isEmpty();
+        largeBudget.scheduler.runAll();
+        assertThat(messages.get()).noneMatch(value -> value.contains("type=BUDGET_THRESHOLD"));
+
+        var halfAccepted = largeBudget.runtime.start(request("large-tool-half"));
+        var halfRun = largeBudget.store.find(halfAccepted.runId()).orElseThrow();
+        halfRun.recordUsage(new AgentRunUsageDelta(0, 0, 0, 0, Long.MAX_VALUE / 2 + 1, 0, 0, 0));
+        var half = io.haifa.agent.runtime.core.recovery.RunBudgetSnapshot.from(halfRun, 1, NOW);
+        assertThat(half.remainingPercent()).isEqualTo(49);
+        assertThat(half.crossedThresholds()).containsExactly(50);
+    }
+
+    @Test
     void budgetConvergenceInstructionReachesTheModelContext() {
         AtomicReference<List<String>> messages = new AtomicReference<>();
         Fixture nearBudget = fixture(request -> {
@@ -958,15 +1072,54 @@ class RuntimeCoreHardeningTest {
         Fixture fixture = fixture(
                 request -> {
                     if (modelCalls.incrementAndGet() == 2) finalizationRequest.set(request);
-                    return response(
+                    AgentChatResponse response = response(
                             modelCalls.get() == 1
                                     ? new ToolCallDecision(List.of(tool))
                                     : finalDecision("retained answer from completed evidence"));
+                    return new AgentChatResponse(
+                            response.responseId(),
+                            response.actualModelId(),
+                            response.content(),
+                            response.toolCalls(),
+                            response.finishReason(),
+                            response.usage(),
+                            response.systemFingerprint(),
+                            response.metadata(),
+                            Optional.of(SensitiveModelReasoning.of(
+                                    modelCalls.get() == 1 ? "unused-tool-reasoning" : "synthesis-reasoning")));
                 },
                 builder -> TestToolPlatform.install(builder, "read", "1.0.0", "read.input", false, request -> {
-                    executions.incrementAndGet();
-                    return new ToolResult(true, "ok", Map.of(), List.of(), List.of(), false);
-                }));
+                            executions.incrementAndGet();
+                            return new ToolResult(true, "ok", Map.of(), List.of(), List.of(), false);
+                        })
+                        .profiles((id, overrides) -> {
+                            var base = DefaultResolvedModelSnapshots.deepSeekV4Pro();
+                            var model = ResolvedModelSnapshot.create(
+                                    base.providerId(),
+                                    base.providerVersion(),
+                                    base.modelId(),
+                                    base.modelVersion(),
+                                    base.providerModelId(),
+                                    base.adapterType(),
+                                    base.adapterVersion(),
+                                    base.apiStyle(),
+                                    base.dialect(),
+                                    base.endpoint(),
+                                    base.credentialRef(),
+                                    base.nativeStreaming(),
+                                    base.capabilities(),
+                                    base.contextWindow(),
+                                    base.maxOutputTokens(),
+                                    base.providerOptions(),
+                                    Map.of("thinking", "enabled", "requires_reasoning_continuation", true));
+                            return new ResolvedProfile(
+                                    id,
+                                    "1.0.0",
+                                    AgentRunType.CHAT,
+                                    new AgentRunBudget(1_000_000, 1_000_000, 1_000_000, 32, 64, 8, "USD", 1_000_000),
+                                    new AgentRunLimits(50, 4, 1, 300_000, 60_000),
+                                    model);
+                        }));
 
         var accepted = fixture.runtime.start(request("tool-budget-limited"));
         var run = fixture.store.find(accepted.runId()).orElseThrow();
@@ -984,6 +1137,14 @@ class RuntimeCoreHardeningTest {
         });
         assertThat(modelCalls).hasValue(2);
         assertThat(finalizationRequest.get().tools()).isEmpty();
+        assertThat(fixture.store.modelContinuations(accepted.runId()))
+                .singleElement()
+                .satisfies(value -> {
+                    assertThat(value.reference().digest())
+                            .isEqualTo(SensitiveModelReasoning.of("synthesis-reasoning")
+                                    .digest());
+                    assertThat(value.toolCorrelationIds()).isEmpty();
+                });
         assertThat(executions).hasValue(0);
         assertThat(fixture.store.toolCalls(accepted.runId())).isEmpty();
     }

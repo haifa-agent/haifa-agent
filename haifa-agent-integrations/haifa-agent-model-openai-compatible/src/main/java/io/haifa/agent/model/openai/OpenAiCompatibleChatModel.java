@@ -385,8 +385,13 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
         Map<String, Object> options = invocationOptions(request);
         LinkedHashMap<String, Object> body = new LinkedHashMap<>();
         body.put("model", request.model().providerModelId());
-        List<Map<String, Object>> messages =
-                new ArrayList<>(request.messages().stream().map(this::message).toList());
+        List<Map<String, Object>> messages = new ArrayList<>(request.messages().stream()
+                .map(value -> message(
+                        value,
+                        !OpenAiCompatibleDialects.DEEPSEEK.equals(
+                                        request.model().dialect())
+                                || !request.tools().isEmpty()))
+                .toList());
         request.structuredOutput().ifPresent(requirement -> {
             if (!io.haifa.agent.model.api.ModelApiBindingDefinition.STANDARD_DIALECT.equals(
                     request.model().dialect())) {
@@ -646,7 +651,7 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
         return normalized;
     }
 
-    private Map<String, Object> message(ModelMessage message) {
+    private Map<String, Object> message(ModelMessage message, boolean replayReasoning) {
         LinkedHashMap<String, Object> mapped = new LinkedHashMap<>();
         mapped.put("role", message.role().name().toLowerCase(Locale.ROOT));
         mapped.put("content", messageContent(message));
@@ -656,6 +661,7 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                     message.toolCalls().stream().map(this::toolCall).toList());
         }
         message.reasoning()
+                .filter(ignored -> replayReasoning)
                 .ifPresent(reasoning ->
                         mapped.put("reasoning_content", reasoning.use(java.util.function.Function.identity())));
         message.providerCorrelationId().ifPresent(value -> mapped.put("tool_call_id", value.value()));

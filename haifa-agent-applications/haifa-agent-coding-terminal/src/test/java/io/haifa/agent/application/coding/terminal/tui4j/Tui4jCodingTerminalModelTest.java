@@ -1,5 +1,6 @@
 package io.haifa.agent.application.coding.terminal.tui4j;
 
+import static io.haifa.agent.application.coding.terminal.application.CodingTerminalTestSupport.view;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.williamcallahan.tui4j.compat.bubbletea.BatchMessage;
@@ -34,6 +35,7 @@ import io.haifa.agent.application.project.product.coding.client.CodingAuthentica
 import io.haifa.agent.application.project.product.coding.client.CodingSessionClient;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.core.session.AgentSessionStatus;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.AgentRunEventListener;
@@ -47,6 +49,7 @@ import io.haifa.agent.runtime.api.RunEventPayloads;
 import io.haifa.agent.runtime.api.RunEventSubscription;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -86,6 +89,41 @@ class Tui4jCodingTerminalModelTest {
 
         fixture.model.update(key(KeyType.keyETX));
         assertThat(fixture.controller.state().exitRequested()).isTrue();
+    }
+
+    @Test
+    void rechecksTheRealWindowSizeEveryBoundedNumberOfPolls() {
+        var fixture = fixture();
+
+        assertThat(requestsWindowSizeCheck(fixture.model.init())).isTrue();
+
+        int polls = 0;
+        boolean requested = false;
+        while (polls < Tui4jCodingTerminalModel.WINDOW_SIZE_POLL_TICKS && !requested) {
+            polls++;
+            var polled = fixture.model.update(new Tui4jCodingTerminalModel.PollMessage());
+            requested = requestsWindowSizeCheck(polled.command());
+        }
+
+        assertThat(requested).isTrue();
+        assertThat(polls).isEqualTo(Tui4jCodingTerminalModel.WINDOW_SIZE_POLL_TICKS);
+    }
+
+    @Test
+    void doesNotPollWindowSizeWhenTheHostReportsResizeSignals() {
+        TerminalHostInfo linux = TerminalHostInfo.detect(
+                Map.of(
+                        "os.name", "Linux",
+                        "os.version", "6.0",
+                        "os.arch", "amd64",
+                        "java.version", "21"),
+                List.of());
+        var fixture = fixture(linux);
+
+        for (int poll = 0; poll < Tui4jCodingTerminalModel.WINDOW_SIZE_POLL_TICKS; poll++) {
+            var polled = fixture.model.update(new Tui4jCodingTerminalModel.PollMessage());
+            assertThat(requestsWindowSizeCheck(polled.command())).isFalse();
+        }
     }
 
     @Test
@@ -165,6 +203,164 @@ class Tui4jCodingTerminalModelTest {
             assertThat(item.title()).isEqualTo("You");
             assertThat(item.body()).isEqualTo("inspect the repository");
         });
+    }
+
+    @Test
+    void summarizesLargeBracketedPasteAndDeletesItInOneStroke() {
+        var fixture = fixture();
+
+        fixture.model.update(new PasteMessage("alpha\nbeta\ngamma"));
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~3 lines]");
+
+        fixture.model.update(key(KeyType.keyBS));
+
+        assertThat(fixture.controller.state().editorBuffer()).isEmpty();
+    }
+
+    @Test
+    void keepsShortBracketedPasteVerbatim() {
+        var fixture = fixture();
+
+        fixture.model.update(new PasteMessage("one\ntwo"));
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("one\ntwo");
+    }
+
+    @Test
+    void summarizesSingleLinePasteBeyondTheCharacterThreshold() {
+        var fixture = fixture();
+
+        fixture.model.update(new PasteMessage("x".repeat(151)));
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~1 lines]");
+    }
+
+    @Test
+    void expandsSummarizedPasteBackToTheOriginalTextOnSubmit() {
+        var fixture = fixture();
+        String pasted = "alpha\nbeta\ngamma";
+        fixture.model.update(new PasteMessage(pasted));
+
+        var guarded = fixture.model.update(key(KeyType.keyCR));
+        fixture.model.update(guarded.command().execute());
+
+        assertThat(fixture.controller.state().editorBuffer()).isEmpty();
+        assertThat(fixture.controller.state().transcript()).singleElement().satisfies(item -> {
+            assertThat(item.title()).isEqualTo("You");
+            assertThat(item.body()).isEqualTo(pasted);
+        });
+    }
+
+    @Test
+    void movesTheCursorAcrossASummarizedPasteAsOneUnit() {
+        var fixture = fixture();
+        String token = "[Pasted #1 ~3 lines]";
+        fixture.model.update(new PasteMessage("alpha\nbeta\ngamma"));
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo(token);
+
+        fixture.model.update(key(KeyType.KeyLeft));
+        assertThat(fixture.controller.state().editorCursor()).isZero();
+
+        fixture.model.update(key(KeyType.KeyRight));
+        assertThat(fixture.controller.state().editorCursor()).isEqualTo(token.length());
+    }
+
+    @Test
+    void expandsConsecutiveSummarizedPastesWithoutInjectingContent() {
+        var fixture = fixture();
+        fixture.model.update(new PasteMessage("a1\na2\na3"));
+        fixture.model.update(new PasteMessage("b1\nb2\nb3"));
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~3 lines][Pasted #2 ~3 lines]");
+
+        var guarded = fixture.model.update(key(KeyType.keyCR));
+        fixture.model.update(guarded.command().execute());
+
+        assertThat(fixture.controller.state().transcript()).singleElement().satisfies(item -> assertThat(item.body())
+                .isEqualTo("a1\na2\na3b1\nb2\nb3"));
+    }
+
+    @Test
+    void deletesASummarizedPasteForwardInOneStroke() {
+        var fixture = fixture();
+        fixture.model.update(new PasteMessage("alpha\nbeta\ngamma"));
+
+        fixture.model.update(key(KeyType.KeyLeft));
+        fixture.model.update(key(KeyType.KeyDelete));
+
+        assertThat(fixture.controller.state().editorBuffer()).isEmpty();
+    }
+
+    @Test
+    void treatsASummarizedPasteStartingWithASlashAsAMessage() {
+        var fixture = fixture();
+        String pasted = "/usr/local/bin/tool\nsecond line\nthird line";
+        fixture.model.update(new PasteMessage(pasted));
+
+        var guarded = fixture.model.update(key(KeyType.keyCR));
+        fixture.model.update(guarded.command().execute());
+
+        assertThat(fixture.controller.state().transcript()).singleElement().satisfies(item -> {
+            assertThat(item.title()).isEqualTo("You");
+            assertThat(item.body()).isEqualTo(pasted);
+        });
+    }
+
+    @Test
+    void preservesLeadingIndentationInASummarizedPaste() {
+        var fixture = fixture();
+        String pasted = "    indented\nplain\nthird";
+        fixture.model.update(new PasteMessage(pasted));
+
+        var guarded = fixture.model.update(key(KeyType.keyCR));
+        fixture.model.update(guarded.command().execute());
+
+        assertThat(fixture.controller.state().transcript()).singleElement().satisfies(item -> assertThat(item.body())
+                .isEqualTo(pasted));
+    }
+
+    @Test
+    void doesNotInjectASeparatorAfterExistingDraftText() {
+        var fixture = fixture();
+        fixture.model.update(new PasteMessage("--data="));
+        fixture.model.update(new PasteMessage("alpha\nbeta\ngamma"));
+
+        var guarded = fixture.model.update(key(KeyType.keyCR));
+        fixture.model.update(guarded.command().execute());
+
+        assertThat(fixture.controller.state().transcript()).singleElement().satisfies(item -> assertThat(item.body())
+                .isEqualTo("--data=alpha\nbeta\ngamma"));
+    }
+
+    @Test
+    void doesNotExpandAPlaceholderLiteralInsideAnotherPaste() {
+        var fixture = fixture();
+        String first = "keep\n[Pasted #2 ~3 lines]\ntail";
+        fixture.model.update(new PasteMessage(first));
+        fixture.model.update(new PasteMessage("b1\nb2\nb3"));
+
+        var guarded = fixture.model.update(key(KeyType.keyCR));
+        fixture.model.update(guarded.command().execute());
+
+        assertThat(fixture.controller.state().transcript()).singleElement().satisfies(item -> assertThat(item.body())
+                .isEqualTo(first + "b1\nb2\nb3"));
+    }
+
+    @Test
+    void protectsASummarizedPasteFromPartialEditing() {
+        var fixture = fixture();
+        fixture.model.update(new PasteMessage("alpha\nbeta\ngamma"));
+        fixture.model.update(key(KeyType.keyLF));
+        fixture.model.update(runes('x'));
+        fixture.model.update(runes('y'));
+        String draft = fixture.controller.state().editorBuffer();
+
+        fixture.model.update(key(KeyType.KeyUp));
+        fixture.model.update(runes('Z'));
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo(draft);
+        assertThat(fixture.controller.state().recoverableError()).contains("PASTE_PLACEHOLDER_ATOMIC");
     }
 
     @Test
@@ -785,8 +981,237 @@ class Tui4jCodingTerminalModelTest {
         assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("model-provider");
     }
 
+    @Test
+    void opensCommandPaletteWhenTriggeredByShortcut() {
+        var fixture = fixture();
+
+        fixture.model.update(key(KeyType.keyDLE));
+
+        assertThat(fixture.controller.state().selector()).isPresent();
+        assertThat(fixture.controller.state().selector().get().title()).isEqualTo("Commands");
+    }
+
+    @Test
+    void togglesSidebarUsingLeaderKeyCombination() {
+        var fixture = fixture();
+        boolean initialVisible = fixture.controller.state().sidebarVisible();
+
+        fixture.model.update(key(KeyType.keyCAN));
+        fixture.model.update(runes('b'));
+        fixture.controller.drainEvents();
+
+        assertThat(fixture.controller.state().sidebarVisible()).isEqualTo(!initialVisible);
+
+        fixture.model.update(key(KeyType.keyCAN));
+        fixture.model.update(runes('b'));
+        fixture.controller.drainEvents();
+
+        assertThat(fixture.controller.state().sidebarVisible()).isEqualTo(initialVisible);
+    }
+
+    @Test
+    void leaderEInformsUserThatExternalEditorIsDeferred() {
+        var fixture = fixture();
+        fixture.model.update(new PasteMessage("draft-code"));
+
+        fixture.model.update(key(KeyType.keyCAN));
+        fixture.model.update(runes('e'));
+        fixture.controller.drainEvents();
+
+        assertThat(fixture.controller.state().status()).isEqualTo("External editor deferred in this version");
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("draft-code");
+    }
+
+    @Test
+    void approvalDialogRejectsLeaderKeysAndDoesNotAccidentallySubmit() {
+        var fixture = fixture();
+        fixture.pump.offer(new TerminalUiAction.SelectorOpened(
+                new TerminalSelector("interaction:approval-1", "Approval", List.of("reject", "approve"), 1)));
+        fixture.controller.drainEvents();
+
+        assertThat(fixture.controller.state().selector()).isPresent();
+        assertThat(fixture.controller.state().selector().orElseThrow().selected())
+                .isEqualTo(1);
+
+        fixture.model.update(key(KeyType.keyCAN));
+        fixture.model.update(runes('m'));
+        fixture.controller.drainEvents();
+
+        assertThat(fixture.controller.state().selector()).isPresent();
+        assertThat(fixture.controller.state().selector().orElseThrow().title()).isEqualTo("Approval");
+        assertThat(fixture.controller.state().selector().orElseThrow().selected())
+                .isEqualTo(1);
+    }
+
+    @Test
+    void commandPaletteAndLeaderActionsPreserveDraftAndPastedContent() {
+        var fixture = fixture();
+        String largeContent = "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7";
+        fixture.model.update(new PasteMessage(largeContent));
+        String originalBuffer = fixture.controller.state().editorBuffer();
+        assertThat(originalBuffer).startsWith("[Pasted #1 ~7 lines]");
+
+        fixture.model.update(key(KeyType.keyDLE));
+        assertThat(fixture.controller.state().selector()).isPresent();
+        assertThat(fixture.controller.state().selector().orElseThrow().kind()).isEqualTo("command-palette");
+
+        fixture.model.update(key(KeyType.keyESC));
+        assertThat(fixture.controller.state().selector()).isEmpty();
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo(originalBuffer);
+
+        fixture.model.update(key(KeyType.keyCAN));
+        fixture.model.update(runes('s'));
+        fixture.controller.drainEvents();
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo(originalBuffer);
+        fixture.model.update(key(KeyType.keyESC));
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo(originalBuffer);
+    }
+
+    @Test
+    void leaderRenamePromptPreservesDraftAndCancelsOnEsc() {
+        var fixture = fixture();
+        fixture.model.update(new PasteMessage("my draft before rename"));
+
+        fixture.model.update(key(KeyType.keyCAN));
+        fixture.model.update(runes('r'));
+        fixture.controller.drainEvents();
+
+        assertThat(fixture.controller.state().status()).isEqualTo("No active session to rename");
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("my draft before rename");
+    }
+
+    @Test
+    void leaderRenameWithActiveSessionConfirmsOnEnterWithoutSubmittingMessage() {
+        var client = new UnusedClient();
+        client.currentSession = sessionView("Original Name");
+        var fixture = activeFixture(client);
+
+        fixture.model.update(new PasteMessage("important draft message"));
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("important draft message");
+
+        fixture.model.update(key(KeyType.keyCAN));
+        fixture.model.update(runes('r'));
+        fixture.controller.drainEvents();
+
+        assertThat(fixture.controller.isRenamingSession()).isTrue();
+        assertThat(fixture.controller.state().status()).contains("Rename session");
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("Original Name");
+
+        // Type updated name
+        fixture.model.update(runes('2'));
+        fixture.controller.drainEvents();
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("Original Name2");
+
+        // Hit Enter to confirm
+        commitPlainEnter(fixture);
+        fixture.controller.drainEvents();
+
+        assertThat(client.renamedTitle).isEqualTo("Original Name2");
+        assertThat(client.submittedMessages).isEmpty();
+        assertThat(fixture.controller.isRenamingSession()).isFalse();
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("important draft message");
+    }
+
+    @Test
+    void leaderRenameWithActiveSessionCancelsOnEscRestoringDraft() {
+        var client = new UnusedClient();
+        client.currentSession = sessionView("Original Name");
+        var fixture = activeFixture(client);
+
+        fixture.model.update(new PasteMessage("important draft message"));
+
+        fixture.model.update(key(KeyType.keyCAN));
+        fixture.model.update(runes('r'));
+        fixture.controller.drainEvents();
+
+        assertThat(fixture.controller.isRenamingSession()).isTrue();
+        fixture.model.update(runes('2'));
+
+        fixture.model.update(key(KeyType.keyESC));
+        fixture.controller.drainEvents();
+
+        assertThat(fixture.controller.isRenamingSession()).isFalse();
+        assertThat(fixture.controller.state().status()).isEqualTo("Rename cancelled");
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("important draft message");
+        assertThat(client.renamedTitle).isNull();
+        assertThat(client.submittedMessages).isEmpty();
+    }
+
+    @Test
+    void f2ModelCyclingBlockedDuringActiveRun() {
+        var fixture = fixture();
+        fixture.pump.offer(new TerminalUiAction.RunEventReceived(
+                event(1, new RunEventPayloads.RunLifecycle("RUNNING", 1, "NONE"))));
+        fixture.controller.drainEvents();
+
+        fixture.model.update(key(KeyType.KeyF2));
+        fixture.controller.drainEvents();
+
+        assertThat(fixture.controller.state().status()).isEqualTo("Cannot switch model during active run");
+    }
+
+    @Test
+    void leaderKeyTimesOutAfterInactivity() {
+        AtomicLong clock = new AtomicLong(1_000_000_000L);
+        var fixture = fixture(clock::get);
+        boolean initialVisible = fixture.controller.state().sidebarVisible();
+
+        fixture.model.update(key(KeyType.keyCAN));
+        clock.addAndGet(2_000_000_000L); // 2 seconds > 1500ms timeout
+        fixture.model.update(runes('b'));
+        fixture.controller.drainEvents();
+
+        assertThat(fixture.controller.state().sidebarVisible()).isEqualTo(initialVisible);
+    }
+
+    @Test
+    void themeSwitchPreservesScrollPositionAndDoesNotTriggerPhantomNewOutput() {
+        var fixture = fixture();
+        for (int i = 0; i < 30; i++) {
+            fixture.pump.offer(new TerminalUiAction.UserMessageCommitted("user-" + i, "Line " + i));
+        }
+        fixture.controller.drainEvents();
+        fixture.model.init();
+
+        // Scroll up
+        fixture.model.update(key(KeyType.KeyPgUp));
+
+        // Now switch theme via action
+        fixture.pump.offer(new TerminalUiAction.ThemeChanged("nord"));
+        fixture.controller.drainEvents();
+
+        // Trigger update to sync components
+        fixture.model.update(new Tui4jCodingTerminalModel.PollMessage());
+        String viewAfterTheme = fixture.model.view();
+
+        // The view must not show the phantom "new output below" badge
+        assertThat(viewAfterTheme).doesNotContain("new output below");
+        assertThat(fixture.controller.state().themeName()).isEqualTo("nord");
+    }
+
     private Fixture fixture() {
         return fixture(System::nanoTime);
+    }
+
+    private Fixture activeFixture(UnusedClient client) {
+        var pump = new TerminalEventPump(64);
+        var controller = new CodingTerminalController(
+                new ProjectId("project-1"),
+                client,
+                pump,
+                new TerminalUiReducer(),
+                TerminalUiState.initial(80, 24),
+                Runnable::run);
+        if (client.currentSession != null) {
+            controller.open(client.currentSession.summary().sessionId());
+            controller.drainEvents();
+        }
+        return new Fixture(controller, pump, new Tui4jCodingTerminalModel(controller, pump));
+    }
+
+    private static CodingSessionView sessionView(String displayName) {
+        return view(Optional.empty(), 0, displayName);
     }
 
     private Fixture fixture(java.util.function.LongSupplier monotonicNanos) {
@@ -799,6 +1224,19 @@ class Tui4jCodingTerminalModelTest {
                 TerminalUiState.initial(80, 24),
                 Runnable::run);
         return new Fixture(controller, pump, new Tui4jCodingTerminalModel(controller, pump, monotonicNanos));
+    }
+
+    private Fixture fixture(TerminalHostInfo hostInfo) {
+        var pump = new TerminalEventPump(64);
+        var controller = new CodingTerminalController(
+                new ProjectId("project-1"),
+                new UnusedClient(),
+                pump,
+                new TerminalUiReducer(),
+                TerminalUiState.initial(80, 24),
+                Runnable::run);
+        return new Fixture(
+                controller, pump, new Tui4jCodingTerminalModel(controller, pump, System::nanoTime, hostInfo));
     }
 
     private Fixture fixture(CodingAuthenticationClient authentication) {
@@ -821,6 +1259,24 @@ class Tui4jCodingTerminalModelTest {
     private void commitPlainEnter(Fixture fixture) {
         var guarded = fixture.model.update(key(KeyType.keyCR));
         fixture.model.update(guarded.command().execute());
+    }
+
+    private boolean requestsWindowSizeCheck(Command command) {
+        if (Command.isNone(command)) {
+            return false;
+        }
+        Message message = command.execute();
+        if (message instanceof com.williamcallahan.tui4j.message.CheckWindowSizeMessage) {
+            return true;
+        }
+        if (message instanceof BatchMessage batch) {
+            for (Command child : batch.commands()) {
+                if (requestsWindowSizeCheck(child)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private boolean emitsClearScreen(Command command) {
@@ -892,6 +1348,10 @@ class Tui4jCodingTerminalModelTest {
             throw new UnsupportedOperationException();
         }
 
+        CodingSessionView currentSession;
+        String renamedTitle;
+        final List<String> submittedMessages = new ArrayList<>();
+
         @Override
         public List<CodingSessionSummary> list(ProjectId projectId, int limit) {
             return List.of();
@@ -899,12 +1359,40 @@ class Tui4jCodingTerminalModelTest {
 
         @Override
         public CodingSessionView open(AgentSessionId sessionId) {
+            if (currentSession != null) return currentSession;
             throw new UnsupportedOperationException();
         }
 
         @Override
         public CodingSessionView reconcile(AgentSessionId sessionId) {
+            if (currentSession != null) return currentSession;
             throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public CodingSessionSummary rename(AgentSessionId sessionId, String displayName, long expectedRevision) {
+            renamedTitle = displayName;
+            CodingSessionSummary updated = new CodingSessionSummary(
+                    sessionId,
+                    new ProjectId("project-1"),
+                    displayName,
+                    AgentSessionStatus.ACTIVE,
+                    Optional.empty(),
+                    Optional.empty(),
+                    0,
+                    Instant.EPOCH,
+                    expectedRevision + 1);
+            if (currentSession != null) {
+                currentSession = new CodingSessionView(
+                        updated,
+                        currentSession.activeRun(),
+                        currentSession.pendingInteraction(),
+                        currentSession.eventCursor(),
+                        currentSession.configurationDigest(),
+                        currentSession.productProfileRef(),
+                        currentSession.model());
+            }
+            return updated;
         }
 
         @Override
@@ -914,7 +1402,7 @@ class Tui4jCodingTerminalModelTest {
 
         @Override
         public void submit(AgentSessionId sessionId, String message, String idempotencyKey) {
-            throw new UnsupportedOperationException();
+            submittedMessages.add(message);
         }
 
         @Override

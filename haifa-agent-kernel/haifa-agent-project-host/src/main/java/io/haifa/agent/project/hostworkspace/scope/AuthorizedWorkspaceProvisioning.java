@@ -148,8 +148,9 @@ public final class AuthorizedWorkspaceProvisioning {
 
     /**
      * Authorizes one user-approved directory. If the directory is already covered by an existing
-     * authorized boundary, the existing entry is reused and its current mode is kept. If it would
-     * swallow an existing boundary, the request is rejected fail closed.
+     * authorized boundary, the existing entry is reused; a re-attach of the exact same root may
+     * escalate its mode, but an enclosing boundary is never expanded or downgraded. If the request
+     * would swallow an existing boundary, it is rejected fail closed.
      */
     public ProvisioningResult authorize(Path directory) {
         return authorizeApprovedAttach(directory, WorkspaceAccessMode.DEVELOP);
@@ -195,7 +196,10 @@ public final class AuthorizedWorkspaceProvisioning {
                     throw HostWorkspaceScopeException.accessDenied(
                             realPath.toString(), "Enclosing authorized directory is no longer verifiable");
                 }
-                return new ProvisioningResult(existing, true, false, enclosing.view());
+                AuthorizedDirectoryEntry reused = existing.realPath().equals(realPath)
+                        ? applyApprovedReuse(enclosing, realPath, requestedMode)
+                        : enclosing;
+                return new ProvisioningResult(existing, true, false, reused.view());
             }
             if (existing.realPath().startsWith(realPath)) {
                 throw HostWorkspaceScopeException.invalidArgument(
@@ -231,8 +235,9 @@ public final class AuthorizedWorkspaceProvisioning {
                         identity.physicalFingerprint(),
                         now));
             } else {
+                WorkspaceAccessMode effectiveMode = strongerOf(existingEntry.mode(), requestedMode);
                 AuthorizedDirectoryEntry updated = existingEntry.status() == AuthorizedDirectoryStatus.ACTIVE
-                        ? existingEntry.revalidated(realPath, identity.physicalFingerprint(), now)
+                        ? existingEntry.revalidated(realPath, identity.physicalFingerprint(), effectiveMode, now)
                         : existingEntry.reactivate(realPath, identity.physicalFingerprint(), requestedMode, now);
                 persisted = registry.update(updated, existingEntry.version());
             }
@@ -272,6 +277,31 @@ public final class AuthorizedWorkspaceProvisioning {
         } finally {
             registryMutation.set(false);
         }
+    }
+
+    /**
+     * Applies a user-approved re-attach to an already active authorization for the exact same root.
+     * The effective mode is the stronger of the current and requested mode: an approved attach may
+     * escalate READ to DEVELOP, but it never weakens an approved boundary.
+     */
+    private AuthorizedDirectoryEntry applyApprovedReuse(
+            AuthorizedDirectoryEntry entry, Path realPath, WorkspaceAccessMode requestedMode) {
+        WorkspaceAccessMode effectiveMode = strongerOf(entry.mode(), requestedMode);
+        if (effectiveMode == entry.mode()) {
+            return entry;
+        }
+        Instant now = time.now();
+        registryMutation.set(true);
+        try {
+            return registry.update(
+                    entry.revalidated(realPath, entry.physicalFingerprint(), effectiveMode, now), entry.version());
+        } finally {
+            registryMutation.set(false);
+        }
+    }
+
+    private static WorkspaceAccessMode strongerOf(WorkspaceAccessMode current, WorkspaceAccessMode requested) {
+        return requested.allows(current) ? requested : current;
     }
 
     private AuthorizedHostDirectory provisionDirectory(Path realPath, HostDirectoryIdentity identity) {

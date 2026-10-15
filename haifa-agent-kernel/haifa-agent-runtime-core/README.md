@@ -1,5 +1,37 @@
 # Haifa Agent Runtime Core
 
+已提交模型 Assistant 消息的公开 `modelCallId` 取自同一次 `ModelInvocationResult`，由既有消息 metadata
+持久化并经消息分页窄投影公开；重开 Store 不丢失关联，旧记录缺失时保留空值，redaction 清除公开关联。
+
+内建 `skill_resource_read` 只在当前 Run 已激活至少一个包含可读辅助资源的 Skill 后进入模型的
+Tool 列表。新 Run 不继承上一 Run 的工具展示状态；只有 `SKILL.md` 的包不会展示辅助 reader。
+冻结 Tool binding 和实际调用的 caller、激活、索引、hash 与预算校验保持原有语义。
+模型若在未激活时调用这个未展示的内建 reader，调用按冻结绑定映射为普通 Tool 请求，由既有激活
+守卫返回 `SKILL_NOT_ACTIVATED` 工具失败供模型自行加载后重读，而不是判为无效模型响应；展示列表
+为空的收尾与最终回答尝试、以及冻结绑定中不存在或非内建 Skill provider 的工具名行为不变。
+
+`DefaultAgentRuntime.messages` 先通过 `findVisible` 校验实际 Run 的可信 Caller，再由既有
+SessionMessage repository 有界读取 Assistant/Tool 消息。`RunMessageProjector` 只查询本页 parts 引用的
+ToolCall ID，并校验 Run、correlation/name/version；不会加载整个 Run 的 Tool 历史。正文沿既有安全
+redactor 投影，权威结果已有截断标记时透传。存储或引用失效统一为固定安全 `INTERNAL_ERROR`。
+共用 `appendSessionMessage` seam 同事务追加 reference-only `message.committed` 并在 afterCommit
+唤醒现有 Run Event Feed；正常、拒绝、恢复和 final-output 写入均沿此 seam，没有第二份消息正文。
+模型在包含 native Tool 调用（普通 Tool 或 delegation）的回合中若同时返回非空普通可见正文，
+该正文作为 `TextPart` 置于同一权威 Assistant 消息中（位于 `ToolCallPart` 之前），消息可见性提升为
+`USER_VISIBLE`；正文为空时保持既有 `AGENT_VISIBLE`。公开展现 `runtime.messages` 沿同一 Assistant
+条目同时呈现可见文本与工具调用及关联 ID；模型后续上下文保留该文本与工具调用，私有 reasoning 保持隔离。
+
+`DefaultAgentRuntime.frozenInstructionDiagnostic(runId)` 先通过既有 Run repository 的
+`findVisible(runId, tenant, principal)` 过滤可信 Caller 所有权，再通过
+`RuntimeStateRepository.configuration(run.configurationSnapshot())` 读取冻结事实并核对 reference、
+Definition ID/version。它对既有实际 `agentInstruction` 的 UTF-8 字节计算 SHA-256，只公开摘要；
+不读当前 Profile、不写缓存/事件、不调度执行。存储/codec 或绑定失败统一转换成无正文、无 cause 的固定
+`INTERNAL_ERROR`。没有新增持久化端口、表、状态或指令副本。
+
+SQLite 的 `findVisible` 在还原 Run 及其 referenced configuration 之前检查已有 RunRow 的
+Tenant/Principal。缺失 configuration 造成的还原异常也仅对 owner 返回固定诊断错误；
+其他 caller 看不到损坏资源的存在性。其他 Run 查询保持原合同。
+
 ## Human interaction lifetime
 
 Runtime 生成的 Clarification 与 Tool Approval 默认不自动过期，并在 Interaction Store 中持久保持
@@ -37,6 +69,60 @@ and marks the Attempt ABANDONED. It schedules no replacement. Currently owned ex
 can use saved conversation facts and observe current conditions. Intentional pauses and approvals continue through
 resume/respond across restart, retaining caller, frozen binding, exact target and budget checks. Missing or non-latest
 pause state fails closed; normal continuation cannot select an earlier budget.
+
+## Parent-child delegation
+
+`RuntimeCoreBuilder.snapshotFactoryDecorator` 在既有配置工厂外增加窄装饰，不重新组装 Tool、Skill 或 trust
+目录。`ConfigurationSnapshotFactory.createChild` 接收真实 Parent，用于从它的冻结配置继承执行能力；
+默认实现继续调用原 `create`，保留已有自定义工厂的函数式接口兼容性。SDK 的
+`nonInteractiveChildTools()` 仅追加一项既有 capability 事实；Child 的启用值由 Parent snapshot 冻结，
+重装时的当前 builder 选项不会改变旧 Run。
+
+This is Minimal Parent–Child Delegation (Agent-as-Tool): a parent delegates with a Tool Call and receives the child's
+terminal result as that call's Tool Result. There is no parent–child messaging protocol, child steer or event-driven
+waiting. `ChildRunCoordinator` is the default `DelegationPort`. A run whose frozen configuration allows child agents, whose
+depth is zero and whose `maxChildRuns` is positive sees the Runtime-owned `task` Tool (`DelegationTool`); the response
+mapper turns any response containing it into one `DelegationDecision` holding every Tool request in model order.
+`DecisionExecutor` records all calls in one assistant message, runs the delegation calls first and in parallel, then
+the ordinary Tools sequentially. Each delegation creates an ordinary child `AgentRun` (`AGENT_AS_TOOL`, own
+ephemeral session and configuration snapshot, parent tenant/principal/project/overrides, Tools = child allowlist ∩
+parent Tools, no child agents) with ID `childRunId(parentRunId, toolCallId)`, so a retried call re-attaches.
+
+终态收集回调或其他线程在批次运行期间发出 Parent 停止信号时，每次准入前重新读取既有 control directive。
+尚未准入的请求仍由原停止路径关闭，不在收集完成后继续创建 Child；没有停止信号时沿用原准入顺序。
+
+The parent thread owns the batch: a request is created only when a `maxParallelChildren` and process slot is free,
+child state is read only from `RunStateRepository` (`children(parentRunId)`), each terminal child becomes the Tool
+Result immediately, and a child exceeding its own `maxWallTimeMillis` is timed out. Stop signals and the parent wall
+time stop the batch: started children receive `PARENT_CANCELLED`, requests that never started are closed, and
+`terminateChildren` settles children whose executor is gone through `InterruptedRunSettler`, the same settlement
+`recover` uses. Child waits are excluded from the idle check but not from wall time. Child runs skip Memory recall.
+
+If an execution guard observes a typed `wallTimeMillis` limit before the cooperative timeout signal arrives,
+`AttemptExecutor` settles the non-terminal Run through the same `TIMEOUT / WALL_TIME_EXCEEDED` transition.
+Other execution limits retain their failure classification. Already terminal Runs and an atomically committed
+waiting Run/paused Attempt are preserved; generic error codes or messages cannot impersonate a wall deadline.
+A Tool whose dispatch window is already exhausted keeps its `FAILED / RUN_BUDGET_EXCEEDED` record and is
+never dispatched. The Run times out while the failed Attempt retains the classified error and diagnostic ID;
+cooperative watchdog cancellation may instead cancel the Tool. These records describe different boundaries.
+
+A child's first message holds the `task` brief plus an immutable copy of the non-text references the parent Run was
+started with (`AgentRunRequest.inputs`: stored images and audio, image URLs, asset and artifact references); the
+parent's free text is not copied and the `task` arguments cannot add or widen references.
+
+A process slot (`maxConcurrentChildRuns`) is taken before a child is created and returned only when the child Run is
+terminal and none of its execution tasks is running. The Runtime submits every task through
+`ChildRunCoordinator.scheduler()`, so a child resumed after approval runs under the same slot; a parent that stops
+waiting never frees a slot early. If the scheduler rejects a committed child, the child fails with
+`RUNTIME_EXECUTION_FAILED` (`CHILD_NOT_SCHEDULED`), its attempt is closed and the slot returns; no QUEUED child is left
+behind. The parent's `child.run.completed|failed|cancelled|timed-out` event is appended inside the child's own terminal
+transition (`RunTransitionCoordinator.projectTerminalRunsWith`), so it is written exactly once, also when the child ends
+after its parent stopped or is settled by recovery.
+
+`LocalExecutionScheduler` still rejects an ordinary duplicate `submit` for the same Run. Only the Runtime resume path
+may register one process-local successor. That successor starts only after the current delegate has completely
+returned and continues to hold the same child process slot. Closing the scheduler drains an already accepted current
+task and successor before rejecting new submissions.
 
 ## Model-call client events
 
@@ -108,6 +194,9 @@ Approval Interaction request、exact target、Checkpoint、Run `WAITING_APPROVAL
 `policy.decision.made` / `approval.requested` Event-Outbox 在同一 Runtime UoW 中提交。`PolicyDecision`
 只在当前求值中瞬态产生，不进入 Store。响应侧把可信 Caller、Authority/Target 验证结果、Interaction
 response/application 和安全事件放入同一 UoW，再在提交后恢复 Run；Tool Resolution 只应用一次。
+所有阻塞式 Interaction 在对外提交 `WAITING_APPROVAL` / `WAITING_INTERACTION` 时，也在同一 UoW
+把当前 Execution Attempt 提交为 `PAUSED`；提交前两者均不可见，回滚时两者均不生效，提交后的执行器
+不会再次结束同一个 Attempt。这样重启或并发响应不会观察到 WAITING Run 仍绑定 RUNNING Attempt。
 
 ## Interaction、Steer 与 Client Event（Task 01～03）
 
@@ -117,10 +206,20 @@ Pending Interaction。新的 revision-aware Response 返回稳定收据，按可
 request 和幂等键去重；Approval 继续复用 Policy API 的 Authority/Target verification，不产生
 Decision bearer、Authorization Evidence 或可复用 Grant。
 
-`RunInputPort` 独立保存 Steer 的 `ACCEPTED/APPLIED` 状态。AgentLoop 只在
+`RunInputPort` 独立保存 Steer 的 `ACCEPTED/APPLIED/REJECTED` 状态。AgentLoop 只在
 `BEFORE_ITERATION` safe point 将已接受输入追加为 Session 用户消息，并绑定 Attempt/Iteration，
 不会异步修改正在构造的模型请求或 Tool 参数。内存与 SQLite 均实现该 Port；SQLite 使用条件更新、
 canonical digest 和 Attempt/Iteration 外键实现重启后的 exactly-once state application。
+
+已 `ACCEPTED` 的输入不会静默丢失。`submitInput` 在同一 Unit of Work 中重读 Run 状态并接收输入，
+与终态提交互相串行：模型给出 Final 时若仍有待应用输入，`RunTransitionCoordinator` 不提交完成，
+原回答保留为普通 Assistant 消息并记录 `completion.deferred`（`PENDING_RUN_INPUT`），下一轮
+`BEFORE_ITERATION` 应用输入后模型重新作答；若冻结限额已不允许下一次模型调用，则直接完成。
+任何终态转换（完成、失败、取消、超时，含重启后的 `recover`）都会在同一 Unit of Work、终态事件之前把
+仍待应用的输入结算为 `REJECTED`（`run-completed`、`run-failed`、`run-cancelled`、`run-timeout`），
+并写入 `run.input.rejected`。已进入 `COMPLETING` 或终态的 Run 拒绝新输入（`RUN_STATE_CONFLICT`）；
+同一幂等键的重试按输入意图（目标 Run 与内容，不含提交时间和 expected version）去重，并返回绑定输入
+的权威状态（`DUPLICATE`/`APPLIED`/`REJECTED`）。
 
 `RuntimeEventFeed` 从权威 Journal 按排他 sequence 和固定 head 范围读取；`RuntimeClientEventProjector`
 只输出 P0 typed 白名单，未知内部事件只推进 Cursor。`RuntimeEventSubscriptions` 先注册 Run-scoped
@@ -157,7 +256,7 @@ Tail 按 Token 预算从后向前选择，固定消息组数只作为安全上�
 本次默认启用把 Policy 窗口版本从 `session-window-v2` 提升到 `session-window-v3`；Checkpoint 兼容性要求
 Policy 版本精确匹配，因此旧版本摘要不再被复用为 Checkpoint，并在下一次压缩中确定性重建，
 源消息始终是权威事实。
-Todo 与 governed Memory 等可变快照位于 append-only Session 前缀之后，其安全 provenance digest 参与
+Todo 与 Memory 等可变快照位于 append-only Session 前缀之后，其安全 provenance digest 参与
 `windowGeneration` identity；变化表现为显式窗口边界，而不是静默改写未标识的前置内容。Tree/活动路径
 延期期间不得把该入口解释为分支感知压缩。
 
@@ -182,10 +281,10 @@ Tool Pipeline 只接受 `PublicToolPolicy` 产生的瞬态 `PolicyDecision`；�
 
 ## Memory default assembly
 
-Runtime 只在未配置 `MemoryRetriever` 时创建默认的内存 Store、Policy 和 Retriever；配置自定义
-Retriever 时不会创建这些默认对象。`MemoryAuditSink` 属于 Memory Service 自身的写入审计边界，
-不是 Runtime Builder 的装配输入。配置 `MemoryService` 时，消息 redaction 仍会使其来源的 Memory
-失效。
+Runtime 只依赖 `MemoryRetriever`：未配置时使用 `MemoryRetriever.none()`，不召回任何 Memory。
+`memory(retriever)` 是唯一装配入口；Memory 的写入、更新、删除和清空由产品侧 `MemoryService`
+负责，Runtime 不注册消息 redaction 监听，也不修改 Memory。召回可用
+`retriever.onlyWhen(request -> ...)` 按 Run 或 Agent 关闭。
 
 ## Provider continuation
 
@@ -240,7 +339,7 @@ Run/Attempt 事实。具有副作用且结果不确定的 Tool 仍映射为 `TOO
 - Run 配置按 alias 冻结精确 `FrozenSkillBinding`、Catalog digest 和 Resolution Policy reference；普通未启用 Skill 的 Profile 冻结空集合。
 - 模型初始上下文只披露冻结 Skill 的有界元数据。`skill_load` 与 `skill_resource_read` 作为普通 Tool 经统一冻结、Policy、Schema、Journal 和调用管线执行；激活后的指令进入最弱 `PromptLayer.SKILL`，资源只可从当前 Run 已冻结、已激活且索引为可读文本的包中按需读取。未允许、未激活、未索引或非文本资源会返回结构化 Tool 失败供模型修正请求；调用者越权、内容摘要漂移等完整性故障仍 fail closed。
 - Skill 激活是 Run-scope 的幂等事实，保存在 Skill 状态仓。继续执行时检查冻结 Binding 与内容访问，不复制到 Checkpoint。
-- `ToolCall` 是工具调用的权威记录。`ToolCallPart`/`ToolResultPart` 只保存领域 `ToolCallId`、Provider correlation 等协议引用和有界摘要；组装下一轮模型请求时，从权威 `ToolCall.result()` 重建已归一化的 `structuredData` 与 `truncated`，Runtime idempotency key 不发送给模型。
+- `ToolCall` 是工具调用的权威记录。`ToolCallPart`/`ToolResultPart` 只保存领域 `ToolCallId`、Provider correlation 等协议引用和有界摘要；组装下一轮模型请求时，从权威 `ToolCall.result()` 重建已归一化的 `structuredData` 与 `truncated`；`task` 结果排除仅供展示的 `outputPreview`、`outputSha256`、`outputTruncated`，Runtime idempotency key 不发送给模型。
 - Session Context 的 Token 估算同样从权威 `ToolCall` 读取完整 arguments 与 structured result；Tool 执行和持久化 Trace 记录实际 AgentLoop iteration，不使用占位值。
 - Provider 在 Tool dispatch 后抛出异常时，Runtime 会先把权威 `ToolCall` 和 Step 收敛为失败并追加
   使用同一 Provider correlation 的安全 `ToolResultPart`，再终止当前 Run。后续 Run 因此仍能组装
@@ -274,7 +373,7 @@ Run/Attempt 事实。具有副作用且结果不确定的 Tool 仍映射为 `TOO
 - `OutboxMessage` 保存与对应 `RuntimeEvent` 相同的 Run 内 `sequence` 和稳定 `schemaVersion`。本地
   `ExecutionOwnershipPort` 以当前进程实例 ID 精确匹配 Attempt `workerId`，进程重启后的旧 Attempt
   不再被误判为仍由本地持有。
-- Runtime 使用可信 Run 身份检索 RUN/SESSION/USER Scope 的 ACTIVE Memory；授权和状态过滤先于排序，结果仍通过 `ContextItem` IR 和统一 Token 预算。同一执行内以最新 COMPLETED USER 消息为回合键缓存检索结果，并且每个回合只持久化一次 `RuntimeMemorySelection`；继续时重新检索授权且有效的 Memory。Memory selection 不再复制到 Checkpoint。
+- Runtime 使用可信 Run 身份（tenant、owner、Session、Agent Definition id）检索 USER/AGENT/SESSION Scope 的有效 Memory；Scope 约束先于排序，结果仍通过 `ContextItem` IR 和统一 Token 预算。同一执行内以最新 COMPLETED USER 消息为回合键缓存检索结果，并且每个回合只持久化一次 `RuntimeMemorySelection`；继续时重新检索授权且有效的 Memory。Memory selection 不再复制到 Checkpoint。
 - Checkpoint 仅保存正常暂停／交互的最小续跑计数；SQLite 适配器保留有界持久化耗时指标。
 - 模块不依赖 Spring、模型 Provider SDK、MCP、Docker、JPA、产品模块或管理端。
 
@@ -283,3 +382,30 @@ Completion 产品验收统一通过 `CompletionPolicy` 返回结构化阻塞与�
 
 恢复来源直接读取持久 Attempt 的 `resumedFromCheckpointId`，不再经过进程内 Selector。已记录来源必须精确存在，
 缺失、非最新的来源或缺失状态会拒绝继续；新 Run 无来源时从初始计数开始，不回退历史快照。
+
+声明 `requires_reasoning_continuation=true` 的模型，其普通 assistant 答案也通过既有
+continuation 保护和存储；最终答案、保护载荷与 Run 完成状态在同一 Unit of Work 中提交。
+工具预算耗尽时生成的收尾答案同样保留其自身调用的保护载荷；本地降级摘要不关联被丢弃的工具推理。
+消息装配仅恢复同配置 Binding 的保护载荷，缺失引用保持失败关闭，跨 Binding 不搬运。
+
+## Shared Child capacity
+
+`ChildRunCapacity` is caller-owned and may be shared across Agents using
+`HaifaAgentBuilder.childRunCapacity(capacity)` (or `RuntimeCoreBuilder.childRunCapacity(capacity)`).
+Its maximum takes precedence over `maxConcurrentChildRuns`; no shared capacity is installed by default.
+A Child keeps its slot while waiting for approval and until its terminal Run and actual execution tasks
+have settled. Releasing a slot wakes waiting parents across all participating Agents. Cancelling a
+parent waiting for admission creates no Child. Closing one Agent does not close the shared capacity.
+
+An already created Child whose execution wrapper has been submitted but has not entered execution
+settles as `CANCELLED/PARENT_CANCELLED` when its parent stops. Admission and queued cancellation
+share the existing Unit of Work; draining the retained wrapper cannot start a terminal Child. Its
+capacity slot remains reserved until that physical wrapper drains. Parent `child.run.started` still
+describes creation/admission, while the Child's typed `RunLifecycle` status `RUNNING` in
+`run.status.changed` describes physical execution.
+
+## Budget threshold notices
+
+预算百分比按精确整数向下取整并限制在 0–100，包括 `Long.MAX_VALUE` 的工具额度；
+大额度的乘法不会溢出为零或触发虚假的 `BUDGET_THRESHOLD` 收敛通知。
+真实的 50/25/10 百分比阈值和既有模型消息角色保持不变。

@@ -175,4 +175,34 @@ class McpServerSpecTest {
 
         assertThat(spec.toString()).doesNotContain("PARTNER_MCP_TOKEN").doesNotContain("Bearer");
     }
+
+    @Test
+    void supportsDynamicBearerTokenSupplierAndStripsRedundantPrefix() {
+        McpServerSpec spec = McpServerSpec.streamableHttp("enterprise-search", ENDPOINT)
+                .allowTools("search_jobs")
+                .bearerToken(() -> "Bearer secret-token-value");
+
+        assertThat(spec.toString()).doesNotContain("secret-token-value");
+        assertThat(spec.credentials()).singleElement().satisfies(credential -> {
+            assertThat(credential.headerName()).isEqualTo("Authorization");
+            assertThat(credential.valuePrefix()).isEqualTo("Bearer ");
+            assertThat(credential.valueSupplier().get()).isEqualTo("secret-token-value");
+        });
+    }
+
+    @Test
+    void supportsDynamicHeaderSupplierAndRejectsReservedHeaders() {
+        McpServerSpec spec = McpServerSpec.streamableHttp("enterprise-search", ENDPOINT)
+                .allowTools("search_jobs")
+                .header("X-Custom-Token", () -> "dynamic-val");
+
+        assertThat(spec.credentials()).singleElement().satisfies(credential -> {
+            assertThat(credential.headerName()).isEqualTo("X-Custom-Token");
+            assertThat(credential.valueSupplier().get()).isEqualTo("dynamic-val");
+        });
+
+        assertThatThrownBy(() -> spec.header("Host", () -> "malicious.com"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("owned by the HTTP or MCP transport");
+    }
 }

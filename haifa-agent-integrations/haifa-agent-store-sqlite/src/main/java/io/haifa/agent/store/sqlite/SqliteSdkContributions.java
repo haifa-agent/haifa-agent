@@ -3,6 +3,8 @@ package io.haifa.agent.store.sqlite;
 import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationProtector;
 import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
+import io.haifa.agent.sdk.contribution.MemoryPlatformContribution;
+import io.haifa.agent.sdk.product.ProductMemoryPolicy;
 import io.haifa.agent.sdk.spi.SdkPersistenceContribution;
 import java.security.SecureRandom;
 import java.time.Clock;
@@ -52,6 +54,15 @@ public record SqliteSdkContributions(
      */
     public SdkPersistenceContribution borrowedPersistence() {
         return new BorrowedPersistence(persistence);
+    }
+
+    /**
+     * Direct Memory CRUD and recall stored in this SQLite file. The Memory component shares the foundation
+     * lifecycle, which stays owned by {@link #persistence()}.
+     */
+    public MemoryPlatformContribution memory(ProductMemoryPolicy policy) {
+        SqliteStoreFoundation foundation = persistence.foundation();
+        return SqliteSdkProductContributions.memory(foundation, foundation.clock(), policy);
     }
 
     static SecretKey requireAes256Key(SecretKey key) {

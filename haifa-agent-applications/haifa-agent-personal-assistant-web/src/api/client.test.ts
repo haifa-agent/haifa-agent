@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { MissionSnapshot } from "./generated";
+import type { Memory, MissionSnapshot } from "./generated";
 import { HttpPersonalAssistantClient } from "./client";
 
 afterEach(() => {
@@ -168,6 +168,36 @@ describe("HttpPersonalAssistantClient deployment boundary", () => {
       "If-Match": "7",
       "X-Haifa-CSRF": "1",
     });
+  });
+
+  it("sends Memory mutations with the revision and without an idempotency key", async () => {
+    const memory = { id: "memory/1", revision: 3 } as unknown as Memory;
+    const fetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+      async (_input, init) => (init?.method === "DELETE"
+        ? { ok: true, status: 204 }
+        : { json: async () => ({ ...memory, deleted: 0 }), ok: true, status: 200 }) as Response,
+    );
+    vi.stubGlobal("fetch", fetch);
+    const client = new HttpPersonalAssistantClient();
+
+    await client.updateMemory(memory, "Uses VS Code");
+    await client.deleteMemory(memory);
+    await client.clearMemories();
+
+    const [[updateUrl, update], [deleteUrl, remove], [clearUrl, clear]] = fetch.mock.calls as [
+      RequestInfo | URL,
+      RequestInit | undefined,
+    ][];
+    expect(updateUrl).toBe("http://127.0.0.1:20001/api/v1/memory/memory%2F1");
+    expect(update?.method).toBe("PATCH");
+    expect(update?.headers).toMatchObject({ "If-Match": "3", "X-Haifa-CSRF": "1" });
+    expect(deleteUrl).toBe("http://127.0.0.1:20001/api/v1/memory/memory%2F1");
+    expect(remove?.method).toBe("DELETE");
+    expect(remove?.headers).toMatchObject({ "If-Match": "3", "X-Haifa-CSRF": "1" });
+    expect(clearUrl).toBe("http://127.0.0.1:20001/api/v1/memory/clear");
+    expect(clear?.method).toBe("POST");
+    expect(clear?.headers).not.toHaveProperty("If-Match");
+    for (const init of [update, remove, clear]) expect(init?.headers).not.toHaveProperty("Idempotency-Key");
   });
 
   it("allows synchronous Mission planning to use the Server planning window", async () => {

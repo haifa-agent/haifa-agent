@@ -3,6 +3,7 @@ package io.haifa.agent.auth.localmodel;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.model.api.CredentialRef;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -102,6 +103,42 @@ class LocalModelAuthenticationServiceTest {
     }
 
     @Test
+    void requiresConnectionWithoutCredentialStore() {
+        LocalModelAuthStore unavailableStore =
+                new WindowsLocalModelAuthStore(UnavailableWindowsCredentialManagerClient.INSTANCE, new ObjectMapper());
+        var service = service(unavailableStore, Map.of());
+
+        assertThat(service.connectionRequired(new CredentialRef("model-auth://deepseek/default")))
+                .isTrue();
+    }
+
+    @Test
+    void requiresConnectionForUnavailableStoreSignalWithoutReason() {
+        var service = service(
+                new FailingStore(new IllegalStateException(
+                        "OS_CREDENTIAL_STORE_UNAVAILABLE: system credential store is unavailable on this operating"
+                                + " system")),
+                Map.of());
+
+        assertThat(service.connectionRequired(new CredentialRef("model-auth://deepseek/default")))
+                .isTrue();
+    }
+
+    @Test
+    void propagatesCredentialStoreFailuresOtherThanUnavailable() {
+        var service = service(
+                new FailingStore(new WindowsCredentialManagerException(
+                        WindowsCredentialManagerException.Reason.ACCESS_DENIED,
+                        5,
+                        "Windows Credential Manager read failed")),
+                Map.of());
+
+        assertThatThrownBy(() -> service.connectionRequired(new CredentialRef("model-auth://deepseek/default")))
+                .isInstanceOf(WindowsCredentialManagerException.class)
+                .hasMessage("Windows Credential Manager read failed");
+    }
+
+    @Test
     void findsCodexAccountIdForValidatedExternalCredential() {
         InMemoryStore store = new InMemoryStore();
         var service = service(store, Map.of());
@@ -166,7 +203,7 @@ class LocalModelAuthenticationServiceTest {
                 .isEqualTo("sk-original-key");
     }
 
-    private static LocalModelAuthenticationService service(InMemoryStore store, Map<String, String> environment) {
+    private static LocalModelAuthenticationService service(LocalModelAuthStore store, Map<String, String> environment) {
         return new LocalModelAuthenticationService(
                 store,
                 Optional.empty(),
@@ -197,6 +234,34 @@ class LocalModelAuthenticationServiceTest {
         @Override
         public boolean delete(LocalModelAuthReference reference) {
             return values.remove(reference) != null;
+        }
+    }
+
+    private static final class FailingStore implements LocalModelAuthStore {
+        private final RuntimeException failure;
+
+        private FailingStore(RuntimeException failure) {
+            this.failure = failure;
+        }
+
+        @Override
+        public Optional<StoredModelCredential> find(LocalModelAuthReference reference) {
+            throw failure;
+        }
+
+        @Override
+        public List<LocalModelConnectionView> listSafe() {
+            return List.of();
+        }
+
+        @Override
+        public void save(StoredModelCredential credential) {
+            throw failure;
+        }
+
+        @Override
+        public boolean delete(LocalModelAuthReference reference) {
+            return false;
         }
     }
 }

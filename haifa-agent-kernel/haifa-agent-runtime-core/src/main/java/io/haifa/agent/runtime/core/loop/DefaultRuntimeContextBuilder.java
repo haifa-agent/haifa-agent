@@ -23,7 +23,9 @@ import io.haifa.agent.runtime.core.middleware.AgentRuntimeMiddlewareChain;
 import io.haifa.agent.runtime.core.middleware.RuntimeMiddlewareContext;
 import io.haifa.agent.runtime.core.middleware.RuntimePhase;
 import io.haifa.agent.runtime.core.model.FrozenModelBinding;
+import io.haifa.agent.runtime.core.skill.SkillToolProvider;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
+import io.haifa.agent.skill.api.SkillActivation;
 import io.haifa.agent.skill.api.SkillContentLoader;
 import io.haifa.agent.skill.api.SkillScope;
 import io.haifa.agent.skill.api.SkillVisibilityContext;
@@ -74,8 +76,8 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
         RuntimeMiddlewareContext middlewareContext = new RuntimeMiddlewareContext(run, state);
         middleware.apply(RuntimePhase.BEFORE_CONTEXT_BUILD, middlewareContext);
         middleware.apply(RuntimePhase.AFTER_CONTEXT_BUILD, middlewareContext);
-        addSkillPrompts(run, middlewareContext);
-        List<ModelToolSpecification> effectiveTools = model.tools();
+        List<SkillActivation> activations = addSkillPrompts(run, middlewareContext);
+        List<ModelToolSpecification> effectiveTools = skillTools(model, activations);
         if (RuntimeControlOptions.finalizeOnly(
                 model.configuration().modelRequestOptions(), run.usage().toolCalls())) {
             effectiveTools = List.of();
@@ -293,7 +295,24 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
         return sha256(String.join("|", components));
     }
 
-    private void addSkillPrompts(AgentRun run, RuntimeMiddlewareContext context) {
+    private static List<ModelToolSpecification> skillTools(
+            FrozenModelBinding model, List<SkillActivation> activations) {
+        boolean builtInRead = model.configuration().toolBindings().stream()
+                .anyMatch(binding -> binding.alias().equals(SkillToolProvider.RESOURCE_READ_ALIAS)
+                        && binding.definition().providerId().equals(SkillToolProvider.PROVIDER_ID));
+        boolean readable = activations.stream()
+                .anyMatch(activation -> activation.binding().packageIndex().resources().stream()
+                        .anyMatch(resource -> resource.readableText()
+                                && !resource.relativePath().equals("SKILL.md")));
+        if (!builtInRead || readable) return model.tools();
+        // Frozen bindings and invocation authorization stay intact. Disclose the built-in
+        // reader only after this Run has an activated Skill with readable resources.
+        return model.tools().stream()
+                .filter(tool -> !tool.name().equals(SkillToolProvider.RESOURCE_READ_ALIAS.value()))
+                .toList();
+    }
+
+    private List<SkillActivation> addSkillPrompts(AgentRun run, RuntimeMiddlewareContext context) {
         var configuration = state.configuration(run.configurationSnapshot())
                 .orElseThrow(() -> new IllegalStateException("run configuration snapshot is unavailable"));
         if (!configuration.skillBindings().isEmpty()) {
@@ -321,7 +340,8 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
                 run.project(),
                 run.project().isPresent(),
                 java.util.EnumSet.allOf(SkillScope.class));
-        state.skillActivations(run.id()).forEach(activation -> {
+        List<SkillActivation> activations = state.skillActivations(run.id());
+        activations.forEach(activation -> {
             var content = skillContentLoader.load(activation.binding(), visibility);
             context.addPrompt(new PromptComponent(
                     new PromptComponentId(
@@ -353,6 +373,7 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
                                             .value(),
                             "skill-activation-reason:" + sha256(activation.reason()))));
         });
+        return activations;
     }
 
     private static String boundedDescription(String value) {

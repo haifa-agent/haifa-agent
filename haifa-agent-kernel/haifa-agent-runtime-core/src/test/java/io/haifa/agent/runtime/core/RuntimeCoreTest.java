@@ -8,6 +8,7 @@ import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.context.compression.CompressionPolicy;
 import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.content.TextPart;
+import io.haifa.agent.core.error.AgentError;
 import io.haifa.agent.core.error.AgentErrorCode;
 import io.haifa.agent.core.message.AgentMessageId;
 import io.haifa.agent.core.message.MessageRole;
@@ -18,6 +19,8 @@ import io.haifa.agent.core.plan.AgentPlanId;
 import io.haifa.agent.core.plan.TodoItem;
 import io.haifa.agent.core.plan.TodoItemId;
 import io.haifa.agent.core.plan.TodoPriority;
+import io.haifa.agent.core.reference.PrincipalRef;
+import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunBudget;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunLimits;
@@ -64,16 +67,26 @@ import io.haifa.agent.runtime.api.RuntimeCommandStatus;
 import io.haifa.agent.runtime.api.RuntimeCommandType;
 import io.haifa.agent.runtime.api.RuntimeContractException;
 import io.haifa.agent.runtime.api.RuntimeOverrides;
+import io.haifa.agent.runtime.core.attempt.ExecutionAttemptStatus;
 import io.haifa.agent.runtime.core.bootstrap.DefaultResolvedModelSnapshots;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
+import io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions;
+import io.haifa.agent.runtime.core.control.RunControlRegistry;
 import io.haifa.agent.runtime.core.decision.FinalAnswerDecision;
 import io.haifa.agent.runtime.core.decision.ToolCallDecision;
 import io.haifa.agent.runtime.core.decision.ToolRequest;
+import io.haifa.agent.runtime.core.execution.AgentExecutionFailureException;
+import io.haifa.agent.runtime.core.execution.LocalExecutionScheduler;
 import io.haifa.agent.runtime.core.execution.ManualExecutionScheduler;
+import io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException;
 import io.haifa.agent.runtime.core.input.InMemoryRunInputPort;
 import io.haifa.agent.runtime.core.interaction.InMemoryInteractionPort;
 import io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
+import io.haifa.agent.runtime.core.middleware.AgentRuntimeMiddleware;
+import io.haifa.agent.runtime.core.middleware.RuntimeMiddlewareContext;
+import io.haifa.agent.runtime.core.middleware.RuntimeMiddlewareOrder;
+import io.haifa.agent.runtime.core.middleware.RuntimePhase;
 import io.haifa.agent.runtime.core.recovery.RunBudgetSnapshot;
 import io.haifa.agent.runtime.core.retry.BackoffStrategy;
 import io.haifa.agent.runtime.core.retry.CompletionRepairPolicy;
@@ -100,13 +113,42 @@ import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Queue;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class RuntimeCoreTest {
+    @Test
+    void committedMessagesWakeExistingEventSubscriptionAndReplayTheSameAuthoritativeMessage() throws Exception {
+        Fixture fixture = fixture(model(finalDecision("complete")));
+        var runId = fixture.runtime.start(request("message-notification")).runId();
+        CountDownLatch committed = new CountDownLatch(1);
+        AtomicReference<io.haifa.agent.runtime.api.RunEventPayloads.MessageCommitted> reference =
+                new AtomicReference<>();
+        try (var subscription = fixture.runtime.subscribe(
+                runId, io.haifa.agent.runtime.api.RunEventCursor.beforeFirst(runId), event -> {
+                    if (event.payload()
+                            instanceof io.haifa.agent.runtime.api.RunEventPayloads.MessageCommitted message) {
+                        reference.set(message);
+                        committed.countDown();
+                    }
+                })) {
+            fixture.scheduler.runAll();
+            assertThat(committed.await(5, TimeUnit.SECONDS)).isTrue();
+            var page =
+                    fixture.runtime.messages(runId, io.haifa.agent.runtime.api.RunMessageCursor.beforeFirst(runId), 10);
+            assertThat(page.items()).singleElement().satisfies(message -> {
+                assertThat(message.messageId()).isEqualTo(reference.get().messageId());
+                assertThat(message.sequence()).isEqualTo(reference.get().messageSequence());
+                assertThat(message.text()).isEqualTo("complete");
+            });
+        }
+    }
+
     @Test
     void currentRunObjectiveAppearsOnceThroughAuthoritativeSessionHistory() {
         AtomicReference<AgentChatRequest> captured = new AtomicReference<>();
@@ -251,6 +293,115 @@ class RuntimeCoreTest {
         assertThat(fixture.store.toolCalls(accepted.runId()))
                 .singleElement()
                 .satisfies(call -> assertThat(call.arguments().values()).containsEntry("workdir", "."));
+    }
+
+    @Test
+    void projectsStableBoundedAndRedactedToolCallTranscriptWithoutWrites() {
+        String inputSecret = "input-secret-material";
+        String resultSecret = "result-secret-material";
+        ToolRequest original = toolRequest(
+                "projected-tool",
+                "echo",
+                "1.0.0",
+                new ToolArguments(
+                        "echo.input",
+                        "1.0",
+                        Map.of(
+                                "workdir",
+                                "/app",
+                                "api_key",
+                                inputSecret,
+                                "nested",
+                                Map.of("continuation_token", inputSecret),
+                                "large",
+                                "x".repeat(20_000))));
+        Fixture fixture = fixture(
+                model(new ToolCallDecision(List.of(original)), finalDecision("done")),
+                builder -> TestToolPlatform.install(
+                        builder,
+                        "echo",
+                        "1.0.0",
+                        "echo.input",
+                        false,
+                        request -> new ToolResult(
+                                true,
+                                "completed with token=" + resultSecret + " " + "y".repeat(20_000),
+                                Map.of(
+                                        "path",
+                                        "outputs/demo.txt",
+                                        "credential",
+                                        resultSecret,
+                                        "nested",
+                                        Map.of("signature", resultSecret)),
+                                List.of(),
+                                List.of(),
+                                false)));
+
+        var accepted = fixture.runtime.start(request("tool-call-view"));
+        fixture.scheduler.runAll();
+        int eventCountBeforeRead = fixture.store.eventsFor(accepted.runId()).size();
+
+        var first = fixture.runtime.toolCalls(accepted.runId());
+        var second = fixture.runtime.toolCalls(accepted.runId());
+
+        assertThat(first).isEqualTo(second).singleElement().satisfies(view -> {
+            assertThat(view.id())
+                    .isEqualTo(
+                            fixture.store.toolCalls(accepted.runId()).getFirst().id());
+            assertThat(view.runId()).isEqualTo(accepted.runId());
+            assertThat(view.toolName()).isEqualTo("echo");
+            assertThat(view.toolVersion()).isEqualTo("1.0.0");
+            assertThat(view.status()).isEqualTo(ToolCallStatus.COMPLETED);
+            assertThat(view.arguments().truncated()).isTrue();
+            assertThat(view.arguments().values())
+                    .containsEntry("workdir", "/app")
+                    .containsEntry("api_key", "[REDACTED]");
+            assertThat(view.arguments().values().toString()).doesNotContain(inputSecret);
+            assertThat(view.result()).hasValueSatisfying(result -> {
+                assertThat(result.summary().text()).contains("token=[REDACTED]").doesNotContain(resultSecret);
+                assertThat(result.truncated()).isTrue();
+                assertThat(result.structuredData().values())
+                        .containsEntry("path", "outputs/demo.txt")
+                        .containsEntry("credential", "[REDACTED]");
+                assertThat(result.structuredData().values().toString()).doesNotContain(resultSecret);
+            });
+        });
+        assertThat(fixture.store.eventsFor(accepted.runId())).hasSize(eventCountBeforeRead);
+    }
+
+    @Test
+    void toolCallTranscriptFailsClosedForForeignAndUnknownRuns() {
+        AtomicReference<RuntimeCallerContext> caller = new AtomicReference<>(
+                new RuntimeCallerContext(new TenantRef("local"), new PrincipalRef("local-user", "user")));
+        ToolRequest original = toolRequest(
+                "caller-scoped-tool",
+                "echo",
+                "1.0.0",
+                new ToolArguments("echo.input", "1.0", Map.of("value", "visible")));
+        Fixture fixture = fixture(
+                model(new ToolCallDecision(List.of(original)), finalDecision("done")),
+                builder -> TestToolPlatform.install(
+                                builder,
+                                "echo",
+                                "1.0.0",
+                                "echo.input",
+                                false,
+                                request -> new ToolResult(true, "ok", Map.of(), List.of(), List.of(), false))
+                        .callers(caller::get));
+        var accepted = fixture.runtime.start(request("caller-scoped-tool-call-view"));
+        fixture.scheduler.runAll();
+        caller.set(new RuntimeCallerContext(new TenantRef("foreign"), new PrincipalRef("intruder", "user")));
+
+        assertThatThrownBy(() -> fixture.runtime.toolCalls(accepted.runId()))
+                .isInstanceOfSatisfying(RuntimeContractException.class, error -> {
+                    assertThat(error.code()).isEqualTo(RuntimeApiErrorCode.RUN_NOT_FOUND);
+                    assertThat(error).hasMessage("The run does not exist or is not visible");
+                });
+        assertThatThrownBy(() -> fixture.runtime.toolCalls(new AgentRunId("unknown-run")))
+                .isInstanceOfSatisfying(RuntimeContractException.class, error -> {
+                    assertThat(error.code()).isEqualTo(RuntimeApiErrorCode.RUN_NOT_FOUND);
+                    assertThat(error).hasMessage("The run does not exist or is not visible");
+                });
     }
 
     @Test
@@ -692,6 +843,74 @@ class RuntimeCoreTest {
                 .isEqualTo(AgentRunStatus.CANCELLED);
         assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().terminationReason())
                 .hasValueSatisfying(reason -> assertThat(reason.code()).isEqualTo("USER_CANCELLED"));
+    }
+
+    @Test
+    void acceptedCancelOutranksToolFailureAtRunSettlement() {
+        RunControlRegistry controls = new RunControlRegistry();
+        ToolRequest call = toolRequest(
+                "fail-after-cancel", "read_doc", "1.0.0", new ToolArguments("read.doc.input", "1.0", Map.of()));
+        Fixture fixture = fixture(ignored -> response(new ToolCallDecision(List.of(call))), builder -> {
+            builder.controlRegistry(controls);
+            return TestToolPlatform.install(builder, "read_doc", "1.0.0", "read.doc.input", false, invocation -> {
+                controls.requestCancel(invocation.runId());
+                throw new IllegalStateException("tool failed after the accepted cancel");
+            });
+        });
+
+        var accepted = fixture.runtime.start(request("fail-after-cancel"));
+        fixture.scheduler.runAll();
+
+        var settled = fixture.runtime.find(accepted.runId()).orElseThrow();
+        assertThat(settled.status()).isEqualTo(AgentRunStatus.CANCELLED);
+        assertThat(settled.terminationReason())
+                .hasValueSatisfying(reason -> assertThat(reason.code()).isEqualTo("USER_CANCELLED"));
+        assertThat(fixture.store.toolCalls(accepted.runId())).singleElement().satisfies(toolCall -> {
+            assertThat(toolCall.status()).isEqualTo(ToolCallStatus.FAILED);
+            assertThat(toolCall.error().orElseThrow().error().code()).isEqualTo(AgentErrorCode.TOOL_INVOCATION_FAILED);
+        });
+    }
+
+    @Test
+    void toolFailureWithoutAnAcceptedCancelStillFailsTheRun() {
+        ToolRequest call = toolRequest(
+                "fail-without-cancel", "read_doc", "1.0.0", new ToolArguments("read.doc.input", "1.0", Map.of()));
+        Fixture fixture = fixture(
+                ignored -> response(new ToolCallDecision(List.of(call))),
+                builder ->
+                        TestToolPlatform.install(builder, "read_doc", "1.0.0", "read.doc.input", false, invocation -> {
+                            throw new IllegalStateException("tool failed without cancellation");
+                        }));
+
+        var accepted = fixture.runtime.start(request("fail-without-cancel"));
+        fixture.scheduler.runAll();
+
+        var settled = fixture.runtime.find(accepted.runId()).orElseThrow();
+        assertThat(settled.status()).isEqualTo(AgentRunStatus.FAILED);
+        assertThat(settled.error().orElseThrow().code()).isEqualTo(AgentErrorCode.TOOL_INVOCATION_FAILED);
+    }
+
+    @Test
+    void cancelAfterTerminalToolFailureDoesNotRewriteTheRun() {
+        ToolRequest call = toolRequest(
+                "fail-then-cancel", "read_doc", "1.0.0", new ToolArguments("read.doc.input", "1.0", Map.of()));
+        Fixture fixture = fixture(
+                ignored -> response(new ToolCallDecision(List.of(call))),
+                builder ->
+                        TestToolPlatform.install(builder, "read_doc", "1.0.0", "read.doc.input", false, invocation -> {
+                            throw new IllegalStateException("tool failed without cancellation");
+                        }));
+
+        var accepted = fixture.runtime.start(request("fail-then-cancel"));
+        fixture.scheduler.runAll();
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.FAILED);
+
+        fixture.runtime.command(command(accepted.runId().value(), RuntimeCommandType.CANCEL, "cancel-after-failed"));
+
+        var settled = fixture.runtime.find(accepted.runId()).orElseThrow();
+        assertThat(settled.status()).isEqualTo(AgentRunStatus.FAILED);
+        assertThat(settled.error().orElseThrow().code()).isEqualTo(AgentErrorCode.TOOL_INVOCATION_FAILED);
     }
 
     @Test
@@ -1929,6 +2148,95 @@ class RuntimeCoreTest {
     }
 
     @Test
+    void recoverAbandonedSettlesOnlyUnownedStaleHeartbeats() {
+        AtomicBoolean owned = new AtomicBoolean(true);
+        AtomicReference<Instant> wallClock = new AtomicReference<>(Instant.parse("2026-07-21T00:00:00Z"));
+        AgentChatModel model = request -> {
+            throw new AssertionError("simulated process loss");
+        };
+        Fixture fixture = fixture(model, builder -> builder.executionOwnership(attempt -> owned.get()), wallClock::get);
+        var accepted = fixture.runtime.start(request("abandoned"));
+
+        assertThatThrownBy(fixture.scheduler::runNext).isInstanceOf(AssertionError.class);
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.RUNNING);
+
+        // Owned by this executor: never settled, even with a stale heartbeat.
+        wallClock.set(wallClock.get().plus(Duration.ofMinutes(31)));
+        assertThat(fixture.runtime.recoverAbandoned(accepted.runId(), Duration.ofMinutes(30)))
+                .isFalse();
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.RUNNING);
+
+        // Unowned but with a fresh heartbeat: not settled.
+        owned.set(false);
+        wallClock.set(Instant.parse("2026-07-21T00:00:00Z"));
+        assertThat(fixture.runtime.recoverAbandoned(accepted.runId(), Duration.ofMinutes(30)))
+                .isFalse();
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.RUNNING);
+
+        // Unowned and stale: settled to FAILED, then idempotent.
+        wallClock.set(Instant.parse("2026-07-21T00:00:00Z").plus(Duration.ofMinutes(31)));
+        assertThat(fixture.runtime.recoverAbandoned(accepted.runId(), Duration.ofMinutes(30)))
+                .isTrue();
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.FAILED);
+        assertThat(fixture.runtime.recoverAbandoned(accepted.runId(), Duration.ofMinutes(30)))
+                .isTrue();
+    }
+
+    @Test
+    void recoverAbandonedHonorsHostOwnershipLiveness() {
+        AtomicReference<io.haifa.agent.runtime.core.execution.ExecutionOwnershipPort.OwnerLiveness> liveness =
+                new AtomicReference<>(io.haifa.agent.runtime.core.execution.ExecutionOwnershipPort.OwnerLiveness.OWNED);
+        AtomicReference<Instant> wallClock = new AtomicReference<>(Instant.parse("2026-07-21T00:00:00Z"));
+        io.haifa.agent.runtime.core.execution.ExecutionOwnershipPort ownership =
+                new io.haifa.agent.runtime.core.execution.ExecutionOwnershipPort() {
+                    @Override
+                    public boolean stillOwned(io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt attempt) {
+                        return liveness.get()
+                                == io.haifa.agent.runtime.core.execution.ExecutionOwnershipPort.OwnerLiveness.OWNED;
+                    }
+
+                    @Override
+                    public io.haifa.agent.runtime.core.execution.ExecutionOwnershipPort.OwnerLiveness ownerLiveness(
+                            io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt attempt) {
+                        return liveness.get();
+                    }
+                };
+        AgentChatModel model = request -> {
+            throw new AssertionError("simulated process loss");
+        };
+        Fixture fixture = fixture(model, builder -> builder.executionOwnership(ownership), wallClock::get);
+        var accepted = fixture.runtime.start(request("liveness"));
+        assertThatThrownBy(fixture.scheduler::runNext).isInstanceOf(AssertionError.class);
+
+        // A live owner process on this host is never settled, even with a stale heartbeat.
+        liveness.set(io.haifa.agent.runtime.core.execution.ExecutionOwnershipPort.OwnerLiveness.ALIVE);
+        wallClock.set(wallClock.get().plus(Duration.ofMinutes(31)));
+        assertThat(fixture.runtime.recoverAbandoned(accepted.runId(), Duration.ofMinutes(30)))
+                .isFalse();
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.RUNNING);
+
+        // Unknown ownership still falls back to the heartbeat window.
+        liveness.set(io.haifa.agent.runtime.core.execution.ExecutionOwnershipPort.OwnerLiveness.UNKNOWN);
+        wallClock.set(Instant.parse("2026-07-21T00:00:00Z"));
+        assertThat(fixture.runtime.recoverAbandoned(accepted.runId(), Duration.ofMinutes(30)))
+                .isFalse();
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.RUNNING);
+
+        // A provably gone host owner is settled immediately even though the heartbeat is still fresh.
+        liveness.set(io.haifa.agent.runtime.core.execution.ExecutionOwnershipPort.OwnerLiveness.GONE);
+        assertThat(fixture.runtime.recoverAbandoned(accepted.runId(), Duration.ofMinutes(30)))
+                .isTrue();
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.FAILED);
+    }
+
+    @Test
     void settlesAbandonedAttemptWithoutAutomaticResume() {
         AtomicInteger calls = new AtomicInteger();
         AtomicBoolean owned = new AtomicBoolean(true);
@@ -2144,6 +2452,95 @@ class RuntimeCoreTest {
                         "approval.authority.verified",
                         "approval.target.validated",
                         "approval.responded");
+    }
+
+    @Test
+    void immediateApprovalResponseFromWaitingListenerDoesNotStrandTheResumedAttempt() throws Exception {
+        AtomicInteger sequence = new AtomicInteger();
+        AtomicInteger modelCalls = new AtomicInteger();
+        AtomicInteger toolCalls = new AtomicInteger();
+        AtomicBoolean responseStarted = new AtomicBoolean();
+        AtomicReference<Throwable> responseFailure = new AtomicReference<>();
+        CountDownLatch responseReturned = new CountDownLatch(1);
+        CountDownLatch terminalObserved = new CountDownLatch(1);
+        CountDownLatch attemptSettled = new CountDownLatch(1);
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        InMemoryInteractionPort interactions = new InMemoryInteractionPort();
+        InMemoryToolExecutionJournal journal = new InMemoryToolExecutionJournal();
+        AgentChatModel model = ignored -> response(
+                modelCalls.incrementAndGet() == 1
+                        ? new ToolCallDecision(List.of(toolRequest(
+                                "immediate-response",
+                                "write",
+                                "1.0.0",
+                                new ToolArguments("write.input", "1.0", Map.of("v", 1)))))
+                        : finalDecision("completed after immediate approval"));
+
+        try (LocalExecutionScheduler scheduler = new LocalExecutionScheduler()) {
+            RuntimeCoreBuilder builder = new RuntimeCoreBuilder()
+                    .registerChatModel("openai-compatible", "1.0.0", model)
+                    .scheduler(scheduler)
+                    .persistence(RuntimePersistencePorts.inMemory(store, journal, interactions))
+                    .identifierGenerator(() -> "immediate-response-id-" + sequence.incrementAndGet())
+                    .timeProvider(() -> Instant.parse("2026-07-21T00:00:00Z"));
+            DefaultAgentRuntime runtime = TestToolPlatform.install(
+                            builder,
+                            "write",
+                            "1.0.0",
+                            "write.input",
+                            true,
+                            TestToolPlatform.approvalRequired(),
+                            request -> {
+                                toolCalls.incrementAndGet();
+                                return new ToolResult(true, "written", Map.of(), List.of(), List.of(), false);
+                            })
+                    .build();
+            runtime.addListener(snapshot -> {
+                if (snapshot.status() == AgentRunStatus.WAITING_APPROVAL
+                        && responseStarted.compareAndSet(false, true)) {
+                    try {
+                        var interaction = interactions.pending(snapshot.runId()).orElseThrow();
+                        runtime.respond(new InteractionResponse(
+                                new InteractionResponseId("immediate-response"),
+                                interaction.id(),
+                                snapshot.runId(),
+                                InteractionResponseType.APPROVE,
+                                List.of(),
+                                "immediate-response-key",
+                                Instant.parse("2026-07-21T00:00:00Z")));
+                    } catch (Throwable failure) {
+                        responseFailure.set(failure);
+                    } finally {
+                        responseReturned.countDown();
+                    }
+                }
+                if (snapshot.status().isTerminal()) terminalObserved.countDown();
+            });
+
+            AgentRunId runId =
+                    runtime.start(request("immediate-approval-response")).runId();
+
+            assertThat(responseReturned.await(2, TimeUnit.SECONDS)).isTrue();
+            assertThat(responseFailure.get())
+                    .as(
+                            "immediate response failed after durable resume; run=%s attempts=%s",
+                            runtime.find(runId).orElseThrow(), store.attemptsFor(runId))
+                    .isNull();
+            long settlementDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            assertThat(terminalObserved.await(2, TimeUnit.SECONDS)).isTrue();
+            // The terminal Run listener runs before AttemptExecutor settles the Attempt.
+            // Observe completion of that same scheduler lane within the original terminal wait budget.
+            scheduler.submitAfterCurrent(runId, attemptSettled::countDown);
+            assertThat(attemptSettled.await(Math.max(0, settlementDeadline - System.nanoTime()), TimeUnit.NANOSECONDS))
+                    .as("the resumed execution attempt must settle after the terminal Run notification")
+                    .isTrue();
+            assertThat(runtime.find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(toolCalls).hasValue(1);
+            assertThat(modelCalls).hasValue(2);
+            assertThat(store.attemptsFor(runId))
+                    .extracting(attempt -> attempt.status())
+                    .containsExactly(ExecutionAttemptStatus.PAUSED, ExecutionAttemptStatus.SUCCEEDED);
+        }
     }
 
     @Test
@@ -2609,6 +3006,183 @@ class RuntimeCoreTest {
         assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
                 .isEqualTo(AgentRunStatus.COMPLETED);
         assertThat(modelCalls).hasValue(2);
+    }
+
+    @Test
+    void wallDeadlineAtToolDispatchTimesOutRunAndPreservesTheUndispatchedToolFailure() {
+        Instant start = Instant.parse("2026-07-21T00:00:00Z");
+        AtomicReference<Instant> clock = new AtomicReference<>(start);
+        AtomicInteger invocations = new AtomicInteger();
+        Fixture fixture = fixture(
+                model(new ToolCallDecision(List.of(toolRequest(
+                        "wall-dispatch", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of()))))),
+                builder -> TestToolPlatform.install(
+                                builder, "write", "1.0.0", "write.input", true, TestToolPlatform.allow(), request -> {
+                                    invocations.incrementAndGet();
+                                    return new ToolResult(true, "unreachable", Map.of(), List.of(), List.of(), false);
+                                })
+                        .publicToolPolicy((run, binding, request) -> {
+                            clock.set(start.plusMillis(run.limits().maxWallTimeMillis() + 259));
+                            return TestToolPlatform.allow();
+                        }),
+                clock::get);
+        AgentRunId runId =
+                fixture.runtime.start(request("wall-at-tool-dispatch")).runId();
+        fixture.scheduler.runAll();
+
+        var run = fixture.runtime.find(runId).orElseThrow();
+        assertThat(run.status()).isEqualTo(AgentRunStatus.TIMEOUT);
+        assertThat(run.terminationReason().orElseThrow().code()).isEqualTo("WALL_TIME_EXCEEDED");
+        assertThat(run.error()).isEmpty();
+        assertThat(invocations).hasValue(0);
+        var call = fixture.store.toolCalls(runId).getFirst();
+        assertThat(call.status()).isEqualTo(ToolCallStatus.FAILED);
+        var error = call.error().orElseThrow().error();
+        assertThat(error.code()).isEqualTo(AgentErrorCode.RUN_BUDGET_EXCEEDED);
+        assertThat(error.details()).containsEntry("resource", "wallTimeMillis");
+        assertThat(error.details().get("used")).isEqualTo((long) error.details().get("limit") + 259);
+        assertThat(fixture.journal.state(runId, call.idempotencyKey()))
+                .contains(io.haifa.agent.runtime.core.tool.ToolJournalState.FAILED);
+        var attempt = fixture.store.attemptsFor(runId).getLast();
+        assertThat(attempt.status()).isEqualTo(ExecutionAttemptStatus.FAILED);
+        assertThat(attempt.error()).contains(error);
+    }
+
+    @Test
+    void nonWallExecutionLimitsKeepTheirPersistedFailureClassification() {
+        for (String resource : List.of("modelCalls", "toolCalls", "iterations", "depth", "idleTimeMillis")) {
+            Fixture fixture = fixture(
+                    model(finalDecision("unreachable")),
+                    builder -> builder.middleware(throwingMiddleware(
+                            RuntimePhase.BEFORE_MODEL_CALL, new RuntimeLimitExceededException(resource, 5, 6))));
+            AgentRunId runId =
+                    fixture.runtime.start(request("non-wall-" + resource)).runId();
+            fixture.scheduler.runAll();
+
+            var run = fixture.runtime.find(runId).orElseThrow();
+            assertThat(run.status()).as(resource).isEqualTo(AgentRunStatus.FAILED);
+            assertThat(run.error().orElseThrow().code()).isEqualTo(AgentErrorCode.RUN_EXECUTION_LIMIT_EXCEEDED);
+            assertThat(run.error().orElseThrow().details())
+                    .containsEntry("resource", resource)
+                    .containsEntry("limit", 5L)
+                    .containsEntry("used", 6L);
+            assertThat(run.terminationReason()).isEmpty();
+            assertThat(fixture.store.attemptsFor(runId).getLast().status()).isEqualTo(ExecutionAttemptStatus.FAILED);
+        }
+    }
+
+    @Test
+    void genericFailureCodeAndWallTextCannotImpersonateATypedWallDeadline() {
+        AgentError generic = new AgentError(
+                AgentErrorCode.RUN_EXECUTION_LIMIT_EXCEEDED,
+                Map.of("resource", "wallTimeMillis", "limit", 1_000L, "used", 1_259L),
+                "test",
+                Instant.EPOCH);
+        Fixture fixture = fixture(
+                model(finalDecision("unreachable")),
+                builder -> builder.middleware(throwingMiddleware(
+                        RuntimePhase.BEFORE_MODEL_CALL,
+                        new AgentExecutionFailureException(
+                                generic, new IllegalStateException("wallTimeMillis limit exceeded")))));
+        AgentRunId runId = fixture.runtime.start(request("generic-wall-text")).runId();
+        fixture.scheduler.runAll();
+
+        var run = fixture.runtime.find(runId).orElseThrow();
+        assertThat(run.status()).isEqualTo(AgentRunStatus.FAILED);
+        assertThat(run.error()).contains(generic);
+        assertThat(run.terminationReason()).isEmpty();
+    }
+
+    @Test
+    void typedWallFailureCannotRewriteAnAlreadyCompletedRun() {
+        Fixture fixture = fixture(
+                model(finalDecision("committed answer")),
+                builder -> builder.middleware(throwingMiddleware(
+                        RuntimePhase.AFTER_COMPLETION,
+                        new RuntimeLimitExceededException("wallTimeMillis", 1_000, 1_259))));
+        AgentRunId runId = fixture.runtime.start(request("terminal-wall-guard")).runId();
+        fixture.scheduler.runAll();
+
+        var run = fixture.runtime.find(runId).orElseThrow();
+        assertThat(run.status()).isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(run.result().orElseThrow().summary()).isEqualTo("committed answer");
+        assertThat(run.terminationReason()).isEmpty();
+        assertThat(run.error()).isEmpty();
+    }
+
+    @Test
+    void typedWallFailureCannotRewriteTheCommittedWaitingBoundary() {
+        AtomicInteger toolCalls = new AtomicInteger();
+        AtomicReference<Throwable> diagnostic = new AtomicReference<>();
+        RuntimeException failure = new RuntimeLimitExceededException("wallTimeMillis", 1_000, 1_259);
+        Fixture fixture = postCommitWaitingFixture(toolCalls, diagnostic, failure);
+        AgentRunId runId =
+                fixture.runtime.start(request("wall-after-committed-wait")).runId();
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.WAITING_APPROVAL);
+        assertThat(fixture.interactions.pending(runId)).isPresent();
+        assertThat(fixture.store.attemptsFor(runId).getLast().status()).isEqualTo(ExecutionAttemptStatus.PAUSED);
+        assertThat(diagnostic.get()).isSameAs(failure);
+        assertThat(toolCalls).hasValue(0);
+    }
+
+    @Test
+    void postCommitFailureKeepsTheWaitingBoundaryAndRecordsADiagnostic() {
+        AtomicInteger toolCalls = new AtomicInteger();
+        AtomicReference<Throwable> diagnostic = new AtomicReference<>();
+        RuntimeException failure = new IllegalStateException("injected post-commit failure");
+        Fixture fixture = postCommitWaitingFixture(toolCalls, diagnostic, failure);
+
+        AgentRunId runId =
+                fixture.runtime.start(request("post-commit-waiting-boundary")).runId();
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.WAITING_APPROVAL);
+        assertThat(fixture.interactions.pending(runId)).isPresent();
+        assertThat(fixture.store.attemptsFor(runId).getLast().status()).isEqualTo(ExecutionAttemptStatus.PAUSED);
+        assertThat(diagnostic.get())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("injected post-commit failure");
+        assertThat(toolCalls).hasValue(0);
+    }
+
+    private static Fixture postCommitWaitingFixture(
+            AtomicInteger toolCalls, AtomicReference<Throwable> diagnostic, RuntimeException failure) {
+        AgentChatModel model = ignored -> response(new ToolCallDecision(List.of(toolRequest(
+                "call-write", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of("key", "value"))))));
+        return fixture(model, builder -> TestToolPlatform.install(
+                        builder,
+                        "write",
+                        "1.0.0",
+                        "write.input",
+                        true,
+                        TestToolPlatform.approvalRequired(),
+                        request -> {
+                            toolCalls.incrementAndGet();
+                            return new ToolResult(true, "written", Map.of(), List.of(), List.of(), false);
+                        })
+                .middleware(throwingMiddleware(RuntimePhase.AFTER_DECISION_EXECUTION, failure))
+                .failureDiagnostics((context, captured) -> diagnostic.set(captured)));
+    }
+
+    private static AgentRuntimeMiddleware throwingMiddleware(RuntimePhase phase, RuntimeException failure) {
+        return new AgentRuntimeMiddleware() {
+            @Override
+            public RuntimePhase phase() {
+                return phase;
+            }
+
+            @Override
+            public RuntimeMiddlewareOrder order() {
+                return new RuntimeMiddlewareOrder(1);
+            }
+
+            @Override
+            public void apply(RuntimeMiddlewareContext context) {
+                throw failure;
+            }
+        };
     }
 
     private static Fixture fixture(AgentChatModel model) {

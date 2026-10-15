@@ -11,6 +11,14 @@ public final class RunEventPayloads {
 
     private RunEventPayloads() {}
 
+    /** Reference to authoritative SessionMessage content; the journal never copies message text. */
+    public record MessageCommitted(String messageId, long messageSequence) implements AgentRunEvent.Payload {
+        public MessageCommitted {
+            messageId = InteractionOption.requireText(messageId, "messageId", 256);
+            if (messageSequence < 1) throw new IllegalArgumentException("messageSequence must be positive");
+        }
+    }
+
     public record RunLifecycle(
             String status,
             long version,
@@ -227,6 +235,22 @@ public final class RunEventPayloads {
             if (limitingUsed < 0 || limitingLimit < 0) {
                 throw new IllegalArgumentException("limiting usage values must not be negative");
             }
+        }
+    }
+
+    /**
+     * Lifecycle of one child run as seen in its parent's event stream. The child's own events are read from the
+     * child run; this projection only correlates the child with the parent's delegation Tool Call.
+     */
+    public record ChildRunLifecycle(
+            String childRunId, String toolCallId, String childAgent, String status, String reasonCode)
+            implements AgentRunEvent.Payload {
+        public ChildRunLifecycle {
+            childRunId = text(childRunId, "childRunId", 256);
+            toolCallId = text(toolCallId, "toolCallId", 256);
+            childAgent = text(childAgent, "childAgent", Integer.MAX_VALUE);
+            status = text(status, "status", 64);
+            reasonCode = text(reasonCode, "reasonCode", 128);
         }
     }
 

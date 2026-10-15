@@ -130,6 +130,49 @@ class SqliteRuntimeRecoveryTest {
     }
 
     @Test
+    void projectsTheSameToolCallTranscriptAfterStoreReopen() {
+        AgentRunId runId;
+        List<io.haifa.agent.runtime.api.ToolCallView> beforeRestart;
+        AtomicInteger providerCalls = new AtomicInteger();
+        try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance processA = toolRuntime(
+                    first,
+                    model(toolResponse(), finalResponse("completed before restart")),
+                    "transcript-process-a",
+                    new TestIds("transcript-a"),
+                    providerCalls,
+                    allow());
+            runId = processA.runtime()
+                    .start(request("tool-call-transcript-restart"))
+                    .runId();
+            processA.scheduler().runAll();
+
+            assertThat(processA.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
+            beforeRestart = processA.runtime().toolCalls(runId);
+            assertThat(beforeRestart).singleElement().satisfies(view -> {
+                assertThat(view.toolName()).isEqualTo("write");
+                assertThat(view.status()).isEqualTo(io.haifa.agent.core.tool.ToolCallStatus.COMPLETED);
+                assertThat(view.result())
+                        .hasValueSatisfying(
+                                result -> assertThat(result.summary().text()).isEqualTo("provider"));
+            });
+        }
+
+        try (SqliteStoreFoundation reopened = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance processB = toolRuntime(
+                    reopened,
+                    finalModel("must not run"),
+                    "transcript-process-b",
+                    new TestIds("transcript-b"),
+                    providerCalls,
+                    allow());
+
+            assertThat(processB.runtime().toolCalls(runId)).isEqualTo(beforeRestart);
+            assertThat(providerCalls).hasValue(1);
+        }
+    }
+
+    @Test
     void streamsDeltasInProcessButPersistsOnlyOneCompleteAssistantMessage() throws Exception {
         AgentChatModel streaming = new AgentChatModel() {
             @Override
@@ -308,6 +351,101 @@ class SqliteRuntimeRecoveryTest {
     }
 
     @Test
+    void acceptedSteerSurvivesRestartAndIsAppliedWhenTheSuspendedRunResumes() {
+        AgentRunId runId = suspendedRunWithAcceptedSteer("steer-resume");
+        List<AgentChatRequest> requests = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        try (SqliteStoreFoundation reopened = SqliteTestSupport.foundation(directory)) {
+            assertThat(reopened.runInputs().pending(runId, 10)).singleElement().satisfies(record -> assertThat(
+                            record.status())
+                    .isEqualTo(io.haifa.agent.runtime.api.RunInputReceiptStatus.ACCEPTED));
+            RuntimeInstance processB = runtime(
+                    reopened,
+                    request -> {
+                        requests.add(request);
+                        return finalResponse("resumed with steer");
+                    },
+                    "process-b",
+                    new TestIds("steer-resume-b"));
+            processB.runtime().resume(new ResumeAgentRunRequest("resume-steer", runId, List.of()));
+            processB.scheduler().runAll();
+
+            assertThat(processB.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(requests.getLast().messages())
+                    .anySatisfy(message -> assertThat(message.content()).contains("steer survives restart"));
+            assertThat(reopened.runInputs().find(new io.haifa.agent.runtime.api.RunInputId("steer-resume-input")))
+                    .get()
+                    .satisfies(record -> assertThat(record.status())
+                            .isEqualTo(io.haifa.agent.runtime.api.RunInputReceiptStatus.APPLIED));
+        }
+    }
+
+    @Test
+    void acceptedSteerOfAnInterruptedRunIsRejectedWhenRecoverySettlesIt() {
+        AgentRunId runId = suspendedRunWithAcceptedSteer("steer-recover");
+        try (SqliteStoreFoundation crashed = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance processA =
+                    runtime(crashed, finalModel("not-called"), "process-a", new TestIds("steer-recover-a2"));
+            processA.runtime().resume(new ResumeAgentRunRequest("resume-before-crash", runId, List.of()));
+            AgentRunExecutionAttempt active =
+                    crashed.attempts().activeFor(runId).orElseThrow();
+            long expected = active.version();
+            active.start("process-a", NOW);
+            crashed.attempts().save(active, expected);
+        }
+
+        try (SqliteStoreFoundation recovered = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance processB =
+                    runtime(recovered, finalModel("not-called"), "process-b", new TestIds("steer-recover-b"));
+            processB.runtime().recover(runId);
+            processB.scheduler().runAll();
+
+            assertThat(processB.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.FAILED);
+            assertThat(recovered.runInputs().pending(runId, 10)).isEmpty();
+            var settled = processB.runtime().submitInput(steerInput(runId, "steer-recover"));
+            assertThat(settled.status()).isEqualTo(io.haifa.agent.runtime.api.RunInputReceiptStatus.REJECTED);
+            assertThat(settled.reasonCode()).contains("run-failed");
+            assertThat(processB.ports().events().eventsFor(runId))
+                    .filteredOn(event -> event.type().equals("run.input.rejected"))
+                    .singleElement()
+                    .satisfies(event -> assertThat(event.data()).containsEntry("reasonCode", "run-failed"));
+        }
+    }
+
+    /** Leaves a durable SUSPENDED Run with one accepted, unapplied steer input and closes its process. */
+    private AgentRunId suspendedRunWithAcceptedSteer(String key) {
+        try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
+            AtomicReference<DefaultAgentRuntime> runtimeRef = new AtomicReference<>();
+            AtomicReference<AgentRunId> runRef = new AtomicReference<>();
+            AgentChatModel pausingModel = ignored -> {
+                runtimeRef.get().command(pause(runRef.get()));
+                return finalResponse("checkpoint-before-restart");
+            };
+            RuntimeInstance processA =
+                    runtime(first, pausingModel, "process-a", new TestIds(key + "-a"), builder -> builder);
+            runtimeRef.set(processA.runtime());
+            AgentRunId runId = processA.runtime().start(request(key)).runId();
+            runRef.set(runId);
+            processA.scheduler().runAll();
+            assertThat(processA.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.SUSPENDED);
+
+            assertThat(processA.runtime().submitInput(steerInput(runId, key)).status())
+                    .isEqualTo(io.haifa.agent.runtime.api.RunInputReceiptStatus.ACCEPTED);
+            return runId;
+        }
+    }
+
+    private static io.haifa.agent.runtime.api.RunInputSubmission steerInput(AgentRunId runId, String key) {
+        return new io.haifa.agent.runtime.api.RunInputSubmission(
+                new io.haifa.agent.runtime.api.RunInputId(key + "-input"),
+                runId,
+                java.util.OptionalLong.empty(),
+                List.of(new io.haifa.agent.core.content.TextPart("steer survives restart", "plain")),
+                key,
+                NOW);
+    }
+
+    @Test
     void reopensAttemptAndRestoresItsExactCheckpointWithoutAnInMemorySelection() {
         AgentRunId runId;
         io.haifa.agent.core.checkpoint.CheckpointId selectedId;
@@ -383,16 +521,49 @@ class SqliteRuntimeRecoveryTest {
 
     @Test
     void readsProtectedReasoningFromItsFactStoreAfterApprovalAcrossRestart() throws Exception {
+        protectedReasoningRecovery(false);
+    }
+
+    @Test
+    void ordinaryAndToolReasoningRecoverTogetherAtLowEffort() throws Exception {
+        protectedReasoningRecovery(true);
+    }
+
+    private void protectedReasoningRecovery(boolean ordinaryFirst) throws Exception {
         AtomicInteger providerCalls = new AtomicInteger();
         AgentRunId runId;
         try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
-            RuntimeInstance processA = toolRuntime(
+            RuntimeInstance processA = protectedToolRuntime(
                     first,
-                    model(reasoningToolResponse("checkpoint-private-reasoning")),
+                    ordinaryFirst
+                            ? model(
+                                    new AgentChatResponse(
+                                            "ordinary",
+                                            "deepseek-v4-pro",
+                                            "ordinary answer",
+                                            List.of(),
+                                            ModelFinishReason.STOP,
+                                            ModelUsage.unpriced(1, 1),
+                                            "",
+                                            Map.of(),
+                                            Optional.of(SensitiveModelReasoning.of("ordinary recovery reasoning"))),
+                                    reasoningToolResponse("checkpoint-private-reasoning"))
+                            : model(reasoningToolResponse("checkpoint-private-reasoning")),
                     "reasoning-process-a",
                     new TestIds("reasoning-a"),
                     providerCalls,
-                    approvalRequired());
+                    ordinaryFirst);
+            if (ordinaryFirst) {
+                var previous = processA.runtime().start(request("ordinary-before-approval"));
+                processA.scheduler().runAll();
+                assertThat(processA.runtime()
+                                .find(previous.runId())
+                                .orElseThrow()
+                                .status())
+                        .isEqualTo(AgentRunStatus.COMPLETED);
+                assertThat(processA.ports().state().modelContinuations(previous.runId()))
+                        .hasSize(1);
+            }
             runId = processA.runtime().start(request("reasoning-checkpoint")).runId();
             processA.scheduler().runAll();
 
@@ -409,13 +580,13 @@ class SqliteRuntimeRecoveryTest {
             return finalResponse("reasoning continuation recovered");
         };
         try (SqliteStoreFoundation reopened = SqliteTestSupport.foundation(directory)) {
-            RuntimeInstance processB = toolRuntime(
+            RuntimeInstance processB = protectedToolRuntime(
                     reopened,
                     resumedModel,
                     "reasoning-process-b",
                     new TestIds("reasoning-b"),
                     providerCalls,
-                    approvalRequired());
+                    ordinaryFirst);
             var interaction = processB.ports().interactions().pending(runId).orElseThrow();
             processB.runtime().respond(approvalResponse(runId, interaction.id(), "reasoning-approval"));
             processB.scheduler().runAll();
@@ -436,6 +607,20 @@ class SqliteRuntimeRecoveryTest {
                                     .orElseThrow()
                                     .value()
                                     .equals("provider-tool-call"));
+            if (ordinaryFirst) {
+                assertThat(resumedRequest.get().model().invocationOptions())
+                        .containsEntry("thinking", "enabled")
+                        .containsEntry("reasoning_effort", "low");
+                assertThat(resumedRequest.get().messages()).anyMatch(message -> message.reasoning()
+                        .map(value -> value.use(java.util.function.Function.identity())
+                                .equals("ordinary recovery reasoning"))
+                        .orElse(false));
+                var next = processB.runtime().start(request("next-after-recovery"));
+                processB.scheduler().runAll();
+                assertThat(processB.runtime().find(next.runId()).orElseThrow().status())
+                        .isEqualTo(AgentRunStatus.COMPLETED);
+                assertThat(providerCalls).hasValue(1);
+            }
             assertThat(processB.ports().attempts().attemptsFor(runId).getLast().resumedFromCheckpointId())
                     .isPresent();
             assertLegacyPolicyFamiliesAbsent(reopened.connections());
@@ -444,7 +629,46 @@ class SqliteRuntimeRecoveryTest {
         try (var paths = java.nio.file.Files.list(directory)) {
             for (Path path : paths.filter(java.nio.file.Files::isRegularFile).toList()) {
                 assertThat(new String(java.nio.file.Files.readAllBytes(path), StandardCharsets.ISO_8859_1))
-                        .doesNotContain("checkpoint-private-reasoning");
+                        .doesNotContain("checkpoint-private-reasoning", "ordinary recovery reasoning");
+            }
+        }
+    }
+
+    @Test
+    void attemptVersionConflictRollsBackTheWholeWaitingApprovalTransaction() throws Exception {
+        AtomicInteger providerCalls = new AtomicInteger();
+        try (SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory)) {
+            RuntimePersistencePorts base = foundation.persistencePorts(protector());
+            RuntimePersistencePorts instrumented =
+                    withAttempts(base, new ConflictingPausedAttemptRepository(base.attempts()));
+            ensureSession(instrumented);
+            RuntimeInstance instance = runtime(
+                    instrumented,
+                    model(toolResponse()),
+                    "conflicting-pause-process",
+                    new TestIds("conflicting-pause"),
+                    builder -> installTool(builder, providerCalls, approvalRequired()));
+            AgentRunId runId = instance.runtime()
+                    .start(request("conflicting-approval-pause"))
+                    .runId();
+
+            instance.scheduler().runAll();
+
+            assertThat(base.runs().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.FAILED);
+            assertThat(base.interactions().pending(runId)).isEmpty();
+            assertThat(base.attempts().activeFor(runId)).isEmpty();
+            assertThat(base.attempts().attemptsFor(runId).getLast().status()).isEqualTo(ExecutionAttemptStatus.FAILED);
+            assertThat(providerCalls).hasValue(0);
+            try (Connection reader = foundation.connections().openConnection()) {
+                assertThat(countWhere(
+                                reader, "SELECT COUNT(*) FROM interaction_request WHERE run_id = ?", runId.value()))
+                        .isZero();
+                assertThat(countWhere(
+                                reader,
+                                "SELECT COUNT(*) FROM runtime_event WHERE run_id = ? AND type = ?",
+                                runId.value(),
+                                "run.waiting-approval"))
+                        .isZero();
             }
         }
     }
@@ -508,6 +732,9 @@ class SqliteRuntimeRecoveryTest {
 
             assertThat(processA.runtime().find(runId).orElseThrow().status())
                     .isEqualTo(AgentRunStatus.WAITING_APPROVAL);
+            assertThat(processA.ports().attempts().activeFor(runId)).isEmpty();
+            assertThat(processA.ports().attempts().attemptsFor(runId).getLast().status())
+                    .isEqualTo(ExecutionAttemptStatus.PAUSED);
         }
 
         Instant resumedAt = NOW.plus(Duration.ofDays(365));
@@ -1004,8 +1231,46 @@ class SqliteRuntimeRecoveryTest {
                 .persistence(ports)
                 .identifierGenerator(ids)
                 .timeProvider(time)
-                .workerId(workerId);
+                .workerId(workerId)
+                .executionOwnership(io.haifa.agent.runtime.core.execution.ExecutionOwnershipPort.local(workerId));
         return new RuntimeInstance(customizer.apply(builder).build(), scheduler, ports);
+    }
+
+    private RuntimeInstance protectedToolRuntime(
+            SqliteStoreFoundation foundation,
+            AgentChatModel model,
+            String workerId,
+            IdentifierGenerator ids,
+            AtomicInteger toolCalls,
+            boolean ordinaryFirst) {
+        if (!ordinaryFirst) return toolRuntime(foundation, model, workerId, ids, toolCalls, approvalRequired());
+        var base = io.haifa.agent.runtime.core.bootstrap.DefaultResolvedModelSnapshots.deepSeekV4Pro();
+        var snapshot = io.haifa.agent.model.api.ResolvedModelSnapshot.create(
+                base.providerId(),
+                base.providerVersion(),
+                base.modelId(),
+                base.modelVersion(),
+                base.providerModelId(),
+                base.adapterType(),
+                base.adapterVersion(),
+                base.apiStyle(),
+                base.dialect(),
+                base.endpoint(),
+                base.credentialRef(),
+                base.nativeStreaming(),
+                base.capabilities(),
+                base.contextWindow(),
+                base.maxOutputTokens(),
+                Map.of(),
+                Map.of("thinking", "enabled", "reasoning_effort", "low", "requires_reasoning_continuation", true));
+        return runtime(foundation, model, workerId, ids, builder -> installTool(builder, toolCalls, approvalRequired())
+                .profiles((id, overrides) -> new io.haifa.agent.runtime.core.bootstrap.ResolvedProfile(
+                        id,
+                        "1.0",
+                        io.haifa.agent.core.run.AgentRunType.CHAT,
+                        new io.haifa.agent.core.run.AgentRunBudget(10000, 10000, 10000, 20, 20, 5, "USD", 10000),
+                        new io.haifa.agent.core.run.AgentRunLimits(20, 5, 1, 60000, 30000),
+                        snapshot)));
     }
 
     private RuntimeInstance toolRuntime(
@@ -1200,6 +1465,61 @@ class SqliteRuntimeRecoveryTest {
                 base.conversationSummaries(),
                 base.toolResultAssets(),
                 base.messageRedactions());
+    }
+
+    private static RuntimePersistencePorts withAttempts(
+            RuntimePersistencePorts base, ExecutionAttemptRepository attempts) {
+        return new RuntimePersistencePorts(
+                base.sessions(),
+                base.runs(),
+                attempts,
+                base.checkpoints(),
+                base.state(),
+                base.events(),
+                base.outbox(),
+                base.idempotency(),
+                base.unitOfWork(),
+                base.toolJournal(),
+                base.interactions(),
+                base.runInputs(),
+                base.conversationSummaries(),
+                base.toolResultAssets(),
+                base.messageRedactions());
+    }
+
+    private static final class ConflictingPausedAttemptRepository implements ExecutionAttemptRepository {
+        private final ExecutionAttemptRepository delegate;
+
+        private ConflictingPausedAttemptRepository(ExecutionAttemptRepository delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public void insert(AgentRunExecutionAttempt attempt) {
+            delegate.insert(attempt);
+        }
+
+        @Override
+        public void save(AgentRunExecutionAttempt attempt, long expectedVersion) {
+            long conflictingVersion =
+                    attempt.status() == ExecutionAttemptStatus.PAUSED ? expectedVersion - 1 : expectedVersion;
+            delegate.save(attempt, conflictingVersion);
+        }
+
+        @Override
+        public Optional<AgentRunExecutionAttempt> find(ExecutionAttemptId id) {
+            return delegate.find(id);
+        }
+
+        @Override
+        public Optional<AgentRunExecutionAttempt> activeFor(AgentRunId runId) {
+            return delegate.activeFor(runId);
+        }
+
+        @Override
+        public List<AgentRunExecutionAttempt> attemptsFor(AgentRunId runId) {
+            return delegate.attemptsFor(runId);
+        }
     }
 
     private static RuntimePersistencePorts withFailingOutboxAppend(RuntimePersistencePorts base) {

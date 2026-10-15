@@ -9,6 +9,7 @@ import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiReducer;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
 import io.haifa.agent.application.project.product.ProjectProductException;
+import io.haifa.agent.application.project.product.coding.CodingModelOption;
 import io.haifa.agent.application.project.product.coding.CodingWorkspaceView;
 import io.haifa.agent.runtime.api.InteractionAction;
 import io.haifa.agent.runtime.api.InteractionView;
@@ -500,7 +501,141 @@ class CodingTerminalInteractionTest {
         controller.accept(input(TerminalInput.Kind.SUBMIT, "/command"));
 
         assertThat(controller.state().selector()).isPresent();
-        assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("completion");
+        assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("command-palette");
         assertThat(controller.state().selector().orElseThrow().title()).isEqualTo("Commands");
+    }
+
+    @Test
+    void commandPaletteInputOpensTheCommandsSelector() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        var controller = controller(client);
+
+        controller.accept(input(TerminalInput.Kind.COMMAND_PALETTE, ""));
+
+        assertThat(controller.state().selector()).isPresent();
+        assertThat(controller.state().selector().orElseThrow().title()).isEqualTo("Commands");
+    }
+
+    @Test
+    void cycleModelNextAndPreviousSwitchesModelSelection() {
+        CodingModelOption model1 = model("deepseek-chat", "DeepSeek Chat");
+        CodingModelOption model2 = model("claude-sonnet", "Claude Sonnet");
+        FakeClient client = new FakeClient(view(Optional.empty(), 0, "session", model1));
+        client.models = List.of(model1, model2);
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+
+        controller.accept(input(TerminalInput.Kind.CYCLE_MODEL_NEXT, ""));
+        assertThat(client.selectedModelId).isEqualTo("claude-sonnet");
+
+        controller.accept(input(TerminalInput.Kind.CYCLE_MODEL_PREVIOUS, ""));
+        assertThat(client.selectedModelId).isEqualTo("deepseek-chat");
+    }
+
+    @Test
+    void asyncModelLoadingDoesNotCloseModalSelectorOpenedWhileLoading() {
+        CodingModelOption model1 = model("deepseek-chat", "DeepSeek Chat");
+        CodingModelOption model2 = model("claude-sonnet", "Claude Sonnet");
+        FakeClient client = new FakeClient(view(Optional.empty(), 0, "session", model1));
+        client.models = List.of(model1, model2);
+        var queuedEffects = new ArrayDeque<Runnable>();
+        var controller = new CodingTerminalController(
+                PROJECT_ID,
+                client,
+                new TerminalEventPump(32),
+                new TerminalUiReducer(),
+                TerminalUiState.initial(120, 40),
+                queuedEffects::add);
+        controller.open(SESSION_ID);
+
+        // User triggers model cycle, which schedules async model loading
+        controller.accept(input(TerminalInput.Kind.CYCLE_MODEL_NEXT, ""));
+        assertThat(controller.state().status()).isEqualTo("Loading models");
+        assertThat(queuedEffects).hasSize(1);
+
+        // While loading, user edits draft and opens command palette
+        controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, "user draft", 10));
+        controller.accept(input(TerminalInput.Kind.COMMAND_PALETTE, ""));
+        assertThat(controller.state().selector()).isPresent();
+        assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("command-palette");
+        assertThat(controller.preservedDraft()).contains("user draft");
+
+        // Background effect completes
+        queuedEffects.remove().run();
+        controller.drainEvents();
+
+        // Modal selector must remain open, model must not be changed, draft preserved
+        assertThat(controller.state().selector()).isPresent();
+        assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("command-palette");
+        assertThat(client.selectedModelId).isNull();
+        assertThat(controller.preservedDraft()).contains("user draft");
+
+        // Cancel modal restores draft cleanly
+        controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
+        assertThat(controller.state().selector()).isEmpty();
+        assertThat(controller.state().editorBuffer()).isEqualTo("user draft");
+    }
+
+    @Test
+    void newSessionConsecutiveModelCyclesAdvanceThroughAvailableModels() {
+        CodingModelOption modelA = model("model-a", "Model A");
+        CodingModelOption modelB = model("model-b", "Model B");
+        CodingModelOption modelC = model("model-c", "Model C");
+        FakeClient client = new FakeClient(view(Optional.empty(), 0, "session", modelA));
+        client.models = List.of(modelA, modelB, modelC);
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+
+        // User enters /new
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "/new"));
+        assertThat(controller.state().status()).isEqualTo("New session: enter the first message");
+
+        // First cycle in /new selects Model B
+        controller.accept(input(TerminalInput.Kind.CYCLE_MODEL_NEXT, ""));
+        assertThat(controller.state().status()).isEqualTo("Model selected for next session");
+
+        // Second cycle in /new must select Model C (not repeat Model B!)
+        controller.accept(input(TerminalInput.Kind.CYCLE_MODEL_NEXT, ""));
+        assertThat(controller.state().status()).isEqualTo("Model selected for next session");
+
+        // First turn submission creates session with Model C
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "first turn"));
+        assertThat(client.createOptions.initialModelId()).contains("model-c");
+    }
+
+    @Test
+    void themeCommandSwitchesThemeDirectlyOrViaSelector() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+
+        assertThat(controller.state().themeName()).isEqualTo("dark");
+
+        // Direct theme switch
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "/theme nord"));
+        assertThat(controller.state().themeName()).isEqualTo("nord");
+        assertThat(controller.state().status()).isEqualTo("Theme set to nord");
+
+        // Invalid theme does not change theme and reports available options
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "/theme unknown_palette"));
+        assertThat(controller.state().themeName()).isEqualTo("nord");
+        assertThat(controller.state().status()).contains("Unknown theme", "dark, light, high-contrast, nord");
+
+        // /theme with no arguments opens selector
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "/theme"));
+        assertThat(controller.state().selector()).hasValueSatisfying(selector -> {
+            assertThat(selector.kind()).isEqualTo("theme-selector");
+            assertThat(selector.options()).containsExactly("dark", "light", "high-contrast", "nord");
+            assertThat(selector.selected()).isEqualTo(3); // "nord" is at index 3
+        });
+
+        // Select "light" (move up twice from 3 to 1) and confirm
+        controller.accept(input(TerminalInput.Kind.SELECT_PREVIOUS, ""));
+        controller.accept(input(TerminalInput.Kind.SELECT_PREVIOUS, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+
+        assertThat(controller.state().selector()).isEmpty();
+        assertThat(controller.state().themeName()).isEqualTo("light");
+        assertThat(controller.state().status()).isEqualTo("Theme set to light");
     }
 }

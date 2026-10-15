@@ -4,6 +4,7 @@ import io.haifa.agent.core.run.AgentRunBudget;
 import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.core.run.AgentRunType;
 import io.haifa.agent.model.api.EffectiveModelParameters;
+import io.haifa.agent.runtime.api.TruncatedOutputPolicy;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -22,7 +23,9 @@ public record ProductRunProfile(
         AgentRunLimits limits,
         Map<String, Object> modelRequestOptions,
         Optional<EffectiveModelParameters> effectiveModelParameters,
-        Optional<Set<String>> allowedTools) {
+        Optional<Set<String>> allowedTools,
+        TruncatedOutputPolicy truncatedOutputPolicy) {
+
     public ProductRunProfile(
             String id,
             String version,
@@ -31,7 +34,17 @@ public record ProductRunProfile(
             AgentRunBudget budget,
             AgentRunLimits limits,
             Map<String, Object> modelRequestOptions) {
-        this(id, version, modelId, runType, budget, limits, modelRequestOptions, Optional.empty(), Optional.empty());
+        this(
+                id,
+                version,
+                modelId,
+                runType,
+                budget,
+                limits,
+                modelRequestOptions,
+                Optional.empty(),
+                Optional.empty(),
+                TruncatedOutputPolicy.FAIL_CLOSED);
     }
 
     public ProductRunProfile(
@@ -43,11 +56,89 @@ public record ProductRunProfile(
             AgentRunLimits limits,
             Map<String, Object> modelRequestOptions,
             Optional<Set<String>> allowedTools) {
-        this(id, version, modelId, runType, budget, limits, modelRequestOptions, Optional.empty(), allowedTools);
+        this(
+                id,
+                version,
+                modelId,
+                runType,
+                budget,
+                limits,
+                modelRequestOptions,
+                Optional.empty(),
+                allowedTools,
+                TruncatedOutputPolicy.FAIL_CLOSED);
+    }
+
+    public ProductRunProfile(
+            String id,
+            String version,
+            String modelId,
+            AgentRunType runType,
+            AgentRunBudget budget,
+            AgentRunLimits limits,
+            Map<String, Object> modelRequestOptions,
+            Optional<EffectiveModelParameters> effectiveModelParameters,
+            Optional<Set<String>> allowedTools) {
+        this(
+                id,
+                version,
+                modelId,
+                runType,
+                budget,
+                limits,
+                modelRequestOptions,
+                effectiveModelParameters,
+                allowedTools,
+                TruncatedOutputPolicy.FAIL_CLOSED);
+    }
+
+    public ProductRunProfile(
+            String id,
+            String version,
+            String modelId,
+            AgentRunType runType,
+            AgentRunBudget budget,
+            AgentRunLimits limits,
+            Map<String, Object> modelRequestOptions,
+            TruncatedOutputPolicy truncatedOutputPolicy) {
+        this(
+                id,
+                version,
+                modelId,
+                runType,
+                budget,
+                limits,
+                modelRequestOptions,
+                Optional.empty(),
+                Optional.empty(),
+                truncatedOutputPolicy);
+    }
+
+    public ProductRunProfile(
+            String id,
+            String version,
+            String modelId,
+            AgentRunType runType,
+            AgentRunBudget budget,
+            AgentRunLimits limits,
+            Map<String, Object> modelRequestOptions,
+            Optional<Set<String>> allowedTools,
+            TruncatedOutputPolicy truncatedOutputPolicy) {
+        this(
+                id,
+                version,
+                modelId,
+                runType,
+                budget,
+                limits,
+                modelRequestOptions,
+                Optional.empty(),
+                allowedTools,
+                truncatedOutputPolicy);
     }
 
     public ProductRunProfile {
-        id = ProductValues.text(id, "id", 128);
+        id = ProductValues.text(id, "id");
         version = ProductValues.text(version, "version", 64);
         modelId = ProductValues.text(modelId, "modelId", 128);
         runType = Objects.requireNonNull(runType, "runType must not be null");
@@ -63,6 +154,21 @@ public record ProductRunProfile(
         }
         allowedTools = Objects.requireNonNull(allowedTools, "allowedTools must not be null")
                 .map(ProductRunProfile::freezeToolAliases);
+        truncatedOutputPolicy = Objects.requireNonNull(truncatedOutputPolicy, "truncatedOutputPolicy must not be null");
+    }
+
+    public ProductRunProfile withTruncatedOutputPolicy(TruncatedOutputPolicy policy) {
+        return new ProductRunProfile(
+                id,
+                version,
+                modelId,
+                runType,
+                budget,
+                limits,
+                modelRequestOptions,
+                effectiveModelParameters,
+                allowedTools,
+                policy);
     }
 
     private static Set<String> freezeToolAliases(Set<String> aliases) {

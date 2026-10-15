@@ -307,10 +307,8 @@ public final class PersonalAssistantAssembler {
         fields.add(dependencies.policy().rules().contentDigest());
         io.haifa.agent.sdk.product.ProductMemoryPolicy memoryPolicy =
                 dependencies.memory().policy();
-        fields.add("memory.policy.manualReviewRequired");
-        fields.add(Boolean.toString(memoryPolicy.manualReviewRequired()));
-        fields.add("memory.policy.maxCandidateContentChars");
-        fields.add(Integer.toString(memoryPolicy.maxCandidateContentChars()));
+        fields.add("memory.policy.maxContentChars");
+        fields.add(Integer.toString(memoryPolicy.maxContentChars()));
         fields.add("memory.policy.maxQueryLimit");
         fields.add(Integer.toString(memoryPolicy.maxQueryLimit()));
         io.haifa.agent.sdk.product.ProductArtifactPolicy artifactPolicy =

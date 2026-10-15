@@ -24,6 +24,7 @@ import io.haifa.agent.runtime.api.AgentRunOutputListener;
 import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.AgentRunSnapshot;
 import io.haifa.agent.runtime.api.AgentRuntime;
+import io.haifa.agent.runtime.api.FrozenInstructionDiagnostic;
 import io.haifa.agent.runtime.api.InteractionAction;
 import io.haifa.agent.runtime.api.InteractionResponse;
 import io.haifa.agent.runtime.api.InteractionResponseReceipt;
@@ -62,7 +63,9 @@ import io.haifa.agent.runtime.core.execution.AttemptExecutor;
 import io.haifa.agent.runtime.core.execution.ExecutionOwnershipPort;
 import io.haifa.agent.runtime.core.execution.ExecutionScheduler;
 import io.haifa.agent.runtime.core.idempotency.CanonicalRequestDigest;
+import io.haifa.agent.runtime.core.input.RunInputAcceptance;
 import io.haifa.agent.runtime.core.input.RunInputPort;
+import io.haifa.agent.runtime.core.input.RunInputRecord;
 import io.haifa.agent.runtime.core.interaction.InteractionPort;
 import io.haifa.agent.runtime.core.interaction.InteractionRecord;
 import io.haifa.agent.runtime.core.interaction.InteractionViewProjector;
@@ -79,8 +82,13 @@ import io.haifa.agent.runtime.core.storage.RuntimeOutboxPublisher;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import io.haifa.agent.runtime.core.storage.RuntimeUnitOfWork;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -117,6 +125,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
     private final RuntimeEventFeed eventFeed;
     private final RuntimeEventSubscriptions eventSubscriptions;
     private final InteractionViewProjector interactionViews = new InteractionViewProjector();
+    private final io.haifa.agent.runtime.core.recovery.InterruptedRunSettler settler;
 
     public DefaultAgentRuntime(
             CallerContextProvider callers,
@@ -144,7 +153,9 @@ public final class DefaultAgentRuntime implements AgentRuntime {
             ApprovalVerificationService approvalVerification,
             RunInputPort runInputs,
             RuntimeEventFeed eventFeed,
-            RuntimeEventSubscriptions eventSubscriptions) {
+            RuntimeEventSubscriptions eventSubscriptions,
+            io.haifa.agent.runtime.core.recovery.InterruptedRunSettler settler) {
+        this.settler = Objects.requireNonNull(settler);
         this.callers = Objects.requireNonNull(callers);
         this.bootstrapper = Objects.requireNonNull(bootstrapper);
         this.runs = Objects.requireNonNull(runs);
@@ -278,7 +289,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         AgentRunSnapshot accepted = snapshot(run.id());
         if (created.get()) {
             AgentRun submittedRun = run;
-            scheduler.submit(run.id(), () -> attemptExecutor.execute(submittedRun, createdAttempt.get()));
+            scheduler.submitAfterCurrent(run.id(), () -> attemptExecutor.execute(submittedRun, createdAttempt.get()));
         }
         return accepted;
     }
@@ -554,19 +565,32 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         Objects.requireNonNull(input, "input must not be null");
         AgentRun run = requireRunForContract(input.runId());
         requireContractCaller(run);
-        if (run.status().isTerminal() || run.status() == AgentRunStatus.COMPLETING) {
-            throw new io.haifa.agent.runtime.api.RuntimeContractException(
-                    io.haifa.agent.runtime.api.RuntimeApiErrorCode.RUN_STATE_CONFLICT,
-                    "The run cannot accept steer input in its current state");
-        }
-        if (input.expectedRunVersion().isPresent() && input.expectedRunVersion().getAsLong() != run.version()) {
-            throw new io.haifa.agent.runtime.api.RuntimeContractException(
-                    io.haifa.agent.runtime.api.RuntimeApiErrorCode.RUN_VERSION_CONFLICT,
-                    "The run version is no longer current");
-        }
-        var caller = callers.current();
-        var acceptance = unitOfWork.execute(() -> {
-            var accepted = runInputs.accept(input, callerScope(caller), time.now());
+        String scope = callerScope(callers.current());
+        // A retry reports the bound input's authoritative state, even after the Run stopped.
+        Optional<RunInputRecord> bound = runInputs.findExisting(input, scope);
+        if (bound.isPresent()) return receipt(new RunInputAcceptance(bound.orElseThrow(), false));
+        InputIntake intake = unitOfWork.execute(() -> {
+            Optional<RunInputRecord> raced = runInputs.findExisting(input, scope);
+            if (raced.isPresent()) return new InputIntake(new RunInputAcceptance(raced.orElseThrow(), false), null);
+            // Terminal transitions settle pending input in their own Unit of Work, so the state read here is ordered
+            // against them: input either precedes the final commit (and defers it) or observes a stopped Run.
+            AgentRun current = requireRunForContract(input.runId());
+            if (current.status().isTerminal() || current.status() == AgentRunStatus.COMPLETING) {
+                return new InputIntake(
+                        null,
+                        new io.haifa.agent.runtime.api.RuntimeContractException(
+                                io.haifa.agent.runtime.api.RuntimeApiErrorCode.RUN_STATE_CONFLICT,
+                                "The run cannot accept steer input in its current state"));
+            }
+            if (input.expectedRunVersion().isPresent()
+                    && input.expectedRunVersion().getAsLong() != current.version()) {
+                return new InputIntake(
+                        null,
+                        new io.haifa.agent.runtime.api.RuntimeContractException(
+                                io.haifa.agent.runtime.api.RuntimeApiErrorCode.RUN_VERSION_CONFLICT,
+                                "The run version is no longer current"));
+            }
+            var accepted = runInputs.accept(input, scope, time.now());
             if (accepted.newlyAccepted()) {
                 var event = events.append(
                         run.id(),
@@ -582,15 +606,26 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                         event.data(),
                         event.occurredAt()));
             }
-            return accepted;
+            return new InputIntake(accepted, null);
         });
+        if (intake.refusal() != null) throw intake.refusal();
+        return receipt(intake.acceptance());
+    }
+
+    private static RunInputReceipt receipt(RunInputAcceptance acceptance) {
         RunInputReceiptStatus receiptStatus = acceptance.newlyAccepted()
                 ? RunInputReceiptStatus.ACCEPTED
-                : acceptance.record().status() == RunInputReceiptStatus.APPLIED
-                        ? RunInputReceiptStatus.APPLIED
-                        : RunInputReceiptStatus.DUPLICATE;
+                : switch (acceptance.record().status()) {
+                    case APPLIED -> RunInputReceiptStatus.APPLIED;
+                    case REJECTED -> RunInputReceiptStatus.REJECTED;
+                    case ACCEPTED, DUPLICATE -> RunInputReceiptStatus.DUPLICATE;
+                };
         return acceptance.record().receipt(receiptStatus);
     }
+
+    /** Result of the input Unit of Work; a refusal is returned rather than thrown so the transaction stays clean. */
+    private record InputIntake(
+            RunInputAcceptance acceptance, io.haifa.agent.runtime.api.RuntimeContractException refusal) {}
 
     /**
      * Converges due interactions for one authorized Run. A scheduler may invoke this repeatedly.
@@ -726,6 +761,45 @@ public final class DefaultAgentRuntime implements AgentRuntime {
     }
 
     @Override
+    public Optional<FrozenInstructionDiagnostic> frozenInstructionDiagnostic(AgentRunId runId) {
+        var caller = callers.current();
+        AgentRunId checked = Objects.requireNonNull(runId, "runId must not be null");
+        try {
+            return runs.findVisible(checked, caller.tenant(), caller.principal())
+                    .map(this::projectFrozenInstruction);
+        } catch (RuntimeException unreadable) {
+            // Materializing the visible Run may already require its configuration reference.
+            throw frozenInstructionUnavailable();
+        }
+    }
+
+    private FrozenInstructionDiagnostic projectFrozenInstruction(AgentRun run) {
+        try {
+            var configuration = state.configuration(run.configurationSnapshot()).orElseThrow();
+            if (!run.configurationSnapshot().equals(configuration.reference())
+                    || !run.agentDefinitionId().equals(configuration.definitionId())
+                    || !run.agentDefinitionVersion().equals(configuration.definitionVersion())) {
+                throw new IllegalStateException();
+            }
+            String hash = "sha256:"
+                    + HexFormat.of()
+                            .formatHex(MessageDigest.getInstance("SHA-256")
+                                    .digest(configuration.agentInstruction().getBytes(StandardCharsets.UTF_8)));
+            return new FrozenInstructionDiagnostic(
+                    run.id(), run.agentDefinitionId(), run.agentDefinitionVersion(), configuration.reference(), hash);
+        } catch (RuntimeException | NoSuchAlgorithmException unreadable) {
+            // Persistence/codec failures can contain payload bodies; never retain their cause.
+            throw frozenInstructionUnavailable();
+        }
+    }
+
+    private static io.haifa.agent.runtime.api.RuntimeContractException frozenInstructionUnavailable() {
+        return new io.haifa.agent.runtime.api.RuntimeContractException(
+                io.haifa.agent.runtime.api.RuntimeApiErrorCode.INTERNAL_ERROR,
+                "Frozen instruction diagnostic is unavailable");
+    }
+
+    @Override
     public Optional<io.haifa.agent.runtime.api.AgentRunViewSnapshot> view(AgentRunId runId) {
         var caller = callers.current();
         return runs.find(Objects.requireNonNull(runId))
@@ -764,6 +838,65 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                         plan.revision(),
                         plan.createdAt(),
                         plan.updatedAt()));
+    }
+
+    @Override
+    public List<io.haifa.agent.runtime.api.ChildRunView> children(AgentRunId parentRunId) {
+        AgentRun parent = requireRunForContract(Objects.requireNonNull(parentRunId, "parentRunId must not be null"));
+        requireContractCaller(parent);
+        return runs.children(parentRunId).stream()
+                .filter(child -> child.tenant().equals(parent.tenant())
+                        && child.principal().equals(parent.principal()))
+                .map(io.haifa.agent.runtime.api.ChildRunView::from)
+                .toList();
+    }
+
+    @Override
+    public List<io.haifa.agent.runtime.api.ToolCallView> toolCalls(AgentRunId runId) {
+        AgentRun run = requireRunForContract(Objects.requireNonNull(runId, "runId must not be null"));
+        requireContractCaller(run);
+        return state.toolCalls(runId).stream()
+                .sorted(java.util.Comparator.comparing(io.haifa.agent.core.tool.ToolCall::requestedAt)
+                        .thenComparing(call -> call.id().value()))
+                .map(io.haifa.agent.runtime.core.tool.ToolCallViewProjector::project)
+                .toList();
+    }
+
+    @Override
+    public io.haifa.agent.runtime.api.RunMessagePage messages(
+            AgentRunId runId, io.haifa.agent.runtime.api.RunMessageCursor after, int limit) {
+        Objects.requireNonNull(runId, "runId must not be null");
+        Objects.requireNonNull(after, "after must not be null");
+        var caller = callers.current();
+        try {
+            if (runs.findVisible(runId, caller.tenant(), caller.principal()).isEmpty())
+                throw new io.haifa.agent.runtime.api.RuntimeContractException(
+                        io.haifa.agent.runtime.api.RuntimeApiErrorCode.RUN_NOT_FOUND,
+                        "The run does not exist or is not visible");
+            if (!runId.equals(after.runId()) || limit < 1 || limit > 500)
+                throw new io.haifa.agent.runtime.api.RuntimeContractException(
+                        io.haifa.agent.runtime.api.RuntimeApiErrorCode.CURSOR_INVALID, "Invalid message page request");
+            return unitOfWork.execute(() -> io.haifa.agent.runtime.core.message.RunMessageProjector.page(
+                    state, runId, after.exclusiveSequence(), limit));
+        } catch (io.haifa.agent.runtime.api.RuntimeContractException refusal) {
+            throw refusal;
+        } catch (IllegalArgumentException invalid) {
+            throw new io.haifa.agent.runtime.api.RuntimeContractException(
+                    io.haifa.agent.runtime.api.RuntimeApiErrorCode.CURSOR_INVALID, "Invalid message page request");
+        } catch (RuntimeException unavailable) {
+            org.slf4j.LoggerFactory.getLogger(DefaultAgentRuntime.class)
+                    .warn(
+                            "event=runtime.messages-unavailable runId={} failureType={}",
+                            runId.value(),
+                            unavailable.getClass().getSimpleName());
+            throw new io.haifa.agent.runtime.api.RuntimeContractException(
+                    io.haifa.agent.runtime.api.RuntimeApiErrorCode.INTERNAL_ERROR, "Run messages are unavailable");
+        }
+    }
+
+    /** The assembled delegation boundary; visible to same-package tests only. */
+    DelegationPort delegations() {
+        return delegations;
     }
 
     @Override
@@ -835,58 +968,37 @@ public final class DefaultAgentRuntime implements AgentRuntime {
             if (current.status() != AgentRunStatus.RUNNING && current.status() != AgentRunStatus.SUSPENDING) {
                 throw new IllegalStateException("only an interrupted executing run can be settled");
             }
-            long expected = active.version();
-            active.finish(ExecutionAttemptStatus.ABANDONED, time.now(), Optional.empty());
-            attempts.save(active, expected);
-            var error = new io.haifa.agent.core.error.AgentError(
-                    io.haifa.agent.core.error.AgentErrorCode.RUNTIME_EXECUTION_INTERRUPTED,
-                    Map.of("reason", "EXECUTOR_LOST", "automaticResume", false),
-                    ids.nextValue(),
-                    time.now());
-            try {
-                toolRecovery.reconcile(current);
-            } catch (io.haifa.agent.runtime.core.execution.AgentExecutionFailureException unknown) {
-                error = unknown.error();
-            }
-            for (var call : state.toolCalls(runId)) {
-                if (java.util.EnumSet.of(
-                                io.haifa.agent.core.tool.ToolCallStatus.REQUESTED,
-                                io.haifa.agent.core.tool.ToolCallStatus.VALIDATING,
-                                io.haifa.agent.core.tool.ToolCallStatus.POLICY_CHECK,
-                                io.haifa.agent.core.tool.ToolCallStatus.WAITING_APPROVAL,
-                                io.haifa.agent.core.tool.ToolCallStatus.APPROVED,
-                                io.haifa.agent.core.tool.ToolCallStatus.RUNNING)
-                        .contains(call.status())) {
-                    call.cancel(time.now());
-                    state.appendToolCall(call);
-                    state.appendSessionMessage(new SessionMessageDraft(
-                            new AgentMessageId(ids.nextValue()),
-                            current.sessionId(),
-                            Optional.of(runId),
-                            Optional.empty(),
-                            MessageRole.TOOL,
-                            MessageStatus.COMPLETED,
-                            MessageVisibility.AGENT_VISIBLE,
-                            List.of(
-                                    new io.haifa.agent.core.content.ToolResultPart(
-                                            call.id(),
-                                            call.providerCorrelationId(),
-                                            "Execution interrupted before a confirmed result; do not automatically repeat this operation")),
-                            Map.of("interrupted", true),
-                            time.now()));
-                }
-            }
-            for (var step : state.steps(runId)) {
-                if (step.status() == io.haifa.agent.core.step.AgentStepStatus.PENDING
-                        || step.status() == io.haifa.agent.core.step.AgentStepStatus.RUNNING
-                        || step.status() == io.haifa.agent.core.step.AgentStepStatus.WAITING) {
-                    step.cancel(time.now());
-                    state.appendStep(step);
-                }
-            }
+            io.haifa.agent.core.error.AgentError error = settler.settle(current, active);
             delegations.terminateChildren(current);
             return transitions.failed(current, error);
         });
+    }
+
+    @Override
+    public boolean recoverAbandoned(AgentRunId runId, Duration heartbeatStaleness) {
+        Objects.requireNonNull(runId, "runId must not be null");
+        Objects.requireNonNull(heartbeatStaleness, "heartbeatStaleness must not be null");
+        AgentRun run = requireRun(runId);
+        requireCaller(run);
+        if (run.status().isTerminal()) return true;
+        if (run.status() != AgentRunStatus.RUNNING && run.status() != AgentRunStatus.SUSPENDING) {
+            return false;
+        }
+        Optional<AgentRunExecutionAttempt> active = attempts.activeFor(runId);
+        if (active.isEmpty()) return false;
+        AgentRunExecutionAttempt attempt = active.orElseThrow();
+        ExecutionOwnershipPort.OwnerLiveness liveness = ownership.ownerLiveness(attempt);
+        if (liveness == ExecutionOwnershipPort.OwnerLiveness.OWNED
+                || liveness == ExecutionOwnershipPort.OwnerLiveness.ALIVE) {
+            return false;
+        }
+        if (liveness == ExecutionOwnershipPort.OwnerLiveness.UNKNOWN) {
+            Instant heartbeat = attempt.heartbeatAt().orElse(null);
+            if (heartbeat == null) return false;
+            if (Duration.between(heartbeat, time.now()).compareTo(heartbeatStaleness) < 0) return false;
+        }
+        recover(runId);
+        return true;
     }
 
     private void applyCancel(AgentRun run, RunCancellation cancellation) {

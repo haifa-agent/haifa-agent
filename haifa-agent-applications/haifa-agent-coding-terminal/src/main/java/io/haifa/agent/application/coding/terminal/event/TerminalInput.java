@@ -16,7 +16,11 @@ public record TerminalInput(Kind kind, String text, int cursor) {
         SELECT_NEXT,
         NAVIGATE_BACK,
         INTERRUPT,
-        EOF
+        EOF,
+        COMMAND_PALETTE,
+        CYCLE_MODEL_NEXT,
+        CYCLE_MODEL_PREVIOUS,
+        EXECUTE_COMMAND
     }
 
     public TerminalInput {

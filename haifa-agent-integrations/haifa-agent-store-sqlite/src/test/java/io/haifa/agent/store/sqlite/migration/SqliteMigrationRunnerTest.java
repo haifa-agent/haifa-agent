@@ -12,10 +12,16 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.List;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class SqliteMigrationRunnerTest {
+    @AfterEach
+    void closeStores() throws Exception {
+        SqliteTestSupport.closeOpenedStores();
+    }
+
     @TempDir
     Path directory;
 
@@ -277,8 +283,66 @@ class SqliteMigrationRunnerTest {
         }
     }
 
+    @Test
+    void v15ReplacesTheCandidateMemorySchemaAndDropsDerivedMemorySelections() throws Exception {
+        SqliteConnectionFactory connections = initializedConnections();
+        SqliteMigrationRunner runner = new SqliteMigrationRunner(connections, SqliteTestSupport.CLOCK);
+        runner.migrate(throughVersion(14));
+        try (Connection connection = connections.openConnection();
+                Statement statement = connection.createStatement()) {
+            statement.execute("PRAGMA foreign_keys = OFF");
+            statement.executeUpdate("INSERT INTO memory_selection (run_id, retrieval_policy_version, query_digest, "
+                    + "memories_schema_version, memories_payload, memories_hash, updated_at) "
+                    + "VALUES ('run-1', 'v1', 'sha256:q', '1', X'00', 'hash', 0)");
+        }
+
+        runner.migrate(HaifaAgentStoreMigrations.all());
+
+        try (Connection connection = connections.openConnection()) {
+            assertThat(queryLong(connection, "SELECT COUNT(*) FROM memory_selection"))
+                    .isZero();
+            assertThat(queryLong(
+                            connection,
+                            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' "
+                                    + "AND name IN ('memory_candidate','memory_audit_event')"))
+                    .isZero();
+            assertThat(queryLong(
+                            connection,
+                            "SELECT COUNT(*) FROM pragma_table_info('memory_record') WHERE name='deleted_at'"))
+                    .isEqualTo(1);
+            assertThat(queryLong(connection, "SELECT COUNT(*) FROM memory_scope_clear"))
+                    .isZero();
+        }
+    }
+
+    @Test
+    void v15RefusesToDropLiveMemoriesAndKeepsThemUntouched() throws Exception {
+        SqliteConnectionFactory connections = initializedConnections();
+        SqliteMigrationRunner runner = new SqliteMigrationRunner(connections, SqliteTestSupport.CLOCK);
+        runner.migrate(throughVersion(14));
+        try (Connection connection = connections.openConnection();
+                Statement statement = connection.createStatement()) {
+            statement.executeUpdate("INSERT INTO memory_record (memory_id, memory_version, tenant_id, owner_id, "
+                    + "scope_type, target_id, visibility, security_label_bits, kind, subject_key, status, "
+                    + "normalized_digest, updated_at, payload_schema_version, payload_type, payload_hash, payload) "
+                    + "VALUES ('memory-1', 1, 'tenant', 'user', 'USER', 'user', 'OWNER_ONLY', 1, 'FACT', "
+                    + "'subject', 'ACTIVE', 'sha256:d', 0, 1, 'memory-record', 'sha256:h', X'00')");
+        }
+
+        assertThatThrownBy(() -> runner.migrate(HaifaAgentStoreMigrations.all()))
+                .isInstanceOf(SqliteStoreException.class);
+
+        try (Connection connection = connections.openConnection()) {
+            assertThat(queryString(connection, "SELECT status FROM memory_record WHERE memory_id='memory-1'"))
+                    .isEqualTo("ACTIVE");
+            assertThat(queryLong(connection, "SELECT COUNT(*) FROM schema_migration WHERE version = 15"))
+                    .isZero();
+        }
+    }
+
     private SqliteConnectionFactory initializedConnections() {
-        SqliteConnectionFactory connections = new SqliteConnectionFactory(SqliteTestSupport.configuration(directory));
+        SqliteConnectionFactory connections = SqliteTestSupport.closeAfterTest(
+                new SqliteConnectionFactory(SqliteTestSupport.configuration(directory)));
         connections.initialize();
         return connections;
     }

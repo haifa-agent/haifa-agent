@@ -48,9 +48,9 @@ class Tui4jTerminalThemeTest {
         renderer.setColorProfile(ColorProfile.Ascii);
         renderer.setHasDarkBackground(false);
 
-        assertThat(theme.success("success")).isEqualTo(" success ");
-        assertThat(theme.pending("pending")).isEqualTo(" pending ");
-        assertThat(theme.error("error")).isEqualTo(" error ");
+        assertThat(theme.success("success")).isEqualTo("success");
+        assertThat(theme.pending("pending")).isEqualTo("pending");
+        assertThat(theme.error("error")).isEqualTo("error");
         assertThat(theme.queued("queued")).isEqualTo(" queued ");
         assertThat(theme.focus("focus")).isEqualTo("focus");
         assertThat(theme.selected("selected")).isEqualTo("selected");
@@ -74,7 +74,7 @@ class Tui4jTerminalThemeTest {
             String rendered = theme.error("错误 🚀");
 
             assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(rendered))
-                    .isEqualTo(" 错误 🚀 ");
+                    .isEqualTo("错误 🚀");
             assertThat(rendered).contains("\u001B[").endsWith("\u001B[0m");
 
             String markdownStyles = theme.heading("heading")
@@ -88,5 +88,161 @@ class Tui4jTerminalThemeTest {
                     .isEqualTo("headingstrongemphasiscodeblockquotelink");
             assertThat(markdownStyles).contains("\u001B[");
         }
+    }
+
+    @Test
+    void rendersUserAndErrorCardLinesWithAppropriateBordersAndNoColorGrace() {
+        renderer.setColorProfile(ColorProfile.Ascii);
+        renderer.setHasDarkBackground(false);
+
+        String userHeaderNormal = theme.userCardLine("❯ You          ", false, true);
+        String userBodyNormal = theme.userCardLine("Fix retry loop ", false, false);
+        String userHeaderNarrow = theme.userCardLine("❯ You          ", true, true);
+        String errorHeaderNormal = theme.errorCardLine("✖ Error · Failed", false, true);
+        String errorHeaderNarrow = theme.errorCardLine("✖ Error · Failed", true, true);
+
+        assertThat(userHeaderNormal).isEqualTo("│ ❯ You           ");
+        assertThat(userBodyNormal).isEqualTo("│ Fix retry loop  ");
+        assertThat(userHeaderNarrow).isEqualTo(" ❯ You           ");
+        assertThat(errorHeaderNormal).isEqualTo("│ ✖ Error · Failed");
+        assertThat(errorHeaderNarrow).isEqualTo(" ✖ Error · Failed");
+
+        assertThat(userHeaderNormal).doesNotContain("\u001B");
+        assertThat(errorHeaderNormal).doesNotContain("\u001B");
+    }
+
+    @Test
+    void stylesUserAndErrorCardLinesWithAdaptiveTrueColorAndClosesSequences() {
+        for (boolean dark : new boolean[] {true, false}) {
+            renderer.setColorProfile(ColorProfile.TrueColor);
+            renderer.setHasDarkBackground(dark);
+
+            String userHeader = theme.userCardLine("❯ You", false, true);
+            String userBody = theme.userCardLine("Fix loop", false, false);
+            String errorHeader = theme.errorCardLine("✖ Error", false, true);
+            String errorBody = theme.errorCardLine("Broken", false, false);
+
+            assertThat(userHeader).contains("\u001B[").isNotEqualTo(userBody);
+            assertThat(errorHeader).contains("\u001B[").isNotEqualTo(errorBody);
+            assertThat(userHeader).isNotEqualTo(errorHeader);
+
+            assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(userHeader))
+                    .isEqualTo("│ ❯ You ");
+            assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(errorHeader))
+                    .isEqualTo("│ ✖ Error");
+
+            String subtle = theme.borderSubtle("│");
+            assertThat(subtle).contains("\u001B[");
+            assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(subtle))
+                    .isEqualTo("│");
+        }
+    }
+
+    @Test
+    void statusStylesNeverContainBackgroundSequencesAcrossThemesAndProfiles() {
+        for (String themeName : Tui4jTerminalTheme.availableThemeNames()) {
+            theme.switchTheme(themeName);
+            for (ColorProfile profile : new ColorProfile[] {
+                ColorProfile.Ascii, ColorProfile.ANSI, ColorProfile.ANSI256, ColorProfile.TrueColor
+            }) {
+                for (boolean dark : new boolean[] {true, false}) {
+                    renderer.setColorProfile(profile);
+                    renderer.setHasDarkBackground(dark);
+
+                    String succ = theme.success("Operation succeeded");
+                    String pend = theme.pending("Operation pending");
+                    String err = theme.error("Operation failed");
+                    String warn = theme.warning("Warning message");
+                    String errHeader = theme.errorCardLine("✖ Error · Failed", false, true);
+                    String errBody = theme.errorCardLine("Reason: detail", false, false);
+
+                    // SGR background codes begin with [4 or [10
+                    assertThat(succ).doesNotContain("\u001B[4").doesNotContain("\u001B[10");
+                    assertThat(pend).doesNotContain("\u001B[4").doesNotContain("\u001B[10");
+                    assertThat(err).doesNotContain("\u001B[4").doesNotContain("\u001B[10");
+                    assertThat(warn).doesNotContain("\u001B[4").doesNotContain("\u001B[10");
+                    assertThat(errHeader).doesNotContain("\u001B[4").doesNotContain("\u001B[10");
+                    assertThat(errBody).doesNotContain("\u001B[4").doesNotContain("\u001B[10");
+
+                    assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(succ))
+                            .isEqualTo("Operation succeeded");
+                    assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(pend))
+                            .isEqualTo("Operation pending");
+                    assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(err))
+                            .isEqualTo("Operation failed");
+                    assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(warn))
+                            .isEqualTo("Warning message");
+                    assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(errHeader))
+                            .isEqualTo("│ ✖ Error · Failed");
+                    assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(errBody))
+                            .isEqualTo("│ Reason: detail");
+                }
+            }
+        }
+    }
+
+    @Test
+    void supportsSwitchingBetweenBuiltinThemes() {
+        assertThat(Tui4jTerminalTheme.availableThemeNames()).containsExactly("dark", "light", "high-contrast", "nord");
+
+        assertThat(theme.currentThemeName()).isEqualTo("dark");
+
+        boolean switchedToLight = theme.switchTheme("light");
+        assertThat(switchedToLight).isTrue();
+        assertThat(theme.currentThemeName()).isEqualTo("light");
+
+        boolean switchedToHc = theme.switchTheme("high-contrast");
+        assertThat(switchedToHc).isTrue();
+        assertThat(theme.currentThemeName()).isEqualTo("high-contrast");
+
+        boolean switchedToNord = theme.switchTheme("nord");
+        assertThat(switchedToNord).isTrue();
+        assertThat(theme.currentThemeName()).isEqualTo("nord");
+
+        boolean switchedInvalid = theme.switchTheme("nonexistent");
+        assertThat(switchedInvalid).isFalse();
+        assertThat(theme.currentThemeName()).isEqualTo("nord");
+    }
+
+    @Test
+    void stylesSyntaxTokensWithConsistentBackgroundAcrossThemes() {
+        renderer.setColorProfile(ColorProfile.TrueColor);
+        renderer.setHasDarkBackground(true);
+
+        String keyword = theme.syntaxKeyword("public");
+        String string = theme.syntaxString("\"hello\"");
+        String comment = theme.syntaxComment("// comment");
+        String number = theme.syntaxNumber("42");
+        String type = theme.syntaxType("String");
+        String literal = theme.syntaxLiteral("true");
+        String punctuation = theme.syntaxPunctuation(";");
+
+        assertThat(keyword).contains("\u001B[").isNotEqualTo(string);
+        assertThat(string).contains("\u001B[").isNotEqualTo(comment);
+        assertThat(number).contains("\u001B[").isNotEqualTo(type);
+        assertThat(literal).contains("\u001B[").isNotEqualTo(punctuation);
+
+        assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(keyword)).isEqualTo("public");
+        assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(string)).isEqualTo("\"hello\"");
+        assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(comment)).isEqualTo("// comment");
+    }
+
+    @Test
+    void nordThemeAdaptsColorsForLightAndDarkHostTerminals() {
+        theme.switchTheme("nord");
+        renderer.setColorProfile(ColorProfile.TrueColor);
+
+        renderer.setHasDarkBackground(true);
+        String darkText = theme.syntaxPlain("text");
+        String darkKeyword = theme.syntaxKeyword("class");
+
+        renderer.setHasDarkBackground(false);
+        String lightText = theme.syntaxPlain("text");
+        String lightKeyword = theme.syntaxKeyword("class");
+
+        assertThat(darkText).isNotEqualTo(lightText);
+        assertThat(darkKeyword).isNotEqualTo(lightKeyword);
+        assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(lightText))
+                .isEqualTo("text");
     }
 }

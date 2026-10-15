@@ -73,6 +73,7 @@ runtime:
   maxModelCalls: 256
   maxToolCalls: 256
   maxWallTimeMillis: 3600000
+  abandonedRunStalenessMillis: 1800000
 persistence:
   mode: SQLITE_WITH_JSONL
   databasePath: __HAIFA_SQLITE_DATABASE_PATH__

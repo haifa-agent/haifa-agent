@@ -2,7 +2,7 @@
 
 为个人电脑上的 Haifa 产品提供共享的本机模型认证边界：操作系统凭据管理器（Windows Desktop 通过 JNA Advapi32
 访问 Windows Credential Manager）、`env://`、`os://` 与 `model-auth://` 凭据解析、外部登录方法注册、登录 Attempt 协调和进程内 Token Refresh single-flight。
-非 Windows 桌面环境 fail closed（报 `OS_CREDENTIAL_STORE_UNAVAILABLE`），不回退到明文文件或未加密存储。
+非 Windows 桌面环境 fail closed（报 `OS_CREDENTIAL_STORE_UNAVAILABLE`），不回退到明文文件或未加密存储；`connectionRequired` 这类可用性探测把该状态视为“需要连接”并返回 `true`，只有凭据解析与写入继续以 `OS_CREDENTIAL_STORE_UNAVAILABLE` 失败。
 
 本模块只依赖 Common、Model API、Jackson、JNA 与 JDK。它不依赖 Coding Agent、Personal Assistant、Spring、Runtime、
 SQLite 或任何 UI，也不直接绑定特定供应商（Codex、Antigravity 等非公开驱动已拆入独立的外围兼容模块中）。

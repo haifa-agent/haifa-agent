@@ -26,4 +26,12 @@ public final class CompositeSkillContentLoader implements SkillContentLoader {
         if (source == null) throw new IllegalStateException("frozen Skill source adapter is unavailable");
         return source.load(binding, context);
     }
+
+    @Override
+    public java.util.Optional<byte[]> loadResourceBytes(
+            FrozenSkillBinding binding, SkillVisibilityContext context, String relativePath) {
+        SkillSource source = sources.get(binding.coordinate().source());
+        if (source == null) throw new IllegalStateException("frozen Skill source adapter is unavailable");
+        return source.readResource(binding, context, relativePath);
+    }
 }

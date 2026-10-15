@@ -53,7 +53,7 @@ public final class PersonalApiExceptionHandler {
     @ExceptionHandler(HaifaAgentException.class)
     ResponseEntity<PersonalApiDtos.Error> sdk(HaifaAgentException exception) {
         String code = exception.code();
-        HttpStatus status = code.contains("NOT_FOUND")
+        HttpStatus status = code.contains("NOT_FOUND") || "MEMORY_UNAVAILABLE".equals(code)
                 ? HttpStatus.NOT_FOUND
                 : code.contains("CONFLICT") || code.contains("REVISION") ? HttpStatus.CONFLICT : HttpStatus.BAD_REQUEST;
         return ResponseEntity.status(status)

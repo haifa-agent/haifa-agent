@@ -19,6 +19,19 @@ public interface AgentRuntime {
         throw new UnsupportedOperationException("durable Run recovery is not supported");
     }
 
+    /**
+     * Settles a Run abandoned by a previous Runtime instance when its execution lease is no longer owned and its
+     * heartbeat has been silent for at least {@code heartbeatStaleness}. Returns {@code true} when the Run is now
+     * terminal (just settled or already terminal) and {@code false} when it is still actively owned or fresh, so a
+     * caller can distinguish "safe to release" from "still executing". Runs waiting for a human are never settled
+     * here. Implementations without durable recovery return {@code false}.
+     */
+    default boolean recoverAbandoned(io.haifa.agent.core.run.AgentRunId runId, java.time.Duration heartbeatStaleness) {
+        java.util.Objects.requireNonNull(runId, "runId must not be null");
+        java.util.Objects.requireNonNull(heartbeatStaleness, "heartbeatStaleness must not be null");
+        return false;
+    }
+
     AgentRunSnapshot respond(InteractionResponse response);
 
     default InteractionResponseReceipt respond(InteractionResponseSubmission response) {
@@ -37,6 +50,18 @@ public interface AgentRuntime {
 
     Optional<AgentRunSnapshot> find(io.haifa.agent.core.run.AgentRunId runId);
 
+    /**
+     * Returns the digest of the instruction in the caller-visible Run's admission snapshot.
+     * No instruction body or current Profile is exposed. Unknown or invisible Runs return empty;
+     * an admitted visible Run with an unreadable snapshot fails with a safe contract error.
+     * The compatibility default returns empty because this implementation does not support the query.
+     */
+    default Optional<FrozenInstructionDiagnostic> frozenInstructionDiagnostic(
+            io.haifa.agent.core.run.AgentRunId runId) {
+        java.util.Objects.requireNonNull(runId, "runId must not be null");
+        return Optional.empty();
+    }
+
     default Optional<AgentRunViewSnapshot> view(io.haifa.agent.core.run.AgentRunId runId) {
         throw new UnsupportedOperationException("transport-ready Run views are not supported");
     }
@@ -44,6 +69,21 @@ public interface AgentRuntime {
     /** Returns the authoritative plan when this Runtime has one for the caller-visible Run. */
     default Optional<AgentPlanView> plan(io.haifa.agent.core.run.AgentRunId runId) {
         throw new UnsupportedOperationException("public plan views are not supported");
+    }
+
+    /** Lists the direct child runs delegated by a caller-visible parent run, oldest first. */
+    default List<ChildRunView> children(io.haifa.agent.core.run.AgentRunId parentRunId) {
+        throw new UnsupportedOperationException("child run queries are not supported");
+    }
+
+    /** Returns bounded, redacted views of the authoritative Tool Calls for a caller-visible Run. */
+    default List<ToolCallView> toolCalls(io.haifa.agent.core.run.AgentRunId runId) {
+        throw new UnsupportedOperationException("public Tool Call views are not supported");
+    }
+
+    /** Safely projects existing durable assistant/tool messages for an authorized Run. */
+    default RunMessagePage messages(io.haifa.agent.core.run.AgentRunId runId, RunMessageCursor after, int limit) {
+        throw new UnsupportedOperationException("Run message paging is not supported");
     }
 
     AgentRunHandle handle(io.haifa.agent.core.run.AgentRunId runId);

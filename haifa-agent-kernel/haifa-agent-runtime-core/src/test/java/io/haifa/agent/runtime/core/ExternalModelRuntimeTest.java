@@ -162,6 +162,23 @@ class ExternalModelRuntimeTest {
                 .singleElement()
                 .satisfies(event -> assertThat(event.textDelta()).isEqualTo("done"));
         assertThat(calls).hasValue(2);
+        var acceptedMessages = runtime.messages(
+                accepted.runId(), io.haifa.agent.runtime.api.RunMessageCursor.beforeFirst(accepted.runId()), 20);
+        var committedCalls = outputEvents.stream()
+                .filter(event -> event.type() == AgentRunOutputEventType.ASSISTANT_TEXT_COMMITTED)
+                .map(event -> event.modelCallId())
+                .toList();
+        assertThat(acceptedMessages.items().stream()
+                        .filter(message -> message.role().equals("ASSISTANT"))
+                        .map(message -> message.modelCallId().orElseThrow())
+                        .toList())
+                .containsExactlyElementsOf(committedCalls);
+        assertThat(acceptedMessages.items().stream()
+                        .filter(message -> message.role().equals("TOOL")))
+                .allSatisfy(message -> assertThat(message.modelCallId()).isEmpty());
+        assertThat(outputEvents.stream()
+                        .filter(event -> event.type() == AgentRunOutputEventType.ASSISTANT_TEXT_COMMITTED))
+                .allSatisfy(event -> assertThat(event.generationId()).isEqualTo(event.modelCallId()));
         assertThat(runtime.events(accepted.runId(), RunEventCursor.beforeFirst(accepted.runId()), 100).items().stream()
                         .filter(event -> event.payload() instanceof RunEventPayloads.ModelLifecycle)
                         .map(event -> (RunEventPayloads.ModelLifecycle) event.payload()))

@@ -11,13 +11,7 @@ import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.execution.api.ToolOutputPreview;
 import io.haifa.agent.execution.api.ToolOutputPreviewPublisher;
-import io.haifa.agent.memory.api.MemoryCandidateId;
-import io.haifa.agent.memory.api.MemoryCandidateStatus;
 import io.haifa.agent.memory.api.MemoryId;
-import io.haifa.agent.memory.api.MemoryKind;
-import io.haifa.agent.memory.api.MemoryRef;
-import io.haifa.agent.memory.api.MemoryStatus;
-import io.haifa.agent.memory.api.MemoryVersion;
 import io.haifa.agent.personalassistant.application.mcp.PersonalMcpPlatform;
 import io.haifa.agent.personalassistant.application.mission.MissionModelBinding;
 import io.haifa.agent.personalassistant.application.mission.MissionRuntimeAccess;
@@ -47,12 +41,8 @@ import io.haifa.agent.sdk.conversation.ConversationTurnQuery;
 import io.haifa.agent.sdk.conversation.RenameConversationCommand;
 import io.haifa.agent.sdk.conversation.StartConversationCommand;
 import io.haifa.agent.sdk.conversation.SubmitConversationTurnCommand;
-import io.haifa.agent.sdk.memory.InvalidateMemoryCommand;
-import io.haifa.agent.sdk.memory.MemoryCandidateListQuery;
 import io.haifa.agent.sdk.memory.MemoryListQuery;
 import io.haifa.agent.sdk.memory.MemoryScopeSpec;
-import io.haifa.agent.sdk.memory.RejectMemoryCandidateCommand;
-import io.haifa.agent.sdk.memory.ReviewMemoryCandidateCommand;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Comparator;
@@ -599,74 +589,22 @@ public final class PersonalAssistantApplication implements AutoCloseable {
         }
     }
 
-    public List<MemoryCandidateView> memoryCandidates(int limit) {
-        var memories = agent.memories().orElseThrow();
-        return memories
-                .candidates(new MemoryCandidateListQuery(
-                        MemoryScopeSpec.user(),
-                        Set.of(MemoryCandidateStatus.PENDING),
-                        Set.of(),
-                        Optional.empty(),
-                        Optional.empty(),
-                        limit))
-                .items()
-                .stream()
-                .map(candidate -> new MemoryCandidateView(
-                        candidate.id().value(),
-                        candidate.kind().name(),
-                        candidate.subjectKey(),
-                        candidate.content().boundedText(),
-                        candidate.status().name(),
-                        candidate.updatedAt(),
-                        candidate.revision()))
-                .toList();
-    }
-
-    public MemoryView approveMemoryCandidate(String candidateId, long expectedRevision, String idempotencyKey) {
-        return memory(agent.memories()
-                .orElseThrow()
-                .approve(new ReviewMemoryCandidateCommand(
-                        new MemoryCandidateId(candidateId), expectedRevision, idempotencyKey)));
-    }
-
-    public MemoryCandidateView rejectMemoryCandidate(
-            String candidateId, long expectedRevision, String idempotencyKey, String reason) {
-        var candidate = agent.memories()
-                .orElseThrow()
-                .reject(new RejectMemoryCandidateCommand(
-                        new MemoryCandidateId(candidateId), expectedRevision, idempotencyKey, reason));
-        return new MemoryCandidateView(
-                candidate.id().value(),
-                candidate.kind().name(),
-                candidate.subjectKey(),
-                candidate.content().boundedText(),
-                candidate.status().name(),
-                candidate.updatedAt(),
-                candidate.revision());
-    }
-
     public List<MemoryView> memories(int limit) {
-        return agent
-                .memories()
-                .orElseThrow()
-                .memories(new MemoryListQuery(
-                        MemoryScopeSpec.user(),
-                        Set.of(MemoryStatus.ACTIVE, MemoryStatus.INVALIDATED),
-                        Set.<MemoryKind>of(),
-                        Optional.empty(),
-                        Optional.empty(),
-                        limit))
-                .items()
-                .stream()
+        return agent.memories().orElseThrow().list(MemoryListQuery.of(MemoryScopeSpec.user(), limit)).items().stream()
                 .map(PersonalAssistantApplication::memory)
                 .toList();
     }
 
-    public MemoryView invalidateMemory(String memoryId, long version, String idempotencyKey, String reason) {
-        return memory(agent.memories()
-                .orElseThrow()
-                .invalidate(new InvalidateMemoryCommand(
-                        new MemoryRef(new MemoryId(memoryId), new MemoryVersion(version)), idempotencyKey, reason)));
+    public MemoryView updateMemory(String memoryId, long expectedRevision, String content) {
+        return memory(agent.memories().orElseThrow().update(new MemoryId(memoryId), expectedRevision, content));
+    }
+
+    public void deleteMemory(String memoryId, long expectedRevision) {
+        agent.memories().orElseThrow().delete(new MemoryId(memoryId), expectedRevision);
+    }
+
+    public int clearMemories() {
+        return agent.memories().orElseThrow().clear(MemoryScopeSpec.user());
     }
 
     public String productDigest() {
@@ -1172,11 +1110,10 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     private static MemoryView memory(io.haifa.agent.memory.api.Memory value) {
         return new MemoryView(
                 value.id().value(),
-                value.version().value(),
+                value.revision(),
                 value.kind().name(),
                 value.subjectKey(),
-                value.content().map(content -> content.boundedText()).orElse(""),
-                value.status().name(),
+                value.content(),
                 value.createdAt(),
                 value.updatedAt());
     }
@@ -1364,22 +1301,12 @@ public final class PersonalAssistantApplication implements AutoCloseable {
             long version,
             Optional<ToolDetailView> toolDetail) {}
 
-    public record MemoryCandidateView(
-            String id,
-            String kind,
-            String subjectKey,
-            String content,
-            String status,
-            Instant updatedAt,
-            long revision) {}
-
     public record MemoryView(
             String id,
-            long version,
+            long revision,
             String kind,
             String subjectKey,
             String content,
-            String status,
             Instant createdAt,
             Instant updatedAt) {}
 

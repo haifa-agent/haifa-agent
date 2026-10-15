@@ -1093,6 +1093,37 @@ class TerminalUiReducerTest {
         assertThat(state.footer().model()).endsWith(" · [登录已失效，请重新认证]");
     }
 
+    @Test
+    void sidebarToggledInvertsSidebarVisibility() {
+        TerminalUiState wide = TerminalUiState.initial(120, 40);
+        assertThat(wide.sidebarVisible()).isTrue();
+
+        TerminalUiState toggledOff = reducer.reduce(wide, new TerminalUiAction.SidebarToggled());
+        assertThat(toggledOff.sidebarVisible()).isFalse();
+
+        TerminalUiState toggledOn = reducer.reduce(toggledOff, new TerminalUiAction.SidebarToggled());
+        assertThat(toggledOn.sidebarVisible()).isTrue();
+    }
+
+    @Test
+    void resizingNarrowStartupToWideExpandsSidebarAutomaticallyIfNotExplicitlyToggled() {
+        TerminalUiState narrow = TerminalUiState.initial(80, 24);
+        assertThat(narrow.sidebarVisible()).isFalse();
+        assertThat(narrow.sidebarExplicitlyToggled()).isFalse();
+
+        TerminalUiState wideResized = reducer.reduce(narrow, new TerminalUiAction.TerminalResized(120, 40));
+        assertThat(wideResized.sidebarVisible()).isTrue();
+        assertThat(wideResized.sidebarExplicitlyToggled()).isFalse();
+
+        TerminalUiState toggledOff = reducer.reduce(wideResized, new TerminalUiAction.SidebarToggled());
+        assertThat(toggledOff.sidebarVisible()).isFalse();
+        assertThat(toggledOff.sidebarExplicitlyToggled()).isTrue();
+
+        TerminalUiState wideAgain = reducer.reduce(toggledOff, new TerminalUiAction.TerminalResized(140, 45));
+        assertThat(wideAgain.sidebarVisible()).isFalse();
+        assertThat(wideAgain.sidebarExplicitlyToggled()).isTrue();
+    }
+
     private static AgentRunEvent event(long sequence, String id, AgentRunEvent.Payload payload) {
         return event(sequence, id, payload, Instant.parse("2026-07-27T00:00:00Z"));
     }

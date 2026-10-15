@@ -13,12 +13,23 @@ Haifa Agent SDK Release Bundle
 - haifa-agent-spring-bom: Spring 生态 BOM
 
 【Maven 依赖配置 (纯 Java)】
+解压后，将 repository/ 配置为文件仓库（替换为实际绝对路径）。
+本包提供全部 io.haifa 内部依赖及其 POM，第三方依赖仍需访问 Maven Central。
+无需向本机 Maven 仓库执行 install。
+
+<repositories>
+    <repository>
+        <id>haifa-release</id>
+        <url>file:///D:/packages/haifa-agent-sdk-v0.1.2/repository</url>
+    </repository>
+</repositories>
+
 <dependencyManagement>
     <dependencies>
         <dependency>
             <groupId>io.haifa</groupId>
             <artifactId>haifa-agent-bom</artifactId>
-            <version>0.1.1</version>
+            <version>0.1.2</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>
@@ -33,15 +44,19 @@ Haifa Agent SDK Release Bundle
 </dependencies>
 
 【Gradle 依赖配置】
+repositories {
+    maven { url = uri("D:/packages/haifa-agent-sdk-v0.1.2/repository") }
+    mavenCentral()
+}
+
 dependencies {
-    implementation platform("io.haifa:haifa-agent-bom:0.1.1")
+    implementation platform("io.haifa:haifa-agent-bom:0.1.2")
     implementation "io.haifa:haifa-agent-sdk-starter"
 }
 
 【纯 Java 最小代码示例】
 try (HaifaAgent agent = HaifaAgentStarter.create()) {
-    AgentRunResult result = agent.chat("Hello Haifa Agent!");
-    System.out.println(result.output());
+    System.out.println(agent.chat("Hello Haifa Agent!").await().text());
 }
 
 ========================================================================

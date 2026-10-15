@@ -48,7 +48,7 @@ echo ========================================================================
 
 rem Check if service is already running on port 20001
 for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":20001" ^| findstr "LISTENING"') do (
-    echo [INFO] Haifa Personal Assistant is already running on port 20001 (PID: %%a).
+    echo [INFO] Haifa Personal Assistant is already running on port 20001 - PID: %%a.
     echo Opening browser directly...
     start "" powershell -NoProfile -Command "Start-Process 'http://127.0.0.1:20001/index.html'"
     exit /b 0

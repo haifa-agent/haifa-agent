@@ -6,6 +6,7 @@ import io.haifa.agent.common.time.SystemTimeProvider;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.context.compression.CompressionPolicy;
 import io.haifa.agent.core.run.AgentRunType;
+import io.haifa.agent.runtime.api.ChildRunCapacity;
 import io.haifa.agent.runtime.core.RuntimeCoreBuilder;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedDefinition;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
@@ -26,15 +27,23 @@ import io.haifa.agent.sdk.contribution.SkillPlatformContribution;
 import io.haifa.agent.sdk.contribution.ToolPlatformContribution;
 import io.haifa.agent.sdk.contribution.ToolRegistration;
 import io.haifa.agent.sdk.internal.DefaultConversationService;
+import io.haifa.agent.sdk.internal.NonInteractiveChildToolPolicy;
+import io.haifa.agent.sdk.internal.PlanAuthoringTool;
 import io.haifa.agent.sdk.internal.ProcessLocalPromptDiagnostics;
+import io.haifa.agent.sdk.internal.ReadOnlyNetworkToolPolicy;
 import io.haifa.agent.sdk.internal.SafeConversationService;
+import io.haifa.agent.sdk.internal.StandardFileWriteToolPolicy;
 import io.haifa.agent.sdk.internal.ToolAssembly;
 import io.haifa.agent.sdk.memory.AgentMemories;
+import io.haifa.agent.sdk.plan.PlanAuthoringSpec;
+import io.haifa.agent.sdk.product.ChildAgentSpec;
 import io.haifa.agent.sdk.product.ProductProfile;
 import io.haifa.agent.sdk.product.ProductRunProfile;
+import io.haifa.agent.sdk.product.ProductRunProfileRef;
 import io.haifa.agent.sdk.spi.SdkConversationContribution;
 import io.haifa.agent.sdk.spi.SdkPersistenceContribution;
 import io.haifa.agent.sdk.tool.JavaTool;
+import io.haifa.agent.tool.api.ToolName;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -44,8 +53,10 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Predicate;
+import java.util.function.Supplier;
 
 /** Fluent bootstrap builder with explicit typed component assembly. */
 public final class HaifaAgentBuilder {
@@ -62,6 +73,9 @@ public final class HaifaAgentBuilder {
     private CredentialPlatformContribution credentials;
     private final List<JavaTool<?, ?>> javaTools = new ArrayList<>();
     private final List<ToolRegistration> toolRegistrations = new ArrayList<>();
+    private Set<ToolName> autoApproveReadOnlyNetworkTools = Set.of();
+    private Set<ToolName> autoApproveStandardFileWriteTools = Set.of();
+    private boolean nonInteractiveChildTools;
     private final List<AutoCloseable> managedResources = new ArrayList<>();
     private final List<AgentDiagnostic> assemblyDiagnostics = new ArrayList<>();
     private SdkCallerProvider callers = SdkCallerProvider.defaultPublicUser();
@@ -75,9 +89,14 @@ public final class HaifaAgentBuilder {
     private RetryPolicy toolRetry = RetryPolicy.none();
     private ModelRetryPolicy modelRetry = ModelRetryPolicy.defaults();
     private final Map<String, ProductRunProfile> runProfiles = new LinkedHashMap<>();
+    private final Map<String, ChildAgentSpec> childAgents = new LinkedHashMap<>();
+    private Integer maxConcurrentChildRuns;
+    private ChildRunCapacity childRunCapacity;
     private AgentMetadata metadata = AgentMetadata.defaults();
     private boolean starterDefaultInstructionsInUse;
     private CompressionPolicy compressionPolicy;
+    private PlanAuthoringSpec planAuthoringSpec;
+    private Supplier<? extends ExecutorService> executionExecutorFactory;
 
     HaifaAgentBuilder() {}
 
@@ -88,6 +107,15 @@ public final class HaifaAgentBuilder {
 
     public CompressionPolicy compressionPolicy() {
         return compressionPolicy;
+    }
+
+    public HaifaAgentBuilder planAuthoring(PlanAuthoringSpec spec) {
+        this.planAuthoringSpec = Objects.requireNonNull(spec, "planAuthoringSpec must not be null");
+        return this;
+    }
+
+    public HaifaAgentBuilder enablePlanAuthoring() {
+        return planAuthoring(PlanAuthoringSpec.defaults());
     }
 
     public HaifaAgentBuilder product(ProductProfile value) {
@@ -140,8 +168,24 @@ public final class HaifaAgentBuilder {
         return this;
     }
 
+    /**
+     * Sets the Agent's single credential broker. A second, different contribution is rejected instead
+     * of silently replacing the first, because Tools already wired to the first broker (for example
+     * MCP Tools applied through {@code McpToolPlatforms}) would lose their credentials. Callers that
+     * need several credential sources must supply one broker that composes them. Passing an equal
+     * contribution again (the same broker, even in a new wrapper) is allowed.
+     *
+     * @param value the credential contribution
+     * @return this builder
+     * @throws IllegalStateException if a different credential contribution is already set
+     */
     public HaifaAgentBuilder credentials(CredentialPlatformContribution value) {
-        credentials = Objects.requireNonNull(value, "value must not be null");
+        Objects.requireNonNull(value, "value must not be null");
+        if (credentials != null && !credentials.equals(value)) {
+            throw new IllegalStateException("A credential contribution is already set on this builder; "
+                    + "supply a single broker that composes every credential source instead of replacing it");
+        }
+        credentials = value;
         return this;
     }
 
@@ -186,6 +230,20 @@ public final class HaifaAgentBuilder {
         return this;
     }
 
+    /**
+     * Denies approval-required Tools in delegated Child Runs without creating an Interaction.
+     * The Child receives the Runtime's safe policy-denial result and may continue. Root Run decisions,
+     * existing ALLOW/DENY decisions, and non-Tool Interactions are unchanged. Disabled by default.
+     *
+     * <p>Requires an explicit product policy. The option is frozen in each Run configuration and
+     * inherited by its Children; it is applied after the configured Tool policy decorator.
+     * A Child denial's requirement digest includes that frozen configuration. Never auto-approves a Tool.
+     */
+    public HaifaAgentBuilder nonInteractiveChildTools() {
+        nonInteractiveChildTools = true;
+        return this;
+    }
+
     public HaifaAgentBuilder modelImageResolver(ModelImageResolver value) {
         modelImageResolver = Objects.requireNonNull(value, "value must not be null");
         return this;
@@ -193,6 +251,31 @@ public final class HaifaAgentBuilder {
 
     public HaifaAgentBuilder modelAudioResolver(ModelAudioResolver value) {
         modelAudioResolver = Objects.requireNonNull(value, "value must not be null");
+        return this;
+    }
+
+    /**
+     * Test-only host-assembly hook supplying the standard {@link ExecutorService} that backs the
+     * process-local execution scheduler. By default every assembled Agent owns a fresh
+     * virtual-thread-per-task executor, which stays the default when this hook is not set.
+     *
+     * <p>The factory is invoked exactly once per {@link #build()}; the SDK owns the returned executor,
+     * closes it together with the Agent through the existing {@code LocalExecutionScheduler.close()},
+     * and treats a null factory or a null created executor as an assembly failure. The executor must
+     * not be shared with other Agents or callers: shutdown only waits for the tasks this Agent
+     * scheduled, so the owner remains responsible for draining any work it enqueues and for not
+     * leaving tasks the Agent did not submit. This controls host assembly only; it is neither a
+     * request option nor part of a frozen Run configuration, and it does not change lifecycle
+     * defaults. Production callers must retain the default executor. A test executor must permit
+     * independent concurrent Parent and Child tasks, including while Parents await their Children;
+     * single-thread and fixed-size pools are unsupported because delegation waits synchronously.
+     * A deliberately held Child must be explicitly released by the test owner, even on failure.
+     *
+     * @param value the executor factory; must not be null
+     * @return this builder
+     */
+    public HaifaAgentBuilder executionExecutorFactoryForTests(Supplier<? extends ExecutorService> value) {
+        executionExecutorFactory = Objects.requireNonNull(value, "executionExecutorFactory must not be null");
         return this;
     }
 
@@ -230,6 +313,34 @@ public final class HaifaAgentBuilder {
         return this;
     }
 
+    /**
+     * Registers one child agent. A parent run may delegate to it through the Runtime {@code task} Tool only when
+     * the Product Profile lists its id in {@code allowedChildAgents}.
+     */
+    public HaifaAgentBuilder childAgent(ChildAgentSpec value) {
+        ChildAgentSpec child = Objects.requireNonNull(value, "value must not be null");
+        if (childAgents.putIfAbsent(child.id(), child) != null) {
+            throw new IllegalArgumentException("child agent IDs must be unique");
+        }
+        return this;
+    }
+
+    /**
+     * Uses a caller-owned Child capacity shared with other Agents. Its maximum takes precedence over
+     * {@link #maxConcurrentChildRuns(int)}; closing this Agent does not close the shared capacity.
+     */
+    public HaifaAgentBuilder childRunCapacity(ChildRunCapacity value) {
+        childRunCapacity = Objects.requireNonNull(value, "childRunCapacity must not be null");
+        return this;
+    }
+
+    /** Per-Agent maximum (default three); an explicitly shared capacity takes precedence. */
+    public HaifaAgentBuilder maxConcurrentChildRuns(int value) {
+        if (value < 1) throw new IllegalArgumentException("maxConcurrentChildRuns must be positive");
+        maxConcurrentChildRuns = value;
+        return this;
+    }
+
     /** Registers one typed Java Tool without requiring a catalog or platform contribution. */
     public HaifaAgentBuilder tool(JavaTool<?, ?> value) {
         javaTools.add(Objects.requireNonNull(value, "value must not be null"));
@@ -251,6 +362,45 @@ public final class HaifaAgentBuilder {
     public HaifaAgentBuilder toolRegistrations(List<ToolRegistration> values) {
         Objects.requireNonNull(values, "values must not be null")
                 .forEach(value -> toolRegistrations.add(Objects.requireNonNull(value, "value must not be null")));
+        return this;
+    }
+
+    /**
+     * Exempts exactly the named read-only network Tools from the standard preset network approval.
+     *
+     * <p>The default is empty. A Tool is only exempted when its frozen definition declares exactly
+     * {@code NETWORK_ACCESS} as its single side effect, is not high or critical risk, keeps the
+     * policy-decided approval requirement, and constrains at least one host. The names become narrow
+     * {@code ALLOW} marker rules in the frozen product policy, so the list is part of the requirement
+     * digest. Every other standard ASK/DENY, custom rule, and approval mode is preserved; the
+     * product's own {@code PolicyDecisionService} is reused and never replaced.
+     *
+     * @param values the exact Tool names to auto-approve; an empty set disables the feature
+     * @return this builder
+     * @throws io.haifa.agent.sdk.api.HaifaAgentException if a listed Tool is missing, unsafe, or its
+     *     policy marker would collide with a different existing rule
+     */
+    public HaifaAgentBuilder autoApproveReadOnlyNetworkTools(Set<ToolName> values) {
+        autoApproveReadOnlyNetworkTools = Set.copyOf(Objects.requireNonNull(values, "values must not be null"));
+        return this;
+    }
+
+    /**
+     * Exempts exactly the listed registered Java Tools from the canonical standard FILE_WRITE ASK.
+     *
+     * <p>The default is empty. Each actual frozen Java binding must declare only FILE_WRITE,
+     * non-high/non-critical risk and POLICY approval. Integration Tools, missing names and unsafe
+     * definitions fail assembly. The manifest participates in the frozen policy requirement digest;
+     * custom ASK/DENY, default rules, other effects and approval modes are preserved. This reuses the
+     * configured evaluator and does not authorize Tool arguments or constrain the Tool's own writes.
+     *
+     * @param values exact registered Java Tool names; empty disables the exemption
+     * @return this builder
+     * @throws HaifaAgentException if policy, a Java binding or a safe declaration is unavailable, or
+     *     a policy marker/ref conflicts with existing content
+     */
+    public HaifaAgentBuilder autoApproveStandardFileWriteTools(Set<ToolName> values) {
+        autoApproveStandardFileWriteTools = Set.copyOf(Objects.requireNonNull(values, "values must not be null"));
         return this;
     }
 
@@ -284,17 +434,33 @@ public final class HaifaAgentBuilder {
                     "assembly",
                     "Artifact component is forbidden by the Product Profile policy");
         }
-        ToolAssembly.Prepared prepared = ToolAssembly.prepare(this.toolPlatform, javaTools, toolRegistrations);
+        List<JavaTool<?, ?>> effectiveJavaTools = new ArrayList<>(this.javaTools);
+        if (planAuthoringSpec != null) {
+            effectiveJavaTools.add(new PlanAuthoringTool(
+                    planAuthoringSpec, persistence.runtimePersistence().state(), ids, time));
+        }
+        ToolAssembly.Prepared prepared = ToolAssembly.prepare(this.toolPlatform, effectiveJavaTools, toolRegistrations);
         ToolPlatformContribution tool = prepared.platform();
         Set<String> allowedTools = new LinkedHashSet<>(effectiveProfile.allowedTools());
         allowedTools.addAll(prepared.contributedAliases());
         Set<String> effectiveAllowedTools = Set.copyOf(allowedTools);
         validateDeclaredAliases(effectiveAllowedTools, tool, effectiveProfile.allowedSkills(), skillPlatform);
+        validateChildAgents(effectiveProfile, effectiveAllowedTools);
+        Map<String, ChildAgentSpec> children = Map.copyOf(childAgents);
+        Set<io.haifa.agent.core.agent.AgentDefinitionId> allowedChildren =
+                effectiveProfile.allowedChildAgents().stream()
+                        .map(io.haifa.agent.core.agent.AgentDefinitionId::new)
+                        .collect(java.util.stream.Collectors.toUnmodifiableSet());
 
         List<AutoCloseable> lifecycle = collectLifecycle();
         LocalExecutionScheduler scheduler;
         try {
-            scheduler = new LocalExecutionScheduler();
+            if (executionExecutorFactory == null) {
+                scheduler = new LocalExecutionScheduler();
+            } else {
+                scheduler = new LocalExecutionScheduler(Objects.requireNonNull(
+                        executionExecutorFactory.get(), "executionExecutorFactory returned null"));
+            }
         } catch (RuntimeException | Error exception) {
             closeAfterFailedBuild(lifecycle, exception);
             throw exception;
@@ -317,14 +483,29 @@ public final class HaifaAgentBuilder {
                         SdkCaller caller = Objects.requireNonNull(callers.current(), "caller provider returned null");
                         return new RuntimeCallerContext(caller.tenant(), caller.principal());
                     })
-                    .definitions((id, requested) -> new ResolvedDefinition(
-                            id,
-                            requested.orElse(effectiveProfile.definitionVersion()),
-                            effectiveAllowedTools,
-                            effectiveProfile.allowedSkills(),
-                            Set.of(),
-                            effectiveProfile.instructions(),
-                            List.of()))
+                    .definitions((id, requested) -> {
+                        ChildAgentSpec child = children.get(id.value());
+                        if (child != null && !id.equals(effectiveProfile.definitionId())) {
+                            return new ResolvedDefinition(
+                                    id,
+                                    requested.orElse(effectiveProfile.definitionVersion()),
+                                    child.allowedTools(),
+                                    Set.of(),
+                                    Set.of(),
+                                    child.instructions(),
+                                    List.of(),
+                                    child.description(),
+                                    child.runProfile().map(ProductRunProfileRef::id));
+                        }
+                        return new ResolvedDefinition(
+                                id,
+                                requested.orElse(effectiveProfile.definitionVersion()),
+                                effectiveAllowedTools,
+                                effectiveProfile.allowedSkills(),
+                                allowedChildren,
+                                effectiveProfile.instructions(),
+                                List.of());
+                    })
                     .profiles((id, overrides) -> {
                         ProductRunProfile selected = runProfiles.get(id);
                         if (selected == null) {
@@ -352,12 +533,15 @@ public final class HaifaAgentBuilder {
                                 snapshot,
                                 Map.of(),
                                 selected.modelRequestOptions(),
-                                selected.allowedTools());
+                                selected.allowedTools(),
+                                selected.truncatedOutputPolicy());
                     });
             model.adapters()
                     .forEach((coordinate, adapter) ->
                             runtimeBuilder.registerChatModel(coordinate.type(), coordinate.version(), adapter));
             runtimeBuilder.policyProductId(effectiveProfile.productId().value());
+            if (maxConcurrentChildRuns != null) runtimeBuilder.maxConcurrentChildRuns(maxConcurrentChildRuns);
+            if (childRunCapacity != null) runtimeBuilder.childRunCapacity(childRunCapacity);
 
             if (tool != null) {
                 runtimeBuilder.toolPlatform(tool.catalog(), tool.invoker(), tool.schemaValidator());
@@ -366,15 +550,79 @@ public final class HaifaAgentBuilder {
                 runtimeBuilder.skillPlatform(
                         skillPlatform.catalog(), skillPlatform.contentLoader(), skillPlatform.trust());
             }
-            runtimeBuilder.publicToolPolicyDecorator(publicToolPolicyDecorator);
+            boolean denyChildApprovals = nonInteractiveChildTools;
+            var configuredDecorator = publicToolPolicyDecorator;
+            var configuredState = persistence.runtimePersistence().state();
+            runtimeBuilder.snapshotFactoryDecorator(
+                    selected -> NonInteractiveChildToolPolicy.snapshots(selected, configuredState, denyChildApprovals));
             if (memory != null) {
-                runtimeBuilder.memory(memory.service(), memory.retriever());
+                runtimeBuilder.memory(memory.retriever());
             }
             // No implicit policy: a tool platform without an explicit product policy fails closed in
             // RuntimeCoreBuilder instead of inheriting rules from the SDK assembly layer.
-            if (policy != null) {
-                runtimeBuilder.policy(policy.rules(), policy.evaluator());
+            PolicyPlatformContribution effectivePolicy = policy;
+            if (!autoApproveReadOnlyNetworkTools.isEmpty()) {
+                if (policy == null) {
+                    throw new HaifaAgentException(
+                            "NETWORK_AUTO_APPROVE_POLICY_REQUIRED",
+                            "product.assemble",
+                            "assembly",
+                            "auto-approved read-only network Tools require an explicit product policy");
+                }
+                if (tool == null) {
+                    throw new HaifaAgentException(
+                            "NETWORK_AUTO_APPROVE_TOOL_UNAVAILABLE",
+                            "product.assemble",
+                            "assembly",
+                            "auto-approved read-only network Tools are absent from the Tool catalog");
+                }
+                effectivePolicy = ReadOnlyNetworkToolPolicy.apply(
+                        policy,
+                        autoApproveReadOnlyNetworkTools,
+                        tool.catalog(),
+                        effectiveProfile.productId().value());
             }
+            if (!autoApproveStandardFileWriteTools.isEmpty()) {
+                if (effectivePolicy == null) {
+                    throw new HaifaAgentException(
+                            "FILE_WRITE_AUTO_APPROVE_POLICY_REQUIRED",
+                            "product.assemble",
+                            "assembly",
+                            "auto-approved Java file-writing Tools require an explicit product policy");
+                }
+                if (tool == null) {
+                    throw new HaifaAgentException(
+                            "FILE_WRITE_AUTO_APPROVE_TOOL_UNAVAILABLE",
+                            "product.assemble",
+                            "assembly",
+                            "auto-approved Java file-writing Tools are absent from the Tool catalog");
+                }
+                effectivePolicy = StandardFileWriteToolPolicy.apply(
+                        effectivePolicy,
+                        autoApproveStandardFileWriteTools,
+                        tool.catalog(),
+                        prepared.javaBindings(),
+                        effectiveProfile.productId().value());
+            }
+            if (denyChildApprovals) {
+                if (effectivePolicy == null) {
+                    throw new HaifaAgentException(
+                            "CHILD_NON_INTERACTIVE_POLICY_REQUIRED",
+                            "product.assemble",
+                            "assembly",
+                            "non-interactive Child Tools require an explicit product policy");
+                }
+            }
+            if (effectivePolicy != null) {
+                runtimeBuilder.policy(effectivePolicy.rules(), effectivePolicy.evaluator());
+            }
+            var configuredRules = effectivePolicy == null ? null : effectivePolicy.rules();
+            runtimeBuilder.publicToolPolicyDecorator(selected -> new NonInteractiveChildToolPolicy(
+                    Objects.requireNonNull(
+                            configuredDecorator.apply(selected), "public tool policy decorator returned null"),
+                    configuredState,
+                    configuredRules,
+                    effectiveProfile.productId().value()));
             if (approval != null) {
                 runtimeBuilder.approvalVerification(approval.verification());
             }
@@ -384,17 +632,20 @@ public final class HaifaAgentBuilder {
             if (compressionPolicy != null) {
                 runtimeBuilder.compressionPolicy(compressionPolicy);
             }
+            if (planAuthoringSpec != null) {
+                runtimeBuilder.todoSystemPrompt(planAuthoringSpec.systemPrompt());
+            }
 
             var runtime = runtimeBuilder.build();
             var conversationService = new DefaultConversationService(
                     effectiveProfile, runtime, persistence, conversation.conversationStore(), callers, ids, time);
             AtomicBoolean lifecycleClosed = new AtomicBoolean();
             var safeConversations = new SafeConversationService(conversationService, lifecycleClosed);
-            var agentRuns = new AgentRuns(runtime, processPromptDiagnostics);
+            var agentRuns = new AgentRuns(runtime, processPromptDiagnostics, ids, time);
             var agentMemories = memory == null
                     ? Optional.<AgentMemories>empty()
                     : Optional.of(new AgentMemories(
-                            memory.service(), memory.policy(), callers, safeConversations, agentRuns, lifecycleClosed));
+                            memory.service(), memory.policy(), callers, safeConversations, lifecycleClosed));
             return new HaifaAgent(
                     effectiveProfile,
                     metadata,
@@ -461,6 +712,41 @@ public final class HaifaAgentBuilder {
         return Optional.ofNullable(model.snapshots().get(modelId))
                 .orElseThrow(() ->
                         new IllegalArgumentException("MODEL_SELECTION_REQUIRED: configured model is unavailable"));
+    }
+
+    private void validateChildAgents(ProductProfile profile, Set<String> parentTools) {
+        for (String allowed : profile.allowedChildAgents()) {
+            if (!childAgents.containsKey(allowed)
+                    || allowed.equals(profile.definitionId().value())) {
+                throw new HaifaAgentException(
+                        "CHILD_AGENT_UNAVAILABLE",
+                        "product.assemble",
+                        "assembly",
+                        "Product Profile allows a child agent that is not registered");
+            }
+        }
+        for (ChildAgentSpec child : childAgents.values()) {
+            if (!parentTools.containsAll(child.allowedTools())) {
+                throw new HaifaAgentException(
+                        "CHILD_AGENT_TOOL_UNAVAILABLE",
+                        "product.assemble",
+                        "assembly",
+                        "A child agent allows a Tool its parent cannot delegate");
+            }
+            if (child.runProfile().isPresent()) {
+                ProductRunProfileRef reference = child.runProfile().orElseThrow();
+                ProductRunProfile runProfile = runProfiles.get(reference.id());
+                if (runProfile == null
+                        || !runProfile.version().equals(reference.version())
+                        || runProfile.limits().maxDepth() < 1) {
+                    throw new HaifaAgentException(
+                            "CHILD_RUN_PROFILE_UNAVAILABLE",
+                            "product.assemble",
+                            "assembly",
+                            "A child agent references an unregistered or non-delegable run profile");
+                }
+            }
+        }
     }
 
     private static void validateDeclaredAliases(

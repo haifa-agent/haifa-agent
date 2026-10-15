@@ -15,6 +15,7 @@ import io.haifa.agent.tool.api.ToolSideEffect;
 import java.net.URI;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import org.junit.jupiter.api.Test;
 
@@ -36,6 +37,20 @@ class NativeMcpToolPlatformTest {
                     .containsExactly(
                             "enterprise_search_courses", "enterprise_search_policies", "enterprise_search_jobs");
             assertThat(platform.diagnostics()).isEmpty();
+            int discoveryCalls = mcp.listToolsCalls();
+            var names = platform.toolNames();
+            assertThat(names)
+                    .containsExactlyInAnyOrder(
+                            "enterprise_search_courses", "enterprise_search_policies", "enterprise_search_jobs");
+            assertThatThrownBy(() -> names.add("invented")).isInstanceOf(UnsupportedOperationException.class);
+            assertThat(platform.toolNames()).isEqualTo(names);
+            assertThat(mcp.listToolsCalls()).isEqualTo(discoveryCalls);
+            assertThat(mcp.openClients()).isEqualTo(1);
+            assertThat(mcp.calls()).isEmpty();
+            platform.close();
+            assertThat(platform.toolNames()).isEqualTo(names);
+            assertThat(mcp.listToolsCalls()).isEqualTo(discoveryCalls);
+            assertThat(mcp.closedClients()).isEqualTo(1);
         }
     }
 
@@ -101,6 +116,7 @@ class NativeMcpToolPlatformTest {
 
         try (var platform = connect(mcp, jobs().readOnly().optional())) {
             assertThat(platform.registrations()).isEmpty();
+            assertThat(platform.toolNames()).isEmpty();
             assertThat(platform.diagnostics()).singleElement().satisfies(diagnostic -> {
                 assertThat(diagnostic.code()).isEqualTo("MCP_SERVER_UNAVAILABLE");
                 assertThat(diagnostic.safeMessage()).contains("enterprise-search");
@@ -212,6 +228,47 @@ class NativeMcpToolPlatformTest {
                 assertThat(diagnostic.safeMessage()).contains("legacy-search");
             });
         }
+    }
+
+    @Test
+    void supportsDynamicCredentialSupplierAndRefreshesSecret() {
+        var mcp = new FakeMcpServer().serving("enterprise-search", "search_jobs");
+        AtomicReference<String> tokenHolder = new AtomicReference<>("initial-token-xyz");
+
+        McpServerSpec dynamicSpec = jobs().bearerToken(tokenHolder::get).readOnly();
+
+        try (var platform = connect(mcp, dynamicSpec)) {
+            assertThat(platform.credentials().requireSecret("mcp:enterprise-search:authorization"))
+                    .isEqualTo("initial-token-xyz");
+            assertThat(mcp.authorizationValues()).contains("Authorization: Bearer initial-token-xyz");
+            assertThat(platform.credentials().redactor().redact("content with initial-token-xyz"))
+                    .isEqualTo("content with [REDACTED]");
+
+            tokenHolder.set("refreshed-token-abc");
+            assertThat(platform.credentials().requireSecret("mcp:enterprise-search:authorization"))
+                    .isEqualTo("refreshed-token-abc");
+            assertThat(platform.credentials().redactor().redact("content with initial-token-xyz"))
+                    .isEqualTo("content with initial-token-xyz");
+            assertThat(platform.credentials().redactor().redact("content with refreshed-token-abc"))
+                    .isEqualTo("content with [REDACTED]");
+        }
+    }
+
+    @Test
+    void releasesRedactionScopesOnPlatformClose() {
+        var mcp = new FakeMcpServer().serving("enterprise-search", "search_jobs");
+        AtomicReference<String> tokenHolder = new AtomicReference<>("dynamic-token-999");
+        McpServerSpec dynamicSpec = jobs().bearerToken(tokenHolder::get).readOnly();
+
+        var platform = connect(mcp, dynamicSpec);
+        assertThat(platform.credentials().requireSecret("mcp:enterprise-search:authorization"))
+                .isEqualTo("dynamic-token-999");
+        assertThat(platform.credentials().redactor().redact("raw dynamic-token-999"))
+                .isEqualTo("raw [REDACTED]");
+
+        platform.close();
+        assertThat(platform.credentials().redactor().redact("raw dynamic-token-999"))
+                .isEqualTo("raw dynamic-token-999");
     }
 
     private static NativeMcpToolPlatform connect(FakeMcpServer mcp, McpServerSpec spec) {

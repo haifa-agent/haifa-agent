@@ -22,7 +22,7 @@ HTTP 生产配置只允许 HTTPS；loopback HTTP 必须显式启用且 Origin �
 
 认证 discovery 使用 `CredentialOperationRequest` 的 `MCP_CONNECTION_INITIALIZE`/`MCP_DISCOVERY` 控制面语义，不伪造 RunId 或 Tool coordinate。Tool call 只消费 Runtime 已放入 `ToolInvocationRequest` 的 Lease。stdio 环境值在 ExecutionBroker 解析环境时才物化，进程关闭后 binding 立即撤销。
 
-HTTP 401/403 不会把 SDK request snapshot 或凭据带入对外异常：未配置预共享 Credential 时映射为 `MCP_AUTH_FLOW_UNSUPPORTED`，已配置 Credential 被拒绝时映射为 `MCP_REAUTH_REQUIRED`。首版不实现浏览器 OAuth、Protected Resource Metadata discovery 或 Token 刷新。
+HTTP 401/403 不会把 SDK request snapshot 或凭据带入对外异常：未配置预共享 Credential 时映射为 `MCP_AUTH_FLOW_UNSUPPORTED`，已配置 Credential 被拒绝时映射为 `MCP_REAUTH_REQUIRED`。支持动态 Token 供应与轻量级客户端凭据 OAuth 2.0 刷新（`McpOAuthClientCredentials`，基于 RFC 6749 client_credentials，带 64KB 响应上限、fail-closed 重定向与自适应 skew），不实现交互式浏览器 OAuth、Protected Resource Metadata discovery 或跨租户会话绑定。
 
 `DISPATCHED` 只在 HTTP request customizer 完成凭据注入并即将发送，或 stdio frame 即将写入 managed session 时记录。初始化失败允许按 server policy 做有界抖动重连；已 dispatch、结果未知的 Tool call 不自动重放。
 

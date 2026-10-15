@@ -2,7 +2,10 @@ package io.haifa.agent.store.sqlite;
 
 import io.haifa.agent.common.io.SecureFilePermissions;
 import java.io.IOException;
-import java.lang.ref.WeakReference;
+import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -12,18 +15,39 @@ import java.sql.Statement;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import org.apache.ibatis.datasource.pooled.PooledDataSource;
+import org.apache.ibatis.datasource.unpooled.UnpooledDataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+/**
+ * Opens connections to the store database.
+ *
+ * <p>Physical SQLite connections are reused: {@link #openConnection()} leases one from a small
+ * pool and closing the returned connection gives it back. A lease is single-use; once closed it
+ * rejects further calls. Every returned connection is restored to the state of a freshly opened
+ * one, and a connection that cannot be restored is discarded instead of being reused.
+ */
 public final class SqliteConnectionFactory implements AutoCloseable {
     private static final Logger LOGGER = LoggerFactory.getLogger(SqliteConnectionFactory.class);
     private static final long SLOW_OPERATION_MILLIS = 50;
+    /**
+     * SQLite admits one writer at a time and units of work are short, so a few connections serve
+     * the concurrent readers; each physical connection keeps its own page cache.
+     */
+    static final int MAXIMUM_POOLED_CONNECTIONS = 8;
+
     private final SqliteStoreConfiguration configuration;
     private final PermissionStrategyDetector permissionStrategyDetector;
-    private final Set<WeakReference<Connection>> openedConnections = ConcurrentHashMap.newKeySet();
+    // Leases never outnumber physical connections, so the pool itself never has to wait for, or
+    // reclaim, a connection that is still in use.
+    private final Semaphore leases = new Semaphore(MAXIMUM_POOLED_CONNECTIONS, true);
+    private final AtomicLong physicalConnectionsOpened = new AtomicLong();
+    private volatile PooledDataSource pool;
     private SecureFilePermissions.PermissionStrategy permissionStrategy;
     private volatile boolean initialized;
     private volatile boolean closed;
@@ -59,6 +83,7 @@ public final class SqliteConnectionFactory implements AutoCloseable {
             }
             validateConnectionPragmas(connection, false);
             secureDatabaseFiles();
+            pool = newPool();
             initialized = true;
         } catch (SQLException exception) {
             throw new SqliteStoreException(
@@ -66,78 +91,202 @@ public final class SqliteConnectionFactory implements AutoCloseable {
         }
     }
 
-    public synchronized Connection openConnection() {
+    public Connection openConnection() {
         long started = System.nanoTime();
         requireOpen();
         if (!initialized) {
             throw new SqliteStoreException(
                     SqliteStoreFailure.CONNECTION_FAILED, "SQLite connection factory is not initialized");
         }
-        Connection connection = openRawConnection();
-        long rawMillis = elapsedMillis(started);
+        acquireLease();
+        Connection pooled = null;
         try {
+            PooledDataSource current = pool;
+            if (closed || current == null) {
+                throw new SqliteStoreException(
+                        SqliteStoreFailure.CONNECTION_FAILED, "SQLite connection factory is closed");
+            }
+            pooled = current.getConnection();
+            long leaseMillis = elapsedMillis(started);
             long phaseStarted = System.nanoTime();
-            validateConnectionPragmas(connection, false);
-            long validateMillis = elapsedMillis(phaseStarted);
-            phaseStarted = System.nanoTime();
             secureDatabaseFiles();
             long secureMillis = elapsedMillis(phaseStarted);
-            phaseStarted = System.nanoTime();
-            pruneClosedConnections();
-            openedConnections.add(new WeakReference<>(connection));
-            long bookkeepingMillis = elapsedMillis(phaseStarted);
-            logConnectionOpen(rawMillis, validateMillis, secureMillis, bookkeepingMillis, elapsedMillis(started));
-            return connection;
+            requireOpen();
+            Connection lease = lease(pooled);
+            logConnectionOpen(leaseMillis, secureMillis, elapsedMillis(started));
+            return lease;
         } catch (RuntimeException exception) {
-            try {
-                connection.close();
-            } catch (SQLException closeFailure) {
-                exception.addSuppressed(closeFailure);
-            }
+            discard(pooled, exception);
+            leases.release();
             throw exception;
+        } catch (SQLException exception) {
+            var failure = new SqliteStoreException(
+                    SqliteStoreFailure.CONNECTION_FAILED, "Unable to open SQLite database", exception);
+            discard(pooled, failure);
+            leases.release();
+            throw failure;
         }
+    }
+
+    /** Number of physical connections opened so far; a reused connection is not counted again. */
+    long physicalConnectionsOpened() {
+        return physicalConnectionsOpened.get();
     }
 
     public SqliteStoreConfiguration configuration() {
         return configuration;
     }
 
+    /**
+     * Closes every physical connection. Outstanding leases are given up to the busy timeout to come
+     * back first, so a connection is not closed underneath the thread that is still using it; a
+     * lease returned after that closes its own connection.
+     */
     @Override
     public synchronized void close() {
         if (closed) return;
         closed = true;
-        RuntimeException failure = null;
-        for (WeakReference<Connection> reference : openedConnections) {
-            Connection connection = reference.get();
-            if (connection == null) continue;
-            try {
-                connection.close();
-            } catch (SQLException exception) {
-                if (failure == null) {
-                    failure = new SqliteStoreException(
-                            SqliteStoreFailure.CONNECTION_FAILED,
-                            "Unable to close SQLite store connections",
-                            exception);
-                } else {
-                    failure.addSuppressed(exception);
-                }
-            }
-        }
-        openedConnections.clear();
+        PooledDataSource current = pool;
+        pool = null;
         permissionStrategy = null;
-        if (failure != null) throw failure;
+        if (current == null) {
+            return;
+        }
+        boolean drained = awaitOutstandingLeases();
+        current.forceCloseAll();
+        if (drained) {
+            // Lets a caller that was already waiting for a lease fail on the closed factory at once.
+            leases.release(MAXIMUM_POOLED_CONNECTIONS);
+        }
     }
 
-    private void pruneClosedConnections() {
-        openedConnections.removeIf(reference -> {
-            Connection connection = reference.get();
-            if (connection == null) return true;
-            try {
-                return connection.isClosed();
-            } catch (SQLException ignored) {
-                return false;
+    private boolean awaitOutstandingLeases() {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(configuration.busyTimeoutMillis());
+        boolean interrupted = Thread.interrupted();
+        try {
+            while (true) {
+                try {
+                    return leases.tryAcquire(
+                            MAXIMUM_POOLED_CONNECTIONS,
+                            Math.max(0, deadline - System.nanoTime()),
+                            TimeUnit.NANOSECONDS);
+                } catch (InterruptedException exception) {
+                    interrupted = true;
+                }
             }
-        });
+        } finally {
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    private PooledDataSource newPool() {
+        PooledDataSource created = new PooledDataSource(new PhysicalConnections());
+        created.setPoolMaximumActiveConnections(MAXIMUM_POOLED_CONNECTIONS);
+        // Keeping every returned connection idle is the point: closing one costs far more than
+        // the transaction it served.
+        created.setPoolMaximumIdleConnections(MAXIMUM_POOLED_CONNECTIONS);
+        // The pool would otherwise take a long-running unit of work's connection away from it.
+        created.setPoolMaximumCheckoutTime(Integer.MAX_VALUE);
+        created.setPoolTimeToWait(configuration.busyTimeoutMillis());
+        return created;
+    }
+
+    /**
+     * Waits for a lease without giving up on interruption. A cancelled run is interrupted and must
+     * still be able to persist its own cancellation, so the interrupt is kept for the caller instead
+     * of failing the store access.
+     */
+    private void acquireLease() {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(configuration.busyTimeoutMillis());
+        boolean interrupted = Thread.interrupted();
+        try {
+            while (true) {
+                try {
+                    if (leases.tryAcquire(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS)) {
+                        return;
+                    }
+                    break;
+                } catch (InterruptedException exception) {
+                    interrupted = true;
+                }
+            }
+        } finally {
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        throw new SqliteStoreException(
+                SqliteStoreFailure.DATABASE_BUSY,
+                "Timed out waiting for one of the " + MAXIMUM_POOLED_CONNECTIONS + " pooled SQLite connections");
+    }
+
+    private Connection lease(Connection pooled) {
+        return (Connection) Proxy.newProxyInstance(
+                SqliteConnectionFactory.class.getClassLoader(), new Class<?>[] {Connection.class}, new Lease(pooled));
+    }
+
+    private void giveBack(Connection pooled) {
+        try {
+            boolean reusable = !closed && restoreFreshState(pooled);
+            if (!reusable) {
+                closePhysical(pooled);
+            }
+            // Hands a healthy connection back to the pool; a closed one is dropped by it.
+            pooled.close();
+        } catch (SQLException exception) {
+            LOGGER.debug("event=sqlite.connection.discard reason=return-failed", exception);
+        } finally {
+            leases.release();
+        }
+    }
+
+    private static void discard(Connection pooled, RuntimeException original) {
+        if (pooled == null) return;
+        try {
+            closePhysical(pooled);
+            pooled.close();
+        } catch (SQLException closeFailure) {
+            original.addSuppressed(closeFailure);
+        }
+    }
+
+    private static void closePhysical(Connection pooled) throws SQLException {
+        PooledDataSource.unwrapConnection(pooled).close();
+    }
+
+    /**
+     * Leaves the connection as a newly opened one would be: not inside a transaction and writable.
+     * The units of work drive transactions with BEGIN/COMMIT statements, which JDBC's auto-commit
+     * flag does not reflect, so an open transaction is ended explicitly here.
+     */
+    private static boolean restoreFreshState(Connection connection) {
+        try {
+            if (!connection.getAutoCommit()) {
+                connection.rollback();
+                connection.setAutoCommit(true);
+            }
+            try (Statement statement = connection.createStatement()) {
+                try {
+                    statement.execute("ROLLBACK");
+                } catch (SQLException exception) {
+                    if (!isNoActiveTransaction(exception)) {
+                        throw exception;
+                    }
+                }
+                statement.execute("PRAGMA query_only=OFF");
+            }
+            return true;
+        } catch (SQLException exception) {
+            LOGGER.debug("event=sqlite.connection.discard reason=restore-failed", exception);
+            return false;
+        }
+    }
+
+    private static boolean isNoActiveTransaction(SQLException exception) {
+        String message = exception.getMessage();
+        return message != null && message.contains("no transaction is active");
     }
 
     private Connection openRawConnection() {
@@ -273,23 +422,18 @@ public final class SqliteConnectionFactory implements AutoCloseable {
         }
     }
 
-    private static void logConnectionOpen(
-            long rawMillis, long validateMillis, long secureMillis, long bookkeepingMillis, long totalMillis) {
+    private static void logConnectionOpen(long leaseMillis, long secureMillis, long totalMillis) {
         if (totalMillis >= SLOW_OPERATION_MILLIS) {
             LOGGER.info(
-                    "event=sqlite.connection.open rawMs={} validateMs={} secureFilesMs={} bookkeepingMs={} totalMs={}",
-                    rawMillis,
-                    validateMillis,
+                    "event=sqlite.connection.open leaseMs={} secureFilesMs={} totalMs={}",
+                    leaseMillis,
                     secureMillis,
-                    bookkeepingMillis,
                     totalMillis);
         } else {
             LOGGER.debug(
-                    "event=sqlite.connection.open rawMs={} validateMs={} secureFilesMs={} bookkeepingMs={} totalMs={}",
-                    rawMillis,
-                    validateMillis,
+                    "event=sqlite.connection.open leaseMs={} secureFilesMs={} totalMs={}",
+                    leaseMillis,
                     secureMillis,
-                    bookkeepingMillis,
                     totalMillis);
         }
     }
@@ -297,6 +441,71 @@ public final class SqliteConnectionFactory implements AutoCloseable {
     private void requireOpen() {
         if (closed) {
             throw new SqliteStoreException(SqliteStoreFailure.CONNECTION_FAILED, "SQLite connection factory is closed");
+        }
+    }
+
+    /** Supplies the pool with physical connections that carry the store's connection settings. */
+    private final class PhysicalConnections extends UnpooledDataSource {
+        @Override
+        public Connection getConnection() {
+            Connection connection = openRawConnection();
+            try {
+                validateConnectionPragmas(connection, false);
+            } catch (RuntimeException exception) {
+                closeFailedConnection(connection, exception);
+                throw exception;
+            }
+            physicalConnectionsOpened.incrementAndGet();
+            return connection;
+        }
+
+        @Override
+        public Connection getConnection(String username, String password) {
+            return getConnection();
+        }
+    }
+
+    /** A single-use view of a pooled connection; closing it returns the connection to the pool. */
+    private final class Lease implements InvocationHandler {
+        private final Connection pooled;
+        private final AtomicBoolean returned = new AtomicBoolean();
+
+        private Lease(Connection pooled) {
+            this.pooled = pooled;
+        }
+
+        @Override
+        public Object invoke(Object proxy, Method method, Object[] arguments) throws Throwable {
+            switch (method.getName()) {
+                case "close" -> {
+                    if (returned.compareAndSet(false, true)) {
+                        giveBack(pooled);
+                    }
+                    return null;
+                }
+                case "isClosed" -> {
+                    return returned.get() || pooled.isClosed();
+                }
+                case "equals" -> {
+                    return proxy == arguments[0];
+                }
+                case "hashCode" -> {
+                    return System.identityHashCode(proxy);
+                }
+                case "toString" -> {
+                    return "SqliteConnectionLease[returned=" + returned.get() + "]";
+                }
+                default -> {
+                    if (returned.get()) {
+                        throw new SQLException("SQLite connection was already returned to the store");
+                    }
+                    try {
+                        return method.invoke(pooled, arguments);
+                    } catch (InvocationTargetException exception) {
+                        throw exception.getCause();
+                    }
+                }
+            }
         }
     }
 

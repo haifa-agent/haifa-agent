@@ -6,22 +6,14 @@ import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.memory.api.Memory;
 import io.haifa.agent.memory.api.MemoryActor;
-import io.haifa.agent.memory.api.MemoryCandidateDraft;
-import io.haifa.agent.memory.api.MemoryEvidenceRef;
+import io.haifa.agent.memory.api.MemoryDraft;
 import io.haifa.agent.memory.api.MemoryKind;
-import io.haifa.agent.memory.api.MemoryRetentionPolicy;
+import io.haifa.agent.memory.api.MemoryRetriever;
 import io.haifa.agent.memory.api.MemoryScope;
-import io.haifa.agent.memory.api.MemoryScopeType;
-import io.haifa.agent.memory.api.MemorySourceRef;
-import io.haifa.agent.memory.api.MemorySourceType;
-import io.haifa.agent.memory.api.MemoryStatus;
-import io.haifa.agent.memory.api.MemoryVisibility;
-import io.haifa.agent.memory.api.TextMemoryContent;
-import io.haifa.agent.memory.core.DefaultMemoryPolicy;
 import io.haifa.agent.memory.core.DefaultMemoryRetriever;
 import io.haifa.agent.memory.core.DefaultMemoryService;
-import io.haifa.agent.memory.core.InMemoryMemoryEvidenceVerifier;
 import io.haifa.agent.memory.core.InMemoryMemoryStore;
 import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.AgentChatResponse;
@@ -38,39 +30,89 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class MemoryRuntimeIntegrationTest {
     private static final Instant NOW = Instant.parse("2026-07-21T00:00:00Z");
+    private static final TenantRef TENANT = new TenantRef("local");
+    private static final PrincipalRef OWNER = new PrincipalRef("local-user", "user");
+    private static final MemoryActor ACTOR = new MemoryActor(TENANT, OWNER);
+
+    private final InMemoryMemoryStore memories = new InMemoryMemoryStore();
+    private final AtomicInteger memoryIds = new AtomicInteger();
+    private final AtomicInteger clock = new AtomicInteger();
+    private final DefaultMemoryService memoryService = new DefaultMemoryService(
+            memories, () -> "memory-" + memoryIds.incrementAndGet(), () -> NOW.plusMillis(clock.incrementAndGet()));
+    private final InMemoryRuntimeStore runtimeStore = new InMemoryRuntimeStore();
+    private final ManualExecutionScheduler scheduler = new ManualExecutionScheduler();
+    private final AtomicReference<AgentChatRequest> modelRequest = new AtomicReference<>();
+    private final List<RuntimeTraceEvent> traces = new ArrayList<>();
+    private final AtomicInteger runtimeIds = new AtomicInteger();
 
     @Test
-    void authorizedMemoryEntersContextCheckpointUsesReferencesAndRedactionPreventsResumeRevival() {
-        TenantRef tenant = new TenantRef("local");
-        PrincipalRef owner = new PrincipalRef("local-user", "user");
-        AgentSessionId session = new AgentSessionId("memory-session");
-        InMemoryMemoryStore memories = new InMemoryMemoryStore();
-        InMemoryMemoryEvidenceVerifier verifier = new InMemoryMemoryEvidenceVerifier();
-        DefaultMemoryPolicy policy = new DefaultMemoryPolicy();
-        AtomicInteger memoryIds = new AtomicInteger();
-        DefaultMemoryService memoryService = new DefaultMemoryService(
-                memories,
-                memories,
-                policy,
-                verifier,
-                List.of(),
-                memories,
-                () -> "governed-memory-" + memoryIds.incrementAndGet(),
-                () -> NOW);
-        DefaultMemoryRetriever retriever = new DefaultMemoryRetriever(memories, policy);
-        InMemoryRuntimeStore runtimeStore = new InMemoryRuntimeStore();
-        ManualExecutionScheduler scheduler = new ManualExecutionScheduler();
-        AtomicReference<AgentChatRequest> modelRequest = new AtomicReference<>();
-        List<RuntimeTraceEvent> traces = new ArrayList<>();
-        AtomicInteger runtimeIds = new AtomicInteger();
-        var runtime = new RuntimeCoreBuilder()
+    void agentMemoryEntersContextByReferenceAndDeleteStopsTheNextRecall() {
+        var runtime = runtime(new DefaultMemoryRetriever(memories));
+        Memory memory = memoryService.put(
+                MemoryDraft.of(
+                        MemoryScope.agent(TENANT, OWNER, "builder-agent"),
+                        MemoryKind.PREFERENCE,
+                        "build-tool",
+                        "remembered build preference is Maven"),
+                ACTOR);
+        memoryService.put(
+                MemoryDraft.of(
+                        MemoryScope.agent(TENANT, OWNER, "other-agent"),
+                        MemoryKind.PREFERENCE,
+                        "build-tool",
+                        "remembered build preference is Gradle"),
+                ACTOR);
+
+        var first = start(runtime, "memory-runtime-1", "remembered build preference");
+        scheduler.runAll();
+
+        assertThat(modelRequest.get().messages()).anySatisfy(message -> assertThat(message.content())
+                .contains("[memory " + memory.id().value() + "@1]")
+                .contains("remembered build preference is Maven")
+                .doesNotContain("Gradle"));
+        assertThat(runtimeStore.memorySelection(first.runId()).orElseThrow().memories())
+                .singleElement()
+                .satisfies(reference -> {
+                    assertThat(reference.id()).isEqualTo(memory.id());
+                    assertThat(reference.revision()).isEqualTo(1);
+                });
+        assertThat(traces).allSatisfy(trace -> assertThat(trace.safeAttributes().toString())
+                .doesNotContain("remembered build preference is Maven"));
+
+        memoryService.delete(memory.id(), memory.revision(), ACTOR);
+        modelRequest.set(null);
+        start(runtime, "memory-runtime-2", "remembered build preference");
+        scheduler.runAll();
+
+        assertThat(modelRequest.get().messages()).allSatisfy(message -> assertThat(message.content())
+                .doesNotContain("remembered build preference is Maven"));
+    }
+
+    @Test
+    void recallCanBeSwitchedOffForOneAgent() {
+        memoryService.put(
+                MemoryDraft.of(
+                        MemoryScope.user(TENANT, OWNER), MemoryKind.FACT, "editor", "remembered editor is IntelliJ"),
+                ACTOR);
+        MemoryRetriever retriever = new DefaultMemoryRetriever(memories)
+                .onlyWhen(request -> !request.agentId().equals("builder-agent"));
+        var runtime = runtime(retriever);
+
+        start(runtime, "memory-runtime-off", "remembered editor");
+        scheduler.runAll();
+
+        assertThat(modelRequest.get().messages())
+                .allSatisfy(message -> assertThat(message.content()).doesNotContain("remembered editor is IntelliJ"));
+    }
+
+    private DefaultAgentRuntime runtime(MemoryRetriever retriever) {
+        return new RuntimeCoreBuilder()
                 .registerChatModel("openai-compatible", "1.0.0", request -> {
                     modelRequest.set(request);
                     return new AgentChatResponse(
@@ -88,59 +130,21 @@ class MemoryRuntimeIntegrationTest {
                 .identifierGenerator(() -> "runtime-memory-" + runtimeIds.incrementAndGet())
                 .timeProvider(() -> NOW)
                 .trace(traces::add)
-                .memory(memoryService, retriever)
+                .memory(retriever)
                 .build();
+    }
 
-        var accepted = runtime.start(new AgentRunRequest(
-                "memory-runtime",
-                new AgentDefinitionId("agent"),
+    private static io.haifa.agent.runtime.api.AgentRunSnapshot start(
+            DefaultAgentRuntime runtime, String key, String objective) {
+        return runtime.start(new AgentRunRequest(
+                key,
+                new AgentDefinitionId("builder-agent"),
                 Optional.empty(),
                 "default",
-                session,
+                new AgentSessionId(key + "-session"),
                 Optional.empty(),
-                "remembered build preference",
+                objective,
                 List.of(),
                 RuntimeOverrides.NONE));
-        var sourceMessage = runtimeStore.messages(accepted.runId()).getFirst();
-        MemoryScope scope = new MemoryScope(
-                tenant, owner, MemoryScopeType.SESSION, session.value(), MemoryVisibility.OWNER_ONLY, Set.of());
-        MemorySourceRef source =
-                new MemorySourceRef(MemorySourceType.MESSAGE, sourceMessage.id().value(), Optional.empty());
-        MemoryEvidenceRef evidence = new MemoryEvidenceRef(source, "sha256:runtime-source");
-        verifier.register(scope, evidence);
-        var candidate = memoryService.propose(
-                new MemoryCandidateDraft(
-                        "runtime-memory-candidate",
-                        scope,
-                        MemoryKind.PREFERENCE,
-                        "build-tool",
-                        new TextMemoryContent("remembered build preference is Maven"),
-                        List.of(source),
-                        List.of(evidence),
-                        MemoryRetentionPolicy.RETAIN,
-                        false),
-                new MemoryActor(tenant, owner, Set.of("memory:review")));
-        var memory = memoryService.approve(
-                candidate.id(), new MemoryActor(tenant, owner, Set.of("memory:review")), "runtime-approve");
-
-        scheduler.runAll();
-
-        assertThat(modelRequest.get().messages()).anySatisfy(message -> assertThat(message.content())
-                .contains("[memory " + memory.id().value() + "@1]")
-                .contains("remembered build preference is Maven"));
-        assertThat(runtimeStore.latest(accepted.runId())).isEmpty();
-        assertThat(runtimeStore.memorySelection(accepted.runId()).orElseThrow().memories())
-                .singleElement()
-                .satisfies(reference -> assertThat(reference.id()).isEqualTo(memory.id()));
-        assertThat(traces).allSatisfy(trace -> assertThat(trace.safeAttributes().toString())
-                .doesNotContain("remembered build preference is Maven"));
-
-        runtimeStore.redactMessage(sourceMessage.id());
-        assertThat(memories.find(memory.id(), memory.version()).orElseThrow().status())
-                .isEqualTo(MemoryStatus.INVALIDATED);
-        assertThat(retriever.findAuthorized(memory.id(), memory.version(), tenant, owner, NOW))
-                .isEmpty();
-        assertThat(memories.auditEvents()).allSatisfy(event -> assertThat(event.toString())
-                .doesNotContain("remembered build preference is Maven"));
     }
 }
