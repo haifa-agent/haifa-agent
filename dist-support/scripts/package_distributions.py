@@ -435,7 +435,10 @@ def package_sdk(repo_root: Path, work_dir: Path, output_dir: Path, version: str)
         collected_count += 1
         if packaging == "pom":
             continue
-        for suffix in (".jar", "-sources.jar", "-javadoc.jar"):
+        suffixes = (".jar", "-sources.jar", "-javadoc.jar") if any(
+            (directory / "src" / "main" / "java").rglob("*.java")
+        ) else (".jar",)
+        for suffix in suffixes:
             name = f"{artifact}-{version}{suffix}"
             shutil.copy2(directory / "target" / name, destination / name)
             collected_count += 1

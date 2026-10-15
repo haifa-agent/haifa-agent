@@ -31,6 +31,9 @@ class ReleaseDistributionsTest(unittest.TestCase):
             (path / "pom.xml").write_text(text, encoding="utf-8")
             (path / ".flattened-pom.xml").write_text(text, encoding="utf-8")
             if packaging == "jar":
+                sources = path / "src/main/java"
+                sources.mkdir(parents=True)
+                (sources / "Example.java").write_text("class Example {}", encoding="utf-8")
                 (path / "target").mkdir()
                 for suffix in (".jar", "-sources.jar", "-javadoc.jar"):
                     (path / "target" / f"{artifact}-0.1.2{suffix}").write_bytes(b"artifact")
@@ -53,6 +56,17 @@ class ReleaseDistributionsTest(unittest.TestCase):
                 self.assertIn(prefix + "sdk/0.1.2/sdk-0.1.2-sources.jar", files)
                 self.assertIn(prefix + "sdk/0.1.2/sdk-0.1.2-javadoc.jar", files)
                 self.assertEqual(len(files), 10)
+
+    def test_dependency_only_starter_needs_no_nonexistent_source_or_javadoc(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.fixture(root)
+            (root / "common/src/main/java/Example.java").unlink()
+            for suffix in ("-sources.jar", "-javadoc.jar"):
+                (root / "common/target" / f"common-0.1.2{suffix}").unlink()
+            archive = MODULE.package_sdk(root, root / "work", root / "output", "0.1.2")
+            with zipfile.ZipFile(archive) as bundle:
+                self.assertEqual(len(bundle.namelist()), 8)
 
     def test_missing_dependency_or_unresolved_pom_refuses_bundle(self):
         for problem in ("missing-jar", "unresolved-pom", "wrong-version"):

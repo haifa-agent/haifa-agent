@@ -42,8 +42,9 @@ $sdkModules = python dist-support/scripts/package_distributions.py sdk-modules
 ```
 
 该命令只生成制品；前置条件是同一 SHA 的 Unit / Architecture 已通过。PA 前端需先运行 `npm ci`。
-打包要求 `--version` 与根 POM `revision` 相同，SDK 缺少任一 JAR、Source、Javadoc 或
-Flattened POM 时失败，不会生成缺依赖的发行包。无需向本地 Maven 仓库安装制品。
+打包要求 `--version` 与根 POM `revision` 相同，SDK 缺少任一 JAR、Flattened POM，或含 Java
+源码的模块缺少 Source / Javadoc 时失败。纯依赖 Starter 不生成 Source / Javadoc。
+无需向本地 Maven 仓库安装制品。
 
 Windows PowerShell：
 ```powershell
