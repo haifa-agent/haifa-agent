@@ -1231,7 +1231,8 @@ class SqliteRuntimeRecoveryTest {
                 .persistence(ports)
                 .identifierGenerator(ids)
                 .timeProvider(time)
-                .workerId(workerId);
+                .workerId(workerId)
+                .executionOwnership(io.haifa.agent.runtime.core.execution.ExecutionOwnershipPort.local(workerId));
         return new RuntimeInstance(customizer.apply(builder).build(), scheduler, ports);
     }
 

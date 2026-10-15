@@ -20,7 +20,8 @@
    - 包含前台运行自启浏览器的 `start.bat`、后台无窗口运行的 `start-background.vbs` 与停服脚本 `stop.bat`。
 
 3. **`haifa-agent-sdk-v<version>.zip`**
-   - 包含纯 Java SDK、SDK Starter、Spring Boot 自动装配模块及 BOM 的完整发行压缩包；
+   - `repository/` 包含纯 Java SDK、SDK Starter、Spring Boot 自动装配、公开 Integration、
+     所有内部依赖与父 POM/BOM，以及源码/Javadoc，采用 Maven 文件仓库布局；
    - 附带 Maven / Gradle 引入配置说明与最小代码示例。
 
 4. **`sha256sums.txt`**
@@ -31,6 +32,19 @@
 ## 快速使用
 
 ### 1. 一键生成全部 3 个发布包
+
+先使用 `sdk-modules` 动作取得公开模块列表，并构建相同版本的制品：
+
+```powershell
+$sdkModules = python dist-support/scripts/package_distributions.py sdk-modules
+.\build-support\scripts\invoke-haifa-maven.ps1 --layer L2 '--' `
+  -pl "$sdkModules,:haifa-agent-cli,:haifa-agent-personal-assistant-server" -am -Prelease-artifacts verify
+```
+
+该命令只生成制品；前置条件是同一 SHA 的 Unit / Architecture 已通过。PA 前端需先运行 `npm ci`。
+打包要求 `--version` 与根 POM `revision` 相同，SDK 缺少任一 JAR、Flattened POM，或含 Java
+源码的模块缺少 Source / Javadoc 时失败。纯依赖 Starter 不生成 Source / Javadoc。
+无需向本地 Maven 仓库安装制品。
 
 Windows PowerShell：
 ```powershell
