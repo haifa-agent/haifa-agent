@@ -5,7 +5,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.williamcallahan.tui4j.ansi.TextWidth;
 import com.williamcallahan.tui4j.compat.bubbles.textarea.Textarea;
 import com.williamcallahan.tui4j.compat.bubbles.viewport.Viewport;
+import com.williamcallahan.tui4j.compat.lipgloss.Renderer;
+import com.williamcallahan.tui4j.compat.lipgloss.color.ColorProfile;
 import com.williamcallahan.tui4j.compat.lipgloss.color.NoColor;
+import com.williamcallahan.tui4j.compat.x.ansi.Strip;
 import com.williamcallahan.tui4j.term.TerminalInfo;
 import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
 import io.haifa.agent.application.coding.terminal.state.ApprovalDetails;
@@ -569,6 +572,49 @@ class Tui4jTerminalViewTest {
     }
 
     @Test
+    void rendersToolCardsWithNeutralBackgroundAndLocalizedStatusGlyph() {
+        Renderer renderer = Renderer.defaultRenderer();
+        renderer.setColorProfile(ColorProfile.TrueColor);
+        renderer.setHasDarkBackground(true);
+        try {
+            TerminalUiState state = withTranscript(
+                    defaultState(),
+                    List.of(
+                            item(
+                                    "tool-1",
+                                    TranscriptItem.Kind.TOOL,
+                                    "file_stat · local-tmp/test.log",
+                                    "Inspected local-tmp/test.log",
+                                    "SUCCEEDED",
+                                    false),
+                            item(
+                                    "exec-1",
+                                    TranscriptItem.Kind.EXECUTION,
+                                    "execution_run · ./mvnw test",
+                                    "Command exited (exit 0)",
+                                    "SUCCEEDED",
+                                    false)));
+
+            String content = view.transcriptContent(state);
+
+            String stripped = com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(content);
+            assertThat(stripped)
+                    .contains("file_stat · local-tmp/test.log · ctrl+o expand")
+                    .contains("Inspected local-tmp/test.log")
+                    .contains("execution_run · ./mvnw test · ctrl+o expand")
+                    .contains("Command exited (exit 0)");
+
+            // Must have foreground color for glyph (e.g. \u001B[38 or \u001B[32)
+            assertThat(content).contains("\u001B[3");
+            // Must NOT have any background fill (no [4 or [10)
+            assertThat(content).doesNotContain("\u001B[4").doesNotContain("\u001B[10");
+        } finally {
+            renderer.setColorProfile(ColorProfile.Ascii);
+            renderer.setHasDarkBackground(false);
+        }
+    }
+
+    @Test
     void omitsThePreviewWhenEveryBodyLineIsStructural() {
         TerminalUiState state = withTranscript(
                 defaultState(),
@@ -737,6 +783,132 @@ class Tui4jTerminalViewTest {
                         "Duration 300 ms · 2 lines",
                         "✓ Run completed · 4s · ctrl+o expand")
                 .doesNotContain("Status: COMPLETED");
+    }
+
+    @Test
+    void highlightsUnifiedDiffOutputInsideExpandedToolBody() {
+        Renderer renderer = Renderer.defaultRenderer();
+        renderer.setColorProfile(ColorProfile.TrueColor);
+        renderer.setHasDarkBackground(true);
+        try {
+
+            String diffBody =
+                    """
+                Target: src/App.java
+                Output:
+                --- a/src/App.java
+                +++ b/src/App.java
+                @@ -1,3 +1,3 @@
+                -int counter = 0;
+                +int counter = 1;
+                 return counter;
+                Result: ok""";
+
+            TerminalUiState initial = TerminalUiState.initial(100, 30);
+            TerminalUiState state = new TerminalUiState(
+                    initial.header(),
+                    initial.loadedResources(),
+                    List.of(new TranscriptItem(
+                            "tool-patch-1",
+                            TranscriptItem.Kind.TOOL,
+                            "file_patch · src/App.java",
+                            diffBody,
+                            "SUCCEEDED",
+                            true,
+                            Optional.empty(),
+                            Optional.of(1_000L),
+                            Optional.of(150L))),
+                    initial.pending(),
+                    initial.status(),
+                    initial.editorBuffer(),
+                    initial.editorCursor(),
+                    initial.selector(),
+                    initial.footer(),
+                    initial.columns(),
+                    initial.rows(),
+                    initial.session(),
+                    initial.currentRunId(),
+                    initial.appliedCursor(),
+                    initial.seenEventIds(),
+                    initial.recoverableError(),
+                    initial.exitRequested());
+
+            String content = view.transcriptContent(state);
+
+            assertThat(content).contains("\u001B[");
+            String stripped = Strip.strip(content);
+            assertThat(stripped)
+                    .contains(
+                            "--- a/src/App.java",
+                            "+++ b/src/App.java",
+                            "@@ -1,3 +1,3 @@",
+                            "-int counter = 0;",
+                            "+int counter = 1;",
+                            " return counter;");
+            assertThat(stripped).contains("Duration 150 ms");
+        } finally {
+            renderer.setColorProfile(ColorProfile.Ascii);
+            renderer.setHasDarkBackground(false);
+        }
+    }
+
+    @Test
+    void doesNotMiscolorOrdinaryToolOutputsAsDiff() {
+        Renderer renderer = Renderer.defaultRenderer();
+        renderer.setColorProfile(ColorProfile.TrueColor);
+        renderer.setHasDarkBackground(true);
+        try {
+            String ordinaryBody =
+                    """
+                    Target: README.md
+                    Output:
+                    - item 1
+                    - item 2
+                    + note on addition
+                    Result: ok""";
+
+            TerminalUiState initial = TerminalUiState.initial(100, 30);
+            TerminalUiState state = new TerminalUiState(
+                    initial.header(),
+                    initial.loadedResources(),
+                    List.of(new TranscriptItem(
+                            "tool-read-1",
+                            TranscriptItem.Kind.TOOL,
+                            "file_read · README.md",
+                            ordinaryBody,
+                            "SUCCEEDED",
+                            true,
+                            Optional.empty(),
+                            Optional.of(1_000L),
+                            Optional.of(150L))),
+                    initial.pending(),
+                    initial.status(),
+                    initial.editorBuffer(),
+                    initial.editorCursor(),
+                    initial.selector(),
+                    initial.footer(),
+                    initial.columns(),
+                    initial.rows(),
+                    initial.session(),
+                    initial.currentRunId(),
+                    initial.appliedCursor(),
+                    initial.seenEventIds(),
+                    initial.recoverableError(),
+                    initial.exitRequested());
+
+            String content = view.transcriptContent(state);
+
+            // Lines with bullet lists (- item) should NOT be diff-colored in red or green
+            assertThat(content).contains("  - item 1");
+            assertThat(content).contains("  - item 2");
+            assertThat(content).contains("  + note on addition");
+            Tui4jTerminalTheme theme = new Tui4jTerminalTheme();
+            assertThat(content).doesNotContain(theme.diffRemoved("- item 1"));
+            assertThat(content).doesNotContain(theme.diffAdded("+ note on addition"));
+        } finally {
+            renderer.setColorProfile(ColorProfile.Ascii);
+            renderer.setHasDarkBackground(false);
+        }
     }
 
     @Test
@@ -972,6 +1144,199 @@ class Tui4jTerminalViewTest {
 
         String rendered = view.render(state, transcript(state), editor(100), false, true, Duration.ofSeconds(3));
         assertThat(rendered).contains("THINKING (3s)").contains("esc interrupt").contains("new output below");
+    }
+
+    @Test
+    void rendersUserMessageAsLeftBorderCardWithoutEnclosingBoxLines() {
+        TerminalUiState base = TerminalUiState.initial(80, 24);
+        TerminalUiState state = new TerminalUiState(
+                base.header(),
+                base.loadedResources(),
+                List.of(item(
+                        "u-1",
+                        TranscriptItem.Kind.USER,
+                        "You",
+                        "Please fix the flaky test\nand check git status",
+                        "SENT",
+                        true)),
+                base.pending(),
+                base.status(),
+                base.editorBuffer(),
+                base.editorCursor(),
+                base.selector(),
+                base.footer(),
+                80,
+                24,
+                base.session(),
+                base.currentRunId(),
+                base.appliedCursor(),
+                base.seenEventIds(),
+                base.recoverableError(),
+                base.exitRequested());
+
+        String content = view.transcriptContent(state);
+        List<String> lines = content.lines().toList();
+
+        assertThat(lines).hasSize(3);
+        assertThat(lines.get(0)).startsWith("│ ❯ You");
+        assertThat(lines.get(1)).startsWith("│ Please fix the flaky test");
+        assertThat(lines.get(2)).startsWith("│ and check git status");
+
+        // Cell layout contract: every card line must have cell width equal to mainWidth (80)
+        for (String line : lines) {
+            assertThat(TextWidth.measureCellWidth(line)).isEqualTo(80);
+        }
+
+        // Viewport height preservation: no enclosing top/bottom borders or extra blank framing
+        assertThat(content).doesNotContain("┌", "└", "─", "━");
+    }
+
+    @Test
+    void rendersErrorMessageAsLeftBorderCardWithDualCuesAndPreservedDiagnostics() {
+        TerminalUiState base = TerminalUiState.initial(80, 24);
+        TerminalUiState state = new TerminalUiState(
+                base.header(),
+                base.loadedResources(),
+                List.of(item(
+                        "e-1",
+                        TranscriptItem.Kind.ERROR,
+                        "Process timeout",
+                        "Subprocess timed out after 30000ms\nExit code: -1",
+                        "FAILED",
+                        true)),
+                base.pending(),
+                base.status(),
+                base.editorBuffer(),
+                base.editorCursor(),
+                base.selector(),
+                base.footer(),
+                80,
+                24,
+                base.session(),
+                base.currentRunId(),
+                base.appliedCursor(),
+                base.seenEventIds(),
+                base.recoverableError(),
+                base.exitRequested());
+
+        String content = view.transcriptContent(state);
+        List<String> lines = content.lines().toList();
+
+        assertThat(lines).hasSize(3);
+        assertThat(lines.get(0)).isEqualTo("│ ✖ Error · Process timeout [failed]");
+        assertThat(lines.get(1)).isEqualTo("│ Subprocess timed out after 30000ms");
+        assertThat(lines.get(2)).isEqualTo("│ Exit code: -1");
+
+        for (String line : lines) {
+            assertThat(TextWidth.measureCellWidth(line)).isLessThanOrEqualTo(80);
+        }
+
+        assertThat(content).doesNotContain("┌", "└", "─", "━");
+    }
+
+    @Test
+    void rendersFailedToolCardWithLocalizedErrorTitleAndCleanBody() {
+        TerminalUiState initial = TerminalUiState.initial(100, 30);
+        TerminalUiState state = new TerminalUiState(
+                initial.header(),
+                initial.loadedResources(),
+                List.of(item(
+                        "tool-1",
+                        TranscriptItem.Kind.TOOL,
+                        "file_patch · src/App.java",
+                        "--- a/src/App.java\n+++ b/src/App.java\n@@ -1,2 +1,2 @@\n-old\n+new",
+                        "FAILED",
+                        true)),
+                initial.pending(),
+                initial.status(),
+                initial.editorBuffer(),
+                initial.editorCursor(),
+                initial.selector(),
+                initial.footer(),
+                initial.columns(),
+                initial.rows(),
+                initial.session(),
+                initial.currentRunId(),
+                initial.appliedCursor(),
+                initial.seenEventIds(),
+                initial.recoverableError(),
+                initial.exitRequested());
+
+        String content = view.transcriptContent(state);
+
+        assertThat(content).contains("✗ file_patch · src/App.java");
+        assertThat(content).contains("-old", "+new");
+        // No background sequence anywhere in tool error output
+        assertThat(content).doesNotContain("\u001B[4").doesNotContain("\u001B[10");
+    }
+
+    @Test
+    void degradesLeftBorderToSingleSpaceIndentInNarrowMode() {
+        TerminalUiState base = TerminalUiState.initial(36, 20);
+        TerminalUiState state = new TerminalUiState(
+                base.header(),
+                base.loadedResources(),
+                List.of(item("u-1", TranscriptItem.Kind.USER, "You", "Narrow terminal check", "SENT", true)),
+                base.pending(),
+                base.status(),
+                base.editorBuffer(),
+                base.editorCursor(),
+                base.selector(),
+                base.footer(),
+                36,
+                20,
+                base.session(),
+                base.currentRunId(),
+                base.appliedCursor(),
+                base.seenEventIds(),
+                base.recoverableError(),
+                base.exitRequested());
+
+        String content = view.transcriptContent(state);
+        List<String> lines = content.lines().toList();
+
+        assertThat(lines).hasSize(2);
+        // In narrow mode (< 40 cols), left vertical bar degrades to a single space
+        assertThat(lines.get(0)).startsWith(" ❯ You").doesNotStartWith("│");
+        assertThat(lines.get(1)).startsWith(" Narrow terminal check").doesNotStartWith("│");
+
+        for (String line : lines) {
+            assertThat(TextWidth.measureCellWidth(line)).isEqualTo(36);
+        }
+    }
+
+    @Test
+    void handlesMultilingualAndWideCharactersWithoutCellOverflow() {
+        TerminalUiState base = TerminalUiState.initial(80, 24);
+        TerminalUiState state = new TerminalUiState(
+                base.header(),
+                base.loadedResources(),
+                List.of(item("u-1", TranscriptItem.Kind.USER, "You", "用户需求：重构终端卡片渲染 🚀 包含 CJK 宽字符", "SENT", true)),
+                base.pending(),
+                base.status(),
+                base.editorBuffer(),
+                base.editorCursor(),
+                base.selector(),
+                base.footer(),
+                80,
+                24,
+                base.session(),
+                base.currentRunId(),
+                base.appliedCursor(),
+                base.seenEventIds(),
+                base.recoverableError(),
+                base.exitRequested());
+
+        String content = view.transcriptContent(state);
+        List<String> lines = content.lines().toList();
+
+        assertThat(lines).hasSize(2);
+        assertThat(lines.get(0)).startsWith("│ ❯ You");
+        assertThat(lines.get(1)).contains("用户需求：重构终端卡片渲染");
+
+        for (String line : lines) {
+            assertThat(TextWidth.measureCellWidth(line)).isEqualTo(80);
+        }
     }
 
     private TranscriptItem item(

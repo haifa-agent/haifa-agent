@@ -1165,6 +1165,31 @@ class Tui4jCodingTerminalModelTest {
         assertThat(fixture.controller.state().sidebarVisible()).isEqualTo(initialVisible);
     }
 
+    @Test
+    void themeSwitchPreservesScrollPositionAndDoesNotTriggerPhantomNewOutput() {
+        var fixture = fixture();
+        for (int i = 0; i < 30; i++) {
+            fixture.pump.offer(new TerminalUiAction.UserMessageCommitted("user-" + i, "Line " + i));
+        }
+        fixture.controller.drainEvents();
+        fixture.model.init();
+
+        // Scroll up
+        fixture.model.update(key(KeyType.KeyPgUp));
+
+        // Now switch theme via action
+        fixture.pump.offer(new TerminalUiAction.ThemeChanged("nord"));
+        fixture.controller.drainEvents();
+
+        // Trigger update to sync components
+        fixture.model.update(new Tui4jCodingTerminalModel.PollMessage());
+        String viewAfterTheme = fixture.model.view();
+
+        // The view must not show the phantom "new output below" badge
+        assertThat(viewAfterTheme).doesNotContain("new output below");
+        assertThat(fixture.controller.state().themeName()).isEqualTo("nord");
+    }
+
     private Fixture fixture() {
         return fixture(System::nanoTime);
     }

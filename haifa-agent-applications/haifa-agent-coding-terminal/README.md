@@ -147,13 +147,18 @@ Windows ConPTY Gate B。
    - 右侧展示快捷键提示（`[f2] models  [ctrl+p] commands`）及 Session 性能指标；空间受限时优先丢弃指标、次选裁剪工程路径，核心操作反馈与活动运行状态具有最高显示优先级；
    - 输入框上方 Meta 条右侧保持显示编辑器操作提示（如 `enter steer · alt+enter follow-up` 或 `enter send · shift+enter newline`）。
 
-Theme 使用 tui4j Lip Gloss 的 Adaptive Color 表达 Accent、Muted、User、Success、Pending、
+Theme 使用 tui4j Lip Gloss 的 Adaptive Color 表达 Accent、Muted、Surface Panel、Surface Element、Border Subtle、User、Success、Pending、
 Error、Queued 和 Focus。TrueColor 参考色会按明暗背景自适应；NoColor 环境仍依靠稳定标题、状态文字、
-边界和顺序区分：
+边线字符和顺序区分：
 
-- User 使用低对比消息块，便于定位用户意图；
-- Assistant 正文直接进入对话流，不使用厚卡片；高频 Markdown 子集只在 View 层转换为终端样式，
-  `TranscriptItem`、Session 与持久化继续保留原始 Markdown；
+- User 消息采用左侧竖线装饰（`│ `，窄屏 `<40` 列自动降级为单空格缩进）与平滑面板底色（Surface Panel），
+  首行带有 `❯ You` 双重角色线索；文本按可用宽度（`contentWidth = Math.max(16, mainWidth - 3)`）严格软折行，
+  单行 cell 宽度严格闭合，**不增加上下封闭框线与额外空行**以保持最大垂直视口高度；
+- Error 消息采用统一的左侧红色竖线装饰（`│ `）与弱化红底，首行带有 `✖ Error` 双重结构化标签，
+  完整保留错误原因、上下文与恢复建议诊断文本；
+- Assistant 正文保持 2-cell 左对齐以与 User 边线气泡形成清晰的视觉层级；输入框 Prompt Box 适配
+  Surface Element 底色，侧栏垂直分割线统一使用 Border Subtle，消除界面视觉断层；
+- 高频 Markdown 子集只在 View 层转换为终端样式，`TranscriptItem`、Session 与持久化继续保留原始 Markdown；
 - Tool 根据 `requested/started/succeeded/failed/cancelled` 使用状态色。折叠项默认占一行：
   以 `✓`/`✗`/`●` 状态符号开头，随后是 `名称 · 目标`，并把 `ctrl+o expand` 放在同一行；连续折叠项
   之间不插入空行。成功的 Tool/Execution 折叠时再追加一行灰色正文预览（取正文里第一条有效内容；

@@ -18,6 +18,7 @@ public enum TerminalCommand {
     TRUST,
     SESSION,
     COMMANDS,
+    THEME,
     QUIT,
     NOT_IMPLEMENTED,
     UNKNOWN
