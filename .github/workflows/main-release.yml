@@ -152,6 +152,8 @@ jobs:
                   } else {
                     python dist-support/scripts/package_distributions.py all
                   }
+            - name: Verify extracted Windows distributions
+              run: python dist-support/scripts/smoke_distributions.py verify
             - name: Upload Windows packages
               uses: actions/upload-artifact@v4
               with:
