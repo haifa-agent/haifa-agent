@@ -220,24 +220,7 @@ public final class SemanticCompactionCoordinator {
         List<List<AgentMessage>> activeGroups =
                 activeSnapshot == null ? groupsAfterSummary(visible, previousSummary) : groups;
 
-        Function<ToolCallId, ToolCall> resolver;
-        if (activeSnapshot != null) {
-            resolver = activeSnapshot.toolCalls()::get;
-        } else {
-            Map<io.haifa.agent.core.run.AgentRunId, Map<ToolCallId, ToolCall>> toolCallsByRun = new HashMap<>();
-            resolver = callId -> {
-                for (AgentMessage message : visible) {
-                    io.haifa.agent.core.run.AgentRunId messageRunId =
-                            message.runId().orElse(run.id());
-                    Map<ToolCallId, ToolCall> runCalls =
-                            toolCallsByRun.computeIfAbsent(messageRunId, rId -> state.toolCalls(rId).stream()
-                                    .collect(Collectors.toMap(ToolCall::id, Function.identity(), (a, b) -> a)));
-                    ToolCall call = runCalls.get(callId);
-                    if (call != null) return call;
-                }
-                return null;
-            };
-        }
+        Function<ToolCallId, ToolCall> resolver = toolCallResolver(run, activeSnapshot, visible);
 
         long currentTokens =
                 previousSummary.map(ConversationSummary::estimatedTokens).orElse(0)
@@ -276,15 +259,13 @@ public final class SemanticCompactionCoordinator {
         long softLimit = decision.budgetBreakdown().softLimitTokens();
         long prevTokens =
                 previousSummary.map(ConversationSummary::estimatedTokens).orElse(0);
-        long remainingSoftLimit = Math.max(0L, softLimit - prevTokens);
         List<AgentMessage> activeMessages =
                 activeGroups.stream().flatMap(List::stream).toList();
-        ModelMessageProjectionPlan projectionPlan = projectionPlanner.plan(
-                activeMessages, resolver, ModelMessageProjectionPlanner.DEFAULT_PURE_READ_TOOLS, remainingSoftLimit);
-        if (projectionPlan.bypassCompactionRecommended()) {
+        ModelMessageProjectionPlan projectionPlan = projectionPlanner.plan(activeMessages, resolver);
+        long beforeTokens = prevTokens + projectionPlan.rawActiveTokens();
+        long afterTokens = prevTokens + projectionPlan.projectedActiveTokens();
+        if (bypassCompactionRecommended(softLimit, projectionPlan, afterTokens)) {
             long elapsed = elapsedMillis(startNanos);
-            long beforeTokens = prevTokens + projectionPlan.rawActiveTokens();
-            long afterTokens = prevTokens + projectionPlan.projectedActiveTokens();
             log.info(
                     "Bypassing semantic compaction for session {} due to projection pruning: activeBudget={}, saved {} tokens, projected {} < softLimit {}",
                     run.sessionId().value(),
@@ -307,9 +288,6 @@ public final class SemanticCompactionCoordinator {
             eventData.put("tokensSaved", projectionPlan.tokensSavedByPruning());
             eventData.put(
                     "prunedToolResultsCount", projectionPlan.prunedToolResults().size());
-            eventData.put(
-                    "truncatedToolCallsCount",
-                    projectionPlan.truncatedToolCalls().size());
             events.append(run.id(), "session.compaction-bypassed", eventData, time.now());
             return CompactionEvaluationOutcome.bypassed(
                     decision.reason(),
@@ -350,18 +328,10 @@ public final class SemanticCompactionCoordinator {
         }
         Optional<ConversationSummary> previousSummary = snapshot.summary();
         long expectedPreviousVersion = snapshot.summaryVersion();
-        Function<ToolCallId, ToolCall> resolver = snapshot.toolCalls()::get;
+        Function<ToolCallId, ToolCall> resolver = toolCallResolver(run, snapshot, visible);
         long currentTokens =
                 previousSummary.map(ConversationSummary::estimatedTokens).orElse(0) + estimateGroups(groups, resolver);
-        long contextWindow = binding.configuration().model().contextWindow();
-        long outputReserve = binding.configuration().model().maxOutputTokens();
-        int safetyMargin = Math.min(16_384, Math.max(256, (int) (contextWindow / 20)));
-        long available = Math.max(1000L, contextWindow - outputReserve - safetyMargin);
-        ModelMessageProjectionPlan projectionPlan = projectionPlanner.plan(
-                snapshot.selectedMessages(),
-                resolver,
-                ModelMessageProjectionPlanner.DEFAULT_PURE_READ_TOOLS,
-                available);
+        ModelMessageProjectionPlan projectionPlan = projectionPlanner.plan(snapshot.selectedMessages(), resolver);
         CompactionEvaluationOutcome outcome = compactSession(
                 run,
                 iteration,
@@ -433,24 +403,7 @@ public final class SemanticCompactionCoordinator {
             return CompactionEvaluationOutcome.untriggered(0L, elapsedMillis(startNanos));
         }
 
-        Function<ToolCallId, ToolCall> resolver;
-        if (activeSnapshot != null) {
-            resolver = activeSnapshot.toolCalls()::get;
-        } else {
-            Map<io.haifa.agent.core.run.AgentRunId, Map<ToolCallId, ToolCall>> toolCallsByRun = new HashMap<>();
-            resolver = callId -> {
-                for (AgentMessage message : visible) {
-                    io.haifa.agent.core.run.AgentRunId messageRunId =
-                            message.runId().orElse(run.id());
-                    Map<ToolCallId, ToolCall> runCalls =
-                            toolCallsByRun.computeIfAbsent(messageRunId, rId -> state.toolCalls(rId).stream()
-                                    .collect(Collectors.toMap(ToolCall::id, Function.identity(), (a, b) -> a)));
-                    ToolCall call = runCalls.get(callId);
-                    if (call != null) return call;
-                }
-                return null;
-            };
-        }
+        Function<ToolCallId, ToolCall> resolver = toolCallResolver(run, activeSnapshot, visible);
 
         long currentTokens =
                 previousSummary.map(ConversationSummary::estimatedTokens).orElse(0)
@@ -459,12 +412,7 @@ public final class SemanticCompactionCoordinator {
         // Tier 1 projection pruning is executed before Tier 2 compaction
         List<AgentMessage> activeMessages =
                 activeGroups.stream().flatMap(List::stream).toList();
-        long contextWindow = binding.configuration().model().contextWindow();
-        long outputReserve = binding.configuration().model().maxOutputTokens();
-        int safetyMargin = Math.min(16_384, Math.max(256, (int) (contextWindow / 20)));
-        long available = Math.max(1000L, contextWindow - outputReserve - safetyMargin);
-        ModelMessageProjectionPlan projectionPlan = projectionPlanner.plan(
-                activeMessages, resolver, ModelMessageProjectionPlanner.DEFAULT_PURE_READ_TOOLS, available);
+        ModelMessageProjectionPlan projectionPlan = projectionPlanner.plan(activeMessages, resolver);
 
         log.info(
                 "Forcing semantic compaction due to context overflow for session {}",
@@ -1332,6 +1280,40 @@ public final class SemanticCompactionCoordinator {
             index = end + 1;
         }
         return List.copyOf(groups);
+    }
+
+    /**
+     * Owns the budget decision for skipping semantic compaction. Result pruning may bypass Tier 2 only when it saved
+     * tokens and the complete session estimate (previous summary plus projected active history) already fits inside the
+     * budget soft limit, which the trigger evaluator derived after reserving instructions, tools, memory and output.
+     */
+    private static boolean bypassCompactionRecommended(
+            long softLimitTokens, ModelMessageProjectionPlan plan, long projectedSessionTokens) {
+        return softLimitTokens > 0 && plan.tokensSavedByPruning() > 0 && projectedSessionTokens <= softLimitTokens;
+    }
+
+    /**
+     * Shares one authoritative Tool Call lookup across planning and estimation: the loaded snapshot is reused when
+     * present, otherwise each referenced Run is loaded once per operation.
+     */
+    private Function<ToolCallId, ToolCall> toolCallResolver(
+            AgentRun run, ActiveContextSnapshot activeSnapshot, List<AgentMessage> visible) {
+        if (activeSnapshot != null) {
+            return activeSnapshot.toolCalls()::get;
+        }
+        Map<io.haifa.agent.core.run.AgentRunId, Map<ToolCallId, ToolCall>> toolCallsByRun = new HashMap<>();
+        return callId -> {
+            for (AgentMessage message : visible) {
+                io.haifa.agent.core.run.AgentRunId messageRunId = message.runId().orElse(run.id());
+                Map<ToolCallId, ToolCall> runCalls = toolCallsByRun.computeIfAbsent(
+                        messageRunId,
+                        rId -> state.toolCalls(rId).stream()
+                                .collect(Collectors.toMap(ToolCall::id, Function.identity(), (a, b) -> a)));
+                ToolCall call = runCalls.get(callId);
+                if (call != null) return call;
+            }
+            return null;
+        };
     }
 
     private long estimateGroups(List<List<AgentMessage>> groups) {

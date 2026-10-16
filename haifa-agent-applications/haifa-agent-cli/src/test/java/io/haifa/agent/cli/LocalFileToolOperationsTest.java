@@ -326,6 +326,94 @@ class LocalFileToolOperationsTest {
         assertThat(Files.readString(tracked)).isEqualTo("after");
     }
 
+    @Test
+    void refusesToOverwriteExistingFileWithHistoricalTruncationPlaceholder() throws Exception {
+        Path target = root.resolve("handoff.md");
+        Files.writeString(target, "# Handoff\n\nreal content\n", StandardCharsets.UTF_8);
+        byte[] before = Files.readAllBytes(target);
+        Fixture fixture = fixture();
+        String hostPath = target.toAbsolutePath().normalize().toString();
+
+        var result = fixture.operations.execute(
+                "file_write",
+                fixture.workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                arguments(Map.of(
+                        "path",
+                        hostPath,
+                        "content",
+                        "[Code content truncated (3521 chars); file written to /tmp/handoff.md]")));
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData())
+                .containsEntry("errorCode", "CORRUPTED_ARGUMENT_PLACEHOLDER")
+                .containsEntry("stableFailureCode", "CORRUPTED_ARGUMENT_PLACEHOLDER")
+                .containsEntry("failureCategory", "INVALID_INPUT")
+                .containsEntry("failureActionCode", "REGENERATE_CONTENT_FROM_SOURCE")
+                .containsEntry("retryable", false);
+        assertThat(result.structuredData().values().toString()).doesNotContain("3521 chars");
+        assertThat(Files.readAllBytes(target)).isEqualTo(before);
+    }
+
+    @Test
+    void refusesToCreateFileFromHistoricalTruncationPlaceholder() {
+        Fixture fixture = fixture();
+        Path target = root.resolve("created.md");
+        String hostPath = target.toAbsolutePath().normalize().toString();
+
+        var result = fixture.operations.execute(
+                "file_create",
+                fixture.workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                arguments(Map.of("path", hostPath, "content", "[Content truncated (5000 chars)]")));
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData()).containsEntry("errorCode", "CORRUPTED_ARGUMENT_PLACEHOLDER");
+        assertThat(Files.exists(target)).isFalse();
+    }
+
+    @Test
+    void refusesPatchThatIsEntirelyAPlaceholder() throws Exception {
+        Path target = root.resolve("patched.txt");
+        Files.writeString(target, "keep me\n", StandardCharsets.UTF_8);
+        Fixture fixture = fixture();
+
+        var result = fixture.operations.execute(
+                "file_patch",
+                fixture.workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                arguments(Map.of("patch", "[Content truncated (5000 chars)]")));
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData()).containsEntry("errorCode", "CORRUPTED_ARGUMENT_PLACEHOLDER");
+        assertThat(Files.readString(target)).isEqualTo("keep me\n");
+    }
+
+    @Test
+    void writesOrdinaryContentThatMerelyQuotesMarkerStrings() throws Exception {
+        Fixture fixture = fixture();
+        Path target = root.resolve("guide.md");
+        String hostPath = target.toAbsolutePath().normalize().toString();
+        String document = "# Guide\n\n"
+                + "The old runtime wrote `[Code content truncated (3521 chars); file written to /tmp/handoff.md]`.\n"
+                + "Redaction uses [REDACTED] and [TRUNCATED] literals in prose.\n"
+                + "x".repeat(2_000)
+                + "\n";
+
+        var result = fixture.operations.execute(
+                "file_write",
+                fixture.workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                arguments(Map.of("path", hostPath, "content", document)));
+
+        assertThat(result.successful()).isTrue();
+        assertThat(Files.readString(target)).isEqualTo(document);
+    }
+
     private Fixture fixture() {
         return fixture(null, false);
     }

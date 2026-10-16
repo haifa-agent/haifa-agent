@@ -90,12 +90,45 @@ public final class FrozenModelInvoker {
             ModelAudioResolver audioResolver,
             ActiveContextSnapshots activeContexts,
             DefinitionResolver childDefinitions) {
+        this(
+                state,
+                adapters,
+                ids,
+                output,
+                controls,
+                events,
+                time,
+                imageResolver,
+                audioResolver,
+                activeContexts,
+                childDefinitions,
+                ToolResultPruningQualifier.none());
+    }
+
+    public FrozenModelInvoker(
+            RuntimeStateRepository state,
+            Map<ModelAdapterKey, AgentChatModel> adapters,
+            IdentifierGenerator ids,
+            RuntimeModelOutputPublisher output,
+            RunControlRegistry controls,
+            RuntimeEventAppender events,
+            TimeProvider time,
+            ModelImageResolver imageResolver,
+            ModelAudioResolver audioResolver,
+            ActiveContextSnapshots activeContexts,
+            DefinitionResolver childDefinitions,
+            ToolResultPruningQualifier resultPruningQualifier) {
         this.childDefinitions = childDefinitions;
         this.state = Objects.requireNonNull(state, "state must not be null");
         this.adapters = Map.copyOf(Objects.requireNonNull(adapters, "adapters must not be null"));
         this.ids = Objects.requireNonNull(ids, "ids must not be null");
         this.messages = new ModelMessageAssembler(
-                state, imageResolver, audioResolver, new ModelMessageProjectionPlanner(state), activeContexts);
+                state,
+                imageResolver,
+                audioResolver,
+                new ModelMessageProjectionPlanner(
+                        Objects.requireNonNull(resultPruningQualifier, "resultPruningQualifier must not be null")),
+                activeContexts);
         this.responses = new AgentChatResponseMapper(ids);
         this.output = Objects.requireNonNull(output, "output must not be null");
         this.controls = Objects.requireNonNull(controls, "controls must not be null");

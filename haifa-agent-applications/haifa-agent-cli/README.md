@@ -600,7 +600,11 @@ Java `file_search` 仍是 Project Tool Catalog 支持的有界兼容能力，可
 确定性重读一次；跨路径复用仍作为无效游标拒绝。敏感路径返回 `USER_ACTION_REQUIRED`，明确要求用户
 调整边界或授权，不建议模型通过随机改名、移动或复制绕过。`file_write` 会在目标不存在时原子创建文件；
 目标已存在时仍以版本和内容哈希保护整体替换。`file_create` 遇到已有目标返回
-`USE_FILE_WRITE_OR_PATCH`，不是原样重试信号。
+`USE_FILE_WRITE_OR_PATCH`，不是原样重试信号。`file_create`、`file_write` 和 `file_patch` 在产生任何文件副作用前，
+会拒绝整个待写值恰好是已知历史占位符（如 `[Code content truncated (...)]`、`[Content truncated (...)]` 或历史
+纯读省略提示）的请求，返回既有失败信封中的固定原因 `CORRUPTED_ARGUMENT_PLACEHOLDER` 和有界修复提示，不回显被拒
+正文。该匹配仅针对完整的单行旧占位符，普通文档、代码和补丁中作为引用出现的同名标记，以及 `[REDACTED]` /
+`[TRUNCATED]` 字面文本仍可正常写入；这只是一道有限兜底，不证明文本来源，也不覆盖任意模型幻觉。
 
 只有当 `tools.enabled` 显式包含 `workspace_attach` 时，用户要求读取或修改当前 Workspace 外的目录，模型才可
 请求 `workspace_attach`：必须给出主机绝对路径和最小 mode（`read` 或 `develop`）。默认 `ask` 模式会向用户
