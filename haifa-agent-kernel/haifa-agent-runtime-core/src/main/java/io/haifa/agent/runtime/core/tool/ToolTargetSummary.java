@@ -10,7 +10,6 @@ import java.util.stream.Collectors;
 
 /**
  * Extracts a human-readable, bounded, single-line target summary from a {@link ToolCall}.
- * Redacts credentials, tokens, and API keys across CLI commands, URLs, and tool arguments.
  */
 public final class ToolTargetSummary {
 
@@ -18,25 +17,6 @@ public final class ToolTargetSummary {
 
     private static final Pattern PATCH_FILE_HEADER = Pattern.compile(
             "(?m)(?:\\*\\*\\*\\s*(?:Update|Add|Delete)\\s+File:\\s*|(?:--- |\\+\\+\\+ )(?:[ab]/)?)([^\\r\\n\\t]+)");
-
-    private static final Pattern URI_USER_INFO = Pattern.compile("(?i)([a-z][a-z0-9+.-]*://)[^/@\\s]+@");
-
-    private static final Pattern BASIC_AUTH_FLAG =
-            Pattern.compile("(?i)((?<!\\S)-u\\s+)(?:\"[^\"]*:[^\"]*\"|'[^']*:[^']*'|[^\\s\"';:]+:[^\\s\"';]+)");
-
-    private static final Pattern CLI_SECRET_FLAG = Pattern.compile(
-            "(?i)((?<!\\S)-(?:-)?(?:password|passwd|token|auth[_-]?token|access[_-]?token|api[_-]?key|client[_-]?secret|secret|user)\\b(?:[=\\s]+)(?:bearer\\s+)?)(?:\"[^\"]*\"|'[^']*'|[^\\s\"';]+)");
-
-    private static final Pattern KEY_VALUE_SECRET = Pattern.compile(
-            "(?i)(\\b[A-Za-z0-9_]*(?:authorization|api[_-]?key|access[_-]?token|client[_-]?secret|auth[_-]?token|token|password|passwd|secret|credential|credentials|continuation|signature|private[_-]?key)(?!(?:[_-]?(?:count|limit|size|len|length|num|max|min|timeout|expiry|expiration|type|url|path|file|id|s))\\b)[A-Za-z0-9_]*\\s*[:=]\\s*(?:bearer\\s+)?)(?:\"[^\"]*\"|'[^']*'|[^\\s\"';,]+)");
-
-    private static final Pattern BEARER_OR_BASIC = Pattern.compile("(?i)\\b(bearer|basic)\\s+[A-Za-z0-9._~+/-]{10,}=*");
-
-    private static final Pattern KNOWN_TOKEN_PREFIX = Pattern.compile(
-            "\\b(?:sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{22,}|glpat-[A-Za-z0-9_-]{20,}|xox[baprs]-[0-9A-Za-z_-]{10,}|(?:AKIA|ASIA)[0-9A-Z]{16})\\b");
-
-    private static final Pattern JWT_TOKEN =
-            Pattern.compile("\\beyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}(?:\\.[A-Za-z0-9_.-]+)?\\b");
 
     private ToolTargetSummary() {}
 
@@ -228,28 +208,13 @@ public final class ToolTargetSummary {
         if (singleLine.isEmpty()) {
             return fallback == null ? "" : fallback;
         }
-        String redacted = redactTarget(singleLine);
-        if (redacted.length() <= MAX_TARGET_LENGTH) {
-            return redacted;
+        if (singleLine.length() <= MAX_TARGET_LENGTH) {
+            return singleLine;
         }
         int end = MAX_TARGET_LENGTH - 1;
-        if (Character.isLowSurrogate(redacted.charAt(end)) && Character.isHighSurrogate(redacted.charAt(end - 1))) {
+        if (Character.isLowSurrogate(singleLine.charAt(end)) && Character.isHighSurrogate(singleLine.charAt(end - 1))) {
             end--;
         }
-        return redacted.substring(0, end) + "…";
-    }
-
-    static String redactTarget(String text) {
-        if (text == null || text.isBlank()) {
-            return text == null ? "" : text;
-        }
-        String result = URI_USER_INFO.matcher(text).replaceAll("$1[REDACTED]@");
-        result = BASIC_AUTH_FLAG.matcher(result).replaceAll("$1[REDACTED]");
-        result = CLI_SECRET_FLAG.matcher(result).replaceAll("$1[REDACTED]");
-        result = KEY_VALUE_SECRET.matcher(result).replaceAll("$1[REDACTED]");
-        result = BEARER_OR_BASIC.matcher(result).replaceAll("$1 [REDACTED]");
-        result = KNOWN_TOKEN_PREFIX.matcher(result).replaceAll("[REDACTED]");
-        result = JWT_TOKEN.matcher(result).replaceAll("[REDACTED]");
-        return result;
+        return singleLine.substring(0, end) + "…";
     }
 }

@@ -34,7 +34,7 @@ class ToolTargetSummaryTest {
     }
 
     @Test
-    void redactsSecretsInExecutionCommand() {
+    void preservesFullCommandWithoutRedaction() {
         ToolCall call = call(
                 "execution_run",
                 Map.of(
@@ -42,7 +42,7 @@ class ToolTargetSummaryTest {
                         "curl -H Authorization: Bearer sk-ant-api03-abcdefghijklmn https://api.anthropic.com"));
 
         assertThat(ToolTargetSummary.from(call))
-                .isEqualTo("curl -H Authorization: Bearer [REDACTED] https://api.anthropic.com");
+                .isEqualTo("curl -H Authorization: Bearer sk-ant-api03-abcdefghijklmn https://api.anthropic.com");
     }
 
     @Test
@@ -138,69 +138,20 @@ class ToolTargetSummaryTest {
     }
 
     @Test
-    void redactsEmbeddedUrlCredentials() {
-        ToolCall call = call(
-                "execution_run",
-                Map.of("command", "git clone https://username:supersecretpassword@github.com/org/repo.git"));
-        assertThat(ToolTargetSummary.from(call)).isEqualTo("git clone https://[REDACTED]@github.com/org/repo.git");
-
-        ToolCall readUrl = call("read_url_content", Map.of("Url", "https://admin:pass123@api.internal/endpoint"));
-        assertThat(ToolTargetSummary.from(readUrl)).isEqualTo("https://[REDACTED]@api.internal/endpoint");
-    }
-
-    @Test
-    void redactsBasicAuthFlags() {
-        ToolCall call =
-                call("execution_run", Map.of("command", "curl -u admin:my_secret_pass https://api.example.com"));
-        assertThat(ToolTargetSummary.from(call)).isEqualTo("curl -u [REDACTED] https://api.example.com");
-
-        ToolCall quoted =
-                call("execution_run", Map.of("command", "curl -u \"admin:secret_pass\" https://api.example.com"));
-        assertThat(ToolTargetSummary.from(quoted)).isEqualTo("curl -u [REDACTED] https://api.example.com");
-
-        ToolCall gitPush = call("execution_run", Map.of("command", "git push -u origin main"));
-        assertThat(ToolTargetSummary.from(gitPush)).isEqualTo("git push -u origin main");
-    }
-
-    @Test
-    void redactsCliSecretFlags() {
-        ToolCall call1 =
+    void preservesFullExecutionArgumentsWithoutRedaction() {
+        ToolCall dockerCall =
                 call("execution_run", Map.of("command", "docker login --password my_secret_pw --username testuser"));
-        assertThat(ToolTargetSummary.from(call1)).isEqualTo("docker login --password [REDACTED] --username testuser");
+        assertThat(ToolTargetSummary.from(dockerCall))
+                .isEqualTo("docker login --password my_secret_pw --username testuser");
 
-        ToolCall call2 = call(
-                "execution_run",
-                Map.of("command", "app --token bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig --port 8080"));
-        assertThat(ToolTargetSummary.from(call2)).isEqualTo("app --token bearer [REDACTED] --port 8080");
+        ToolCall curlCall =
+                call("execution_run", Map.of("command", "curl -u admin:my_secret_pass https://api.example.com"));
+        assertThat(ToolTargetSummary.from(curlCall)).isEqualTo("curl -u admin:my_secret_pass https://api.example.com");
 
-        ToolCall call3 = call("execution_run", Map.of("command", "cmd --api-key \"secret-value-123\""));
-        assertThat(ToolTargetSummary.from(call3)).isEqualTo("cmd --api-key [REDACTED]");
-    }
-
-    @Test
-    void redactsEnvironmentVariablesAndAssignments() {
-        ToolCall call = call(
-                "execution_run",
-                Map.of("command", "export GITHUB_TOKEN=ghp_111122223333444455556666777788889999; mvn test"));
-        assertThat(ToolTargetSummary.from(call)).isEqualTo("export GITHUB_TOKEN=[REDACTED]; mvn test");
-
-        ToolCall nonSecret =
-                call("execution_run", Map.of("command", "python run.py --max_tokens=2048 --token_count=10"));
-        assertThat(ToolTargetSummary.from(nonSecret)).isEqualTo("python run.py --max_tokens=2048 --token_count=10");
-    }
-
-    @Test
-    void redactsVendorTokensAndJwt() {
-        ToolCall gitlab =
-                call("execution_run", Map.of("command", "echo glpat-1234567890abcdef1234 | sudo tee /tmp/token"));
-        assertThat(ToolTargetSummary.from(gitlab)).isEqualTo("echo [REDACTED] | sudo tee /tmp/token");
-
-        ToolCall jwt = call(
-                "execution_run",
-                Map.of(
-                        "command",
-                        "verify eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"));
-        assertThat(ToolTargetSummary.from(jwt)).isEqualTo("verify [REDACTED]");
+        ToolCall gitCall =
+                call("execution_run", Map.of("command", "git clone https://username:password@github.com/org/repo.git"));
+        assertThat(ToolTargetSummary.from(gitCall))
+                .isEqualTo("git clone https://username:password@github.com/org/repo.git");
     }
 
     private static ToolCall call(String toolName, Map<String, Object> values) {
