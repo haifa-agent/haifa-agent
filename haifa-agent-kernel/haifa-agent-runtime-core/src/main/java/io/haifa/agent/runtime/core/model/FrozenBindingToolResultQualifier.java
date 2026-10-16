@@ -46,7 +46,8 @@ public final class FrozenBindingToolResultQualifier implements ToolResultPruning
         if (!largeResults.requiresExternalization(result.get())) {
             return false;
         }
-        return bindingFor(call).map(binding -> isSafeLocalPureRead(binding.definition()))
+        return bindingFor(call)
+                .map(binding -> isSafeLocalPureRead(binding.definition()))
                 .orElse(false);
     }
 
@@ -54,9 +55,8 @@ public final class FrozenBindingToolResultQualifier implements ToolResultPruning
         if (runs == null) {
             return Optional.empty();
         }
-        FrozenToolBinding binding = bindingsByRun
-                .computeIfAbsent(call.runId(), this::loadBindings)
-                .get(call.toolName());
+        FrozenToolBinding binding =
+                bindingsByRun.computeIfAbsent(call.runId(), this::loadBindings).get(call.toolName());
         if (binding == null || !binding.definition().version().value().equals(call.toolVersion())) {
             return Optional.empty();
         }
@@ -78,7 +78,8 @@ public final class FrozenBindingToolResultQualifier implements ToolResultPruning
             return false;
         }
         ToolResourceRequirements resources = definition.resources();
-        if (!resources.networkHosts().isEmpty() || !resources.executionProfiles().isEmpty()) {
+        if (!resources.networkHosts().isEmpty()
+                || !resources.executionProfiles().isEmpty()) {
             return false;
         }
         for (ToolSideEffect sideEffect : definition.sideEffects()) {

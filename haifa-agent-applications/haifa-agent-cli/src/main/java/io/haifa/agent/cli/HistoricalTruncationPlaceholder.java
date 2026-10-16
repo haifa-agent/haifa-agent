@@ -17,8 +17,7 @@ final class HistoricalTruncationPlaceholder {
             Pattern.compile("^\\[Code content truncated \\(\\d+ chars\\); file written to .+\\]$"),
             Pattern.compile("^\\[Code content truncated \\(\\d+ chars\\); target: .+\\]$"),
             Pattern.compile("^\\[Content truncated \\(\\d+ chars\\)\\]$"),
-            Pattern.compile(
-                    "^\\[Historical large pure-read payload pruned; rerun to inspect current state\\.\\]$"),
+            Pattern.compile("^\\[Historical large pure-read payload pruned; rerun to inspect current state\\.\\]$"),
             Pattern.compile("^\\[Historical large pure-read payload pruned; rerun the tool to inspect current state, "
                     + "which may differ from the historical bytes\\.\\]$"));
 

@@ -97,8 +97,7 @@ class FrozenBindingToolResultQualifierTest {
         assertThat(qualifier.isPrunable(otherRun)).isFalse();
     }
 
-    private static ToolCall completedRead(
-            AgentRun run, String toolName, String toolVersion, Map<String, Object> data) {
+    private static ToolCall completedRead(AgentRun run, String toolName, String toolVersion, Map<String, Object> data) {
         return buildCall(run, toolName, toolVersion, true, data);
     }
 
@@ -116,8 +115,7 @@ class FrozenBindingToolResultQualifierTest {
         List<AgentMessage> messages = new ArrayList<>();
         Map<ToolCallId, ToolCall> calls = new HashMap<>();
         for (int i = 1; i <= 4; i++) {
-            ToolCall call =
-                    buildCall(run, "call-wiring-" + i, "file_read", "2.0.0", true, Map.of("payload", LARGE));
+            ToolCall call = buildCall(run, "call-wiring-" + i, "file_read", "2.0.0", true, Map.of("payload", LARGE));
             calls.put(call.id(), call);
             messages.add(assistantMessage(call));
             messages.add(toolMessage(call));
@@ -156,7 +154,9 @@ class FrozenBindingToolResultQualifierTest {
                 MessageVisibility.AGENT_VISIBLE,
                 Math.abs(call.id().value().hashCode()) + 2L,
                 List.of(new ToolResultPart(
-                        call.id(), call.providerCorrelationId(), call.result().orElseThrow().summary())),
+                        call.id(),
+                        call.providerCorrelationId(),
+                        call.result().orElseThrow().summary())),
                 Map.of(),
                 NOW);
     }
@@ -193,7 +193,8 @@ class FrozenBindingToolResultQualifierTest {
             call.complete(result, NOW);
         } else {
             call.fail(
-                    new ToolExecutionError(new AgentError(AgentErrorCode.TOOL_BUSINESS_FAILURE, Map.of(), "failed", NOW)),
+                    new ToolExecutionError(
+                            new AgentError(AgentErrorCode.TOOL_BUSINESS_FAILURE, Map.of(), "failed", NOW)),
                     result,
                     NOW);
         }

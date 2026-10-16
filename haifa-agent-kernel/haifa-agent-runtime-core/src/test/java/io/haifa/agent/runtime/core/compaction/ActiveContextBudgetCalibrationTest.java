@@ -476,8 +476,8 @@ class ActiveContextBudgetCalibrationTest {
     /** Test seam only: real source-backed qualification is proven in {@code FrozenBindingToolResultQualifierTest}. */
     private static io.haifa.agent.runtime.core.model.ModelMessageProjectionPlanner fileReadPruningPlanner() {
         var large = io.haifa.agent.runtime.core.tool.LargeToolResultPolicy.defaults();
-        return new io.haifa.agent.runtime.core.model.ModelMessageProjectionPlanner(call ->
-                "file_read".equals(call.toolName())
+        return new io.haifa.agent.runtime.core.model.ModelMessageProjectionPlanner(
+                call -> "file_read".equals(call.toolName())
                         && call.result()
                                 .map(result -> result.successful() && large.requiresExternalization(result))
                                 .orElse(false));

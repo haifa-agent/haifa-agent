@@ -1304,10 +1304,10 @@ public final class SemanticCompactionCoordinator {
         Map<io.haifa.agent.core.run.AgentRunId, Map<ToolCallId, ToolCall>> toolCallsByRun = new HashMap<>();
         return callId -> {
             for (AgentMessage message : visible) {
-                io.haifa.agent.core.run.AgentRunId messageRunId = message.runId().orElse(run.id());
-                Map<ToolCallId, ToolCall> runCalls = toolCallsByRun.computeIfAbsent(
-                        messageRunId,
-                        rId -> state.toolCalls(rId).stream()
+                io.haifa.agent.core.run.AgentRunId messageRunId =
+                        message.runId().orElse(run.id());
+                Map<ToolCallId, ToolCall> runCalls =
+                        toolCallsByRun.computeIfAbsent(messageRunId, rId -> state.toolCalls(rId).stream()
                                 .collect(Collectors.toMap(ToolCall::id, Function.identity(), (a, b) -> a)));
                 ToolCall call = runCalls.get(callId);
                 if (call != null) return call;

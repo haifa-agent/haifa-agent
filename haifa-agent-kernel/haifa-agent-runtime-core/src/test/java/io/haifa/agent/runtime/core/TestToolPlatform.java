@@ -272,8 +272,8 @@ final class TestToolPlatform {
             Set<ToolSideEffect> sideEffects,
             ToolResourceRequirements resources,
             ToolExecutionMode executionMode) {
-        Map<String, Object> objectSchema = Map.of(
-                "$schema", ToolSchema.DRAFT_2020_12, "type", "object", "additionalProperties", true);
+        Map<String, Object> objectSchema =
+                Map.of("$schema", ToolSchema.DRAFT_2020_12, "type", "object", "additionalProperties", true);
         return new ToolDefinition(
                 new ToolName(name),
                 new SemanticVersion(version),

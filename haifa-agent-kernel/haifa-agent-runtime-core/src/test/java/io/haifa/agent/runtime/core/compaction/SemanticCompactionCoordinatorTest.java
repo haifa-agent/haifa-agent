@@ -440,16 +440,7 @@ class SemanticCompactionCoordinatorTest {
         DeterministicContextCompressor deterministic = new DeterministicContextCompressor();
 
         SemanticCompactionCoordinator coordinator = new SemanticCompactionCoordinator(
-                store,
-                store,
-                invoker,
-                evaluator,
-                policy,
-                deterministic,
-                ids,
-                time,
-                store,
-                fileReadPruningPlanner());
+                store, store, invoker, evaluator, policy, deterministic, ids, time, store, fileReadPruningPlanner());
 
         AgentRun run = createAndSaveRun(store);
         AgentSessionId session = run.sessionId();

@@ -98,8 +98,7 @@ class ModelMessageProjectionPlannerTest {
                     Map.of("path", "src/File" + i + ".java"),
                     Map.of("content", "line\n".repeat(500)));
         }
-        ModelMessageProjectionPlanner planner =
-                new ModelMessageProjectionPlanner(ToolResultPruningQualifier.none());
+        ModelMessageProjectionPlanner planner = new ModelMessageProjectionPlanner(ToolResultPruningQualifier.none());
 
         ModelMessageProjectionPlan plan = planner.plan(messages, toolCalls::get);
 
@@ -151,8 +150,7 @@ class ModelMessageProjectionPlannerTest {
         assertThat(plan.prunedToolResults())
                 .containsExactlyInAnyOrder(new ToolCallId("big-1"), new ToolCallId("big-2"));
         assertThat(plan.rawActiveTokens()).isGreaterThan(plan.projectedActiveTokens());
-        assertThat(plan.tokensSavedByPruning())
-                .isEqualTo(plan.rawActiveTokens() - plan.projectedActiveTokens());
+        assertThat(plan.tokensSavedByPruning()).isEqualTo(plan.rawActiveTokens() - plan.projectedActiveTokens());
     }
 
     @Test
@@ -221,13 +219,14 @@ class ModelMessageProjectionPlannerTest {
         toolCall.beginPolicyCheck();
         toolCall.start(NOW);
 
-        ToolResult result = new ToolResult(successful, "summary " + callIdStr, structuredData, List.of(), List.of(), false);
+        ToolResult result =
+                new ToolResult(successful, "summary " + callIdStr, structuredData, List.of(), List.of(), false);
         if (successful) {
             toolCall.complete(result, NOW);
         } else {
             toolCall.fail(
-                    new ToolExecutionError(new AgentError(
-                            AgentErrorCode.TOOL_BUSINESS_FAILURE, Map.of(), "failed " + callIdStr, NOW)),
+                    new ToolExecutionError(
+                            new AgentError(AgentErrorCode.TOOL_BUSINESS_FAILURE, Map.of(), "failed " + callIdStr, NOW)),
                     result,
                     NOW);
         }

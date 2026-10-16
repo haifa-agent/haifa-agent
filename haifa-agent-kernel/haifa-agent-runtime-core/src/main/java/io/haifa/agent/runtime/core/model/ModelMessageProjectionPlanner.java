@@ -84,12 +84,10 @@ public final class ModelMessageProjectionPlanner {
         long projectedActiveTokens = estimateProjectedTokens(messages, toolCallResolver, prunedToolResults);
         long tokensSaved = Math.max(0L, rawActiveTokens - projectedActiveTokens);
 
-        return new ModelMessageProjectionPlan(
-                prunedToolResults, rawActiveTokens, projectedActiveTokens, tokensSaved);
+        return new ModelMessageProjectionPlan(prunedToolResults, rawActiveTokens, projectedActiveTokens, tokensSaved);
     }
 
-    private boolean isEligibleGroup(
-            AtomicToolGroup group, Function<ToolCallId, ToolCall> toolCallResolver) {
+    private boolean isEligibleGroup(AtomicToolGroup group, Function<ToolCallId, ToolCall> toolCallResolver) {
         if (group.toolCallIds().isEmpty()) {
             return false;
         }
@@ -143,9 +141,7 @@ public final class ModelMessageProjectionPlanner {
      * result contributes its summary plus the fixed omission notice instead of its structured payload.
      */
     private long estimateProjectedTokens(
-            List<AgentMessage> messages,
-            Function<ToolCallId, ToolCall> resolver,
-            Set<ToolCallId> prunedToolResults) {
+            List<AgentMessage> messages, Function<ToolCallId, ToolCall> resolver, Set<ToolCallId> prunedToolResults) {
         long total = 0L;
         for (AgentMessage message : messages) {
             for (var content : message.contents()) {
@@ -156,7 +152,8 @@ public final class ModelMessageProjectionPlanner {
                         total += HeuristicTokenEstimator.tokens(call.arguments().values());
                     } else {
                         total += HeuristicTokenEstimator.tokens(callPart.toolName());
-                        total += HeuristicTokenEstimator.tokens(callPart.providerCorrelationId().value());
+                        total += HeuristicTokenEstimator.tokens(
+                                callPart.providerCorrelationId().value());
                         total += 16L;
                     }
                 } else if (content instanceof ToolResultPart resPart) {
