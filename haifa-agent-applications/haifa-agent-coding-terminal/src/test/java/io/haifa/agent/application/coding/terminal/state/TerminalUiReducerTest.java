@@ -696,8 +696,38 @@ class TerminalUiReducerTest {
                         new RunEventPayloads.ToolLifecycle(
                                 "tool-1", "file_stat", "SUCCEEDED", "NONE", "file_stat", "artifact:tool-1"))));
 
-        assertThat(state.transcript()).singleElement().satisfies(item -> assertThat(item.title())
-                .isEqualTo("file_stat"));
+        assertThat(state.transcript()).singleElement().satisfies(item -> {
+            assertThat(item.title()).isEqualTo("file_stat");
+            assertThat(item.body()).doesNotContain("Target: file_stat");
+        });
+    }
+
+    @Test
+    void toolItemPreservesExpandedStateAcrossLifecycleEvents() {
+        TerminalUiState started = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1", "execution_run", "STARTED", "NONE", "git status", ""))));
+
+        TerminalUiState expanded = reducer.reduce(started, new TerminalUiAction.ToggleExpanded("tool-tool-1"));
+        assertThat(expanded.transcript()).singleElement().satisfies(item -> assertThat(item.expanded())
+                .isTrue());
+
+        TerminalUiState succeeded = reducer.reduce(
+                expanded,
+                new TerminalUiAction.RunEventReceived(event(
+                        2,
+                        "event-2",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1", "execution_run", "SUCCEEDED", "NONE", "git status", "asset-1"))));
+
+        assertThat(succeeded.transcript()).singleElement().satisfies(item -> {
+            assertThat(item.expanded()).isTrue();
+            assertThat(item.status()).isEqualTo("SUCCEEDED");
+        });
     }
 
     @Test

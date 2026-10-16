@@ -631,6 +631,7 @@ public final class TerminalUiReducer {
             if (terminalToolStatus(projectedStatus)) {
                 duration = Optional.of(Math.max(0, event.occurredAt().toEpochMilli() - startedAt.orElseThrow()));
             }
+            boolean expanded = existing >= 0 && items.get(existing).expanded();
             upsert(
                     items,
                     new TranscriptItem(
@@ -639,7 +640,7 @@ public final class TerminalUiReducer {
                             toolTitle(payload),
                             toolBody(payload),
                             projectedStatus,
-                            false,
+                            expanded,
                             Optional.empty(),
                             startedAt,
                             duration));
@@ -893,7 +894,9 @@ public final class TerminalUiReducer {
     private static String toolBody(RunEventPayloads.ToolLifecycle lifecycle) {
         List<String> lines = new ArrayList<>();
         String target = boundedTarget(lifecycle.targetSummary());
-        if (!target.isBlank()) lines.add(ToolBodyLines.TARGET_PREFIX + " " + target);
+        if (!target.isBlank() && !target.equalsIgnoreCase(lifecycle.displayName())) {
+            lines.add(ToolBodyLines.TARGET_PREFIX + " " + target);
+        }
         Optional<String> reasonCode = normalizedReasonCode(lifecycle.reasonCode());
         if (isOutcomeUnknown(lifecycle.status(), lifecycle.reasonCode())) {
             lines.add(ToolBodyLines.OUTCOME_PREFIX + " UNKNOWN");
