@@ -843,7 +843,7 @@ public final class ToolPipeline {
         data.put("displayName", call.toolName());
         data.put("status", status);
         data.put("reasonCode", reasonCode);
-        data.put("targetSummary", call.toolName());
+        data.put("targetSummary", ToolTargetSummary.from(call));
         data.put("resultRef", resultRef);
         boundedObservation(result).ifPresent(observation -> {
             observation.outputPreview().ifPresent(preview -> {
