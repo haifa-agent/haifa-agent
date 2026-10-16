@@ -309,6 +309,7 @@ public final class SemanticCompactionCoordinator {
                 binding,
                 visible,
                 groups,
+                resolver,
                 previousSummary,
                 expectedPreviousVersion,
                 decision.reason(),
@@ -338,6 +339,7 @@ public final class SemanticCompactionCoordinator {
                 binding,
                 visible,
                 groups,
+                resolver,
                 previousSummary,
                 expectedPreviousVersion,
                 CompactionTriggerReason.ACTIVE_WINDOW_LIMIT,
@@ -423,6 +425,7 @@ public final class SemanticCompactionCoordinator {
                 binding,
                 visible,
                 groups,
+                resolver,
                 previousSummary,
                 expectedPreviousVersion,
                 CompactionTriggerReason.PROVIDER_CONTEXT_TOO_LONG,
@@ -439,6 +442,7 @@ public final class SemanticCompactionCoordinator {
             FrozenModelBinding binding,
             List<AgentMessage> visible,
             List<List<AgentMessage>> groups,
+            Function<ToolCallId, ToolCall> resolver,
             Optional<ConversationSummary> previousSummary,
             long expectedPreviousVersion,
             CompactionTriggerReason reason,
@@ -457,7 +461,9 @@ public final class SemanticCompactionCoordinator {
         int safetyMargin = Math.min(16_384, Math.max(256, (int) (contextWindow / 20)));
         long available = Math.max(1000L, contextWindow - outputReserve - safetyMargin);
 
-        int split = tailSplit(activeGroups, targetTailBudget);
+        // Retained-tail selection must measure the authoritative payloads the tail will actually send, not the short
+        // reference/summary metadata. Source-summary prompt sizing (nextBatchEnd) stays on its own projected estimate.
+        int split = tailSplit(activeGroups, targetTailBudget, resolver);
         if (split <= 0) {
             return CompactionEvaluationOutcome.untriggered(initialEstimatedTokens, elapsedMillis(startNanos));
         }
@@ -642,7 +648,7 @@ public final class SemanticCompactionCoordinator {
         }
 
         List<List<AgentMessage>> tailGroups = activeGroups.subList(safeSplit, activeGroups.size());
-        long retainedTailTokens = estimateGroups(tailGroups);
+        long retainedTailTokens = estimateGroups(tailGroups, resolver);
 
         return commitSummary(
                 run,
@@ -1202,11 +1208,12 @@ public final class SemanticCompactionCoordinator {
         return List.copyOf(selected);
     }
 
-    private int tailSplit(List<List<AgentMessage>> groups, long retainedTailBudget) {
+    private int tailSplit(
+            List<List<AgentMessage>> groups, long retainedTailBudget, Function<ToolCallId, ToolCall> resolver) {
         long retained = 0L;
         int candidateSplit = groups.size();
         for (int index = groups.size() - 1; index >= 0; index--) {
-            long groupTokens = estimateGroup(groups.get(index));
+            long groupTokens = estimateGroup(groups.get(index), resolver);
             if (candidateSplit < groups.size() && (retained + groupTokens > retainedTailBudget)) {
                 break;
             }

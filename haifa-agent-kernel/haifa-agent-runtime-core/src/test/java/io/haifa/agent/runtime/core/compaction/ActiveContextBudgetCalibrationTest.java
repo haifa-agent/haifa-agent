@@ -178,6 +178,109 @@ class ActiveContextBudgetCalibrationTest {
     }
 
     @Test
+    @DisplayName("Protected qualifying tail overflow compacts older whole turns instead of reporting the history fits")
+    void testProtectedQualifyingTailOverflowCompactsOlderTurns() {
+        // Two large reads are the newest two qualifying groups and must stay protected, so Tier 1 cannot fit the
+        // history under a 40k window. Tier 2 must select a retained tail from the actual authoritative payloads and
+        // summarize the older whole turns rather than returning untriggered.
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AtomicInteger idGen = new AtomicInteger();
+        IdentifierGenerator ids = () -> "id-" + idGen.incrementAndGet();
+
+        CompressionPolicy policy = CompressionPolicy.defaults()
+                .withSemanticCompactionEnabled(true)
+                .withActiveHistoryBudgetTokens(96_000L)
+                .withTailTokenBounds(2_000, 2_000);
+
+        SemanticCompactionCoordinator coordinator = coordinator(store, ids, policy);
+        AgentRun run = createAndSaveRun(store, "session-protected-tail-overflow");
+        AgentSessionId session = run.sessionId();
+
+        for (int i = 1; i <= 4; i++) {
+            store.appendSessionMessage(
+                    draft("prot-user-" + i, session, run.id().value(), MessageRole.USER, "Inspect file " + i));
+
+            ToolCallId callId = new ToolCallId("call-prot-" + i);
+            ProviderToolCallCorrelationId corrId = new ProviderToolCallCorrelationId("corr-prot-" + i);
+            Map<String, Object> data =
+                    (i <= 2) ? Map.of("largePayload", "data ".repeat(20_000)) : Map.of("result", "small " + i);
+
+            ToolCall call = new ToolCall(
+                    callId,
+                    run.id(),
+                    new AgentStepId("step-prot-" + i),
+                    corrId,
+                    new RuntimeIdempotencyKey("idemp-prot-" + i),
+                    "file_read",
+                    "1.0.0",
+                    new ToolArguments("input.schema", "1.0.0", Map.of("path", "file" + i + ".txt")),
+                    NOW.plusSeconds(i * 10));
+            call.beginValidation();
+            call.beginPolicyCheck();
+            call.start(NOW.plusSeconds(i * 10 + 1));
+            call.complete(
+                    new ToolResult(true, "Read file " + i, data, List.of(), List.of(), false),
+                    NOW.plusSeconds(i * 10 + 2));
+            store.appendToolCall(call);
+
+            store.appendSessionMessage(new SessionMessageDraft(
+                    new AgentMessageId("prot-a-" + i),
+                    session,
+                    Optional.of(run.id()),
+                    Optional.empty(),
+                    MessageRole.ASSISTANT,
+                    MessageStatus.COMPLETED,
+                    MessageVisibility.AGENT_VISIBLE,
+                    List.of(new ToolCallPart(callId, corrId, "file_read", "1.0.0")),
+                    Map.of(),
+                    NOW.plusSeconds(i * 10 + 1)));
+
+            store.appendSessionMessage(new SessionMessageDraft(
+                    new AgentMessageId("prot-t-" + i),
+                    session,
+                    Optional.of(run.id()),
+                    Optional.empty(),
+                    MessageRole.TOOL,
+                    MessageStatus.COMPLETED,
+                    MessageVisibility.AGENT_VISIBLE,
+                    List.of(new ToolResultPart(callId, corrId, "Read file " + i)),
+                    Map.of(),
+                    NOW.plusSeconds(i * 10 + 2)));
+        }
+
+        AtomicInteger summaryCalls = new AtomicInteger();
+        AgentChatModel model = request -> {
+            summaryCalls.incrementAndGet();
+            String prompt = request.messages().getLast().content();
+            return new AgentChatResponse(
+                    "res",
+                    "model",
+                    summaryJsonForPrompt(prompt),
+                    List.of(),
+                    ModelFinishReason.STOP,
+                    ModelUsage.unpriced(10, 10),
+                    "",
+                    Map.of());
+        };
+
+        FrozenModelBinding binding = createBindingWithContextWindow(store, run, model, 40_000);
+        CompactionEvaluationOutcome outcome = coordinator.evaluateAndCompactIfNeeded(run, 1, binding);
+
+        assertThat(outcome.tier1PruningBypassedSummary()).isFalse();
+        assertThat(outcome.compacted()).isTrue();
+        assertThat(summaryCalls.get()).isGreaterThanOrEqualTo(1);
+
+        var summary = store.latestValid(session).orElseThrow();
+        List<AgentMessage> allMessages = store.messagesAfter(session, MessageCursor.BEFORE_FIRST, Integer.MAX_VALUE);
+        long coveredThrough = summary.coveredThrough().value();
+        assertThat(coveredThrough).isGreaterThan(0L);
+        // The newest message stays in the retained tail beyond the compacted range.
+        assertThat(coveredThrough).isLessThan(allMessages.getLast().cursor().value());
+        assertThat(outcome.projectedActiveHistoryTokensAfter())
+                .isLessThan(outcome.projectedActiveHistoryTokensBefore());
+    }
+
+    @Test
     @DisplayName("Scenario B: Single-Run 60-turn loop maintains atomic group pairing and zero orphan tool calls")
     void testScenarioBSingleRun60TurnAtomicPairingSafety() {
         InMemoryRuntimeStore store = new InMemoryRuntimeStore();
