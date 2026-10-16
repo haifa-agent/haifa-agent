@@ -1744,7 +1744,7 @@ class SemanticCompactionCoordinatorTest {
     }
 
     private static ModelMessageProjectionPlanner fileReadPruningPlanner() {
-        return new ModelMessageProjectionPlanner(call -> "file_read".equals(call.toolName()));
+        return new ModelMessageProjectionPlanner((call, binding) -> "file_read".equals(call.toolName()));
     }
 
     @Test

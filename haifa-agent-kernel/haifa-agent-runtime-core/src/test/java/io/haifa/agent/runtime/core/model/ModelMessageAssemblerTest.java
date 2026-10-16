@@ -1048,8 +1048,8 @@ class ModelMessageAssemblerTest {
                 new ContextWindowBudget(100_000, 10_000, 1_000, 80_000),
                 100);
 
-        ModelMessageProjectionPlanner planner = new ModelMessageProjectionPlanner(
-                call -> call.toolName().equals("file_read") || call.toolName().equals("grep_search"));
+        ModelMessageProjectionPlanner planner = new ModelMessageProjectionPlanner((call, binding) ->
+                call.toolName().equals("file_read") || call.toolName().equals("grep_search"));
         List<ModelMessage> assembled = new ModelMessageAssembler(
                         store, ModelImageResolver.unsupported(), ModelAudioResolver.unsupported(), planner)
                 .assemble(RUN_ID, context);

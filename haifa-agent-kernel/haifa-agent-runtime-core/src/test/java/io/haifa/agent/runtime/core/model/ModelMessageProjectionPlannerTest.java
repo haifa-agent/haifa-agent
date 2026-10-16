@@ -65,24 +65,51 @@ class ModelMessageProjectionPlannerTest {
     }
 
     @Test
-    void preservesAnEntireGroupThatContainsAnIneligibleMember() {
+    void protectsQualifyingTailEvenWhenNewerGroupsAreIneligible() {
         List<AgentMessage> messages = new ArrayList<>();
         Map<ToolCallId, ToolCall> toolCalls = new HashMap<>();
-        addCompletedToolTurn(messages, toolCalls, "call-1", "file_read", Map.of("path", "a"), Map.of("data", "a"));
-        addCompletedToolTurn(messages, toolCalls, "call-2", "file_read", Map.of("path", "b"), Map.of("data", "b"));
-        addCompletedToolTurn(messages, toolCalls, "call-3", "file_write", Map.of("path", "c"), Map.of("data", "c"));
-        addCompletedToolTurn(messages, toolCalls, "call-4", "file_read", Map.of("path", "d"), Map.of("data", "d"));
-        addCompletedToolTurn(messages, toolCalls, "call-5", "file_read", Map.of("path", "e"), Map.of("data", "e"));
-        addCompletedToolTurn(messages, toolCalls, "call-6", "file_read", Map.of("path", "f"), Map.of("data", "f"));
+        // Oldest two groups qualify; the two newest groups are writes and never qualify.
+        addCompletedToolTurn(messages, toolCalls, "read-1", "file_read", Map.of("path", "a"), Map.of("data", "a"));
+        addCompletedToolTurn(messages, toolCalls, "read-2", "file_read", Map.of("path", "b"), Map.of("data", "b"));
+        addCompletedToolTurn(messages, toolCalls, "write-1", "file_write", Map.of("path", "c"), Map.of("data", "c"));
+        addCompletedToolTurn(messages, toolCalls, "write-2", "file_write", Map.of("path", "d"), Map.of("data", "d"));
         ModelMessageProjectionPlanner planner = new ModelMessageProjectionPlanner(nameIs("file_read"));
 
         ModelMessageProjectionPlan plan = planner.plan(messages, toolCalls::get);
 
-        // Qualifying groups are [1, 2, 4, 5, 6]; protecting the latest two leaves a batch of two (groups 1 and 2).
+        // The two qualifying reads are the newest (and only) qualifying groups, so both must be protected.
+        assertThat(plan.prunedToolResults()).isEmpty();
+        assertThat(plan.tokensSavedByPruning()).isZero();
+    }
+
+    @Test
+    void preservesWholeParallelGroupWhenOneMemberIsIneligible() {
+        List<AgentMessage> messages = new ArrayList<>();
+        Map<ToolCallId, ToolCall> toolCalls = new HashMap<>();
+        // Oldest group is a genuine parallel assistant batch: one qualifying read and one ineligible write.
+        addCompletedParallelTurn(
+                messages,
+                toolCalls,
+                "mixed",
+                List.of(
+                        new TurnCall("mixed-read", "file_read", Map.of("path", "r")),
+                        new TurnCall("mixed-write", "file_write", Map.of("path", "w"))));
+        for (int i = 2; i <= 5; i++) {
+            addCompletedToolTurn(
+                    messages, toolCalls, "read-" + i, "file_read", Map.of("path", "f" + i), Map.of("data", "d" + i));
+        }
+        ModelMessageProjectionPlanner planner = new ModelMessageProjectionPlanner(nameIs("file_read"));
+
+        ModelMessageProjectionPlan plan = planner.plan(messages, toolCalls::get);
+
+        // Qualifying groups are read-2..read-5; protect the newest two and prune the oldest two.
         assertThat(plan.prunedToolResults())
-                .containsExactlyInAnyOrder(new ToolCallId("call-1"), new ToolCallId("call-2"));
-        assertThat(plan.isToolResultPruned(new ToolCallId("call-3"))).isFalse();
-        assertThat(plan.isToolResultPruned(new ToolCallId("call-4"))).isFalse();
+                .containsExactlyInAnyOrder(new ToolCallId("read-2"), new ToolCallId("read-3"));
+        // The mixed parallel group is ineligible as a whole, so even its qualifying member is preserved.
+        assertThat(plan.isToolResultPruned(new ToolCallId("mixed-read"))).isFalse();
+        assertThat(plan.isToolResultPruned(new ToolCallId("mixed-write"))).isFalse();
+        assertThat(plan.isToolResultPruned(new ToolCallId("read-4"))).isFalse();
+        assertThat(plan.isToolResultPruned(new ToolCallId("read-5"))).isFalse();
     }
 
     @Test
@@ -180,8 +207,65 @@ class ModelMessageProjectionPlannerTest {
 
     private static ToolResultPruningQualifier nameIs(String... names) {
         Set<String> selected = Set.of(names);
-        return call -> selected.contains(call.toolName())
+        return (call, binding) -> selected.contains(call.toolName())
                 && call.result().map(ToolResult::successful).orElse(false);
+    }
+
+    private record TurnCall(String callId, String toolName, Map<String, Object> arguments) {}
+
+    /** Adds one assistant message with several Tool Call parts followed by one tool message with their results. */
+    private static void addCompletedParallelTurn(
+            List<AgentMessage> messages, Map<ToolCallId, ToolCall> toolCalls, String label, List<TurnCall> specs) {
+        List<io.haifa.agent.core.content.ContentPart> callParts = new ArrayList<>();
+        List<io.haifa.agent.core.content.ContentPart> resultParts = new ArrayList<>();
+        for (TurnCall spec : specs) {
+            ToolCallId callId = new ToolCallId(spec.callId());
+            ProviderToolCallCorrelationId corrId = new ProviderToolCallCorrelationId("corr-" + spec.callId());
+            ToolCall toolCall = new ToolCall(
+                    callId,
+                    RUN_ID,
+                    new AgentStepId("step-" + spec.callId()),
+                    corrId,
+                    new RuntimeIdempotencyKey("idempotency-" + spec.callId()),
+                    spec.toolName(),
+                    "1.0.0",
+                    new ToolArguments("input.schema", "1.0.0", spec.arguments()),
+                    NOW);
+            toolCall.beginValidation();
+            toolCall.beginPolicyCheck();
+            toolCall.start(NOW);
+            toolCall.complete(
+                    new ToolResult(true, "summary " + spec.callId(), spec.arguments(), List.of(), List.of(), false),
+                    NOW);
+            toolCalls.put(callId, toolCall);
+            callParts.add(new ToolCallPart(callId, corrId, spec.toolName(), "1.0.0"));
+            resultParts.add(new ToolResultPart(callId, corrId, "summary " + spec.callId()));
+        }
+        long sequence = 900_000L + messages.size();
+        messages.add(new AgentMessage(
+                new AgentMessageId("asst-" + label),
+                SESSION_ID,
+                Optional.of(RUN_ID),
+                Optional.empty(),
+                MessageRole.ASSISTANT,
+                MessageStatus.COMPLETED,
+                MessageVisibility.AGENT_VISIBLE,
+                sequence,
+                callParts,
+                Map.of(),
+                NOW.plusSeconds(sequence)));
+        messages.add(new AgentMessage(
+                new AgentMessageId("tool-" + label),
+                SESSION_ID,
+                Optional.of(RUN_ID),
+                Optional.empty(),
+                MessageRole.TOOL,
+                MessageStatus.COMPLETED,
+                MessageVisibility.AGENT_VISIBLE,
+                sequence + 1,
+                resultParts,
+                Map.of(),
+                NOW.plusSeconds(sequence + 1)));
     }
 
     private static void addCompletedToolTurn(

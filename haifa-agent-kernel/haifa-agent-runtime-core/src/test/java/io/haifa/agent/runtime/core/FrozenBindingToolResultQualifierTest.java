@@ -32,13 +32,19 @@ import io.haifa.agent.runtime.core.model.FrozenBindingToolResultQualifier;
 import io.haifa.agent.runtime.core.model.ModelMessageProjectionPlan;
 import io.haifa.agent.runtime.core.model.ModelMessageProjectionPlanner;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
+import io.haifa.agent.runtime.core.storage.RunStateRepository;
 import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
+import io.haifa.agent.tool.api.FrozenToolBinding;
+import java.lang.reflect.Proxy;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
@@ -47,54 +53,152 @@ class FrozenBindingToolResultQualifierTest {
     private static final Instant NOW = Instant.parse("2026-07-21T00:00:00Z");
     private static final String LARGE = "x".repeat(20_000);
 
+    private final FrozenBindingToolResultQualifier qualifier = new FrozenBindingToolResultQualifier();
+
     @Test
     void qualifiesOnlyLargeSuccessfulLocalPureReadsFromTheCallsOwnFrozenBinding() {
         InMemoryRuntimeStore store = new InMemoryRuntimeStore();
         AgentRun run = startRun(store);
-        FrozenBindingToolResultQualifier qualifier = new FrozenBindingToolResultQualifier(store, store);
 
-        assertThat(qualifier.isPrunable(completedRead(run, "file_read", "2.0.0", Map.of("payload", LARGE))))
+        assertThat(qualifier.isPrunable(
+                        completedRead(run, "file_read", "2.0.0", Map.of("payload", LARGE)),
+                        bindingFor(store, run, "file_read")))
                 .isTrue();
-        assertThat(qualifier.isPrunable(completedRead(run, "network_read", "1.0.0", Map.of("payload", LARGE))))
+        assertThat(qualifier.isPrunable(
+                        completedRead(run, "network_read", "1.0.0", Map.of("payload", LARGE)),
+                        bindingFor(store, run, "network_read")))
                 .isFalse();
-        assertThat(qualifier.isPrunable(completedRead(run, "file_write", "1.0.0", Map.of("payload", LARGE))))
+        assertThat(qualifier.isPrunable(
+                        completedRead(run, "file_write", "1.0.0", Map.of("payload", LARGE)),
+                        bindingFor(store, run, "file_write")))
                 .isFalse();
-        assertThat(qualifier.isPrunable(completedRead(run, "idempotent_write", "1.0.0", Map.of("payload", LARGE))))
+        assertThat(qualifier.isPrunable(
+                        completedRead(run, "idempotent_write", "1.0.0", Map.of("payload", LARGE)),
+                        bindingFor(store, run, "idempotent_write")))
                 .isFalse();
-        assertThat(qualifier.isPrunable(completedRead(run, "file_read", "9.9.9", Map.of("payload", LARGE))))
+        // Mismatched version for the same alias fails closed.
+        assertThat(qualifier.isPrunable(
+                        completedRead(run, "file_read", "9.9.9", Map.of("payload", LARGE)),
+                        bindingFor(store, run, "file_read")))
                 .isFalse();
-        assertThat(qualifier.isPrunable(completedRead(run, "file_read", "2.0.0", Map.of("payload", "tiny"))))
+        // Successful but below the large-result threshold.
+        assertThat(qualifier.isPrunable(
+                        completedRead(run, "file_read", "2.0.0", Map.of("payload", "tiny")),
+                        bindingFor(store, run, "file_read")))
                 .isFalse();
-        assertThat(qualifier.isPrunable(failedRead(run, "file_read", "2.0.0"))).isFalse();
-        assertThat(qualifier.isPrunable(completedRead(run, "unknown_tool", "1.0.0", Map.of("payload", LARGE))))
+        // Failed outcome.
+        assertThat(qualifier.isPrunable(failedRead(run, "file_read", "2.0.0"), bindingFor(store, run, "file_read")))
+                .isFalse();
+        // No binding resolved for the alias.
+        assertThat(qualifier.isPrunable(
+                        completedRead(run, "unknown_tool", "1.0.0", Map.of("payload", LARGE)),
+                        bindingFor(store, run, "unknown_tool")))
                 .isFalse();
     }
 
     @Test
-    void failsClosedWhenTheRunBindingCannotBeResolved() {
+    void failsClosedWithoutAResolvedBinding() {
         InMemoryRuntimeStore store = new InMemoryRuntimeStore();
         AgentRun run = startRun(store);
-        FrozenBindingToolResultQualifier qualifier = new FrozenBindingToolResultQualifier(store, store);
 
-        ToolCall unattached = completedRead(run, "file_read", "2.0.0", Map.of("payload", LARGE));
-        // A call whose Run was never persisted has no authoritative frozen binding.
-        ToolCall otherRun = new ToolCall(
-                new ToolCallId("other-run-call"),
-                new io.haifa.agent.core.run.AgentRunId("run-absent"),
-                new AgentStepId("step"),
-                new ProviderToolCallCorrelationId("corr"),
-                new RuntimeIdempotencyKey("idem"),
-                "file_read",
-                "2.0.0",
-                new ToolArguments("schema", "1.0", Map.of()),
-                NOW);
-        otherRun.beginValidation();
-        otherRun.beginPolicyCheck();
-        otherRun.start(NOW);
-        otherRun.complete(new ToolResult(true, "summary", Map.of("payload", LARGE), List.of(), List.of(), false), NOW);
+        assertThat(qualifier.isPrunable(completedRead(run, "file_read", "2.0.0", Map.of("payload", LARGE)), null))
+                .isFalse();
+    }
 
-        assertThat(qualifier.isPrunable(unattached)).isTrue();
-        assertThat(qualifier.isPrunable(otherRun)).isFalse();
+    @Test
+    void repositoryQualifierDrivesPruningThroughThePlanner() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentRun run = startRun(store);
+        ModelMessageProjectionPlanner planner =
+                new ModelMessageProjectionPlanner(store, store, new FrozenBindingToolResultQualifier());
+        ReadFixture fixture = readFixture(run, 4);
+
+        ModelMessageProjectionPlan plan = planner.plan(fixture.messages(), fixture.calls()::get);
+
+        assertThat(plan.prunedToolResults())
+                .containsExactlyInAnyOrder(new ToolCallId("call-read-1"), new ToolCallId("call-read-2"));
+        assertThat(plan.tokensSavedByPruning()).isPositive();
+    }
+
+    @Test
+    void loadsEachRunOncePerOperationAndDiscardsTheIndexAfterward() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentRun run = startRun(store);
+        AtomicInteger finds = new AtomicInteger();
+        ModelMessageProjectionPlanner planner = new ModelMessageProjectionPlanner(
+                countingRunRepository(store, finds), store, new FrozenBindingToolResultQualifier());
+        ReadFixture fixture = readFixture(run, 4);
+
+        planner.plan(fixture.messages(), fixture.calls()::get);
+        assertThat(finds).as("one load per Run per operation").hasValue(1);
+
+        // A second operation builds a fresh index: nothing is retained across operations.
+        planner.plan(fixture.messages(), fixture.calls()::get);
+        assertThat(finds).as("each operation reloads its own index").hasValue(2);
+    }
+
+    @Test
+    void plansConcurrentlyThroughTheSameProductionPlannerWithoutSharedMutableState() throws Exception {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentRun run = startRun(store);
+        CyclicBarrier firstLookup = new CyclicBarrier(2);
+        RunStateRepository runs = (RunStateRepository) Proxy.newProxyInstance(
+                RunStateRepository.class.getClassLoader(),
+                new Class<?>[] {RunStateRepository.class},
+                (proxy, method, arguments) -> {
+                    if (method.getName().equals("find")) {
+                        firstLookup.await(10, TimeUnit.SECONDS);
+                    }
+                    return method.invoke(store, arguments);
+                });
+        ModelMessageProjectionPlanner planner =
+                new ModelMessageProjectionPlanner(runs, store, new FrozenBindingToolResultQualifier());
+        ReadFixture fixture = readFixture(run, 4);
+
+        var pool = Executors.newFixedThreadPool(2);
+        try {
+            var first = pool.submit(() -> planner.plan(fixture.messages(), fixture.calls()::get));
+            var second = pool.submit(() -> planner.plan(fixture.messages(), fixture.calls()::get));
+            ModelMessageProjectionPlan firstPlan = first.get(15, TimeUnit.SECONDS);
+            ModelMessageProjectionPlan secondPlan = second.get(15, TimeUnit.SECONDS);
+            assertThat(firstPlan.prunedToolResults()).hasSize(2);
+            assertThat(secondPlan.prunedToolResults()).hasSize(2);
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    private record ReadFixture(List<AgentMessage> messages, Map<ToolCallId, ToolCall> calls) {}
+
+    private static ReadFixture readFixture(AgentRun run, int count) {
+        List<AgentMessage> messages = new ArrayList<>();
+        Map<ToolCallId, ToolCall> calls = new HashMap<>();
+        for (int i = 1; i <= count; i++) {
+            ToolCall call = buildCall(run, "call-read-" + i, "file_read", "2.0.0", true, Map.of("payload", LARGE));
+            calls.put(call.id(), call);
+            messages.add(assistantMessage(call));
+            messages.add(toolMessage(call));
+        }
+        return new ReadFixture(messages, calls);
+    }
+
+    private static FrozenToolBinding bindingFor(InMemoryRuntimeStore store, AgentRun run, String name) {
+        return store.configuration(run.configurationSnapshot()).orElseThrow().toolBindings().stream()
+                .filter(binding -> binding.alias().value().equals(name))
+                .findFirst()
+                .orElse(null);
+    }
+
+    private static RunStateRepository countingRunRepository(InMemoryRuntimeStore store, AtomicInteger finds) {
+        return (RunStateRepository) Proxy.newProxyInstance(
+                RunStateRepository.class.getClassLoader(),
+                new Class<?>[] {RunStateRepository.class},
+                (proxy, method, arguments) -> {
+                    if (method.getName().equals("find")) {
+                        finds.incrementAndGet();
+                    }
+                    return method.invoke(store, arguments);
+                });
     }
 
     private static ToolCall completedRead(AgentRun run, String toolName, String toolVersion, Map<String, Object> data) {
@@ -103,29 +207,6 @@ class FrozenBindingToolResultQualifierTest {
 
     private static ToolCall failedRead(AgentRun run, String toolName, String toolVersion) {
         return buildCall(run, toolName, toolVersion, false, Map.of("payload", LARGE));
-    }
-
-    @Test
-    void repositoryQualifierDrivesPruningThroughThePlanner() {
-        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
-        AgentRun run = startRun(store);
-        ModelMessageProjectionPlanner planner =
-                new ModelMessageProjectionPlanner(new FrozenBindingToolResultQualifier(store, store));
-
-        List<AgentMessage> messages = new ArrayList<>();
-        Map<ToolCallId, ToolCall> calls = new HashMap<>();
-        for (int i = 1; i <= 4; i++) {
-            ToolCall call = buildCall(run, "call-wiring-" + i, "file_read", "2.0.0", true, Map.of("payload", LARGE));
-            calls.put(call.id(), call);
-            messages.add(assistantMessage(call));
-            messages.add(toolMessage(call));
-        }
-
-        ModelMessageProjectionPlan plan = planner.plan(messages, calls::get);
-
-        assertThat(plan.prunedToolResults())
-                .containsExactlyInAnyOrder(new ToolCallId("call-wiring-1"), new ToolCallId("call-wiring-2"));
-        assertThat(plan.tokensSavedByPruning()).isPositive();
     }
 
     private static AgentMessage assistantMessage(ToolCall call) {
@@ -174,13 +255,12 @@ class FrozenBindingToolResultQualifierTest {
             String toolVersion,
             boolean successful,
             Map<String, Object> data) {
-        String suffix = callId;
         ToolCall call = new ToolCall(
                 new ToolCallId(callId),
                 run.id(),
-                new AgentStepId("step-" + suffix),
-                new ProviderToolCallCorrelationId("corr-" + suffix),
-                new RuntimeIdempotencyKey("idem-" + suffix),
+                new AgentStepId("step-" + callId),
+                new ProviderToolCallCorrelationId("corr-" + callId),
+                new RuntimeIdempotencyKey("idem-" + callId),
                 toolName,
                 toolVersion,
                 new ToolArguments("schema", "1.0", Map.of("path", "file.txt")),

@@ -102,7 +102,7 @@ public final class FrozenModelInvoker {
                 audioResolver,
                 activeContexts,
                 childDefinitions,
-                ToolResultPruningQualifier.none());
+                new ModelMessageProjectionPlanner(state));
     }
 
     public FrozenModelInvoker(
@@ -117,7 +117,7 @@ public final class FrozenModelInvoker {
             ModelAudioResolver audioResolver,
             ActiveContextSnapshots activeContexts,
             DefinitionResolver childDefinitions,
-            ToolResultPruningQualifier resultPruningQualifier) {
+            ModelMessageProjectionPlanner projectionPlanner) {
         this.childDefinitions = childDefinitions;
         this.state = Objects.requireNonNull(state, "state must not be null");
         this.adapters = Map.copyOf(Objects.requireNonNull(adapters, "adapters must not be null"));
@@ -126,8 +126,7 @@ public final class FrozenModelInvoker {
                 state,
                 imageResolver,
                 audioResolver,
-                new ModelMessageProjectionPlanner(
-                        Objects.requireNonNull(resultPruningQualifier, "resultPruningQualifier must not be null")),
+                Objects.requireNonNull(projectionPlanner, "projectionPlanner must not be null"),
                 activeContexts);
         this.responses = new AgentChatResponseMapper(ids);
         this.output = Objects.requireNonNull(output, "output must not be null");

@@ -86,8 +86,12 @@ class ActiveContextBudgetCalibrationTest {
 
     @Test
     @DisplayName(
-            "Scenario A: Cross-Run old history with large tool results achieves high Tier 1 bypass rate without LLM calls")
+            "Scenario A: old history with four large reads protects the newest two qualifying groups and bypasses the LLM")
     void testScenarioACrossRunHistoryTier1Bypass() {
+        // Fixture note: the atomic-tail rule now protects the newest two QUALIFYING groups. The fixture therefore
+        // uses four large reads so that the two oldest qualify-and-get-pruned groups are pruned while the two newest
+        // qualifying reads are protected, and the context window is widened so those two protected reads still fit
+        // under the soft limit and trigger the Tier 1 bypass.
         InMemoryRuntimeStore store = new InMemoryRuntimeStore();
         AtomicInteger idGen = new AtomicInteger();
         IdentifierGenerator ids = () -> "id-" + idGen.incrementAndGet();
@@ -104,8 +108,7 @@ class ActiveContextBudgetCalibrationTest {
         for (int i = 1; i <= 4; i++) {
             ToolCallId callId = new ToolCallId("call-sc-a-" + i);
             ProviderToolCallCorrelationId corrId = new ProviderToolCallCorrelationId("corr-sc-a-" + i);
-            Map<String, Object> data =
-                    (i <= 2) ? Map.of("largePayload", "data ".repeat(10_000)) : Map.of("result", "small " + i);
+            Map<String, Object> data = Map.of("largePayload", "data ".repeat(10_000));
 
             ToolCall call = new ToolCall(
                     callId,
@@ -165,7 +168,7 @@ class ActiveContextBudgetCalibrationTest {
                     Map.of());
         };
 
-        FrozenModelBinding binding = createBindingWithContextWindow(store, run, model, 40_000);
+        FrozenModelBinding binding = createBindingWithContextWindow(store, run, model, 60_000);
         CompactionEvaluationOutcome outcome = coordinator.evaluateAndCompactIfNeeded(run, 1, binding);
 
         assertThat(outcome.tier1PruningBypassedSummary()).isTrue();
@@ -477,7 +480,7 @@ class ActiveContextBudgetCalibrationTest {
     private static io.haifa.agent.runtime.core.model.ModelMessageProjectionPlanner fileReadPruningPlanner() {
         var large = io.haifa.agent.runtime.core.tool.LargeToolResultPolicy.defaults();
         return new io.haifa.agent.runtime.core.model.ModelMessageProjectionPlanner(
-                call -> "file_read".equals(call.toolName())
+                (call, binding) -> "file_read".equals(call.toolName())
                         && call.result()
                                 .map(result -> result.successful() && large.requiresExternalization(result))
                                 .orElse(false));

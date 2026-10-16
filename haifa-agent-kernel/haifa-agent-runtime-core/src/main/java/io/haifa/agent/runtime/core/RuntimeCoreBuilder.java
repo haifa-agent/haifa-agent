@@ -90,7 +90,6 @@ import io.haifa.agent.runtime.core.model.ModelAudioResolver;
 import io.haifa.agent.runtime.core.model.ModelImageResolver;
 import io.haifa.agent.runtime.core.model.ModelMessageProjectionPlanner;
 import io.haifa.agent.runtime.core.model.RuntimeModelOutputPublisher;
-import io.haifa.agent.runtime.core.model.ToolResultPruningQualifier;
 import io.haifa.agent.runtime.core.retry.CompletionRepairPolicy;
 import io.haifa.agent.runtime.core.retry.ModelRetryPolicy;
 import io.haifa.agent.runtime.core.retry.RetryExecutor;
@@ -514,7 +513,10 @@ public final class RuntimeCoreBuilder {
                         Set.of(),
                         "Complete the objective using disclosed capabilities.");
         ProfileResolver profileResolver = profiles != null ? profiles : RuntimeCoreBuilder::defaultProfile;
-        ToolResultPruningQualifier resultPruningQualifier = new FrozenBindingToolResultQualifier(runs, state);
+        // Stateless repositories and a stateless qualifier are shared; the per-Run binding index is created inside
+        // each planning operation, so concurrent Runs never mutate shared planning state.
+        ModelMessageProjectionPlanner projectionPlanner =
+                new ModelMessageProjectionPlanner(runs, state, new FrozenBindingToolResultQualifier());
         FrozenModelInvoker models = new FrozenModelInvoker(
                 state,
                 chatModels,
@@ -527,7 +529,7 @@ public final class RuntimeCoreBuilder {
                 modelAudioResolver,
                 activeContexts,
                 definitionResolver,
-                resultPruningQualifier);
+                projectionPlanner);
         RunAwaiter awaiter = new RunAwaiter();
         RunTransitionCoordinator transitions = new RunTransitionCoordinator(
                 runs, state, events, outbox, ids, time, awaiter, unitOfWork, configuredRunInputs);
@@ -672,7 +674,7 @@ public final class RuntimeCoreBuilder {
                 ids,
                 time,
                 events,
-                new ModelMessageProjectionPlanner(resultPruningQualifier),
+                projectionPlanner,
                 activeContexts);
         AgentLoop loop = new DefaultAgentLoop(
                 controls,

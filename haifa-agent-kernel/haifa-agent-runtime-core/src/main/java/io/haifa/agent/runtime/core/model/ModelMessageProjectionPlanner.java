@@ -24,9 +24,13 @@ import java.util.function.Function;
  * provider unchanged. It only replaces an eligible result payload with a fixed omission notice and reports the token
  * estimate of the actual wire representation so the caller can decide whether the projected request still fits.
  *
- * <p>Only complete atomic tool groups are considered, the two most recent groups are always protected, and older
- * groups are advanced in whole-group batches of two. A group is eligible only when every member qualifies; a parallel
- * group that contains an ineligible member, an unresolved call or an incomplete result is preserved entirely.
+ * <p>Only complete atomic tool groups are considered. A group is qualifying only when every member qualifies; a
+ * parallel group that contains an ineligible member, an unresolved call or an incomplete result is preserved entirely.
+ * The two newest qualifying groups are always protected and older qualifying groups are pruned in whole-group batches
+ * of two, so the latest usable read content is never discarded.
+ *
+ * <p>The planner is stateless apart from immutable repository dependencies. Any per-Run binding index is created inside
+ * a single {@link #plan} call and discarded with it.
  */
 public final class ModelMessageProjectionPlanner {
 
@@ -37,19 +41,26 @@ public final class ModelMessageProjectionPlanner {
     public static final int PROTECTED_TAIL_GROUPS = 2;
     public static final int BATCH_STEP = 2;
 
+    private final RunStateRepository runs;
+    private final RuntimeStateRepository state;
     private final ToolResultPruningQualifier qualifier;
 
     /**
-     * Convenience constructor for callers that also expose Run lookup. Production wiring passes the qualifier
-     * explicitly; a store without Run lookup fails closed and disables pruning.
+     * Convenience constructor for callers that also expose Run lookup. Production wiring passes an explicit qualifier;
+     * a store without Run lookup fails closed and disables pruning.
      */
     public ModelMessageProjectionPlanner(RuntimeStateRepository state) {
-        this(new FrozenBindingToolResultQualifier(
-                state instanceof RunStateRepository runs ? runs : null,
-                Objects.requireNonNull(state, "state must not be null")));
+        this(state instanceof RunStateRepository runs ? runs : null, state, new FrozenBindingToolResultQualifier());
     }
 
     public ModelMessageProjectionPlanner(ToolResultPruningQualifier qualifier) {
+        this(null, null, qualifier);
+    }
+
+    public ModelMessageProjectionPlanner(
+            RunStateRepository runs, RuntimeStateRepository state, ToolResultPruningQualifier qualifier) {
+        this.runs = runs;
+        this.state = state;
         this.qualifier = Objects.requireNonNull(qualifier, "qualifier must not be null");
     }
 
@@ -64,20 +75,19 @@ public final class ModelMessageProjectionPlanner {
             return ModelMessageProjectionPlan.EMPTY;
         }
 
-        List<AtomicToolGroup> completedGroups = identifyCompletedToolGroups(messages);
-        int candidateCount = Math.max(0, completedGroups.size() - PROTECTED_TAIL_GROUPS);
-        List<AtomicToolGroup> eligibleCandidates = new ArrayList<>();
-        for (int index = 0; index < candidateCount; index++) {
-            AtomicToolGroup group = completedGroups.get(index);
-            if (isEligibleGroup(group, toolCallResolver)) {
-                eligibleCandidates.add(group);
+        OperationToolBindings bindings = new OperationToolBindings(runs, state);
+        List<AtomicToolGroup> qualifyingGroups = new ArrayList<>();
+        for (AtomicToolGroup group : identifyCompletedToolGroups(messages)) {
+            if (isEligibleGroup(group, toolCallResolver, bindings)) {
+                qualifyingGroups.add(group);
             }
         }
 
-        int prunedGroupCount = (eligibleCandidates.size() / BATCH_STEP) * BATCH_STEP;
+        int candidateCount = Math.max(0, qualifyingGroups.size() - PROTECTED_TAIL_GROUPS);
+        int prunedGroupCount = (candidateCount / BATCH_STEP) * BATCH_STEP;
         Set<ToolCallId> prunedToolResults = new HashSet<>();
         for (int index = 0; index < prunedGroupCount; index++) {
-            prunedToolResults.addAll(eligibleCandidates.get(index).toolCallIds());
+            prunedToolResults.addAll(qualifyingGroups.get(index).toolCallIds());
         }
 
         long rawActiveTokens = estimateProjectedTokens(messages, toolCallResolver, Set.of());
@@ -87,13 +97,14 @@ public final class ModelMessageProjectionPlanner {
         return new ModelMessageProjectionPlan(prunedToolResults, rawActiveTokens, projectedActiveTokens, tokensSaved);
     }
 
-    private boolean isEligibleGroup(AtomicToolGroup group, Function<ToolCallId, ToolCall> toolCallResolver) {
+    private boolean isEligibleGroup(
+            AtomicToolGroup group, Function<ToolCallId, ToolCall> toolCallResolver, OperationToolBindings bindings) {
         if (group.toolCallIds().isEmpty()) {
             return false;
         }
         for (ToolCallId callId : group.toolCallIds()) {
             ToolCall call = toolCallResolver.apply(callId);
-            if (call == null || call.result().isEmpty() || !qualifier.isPrunable(call)) {
+            if (call == null || call.result().isEmpty() || !qualifier.isPrunable(call, bindings.bindingFor(call))) {
                 return false;
             }
         }
