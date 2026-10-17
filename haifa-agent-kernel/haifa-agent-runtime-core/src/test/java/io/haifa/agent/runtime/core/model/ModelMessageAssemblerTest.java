@@ -1048,7 +1048,11 @@ class ModelMessageAssemblerTest {
                 new ContextWindowBudget(100_000, 10_000, 1_000, 80_000),
                 100);
 
-        List<ModelMessage> assembled = new ModelMessageAssembler(store).assemble(RUN_ID, context);
+        ModelMessageProjectionPlanner planner = new ModelMessageProjectionPlanner((call, binding) ->
+                call.toolName().equals("file_read") || call.toolName().equals("grep_search"));
+        List<ModelMessage> assembled = new ModelMessageAssembler(
+                        store, ModelImageResolver.unsupported(), ModelAudioResolver.unsupported(), planner)
+                .assemble(RUN_ID, context);
 
         List<ModelMessage> toolMessages = assembled.stream()
                 .filter(m -> m.role() == ModelMessageRole.TOOL)
@@ -1071,7 +1075,7 @@ class ModelMessageAssemblerTest {
     }
 
     @Test
-    void truncatesOversizedToolCallArgumentsOnTheWire() {
+    void preservesOversizedToolCallArgumentsOnTheWire() {
         InMemoryRuntimeStore store = new InMemoryRuntimeStore();
         AgentSessionId sessionId = new AgentSessionId("session-truncation");
         List<AgentMessage> messages = new java.util.ArrayList<>();
@@ -1133,9 +1137,9 @@ class ModelMessageAssemblerTest {
         ModelMessage turn1Assistant = assembled.get(1);
         assertThat(turn1Assistant.toolCalls()).hasSize(1);
         ModelToolCall turn1Call = turn1Assistant.toolCalls().getFirst();
-        assertThat(turn1Call.arguments().get("codeContent"))
-                .isEqualTo(
-                        "[Code content truncated (" + massiveCode.length() + " chars); file written to src/Big.java]");
+        // The out-of-tail oversized argument reaches the provider with its authoritative value.
+        assertThat(turn1Call.arguments().get("codeContent")).isEqualTo(massiveCode);
+        assertThat(turn1Call.arguments().get("targetFile")).isEqualTo("src/Big.java");
 
         ToolCall persistedCall = store.toolCalls(RUN_ID).stream()
                 .filter(c -> c.id().value().equals("trunc-call-1"))

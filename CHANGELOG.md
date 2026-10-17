@@ -2,6 +2,16 @@
 
 ## Unreleased - 0.1.3-SNAPSHOT
 
+- Historical structured Tool Call arguments are always serialized from the authoritative `ToolCall` and are no longer
+  rewritten as truncation placeholders by any tool name, argument key or length. Large historical pure-read results are
+  pruned only when the historical call's own frozen Tool Binding proves a successful local pure read, and the fixed
+  omission notice states that a reread shows current state rather than the historical bytes. The previous
+  argument-truncation plan API, the `truncatedToolCalls` state and the argument-specific `truncatedToolCallsCount`
+  telemetry are removed; the Tier 2 bypass decision now lives in `SemanticCompactionCoordinator`.
+- Local file create, overwrite and patch reject a whole value that is exactly a known historical truncation placeholder
+  with the existing failure envelope (`CORRUPTED_ARGUMENT_PLACEHOLDER`) before any side effect. Ordinary documents,
+  code, patches and literal `[REDACTED]`/`[TRUNCATED]` examples remain writable.
+
 ## 0.1.2 - 2026-10-15
 
 - Release distributions now include a complete SDK Maven file repository with resolved parent/BOM POMs,
