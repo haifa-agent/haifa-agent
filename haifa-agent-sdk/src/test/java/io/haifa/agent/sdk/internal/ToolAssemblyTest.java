@@ -10,6 +10,7 @@ import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.core.tool.ToolResult;
+import io.haifa.agent.credential.api.CredentialRequirement;
 import io.haifa.agent.sdk.api.HaifaAgentException;
 import io.haifa.agent.sdk.contribution.ToolPlatformContribution;
 import io.haifa.agent.sdk.contribution.ToolRegistration;
@@ -164,6 +165,40 @@ public class ToolAssemblyTest {
                 .containsExactly(io.haifa.agent.tool.api.ToolSideEffect.NETWORK_ACCESS);
         assertThat(binding.definition().risk()).isEqualTo(ToolRisk.MEDIUM);
         assertThat(binding.definition().approvalRequirement()).isEqualTo(ToolApprovalRequirement.POLICY);
+    }
+
+    @Test
+    void freezesDeclaredCredentialRequirementsAndPassesRuntimeCredentialsToTheTool() {
+        AtomicReference<JavaToolContext> captured = new AtomicReference<>();
+        ToolAssembly.Prepared prepared = ToolAssembly.prepare(null, List.of(new CredentialedTool(captured)), List.of());
+        var binding = prepared.platform()
+                .catalog()
+                .findByAlias(new ToolAlias("credentialed_fetch"))
+                .orElseThrow();
+
+        assertThat(binding.definition().credentialRequirements())
+                .extracting(CredentialRequirement::credentialId)
+                .containsExactly("TOOL_API_KEY");
+
+        prepared.platform()
+                .invoker()
+                .invoke(new ToolInvocationRequest(
+                        binding,
+                        new ToolCallId("call-credential"),
+                        new AgentRunId("run-credential"),
+                        new TenantRef("tenant-1"),
+                        new PrincipalRef("user-1", "user"),
+                        new ToolArguments(
+                                binding.definition().inputSchema().id(),
+                                binding.definition().inputSchema().version(),
+                                Map.of("city", "Shanghai")),
+                        Instant.parse("2026-08-05T01:02:03Z"),
+                        java.util.Optional.empty(),
+                        () -> false,
+                        Map.of("TOOL_API_KEY", "resolved-secret"),
+                        ToolInvocationObserver.noop()));
+
+        assertThat(captured.get().credentials()).containsEntry("TOOL_API_KEY", "resolved-secret");
     }
 
     @Test
@@ -395,6 +430,29 @@ public class ToolAssemblyTest {
             captured.set(context);
             if (input.city().equals("fail")) throw new ToolInvocationException("sensitive provider detail");
             return new WeatherResponse("Sunny in " + input.city());
+        }
+    }
+
+    private static final class CredentialedTool implements JavaTool<WeatherRequest, WeatherResponse> {
+        private final AtomicReference<JavaToolContext> captured;
+
+        private CredentialedTool(AtomicReference<JavaToolContext> captured) {
+            this.captured = captured;
+        }
+
+        @Override
+        public JavaToolSpec<WeatherRequest, WeatherResponse> spec() {
+            return JavaToolSpec.builder("credentialed_fetch", WeatherRequest.class, WeatherResponse.class)
+                    .description("Fetches an exact host with a brokered credential")
+                    .networkAccess("api.example.com")
+                    .credentialRequirements(new CredentialRequirement("TOOL_API_KEY"))
+                    .build();
+        }
+
+        @Override
+        public WeatherResponse invoke(WeatherRequest input, JavaToolContext context) {
+            captured.set(context);
+            return new WeatherResponse(input.city());
         }
     }
 

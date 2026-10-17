@@ -3,6 +3,7 @@ package io.haifa.agent.sdk.tool;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.haifa.agent.credential.api.CredentialRequirement;
 import io.haifa.agent.tool.api.ToolApprovalRequirement;
 import io.haifa.agent.tool.api.ToolIdempotency;
 import io.haifa.agent.tool.api.ToolRisk;
@@ -156,6 +157,47 @@ class JavaToolSpecTest {
 
         assertThat(spec.networkHosts()).isEmpty();
         assertThat(spec.sideEffects()).containsExactly(ToolSideEffect.FILE_WRITE);
+    }
+
+    @Test
+    void credentialRequirementsAreDeclaredInOrderAndDropThePureDeclaration() {
+        JavaToolSpec<Request, Response> spec = JavaToolSpec.builder("web_search", Request.class, Response.class)
+                .pure()
+                .credentialRequirements(new CredentialRequirement("TOOL_API_KEY"))
+                .build();
+
+        assertThat(spec.credentialRequirements())
+                .extracting(CredentialRequirement::credentialId)
+                .containsExactly("TOOL_API_KEY");
+        assertThat(spec.pure()).isFalse();
+        assertThat(spec.risk()).isEqualTo(ToolRisk.MEDIUM);
+        assertThat(spec.approvalRequirement()).isEqualTo(ToolApprovalRequirement.POLICY);
+    }
+
+    @Test
+    void credentialRequirementsFailClosedForBlankDuplicateAndNullDeclarations() {
+        assertThatThrownBy(() -> JavaToolSpec.builder("web_search", Request.class, Response.class)
+                        .credentialRequirements(
+                                new CredentialRequirement("TOOL_API_KEY"), new CredentialRequirement("TOOL_API_KEY")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("duplicate credential requirement");
+        assertThatThrownBy(() -> JavaToolSpec.builder("web_search", Request.class, Response.class)
+                        .credentialRequirements((CredentialRequirement) null))
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new CredentialRequirement(" "))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("credentialId must not be blank");
+    }
+
+    @Test
+    void pureDeclarationClearsAnyDeclaredCredentialRequirement() {
+        JavaToolSpec<Request, Response> spec = JavaToolSpec.builder("web_search", Request.class, Response.class)
+                .credentialRequirements(new CredentialRequirement("TOOL_API_KEY"))
+                .pure()
+                .build();
+
+        assertThat(spec.credentialRequirements()).isEmpty();
+        assertThat(spec.pure()).isTrue();
     }
 
     @Test

@@ -2,6 +2,11 @@
 
 ## Unreleased - 0.1.3-SNAPSHOT
 
+- `JavaToolSpec.Builder.credentialRequirements(CredentialRequirement...)` declares the credentials a Java Tool needs.
+  The SDK resolves them through the configured Credential broker before dispatch, injects the values into
+  `JavaToolContext#credentials()` and registers them for scoped redaction, so a provider that reflects an
+  `Authorization` header cannot leak it into events, history or logs. Blank or duplicate credential ids fail closed,
+  and declaring credentials drops a `pure()` declaration.
 - Historical structured Tool Call arguments are always serialized from the authoritative `ToolCall` and are no longer
   rewritten as truncation placeholders by any tool name, argument key or length. Large historical pure-read results are
   pruned only when the historical call's own frozen Tool Binding proves a successful local pure read, and the fixed

@@ -161,10 +161,15 @@ SDK 把每个 Java Tool 一次性转换为 Tool Core 的 `ToolDefinition` 加 `T
 不属于当前版本。
 
 `JavaToolSpec` 只声明普通 Java Tool 需要的事实：name、input/output record、title、description、timeout，以及
-`pure()`、`sideEffects(...)` 或只读网络声明 `networkAccess(hosts...)`。provider 身份、并发策略、资源、Credential、
-Approval、provenance 与 tags 由 SDK Tool 平台固定，不再镜像到该入口；需要这些字段的 Tool 直接用 Tool API 的
-完整 `ToolDefinition` 注册。`pure()` 是唯一降低 risk、idempotency 与 approval 声明的入口，声明 side effect 会
-自动取消 pure 声明，其余情况保持 medium risk、unknown idempotency 与由 Policy 决定的审批。
+`pure()`、`sideEffects(...)`、只读网络声明 `networkAccess(hosts...)` 与凭据声明 `credentialRequirements(...)`。
+provider 身份、并发策略、资源、Approval、provenance 与 tags 由 SDK Tool 平台固定，不再镜像到该入口；需要这些
+字段的 Tool 直接用 Tool API 的完整 `ToolDefinition` 注册。`pure()` 是唯一降低 risk、idempotency 与 approval
+声明的入口，声明 side effect 或凭据会取消 pure 声明，其余情况保持 medium risk、unknown idempotency 与由
+Policy 决定的审批。
+
+`credentialRequirements(new CredentialRequirement("TOOL_API_KEY"))` 声明 Tool 需要的凭据：Runtime 在调用前经
+Credential broker 解析并注入 `JavaToolContext#credentials()`，同时把解析结果注册为作用域内脱敏，因此 Tool 不必
+也不应从环境变量自读密钥；未配置 broker 时 fail closed，空白或重复的 credential id 直接拒绝。
 
 `networkAccess("api.example.com")` 声明一个只访问精确 host 的只读网络 Tool：它把 host 写入既有
 `ToolResourceRequirements.networkHosts`，同时声明 `NETWORK_ACCESS` 并自动取消 pure，但保持保守的 medium risk、
