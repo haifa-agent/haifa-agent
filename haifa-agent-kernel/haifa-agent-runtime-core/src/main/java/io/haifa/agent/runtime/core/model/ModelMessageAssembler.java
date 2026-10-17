@@ -159,12 +159,18 @@ public final class ModelMessageAssembler {
         reusable.ifPresent(snapshot -> snapshot.toolCalls().values().forEach(call -> toolCallsByRun
                 .computeIfAbsent(call.runId(), ignored -> new HashMap<>())
                 .put(call.id(), call)));
-        ModelMessageProjectionPlan projectionPlan = reusable.map(snapshot -> planner.plan(
-                        contextMessages,
-                        snapshot.toolCalls()::get,
-                        ModelMessageProjectionPlanner.DEFAULT_PURE_READ_TOOLS,
-                        context.budget().availableInputTokens()))
-                .orElseGet(() -> planner.plan(runId, context, model));
+        Function<io.haifa.agent.core.tool.ToolCallId, ToolCall> toolCallResolver = callId -> {
+            for (AgentMessage message : contextMessages) {
+                ToolCall call = toolCallsByRun
+                        .computeIfAbsent(message.runId().orElse(runId), this::toolCallsById)
+                        .get(callId);
+                if (call != null) {
+                    return call;
+                }
+            }
+            return null;
+        };
+        ModelMessageProjectionPlan projectionPlan = planner.plan(contextMessages, toolCallResolver);
         ContinuationIndex continuations = reusable.map(snapshot -> new ContinuationIndex(
                         snapshot.continuationsByMessage(),
                         snapshot.continuationsByRun(),
@@ -403,10 +409,10 @@ public final class ModelMessageAssembler {
                                 || !call.toolVersion().equals(part.toolVersion())) {
                             throw new IllegalStateException("tool call protocol reference does not match authority");
                         }
-                        Map<String, Object> arguments = projectionPlan.isToolCallTruncated(call.id())
-                                ? projectionPlan.truncatedArguments(call.id())
-                                : call.arguments().values();
-                        return new ModelToolCall(call.providerCorrelationId(), call.toolName(), arguments);
+                        return new ModelToolCall(
+                                call.providerCorrelationId(),
+                                call.toolName(),
+                                call.arguments().values());
                     })
                     .toList();
             if (isPriorModel(message, model, continuations)) {

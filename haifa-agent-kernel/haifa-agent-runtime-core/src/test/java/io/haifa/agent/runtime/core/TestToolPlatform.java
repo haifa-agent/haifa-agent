@@ -187,6 +187,116 @@ final class TestToolPlatform {
                 .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator());
     }
 
+    /** Installs every supplied definition under a single allow-all policy and provider. */
+    static RuntimeCoreBuilder installDefinitions(
+            RuntimeCoreBuilder builder, List<ToolDefinition> definitions, ToolHandler handler) {
+        ToolProvider provider = new ToolProvider() {
+            @Override
+            public ToolProviderId id() {
+                return PROVIDER_ID;
+            }
+
+            @Override
+            public ToolResult invoke(ToolInvocationRequest request) {
+                return handler.invoke(request);
+            }
+
+            @Override
+            public ToolReconciliation reconcile(ToolReconciliationRequest request) {
+                return ToolReconciliation.unsupported();
+            }
+        };
+        ToolCatalogBuilder catalogBuilder = new ToolCatalogBuilder();
+        for (ToolDefinition definition : definitions) {
+            catalogBuilder.register(alias(definition.name().value()), definition, "runtime-test", provider);
+        }
+        var catalog = catalogBuilder.freeze();
+        return builder.publicToolPolicy((run, binding, request) -> allow())
+                .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator());
+    }
+
+    static ToolDefinition pureReadDefinition(String name, String version, String inputSchemaId) {
+        return customDefinition(
+                name,
+                version,
+                inputSchemaId,
+                ToolIdempotency.PURE,
+                ToolRisk.LOW,
+                Set.of(ToolSideEffect.FILE_READ),
+                ToolResourceRequirements.none(),
+                ToolExecutionMode.IN_PROCESS);
+    }
+
+    static ToolDefinition networkPureReadDefinition(String name, String version, String inputSchemaId) {
+        return customDefinition(
+                name,
+                version,
+                inputSchemaId,
+                ToolIdempotency.PURE,
+                ToolRisk.LOW,
+                Set.of(ToolSideEffect.FILE_READ, ToolSideEffect.NETWORK_ACCESS),
+                new ToolResourceRequirements(Set.of(), Set.of("example.test"), Set.of()),
+                ToolExecutionMode.IN_PROCESS);
+    }
+
+    static ToolDefinition sideEffectingDefinition(String name, String version, String inputSchemaId) {
+        return customDefinition(
+                name,
+                version,
+                inputSchemaId,
+                ToolIdempotency.NON_IDEMPOTENT,
+                ToolRisk.MEDIUM,
+                Set.of(ToolSideEffect.FILE_WRITE),
+                ToolResourceRequirements.none(),
+                ToolExecutionMode.IN_PROCESS);
+    }
+
+    static ToolDefinition idempotentWriteDefinition(String name, String version, String inputSchemaId) {
+        return customDefinition(
+                name,
+                version,
+                inputSchemaId,
+                ToolIdempotency.IDEMPOTENT,
+                ToolRisk.MEDIUM,
+                Set.of(ToolSideEffect.FILE_WRITE),
+                ToolResourceRequirements.none(),
+                ToolExecutionMode.IN_PROCESS);
+    }
+
+    private static ToolDefinition customDefinition(
+            String name,
+            String version,
+            String inputSchemaId,
+            ToolIdempotency idempotency,
+            ToolRisk risk,
+            Set<ToolSideEffect> sideEffects,
+            ToolResourceRequirements resources,
+            ToolExecutionMode executionMode) {
+        Map<String, Object> objectSchema =
+                Map.of("$schema", ToolSchema.DRAFT_2020_12, "type", "object", "additionalProperties", true);
+        return new ToolDefinition(
+                new ToolName(name),
+                new SemanticVersion(version),
+                PROVIDER_ID,
+                name,
+                "Runtime test tool " + name,
+                new ToolSchema(inputSchemaId, "1.0", objectSchema),
+                new ToolSchema(name + ".output", "1.0", objectSchema),
+                executionMode,
+                true,
+                Duration.ofSeconds(10),
+                "test",
+                idempotency,
+                risk,
+                sideEffects,
+                resources,
+                List.of(),
+                ToolApprovalRequirement.NEVER,
+                "test",
+                false,
+                Set.of("test"));
+    }
+
     static FrozenToolBinding binding(String name, String version, String inputSchemaId, boolean sideEffecting) {
         ToolProvider provider = new ToolProvider() {
             @Override
