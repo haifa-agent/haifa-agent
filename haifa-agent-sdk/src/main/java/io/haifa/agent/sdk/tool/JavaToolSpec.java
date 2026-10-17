@@ -1,5 +1,6 @@
 package io.haifa.agent.sdk.tool;
 
+import io.haifa.agent.credential.api.CredentialRequirement;
 import io.haifa.agent.tool.api.SemanticVersion;
 import io.haifa.agent.tool.api.ToolAlias;
 import io.haifa.agent.tool.api.ToolApprovalRequirement;
@@ -9,8 +10,11 @@ import io.haifa.agent.tool.api.ToolRisk;
 import io.haifa.agent.tool.api.ToolSideEffect;
 import java.net.IDN;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
@@ -21,9 +25,14 @@ import java.util.Set;
  * <p>This is the ordinary SDK entry for typed in-process Java Tools: it declares the Tool name,
  * input/output record types, a human title and description, a timeout, and whether the Tool is a pure
  * function or declares side effects. Everything else a {@link io.haifa.agent.tool.api.ToolDefinition}
- * can carry (provider identity, concurrency policy, resource requirements other than network hosts, credential requirements,
+ * can carry (provider identity, concurrency policy, resource requirements other than network hosts,
  * approval requirement, provenance, tags) is fixed by the SDK Tool platform and is not mirrored here;
  * a Tool that needs those fields registers itself through the Tool API instead.
+ *
+ * <p>{@link Builder#credentialRequirements(CredentialRequirement...)} declares the credentials the
+ * runtime resolves and injects into {@link JavaToolContext#credentials()} before the Tool runs, and
+ * registers their values for scoped redaction. A Tool that needs a secret declares it here instead of
+ * reading ambient configuration, otherwise the runtime can neither broker that secret nor redact it.
  *
  * <p>Declaring the Tool as {@link Builder#pure()} is the only way to lower its risk, idempotency and
  * approval requirement. Any other declaration keeps the conservative defaults: medium risk, unknown
@@ -49,6 +58,7 @@ public final class JavaToolSpec<I extends Record, O extends Record> {
     private final boolean pure;
     private final Set<ToolSideEffect> sideEffects;
     private final Set<String> networkHosts;
+    private final List<CredentialRequirement> credentialRequirements;
 
     private JavaToolSpec(Builder<I, O> builder) {
         name = new ToolName(builder.name);
@@ -65,6 +75,7 @@ public final class JavaToolSpec<I extends Record, O extends Record> {
         pure = builder.pure;
         sideEffects = Set.copyOf(builder.sideEffects);
         networkHosts = Set.copyOf(builder.networkHosts);
+        credentialRequirements = List.copyOf(builder.credentialRequirements);
         if (sideEffects.contains(ToolSideEffect.NETWORK_ACCESS) && networkHosts.isEmpty()) {
             throw new IllegalArgumentException("NETWORK_ACCESS requires constrained hosts");
         }
@@ -123,6 +134,14 @@ public final class JavaToolSpec<I extends Record, O extends Record> {
         return networkHosts;
     }
 
+    /**
+     * Credentials the runtime resolves before running the Tool, in declaration order; empty when the
+     * Tool declares none.
+     */
+    public List<CredentialRequirement> credentialRequirements() {
+        return credentialRequirements;
+    }
+
     /** A pure Tool is {@code PURE}; every other Tool keeps the conservative {@code UNKNOWN}. */
     public ToolIdempotency idempotency() {
         return pure ? ToolIdempotency.PURE : ToolIdempotency.UNKNOWN;
@@ -164,6 +183,7 @@ public final class JavaToolSpec<I extends Record, O extends Record> {
         private boolean pure;
         private final Set<ToolSideEffect> sideEffects = new LinkedHashSet<>();
         private Set<String> networkHosts = Set.of();
+        private final List<CredentialRequirement> credentialRequirements = new ArrayList<>();
 
         private Builder(String name, Class<I> inputType, Class<O> outputType) {
             this.name = text(name, "name");
@@ -193,11 +213,15 @@ public final class JavaToolSpec<I extends Record, O extends Record> {
             return this;
         }
 
-        /** Declares a deterministic, side-effect-free function; it also clears any network declaration. */
+        /**
+         * Declares a deterministic, side-effect-free function; it also clears any network and credential
+         * declaration.
+         */
         public Builder<I, O> pure() {
             pure = true;
             sideEffects.clear();
             networkHosts = Set.of();
+            credentialRequirements.clear();
             return this;
         }
 
@@ -214,6 +238,29 @@ public final class JavaToolSpec<I extends Record, O extends Record> {
             networkHosts = validated;
             sideEffects.remove(ToolSideEffect.NETWORK_ACCESS);
             sideEffects.add(ToolSideEffect.NETWORK_ACCESS);
+            pure = false;
+            return this;
+        }
+
+        /**
+         * Declares the credentials the runtime resolves and injects into
+         * {@link JavaToolContext#credentials()} before the Tool runs; their values are registered for
+         * scoped redaction. A blank id fails closed in {@link CredentialRequirement}, a duplicate id or a
+         * null element fails closed here, and declaring credentials drops a pure declaration because a
+         * Tool holding a secret is not a deterministic side-effect-free function.
+         */
+        public Builder<I, O> credentialRequirements(CredentialRequirement... requirements) {
+            Objects.requireNonNull(requirements, "credential requirements must not be null");
+            LinkedHashMap<String, CredentialRequirement> unique = new LinkedHashMap<>();
+            for (CredentialRequirement requirement : requirements) {
+                CredentialRequirement value =
+                        Objects.requireNonNull(requirement, "credential requirement must not be null");
+                if (unique.putIfAbsent(value.credentialId(), value) != null) {
+                    throw new IllegalArgumentException("duplicate credential requirement: " + value.credentialId());
+                }
+            }
+            credentialRequirements.clear();
+            credentialRequirements.addAll(unique.values());
             pure = false;
             return this;
         }

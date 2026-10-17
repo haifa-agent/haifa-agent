@@ -114,7 +114,7 @@ public final class ToolAssembly {
                     spec.risk(),
                     spec.sideEffects(),
                     new ToolResourceRequirements(Set.of(), spec.networkHosts(), Set.of()),
-                    List.of(),
+                    spec.credentialRequirements(),
                     spec.approvalRequirement(),
                     PROVENANCE,
                     false,
