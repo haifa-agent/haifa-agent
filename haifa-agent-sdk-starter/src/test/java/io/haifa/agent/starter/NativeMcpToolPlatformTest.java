@@ -314,6 +314,23 @@ class NativeMcpToolPlatformTest {
         platform.close();
     }
 
+    @Test
+    void declaredMcpCredentialNeverResolvesFromTheFallback() {
+        var mcp = new FakeMcpServer().serving("enterprise-search", "search_jobs");
+        CredentialBroker fallback =
+                new DefaultCredentialBroker(Map.of("mcp:enterprise-search:authorization", "fallback-token"));
+
+        // An optional server with a blank declared secret degrades to a diagnostic; the declared id still
+        // must not borrow the fallback value.
+        var platform = NativeMcpToolPlatform.connect(
+                List.of(jobs().bearerToken(() -> "").optional()), TENANT, PRINCIPAL, environment(), mcp, fallback);
+
+        assertThatThrownBy(() -> platform.credentials().requireSecret("mcp:enterprise-search:authorization"))
+                .isInstanceOf(RuntimeException.class);
+        assertThat(platform.diagnostics()).isNotEmpty();
+        platform.close();
+    }
+
     private static Function<String, String> environment() {
         return ENVIRONMENT::get;
     }

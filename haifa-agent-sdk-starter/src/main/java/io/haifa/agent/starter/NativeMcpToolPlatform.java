@@ -128,6 +128,9 @@ final class NativeMcpToolPlatform implements McpToolPlatforms.McpToolPlatform {
         Map<String, McpServerSpec> usable = new LinkedHashMap<>();
         List<McpServerDefinition> definitions = new ArrayList<>();
         Map<String, Supplier<String>> secretSuppliers = new LinkedHashMap<>();
+        // Ids a spec declares are never satisfied from the caller's fallback broker, even when that spec
+        // degrades to a diagnostic, so a declared MCP credential stays fail closed.
+        Set<String> declaredCredentialIds = new LinkedHashSet<>();
         for (McpServerSpec spec : declared) {
             Objects.requireNonNull(spec, "MCP server spec must not be null");
             if (!declaredNames.add(spec.name())) {
@@ -135,6 +138,7 @@ final class NativeMcpToolPlatform implements McpToolPlatforms.McpToolPlatform {
                         "MCP_SERVER_NAME_CONFLICT",
                         "MCP connection name " + spec.name() + " is declared more than once");
             }
+            spec.credentials().forEach(credential -> declaredCredentialIds.add(credential.credentialId()));
             try {
                 // Resolve the whole server before recording any of it, so a half-resolved optional
                 // server never leaves a definition behind without its spec and credentials.
@@ -171,11 +175,19 @@ final class NativeMcpToolPlatform implements McpToolPlatforms.McpToolPlatform {
         CredentialBroker broker = new DefaultCredentialBroker(
                 id -> {
                     Supplier<String> supplier = secretSuppliers.get(id);
-                    String secret = supplier == null ? null : supplier.get();
-                    if (secret != null && !secret.isBlank()) {
-                        return Optional.of(registerScoped.apply(id, secret));
+                    if (supplier != null) {
+                        String secret = supplier.get();
+                        if (secret != null && !secret.isBlank()) {
+                            return Optional.of(registerScoped.apply(id, secret));
+                        }
+                        // A declared MCP credential id never resolves from the fallback: a blank or
+                        // missing header secret must stay missing instead of borrowing another source.
+                        return Optional.empty();
                     }
                     if (baseCredentials == null) {
+                        return Optional.empty();
+                    }
+                    if (declaredCredentialIds.contains(id)) {
                         return Optional.empty();
                     }
                     return baseCredentials
