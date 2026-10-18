@@ -280,9 +280,9 @@ final class Tui4jTerminalView {
     private List<String> renderSidebar(TerminalUiState state, int height, int width) {
         List<String> lines = new ArrayList<>();
         if (state.session().isPresent()) {
-            var summary = state.session().get().summary();
-            lines.add(theme.strong(clip(summary.displayName(), width)));
-            lines.add(theme.muted(clip(summary.sessionId().value(), width)));
+            var sessionView = state.session().get();
+            lines.add(theme.strong(clip(resolveSidebarTitle(state), width)));
+            lines.add(theme.muted(clip(sessionView.summary().sessionId().value(), width)));
         } else {
             lines.add(theme.strong("Haifa Coding Agent"));
             lines.add(theme.muted("No active session"));
@@ -295,6 +295,12 @@ final class Tui4jTerminalView {
         }
         if (!footer.gitBranch().isBlank()) {
             lines.add(theme.muted("🌿 " + clip(footer.gitBranch(), width - 3)));
+        }
+        if (!footer.worktree().isBlank()) {
+            lines.add(theme.muted("🌳 " + clip(footer.worktree(), width - 3)));
+            if (!footer.worktreeBranch().isBlank()) {
+                lines.add(theme.muted("  🌿 " + clip(footer.worktreeBranch(), width - 5)));
+            }
         }
         lines.add("");
 
@@ -319,6 +325,29 @@ final class Tui4jTerminalView {
             lines.add("");
         }
         return lines;
+    }
+
+    private String resolveSidebarTitle(TerminalUiState state) {
+        if (state.session().isPresent()) {
+            var sessionView = state.session().get();
+            if (sessionView.activeRunTaskSummary().isPresent()
+                    && !sessionView.activeRunTaskSummary().get().isBlank()) {
+                return sessionView.activeRunTaskSummary().get().strip();
+            }
+            for (int i = state.transcript().size() - 1; i >= 0; i--) {
+                TranscriptItem item = state.transcript().get(i);
+                if (item.kind() == TranscriptItem.Kind.USER && !item.body().isBlank()) {
+                    String prompt = item.body().lines().findFirst().orElse("").strip();
+                    if (!prompt.isEmpty()) {
+                        return prompt.length() > 80 ? prompt.substring(0, 79) + "…" : prompt;
+                    }
+                }
+            }
+            if (!sessionView.summary().displayName().isBlank()) {
+                return sessionView.summary().displayName().strip();
+            }
+        }
+        return "Haifa Coding Agent";
     }
 
     private List<String> lowerRegions(
@@ -389,7 +418,10 @@ final class Tui4jTerminalView {
         if (state.currentRunId().isPresent()) {
             String act = timedActivityStatus(
                     state.status(), activityElapsed, state.activity().label());
-            left = theme.pending("⠋ " + act) + theme.muted(" · " + shortcuts.interrupt() + " interrupt");
+            String interruptHint = state.cancelArmed()
+                    ? theme.warning(" · " + shortcuts.interrupt() + " again to interrupt")
+                    : theme.muted(" · " + shortcuts.interrupt() + " interrupt");
+            left = theme.pending("⠋ " + act) + interruptHint;
             if (!alert.isEmpty()) {
                 left = left + " · " + alert;
             }

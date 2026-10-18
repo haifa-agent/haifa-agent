@@ -30,4 +30,27 @@ class LocalGitBranchResolverTest {
         Files.writeString(metadata.resolve("HEAD"), "ref: refs/heads/feat/worktree\n");
         assertThat(LocalGitBranchResolver.resolve(directory)).contains("feat/worktree");
     }
+
+    @Test
+    void resolvesWorktreeDetailsWithMainProjectAndWorktreeBranch() throws Exception {
+        Path mainRepo = Files.createDirectories(directory.resolve("main-repo"));
+        Path mainGit = Files.createDirectories(mainRepo.resolve(".git"));
+        Files.writeString(mainGit.resolve("HEAD"), "ref: refs/heads/main\n");
+
+        Path worktree = Files.createDirectories(directory.resolve("worktree"));
+        Path wtMetadata = Files.createDirectories(mainGit.resolve("worktrees").resolve("worktree"));
+        Files.writeString(wtMetadata.resolve("commondir"), "../..\n");
+        Files.writeString(wtMetadata.resolve("HEAD"), "ref: refs/heads/feat/worktree-branch\n");
+
+        Files.writeString(worktree.resolve(".git"), "gitdir: " + wtMetadata.toAbsolutePath() + "\n");
+
+        LocalGitBranchResolver.GitWorkspaceDetails details = LocalGitBranchResolver.resolveDetails(worktree);
+        assertThat(details.projectPath())
+                .isEqualTo(mainRepo.toAbsolutePath().normalize().toString());
+        assertThat(details.gitBranch()).isEqualTo("main");
+        assertThat(details.worktreePath())
+                .isEqualTo(worktree.toAbsolutePath().normalize().toString());
+        assertThat(details.worktreeBranch()).isEqualTo("feat/worktree-branch");
+        assertThat(LocalGitBranchResolver.resolve(worktree)).contains("feat/worktree-branch");
+    }
 }

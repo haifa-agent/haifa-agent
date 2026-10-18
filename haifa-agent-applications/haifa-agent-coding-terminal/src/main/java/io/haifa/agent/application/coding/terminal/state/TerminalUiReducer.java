@@ -47,6 +47,8 @@ public final class TerminalUiReducer {
             var footer = new TerminalFooter(
                     state.footer().project(),
                     state.footer().gitBranch(),
+                    state.footer().worktree(),
+                    state.footer().worktreeBranch(),
                     active.isPresent()
                             ? "task: " + view.activeRunTaskSummary().orElse("description unavailable")
                             : "session: " + view.summary().displayName(),
@@ -85,7 +87,16 @@ public final class TerminalUiReducer {
                     0,
                     Optional.empty(),
                     new TerminalFooter(
-                            state.footer().project(), state.footer().gitBranch(), "", "context: —", "", "", "IDLE", ""),
+                            state.footer().project(),
+                            state.footer().gitBranch(),
+                            state.footer().worktree(),
+                            state.footer().worktreeBranch(),
+                            "",
+                            "context: —",
+                            "",
+                            "",
+                            "IDLE",
+                            ""),
                     state.columns(),
                     state.rows(),
                     Optional.empty(),
@@ -168,6 +179,8 @@ public final class TerminalUiReducer {
                     new TerminalFooter(
                             footer.project(),
                             footer.gitBranch(),
+                            footer.worktree(),
+                            footer.worktreeBranch(),
                             footer.session(),
                             context.indicator(),
                             footer.provider(),
@@ -503,6 +516,36 @@ public final class TerminalUiReducer {
         if (action instanceof TerminalUiAction.ThemeChanged theme) {
             return state.withThemeName(theme.themeName());
         }
+        if (action instanceof TerminalUiAction.CancelArmedChanged armed) {
+            String newStatus = armed.armed()
+                    ? "Press esc again to cancel"
+                    : ("Press esc again to cancel".equals(state.status())
+                            ? (state.currentRunId().isPresent() ? "Thinking" : "Idle")
+                            : state.status());
+            return new TerminalUiState(
+                    state.header(),
+                    state.loadedResources(),
+                    state.transcript(),
+                    state.pending(),
+                    newStatus,
+                    state.editorBuffer(),
+                    state.editorCursor(),
+                    state.selector(),
+                    state.footer(),
+                    state.columns(),
+                    state.rows(),
+                    state.session(),
+                    state.currentRunId(),
+                    state.appliedCursor(),
+                    state.seenEventIds(),
+                    state.recoverableError(),
+                    state.activity(),
+                    state.exitRequested(),
+                    state.sidebarVisible(),
+                    state.sidebarExplicitlyToggled(),
+                    state.themeName(),
+                    armed.armed());
+        }
         throw new IllegalArgumentException("Unsupported Terminal UI action");
     }
 
@@ -580,7 +623,10 @@ public final class TerminalUiReducer {
                 seen,
                 executionFailure,
                 projectedActivity,
-                state.exitRequested());
+                state.exitRequested(),
+                state.sidebarVisible(),
+                state.sidebarExplicitlyToggled(),
+                runSettled ? false : state.cancelArmed());
     }
 
     private static Optional<TerminalSelector> selectorAfterSessionLoad(
@@ -870,6 +916,8 @@ public final class TerminalUiReducer {
         return new TerminalFooter(
                 current.project(),
                 current.gitBranch(),
+                current.worktree(),
+                current.worktreeBranch(),
                 current.session(),
                 current.metrics(),
                 current.provider(),
@@ -1294,6 +1342,52 @@ public final class TerminalUiReducer {
             boolean exit,
             boolean sidebarVisible,
             boolean sidebarExplicitlyToggled) {
+        return copy(
+                state,
+                resources,
+                transcript,
+                pending,
+                status,
+                buffer,
+                cursor,
+                selector,
+                footer,
+                columns,
+                rows,
+                session,
+                runId,
+                eventCursor,
+                seen,
+                error,
+                activity,
+                exit,
+                sidebarVisible,
+                sidebarExplicitlyToggled,
+                state.cancelArmed());
+    }
+
+    private static TerminalUiState copy(
+            TerminalUiState state,
+            List<String> resources,
+            List<TranscriptItem> transcript,
+            List<PendingMessage> pending,
+            String status,
+            String buffer,
+            int cursor,
+            Optional<TerminalSelector> selector,
+            TerminalFooter footer,
+            int columns,
+            int rows,
+            Optional<io.haifa.agent.application.project.product.coding.CodingSessionView> session,
+            Optional<io.haifa.agent.core.run.AgentRunId> runId,
+            Optional<io.haifa.agent.runtime.api.RunEventCursor> eventCursor,
+            java.util.Set<String> seen,
+            Optional<String> error,
+            TerminalActivity activity,
+            boolean exit,
+            boolean sidebarVisible,
+            boolean sidebarExplicitlyToggled,
+            boolean cancelArmed) {
         return new TerminalUiState(
                 state.header(),
                 resources,
@@ -1315,6 +1409,7 @@ public final class TerminalUiReducer {
                 exit,
                 sidebarVisible,
                 sidebarExplicitlyToggled,
-                state.themeName());
+                state.themeName(),
+                cancelArmed);
     }
 }

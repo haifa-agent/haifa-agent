@@ -19,8 +19,14 @@ import io.haifa.agent.application.coding.terminal.state.TerminalSelector;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiReducer;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
 import io.haifa.agent.application.coding.terminal.state.TranscriptItem;
+import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
+import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.core.session.AgentSessionStatus;
+import io.haifa.agent.project.domain.ProjectId;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -1337,6 +1343,168 @@ class Tui4jTerminalViewTest {
         for (String line : lines) {
             assertThat(TextWidth.measureCellWidth(line)).isEqualTo(80);
         }
+    }
+
+    @Test
+    void rendersWorktreeAndWorktreeBranchUnderProjectAndBranchInSidebar() {
+        TerminalUiState state = new TerminalUiState(
+                "Haifa Coding Agent",
+                List.of(),
+                List.of(),
+                List.of(),
+                "Idle",
+                "",
+                0,
+                Optional.empty(),
+                new TerminalFooter(
+                        "D:/workspace/haifa-agent",
+                        "dev",
+                        "D:/worktrees/feat-worktree",
+                        "feat-worktree",
+                        "session",
+                        "queue: 0",
+                        "provider",
+                        "model",
+                        "IDLE",
+                        ""),
+                120,
+                30,
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                java.util.Set.of(),
+                Optional.empty(),
+                TerminalActivity.initial(),
+                false,
+                true,
+                true);
+
+        String rendered = view.render(state, transcript(state), editor(80), true, false);
+
+        assertThat(rendered)
+                .contains("📁 D:/workspace/haifa-agent")
+                .contains("🌿 dev")
+                .contains("🌳 D:/worktrees/feat-worktree")
+                .contains("  🌿 feat-worktree");
+    }
+
+    @Test
+    void rendersDynamicSidebarTitleFromActiveRunTaskSummaryAndUserTranscript() {
+        CodingSessionSummary summary = new CodingSessionSummary(
+                new AgentSessionId("s-1"),
+                new ProjectId("p-1"),
+                "Original Session Name",
+                AgentSessionStatus.ACTIVE,
+                Optional.empty(),
+                Optional.empty(),
+                0,
+                Instant.EPOCH,
+                0);
+        CodingSessionView sessionWithTask = new CodingSessionView(
+                summary,
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                "digest",
+                "profile",
+                new io.haifa.agent.application.project.product.coding.CodingModelSelection(
+                        new io.haifa.agent.application.project.product.coding.CodingModelOption(
+                                "profile", "profile", "cfg", "Configured", java.util.Set.of(), 1),
+                        0,
+                        true),
+                Optional.of("Dynamic Active Task"));
+
+        TerminalUiState runningState = new TerminalUiState(
+                "Haifa Coding Agent",
+                List.of(),
+                List.of(),
+                List.of(),
+                "THINKING",
+                "",
+                0,
+                Optional.empty(),
+                TerminalFooter.empty(),
+                120,
+                30,
+                Optional.of(sessionWithTask),
+                Optional.of(new AgentRunId("r-1")),
+                Optional.empty(),
+                java.util.Set.of(),
+                Optional.empty(),
+                TerminalActivity.initial(),
+                false,
+                true,
+                true);
+
+        String runningRendered = view.render(runningState, transcript(runningState), editor(80), true, false);
+        assertThat(runningRendered).contains("Dynamic Active Task");
+
+        CodingSessionView settledSession = new CodingSessionView(
+                summary,
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                "digest",
+                "profile",
+                sessionWithTask.model(),
+                Optional.empty());
+
+        TerminalUiState settledState = new TerminalUiState(
+                "Haifa Coding Agent",
+                List.of(),
+                List.of(
+                        item("u-1", TranscriptItem.Kind.USER, "You", "First user prompt", "SENT", true),
+                        item("u-2", TranscriptItem.Kind.USER, "You", "Second updated user prompt", "SENT", true)),
+                List.of(),
+                "Idle",
+                "",
+                0,
+                Optional.empty(),
+                TerminalFooter.empty(),
+                120,
+                30,
+                Optional.of(settledSession),
+                Optional.empty(),
+                Optional.empty(),
+                java.util.Set.of(),
+                Optional.empty(),
+                TerminalActivity.initial(),
+                false,
+                true,
+                true);
+
+        String settledRendered = view.render(settledState, transcript(settledState), editor(80), true, false);
+        assertThat(settledRendered).contains("Second updated user prompt");
+    }
+
+    @Test
+    void rendersArmedInterruptHintWhenCancelArmed() {
+        TerminalUiState armedState = new TerminalUiState(
+                "Haifa Coding Agent",
+                List.of(),
+                List.of(),
+                List.of(),
+                "Press esc again to cancel",
+                "",
+                0,
+                Optional.empty(),
+                TerminalFooter.empty(),
+                80,
+                24,
+                Optional.empty(),
+                Optional.of(new AgentRunId("r-1")),
+                Optional.empty(),
+                java.util.Set.of(),
+                Optional.empty(),
+                TerminalActivity.initial(),
+                false,
+                false,
+                false,
+                "dark",
+                true);
+
+        String rendered = view.render(armedState, transcript(armedState), editor(80), true, false);
+        assertThat(rendered).contains("again to interrupt");
     }
 
     private TranscriptItem item(

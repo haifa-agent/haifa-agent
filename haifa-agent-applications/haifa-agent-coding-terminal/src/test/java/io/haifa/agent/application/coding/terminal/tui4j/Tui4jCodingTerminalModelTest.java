@@ -222,9 +222,22 @@ class Tui4jCodingTerminalModelTest {
     void keepsShortBracketedPasteVerbatim() {
         var fixture = fixture();
 
+        fixture.model.update(new PasteMessage("single line snippet"));
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("single line snippet");
+    }
+
+    @Test
+    void summarizesTwoLineBracketedPasteAndDeletesItInOneStroke() {
+        var fixture = fixture();
+
         fixture.model.update(new PasteMessage("one\ntwo"));
 
-        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("one\ntwo");
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~2 lines]");
+
+        fixture.model.update(key(KeyType.keyBS));
+
+        assertThat(fixture.controller.state().editorBuffer()).isEmpty();
     }
 
     @Test
@@ -638,25 +651,25 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
-    void editsEmojiCombiningTextAndMultilinePasteOnlyAtGraphemeBoundaries() {
+    void editsEmojiCombiningTextAtGraphemeBoundaries() {
         var fixture = fixture();
         String family = "👨‍👩‍👧‍👦";
 
-        fixture.model.update(new PasteMessage("A" + family + "e\u0301\r\n中x\u001B"));
-        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("A" + family + "e\u0301\n中x");
+        fixture.model.update(new PasteMessage("A" + family + "e\u0301-中x\u001B"));
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("A" + family + "e\u0301-中x");
         int afterCombining = 1 + family.length() + "e\u0301".length();
         fixture.controller.accept(new TerminalInput(
                 TerminalInput.Kind.EDITOR_CHANGED, fixture.controller.state().editorBuffer(), afterCombining));
         fixture.model.update(new WindowSizeMessage(80, 24));
         fixture.model.update(key(KeyType.keyBS));
 
-        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("A" + family + "\n中x");
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("A" + family + "-中x");
         assertThat(fixture.controller.state().editorCursor()).isEqualTo(1 + family.length());
 
         fixture.model.update(key(KeyType.KeyLeft));
         fixture.model.update(key(KeyType.KeyDelete));
 
-        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("A\n中x");
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("A-中x");
         assertThat(fixture.controller.state().editorCursor()).isEqualTo(1);
     }
 

@@ -85,7 +85,7 @@ class CodingTerminalExecutionTest {
     }
 
     @Test
-    void escapeCancelsAnActiveRunEvenWhenASelectorIsOpen() {
+    void escapeClosesSelectorFirstAndDoubleEscapeCancelsTheActiveRun() {
         FakeClient client = new FakeClient(activeView());
         TerminalUiReducer reducer = new TerminalUiReducer();
         TerminalUiState activeState = reducer.reduce(
@@ -101,10 +101,19 @@ class CodingTerminalExecutionTest {
                 PROJECT_ID, client, new TerminalEventPump(32), reducer, activeState, Runnable::run);
 
         controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, "draft"));
+        assertThat(controller.state().selector()).isEmpty();
+        assertThat(client.cancelledSessions).isEmpty();
+        assertThat(controller.state().cancelArmed()).isFalse();
 
+        controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, "draft"));
+        assertThat(controller.state().cancelArmed()).isTrue();
+        assertThat(controller.state().status()).isEqualTo("Press esc again to cancel");
+        assertThat(client.cancelledSessions).isEmpty();
+
+        controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, "draft"));
         assertThat(client.cancelledSessions).containsExactly(SESSION_ID);
         assertThat(controller.state().status()).isEqualTo("Cancelling");
-        assertThat(controller.state().selector()).isEmpty();
+        assertThat(controller.state().cancelArmed()).isFalse();
         assertThat(controller.state().editorBuffer()).isEqualTo("draft");
     }
 
