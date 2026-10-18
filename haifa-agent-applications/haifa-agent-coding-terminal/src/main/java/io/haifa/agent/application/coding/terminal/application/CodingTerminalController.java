@@ -43,6 +43,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
@@ -158,6 +159,8 @@ public final class CodingTerminalController implements AutoCloseable {
     private InteractionHydrationRequest interactionHydrationInFlight;
     private InteractionView activeInteraction;
     private long activeCompletionRequestId;
+    private static final long CANCEL_ARMED_TIMEOUT_MILLIS = 5_000L;
+    private long cancelArmedAtMillis = 0L;
 
     public CodingTerminalController(
             ProjectId projectId,
@@ -544,6 +547,14 @@ public final class CodingTerminalController implements AutoCloseable {
             scheduleReconcile();
         }
         schedulePendingCursorAcknowledgement();
+        if (state.cancelArmed()) {
+            if (!hasActiveRun()
+                    || (cancelArmedAtMillis > 0
+                            && (System.currentTimeMillis() - cancelArmedAtMillis) >= CANCEL_ARMED_TIMEOUT_MILLIS)) {
+                cancelArmedAtMillis = 0L;
+                apply(new TerminalUiAction.CancelArmedChanged(false));
+            }
+        }
         drainEffectCompletions();
     }
 
@@ -775,14 +786,32 @@ public final class CodingTerminalController implements AutoCloseable {
             return;
         }
         if (input.kind() == TerminalInput.Kind.CANCEL_OR_CLOSE) {
-            if (state.currentRunId().isPresent() && cancelCurrentRunIfPresent()) {
-                return;
-            }
             if (state.selector().isPresent()) {
                 discardPendingShell();
                 apply(new TerminalUiAction.SelectorClosed());
                 completionContext = null;
                 restorePreservedDraft();
+                return;
+            }
+            if (hasActiveRun()) {
+                long now = System.currentTimeMillis();
+                if (state.cancelArmed() && (now - cancelArmedAtMillis) <= CANCEL_ARMED_TIMEOUT_MILLIS) {
+                    cancelArmedAtMillis = 0L;
+                    apply(new TerminalUiAction.CancelArmedChanged(false));
+                    cancelCurrentRunIfPresent();
+                } else {
+                    cancelArmedAtMillis = now;
+                    apply(new TerminalUiAction.CancelArmedChanged(true));
+                    CompletableFuture.delayedExecutor(CANCEL_ARMED_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
+                            .execute(() -> enqueueCompletion(controlCompletions, () -> {
+                                if (state.cancelArmed()
+                                        && (System.currentTimeMillis() - cancelArmedAtMillis)
+                                                >= CANCEL_ARMED_TIMEOUT_MILLIS) {
+                                    cancelArmedAtMillis = 0L;
+                                    apply(new TerminalUiAction.CancelArmedChanged(false));
+                                }
+                            }));
+                }
                 return;
             }
             if (cancelCurrentRunIfPresent()) {
@@ -1210,6 +1239,13 @@ public final class CodingTerminalController implements AutoCloseable {
             return;
         }
         command(command, text);
+    }
+
+    private boolean hasActiveRun() {
+        return state.currentRunId().isPresent()
+                || state.session()
+                        .flatMap(io.haifa.agent.application.project.product.coding.CodingSessionView::activeRun)
+                        .isPresent();
     }
 
     private boolean cancelCurrentRunIfPresent() {

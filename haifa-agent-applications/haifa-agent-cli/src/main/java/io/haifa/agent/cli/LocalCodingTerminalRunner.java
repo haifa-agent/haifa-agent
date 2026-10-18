@@ -40,14 +40,17 @@ final class LocalCodingTerminalRunner implements CliTerminalRunner {
         try (PrintStream executionSink = new PrintStream(OutputStream.nullOutputStream());
                 StandaloneCodingAgent agent =
                         agentFactory.create(workspace, configuration, executionSink, traceObserver)) {
+            LocalGitBranchResolver.GitWorkspaceDetails gitDetails = LocalGitBranchResolver.resolveDetails(workspace);
             new CodingTerminalApplication(
                             agent.projectId(),
                             agent.client(),
                             startup,
                             terminalIo,
                             new TerminalWorkspaceContext(
-                                    workspace.toAbsolutePath().normalize().toString(),
-                                    LocalGitBranchResolver.resolve(workspace).orElse("")),
+                                    gitDetails.projectPath(),
+                                    gitDetails.gitBranch(),
+                                    gitDetails.worktreePath(),
+                                    gitDetails.worktreeBranch()),
                             agent.authentication(),
                             agent.toolOutputPreviewPublisher())
                     .run();

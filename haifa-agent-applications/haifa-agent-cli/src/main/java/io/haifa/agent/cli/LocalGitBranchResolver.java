@@ -12,14 +12,73 @@ final class LocalGitBranchResolver {
 
     private LocalGitBranchResolver() {}
 
-    static Optional<String> resolve(Path workspace) {
-        Path metadata = workspace.toAbsolutePath().normalize().resolve(".git");
+    record GitWorkspaceDetails(
+            String projectPath,
+            String gitBranch,
+            String worktreePath,
+            String worktreeBranch) {
+        GitWorkspaceDetails {
+            projectPath = projectPath == null ? "" : projectPath.strip();
+            gitBranch = gitBranch == null ? "" : gitBranch.strip();
+            worktreePath = worktreePath == null ? "" : worktreePath.strip();
+            worktreeBranch = worktreeBranch == null ? "" : worktreeBranch.strip();
+        }
+
+        static GitWorkspaceDetails standard(String projectPath, String gitBranch) {
+            return new GitWorkspaceDetails(projectPath, gitBranch, "", "");
+        }
+    }
+
+    static GitWorkspaceDetails resolveDetails(Path workspace) {
+        Path absWorkspace = workspace.toAbsolutePath().normalize();
+        Path metadata = absWorkspace.resolve(".git");
         try {
-            Path gitDirectory =
-                    Files.isDirectory(metadata, LinkOption.NOFOLLOW_LINKS) ? metadata : linkedGitDirectory(metadata);
-            if (gitDirectory == null || !Files.isDirectory(gitDirectory, LinkOption.NOFOLLOW_LINKS)) {
-                return Optional.empty();
+            if (Files.isDirectory(metadata, LinkOption.NOFOLLOW_LINKS)) {
+                String branch = readBranch(metadata).orElse("");
+                return GitWorkspaceDetails.standard(absWorkspace.toString(), branch);
             }
+            Path linkedDirectory = linkedGitDirectory(metadata);
+            if (linkedDirectory == null || !Files.isDirectory(linkedDirectory, LinkOption.NOFOLLOW_LINKS)) {
+                return GitWorkspaceDetails.standard(absWorkspace.toString(), "");
+            }
+            Path commondirFile = linkedDirectory.resolve("commondir");
+            if (Files.isRegularFile(commondirFile, LinkOption.NOFOLLOW_LINKS)) {
+                String commondirStr = boundedRead(commondirFile).strip();
+                if (!commondirStr.isEmpty()) {
+                    Path commonTarget = Path.of(commondirStr);
+                    Path commonGitDir = (commonTarget.isAbsolute()
+                                    ? commonTarget
+                                    : linkedDirectory.resolve(commonTarget))
+                            .normalize();
+                    if (Files.isDirectory(commonGitDir, LinkOption.NOFOLLOW_LINKS)) {
+                        Path mainProject = commonGitDir.getParent();
+                        String mainPath = mainProject != null
+                                ? mainProject.toAbsolutePath().normalize().toString()
+                                : absWorkspace.toString();
+                        String mainBranch = readBranch(commonGitDir).orElse("");
+                        String worktreeBranch = readBranch(linkedDirectory).orElse("");
+                        return new GitWorkspaceDetails(mainPath, mainBranch, absWorkspace.toString(), worktreeBranch);
+                    }
+                }
+            }
+            String branch = readBranch(linkedDirectory).orElse("");
+            return GitWorkspaceDetails.standard(absWorkspace.toString(), branch);
+        } catch (IOException | IllegalArgumentException ignored) {
+            return GitWorkspaceDetails.standard(absWorkspace.toString(), "");
+        }
+    }
+
+    static Optional<String> resolve(Path workspace) {
+        GitWorkspaceDetails details = resolveDetails(workspace);
+        String branch = !details.worktreeBranch().isBlank() ? details.worktreeBranch() : details.gitBranch();
+        return branch.isBlank() ? Optional.empty() : Optional.of(branch);
+    }
+
+    private static Optional<String> readBranch(Path gitDirectory) {
+        if (gitDirectory == null || !Files.isDirectory(gitDirectory, LinkOption.NOFOLLOW_LINKS)) {
+            return Optional.empty();
+        }
+        try {
             String head = boundedRead(gitDirectory.resolve("HEAD")).strip();
             String prefix = "ref: refs/heads/";
             if (!head.startsWith(prefix)) return Optional.empty();

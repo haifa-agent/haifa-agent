@@ -36,7 +36,7 @@ import java.util.function.LongSupplier;
 final class Tui4jCodingTerminalModel implements Model {
     private static final Duration EVENT_POLL_INTERVAL = Duration.ofMillis(50);
     private static final Duration UNBRACKETED_PASTE_GUARD_INTERVAL = Duration.ofMillis(100);
-    private static final int PASTE_SUMMARY_MIN_LINES = 3;
+    private static final int PASTE_SUMMARY_MIN_LINES = 2;
     private static final int PASTE_SUMMARY_MAX_CHARACTERS = 150;
     static final int WINDOW_SIZE_POLL_TICKS = 10;
     private static final int MAX_SECRET_CHARACTERS = 65_536;
@@ -414,14 +414,18 @@ final class Tui4jCodingTerminalModel implements Model {
             moveCursor(TerminalTextCursor.lineEnd(state.editorBuffer(), state.editorCursor()));
             return Command.none();
         }
-        if (key.type() == KeyType.keyBS || key.type() == KeyType.keyDEL) {
+        if (isBackspaceKey(key)) {
             String buffer = state.editorBuffer();
             int cursor = state.editorCursor();
             String token = pastedTokenBefore(buffer, cursor);
             if (token != null) {
                 int start = buffer.indexOf(token);
+                int end = start + token.length();
+                if (end < buffer.length() && buffer.charAt(end) == ' ') {
+                    end++;
+                }
                 pastedContent.remove(token);
-                replaceEditor(buffer.substring(0, start) + buffer.substring(start + token.length()), start);
+                replaceEditor(buffer.substring(0, start) + buffer.substring(end), start);
                 return Command.none();
             }
             int previous = TerminalTextCursor.previous(buffer, cursor);
@@ -434,8 +438,12 @@ final class Tui4jCodingTerminalModel implements Model {
             String token = pastedTokenAfter(buffer, cursor);
             if (token != null) {
                 int start = buffer.indexOf(token);
+                int end = start + token.length();
+                if (end < buffer.length() && buffer.charAt(end) == ' ') {
+                    end++;
+                }
                 pastedContent.remove(token);
-                replaceEditor(buffer.substring(0, start) + buffer.substring(start + token.length()), start);
+                replaceEditor(buffer.substring(0, start) + buffer.substring(end), start);
                 return Command.none();
             }
             replaceEditor(TerminalTextCursor.delete(buffer, cursor), cursor);
@@ -611,6 +619,20 @@ final class Tui4jCodingTerminalModel implements Model {
         String after = editor.value();
         int afterCursor = cursorAfter(message, before, beforeCursor, after);
         if (lostPastedToken(before, after)) {
+            if (message instanceof KeyPressMessage key && isBackspaceKey(key)) {
+                for (String token : List.copyOf(pastedContent.keySet())) {
+                    if (before.contains(token) && !after.contains(token)) {
+                        int start = before.indexOf(token);
+                        int end = start + token.length();
+                        if (end < before.length() && before.charAt(end) == ' ') {
+                            end++;
+                        }
+                        pastedContent.remove(token);
+                        replaceEditor(before.substring(0, start) + before.substring(end), start);
+                        return Command.none();
+                    }
+                }
+            }
             rejectProtectedPaste(before, beforeCursor);
             return Command.none();
         }
@@ -777,11 +799,29 @@ final class Tui4jCodingTerminalModel implements Model {
                         && preserved.map(p -> !p.contains(token)).orElse(true));
     }
 
+    private static boolean isBackspaceKey(KeyPressMessage key) {
+        if (key.type() == KeyType.keyBS || key.type() == KeyType.keyDEL) {
+            return true;
+        }
+        if ("backspace".equalsIgnoreCase(key.key())) {
+            return true;
+        }
+        if (key.type() == KeyType.KeyRunes) {
+            char[] runes = key.runes();
+            return runes != null && runes.length == 1 && (runes[0] == '\b' || runes[0] == 0x7f);
+        }
+        return false;
+    }
+
     private String pastedTokenBefore(String buffer, int cursor) {
         for (String token : pastedContent.keySet()) {
             int start = buffer.indexOf(token);
-            if (start >= 0 && start < cursor && cursor <= start + token.length()) {
-                return token;
+            if (start >= 0) {
+                int end = start + token.length();
+                if ((start < cursor && cursor <= end)
+                        || (cursor == end + 1 && end < buffer.length() && buffer.charAt(end) == ' ')) {
+                    return token;
+                }
             }
         }
         return null;
@@ -790,8 +830,11 @@ final class Tui4jCodingTerminalModel implements Model {
     private String pastedTokenAfter(String buffer, int cursor) {
         for (String token : pastedContent.keySet()) {
             int start = buffer.indexOf(token);
-            if (start >= 0 && start <= cursor && cursor < start + token.length()) {
-                return token;
+            if (start >= 0) {
+                int end = start + token.length();
+                if (start <= cursor && cursor < end) {
+                    return token;
+                }
             }
         }
         return null;
