@@ -26,9 +26,9 @@ public record Tui4jTerminalIo(
     private static final String SAVE_WINDOW_TITLE = "\u001B[22;2t";
     private static final String RESTORE_WINDOW_TITLE = "\u001B[23;2t";
     static final String DISABLE_ALTERNATE_SCREEN_SCROLL = "\u001B[?1007l";
-    private static final byte[] RESET_MOUSE_REPORTING =
-            ("\u001B[?1000l\u001B[?1002l\u001B[?1003l\u001B[?1006l" + DISABLE_ALTERNATE_SCREEN_SCROLL)
-                    .getBytes(StandardCharsets.US_ASCII);
+    private static final byte[] RESET_MOUSE_REPORTING = ("\u001B[?1000l\u001B[?1002l\u001B[?1003l\u001B[?1006l"
+                    + DISABLE_ALTERNATE_SCREEN_SCROLL)
+            .getBytes(StandardCharsets.US_ASCII);
     private static final Set<String> SAFE_TERMINAL_ENVIRONMENT = Set.of(
             "COLORTERM",
             "NO_COLOR",

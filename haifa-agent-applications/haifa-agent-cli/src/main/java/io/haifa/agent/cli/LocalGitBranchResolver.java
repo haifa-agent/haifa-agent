@@ -12,11 +12,7 @@ final class LocalGitBranchResolver {
 
     private LocalGitBranchResolver() {}
 
-    record GitWorkspaceDetails(
-            String projectPath,
-            String gitBranch,
-            String worktreePath,
-            String worktreeBranch) {
+    record GitWorkspaceDetails(String projectPath, String gitBranch, String worktreePath, String worktreeBranch) {
         GitWorkspaceDetails {
             projectPath = projectPath == null ? "" : projectPath.strip();
             gitBranch = gitBranch == null ? "" : gitBranch.strip();

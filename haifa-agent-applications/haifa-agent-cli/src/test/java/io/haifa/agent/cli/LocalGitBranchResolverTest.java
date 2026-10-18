@@ -45,9 +45,11 @@ class LocalGitBranchResolverTest {
         Files.writeString(worktree.resolve(".git"), "gitdir: " + wtMetadata.toAbsolutePath() + "\n");
 
         LocalGitBranchResolver.GitWorkspaceDetails details = LocalGitBranchResolver.resolveDetails(worktree);
-        assertThat(details.projectPath()).isEqualTo(mainRepo.toAbsolutePath().normalize().toString());
+        assertThat(details.projectPath())
+                .isEqualTo(mainRepo.toAbsolutePath().normalize().toString());
         assertThat(details.gitBranch()).isEqualTo("main");
-        assertThat(details.worktreePath()).isEqualTo(worktree.toAbsolutePath().normalize().toString());
+        assertThat(details.worktreePath())
+                .isEqualTo(worktree.toAbsolutePath().normalize().toString());
         assertThat(details.worktreeBranch()).isEqualTo("feat/worktree-branch");
         assertThat(LocalGitBranchResolver.resolve(worktree)).contains("feat/worktree-branch");
     }
