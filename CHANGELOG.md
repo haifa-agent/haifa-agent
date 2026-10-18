@@ -2,6 +2,10 @@
 
 ## Unreleased - 0.1.3-SNAPSHOT
 
+- `McpToolPlatforms.connect(specs, tenant, principal, baseCredentials)` composes the caller's credential broker behind the
+  MCP header secrets, so one Agent keeps a single credential boundary: `mcp:*` ids stay authoritative and every other id,
+  such as a Java Tool's declared `credentialRequirements`, resolves from the caller's broker instead of failing closed
+  whenever MCP servers are configured. Values resolved through the fallback join the same scoped redaction.
 - `JavaToolSpec.Builder.credentialRequirements(CredentialRequirement...)` declares the credentials a Java Tool needs.
   The SDK resolves them through the configured Credential broker before dispatch, injects the values into
   `JavaToolContext#credentials()` and registers them for scoped redaction, so a provider that reflects an
