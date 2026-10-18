@@ -43,11 +43,16 @@ class Tui4jTerminalIoTest {
     void productionProgramLeavesMouseReportingDisabledForNativeTextSelection() throws Exception {
         String terminalOutput = runSpikeProgramToQuit();
 
-        String reset = "\u001B[?1000l\u001B[?1002l\u001B[?1003l\u001B[?1006l";
+        String reset = "\u001B[?1000l\u001B[?1002l\u001B[?1003l\u001B[?1006l\u001B[?1007l";
         assertThat(terminalOutput)
                 .startsWith(reset)
                 .endsWith(reset)
-                .doesNotContain("\u001B[?1000h", "\u001B[?1002h", "\u001B[?1003h", "\u001B[?1006h");
+                .doesNotContain(
+                        "\u001B[?1000h",
+                        "\u001B[?1002h",
+                        "\u001B[?1003h",
+                        "\u001B[?1006h",
+                        "\u001B[?1007h");
         assertThat(terminalOutput.split(java.util.regex.Pattern.quote(reset), -1))
                 .hasSizeGreaterThanOrEqualTo(3);
     }

@@ -118,7 +118,10 @@ final class Tui4jCodingTerminalModel implements Model {
         // relies on the POSIX WINCH signal, which does not exist on Windows. On Windows the 50ms
         // poll carries a bounded size re-check; Tui4jTerminalIo drops unchanged sizes before the
         // renderer, so an unchanged poll does not reset the renderer cache and repaint every row.
-        return Command.batch(Command.checkWindowSize(), nextTick());
+        return Command.batch(
+                Command.printf(Tui4jTerminalIo.DISABLE_ALTERNATE_SCREEN_SCROLL),
+                Command.checkWindowSize(),
+                nextTick());
     }
 
     @Override
