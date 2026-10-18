@@ -2,6 +2,7 @@ package io.haifa.agent.starter;
 
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
+import io.haifa.agent.credential.api.CredentialBroker;
 import io.haifa.agent.mcp.client.McpClientFactory;
 import io.haifa.agent.mcp.client.SdkMcpClientFactory;
 import io.haifa.agent.sdk.api.HaifaAgentBuilder;
@@ -57,7 +58,28 @@ public final class McpToolPlatforms {
      * @return the connected MCP contribution; never {@code null}
      */
     public static McpToolPlatform connect(List<McpServerSpec> specs, TenantRef tenant, PrincipalRef principal) {
-        return connect(specs, tenant, principal, System::getenv, new SdkMcpClientFactory());
+        return connect(specs, tenant, principal, System::getenv, new SdkMcpClientFactory(), null);
+    }
+
+    /**
+     * Connects the declared MCP servers and keeps the caller's own credential broker as the fallback for
+     * every credential id the MCP servers do not declare.
+     *
+     * <p>{@link HaifaAgentBuilder} accepts a single credential contribution, so a Java Tool that declares
+     * its credentials (for example {@code DEEPSEEK_TOOL_API_KEY}) and MCP header credentials must share one
+     * broker. Without this overload the platform replaces the caller's broker with its own {@code mcp:*}
+     * only boundary and such a Tool fails closed before it can run.
+     *
+     * @param specs declared MCP servers in declaration order
+     * @param tenant trusted tenant used for discovery
+     * @param principal trusted principal used for discovery
+     * @param baseCredentials the caller's broker for ids the MCP servers do not declare; {@code null} keeps
+     *     the MCP-only boundary
+     * @return the connected MCP contribution; never {@code null}
+     */
+    public static McpToolPlatform connect(
+            List<McpServerSpec> specs, TenantRef tenant, PrincipalRef principal, CredentialBroker baseCredentials) {
+        return connect(specs, tenant, principal, System::getenv, new SdkMcpClientFactory(), baseCredentials);
     }
 
     /**
@@ -70,13 +92,24 @@ public final class McpToolPlatforms {
             PrincipalRef principal,
             Function<String, String> environment,
             McpClientFactory clientFactory) {
+        return connect(specs, tenant, principal, environment, clientFactory, null);
+    }
+
+    /** Internal entry that also carries the caller's fallback credential broker. */
+    static McpToolPlatform connect(
+            List<McpServerSpec> specs,
+            TenantRef tenant,
+            PrincipalRef principal,
+            Function<String, String> environment,
+            McpClientFactory clientFactory,
+            CredentialBroker baseCredentials) {
         List<McpServerSpec> declared = List.copyOf(Objects.requireNonNull(specs, "specs must not be null"));
         Objects.requireNonNull(tenant, "tenant must not be null");
         Objects.requireNonNull(principal, "principal must not be null");
         Objects.requireNonNull(environment, "environment must not be null");
         Objects.requireNonNull(clientFactory, "clientFactory must not be null");
         if (declared.isEmpty()) return NoOpMcpToolPlatform.INSTANCE;
-        return NativeMcpToolPlatform.connect(declared, tenant, principal, environment, clientFactory);
+        return NativeMcpToolPlatform.connect(declared, tenant, principal, environment, clientFactory, baseCredentials);
     }
 
     /**
