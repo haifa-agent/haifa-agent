@@ -97,6 +97,26 @@ final class NativeMcpToolPlatform implements McpToolPlatforms.McpToolPlatform {
             PrincipalRef principal,
             Function<String, String> environment,
             McpClientFactory clientFactory) {
+        return connect(specs, tenant, principal, environment, clientFactory, null);
+    }
+
+    /**
+     * Connects every declared MCP server and composes the caller's credential broker as a fallback.
+     *
+     * <p>Ids the MCP specs declare resolve from the MCP servers first. Every other id resolves from
+     * {@code baseCredentials}, so one Agent keeps a single credential boundary and one redaction scope
+     * instead of replacing the caller's broker; fallback values join the same scoped redaction as MCP
+     * secrets. A fallback broker that is blank for an id behaves as if it were absent.
+     *
+     * @param baseCredentials the caller's broker for ids the MCP servers do not declare, or {@code null}
+     */
+    static NativeMcpToolPlatform connect(
+            List<McpServerSpec> specs,
+            TenantRef tenant,
+            PrincipalRef principal,
+            Function<String, String> environment,
+            McpClientFactory clientFactory,
+            CredentialBroker baseCredentials) {
         List<McpServerSpec> declared = List.copyOf(Objects.requireNonNull(specs, "specs must not be null"));
         Objects.requireNonNull(tenant, "tenant must not be null");
         Objects.requireNonNull(principal, "principal must not be null");
@@ -131,30 +151,37 @@ final class NativeMcpToolPlatform implements McpToolPlatforms.McpToolPlatform {
         Map<String, AutoCloseable> redactionScopes = new ConcurrentHashMap<>();
         Map<String, String> activeSecretValues = new ConcurrentHashMap<>();
         DefaultSecretRedactor redactor = new DefaultSecretRedactor();
+        // Fallback values join the same scoped redaction as the MCP secrets below, so a single broker
+        // still redacts every credential the Agent can observe.
+        java.util.function.BiFunction<String, String, String> registerScoped = (secretId, value) -> {
+            if (!value.equals(activeSecretValues.get(secretId))) {
+                redactionScopes.compute(secretId, (k, oldScope) -> {
+                    if (oldScope != null) {
+                        try {
+                            oldScope.close();
+                        } catch (Exception ignored) {
+                        }
+                    }
+                    return redactor.registerScoped(value);
+                });
+                activeSecretValues.put(secretId, value);
+            }
+            return value;
+        };
         CredentialBroker broker = new DefaultCredentialBroker(
                 id -> {
                     Supplier<String> supplier = secretSuppliers.get(id);
-                    if (supplier == null) {
+                    String secret = supplier == null ? null : supplier.get();
+                    if (secret != null && !secret.isBlank()) {
+                        return Optional.of(registerScoped.apply(id, secret));
+                    }
+                    if (baseCredentials == null) {
                         return Optional.empty();
                     }
-                    String secret = supplier.get();
-                    if (secret != null && !secret.isBlank()) {
-                        String current = activeSecretValues.get(id);
-                        if (!secret.equals(current)) {
-                            redactionScopes.compute(id, (k, oldScope) -> {
-                                if (oldScope != null) {
-                                    try {
-                                        oldScope.close();
-                                    } catch (Exception ignored) {
-                                    }
-                                }
-                                return redactor.registerScoped(secret);
-                            });
-                            activeSecretValues.put(id, secret);
-                        }
-                        return Optional.of(secret);
-                    }
-                    return Optional.empty();
+                    return baseCredentials
+                            .getSecret(id)
+                            .filter(value -> !value.isBlank())
+                            .map(value -> registerScoped.apply(id, value));
                 },
                 redactor);
         var connections = new McpConnectionManager(definitions, clientFactory);

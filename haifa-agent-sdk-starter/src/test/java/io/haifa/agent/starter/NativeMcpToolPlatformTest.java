@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
+import io.haifa.agent.credential.api.CredentialBroker;
+import io.haifa.agent.credential.core.DefaultCredentialBroker;
 import io.haifa.agent.sdk.api.HaifaAgentException;
 import io.haifa.agent.sdk.contribution.ToolRegistration;
 import io.haifa.agent.tool.api.ToolApprovalRequirement;
@@ -273,6 +275,43 @@ class NativeMcpToolPlatformTest {
 
     private static NativeMcpToolPlatform connect(FakeMcpServer mcp, McpServerSpec spec) {
         return NativeMcpToolPlatform.connect(List.of(spec), TENANT, PRINCIPAL, environment(), mcp);
+    }
+
+    @Test
+    void fallsBackToTheCallerBrokerForToolCredentials() {
+        var mcp = new FakeMcpServer().serving("enterprise-search", "search_jobs");
+        CredentialBroker toolCredentials = new DefaultCredentialBroker(Map.of("DEEPSEEK_TOOL_API_KEY", "tool-key-123"));
+
+        var platform = NativeMcpToolPlatform.connect(
+                List.of(jobs().bearerToken(() -> "partner-token")),
+                TENANT,
+                PRINCIPAL,
+                environment(),
+                mcp,
+                toolCredentials);
+
+        assertThat(platform.credentials().requireSecret("mcp:enterprise-search:authorization"))
+                .isEqualTo("partner-token");
+        assertThat(platform.credentials().requireSecret("DEEPSEEK_TOOL_API_KEY"))
+                .isEqualTo("tool-key-123");
+        assertThat(platform.credentials().redactor().redact("raw tool-key-123")).isEqualTo("raw [REDACTED]");
+        platform.close();
+    }
+
+    @Test
+    void declaredMcpSecretWinsOverTheFallbackBroker() {
+        var mcp = new FakeMcpServer().serving("enterprise-search", "search_jobs");
+        CredentialBroker fallback = new DefaultCredentialBroker(Map.of(
+                "mcp:enterprise-search:authorization", "fallback-token",
+                "OTHER_TOOL_KEY", "other-value"));
+
+        var platform = NativeMcpToolPlatform.connect(
+                List.of(jobs().bearerToken(() -> "partner-token")), TENANT, PRINCIPAL, environment(), mcp, fallback);
+
+        assertThat(platform.credentials().requireSecret("mcp:enterprise-search:authorization"))
+                .isEqualTo("partner-token");
+        assertThat(platform.credentials().requireSecret("OTHER_TOOL_KEY")).isEqualTo("other-value");
+        platform.close();
     }
 
     private static Function<String, String> environment() {
