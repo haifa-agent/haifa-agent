@@ -743,6 +743,26 @@ class OpenAiResponsesModelTest {
     }
 
     @Test
+    void rawProviderErrorDiagnosticsStayOffUntilExplicitlyOptedIn() {
+        response.set(Response.json(400, "{\"error\":{\"message\":\"reasoning item must precede content\"}}"));
+
+        assertThatThrownBy(() -> model().invoke(simpleRequest(standardSnapshot(true))))
+                .isInstanceOf(ModelInvocationException.class)
+                .satisfies(error -> assertThat(error.getMessage())
+                        .doesNotContain("providerBody=", "reasoning item must precede content"));
+
+        System.setProperty("haifa.model.rawErrorBody", "true");
+        try {
+            assertThatThrownBy(() -> model().invoke(simpleRequest(standardSnapshot(true))))
+                    .isInstanceOf(ModelInvocationException.class)
+                    .satisfies(error -> assertThat(error.getMessage())
+                            .contains("providerBody=", "reasoning item must precede content", "inputItems="));
+        } finally {
+            System.clearProperty("haifa.model.rawErrorBody");
+        }
+    }
+
+    @Test
     void rejectsOversizedSynchronousResponseAsMalformed() {
         response.set(Response.json(200, "{\"padding\":\"" + "x".repeat(256) + "\"}"));
 
