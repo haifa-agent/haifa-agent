@@ -968,14 +968,18 @@ try {
     await sleep(1_000);
     captureScreen("full-final-stable");
     const finalFrame = screen.text();
-    observations.finalFrameHeaderVisible = finalFrame.includes("HAIFA CODING AGENT");
-    observations.finalFrameFooterVisible = finalFrame.includes("Footer  Enter sends");
-    const finalFooterLines = finalFrame
+    // The two-column UI renders the app identity in the sidebar and the status line as
+    // "<status> ... queue: N ..."; the retired "HAIFA CODING AGENT"/"Footer  Enter sends"
+    // header and "sandbox: frozen profile" footer no longer exist.
+    observations.finalFrameHeaderVisible = finalFrame.includes("Haifa Agent v");
+    const finalFooterLine = finalFrame
       .split("\n")
-      .filter((line) => line.includes("sandbox: frozen profile"));
+      .find((line) => line.includes("queue: 0 · [f2] models"));
+    observations.finalFrameFooterVisible = finalFooterLine !== undefined;
     observations.finalFrameLifecycleConsistent =
-      finalFooterLines.some((line) => line.includes("COMPLETED")) &&
-      finalFooterLines.every((line) => !line.includes("RUNNING"));
+      finalFooterLine !== undefined &&
+      finalFooterLine.includes("COMPLETED") &&
+      !finalFrame.includes("RUNNING");
   }
   }
   await send("/quit\r", "quit");

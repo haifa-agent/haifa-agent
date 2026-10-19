@@ -11,9 +11,10 @@ import org.junit.jupiter.api.Test;
 
 class CliCodingShellServiceTest {
     @Test
-    void treatsTheTypedCommandAsTheAskDecisionApprovalButStillHonorsDeny() {
+    void requiresInteractiveApprovalForAskDecisionsAndStillHonorsDeny() {
         assertThat(CliCodingShellService.planState(PolicyEffect.ALLOW)).isEqualTo(CodingShellPlan.State.READY);
-        assertThat(CliCodingShellService.planState(PolicyEffect.ASK)).isEqualTo(CodingShellPlan.State.READY);
+        assertThat(CliCodingShellService.planState(PolicyEffect.ASK))
+                .isEqualTo(CodingShellPlan.State.APPROVAL_REQUIRED);
         assertThat(CliCodingShellService.planState(PolicyEffect.DENY)).isEqualTo(CodingShellPlan.State.DENIED);
     }
 
