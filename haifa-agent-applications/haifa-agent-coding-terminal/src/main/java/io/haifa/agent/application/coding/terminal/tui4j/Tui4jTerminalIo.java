@@ -31,6 +31,7 @@ public record Tui4jTerminalIo(
             .getBytes(StandardCharsets.US_ASCII);
     private static final Set<String> SAFE_TERMINAL_ENVIRONMENT = Set.of(
             "COLORTERM",
+            "HAIFA_TERMINAL_MOUSE",
             "NO_COLOR",
             "TERM",
             "TERM_PROGRAM",

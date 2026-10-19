@@ -62,6 +62,15 @@ class Tui4jTerminalIoTest {
                 .contains("\u001B[23;2t");
     }
 
+    @Test
+    void honorsTheMouseReportingOptOut() {
+        assertThat(io("HAIFA_TERMINAL_MOUSE=off").initialMouseReportingEnabled())
+                .isFalse();
+        assertThat(io("HAIFA_TERMINAL_MOUSE=OFF").initialMouseReportingEnabled())
+                .isFalse();
+        assertThat(io("TERM=xterm-256color").initialMouseReportingEnabled()).isTrue();
+    }
+
     private String runSpikeProgramToQuit() throws Exception {
         var output = new ByteArrayOutputStream();
         try (var inputWriter = new PipedOutputStream();
