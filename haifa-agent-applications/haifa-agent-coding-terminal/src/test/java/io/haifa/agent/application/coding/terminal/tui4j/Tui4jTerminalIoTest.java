@@ -40,7 +40,7 @@ class Tui4jTerminalIoTest {
     }
 
     @Test
-    void productionProgramLeavesMouseReportingDisabledForNativeTextSelection() throws Exception {
+    void writesDefensiveMouseReportingResetAroundTheProgram() throws Exception {
         String terminalOutput = runSpikeProgramToQuit();
 
         String reset = "\u001B[?1000l\u001B[?1002l\u001B[?1003l\u001B[?1006l\u001B[?1007l";

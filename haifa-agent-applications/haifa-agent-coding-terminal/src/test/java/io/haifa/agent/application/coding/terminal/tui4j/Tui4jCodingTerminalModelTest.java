@@ -92,6 +92,13 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
+    void enablesMouseCellMotionAtStartupUnlessDisabled() {
+        assertThat(requestsMouseCellMotion(fixture().model.init())).isTrue();
+        assertThat(requestsMouseCellMotion(modelWithMouseReporting(false).init()))
+                .isFalse();
+    }
+
+    @Test
     void rechecksTheRealWindowSizeEveryBoundedNumberOfPolls() {
         var fixture = fixture();
 
@@ -1285,6 +1292,36 @@ class Tui4jCodingTerminalModelTest {
     private void commitPlainEnter(Fixture fixture) {
         var guarded = fixture.model.update(key(KeyType.keyCR));
         fixture.model.update(guarded.command().execute());
+    }
+
+    private Tui4jCodingTerminalModel modelWithMouseReporting(boolean enabled) {
+        var pump = new TerminalEventPump(64);
+        var controller = new CodingTerminalController(
+                new ProjectId("project-1"),
+                new UnusedClient(),
+                pump,
+                new TerminalUiReducer(),
+                TerminalUiState.initial(80, 24),
+                Runnable::run);
+        return new Tui4jCodingTerminalModel(controller, pump, System::nanoTime, null, enabled);
+    }
+
+    private boolean requestsMouseCellMotion(Command command) {
+        if (Command.isNone(command)) {
+            return false;
+        }
+        Message message = command.execute();
+        if (message instanceof com.williamcallahan.tui4j.compat.bubbletea.EnableMouseCellMotionMessage) {
+            return true;
+        }
+        if (message instanceof BatchMessage batch) {
+            for (Command child : batch.commands()) {
+                if (requestsMouseCellMotion(child)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private boolean requestsWindowSizeCheck(Command command) {

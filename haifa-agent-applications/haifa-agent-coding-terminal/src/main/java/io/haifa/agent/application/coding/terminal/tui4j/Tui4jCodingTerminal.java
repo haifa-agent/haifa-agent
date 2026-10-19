@@ -26,7 +26,8 @@ public final class Tui4jCodingTerminal {
                 .ifPresent(code -> pump.offer(
                         new io.haifa.agent.application.coding.terminal.event.TerminalUiAction.RecoverableFailure(
                                 code)));
-        var model = new Tui4jCodingTerminalModel(controller, pump, System::nanoTime, terminalIo.hostInfo());
+        var model = new Tui4jCodingTerminalModel(
+                controller, pump, System::nanoTime, terminalIo.hostInfo(), terminalIo.initialMouseReportingEnabled());
         terminalIo.run(terminalIo.program(model));
     }
 }

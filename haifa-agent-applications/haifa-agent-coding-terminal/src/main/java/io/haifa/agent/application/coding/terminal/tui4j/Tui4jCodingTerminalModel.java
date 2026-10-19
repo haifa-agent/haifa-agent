@@ -53,6 +53,7 @@ final class Tui4jCodingTerminalModel implements Model {
     private final Map<String, String> pastedContent = new LinkedHashMap<>();
     private final LongSupplier monotonicNanos;
     private final boolean pollWindowSize;
+    private final boolean mouseReportingEnabled;
 
     private String transcriptContent = "";
     private List<TranscriptItem> renderedTranscript = List.of();
@@ -89,9 +90,19 @@ final class Tui4jCodingTerminalModel implements Model {
             TerminalEventPump pump,
             LongSupplier monotonicNanos,
             TerminalHostInfo hostInfo) {
+        this(controller, pump, monotonicNanos, hostInfo, true);
+    }
+
+    Tui4jCodingTerminalModel(
+            CodingTerminalController controller,
+            TerminalEventPump pump,
+            LongSupplier monotonicNanos,
+            TerminalHostInfo hostInfo,
+            boolean mouseReportingEnabled) {
         this.controller = controller;
         this.pump = pump;
         this.monotonicNanos = monotonicNanos;
+        this.mouseReportingEnabled = mouseReportingEnabled;
         this.pollWindowSize =
                 hostInfo == null || hostInfo.operatingSystem() == TerminalHostInfo.OperatingSystem.WINDOWS;
         this.shortcuts =
@@ -118,8 +129,9 @@ final class Tui4jCodingTerminalModel implements Model {
         // relies on the POSIX WINCH signal, which does not exist on Windows. On Windows the 50ms
         // poll carries a bounded size re-check; Tui4jTerminalIo drops unchanged sizes before the
         // renderer, so an unchanged poll does not reset the renderer cache and repaint every row.
-        return Command.batch(
+        Command polling = Command.batch(
                 Command.printf(Tui4jTerminalIo.DISABLE_ALTERNATE_SCREEN_SCROLL), Command.checkWindowSize(), nextTick());
+        return mouseReportingEnabled ? Command.batch(Command.enableMouseCellMotion(), polling) : polling;
     }
 
     @Override

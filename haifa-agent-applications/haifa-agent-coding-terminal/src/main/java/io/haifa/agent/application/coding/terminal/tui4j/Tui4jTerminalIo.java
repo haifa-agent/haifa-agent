@@ -102,6 +102,17 @@ public record Tui4jTerminalIo(
         return TerminalHostInfo.system(environment);
     }
 
+    /**
+     * Startup mouse reporting preference. {@code HAIFA_TERMINAL_MOUSE=off} opts into host-native
+     * selection; every other value (including absence) defaults to application mouse capture.
+     */
+    boolean initialMouseReportingEnabled() {
+        return !value("HAIFA_TERMINAL_MOUSE")
+                .map(String::strip)
+                .map("off"::equalsIgnoreCase)
+                .orElse(false);
+    }
+
     private Optional<String> value(String name) {
         String prefix = name + "=";
         return environment.stream()
@@ -131,8 +142,9 @@ public record Tui4jTerminalIo(
         // reset tui4j's line cache and repaint the whole screen.
         options.add(ProgramOption.withFilter((candidate, message) ->
                 candidate instanceof Tui4jCodingTerminalModel terminal ? terminal.filterMessage(message) : message));
-        // Keep mouse reporting disabled. The host terminal must own ordinary drag selection and
-        // clipboard copy; transcript navigation remains available through PageUp/PageDown.
+        // Mouse reporting is toggled at runtime by the model (Command.enableMouseCellMotion /
+        // Command.disableMouse). This IO only owns the startup/exit reset so a failed run cannot
+        // leave the host terminal in mouse mode.
         return new Program(model, options.toArray(ProgramOption[]::new));
     }
 
