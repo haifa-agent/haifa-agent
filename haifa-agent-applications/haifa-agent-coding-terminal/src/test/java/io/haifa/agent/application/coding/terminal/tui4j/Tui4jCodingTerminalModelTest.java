@@ -205,6 +205,67 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
+    void copiesSelectedTranscriptTextThroughTheClipboardPort() {
+        var clipboard = new RecordingClipboard(true);
+        var fixture = fixtureWithClipboard(clipboard);
+        fixture.model.init();
+        for (int index = 1; index <= 6; index++) {
+            fixture.pump.offer(new TerminalUiAction.UserMessageCommitted("m", "line-" + index));
+        }
+        fixture.model.update(new WindowSizeMessage(120, 30));
+        fixture.model.view();
+
+        fixture.model.update(mouse(1, 0, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(1, 30, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft));
+        var release = fixture.model.update(mouse(1, 30, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
+        release.command().execute();
+
+        assertThat(clipboard.text).isNotNull().isNotBlank();
+    }
+
+    @Test
+    void fallsBackToOsc52WhenTheLocalClipboardFails() {
+        var clipboard = new RecordingClipboard(false);
+        var fixture = fixtureWithClipboard(clipboard);
+        fixture.model.init();
+        for (int index = 1; index <= 6; index++) {
+            fixture.pump.offer(new TerminalUiAction.UserMessageCommitted("m", "line-" + index));
+        }
+        fixture.model.update(new WindowSizeMessage(120, 30));
+        fixture.model.view();
+        fixture.model.update(mouse(1, 0, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(1, 30, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft));
+        var release = fixture.model.update(mouse(1, 30, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
+        var copied = (Tui4jCodingTerminalModel.ClipboardCopyResultMessage)
+                release.command().execute();
+
+        var followUp = fixture.model.update(copied);
+        fixture.controller.drainEvents();
+
+        assertThat(copied.success()).isFalse();
+        assertThat(followUp.command().execute()).isNotNull();
+        assertThat(fixture.controller.state().status()).contains("OSC 52");
+    }
+
+    @Test
+    void escapeClearsTheSelectionWithoutCopying() {
+        var clipboard = new RecordingClipboard(true);
+        var fixture = fixtureWithClipboard(clipboard);
+        fixture.model.init();
+        for (int index = 1; index <= 6; index++) {
+            fixture.pump.offer(new TerminalUiAction.UserMessageCommitted("m", "line-" + index));
+        }
+        fixture.model.update(new WindowSizeMessage(120, 30));
+        fixture.model.view();
+        fixture.model.update(mouse(1, 0, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(1, 30, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft));
+
+        fixture.model.update(key(KeyType.keyESC));
+
+        assertThat(clipboard.text).isNull();
+    }
+
+    @Test
     void rendersConversationSubmissionBeforeClientIoRuns() {
         var fixture = fixture();
         fixture.model.update(new PasteMessage("inspect the repository"));
@@ -1365,6 +1426,40 @@ class Tui4jCodingTerminalModelTest {
 
     private KeyPressMessage runes(char value) {
         return new KeyPressMessage(new Key(KeyType.KeyRunes, new char[] {value}));
+    }
+
+    private MouseMessage mouse(int row, int column, MouseAction action, MouseButton button) {
+        return new MouseMessage(column, row, false, false, false, action, button);
+    }
+
+    private Fixture fixtureWithClipboard(TerminalClipboard clipboard) {
+        var pump = new TerminalEventPump(64);
+        var controller = new CodingTerminalController(
+                new ProjectId("project-1"),
+                new UnusedClient(),
+                pump,
+                new TerminalUiReducer(),
+                TerminalUiState.initial(120, 30),
+                Runnable::run);
+        return new Fixture(
+                controller,
+                pump,
+                new Tui4jCodingTerminalModel(controller, pump, System::nanoTime, null, true, clipboard));
+    }
+
+    private static final class RecordingClipboard implements TerminalClipboard {
+        private final boolean succeed;
+        private String text;
+
+        RecordingClipboard(boolean succeed) {
+            this.succeed = succeed;
+        }
+
+        @Override
+        public boolean copy(String value) {
+            this.text = value;
+            return succeed;
+        }
     }
 
     private MouseMessage wheel(MouseButton button) {

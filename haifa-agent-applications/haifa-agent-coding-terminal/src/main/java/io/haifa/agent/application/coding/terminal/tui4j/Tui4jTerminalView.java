@@ -109,10 +109,7 @@ final class Tui4jTerminalView {
     /** Two-dimensional transcript viewport bounds in screen cells; the sidebar column is excluded. */
     record TranscriptRegion(int topRow, int leftColumn, int height, int width) {
         boolean contains(int row, int column) {
-            return row >= topRow
-                    && row < topRow + height
-                    && column >= leftColumn
-                    && column < leftColumn + width;
+            return row >= topRow && row < topRow + height && column >= leftColumn && column < leftColumn + width;
         }
 
         int bottomRow() {

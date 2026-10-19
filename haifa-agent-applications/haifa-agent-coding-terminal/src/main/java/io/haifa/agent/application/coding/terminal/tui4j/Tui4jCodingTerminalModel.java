@@ -246,7 +246,8 @@ final class Tui4jCodingTerminalModel implements Model {
         if (mouse.getAction() == MouseAction.MouseActionRelease && selection.selecting()) {
             transcriptPoint(mouse, true).ifPresent(selection::finish);
             stopSelectionAutoScroll();
-            return selection.range()
+            return selection
+                    .range()
                     .flatMap(range -> TerminalScreenCells.selectedText(
                             transcriptContent, range, TerminalScreenCells.DEFAULT_MAX_COPY_CHARACTERS))
                     .map(this::copySelection)
@@ -267,7 +268,8 @@ final class Tui4jCodingTerminalModel implements Model {
             applyCopyFeedback("copied " + copied.characters() + " chars");
             return Command.none();
         }
-        String encoded = Base64.getEncoder().encodeToString(copied.text().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        String encoded =
+                Base64.getEncoder().encodeToString(copied.text().getBytes(java.nio.charset.StandardCharsets.UTF_8));
         applyCopyFeedback("copied via terminal (OSC 52)");
         return Command.printf("\u001B]52;c;" + encoded + "\u0007");
     }
@@ -323,8 +325,8 @@ final class Tui4jCodingTerminalModel implements Model {
         }
         requestTranscriptScroll(selectionAutoScrollDirection);
         Tui4jTerminalView.TranscriptRegion region = view.transcriptRegion();
-        int nextOffset =
-                Math.max(0, Math.min(transcript.getMaxYOffset(), transcript.getYOffset() + selectionAutoScrollDirection));
+        int nextOffset = Math.max(
+                0, Math.min(transcript.getMaxYOffset(), transcript.getYOffset() + selectionAutoScrollDirection));
         int visibleRow = selectionAutoScrollDirection < 0 ? 0 : Math.max(0, region.height() - 1);
         int row = Math.min(TerminalScreenCells.lineCount(transcriptContent) - 1, nextOffset + visibleRow);
         selection.extend(new TerminalTextSelection.Point(Math.max(0, row), selectionAutoScrollColumn));
