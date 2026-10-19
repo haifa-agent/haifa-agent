@@ -83,6 +83,7 @@ final class Tui4jTerminalView {
     private final IncrementalTerminalMarkdownRenderer markdown = new IncrementalTerminalMarkdownRenderer(theme);
     private final TextWrapper textWrapper = new TextWrapper();
     private final TerminalShortcutProfile shortcuts;
+    private TranscriptRegion transcriptRegion = new TranscriptRegion(0, 0, 1, 1);
 
     Tui4jTerminalView() {
         this(TerminalShortcutProfile.standard());
@@ -99,6 +100,36 @@ final class Tui4jTerminalView {
 
     Tui4jTerminalTheme theme() {
         return theme;
+    }
+
+    TranscriptRegion transcriptRegion() {
+        return transcriptRegion;
+    }
+
+    /** Two-dimensional transcript viewport bounds in screen cells; the sidebar column is excluded. */
+    record TranscriptRegion(int topRow, int leftColumn, int height, int width) {
+        boolean contains(int row, int column) {
+            return row >= topRow
+                    && row < topRow + height
+                    && column >= leftColumn
+                    && column < leftColumn + width;
+        }
+
+        int bottomRow() {
+            return topRow + height - 1;
+        }
+
+        int clampRow(int row) {
+            return Math.max(topRow, Math.min(bottomRow(), row));
+        }
+
+        int clampColumn(int column) {
+            return Math.max(leftColumn, Math.min(leftColumn + width - 1, column));
+        }
+
+        int relativeRow(int row) {
+            return row - topRow;
+        }
     }
 
     String render(
@@ -199,8 +230,10 @@ final class Tui4jTerminalView {
                 isUpdate,
                 secureInputHint);
         int viewportRows = Math.max(1, state.rows() - visualRows(after));
-        transcript.setWidth(showSidebar ? Math.max(12, mainWidth - 1) : Math.max(12, mainWidth));
+        int transcriptWidth = showSidebar ? Math.max(12, mainWidth - 1) : Math.max(12, mainWidth);
+        transcript.setWidth(transcriptWidth);
         transcript.setHeight(viewportRows);
+        transcriptRegion = new TranscriptRegion(0, 0, viewportRows, transcriptWidth);
         if (followTranscript) {
             transcript.gotoBottom();
         }
