@@ -293,12 +293,13 @@ Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、s
   当前返回 `COMPACTION_INSTRUCTION_NOT_SUPPORTED`；
 - `/reload` 重新发现 Workspace 根 `AGENTS.md`，只影响后续新 Run；当前 Run 不热替换；
 - `!command` 与 `!!command` 都通过产品 Shell 服务进入同一 Policy/Approval/ExecutionBroker/
-  Sandbox 链；用户在 Terminal 中输入精确命令并按 Enter 是该次 `ASK` 决策的显式一次授权，仍写入
-  精确绑定的 Decision/Evidence，但不再对同一用户重复弹确认；`DENY` 仍拒绝。前者的安全结果进入
-  后续模型 Context，后者只保留内部 Session 事实和审计；安全命令输出默认展开显示，长输出仍有界；
+  Sandbox 链；`ASK` 决策会打开 Shell 确认选择器（`Run governed shell command?`），显式批准后才
+  执行，`DENY` 仍拒绝。前者的安全结果进入后续模型 Context，后者只保留内部 Session 事实和审计；
+  安全命令输出默认展开显示，长输出仍有界；
 - `/export <workspace-relative-path>` 新建版本化、脱敏 JSONL，不覆盖文件、不跟随符号链接；
 - 输入 `/` 或 `@` 后立即打开可见候选选择器，Tab 仍可按当前 token 重新打开；方向键选择、Enter
-  回填；空闲时 Escape 关闭并保留草稿，活动 Run 时 Escape 优先取消任务；
+  回填；选择器打开期间普通字符（含空格）继续编辑草稿；空闲时 Escape 关闭并保留草稿，活动 Run
+  时 Escape 优先取消任务；
 - `/command` 与 `/commands` 打开同一命令选择器；`@path` 候选来自受限 Workspace 文件和目录，
   目录以 `/` 结尾，不列出任意路径层级中点号开头的隐藏文件/目录、敏感路径、版本库元数据和常见生成目录；
 - pending Approval 在同一 tui4j Program input owner 中 approve/reject；

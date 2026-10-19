@@ -2,6 +2,11 @@
 
 ## Unreleased - 0.1.3-SNAPSHOT
 
+- Coding Terminal shell `ASK` decisions once again open the Shell confirmation selector before execution.
+  A regression had mapped `ASK` to `READY` while `execute` still rejected unapproved decisions, so
+  `!command` failed with `APPROVAL_REQUIRED` and the selector was unreachable.
+- Command completion preserves spaces typed after a command. tui4j reports Space as `KeyType.KeySpace`;
+  it was previously dropped, turning `/rename <arg>` into `/rename<arg>` and failing with `COMMAND_UNKNOWN`.
 - `McpToolPlatforms.connect(specs, tenant, principal, baseCredentials)` composes the caller's credential broker behind the
   MCP header secrets, so one Agent keeps a single credential boundary: `mcp:*` ids stay authoritative and every other id,
   such as a Java Tool's declared `credentialRequirements`, resolves from the caller's broker instead of failing closed

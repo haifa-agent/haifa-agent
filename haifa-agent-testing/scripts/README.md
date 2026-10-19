@@ -45,6 +45,13 @@ node .\haifa-agent-testing\scripts\terminal-ui-conpty-acceptance.mjs `
 included/excluded Shell 批准、Windows 命令解析和 SQLite 权威证据；它不选择 Coding Case。运行根
 必须位于源码仓库之外且事先不存在。
 
+构建用于验收的 CLI jar 时必须使用 `clean package`（例如
+`invoke-haifa-maven.ps1 --layer L2 -- -pl :haifa-agent-cli -am -DskipTests clean package`）。
+普通 `package` 会复用已有 `target` 产物，shaded jar 可能包含过期模块代码。
+
+ConPTY 不转发应用的鼠标模式字节（`?1000h/l`–`?1007h/l`），因此鼠标行为只能做行为级断言
+（注入 SGR 鼠标事件并观察滚动/OSC 52），不要基于这些字节新增断言。
+
 ## Terminal UI Phase C 确定性质量门禁
 
 `terminal-ui-phase-c-quality.mjs` 在当前操作系统运行 Phase C 的确定性测试集合，覆盖 Resize 状态保持、
