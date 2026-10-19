@@ -3,6 +3,8 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+echo "[TIP] Packaging only collects prebuilt artifacts. Build the SDK modules first with: invoke-haifa-maven.sh --layer L2 '--' -pl <sdk-modules> -am -Prelease-artifacts verify (see dist-support/README.md)."
+
 if command -v python3 >/dev/null 2>&1; then
     exec python3 "$script_dir/package_distributions.py" "$@"
 elif command -v python >/dev/null 2>&1; then

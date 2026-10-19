@@ -17,5 +17,7 @@ $arguments = @(
 )
 $arguments += $args
 
+Write-Host "[TIP] Packaging only collects prebuilt artifacts. Build the SDK modules first with: invoke-haifa-maven.ps1 --layer L2 '--' -pl <sdk-modules> -am -Prelease-artifacts verify (see dist-support/README.md)."
+
 & $python.Definition @arguments
 exit $LASTEXITCODE
