@@ -1154,22 +1154,36 @@ public final class OpenAiResponsesModel implements AgentChatModel {
         }
         StringBuilder message = new StringBuilder(safeMessage);
         if (body != null && body.length > 0) {
-            String raw = new String(body, StandardCharsets.UTF_8);
-            message.append(" | providerBody=")
-                    .append(raw.length() > MAX_DIAGNOSTIC_CHARS ? raw.substring(0, MAX_DIAGNOSTIC_CHARS) : raw);
+            message.append(" | providerBody=").append(bound(new String(body, StandardCharsets.UTF_8)));
         }
         try {
-            List<String> types = new ArrayList<>();
-            for (Map<String, Object> item : inputItems(request, dialect)) {
-                types.add(String.valueOf(item.get("type")));
+            Map<String, Object> outgoing = requestBody(request, dialect, true);
+            message.append(" | thinking=").append(outgoing.get("thinking"));
+            Object input = outgoing.get("input");
+            if (input instanceof List<?> items) {
+                List<String> types = new ArrayList<>();
+                List<String> reasoning = new ArrayList<>();
+                for (Object item : items) {
+                    if (item instanceof Map<?, ?> map) {
+                        types.add(String.valueOf(map.get("type")));
+                        if ("reasoning".equals(map.get("type"))) reasoning.add(json.writeValueAsString(map));
+                    }
+                }
+                message.append(" | inputItems=").append(types);
+                message.append(" | reasoningItems=").append(bound(String.join(" || ", reasoning)));
             }
-            message.append(" | inputItems=").append(types);
-        } catch (RuntimeException exception) {
-            message.append(" | inputItems=<error:")
+        } catch (RuntimeException | JsonProcessingException exception) {
+            message.append(" | requestDiagnostic=<error:")
                     .append(exception.getClass().getSimpleName())
                     .append(">");
         }
         return message.toString();
+    }
+
+    private static String bound(String value) {
+        return value.length() > MAX_DIAGNOSTIC_CHARS
+                ? value.substring(0, MAX_DIAGNOSTIC_CHARS) + "...(truncated)"
+                : value;
     }
 
     private static final int MAX_DIAGNOSTIC_CHARS = 16_384;
