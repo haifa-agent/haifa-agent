@@ -567,6 +567,11 @@ final class Tui4jCodingTerminalModel implements Model {
             }
             updated = buffer.substring(0, cursor) + inserted + buffer.substring(cursor);
             updatedCursor = cursor + inserted.length();
+        } else if (key.type() == KeyType.KeySpace) {
+            // tui4j reports Space as KeySpace, not KeyRunes. Without this branch the completion
+            // selector swallows the space, so "/rename <arg>" would become "/rename<arg>".
+            updated = buffer.substring(0, cursor) + " " + buffer.substring(cursor);
+            updatedCursor = cursor + 1;
         } else if (key.type() == KeyType.keyBS || key.type() == KeyType.keyDEL) {
             updatedCursor = TerminalTextCursor.previous(buffer, cursor);
             updated = TerminalTextCursor.backspace(buffer, cursor);

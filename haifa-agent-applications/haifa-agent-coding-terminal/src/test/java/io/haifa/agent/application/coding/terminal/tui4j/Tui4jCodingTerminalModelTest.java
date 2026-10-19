@@ -185,6 +185,19 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
+    void keepsTheSpaceTypedAfterACommandWhileCompletionIsOpen() {
+        var fixture = fixture();
+
+        "/rename".chars().forEach(value -> fixture.model.update(runes((char) value)));
+        assertThat(fixture.controller.state().selector()).isPresent();
+
+        fixture.model.update(key(KeyType.KeySpace));
+        "next".chars().forEach(value -> fixture.model.update(runes((char) value)));
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("/rename next");
+    }
+
+    @Test
     void rendersConversationSubmissionBeforeClientIoRuns() {
         var fixture = fixture();
         fixture.model.update(new PasteMessage("inspect the repository"));
