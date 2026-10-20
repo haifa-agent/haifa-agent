@@ -56,7 +56,7 @@ final class Tui4jCodingTerminalModel implements Model {
     private final Map<String, String> pastedContent = new LinkedHashMap<>();
     private final LongSupplier monotonicNanos;
     private final boolean pollWindowSize;
-    private final boolean mouseReportingEnabled;
+    private boolean mouseReportingEnabled;
     private final TerminalClipboard clipboard;
     private final TerminalTextSelection selection = new TerminalTextSelection();
 
@@ -206,6 +206,11 @@ final class Tui4jCodingTerminalModel implements Model {
         } else {
             editor.update(message);
         }
+        if (controller.mouseReportingEnabled() != mouseReportingEnabled) {
+            mouseReportingEnabled = controller.mouseReportingEnabled();
+            command = Command.batch(
+                    mouseReportingEnabled ? Command.enableMouseCellMotion() : Command.disableMouse(), command);
+        }
         if (controller.state().exitRequested()) {
             return UpdateResult.from(this, Command.quit());
         }
@@ -213,6 +218,9 @@ final class Tui4jCodingTerminalModel implements Model {
     }
 
     private Command mouse(MouseMessage mouse) {
+        if (!mouseReportingEnabled) {
+            return Command.none();
+        }
         Tui4jTerminalView.TranscriptRegion region = view.transcriptRegion();
         if (mouse.isWheel()) {
             if (!region.contains(mouse.row(), mouse.column())) {
@@ -374,7 +382,8 @@ final class Tui4jCodingTerminalModel implements Model {
                 requestedScrollRows,
                 secureInput,
                 isUpdate,
-                secureInputHint);
+                secureInputHint,
+                mouseReportingEnabled);
         if (requestedScrollRows > 0 && transcript.atBottom()) {
             followTranscript = true;
             newOutputPending = false;
