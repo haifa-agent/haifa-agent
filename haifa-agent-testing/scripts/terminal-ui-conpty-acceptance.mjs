@@ -1087,8 +1087,10 @@ const streamingAssertions = {
 const assertions = mode === "streaming" ? streamingAssertions : mode === "viewport" ? {
   ...commonAssertions,
   viewportBounded: observations.viewportBounded === true,
-  // Injected SGR mouse input is not delivered to the application on Windows (ConPTY/jline), so
-  // wheel and drag behavior stay unobservable here; only keyboard navigation is asserted.
+  transcriptWheelNavigates:
+    observations.wheelScrollsTranscript === true && observations.wheelReturnsToBottom === true,
+  transcriptSelectionCopied: observations.selectionCopied === true,
+  transcriptWheelInertWhenDisabled: observations.wheelInertWhenDisabled === true,
   transcriptKeyboardNavigates:
     observations.pageUpScrolled === true && observations.pageDownRestoredBottom === true,
   latestViewportLineVisible: terminalOutput.includes("VIEWPORT-LINE-12"),
