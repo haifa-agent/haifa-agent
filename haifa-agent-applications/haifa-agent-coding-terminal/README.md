@@ -302,6 +302,9 @@ Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、s
   时 Escape 优先取消任务；
 - `/command` 与 `/commands` 打开同一命令选择器；`@path` 候选来自受限 Workspace 文件和目录，
   目录以 `/` 结尾，不列出任意路径层级中点号开头的隐藏文件/目录、敏感路径、版本库元数据和常见生成目录；
+- 默认由应用接管鼠标：滚轮在 transcript 区域内上下回溯，左键拖拽建立选区并在释放时复制，
+  本地剪贴板失败时回退 OSC 52；`/mouse` 切换开关，`/mouse on|off` 显式设置，
+  `HAIFA_TERMINAL_MOUSE=off` 决定启动初始态。关闭后恢复宿主原生选择，两种模式都保留 PageUp/PageDown；
 - pending Approval 在同一 tui4j Program input owner 中 approve/reject；
 - `/model` 打开安全 Selector，也支持 `/model <internal-id>`；当模型来自多个 Provider 时先按 Provider
   分组展示（`Provider · N models`），再展示所选 Provider 的模型；在二级模型列表或详情页按向左键可返回上一级列表并保持当前选中项位置。

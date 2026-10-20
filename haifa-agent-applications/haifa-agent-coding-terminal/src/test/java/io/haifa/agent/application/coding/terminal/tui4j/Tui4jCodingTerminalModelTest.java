@@ -99,6 +99,17 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
+    void disablesMouseReportingWhenTheControllerTurnsItOff() {
+        var fixture = fixture();
+        fixture.model.init();
+        fixture.controller.initializeMouseReporting(false);
+
+        var updated = fixture.model.update(new Tui4jCodingTerminalModel.PollMessage());
+
+        assertThat(requestsDisableMouse(updated.command())).isTrue();
+    }
+
+    @Test
     void rechecksTheRealWindowSizeEveryBoundedNumberOfPolls() {
         var fixture = fixture();
 
@@ -1365,6 +1376,24 @@ class Tui4jCodingTerminalModelTest {
                 TerminalUiState.initial(80, 24),
                 Runnable::run);
         return new Tui4jCodingTerminalModel(controller, pump, System::nanoTime, null, enabled);
+    }
+
+    private boolean requestsDisableMouse(Command command) {
+        if (Command.isNone(command)) {
+            return false;
+        }
+        Message message = command.execute();
+        if (message instanceof com.williamcallahan.tui4j.compat.bubbletea.DisableMouseMessage) {
+            return true;
+        }
+        if (message instanceof BatchMessage batch) {
+            for (Command child : batch.commands()) {
+                if (requestsDisableMouse(child)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private boolean requestsMouseCellMotion(Command command) {

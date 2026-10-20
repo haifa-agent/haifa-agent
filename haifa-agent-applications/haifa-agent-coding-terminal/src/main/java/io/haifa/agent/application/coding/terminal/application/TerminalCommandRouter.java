@@ -33,6 +33,7 @@ public final class TerminalCommandRouter {
             case "/session" -> TerminalCommand.SESSION;
             case "/command", "/commands", "/help" -> TerminalCommand.COMMANDS;
             case "/theme" -> TerminalCommand.THEME;
+            case "/mouse" -> TerminalCommand.MOUSE;
             case "/quit" -> TerminalCommand.QUIT;
             default -> DEFERRED.contains(command) ? TerminalCommand.NOT_IMPLEMENTED : TerminalCommand.UNKNOWN;
         };
