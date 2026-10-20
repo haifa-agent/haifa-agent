@@ -277,6 +277,81 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
+    void doesNotCopyWhileSecureInputIsActive() {
+        var clipboard = new RecordingClipboard(true);
+        var fixture = fixtureWithClipboard(
+                new CapturingAuthenticationClient(new java.util.concurrent.atomic.AtomicReference<>()), clipboard);
+        seedSelectableTranscript(fixture);
+        fixture.model.update(mouse(1, 0, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(1, 30, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft));
+
+        fixture.model.update(new PasteMessage("/login api deepseek"));
+        commitPlainEnter(fixture);
+        fixture.model.update(new PasteMessage("  private-value  "));
+        assertThat(fixture.controller.secureInputRequested()).isTrue();
+
+        fixture.model.update(mouse(1, 30, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
+
+        assertThat(clipboard.text).isNull();
+    }
+
+    @Test
+    void pressOutsideTheTranscriptRegionClearsTheSelection() {
+        var clipboard = new RecordingClipboard(true);
+        var fixture = fixtureWithClipboard(clipboard);
+        seedSelectableTranscript(fixture);
+        fixture.model.update(mouse(1, 0, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(1, 30, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft));
+
+        fixture.model.update(mouse(1, 500, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(1, 500, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
+
+        assertThat(clipboard.text).isNull();
+    }
+
+    @Test
+    void sidebarColumnDoesNotSelectTranscriptText() {
+        var clipboard = new RecordingClipboard(true);
+        var fixture = fixtureWithClipboard(clipboard);
+        seedSelectableTranscript(fixture);
+
+        fixture.model.update(mouse(1, 110, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(1, 118, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(1, 118, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
+
+        assertThat(clipboard.text).isNull();
+    }
+
+    @Test
+    void resizingClearsTheSelection() {
+        var clipboard = new RecordingClipboard(true);
+        var fixture = fixtureWithClipboard(clipboard);
+        seedSelectableTranscript(fixture);
+        fixture.model.update(mouse(1, 0, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(1, 30, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft));
+
+        fixture.model.update(new WindowSizeMessage(110, 30));
+        fixture.model.update(mouse(1, 30, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
+
+        assertThat(clipboard.text).isNull();
+    }
+
+    @Test
+    void togglingTheSidebarClearsTheSelection() {
+        var clipboard = new RecordingClipboard(true);
+        var fixture = fixtureWithClipboard(clipboard);
+        seedSelectableTranscript(fixture);
+        fixture.model.update(mouse(1, 0, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(1, 30, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft));
+
+        fixture.pump.offer(new TerminalUiAction.SidebarToggled());
+        fixture.model.update(new WindowSizeMessage(120, 30));
+        fixture.model.update(mouse(1, 30, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
+
+        assertThat(clipboard.text).isNull();
+    }
+
+    @Test
     void rendersConversationSubmissionBeforeClientIoRuns() {
         var fixture = fixture();
         fixture.model.update(new PasteMessage("inspect the repository"));
@@ -1459,6 +1534,31 @@ class Tui4jCodingTerminalModelTest {
 
     private MouseMessage mouse(int row, int column, MouseAction action, MouseButton button) {
         return new MouseMessage(column, row, false, false, false, action, button);
+    }
+
+    private Fixture fixtureWithClipboard(CodingAuthenticationClient authentication, TerminalClipboard clipboard) {
+        var pump = new TerminalEventPump(64);
+        var controller = new CodingTerminalController(
+                new ProjectId("project-1"),
+                new UnusedClient(),
+                authentication,
+                pump,
+                new TerminalUiReducer(),
+                TerminalUiState.initial(120, 30),
+                Runnable::run);
+        return new Fixture(
+                controller,
+                pump,
+                new Tui4jCodingTerminalModel(controller, pump, System::nanoTime, null, true, clipboard));
+    }
+
+    private void seedSelectableTranscript(Fixture fixture) {
+        fixture.model.init();
+        for (int index = 1; index <= 6; index++) {
+            fixture.pump.offer(new TerminalUiAction.UserMessageCommitted("m", "line-" + index));
+        }
+        fixture.model.update(new WindowSizeMessage(120, 30));
+        fixture.model.view();
     }
 
     private Fixture fixtureWithClipboard(TerminalClipboard clipboard) {
