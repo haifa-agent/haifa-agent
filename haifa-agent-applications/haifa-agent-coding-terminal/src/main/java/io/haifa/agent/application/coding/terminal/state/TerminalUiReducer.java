@@ -689,7 +689,8 @@ public final class TerminalUiReducer {
                             expanded,
                             Optional.empty(),
                             startedAt,
-                            duration));
+                            duration,
+                            payload.observation().flatMap(RunEventPayloads.ToolObservation::exitCode)));
         } else if (event.payload() instanceof RunEventPayloads.ResourceAvailable payload
                 && !isInternalCheckpoint(payload)) {
             upsert(

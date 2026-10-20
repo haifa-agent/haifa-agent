@@ -254,6 +254,18 @@ final class Tui4jCodingTerminalModel implements Model {
         if (mouse.getAction() == MouseAction.MouseActionRelease && selection.selecting()) {
             transcriptPoint(mouse, true).ifPresent(selection::finish);
             stopSelectionAutoScroll();
+            Optional<Integer> clickedRow =
+                    selection.range().map(range -> range.start().row());
+            if (selection.isClick()) {
+                clearSelection();
+                if (isTranscriptContentRow(mouse)) {
+                    clickedRow.ifPresent(row -> view.toggleableItemAt(row).ifPresent(itemId -> {
+                        controller.toggleTranscriptItem(itemId);
+                        syncComponents();
+                    }));
+                }
+                return Command.none();
+            }
             return selection
                     .range()
                     .flatMap(range -> TerminalScreenCells.selectedText(
@@ -303,6 +315,15 @@ final class Tui4jCodingTerminalModel implements Model {
         int logicalRow = Math.max(0, Math.min(lastRow, transcript.getYOffset() + visibleRow));
         int column = region.clampColumn(mouse.column()) - region.leftColumn();
         return Optional.of(new TerminalTextSelection.Point(logicalRow, column));
+    }
+
+    private boolean isTranscriptContentRow(MouseMessage mouse) {
+        Tui4jTerminalView.TranscriptRegion region = view.transcriptRegion();
+        if (!region.contains(mouse.row(), mouse.column())) {
+            return false;
+        }
+        int logicalRow = transcript.getYOffset() + region.relativeRow(mouse.row());
+        return logicalRow >= 0 && logicalRow < TerminalScreenCells.lineCount(transcriptContent);
     }
 
     private Command updateSelectionAutoScroll(MouseMessage mouse, Tui4jTerminalView.TranscriptRegion region) {

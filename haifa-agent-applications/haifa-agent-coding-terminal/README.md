@@ -144,7 +144,7 @@ Windows ConPTY Gate B。
 5. **状态栏信息与提示层级契约 (Status Bar & Feedback Contract)**：
    - 活动 Run 期间：底部状态栏左侧显示单调计时的运行状态 `⠋ <timedActivity> · esc interrupt`；新输出在视口外产生时追加 ` · new output below`，严禁使用路径文字覆盖活动状态指示；
    - 空闲（Idle）期间：左侧优先显示操作反馈与引导状态（如 `/new` 提示、切模成功反馈、重命名状态等）；无反馈时显示当前工程路径；
-   - 右侧展示快捷键提示（`[f2] models  [ctrl+p] commands`）及 Session 性能指标；空间受限时优先丢弃指标、次选裁剪工程路径，核心操作反馈与活动运行状态具有最高显示优先级；
+   - 右侧展示快捷键提示（`[ctrl+o] details  [f2] models  [ctrl+p] commands`）及 Session 性能指标；空间受限时优先回退为不含 `[ctrl+o]` 的短提示并优先丢弃指标、次选裁剪工程路径，核心操作反馈与活动运行状态具有最高显示优先级；
    - 输入框上方 Meta 条右侧保持显示编辑器操作提示（如 `enter steer · alt+enter follow-up` 或 `enter send · shift+enter newline`）。
 
 Theme 使用 tui4j Lip Gloss 的 Adaptive Color 表达 Accent、Muted、Surface Panel、Surface Element、Border Subtle、User、Success、Pending、
@@ -159,14 +159,13 @@ Error、Queued 和 Focus。TrueColor 参考色会按明暗背景自适应；NoCo
 - Assistant 正文保持 2-cell 左对齐以与 User 边线气泡形成清晰的视觉层级；输入框 Prompt Box 适配
   Surface Element 底色，侧栏垂直分割线统一使用 Border Subtle，消除界面视觉断层；
 - 高频 Markdown 子集只在 View 层转换为终端样式，`TranscriptItem`、Session 与持久化继续保留原始 Markdown；
-- Tool 根据 `requested/started/succeeded/failed/cancelled` 使用状态色。折叠项默认占一行：
-  以 `✓`/`✗`/`●` 状态符号开头，随后是 `名称 · 目标`，并把 `ctrl+o expand` 放在同一行；连续折叠项
-  之间不插入空行。成功的 Tool/Execution 折叠时再追加一行灰色正文预览（取正文里第一条有效内容；
-  流式长输出只保留尾部窗口时，预览取该窗口首行），结构行统一由 `ToolBodyLines` 判定并跳过：`Target:`、`Reason:`、`Next:`、`Outcome:`、`Status:`、
-  `Result:`、`Output:`、`Output (truncated):`、`Output (streaming):`、`Output truncated · …`、
-  `[stdout]`/`[stderr]` 以及预览截断/丢弃标记；正文全为结构行时不显示预览。失败/未决项在折叠
-  状态保留最多两行安全原因。折叠时完成耗时只在超过 10s 时显示，避免短调用刷屏；按 `ctrl+o`
-  展开后始终显示既有有界详情和 `Duration … · N lines · X KB` 元数据尾行；
+- Tool 根据 `requested/started/succeeded/failed/cancelled` 使用状态色。正常完成/`EXITED` 的折叠项严格占一行：
+  以 `✓` 状态符号开头，随后是工具名背景徽标、`目标`、辅助信息（非零退出码与耗时）和右端折叠符 `›`；
+  连续折叠项之间不插入空行，不再渲染正文预览行或 `ctrl+o expand` 长提示。`EXITED` 始终是成功状态，
+  非零退出码（如 `exit 1`）只作为弱化事实展示，不会变成红色故障；`exit 0` 不重复展示。
+  真实 `FAILED`/`DENIED`/`TIMEOUT`/`UNKNOWN` 仍保留错误或未知语义，并在折叠态保留最多两行安全原因。
+  折叠态耗时始终显示；按 `ctrl+o` 或点击条目可展开/收起，展开后显示既有有界详情和
+  `Duration … · N lines · X KB` 元数据尾行。点击仅在鼠标捕获开启时可用，且完成文本选择后不触发展开。
 - 运行中的执行工具通过进程内 transient publisher 增量刷新同一 Tool Call 卡片的
   `Output (streaming):` 段；每批最多 4 KiB，卡片正文最多保留 16 KiB 尾部，stderr 和 preview
   丢弃会显式标记；执行侧达到输出上限时使用独立截断标记，避免与预览丢批混淆。该内容不持久化、
@@ -369,8 +368,9 @@ key，并在所有重启间保持不变。
 10. Terminal 模式使用 `--trace detail` 但不提供 `--trace-file`，确认 Trace 不写入 TUI；提供
     `--trace-file` 后确认诊断仅进入文件。
 11. 用 Stub/Fake Tool 走通 requested → started → succeeded/failed/cancelled，确认同一 Tool
-    只更新一张卡片，折叠行带 `✓`/`✗`/`●` 状态符号、成功/运行项的一行正文预览行和（超过 10s 的）
-    耗时，Ctrl+O 可折叠/展开最近项（含 Run Summary 与可折叠 Resource 项）；Run 终态确认追加 Run
+    只更新一张卡片，正常完成/EXITED 折叠行严格一行并带 `✓` 状态符号、工具名徽标、耗时和右端 `›`；
+    `exit 1` 仍为 `✓` 且只显示为弱化事实，真实失败保留最多两行诊断；`/mouse on` 时点击条目可展开/收起，
+    完成文本选择后不触发展开，`/mouse off` 时 Ctrl+O 仍可折叠/展开最近项；Run 终态确认追加 Run
     Summary 卡片。
 12. 用 Stub/Fake Approval 检查结构化字段、approve/reject 回执与 editor 草稿恢复；审批期间输入只由
     Selector 消费。

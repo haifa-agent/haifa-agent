@@ -2522,6 +2522,12 @@ public final class CodingTerminalController implements AutoCloseable {
         return List.copyOf(grouped.values());
     }
 
+    /** Toggles one transcript item, used by pointer expansion as well as the keyboard path. */
+    public void toggleTranscriptItem(String itemId) {
+        if (itemId == null || itemId.isBlank()) return;
+        apply(new TerminalUiAction.ToggleExpanded(itemId));
+    }
+
     public void cycleModel(int delta) {
         if (state.currentRunId().isPresent()) {
             apply(new TerminalUiAction.StatusChanged("Cannot switch model during active run"));

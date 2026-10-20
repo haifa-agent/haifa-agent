@@ -235,6 +235,59 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
+    void clickTogglesACollapsedTranscriptItemWithoutCopying() {
+        var clipboard = new RecordingClipboard(true);
+        var fixture = fixtureWithClipboard(clipboard);
+        seedSingleToolTranscript(fixture);
+
+        fixture.model.update(mouse(0, 2, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(0, 2, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
+
+        var item = fixture.controller.state().transcript().stream()
+                .filter(value -> value.id().equals("tool-tool-1"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(item.expanded()).isTrue();
+        assertThat(clipboard.text).isNull();
+    }
+
+    @Test
+    void clickBelowTheLastTranscriptLineDoesNotToggleAnItem() {
+        var clipboard = new RecordingClipboard(true);
+        var fixture = fixtureWithClipboard(clipboard);
+        seedSingleToolTranscript(fixture);
+
+        fixture.model.update(mouse(5, 2, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(5, 2, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
+
+        var item = fixture.controller.state().transcript().stream()
+                .filter(value -> value.id().equals("tool-tool-1"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(item.expanded()).isFalse();
+        assertThat(clipboard.text).isNull();
+    }
+
+    @Test
+    void finishingATextSelectionDoesNotToggleTheTranscriptItem() {
+        var clipboard = new RecordingClipboard(true);
+        var fixture = fixtureWithClipboard(clipboard);
+        seedSingleToolTranscript(fixture);
+
+        fixture.model.update(mouse(0, 1, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(0, 20, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft));
+        var release = fixture.model.update(mouse(0, 20, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
+        release.command().execute();
+
+        var item = fixture.controller.state().transcript().stream()
+                .filter(value -> value.id().equals("tool-tool-1"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(item.expanded()).isFalse();
+        assertThat(clipboard.text).isNotNull().isNotBlank();
+    }
+
+    @Test
     void fallsBackToOsc52WhenTheLocalClipboardFails() {
         var clipboard = new RecordingClipboard(false);
         var fixture = fixtureWithClipboard(clipboard);
@@ -1557,6 +1610,15 @@ class Tui4jCodingTerminalModelTest {
         for (int index = 1; index <= 6; index++) {
             fixture.pump.offer(new TerminalUiAction.UserMessageCommitted("m", "line-" + index));
         }
+        fixture.model.update(new WindowSizeMessage(120, 30));
+        fixture.model.view();
+    }
+
+    private void seedSingleToolTranscript(Fixture fixture) {
+        fixture.model.init();
+        fixture.pump.offer(new TerminalUiAction.RunEventReceived(event(
+                1,
+                new RunEventPayloads.ToolLifecycle("tool-1", "execution_run", "SUCCEEDED", "NONE", "git status", ""))));
         fixture.model.update(new WindowSizeMessage(120, 30));
         fixture.model.view();
     }
