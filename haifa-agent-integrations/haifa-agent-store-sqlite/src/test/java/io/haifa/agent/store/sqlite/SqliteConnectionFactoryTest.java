@@ -11,6 +11,11 @@ import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -152,6 +157,39 @@ class SqliteConnectionFactoryTest {
         assertThatThrownBy(() -> SqliteStoreConfiguration.defaults(link.toAbsolutePath()))
                 .isInstanceOf(SqliteStoreException.class)
                 .hasMessageContaining("regular file");
+    }
+
+    @Test
+    void inProcessWritersQueueBehindTheSingleWriteSlot() throws Exception {
+        SqliteConnectionFactory factory = SqliteTestSupport.closeAfterTest(
+                new SqliteConnectionFactory(SqliteTestSupport.configuration(directory)));
+        CountDownLatch queuedWriterAcquired = new CountDownLatch(1);
+        factory.acquireWriter();
+        boolean released = false;
+        try (ExecutorService executor = Executors.newSingleThreadExecutor()) {
+            Future<?> queuedWriter = executor.submit(() -> {
+                factory.acquireWriter();
+                queuedWriterAcquired.countDown();
+                factory.releaseWriter();
+                return null;
+            });
+
+            assertThat(queuedWriterAcquired.await(200, TimeUnit.MILLISECONDS))
+                    .as("a second in-process writer waits for the held write slot")
+                    .isFalse();
+
+            factory.releaseWriter();
+            released = true;
+
+            assertThat(queuedWriterAcquired.await(10, TimeUnit.SECONDS))
+                    .as("the queued writer takes the slot as soon as it is released")
+                    .isTrue();
+            queuedWriter.get();
+        } finally {
+            if (!released) {
+                factory.releaseWriter();
+            }
+        }
     }
 
     private static int total(Map<Path, AtomicInteger> values) {
