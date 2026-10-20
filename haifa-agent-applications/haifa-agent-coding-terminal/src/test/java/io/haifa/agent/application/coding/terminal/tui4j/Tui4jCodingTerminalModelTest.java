@@ -252,6 +252,23 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
+    void clickBelowTheLastTranscriptLineDoesNotToggleAnItem() {
+        var clipboard = new RecordingClipboard(true);
+        var fixture = fixtureWithClipboard(clipboard);
+        seedSingleToolTranscript(fixture);
+
+        fixture.model.update(mouse(5, 2, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(5, 2, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
+
+        var item = fixture.controller.state().transcript().stream()
+                .filter(value -> value.id().equals("tool-tool-1"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(item.expanded()).isFalse();
+        assertThat(clipboard.text).isNull();
+    }
+
+    @Test
     void finishingATextSelectionDoesNotToggleTheTranscriptItem() {
         var clipboard = new RecordingClipboard(true);
         var fixture = fixtureWithClipboard(clipboard);

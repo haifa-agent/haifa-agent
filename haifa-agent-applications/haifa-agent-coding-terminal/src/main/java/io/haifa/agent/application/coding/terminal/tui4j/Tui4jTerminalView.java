@@ -355,7 +355,7 @@ final class Tui4jTerminalView {
             if (item.toggleable()) {
                 hits.add(new TranscriptHit(startRow, startRow + lineCount - 1, item.id()));
             }
-            row += lineCount;
+            row = startRow + lineCount - 1;
             previous = item;
         }
         transcriptHits = List.copyOf(hits);
@@ -680,7 +680,14 @@ final class Tui4jTerminalView {
         if (fixedLeft + 1 + rightWidth > available && !target.isEmpty()) {
             int maximumTarget = available - (1 + 1 + nameWidth + 2) - 1 - rightWidth;
             if (maximumTarget < 1) {
-                return glyph + " " + badge + " " + chevron;
+                int fixedWithoutTarget = 1 + 1 + nameWidth + 2;
+                int gap = Math.max(0, available - fixedWithoutTarget - rightWidth);
+                return glyph
+                        + " "
+                        + badge
+                        + " ".repeat(gap)
+                        + (metadata.isEmpty() ? "" : theme.muted(metadata) + " ")
+                        + chevron;
             }
             target = Truncate.truncate(target, maximumTarget, "…");
             targetWidth = TextWidth.measureCellWidth(target);

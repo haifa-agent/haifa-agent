@@ -535,6 +535,44 @@ class Tui4jTerminalViewTest {
     }
 
     @Test
+    void mapsClickRowsToTheCorrectTranscriptItems() {
+        TerminalUiState state = withTranscript(
+                defaultState(),
+                List.of(
+                        item("tool-1", TranscriptItem.Kind.TOOL, "file_read · a", "Output:\na", "SUCCEEDED", false),
+                        item("tool-2", TranscriptItem.Kind.TOOL, "file_read · b", "Output:\nb", "SUCCEEDED", false),
+                        item("tool-3", TranscriptItem.Kind.TOOL, "file_read · c", "Output:\nc", "SUCCEEDED", false)));
+
+        view.transcriptContent(state);
+
+        assertThat(view.toggleableItemAt(0)).contains("tool-1");
+        assertThat(view.toggleableItemAt(1)).contains("tool-2");
+        assertThat(view.toggleableItemAt(2)).contains("tool-3");
+    }
+
+    @Test
+    void keepsNonZeroExitCodeWhenTheTargetCannotFit() {
+        String target = "x".repeat(120);
+        TerminalUiState state = withTranscript(
+                TerminalUiState.initial(60, 30),
+                List.of(new TranscriptItem(
+                        "exec-1",
+                        TranscriptItem.Kind.EXECUTION,
+                        "execution_run · " + target,
+                        "Command exited (exit 1)",
+                        "EXITED",
+                        false,
+                        Optional.empty(),
+                        Optional.of(1_000L),
+                        Optional.of(850L),
+                        Optional.of(1))));
+
+        String content = view.transcriptContent(state);
+
+        assertThat(content).contains("exit 1", "850 ms", "›").doesNotContain(target);
+    }
+
+    @Test
     void keepsCollapsedToolAndExecutionCardsToOneLineWithoutBodyPreview() {
         TerminalUiState toolState = withTranscript(
                 defaultState(),
