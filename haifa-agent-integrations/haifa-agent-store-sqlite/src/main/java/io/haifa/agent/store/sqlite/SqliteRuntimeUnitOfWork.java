@@ -17,7 +17,8 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
     private static final Logger LOGGER = LoggerFactory.getLogger(SqliteRuntimeUnitOfWork.class);
     private static final AtomicLong UNIT_OF_WORK_IDS = new AtomicLong();
     private static final long SLOW_OPERATION_MILLIS = 50;
-    private static final int MAX_BEGIN_ATTEMPTS = 2;
+    /** Cross-process retry budget; shared with the in-process writer queue so the tolerated window stays identical. */
+    private static final int MAX_BEGIN_ATTEMPTS = SqliteConnectionFactory.WRITER_SLOT_ATTEMPTS;
 
     private final SqliteConnectionFactory connections;
     private final SqliteMyBatisSessionFactory myBatis;

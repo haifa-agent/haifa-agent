@@ -48,6 +48,13 @@ public final class SqliteConnectionFactory implements AutoCloseable {
     // reclaim, a connection that is still in use.
     private final Semaphore leases = new Semaphore(MAXIMUM_POOLED_CONNECTIONS, true);
     private final AtomicLong physicalConnectionsOpened = new AtomicLong();
+    /**
+     * In-process writers queue for the window that the direct {@code BEGIN IMMEDIATE} attempts used to provide, so
+     * contention that previously succeeded by retrying never becomes {@code DATABASE_BUSY} just because it now waits
+     * in the local queue instead. The same count still bounds the cross-process retry in
+     * {@link SqliteRuntimeUnitOfWork}.
+     */
+    static final int WRITER_SLOT_ATTEMPTS = 2;
     // SQLite admits one writer. Writers of this process queue here and are woken as soon as the
     // previous one finishes, instead of retrying BEGIN IMMEDIATE through SQLite's busy handler,
     // whose back-off sleeps add tens of milliseconds per contended write.
@@ -134,12 +141,13 @@ public final class SqliteConnectionFactory implements AutoCloseable {
     }
 
     /**
-     * Waits, at most for the busy timeout, until no other unit of work of this process holds the
-     * write transaction. Interruption does not abort the wait (a cancelled run must still persist
-     * its state); the interrupt is restored for the caller.
+     * Waits, at most for the retry window of the direct {@code BEGIN IMMEDIATE} attempts, until no other unit of
+     * work of this process holds the write transaction. Interruption does not abort the wait (a cancelled run must
+     * still persist its state); the interrupt is restored for the caller.
      */
     void acquireWriter() {
-        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(configuration.busyTimeoutMillis());
+        long deadline = System.nanoTime()
+                + TimeUnit.MILLISECONDS.toNanos((long) configuration.busyTimeoutMillis() * WRITER_SLOT_ATTEMPTS);
         boolean interrupted = Thread.interrupted();
         try {
             while (true) {
