@@ -202,6 +202,32 @@ final class Tui4jTerminalView {
             boolean secureInput,
             boolean isUpdate,
             String secureInputHint) {
+        return render(
+                state,
+                transcript,
+                editor,
+                followTranscript,
+                newOutputPending,
+                activityElapsed,
+                requestedScrollRows,
+                secureInput,
+                isUpdate,
+                secureInputHint,
+                true);
+    }
+
+    String render(
+            TerminalUiState state,
+            Viewport transcript,
+            Textarea editor,
+            boolean followTranscript,
+            boolean newOutputPending,
+            Duration activityElapsed,
+            int requestedScrollRows,
+            boolean secureInput,
+            boolean isUpdate,
+            String secureInputHint,
+            boolean mouseReporting) {
         if (state.columns() < MIN_COLUMNS || state.rows() < MIN_ROWS) {
             return String.join(
                     "\n",
@@ -225,7 +251,8 @@ final class Tui4jTerminalView {
                 activityElapsed,
                 secureInput,
                 isUpdate,
-                secureInputHint);
+                secureInputHint,
+                mouseReporting);
         int viewportRows = Math.max(1, state.rows() - visualRows(after));
         int transcriptWidth = showSidebar ? Math.max(12, mainWidth - 1) : Math.max(12, mainWidth);
         transcript.setWidth(transcriptWidth);
@@ -388,7 +415,8 @@ final class Tui4jTerminalView {
             Duration activityElapsed,
             boolean secureInput,
             boolean isUpdate,
-            String secureInputHint) {
+            String secureInputHint,
+            boolean mouseReporting) {
         List<String> lines = new ArrayList<>();
         if (!state.pending().isEmpty()) {
             lines.add(theme.queued("Pending · " + state.pending().size()));
@@ -414,7 +442,7 @@ final class Tui4jTerminalView {
                 lines.add(promptMetaStrip(state, secureInput, isUpdate, secureInputHint));
             }
         }
-        lines.add(renderBottomStatusLine(state, newOutputPending, activityElapsed));
+        lines.add(renderBottomStatusLine(state, newOutputPending, activityElapsed, mouseReporting));
         return lines;
     }
 
@@ -442,7 +470,8 @@ final class Tui4jTerminalView {
         return theme.muted(leftMeta);
     }
 
-    private String renderBottomStatusLine(TerminalUiState state, boolean newOutputPending, Duration activityElapsed) {
+    private String renderBottomStatusLine(
+            TerminalUiState state, boolean newOutputPending, Duration activityElapsed, boolean mouseReporting) {
         String alert = newOutputPending ? theme.queued("new output below") : "";
         String left;
         if (state.currentRunId().isPresent()) {
@@ -465,6 +494,11 @@ final class Tui4jTerminalView {
                     : state.footer().project();
             if (hasOpFeedback) {
                 left = theme.accent(opStatus);
+                if (!alert.isEmpty()) {
+                    left = left + " · " + alert;
+                }
+            } else if (!mouseReporting) {
+                left = theme.muted("native selection · PageUp/PageDown scroll");
                 if (!alert.isEmpty()) {
                     left = left + " · " + alert;
                 }

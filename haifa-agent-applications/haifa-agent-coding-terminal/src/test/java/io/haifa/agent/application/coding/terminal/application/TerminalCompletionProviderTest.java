@@ -26,6 +26,7 @@ class TerminalCompletionProviderTest {
                         "/delete",
                         "/commands",
                         "/theme",
+                        "/mouse",
                         "/help",
                         "/quit");
     }

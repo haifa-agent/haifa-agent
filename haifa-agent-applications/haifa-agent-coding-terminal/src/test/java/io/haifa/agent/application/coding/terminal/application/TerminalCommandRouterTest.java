@@ -27,6 +27,9 @@ class TerminalCommandRouterTest {
         assertThat(router.route("/help")).isEqualTo(TerminalCommand.COMMANDS);
         assertThat(router.route("/theme")).isEqualTo(TerminalCommand.THEME);
         assertThat(router.route("/theme nord")).isEqualTo(TerminalCommand.THEME);
+        assertThat(router.route("/mouse")).isEqualTo(TerminalCommand.MOUSE);
+        assertThat(router.route("/mouse on")).isEqualTo(TerminalCommand.MOUSE);
+        assertThat(router.route("/mouse off")).isEqualTo(TerminalCommand.MOUSE);
         assertThat(router.route("/quit")).isEqualTo(TerminalCommand.QUIT);
     }
 

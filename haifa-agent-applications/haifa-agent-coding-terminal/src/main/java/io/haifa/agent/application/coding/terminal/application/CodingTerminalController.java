@@ -119,6 +119,7 @@ public final class CodingTerminalController implements AutoCloseable {
     private io.haifa.agent.core.run.AgentRunId outputRunId;
     private RunOutputCursor outputCursor = RunOutputCursor.BEFORE_FIRST;
     private boolean awaitingNewSessionMessage;
+    private boolean mouseReportingEnabled = true;
     private boolean automaticLastSessionLoadPending;
     private List<CodingSessionSummary> resumeOptions = List.of();
     private List<CodingQueuedMessage> restoreOptions = List.of();
@@ -314,6 +315,14 @@ public final class CodingTerminalController implements AutoCloseable {
                     return thread;
                 },
                 new ThreadPoolExecutor.AbortPolicy());
+    }
+
+    public boolean mouseReportingEnabled() {
+        return mouseReportingEnabled;
+    }
+
+    public void initializeMouseReporting(boolean enabled) {
+        mouseReportingEnabled = enabled;
     }
 
     public TerminalUiState state() {
@@ -1182,6 +1191,7 @@ public final class CodingTerminalController implements AutoCloseable {
             }
             case COMMANDS -> openCommandSelector();
             case THEME -> handleThemeCommand(argument);
+            case MOUSE -> handleMouseCommand(argument);
             case QUIT -> apply(new TerminalUiAction.ExitRequested());
             case NOT_IMPLEMENTED ->
                 apply(new TerminalUiAction.RecoverableFailure(TerminalCommandRouter.CAPABILITY_NOT_IMPLEMENTED));
@@ -1207,6 +1217,24 @@ public final class CodingTerminalController implements AutoCloseable {
             apply(new TerminalUiAction.StatusChanged(
                     "Unknown theme: " + argument + ". Available: " + String.join(", ", TerminalThemes.AVAILABLE)));
         }
+    }
+
+    private void handleMouseCommand(String argument) {
+        String value = argument == null ? "" : argument.strip().toLowerCase(java.util.Locale.ROOT);
+        boolean enabled;
+        if (value.isEmpty()) {
+            enabled = !mouseReportingEnabled;
+        } else if (value.equals("on")) {
+            enabled = true;
+        } else if (value.equals("off")) {
+            enabled = false;
+        } else {
+            apply(new TerminalUiAction.StatusChanged("Unknown mouse mode: " + argument + ". Use /mouse on|off"));
+            return;
+        }
+        mouseReportingEnabled = enabled;
+        apply(new TerminalUiAction.StatusChanged(
+                enabled ? "Mouse reporting on · drag to select" : "native selection · PageUp/PageDown scroll"));
     }
 
     private void executeRename(String newTitle) {

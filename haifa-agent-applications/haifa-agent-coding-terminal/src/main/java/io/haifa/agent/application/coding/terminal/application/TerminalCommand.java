@@ -19,6 +19,7 @@ public enum TerminalCommand {
     SESSION,
     COMMANDS,
     THEME,
+    MOUSE,
     QUIT,
     NOT_IMPLEMENTED,
     UNKNOWN

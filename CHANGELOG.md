@@ -2,6 +2,10 @@
 
 ## Unreleased - 0.1.3-SNAPSHOT
 
+- Coding Terminal now owns mouse input by default: the wheel scrolls back through the transcript within the
+  transcript region, left-button drag builds a highlighted selection, and release copies the selected text through
+  a clipboard port with an OSC 52 fallback. `/mouse`, `/mouse on|off` and `HAIFA_TERMINAL_MOUSE=off` switch between
+  application capture and host-native selection; PageUp/PageDown stay available in both modes.
 - Coding Terminal shell `ASK` decisions once again open the Shell confirmation selector before execution.
   A regression had mapped `ASK` to `READY` while `execute` still rejected unapproved decisions, so
   `!command` failed with `APPROVAL_REQUIRED` and the selector was unreachable.
