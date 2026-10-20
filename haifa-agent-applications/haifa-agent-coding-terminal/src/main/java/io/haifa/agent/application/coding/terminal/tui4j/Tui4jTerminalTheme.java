@@ -65,7 +65,7 @@ final class Tui4jTerminalTheme {
             new AdaptiveColor("#FEF2F2", "#450A0A"),
             new AdaptiveColor("#315C80", "#A9C7DF"),
             new AdaptiveColor("#E8F0F7", "#29343F"),
-            new AdaptiveColor("#E4E4E7", "#3F3F46"),
+            new AdaptiveColor("#E4E4E7", "#161B22"),
             new AdaptiveColor("#87427F", "#B06AA6"),
             new AdaptiveColor("#FFFFFF", "#FFFFFF"),
             new AdaptiveColor("#6A2F63", "#6A2F63"),
@@ -462,6 +462,18 @@ final class Tui4jTerminalTheme {
                 .paddingRight(1)
                 .bold(true)
                 .render(category.label());
+    }
+
+    String toolNameBadge(String label) {
+        if (isColorDisabled()) {
+            return "[" + label.toLowerCase(Locale.ROOT) + "]";
+        }
+        return Style.newStyle()
+                .foreground(palette.muted())
+                .background(palette.surfaceElement())
+                .paddingLeft(1)
+                .paddingRight(1)
+                .render(label);
     }
 
     private String block(String value, AdaptiveColor foreground, AdaptiveColor background) {

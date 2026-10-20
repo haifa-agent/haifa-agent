@@ -622,6 +622,7 @@ class TerminalUiReducerTest {
         assertThat(state.transcript()).singleElement().satisfies(item -> {
             assertThat(item.status()).isEqualTo("TIMEOUT");
             assertThat(item.durationMillis()).isPresent();
+            assertThat(item.exitCode()).contains(137);
             assertThat(item.body())
                     .contains(
                             "Target: long run",
@@ -630,6 +631,32 @@ class TerminalUiReducerTest {
                             "Output truncated · 2500 bytes · 501 lines",
                             "Result: asset-1")
                     .doesNotContain("Outcome: UNKNOWN");
+        });
+    }
+
+    @Test
+    void keepsNonZeroExitCodeSeparateFromTheSuccessfulExecutionOutcome() {
+        TerminalUiState state = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1",
+                                "execution_run",
+                                "EXITED",
+                                "NONE",
+                                "python -m unittest",
+                                "",
+                                Optional.of(new RunEventPayloads.ToolObservation(
+                                        Optional.of(BoundedText.of(
+                                                "Command exited (exit 1)", new ToolDisplayBudget(1_024, 20))),
+                                        Optional.of("EXITED"),
+                                        Optional.of(1)))))));
+
+        assertThat(state.transcript()).singleElement().satisfies(item -> {
+            assertThat(item.status()).isEqualTo("EXITED");
+            assertThat(item.exitCode()).contains(1);
         });
     }
 
