@@ -36,6 +36,10 @@ final class TerminalTextSelection {
         return selecting;
     }
 
+    boolean isClick() {
+        return anchor != null && anchor.equals(active);
+    }
+
     Optional<Range> range() {
         if (anchor == null || active == null) return Optional.empty();
         return Optional.of(new Range(anchor, active));

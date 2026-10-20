@@ -482,12 +482,13 @@ class Tui4jTerminalViewTest {
                 .containsSubsequence(
                         "You",
                         "Assistant",
-                        "✓ workspace.read",
-                        "● mvn test",
+                        "✓ [workspace.read]",
+                        "● [mvn test]",
                         "Approval · SHELL [pending]",
                         "Resource · Test report [exported]",
                         "Error · Tool failed [failed]")
-                .contains("ctrl+o expand")
+                .contains("›")
+                .doesNotContain("ctrl+o expand")
                 .doesNotContain("\u001B");
     }
 
@@ -522,19 +523,19 @@ class Tui4jTerminalViewTest {
                 initial.exitRequested());
 
         String content = view.transcriptContent(state);
-        String withoutBlockPadding =
-                content.lines().map(String::strip).collect(java.util.stream.Collectors.joining("\n"));
+        List<String> lines = content.lines()
+                .map(String::strip)
+                .filter(line -> !line.isBlank())
+                .toList();
 
-        assertThat(withoutBlockPadding)
-                .isEqualTo(
-                        """
-                        ✓ file_stat · ctrl+o expand
-                        ✓ file_read · README.md · ctrl+o expand""")
-                .doesNotContain("Target:");
+        assertThat(lines).hasSize(2);
+        assertThat(lines.get(0)).contains("[file_stat]", "›").doesNotContain("Target:");
+        assertThat(lines.get(1)).contains("[file_read]", "README.md", "›").doesNotContain("Target:");
+        assertThat(content).doesNotContain("ctrl+o expand");
     }
 
     @Test
-    void showsOneCollapsedBodyPreviewLineForToolAndExecutionCards() {
+    void keepsCollapsedToolAndExecutionCardsToOneLineWithoutBodyPreview() {
         TerminalUiState toolState = withTranscript(
                 defaultState(),
                 List.of(new TranscriptItem(
@@ -564,21 +565,26 @@ class Tui4jTerminalViewTest {
         String toolContent = view.transcriptContent(toolState);
         String executionContent = view.transcriptContent(executionState);
 
+        assertThat(toolContent.lines().filter(line -> !line.isBlank()).count()).isEqualTo(1);
         assertThat(toolContent)
-                .contains("✓ file_read · README.md · ctrl+o expand", "BUILD SUCCESS")
-                .doesNotContain("Target:", "Result:", "Duration", "· 300 ms");
+                .contains("[file_read]", "README.md", "300 ms", "›")
+                .doesNotContain("BUILD SUCCESS", "Target:", "Result:", "Duration", "ctrl+o expand");
+        assertThat(executionContent.lines().filter(line -> !line.isBlank()).count())
+                .isEqualTo(1);
         assertThat(executionContent)
-                .contains("M src/App.java")
+                .contains("[execution_run]", "./mvnw test", "›")
                 .doesNotContain(
+                        "M src/App.java",
                         "Target:",
                         "Output (streaming):",
                         "[execution output truncated]",
                         "[preview output dropped]",
-                        "Result:");
+                        "Result:",
+                        "ctrl+o expand");
     }
 
     @Test
-    void rendersToolCardsWithNeutralBackgroundAndLocalizedStatusGlyph() {
+    void rendersToolCardsWithLocalizedStatusGlyphAndMutedBadge() {
         Renderer renderer = Renderer.defaultRenderer();
         renderer.setColorProfile(ColorProfile.TrueColor);
         renderer.setHasDarkBackground(true);
@@ -605,15 +611,13 @@ class Tui4jTerminalViewTest {
 
             String stripped = com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(content);
             assertThat(stripped)
-                    .contains("file_stat · local-tmp/test.log · ctrl+o expand")
-                    .contains("Inspected local-tmp/test.log")
-                    .contains("execution_run · ./mvnw test · ctrl+o expand")
-                    .contains("Command exited (exit 0)");
+                    .contains("file_stat", "local-tmp/test.log")
+                    .contains("execution_run", "./mvnw test")
+                    .doesNotContain("Inspected local-tmp/test.log", "Command exited (exit 0)", "ctrl+o expand");
 
-            // Must have foreground color for glyph (e.g. \u001B[38 or \u001B[32)
+            // The status glyph and badge still use foreground/background colors.
             assertThat(content).contains("\u001B[3");
-            // Must NOT have any background fill (no [4 or [10)
-            assertThat(content).doesNotContain("\u001B[4").doesNotContain("\u001B[10");
+            assertThat(content).contains("\u001B[4");
         } finally {
             renderer.setColorProfile(ColorProfile.Ascii);
             renderer.setHasDarkBackground(false);
@@ -621,7 +625,7 @@ class Tui4jTerminalViewTest {
     }
 
     @Test
-    void omitsThePreviewWhenEveryBodyLineIsStructural() {
+    void omitsCollapsedBodyContentWhenEveryLineIsStructural() {
         TerminalUiState state = withTranscript(
                 defaultState(),
                 List.of(new TranscriptItem(
@@ -634,29 +638,32 @@ class Tui4jTerminalViewTest {
 
         String content = view.transcriptContent(state);
 
-        assertThat(content.strip()).isEqualTo("✓ file_write · src/x.java · ctrl+o expand");
+        assertThat(content.lines().filter(line -> !line.isBlank()).count()).isEqualTo(1);
+        assertThat(content.strip())
+                .contains("[file_write]", "src/x.java", "›")
+                .doesNotContain("Target:", "Result:", "ctrl+o expand");
     }
 
     @Test
-    void truncatesTheCollapsedPreviewToTheTranscriptWidth() {
+    void truncatesTheCollapsedToolTitleToTheTranscriptWidth() {
         String longLine = "x".repeat(200);
         TerminalUiState state = withTranscript(
                 defaultState(),
                 List.of(new TranscriptItem(
                         "tool-1",
                         TranscriptItem.Kind.TOOL,
-                        "file_read · big.txt",
-                        "Output:\n" + longLine,
+                        "file_read · " + longLine,
+                        "Output:\ncontent",
                         "SUCCEEDED",
                         false)));
 
         String content = view.transcriptContent(state);
 
-        assertThat(content).contains("…").doesNotContain(longLine);
+        assertThat(content).contains("…", "[file_read]", "›").doesNotContain(longLine);
     }
 
     @Test
-    void hidesCollapsedDurationsAtOrBelowTenSecondsAndAlwaysShowsThemWhenExpanded() {
+    void showsCollapsedDurationsAtEveryDurationAndKeepsThemWhenExpanded() {
         String atThreshold =
                 view.transcriptContent(withTranscript(defaultState(), List.of(toolWithDuration(false, 10_000L))));
         String aboveThreshold =
@@ -664,9 +671,49 @@ class Tui4jTerminalViewTest {
         String shortExpanded =
                 view.transcriptContent(withTranscript(defaultState(), List.of(toolWithDuration(true, 9_000L))));
 
-        assertThat(atThreshold.strip()).isEqualTo("✓ file_read · README.md · ctrl+o expand");
-        assertThat(aboveThreshold).contains("✓ file_read · README.md · 10s · ctrl+o expand");
-        assertThat(shortExpanded).contains("✓ file_read · README.md · 9s");
+        assertThat(atThreshold).contains("[file_read]", "README.md", "10s", "›");
+        assertThat(aboveThreshold).contains("[file_read]", "README.md", "10s", "›");
+        assertThat(shortExpanded).contains("[file_read]", "README.md", "9s", "⌄");
+    }
+
+    @Test
+    void showsNonZeroExitCodeAsMutedFactWithoutMarkingExecutionAsFailure() {
+        TerminalUiState nonZero = withTranscript(
+                defaultState(),
+                List.of(new TranscriptItem(
+                        "exec-1",
+                        TranscriptItem.Kind.EXECUTION,
+                        "execution_run · python -m unittest",
+                        "Command exited (exit 1)\nFAILED",
+                        "EXITED",
+                        false,
+                        Optional.empty(),
+                        Optional.of(1_000L),
+                        Optional.of(850L),
+                        Optional.of(1))));
+        TerminalUiState zero = withTranscript(
+                defaultState(),
+                List.of(new TranscriptItem(
+                        "exec-2",
+                        TranscriptItem.Kind.EXECUTION,
+                        "execution_run · git status",
+                        "Command exited (exit 0)\nclean",
+                        "EXITED",
+                        false,
+                        Optional.empty(),
+                        Optional.of(1_000L),
+                        Optional.of(20L),
+                        Optional.of(0))));
+
+        String nonZeroContent = view.transcriptContent(nonZero);
+        String zeroContent = view.transcriptContent(zero);
+
+        assertThat(nonZeroContent.lines().filter(line -> !line.isBlank()).count())
+                .isEqualTo(1);
+        assertThat(nonZeroContent)
+                .contains("✓", "[execution_run]", "exit 1", "850 ms", "›")
+                .doesNotContain("✗", "Command exited (exit 1)", "ctrl+o expand");
+        assertThat(zeroContent).contains("✓", "[execution_run]", "20 ms", "›").doesNotContain("exit 0");
     }
 
     @Test
@@ -700,8 +747,8 @@ class Tui4jTerminalViewTest {
         String content = view.transcriptContent(state);
 
         assertThat(content)
-                .contains("✗ workspace.read · missing.txt · ctrl+o expand", "Reason: NOT_FOUND", "Result: safe-ref")
-                .doesNotContain("Hidden detail");
+                .contains("✗ [workspace.read] missing.txt", "Reason: NOT_FOUND", "Result: safe-ref")
+                .doesNotContain("Hidden detail", "ctrl+o expand");
     }
 
     @Test
@@ -735,11 +782,8 @@ class Tui4jTerminalViewTest {
         String content = view.transcriptContent(state);
 
         assertThat(content)
-                .contains(
-                        "? execution_run · rm -rf build · ctrl+o expand",
-                        "Outcome: UNKNOWN",
-                        "Reason: AUTOMATIC_REPLAY_FORBIDDEN")
-                .doesNotContain("✓", "✗");
+                .contains("? [execution_run] rm -rf build", "Outcome: UNKNOWN", "Reason: AUTOMATIC_REPLAY_FORBIDDEN")
+                .doesNotContain("✓", "✗", "ctrl+o expand");
     }
 
     @Test
@@ -785,10 +829,8 @@ class Tui4jTerminalViewTest {
 
         assertThat(content)
                 .contains(
-                        "✓ file_read · README.md · 300 ms",
-                        "Duration 300 ms · 2 lines",
-                        "✓ Run completed · 4s · ctrl+o expand")
-                .doesNotContain("Status: COMPLETED");
+                        "[file_read]", "README.md", "300 ms", "Duration 300 ms · 2 lines", "✓ Run completed · 4s", "›")
+                .doesNotContain("Status: COMPLETED", "ctrl+o expand");
     }
 
     @Test
@@ -1270,7 +1312,7 @@ class Tui4jTerminalViewTest {
 
         String content = view.transcriptContent(state);
 
-        assertThat(content).contains("✗ file_patch · src/App.java");
+        assertThat(content).contains("✗ [file_patch] src/App.java");
         assertThat(content).contains("-old", "+new");
         // No background sequence anywhere in tool error output
         assertThat(content).doesNotContain("\u001B[4").doesNotContain("\u001B[10");

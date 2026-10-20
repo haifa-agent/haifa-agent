@@ -254,6 +254,16 @@ final class Tui4jCodingTerminalModel implements Model {
         if (mouse.getAction() == MouseAction.MouseActionRelease && selection.selecting()) {
             transcriptPoint(mouse, true).ifPresent(selection::finish);
             stopSelectionAutoScroll();
+            Optional<Integer> clickedRow =
+                    selection.range().map(range -> range.start().row());
+            if (selection.isClick()) {
+                clearSelection();
+                clickedRow.ifPresent(row -> view.toggleableItemAt(row).ifPresent(itemId -> {
+                    controller.toggleTranscriptItem(itemId);
+                    syncComponents();
+                }));
+                return Command.none();
+            }
             return selection
                     .range()
                     .flatMap(range -> TerminalScreenCells.selectedText(

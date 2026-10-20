@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -77,13 +78,13 @@ final class Tui4jTerminalView {
             "SHELL COMMAND DENIED",
             "TIMEOUT");
     private static final Set<String> UNKNOWN_STATUSES = Set.of("OUTCOME_UNKNOWN", "UNKNOWN_OUTCOME");
-    private static final long COLLAPSED_DURATION_HIDE_MILLIS = 10_000L;
 
     private final Tui4jTerminalTheme theme = new Tui4jTerminalTheme();
     private final IncrementalTerminalMarkdownRenderer markdown = new IncrementalTerminalMarkdownRenderer(theme);
     private final TextWrapper textWrapper = new TextWrapper();
     private final TerminalShortcutProfile shortcuts;
     private TranscriptRegion transcriptRegion = new TranscriptRegion(0, 0, 1, 1);
+    private List<TranscriptHit> transcriptHits = List.of();
 
     Tui4jTerminalView() {
         this(TerminalShortcutProfile.standard());
@@ -127,6 +128,20 @@ final class Tui4jTerminalView {
         int relativeRow(int row) {
             return row - topRow;
         }
+    }
+
+    /** One toggleable transcript item's inclusive logical row range in the rendered transcript. */
+    record TranscriptHit(int startRow, int endRow, String itemId) {
+        boolean contains(int row) {
+            return row >= startRow && row <= endRow;
+        }
+    }
+
+    Optional<String> toggleableItemAt(int logicalRow) {
+        return transcriptHits.stream()
+                .filter(hit -> hit.contains(logicalRow))
+                .map(TranscriptHit::itemId)
+                .findFirst();
     }
 
     String render(
@@ -309,6 +324,7 @@ final class Tui4jTerminalView {
     String transcriptContent(TerminalUiState state) {
         if (state.transcript().isEmpty()) {
             markdown.retain(Set.of());
+            transcriptHits = List.of();
             return theme.muted("Start a task or use /commands.");
         }
         Set<String> assistantIds = new HashSet<>();
@@ -323,14 +339,26 @@ final class Tui4jTerminalView {
         int availableWidth = showSidebar ? Math.max(12, mainWidth - 1) : Math.max(12, mainWidth);
 
         StringBuilder content = new StringBuilder();
+        List<TranscriptHit> hits = new ArrayList<>();
         TranscriptItem previous = null;
+        int row = 0;
         for (TranscriptItem item : state.transcript()) {
             if (previous != null) {
-                content.append(isCompactTool(previous) && isCompactTool(item) ? '\n' : "\n\n");
+                String separator = isCompactTool(previous) && isCompactTool(item) ? "\n" : "\n\n";
+                content.append(separator);
+                row += separator.length();
             }
-            content.append(transcriptItem(item, availableWidth));
+            String rendered = transcriptItem(item, availableWidth);
+            int startRow = row;
+            content.append(rendered);
+            int lineCount = lineCount(rendered);
+            if (item.toggleable()) {
+                hits.add(new TranscriptHit(startRow, startRow + lineCount - 1, item.id()));
+            }
+            row += lineCount;
             previous = item;
         }
+        transcriptHits = List.copyOf(hits);
         return content.toString();
     }
 
@@ -511,16 +539,34 @@ final class Tui4jTerminalView {
         }
 
         int available = Math.max(1, state.columns() - 1);
-        String shortcutsHint = "[" + shortcuts.modelCycle() + "] models  [" + shortcuts.commandPalette() + "] commands";
+        String fullShortcuts = "["
+                + shortcuts.toggleExpansion()
+                + "] details  ["
+                + shortcuts.modelCycle()
+                + "] models  ["
+                + shortcuts.commandPalette()
+                + "] commands";
+        String baseShortcuts = "[" + shortcuts.modelCycle() + "] models  [" + shortcuts.commandPalette() + "] commands";
+        String shortcutsHint = fullShortcuts;
         int shortcutsLen = TextWidth.measureCellWidth(shortcutsHint);
+        int baseShortcutsLen = TextWidth.measureCellWidth(baseShortcuts);
         int leftLen = TextWidth.measureCellWidth(left);
+        String metrics = state.footer().metrics();
+        int metricsLen = metrics.isBlank() ? 0 : TextWidth.measureCellWidth(metrics);
 
         List<String> rightParts = new ArrayList<>();
-        if (!state.footer().metrics().isBlank()) {
-            int metricsLen = TextWidth.measureCellWidth(state.footer().metrics());
+        if (!metrics.isBlank()) {
             if (leftLen + metricsLen + shortcutsLen + 5 <= available) {
-                rightParts.add(state.footer().metrics());
+                rightParts.add(metrics);
+            } else if (leftLen + metricsLen + baseShortcutsLen + 5 <= available) {
+                shortcutsHint = baseShortcuts;
+                shortcutsLen = baseShortcutsLen;
+                rightParts.add(metrics);
             }
+        }
+        if (rightParts.isEmpty() && shortcutsLen > baseShortcutsLen && leftLen + baseShortcutsLen + 2 <= available) {
+            shortcutsHint = baseShortcuts;
+            shortcutsLen = baseShortcutsLen;
         }
         rightParts.add(shortcutsHint);
         String right = theme.muted(String.join(" · ", rightParts));
@@ -564,8 +610,7 @@ final class Tui4jTerminalView {
                 switch (item.kind()) {
                     case USER -> "You";
                     case ASSISTANT -> item.title();
-                    case TOOL, EXECUTION, SUMMARY ->
-                        glyph(item.status()) + " " + item.title() + durationSuffix(item, collapsed);
+                    case TOOL, EXECUTION, SUMMARY -> glyph(item.status()) + " " + item.title() + durationSuffix(item);
                     case APPROVAL -> item.title() + " [" + status + "]";
                     case RESOURCE -> "Resource · " + item.title() + " [" + status + "]";
                     case ERROR -> "Error · " + item.title() + " [" + status + "]";
@@ -581,9 +626,8 @@ final class Tui4jTerminalView {
             return style(item, approval(title, item.approvalDetails().orElseThrow(), item.expanded()));
         }
         if (collapsed) {
-            StringBuilder content =
-                    new StringBuilder(title).append(theme.muted(" · " + shortcuts.toggleExpansion() + " expand"));
-            return style(item, content.toString());
+            String content = title + theme.muted("  ›");
+            return style(item, content);
         }
         String body =
                 item.expanded() ? item.body() : item.body().lines().limit(5).collect(Collectors.joining("\n"));
@@ -593,34 +637,23 @@ final class Tui4jTerminalView {
 
     private String renderToolItem(TranscriptItem item, int availableWidth) {
         boolean collapsed = item.collapsible();
-        String glyph = styledGlyph(item.status());
-        String duration = durationSuffix(item, collapsed);
-        String headerTitle = glyph + " " + sanitize(item.title()) + duration;
+        String header = toolHeader(item, availableWidth, collapsed);
 
         if (collapsed) {
-            StringBuilder content =
-                    new StringBuilder(headerTitle).append(theme.muted(" · " + shortcuts.toggleExpansion() + " expand"));
             if (isErrorStatus(item.status()) || isUnknownStatus(item.status())) {
                 String details = item.body()
                         .lines()
                         .limit(2)
                         .map(value -> "  " + sanitize(value))
                         .collect(Collectors.joining("\n"));
-                if (!details.isBlank()) {
-                    content.append('\n').append(details);
-                }
-            } else {
-                String preview = previewLine(item.body(), availableWidth);
-                if (!preview.isBlank()) {
-                    content.append('\n').append(theme.muted("  " + preview));
-                }
+                return details.isBlank() ? header : header + "\n" + details;
             }
-            return content.toString();
+            return header;
         }
 
         String body =
                 item.expanded() ? item.body() : item.body().lines().limit(5).collect(Collectors.joining("\n"));
-        String content = headerTitle + "\n" + renderToolBody(item, body);
+        String content = header + "\n" + renderToolBody(item, body);
         if (item.expanded()) {
             String metadata = metadata(item);
             if (!metadata.isBlank()) {
@@ -628,6 +661,63 @@ final class Tui4jTerminalView {
             }
         }
         return content;
+    }
+
+    private String toolHeader(TranscriptItem item, int availableWidth, boolean collapsed) {
+        String name = toolName(item.title());
+        String target = toolTarget(item.title());
+        String badge = theme.toolNameBadge(name);
+        String glyph = styledGlyph(item.status());
+        String metadata = auxiliaryMetadata(item, collapsed);
+        String chevron = theme.muted(collapsed ? "›" : "⌄");
+
+        int nameWidth = TextWidth.measureCellWidth(name);
+        int targetWidth = TextWidth.measureCellWidth(target);
+        int metadataWidth = TextWidth.measureCellWidth(metadata);
+        int available = Math.max(1, availableWidth);
+        int fixedLeft = 1 + 1 + nameWidth + 2 + (target.isEmpty() ? 0 : 1 + targetWidth);
+        int rightWidth = (metadata.isEmpty() ? 0 : metadataWidth + 1) + 1;
+        if (fixedLeft + 1 + rightWidth > available && !target.isEmpty()) {
+            int maximumTarget = available - (1 + 1 + nameWidth + 2) - 1 - rightWidth;
+            if (maximumTarget < 1) {
+                return glyph + " " + badge + " " + chevron;
+            }
+            target = Truncate.truncate(target, maximumTarget, "…");
+            targetWidth = TextWidth.measureCellWidth(target);
+            fixedLeft = 1 + 1 + nameWidth + 2 + 1 + targetWidth;
+        }
+
+        int gap = Math.max(0, available - fixedLeft - rightWidth);
+        StringBuilder line = new StringBuilder();
+        line.append(glyph).append(' ').append(badge);
+        if (!target.isEmpty()) {
+            line.append(' ').append(target);
+        }
+        line.append(" ".repeat(gap));
+        if (!metadata.isEmpty()) {
+            line.append(theme.muted(metadata)).append(' ');
+        }
+        line.append(chevron);
+        return line.toString();
+    }
+
+    private static String toolName(String title) {
+        int separator = title.indexOf(" · ");
+        return separator > 0 ? sanitize(title.substring(0, separator)) : sanitize(title);
+    }
+
+    private static String toolTarget(String title) {
+        int separator = title.indexOf(" · ");
+        return separator > 0 ? sanitize(title.substring(separator + 3)) : "";
+    }
+
+    private static String auxiliaryMetadata(TranscriptItem item, boolean collapsed) {
+        List<String> parts = new ArrayList<>();
+        if (collapsed) {
+            item.exitCode().filter(value -> value != 0).ifPresent(value -> parts.add("exit " + value));
+        }
+        item.durationMillis().ifPresent(value -> parts.add(TerminalDurations.human(value)));
+        return String.join(" · ", parts);
     }
 
     private String renderToolBody(TranscriptItem item, String body) {
@@ -724,17 +814,6 @@ final class Tui4jTerminalView {
         return text;
     }
 
-    private static String previewLine(String body, int bodyWidth) {
-        int available = Math.max(16, bodyWidth - 2);
-        return body.lines()
-                .map(String::strip)
-                .filter(line -> !line.isEmpty())
-                .filter(line -> !ToolBodyLines.isStructural(line))
-                .findFirst()
-                .map(line -> Truncate.truncate(sanitize(line), available, "…"))
-                .orElse("");
-    }
-
     private static boolean isToolLike(TranscriptItem item) {
         return item.kind() == TranscriptItem.Kind.TOOL || item.kind() == TranscriptItem.Kind.EXECUTION;
     }
@@ -796,9 +875,8 @@ final class Tui4jTerminalView {
         return theme.pending("●");
     }
 
-    private static String durationSuffix(TranscriptItem item, boolean collapsed) {
+    private static String durationSuffix(TranscriptItem item) {
         return item.durationMillis()
-                .filter(value -> !collapsed || value > COLLAPSED_DURATION_HIDE_MILLIS)
                 .map(value -> " · " + TerminalDurations.human(value))
                 .orElse("");
     }
@@ -935,6 +1013,14 @@ final class Tui4jTerminalView {
 
     private int visualRows(List<String> regions) {
         return regions.stream().mapToInt(value -> (int) value.lines().count()).sum();
+    }
+
+    private static int lineCount(String value) {
+        int lines = 1;
+        for (int index = 0; index < value.length(); index++) {
+            if (value.charAt(index) == '\n') lines++;
+        }
+        return lines;
     }
 
     private String clip(String region, int columns) {
