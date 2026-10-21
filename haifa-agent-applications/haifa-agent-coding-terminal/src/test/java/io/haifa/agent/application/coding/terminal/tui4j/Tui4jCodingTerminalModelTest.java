@@ -9,6 +9,7 @@ import com.williamcallahan.tui4j.compat.bubbletea.Command;
 import com.williamcallahan.tui4j.compat.bubbletea.KeyPressMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.Message;
 import com.williamcallahan.tui4j.compat.bubbletea.PasteMessage;
+import com.williamcallahan.tui4j.compat.bubbletea.QuitMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.WindowSizeMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.input.MouseAction;
 import com.williamcallahan.tui4j.compat.bubbletea.input.MouseButton;
@@ -389,9 +390,68 @@ class Tui4jCodingTerminalModelTest {
         fixture.model.update(new PasteMessage("  private-value  "));
         assertThat(fixture.controller.secureInputRequested()).isTrue();
 
+        assertThat(fixture.model.filterMessage(new QuitMessage())).isNull();
+        assertThat(fixture.model.filterMessage(key(KeyType.keyETX))).isNotNull();
+
         fixture.model.update(mouse(1, 30, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
 
         assertThat(clipboard.text).isNull();
+    }
+
+    @Test
+    void copiesSelectionInsteadOfQuittingWhenSignalQuitArrivesDuringSelection() {
+        var clipboard = new RecordingClipboard(true);
+        var fixture = fixtureWithClipboard(clipboard);
+        seedSelectableTranscript(fixture);
+
+        fixture.model.update(mouse(1, 0, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(1, 20, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(1, 20, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
+
+        QuitMessage quit = new QuitMessage();
+        Message filtered = fixture.model.filterMessage(quit);
+        assertThat(filtered).isNotNull().isNotSameAs(quit);
+
+        fixture.model.update(filtered).command().execute();
+
+        assertThat(clipboard.text).isNotNull().isNotBlank();
+        assertThat(fixture.controller.state().exitRequested()).isFalse();
+    }
+
+    @Test
+    void signalQuitWithoutSelectionKeepsTheExistingExitSemantics() {
+        var fixture = fixture();
+        seedSelectableTranscript(fixture);
+
+        QuitMessage quit = new QuitMessage();
+        Message filtered = fixture.model.filterMessage(quit);
+        assertThat(filtered).isNotNull().isNotSameAs(quit);
+
+        fixture.model.update(filtered);
+
+        assertThat(fixture.controller.state().exitRequested()).isTrue();
+    }
+
+    @Test
+    void explicitQuitStillQuitsWhileASelectionIsHighlighted() {
+        var fixture = fixture();
+        seedSelectableTranscript(fixture);
+        fixture.model.update(mouse(1, 0, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(1, 20, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft));
+
+        fixture.controller.accept(new TerminalInput(TerminalInput.Kind.EXECUTE_COMMAND, "/quit", 5));
+
+        assertThat(fixture.controller.state().exitRequested()).isTrue();
+        QuitMessage quit = new QuitMessage();
+        assertThat(fixture.model.filterMessage(quit)).isSameAs(quit);
+    }
+
+    @Test
+    void directCtrlCKeyIsDroppedSoTheSignalHandlerOwnsTheInterrupt() {
+        var fixture = fixture();
+        seedSelectableTranscript(fixture);
+
+        assertThat(fixture.model.filterMessage(key(KeyType.keyETX))).isNull();
     }
 
     @Test

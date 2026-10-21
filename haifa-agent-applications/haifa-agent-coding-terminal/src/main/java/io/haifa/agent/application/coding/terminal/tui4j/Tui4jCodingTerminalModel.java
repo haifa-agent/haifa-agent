@@ -7,6 +7,7 @@ import com.williamcallahan.tui4j.compat.bubbletea.KeyPressMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.Message;
 import com.williamcallahan.tui4j.compat.bubbletea.Model;
 import com.williamcallahan.tui4j.compat.bubbletea.PasteMessage;
+import com.williamcallahan.tui4j.compat.bubbletea.QuitMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.UpdateResult;
 import com.williamcallahan.tui4j.compat.bubbletea.WindowSizeMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.input.MouseAction;
@@ -157,7 +158,16 @@ final class Tui4jCodingTerminalModel implements Model {
     @Override
     public UpdateResult<Tui4jCodingTerminalModel> update(Message message) {
         Command command = Command.none();
-        if (message instanceof SelectionAutoScrollMessage scrolling) {
+        if (message instanceof CtrlCRequestedMessage) {
+            // SIGINT (Ctrl-C) must not terminate the program: with a transcript
+            // selection it copies, without one it keeps the existing interrupt
+            // semantics (clear editor / cancel run).
+            if (selection.range().isPresent()) {
+                command = copySelectedText();
+            } else {
+                accept(TerminalInput.Kind.INTERRUPT);
+            }
+        } else if (message instanceof SelectionAutoScrollMessage scrolling) {
             command = continueSelectionAutoScroll(scrolling);
         } else if (message instanceof ClipboardCopyResultMessage copied) {
             command = completeCopy(copied);
@@ -212,6 +222,7 @@ final class Tui4jCodingTerminalModel implements Model {
                     mouseReportingEnabled ? Command.enableMouseAllMotion() : Command.disableMouse(), command);
         }
         if (controller.state().exitRequested()) {
+            clearSelection();
             return UpdateResult.from(this, Command.quit());
         }
         return UpdateResult.from(this, command);
@@ -1195,6 +1206,21 @@ final class Tui4jCodingTerminalModel implements Model {
      * resize with no change does not make the tui4j renderer clear its line cache and repaint.
      */
     Message filterMessage(Message message) {
+        if (message instanceof KeyPressMessage key
+                && key.type() == KeyType.keyETX
+                && !controller.secureInputRequested()) {
+            // Ctrl-C is handled through the terminal SIGINT handler below so the
+            // signal-driven QuitMessage cannot race the copy and exit the process.
+            return null;
+        }
+        if (message instanceof QuitMessage) {
+            if (controller.secureInputRequested()) {
+                return null;
+            }
+            if (!controller.state().exitRequested()) {
+                return new CtrlCRequestedMessage();
+            }
+        }
         if (message instanceof MouseMessage mouse
                 && mouse.getAction() == MouseAction.MouseActionMotion
                 && !selection.selecting()) {
@@ -1224,6 +1250,8 @@ final class Tui4jCodingTerminalModel implements Model {
     }
 
     record PollMessage() implements Message {}
+
+    private record CtrlCRequestedMessage() implements Message {}
 
     record SelectionAutoScrollMessage(long sequence) implements Message {}
 
