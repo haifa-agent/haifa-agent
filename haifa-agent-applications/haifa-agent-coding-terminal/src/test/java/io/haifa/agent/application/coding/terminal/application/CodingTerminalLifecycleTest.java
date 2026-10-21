@@ -386,6 +386,7 @@ class CodingTerminalLifecycleTest {
         var started = new java.util.concurrent.CountDownLatch(1);
         var release = new java.util.concurrent.CountDownLatch(1);
         var cancelRequested = new java.util.concurrent.atomic.AtomicBoolean();
+        var loginCalls = new java.util.concurrent.atomic.AtomicInteger();
         CodingAuthenticationClient authentication = new CodingAuthenticationClient() {
             @Override
             public List<CodingAuthenticationView> connections() {
@@ -401,6 +402,7 @@ class CodingTerminalLifecycleTest {
             public CodingAuthenticationView loginCodexBrowser(
                     java.util.function.Consumer<CodingBrowserLoginView> instructions,
                     java.util.function.Consumer<CodingAuthenticationProgressView> progress) {
+                loginCalls.incrementAndGet();
                 instructions.accept(new CodingBrowserLoginView(
                         URI.create("https://auth.openai.com/oauth/authorize?state=test"),
                         System.currentTimeMillis() + 60_000));
@@ -451,6 +453,10 @@ class CodingTerminalLifecycleTest {
             assertThat(cancelRequested).isTrue();
             assertThat(controller.state().selector()).isEmpty();
             assertThat(controller.state().status()).isEqualTo("正在取消登录");
+
+            controller.accept(input(TerminalInput.Kind.SUBMIT, "/connect codex browser"));
+            assertThat(loginCalls).hasValue(1);
+            assertThat(controller.state().status()).contains("登录正在进行，请先完成或取消");
         } finally {
             release.countDown();
             executor.shutdownNow();

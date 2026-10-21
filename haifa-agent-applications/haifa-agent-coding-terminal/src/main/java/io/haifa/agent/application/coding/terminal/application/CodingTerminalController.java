@@ -1685,7 +1685,18 @@ public final class CodingTerminalController implements AutoCloseable {
                 "interaction:" + interaction.requestId().value(), "Approval · " + interaction.title(), options, 0)));
     }
 
+    private boolean rejectConcurrentLogin() {
+        if (!authenticationInProgress) {
+            return false;
+        }
+        apply(new TerminalUiAction.StatusChanged("登录正在进行，请先完成或取消当前登录"));
+        return true;
+    }
+
     private void startCodexLogin() {
+        if (rejectConcurrentLogin()) {
+            return;
+        }
         authenticationInProgress = true;
         apply(new TerminalUiAction.StatusChanged("正在打开浏览器完成 ChatGPT 授权"));
         submitEffect(
@@ -1704,6 +1715,9 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void startAntigravityLogin() {
+        if (rejectConcurrentLogin()) {
+            return;
+        }
         authenticationInProgress = true;
         apply(new TerminalUiAction.StatusChanged("正在打开浏览器完成 Antigravity 授权"));
         submitEffect(
@@ -1804,6 +1818,9 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void startCodexDeviceLogin() {
+        if (rejectConcurrentLogin()) {
+            return;
+        }
         authenticationInProgress = true;
         apply(new TerminalUiAction.StatusChanged("正在获取 ChatGPT 设备码"));
         submitEffect(
@@ -1909,6 +1926,9 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void beginApiKeyInput(String input) {
+        if (rejectConcurrentLogin()) {
+            return;
+        }
         if (input == null || input.isBlank()) {
             input = authentication.apiKeyProviderId();
         }
