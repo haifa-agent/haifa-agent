@@ -160,8 +160,10 @@ Error、Queued 和 Focus。TrueColor 参考色会按明暗背景自适应；NoCo
   Surface Element 底色，侧栏垂直分割线统一使用 Border Subtle，消除界面视觉断层；
 - 高频 Markdown 子集只在 View 层转换为终端样式，`TranscriptItem`、Session 与持久化继续保留原始 Markdown；
 - Tool 根据 `requested/started/succeeded/failed/cancelled` 使用状态色。正常完成/`EXITED` 的折叠项严格占一行：
-  以 `✓` 状态符号开头，随后是工具名背景徽标、`目标`、辅助信息（非零退出码与耗时）和右端折叠符 `›`；
-  连续折叠项之间不插入空行，不再渲染正文预览行或 `ctrl+o expand` 长提示。`EXITED` 始终是成功状态，
+  以 `✓` 状态符号开头，随后是工具名背景徽标、调用说明（优先模型 `intentSummary`/`description`，否则安全
+  Target Summary，再否则工具名）、辅助信息（非零退出码与耗时）和右端折叠符 `›`；说明在 `REQUESTED`
+  阶段即可展示，不提前显示成功。连续折叠项之间不插入空行，不再渲染正文预览行或 `ctrl+o expand`
+  长提示。`EXITED` 始终是成功状态，
   非零退出码（如 `exit 1`）只作为弱化事实展示，不会变成红色故障；`exit 0` 不重复展示。
   真实 `FAILED`/`DENIED`/`TIMEOUT`/`UNKNOWN` 仍保留错误或未知语义，并在折叠态保留最多两行安全原因。
   折叠态耗时始终显示；按 `ctrl+o` 或点击条目可展开/收起，展开后显示既有有界详情和

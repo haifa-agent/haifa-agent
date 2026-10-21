@@ -95,12 +95,12 @@ public final class WebToolCatalog {
                 : Set.of(ToolSideEffect.NETWORK_ACCESS, ToolSideEffect.CREDENTIAL_USE);
         return new ToolDefinition(
                 new ToolName(name),
-                new SemanticVersion("1.0.0"),
+                new SemanticVersion("1.1.0"),
                 providerId,
                 title,
                 description,
-                new ToolSchema("haifa." + name + ".input", "1.0.0", inputSchema),
-                new ToolSchema("haifa." + name + ".output", "1.0.0", outputSchema),
+                new ToolSchema("haifa." + name + ".input", "1.1.0", inputSchema),
+                new ToolSchema("haifa." + name + ".output", "1.1.0", outputSchema),
                 ToolExecutionMode.REMOTE_PROVIDER,
                 true,
                 Duration.ofSeconds(30),
@@ -173,6 +173,7 @@ public final class WebToolCatalog {
                             "safeSearch", Map.of("type", "string", "enum", List.of("off", "moderate", "strict")));
             }
         }
+        putCallDescription(properties);
         return objectSchema(properties, List.of("query"));
     }
 
@@ -218,6 +219,7 @@ public final class WebToolCatalog {
                         1_000_000,
                         "default",
                         WebFetchToolProvider.DEFAULT_MAX_CHARACTERS));
+        putCallDescription(properties);
         return objectSchema(properties, List.of("url"));
     }
 
@@ -257,5 +259,24 @@ public final class WebToolCatalog {
         schema.put("required", List.copyOf(new ArrayList<>(required)));
         schema.put("additionalProperties", false);
         return Map.copyOf(schema);
+    }
+
+    /**
+     * Optional LLM-authored user-facing intent for this tool call. Kept out of {@code required} so
+     * missing values never block an otherwise safe invocation or trigger schema repair.
+     */
+    private static void putCallDescription(Map<String, Object> properties) {
+        properties.put(
+                "description",
+                Map.of(
+                        "type",
+                        "string",
+                        "maxLength",
+                        256,
+                        "description",
+                        "Concise user-facing explanation of this tool call's intended operation. "
+                                + "Use the user's language. Name the specific action and target as intent, "
+                                + "not a completed outcome. Do not merely repeat the tool name, and do not "
+                                + "expose credentials, secrets, or internal reasoning."));
     }
 }

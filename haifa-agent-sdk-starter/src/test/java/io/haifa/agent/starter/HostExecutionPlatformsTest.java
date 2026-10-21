@@ -142,7 +142,9 @@ class HostExecutionPlatformsTest {
     @Test
     void exposesTheDeclaredTimeoutBoundToTheModel() throws Exception {
         Path workspace = Files.createDirectories(temporary.resolve("workspace"));
-        var validator = new JsonSchema202012Validator();
+        // Bound assertions are independent of the production soft deadline; use a generous budget so
+        // shared CI runners do not fail this check on GC or scheduling jitter.
+        var validator = new JsonSchema202012Validator(20, 10_000, Duration.ofSeconds(5));
 
         try (var platform = HostExecutionPlatforms.hostGuarded(
                 spec(workspace, Duration.ofSeconds(120), MAXIMUM_TIMEOUT), TENANT, PRINCIPAL)) {

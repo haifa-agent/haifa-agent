@@ -255,6 +255,82 @@ class TerminalUiReducerTest {
     }
 
     @Test
+    void prefersIntentSummaryOverTargetSummaryFromRequestedThroughSucceeded() {
+        TerminalUiState requested = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1",
+                                "execution_run",
+                                "REQUESTED",
+                                "NONE",
+                                "rg -l ToolCall .",
+                                "",
+                                Optional.empty(),
+                                "查找包含 ToolCall 的文件"))));
+        assertThat(requested.transcript())
+                .filteredOn(item -> item.id().equals("tool-tool-1"))
+                .singleElement()
+                .satisfies(item -> {
+                    assertThat(item.status()).isEqualTo("REQUESTED");
+                    assertThat(item.title()).isEqualTo("execution_run · 查找包含 ToolCall 的文件");
+                    assertThat(item.body()).contains("Target: rg -l ToolCall .");
+                });
+
+        TerminalUiState started = reducer.reduce(
+                requested,
+                new TerminalUiAction.RunEventReceived(event(
+                        2,
+                        "event-2",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1",
+                                "execution_run",
+                                "STARTED",
+                                "NONE",
+                                "rg -l ToolCall .",
+                                "",
+                                Optional.empty(),
+                                "查找包含 ToolCall 的文件"))));
+        TerminalUiState succeeded = reducer.reduce(
+                started,
+                new TerminalUiAction.RunEventReceived(event(
+                        3,
+                        "event-3",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1",
+                                "execution_run",
+                                "SUCCEEDED",
+                                "NONE",
+                                "rg -l ToolCall .",
+                                "artifact:tool-1",
+                                Optional.empty(),
+                                "查找包含 ToolCall 的文件"))));
+        assertThat(succeeded.transcript())
+                .filteredOn(item -> item.id().equals("tool-tool-1"))
+                .singleElement()
+                .satisfies(item -> {
+                    assertThat(item.status()).isEqualTo("SUCCEEDED");
+                    assertThat(item.title()).isEqualTo("execution_run · 查找包含 ToolCall 的文件");
+                    assertThat(item.body()).contains("Target: rg -l ToolCall .", "Result: artifact:tool-1");
+                });
+    }
+
+    @Test
+    void fallsBackToTargetSummaryWhenIntentSummaryMissing() {
+        TerminalUiState state = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1", "file_read", "REQUESTED", "NONE", "RuntimeCore.java", ""))));
+        assertThat(state.transcript()).singleElement().satisfies(item -> assertThat(item.title())
+                .isEqualTo("file_read · RuntimeCore.java"));
+    }
+
+    @Test
     void ignoresLatePreviewAfterAuthoritativeToolCompletion() {
         TerminalUiState runStarted = reducer.reduce(
                 TerminalUiState.initial(120, 40),

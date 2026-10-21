@@ -1064,21 +1064,33 @@ public final class TerminalUiReducer {
 
     private static String toolTitle(RunEventPayloads.ToolLifecycle lifecycle) {
         String toolName = lifecycle.displayName();
-        String target = boundedTarget(lifecycle.targetSummary());
-        if (target.isBlank() || target.equalsIgnoreCase(toolName)) {
+        String headline = toolHeadline(lifecycle);
+        if (headline.isBlank() || headline.equalsIgnoreCase(toolName)) {
             return toolName;
         }
         String prefix = toolName + " · ";
         int available = MAX_TRANSCRIPT_TITLE_LENGTH - prefix.length();
-        if (target.length() <= available) return prefix + target;
+        if (headline.length() <= available) return prefix + headline;
         int end = Math.max(0, available - 1);
         if (end > 0
-                && end < target.length()
-                && Character.isLowSurrogate(target.charAt(end))
-                && Character.isHighSurrogate(target.charAt(end - 1))) {
+                && end < headline.length()
+                && Character.isLowSurrogate(headline.charAt(end))
+                && Character.isHighSurrogate(headline.charAt(end - 1))) {
             end--;
         }
-        return prefix + target.substring(0, end) + "…";
+        return prefix + headline.substring(0, end) + "…";
+    }
+
+    /**
+     * Display priority for the collapsed tool headline: model intent description, then the existing
+     * safe target summary, then the tool name (handled by the caller when this returns blank).
+     */
+    private static String toolHeadline(RunEventPayloads.ToolLifecycle lifecycle) {
+        String intent = boundedTarget(lifecycle.intentSummary());
+        if (!intent.isBlank()) {
+            return intent;
+        }
+        return boundedTarget(lifecycle.targetSummary());
     }
 
     private static TranscriptItem runSummaryItem(RunEventPayloads.RunLifecycle payload, AgentRunEvent event) {
