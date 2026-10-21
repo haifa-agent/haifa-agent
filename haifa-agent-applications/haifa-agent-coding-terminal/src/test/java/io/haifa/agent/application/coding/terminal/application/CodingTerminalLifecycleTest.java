@@ -151,8 +151,7 @@ class CodingTerminalLifecycleTest {
         controller.accept(input(TerminalInput.Kind.SELECTOR_BACKSPACE, ""));
         controller.accept(input(TerminalInput.Kind.SELECTOR_BACKSPACE, ""));
 
-        assertThat(controller.state().selector().orElseThrow().options())
-                .containsExactly("Antigravity", "DeepSeek");
+        assertThat(controller.state().selector().orElseThrow().options()).containsExactly("Antigravity", "DeepSeek");
     }
 
     @Test
@@ -506,10 +505,7 @@ class CodingTerminalLifecycleTest {
         assertThat(controller.state().transcript()).singleElement().satisfies(item -> {
             assertThat(item.title()).isEqualTo("ChatGPT 连接失败");
             assertThat(item.body())
-                    .contains(
-                            "阶段：已收到授权，正在换取凭据。",
-                            "原因代码：AUTH_REAUTH_REQUIRED",
-                            "登录已失效，请运行 /connect 重新连接。");
+                    .contains("阶段：已收到授权，正在换取凭据。", "原因代码：AUTH_REAUTH_REQUIRED", "登录已失效，请运行 /connect 重新连接。");
             assertThat(item.status()).isEqualTo("FAILED");
         });
         assertThat(controller.state().recoverableError()).contains("AUTH_REAUTH_REQUIRED");

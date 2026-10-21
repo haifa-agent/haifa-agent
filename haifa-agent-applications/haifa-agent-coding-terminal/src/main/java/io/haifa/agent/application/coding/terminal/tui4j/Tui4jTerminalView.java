@@ -938,7 +938,9 @@ final class Tui4jTerminalView {
         for (int index = start; index < end; index++) {
             boolean selected = index == selector.selected();
             TerminalSelectorDetail detail = selector.detail(index).orElse(null);
-            if (detail != null && !detail.category().isBlank() && !detail.category().equals(category)) {
+            if (detail != null
+                    && !detail.category().isBlank()
+                    && !detail.category().equals(category)) {
                 category = detail.category();
                 lines.add(theme.muted("│ " + sanitize(category)));
             }

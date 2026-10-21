@@ -932,8 +932,7 @@ class Tui4jCodingTerminalModelTest {
         assertThat(fixture.controller.secureInputRequested()).isTrue();
         assertThat(fixture.controller.secureInputIsUpdate()).isFalse();
         assertThat(fixture.controller.state().editorBuffer()).isEmpty();
-        assertThat(fixture.controller.state().status())
-                .contains("输入 DeepSeek 的 API Key");
+        assertThat(fixture.controller.state().status()).contains("输入 DeepSeek 的 API Key");
         assertThat(fixture.model.view())
                 .doesNotContain("private-value", "stored as plaintext", "enter send")
                 .contains("API Key ┃ •••••••••••••", "Enter 保存 · Esc 取消");
@@ -966,9 +965,7 @@ class Tui4jCodingTerminalModelTest {
         assertThat(fixture.controller.secureInputRequested()).isTrue();
         assertThat(fixture.controller.secureInputIsUpdate()).isTrue();
         assertThat(fixture.controller.state().status()).contains("更新 DeepSeek 的 API Key");
-        assertThat(fixture.model.view())
-                .contains(
-                        "新 Key ┃ 粘贴或输入新的 API Key（Esc 保留现有 Key）", "Enter 更新 · Esc 取消");
+        assertThat(fixture.model.view()).contains("新 Key ┃ 粘贴或输入新的 API Key（Esc 保留现有 Key）", "Enter 更新 · Esc 取消");
 
         fixture.model.update(new PasteMessage("updated-key"));
         fixture.model.update(key(KeyType.keyCR));
@@ -1018,8 +1015,7 @@ class Tui4jCodingTerminalModelTest {
         fixture.model.update(new PasteMessage("ws-default-01"));
         fixture.model.update(key(KeyType.keyCR));
 
-        assertThat(fixture.controller.bailianConfigStep())
-                .isEqualTo(CodingTerminalController.BailianConfigStep.REGION);
+        assertThat(fixture.controller.bailianConfigStep()).isEqualTo(CodingTerminalController.BailianConfigStep.REGION);
         assertThat(fixture.controller.secureInputPrompt()).isEqualTo("Region ┃ ");
         assertThat(fixture.controller.state().status()).contains("步骤 3/3");
 
@@ -1095,8 +1091,7 @@ class Tui4jCodingTerminalModelTest {
         fixture.model.update(key(KeyType.keyCR));
 
         assertThat(fixture.controller.secureInputRequested()).isTrue();
-        assertThat(fixture.controller.state().status())
-                .contains("Workspace ID 格式不正确");
+        assertThat(fixture.controller.state().status()).contains("Workspace ID 格式不正确");
 
         fixture.model.update(new PasteMessage("ws-valid-1"));
         fixture.model.update(key(KeyType.keyCR));

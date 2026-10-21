@@ -200,8 +200,7 @@ class Tui4jTerminalViewTest {
 
         String rendered = view.render(state, transcript(state), editor(88), true, false);
 
-        assertThat(rendered)
-                .contains("订阅登录", "API Key", "ChatGPT", "[推荐]", "Antigravity", "DeepSeek", "[当前]");
+        assertThat(rendered).contains("订阅登录", "API Key", "ChatGPT", "[推荐]", "Antigravity", "DeepSeek", "[当前]");
     }
 
     @Test

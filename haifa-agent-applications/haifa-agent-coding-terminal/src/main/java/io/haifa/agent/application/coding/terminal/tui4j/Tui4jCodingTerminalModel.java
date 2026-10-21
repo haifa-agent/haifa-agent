@@ -798,7 +798,9 @@ final class Tui4jCodingTerminalModel implements Model {
     }
 
     private Command selectorKey(KeyPressMessage key) {
-        boolean providerSearch = controller.state().selector()
+        boolean providerSearch = controller
+                .state()
+                .selector()
                 .map(selector -> "auth-provider".equals(selector.kind()))
                 .orElse(false);
         if (providerSearch) {
@@ -815,7 +817,9 @@ final class Tui4jCodingTerminalModel implements Model {
                 return Command.none();
             }
         }
-        boolean authorizationWait = controller.state().selector()
+        boolean authorizationWait = controller
+                .state()
+                .selector()
                 .map(selector -> "auth-wait".equals(selector.kind()))
                 .orElse(false);
         if (authorizationWait) {
@@ -848,7 +852,9 @@ final class Tui4jCodingTerminalModel implements Model {
                 return Command.none();
             }
         }
-        boolean deviceWait = controller.state().selector()
+        boolean deviceWait = controller
+                .state()
+                .selector()
                 .map(selector -> "auth-device".equals(selector.kind()))
                 .orElse(false);
         if (deviceWait) {

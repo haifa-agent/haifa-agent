@@ -257,8 +257,7 @@ class CodingTerminalExecutionTest {
         assertThat(controller.state().selector()).isPresent();
         assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("model-readiness");
         assertThat(controller.state().selector().orElseThrow().options())
-                .containsExactly(
-                        "切换模型 (/model)", "重新登录 provider (/connect)", "保留草稿并关闭");
+                .containsExactly("切换模型 (/model)", "重新登录 provider (/connect)", "保留草稿并关闭");
 
         // Choosing index 2 dismisses selector and keeps draft
         controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));

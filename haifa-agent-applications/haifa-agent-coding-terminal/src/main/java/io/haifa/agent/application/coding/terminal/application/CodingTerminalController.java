@@ -409,10 +409,7 @@ public final class CodingTerminalController implements AutoCloseable {
                 apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
                         "model-readiness",
                         "模型凭据不可用",
-                        List.of(
-                                "切换模型 (/model)",
-                                "重新登录 " + providerName + " (/connect)",
-                                "保留草稿并关闭"),
+                        List.of("切换模型 (/model)", "重新登录 " + providerName + " (/connect)", "保留草稿并关闭"),
                         0)));
             }
             return;
@@ -553,9 +550,10 @@ public final class CodingTerminalController implements AutoCloseable {
                         || AuthenticationProviderPresentation.providerName(provider)
                                 .toLowerCase(java.util.Locale.ROOT)
                                 .contains(needle)
-                        || provider.providerId().toLowerCase(java.util.Locale.ROOT).contains(needle))
-                .sorted(java.util.Comparator
-                        .comparingInt((CodingAuthenticationProviderView value) ->
+                        || provider.providerId()
+                                .toLowerCase(java.util.Locale.ROOT)
+                                .contains(needle))
+                .sorted(java.util.Comparator.comparingInt((CodingAuthenticationProviderView value) ->
                                 value.category() == CodingAuthenticationProviderView.Category.SUBSCRIPTION ? 0 : 1)
                         .thenComparing(value -> AuthenticationProviderPresentation.providerName(value)))
                 .toList();
@@ -571,9 +569,7 @@ public final class CodingTerminalController implements AutoCloseable {
                         || authenticationProviders.get(index).connected())
                 .findFirst()
                 .orElse(0);
-        String title = connectionCenterFilter.isBlank()
-                ? "连接模型"
-                : "连接模型 · 搜索: " + connectionCenterFilter;
+        String title = connectionCenterFilter.isBlank() ? "连接模型" : "连接模型 · 搜索: " + connectionCenterFilter;
         apply(new TerminalUiAction.SelectorOpened(
                 new TerminalSelector("auth-provider", title, options, selected, details)));
         apply(new TerminalUiAction.StatusChanged(
@@ -601,9 +597,10 @@ public final class CodingTerminalController implements AutoCloseable {
         String provider = parts[0].toLowerCase(java.util.Locale.ROOT);
         if ("api".equals(provider)) {
             int separator = argument.indexOf(' ');
-            beginApiKeyInput(separator < 0
-                    ? authentication.apiKeyProviderId()
-                    : argument.substring(separator + 1).strip());
+            beginApiKeyInput(
+                    separator < 0
+                            ? authentication.apiKeyProviderId()
+                            : argument.substring(separator + 1).strip());
             return;
         }
         if ("openai".equals(provider) || "chatgpt".equals(provider) || "codex".equals(provider)) {
@@ -945,7 +942,9 @@ public final class CodingTerminalController implements AutoCloseable {
         }
         if (input.kind() == TerminalInput.Kind.SELECTOR_FILTER
                 || input.kind() == TerminalInput.Kind.SELECTOR_BACKSPACE) {
-            if (state.selector().filter(selector -> "auth-provider".equals(selector.kind())).isEmpty()) {
+            if (state.selector()
+                    .filter(selector -> "auth-provider".equals(selector.kind()))
+                    .isEmpty()) {
                 return;
             }
             if (input.kind() == TerminalInput.Kind.SELECTOR_FILTER) {
@@ -1774,8 +1773,8 @@ public final class CodingTerminalController implements AutoCloseable {
                                 .filter(option -> option.providerId().equals(providerId))
                                 .toList();
                         if (providerModels.isEmpty()) {
-                            pump.offer(new TerminalUiAction.StatusChanged("已连接 " + providerName
-                                    + "，但当前配置没有该提供商的模型；请在配置文件的 models 中加入后重启"));
+                            pump.offer(new TerminalUiAction.StatusChanged(
+                                    "已连接 " + providerName + "，但当前配置没有该提供商的模型；请在配置文件的 models 中加入后重启"));
                             return;
                         }
                         if (providerModels.size() == 1
@@ -1829,7 +1828,8 @@ public final class CodingTerminalController implements AutoCloseable {
         pump.offer(new TerminalUiAction.BrowserLoginInstructionsPresented(connectionName, ""));
     }
 
-    private void rememberDevice(io.haifa.agent.application.project.product.coding.client.CodingDeviceLoginView instruction) {
+    private void rememberDevice(
+            io.haifa.agent.application.project.product.coding.client.CodingDeviceLoginView instruction) {
         pendingDeviceCode.set(instruction.userCode());
         pendingVerificationUri.set(instruction.verificationUri().toString());
         authenticationExpiresAtMillis = instruction.expiresAtEpochMillis();
@@ -1888,8 +1888,7 @@ public final class CodingTerminalController implements AutoCloseable {
         submitControlEffect(
                 () -> {
                     boolean opened = authentication.openAuthorization(uri);
-                    return () -> apply(new TerminalUiAction.StatusChanged(
-                            opened ? "已重新打开浏览器" : "无法打开浏览器，请复制链接后手动打开"));
+                    return () -> apply(new TerminalUiAction.StatusChanged(opened ? "已重新打开浏览器" : "无法打开浏览器，请复制链接后手动打开"));
                 },
                 code -> apply(new TerminalUiAction.RecoverableFailure(code)));
     }
@@ -1906,8 +1905,7 @@ public final class CodingTerminalController implements AutoCloseable {
         lastAuthenticationCountdownSecond = seconds;
         String remaining = "%02d:%02d".formatted(seconds / 60, seconds % 60);
         apply(new TerminalUiAction.StatusChanged(
-                seconds == 0 ? "等待浏览器授权 · 授权即将超时 · Esc 取消"
-                        : "等待浏览器授权 · 剩余 " + remaining + " · Esc 取消"));
+                seconds == 0 ? "等待浏览器授权 · 授权即将超时 · Esc 取消" : "等待浏览器授权 · 剩余 " + remaining + " · Esc 取消"));
     }
 
     private void beginApiKeyInput(String input) {
@@ -1979,8 +1977,7 @@ public final class CodingTerminalController implements AutoCloseable {
         }
 
         if (hasExistingKey) {
-            apply(new TerminalUiAction.StatusChanged(
-                    "更新 " + displayName + " 的 API Key（将覆盖系统凭据库中的现有 Key）" + help));
+            apply(new TerminalUiAction.StatusChanged("更新 " + displayName + " 的 API Key（将覆盖系统凭据库中的现有 Key）" + help));
         } else {
             apply(new TerminalUiAction.StatusChanged("请输入 " + displayName + " 的 API Key" + help));
         }
@@ -2025,9 +2022,7 @@ public final class CodingTerminalController implements AutoCloseable {
             return switch (bailianStep) {
                 case WORKSPACE_ID -> "输入百炼 Workspace ID";
                 case REGION -> "输入地域，例如 cn-beijing（回车使用默认）";
-                default -> secureInputIsUpdate()
-                        ? "粘贴或输入新的 API Key（Esc 保留现有 Key）"
-                        : "粘贴或输入百炼 API Key";
+                default -> secureInputIsUpdate() ? "粘贴或输入新的 API Key（Esc 保留现有 Key）" : "粘贴或输入百炼 API Key";
             };
         }
         return secureInputIsUpdate() ? "粘贴或输入新的 API Key（Esc 保留现有 Key）" : "粘贴或输入 API Key";
@@ -2090,8 +2085,7 @@ public final class CodingTerminalController implements AutoCloseable {
                 try {
                     CodingAuthenticationView connected = authentication.saveApiKey(providerId, owned);
                     completion = () -> {
-                        String providerName =
-                                AuthenticationProviderPresentation.providerName(providerId, providerId);
+                        String providerName = AuthenticationProviderPresentation.providerName(providerId, providerId);
                         apply(new TerminalUiAction.StatusChanged("已连接 " + providerName + "，正在加载模型"));
                         scheduleReconcile();
                         offerConnectionNextStep(providerId, providerName);
@@ -2124,8 +2118,7 @@ public final class CodingTerminalController implements AutoCloseable {
         switch (bailianStep) {
             case API_KEY -> {
                 if (text.chars().anyMatch(Character::isWhitespace)) {
-                    apply(new TerminalUiAction.StatusChanged(
-                            "API Key 不能包含空格；Workspace 和 Region 将在后续步骤中填写"));
+                    apply(new TerminalUiAction.StatusChanged("API Key 不能包含空格；Workspace 和 Region 将在后续步骤中填写"));
                     return;
                 }
                 if (!text.isEmpty()) {
@@ -2142,15 +2135,13 @@ public final class CodingTerminalController implements AutoCloseable {
                     saveBailianCredentials();
                     return;
                 }
-                bailianStep = pendingBailianWorkspaceId == null
-                        ? BailianConfigStep.WORKSPACE_ID
-                        : BailianConfigStep.REGION;
+                bailianStep =
+                        pendingBailianWorkspaceId == null ? BailianConfigStep.WORKSPACE_ID : BailianConfigStep.REGION;
                 applyBailianStepStatus();
             }
             case WORKSPACE_ID -> {
                 if (!DNS_LABEL_PATTERN.matcher(text).matches()) {
-                    apply(new TerminalUiAction.StatusChanged(
-                            "Workspace ID 格式不正确：只能使用小写字母、数字和连字符"));
+                    apply(new TerminalUiAction.StatusChanged("Workspace ID 格式不正确：只能使用小写字母、数字和连字符"));
                     return;
                 }
                 pendingBailianWorkspaceId = text;
@@ -2206,8 +2197,7 @@ public final class CodingTerminalController implements AutoCloseable {
                 try {
                     CodingAuthenticationView connected = authentication.saveApiKey(providerId, key, attributes);
                     completion = () -> {
-                        String providerName =
-                                AuthenticationProviderPresentation.providerName(providerId, providerId);
+                        String providerName = AuthenticationProviderPresentation.providerName(providerId, providerId);
                         apply(new TerminalUiAction.StatusChanged("已连接 " + providerName + "，正在加载模型"));
                         scheduleReconcile();
                         offerConnectionNextStep(providerId, providerName);
@@ -2250,12 +2240,10 @@ public final class CodingTerminalController implements AutoCloseable {
             apply(new TerminalUiAction.StatusChanged("尚未连接模型账号，使用 /connect 连接"));
             return;
         }
-        List<String> options = authenticationOptions.stream().map(this::accountLabel).toList();
-        apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
-                logout ? "auth-logout" : "auth-account",
-                logout ? "断开模型账号" : "模型账号",
-                options,
-                0)));
+        List<String> options =
+                authenticationOptions.stream().map(this::accountLabel).toList();
+        apply(new TerminalUiAction.SelectorOpened(
+                new TerminalSelector(logout ? "auth-logout" : "auth-account", logout ? "断开模型账号" : "模型账号", options, 0)));
     }
 
     private String accountLabel(CodingAuthenticationView connection) {
@@ -2263,11 +2251,12 @@ public final class CodingTerminalController implements AutoCloseable {
                 AuthenticationProviderPresentation.providerName(connection.providerId(), connection.providerId());
         String method = connection.method() == CodingAuthenticationView.Method.API_KEY ? "API Key" : "订阅";
         String account = AuthenticationProviderPresentation.maskAccount(connection.accountLabel());
-        String status = switch (connection.status()) {
-            case AUTHENTICATED -> "已连接";
-            case REAUTH_REQUIRED -> "需要重新登录";
-            case RATE_LIMITED -> "已限流";
-        };
+        String status =
+                switch (connection.status()) {
+                    case AUTHENTICATED -> "已连接";
+                    case REAUTH_REQUIRED -> "需要重新登录";
+                    case RATE_LIMITED -> "已限流";
+                };
         return providerName + " · " + method + (account.isBlank() ? "" : " · " + account) + " · " + status;
     }
 
@@ -2292,10 +2281,7 @@ public final class CodingTerminalController implements AutoCloseable {
         String providerName =
                 AuthenticationProviderPresentation.providerName(connection.providerId(), connection.providerId());
         apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
-                "auth-logout-confirm",
-                "断开 " + providerName + "？",
-                List.of("取消", "确认断开 " + providerName),
-                0)));
+                "auth-logout-confirm", "断开 " + providerName + "？", List.of("取消", "确认断开 " + providerName), 0)));
     }
 
     private void disconnectSelectedAccount() {
@@ -2309,8 +2295,7 @@ public final class CodingTerminalController implements AutoCloseable {
         submitEffect(
                 () -> {
                     boolean removed = authentication.logout(connection.connectionId());
-                    return () -> apply(new TerminalUiAction.StatusChanged(
-                            removed ? "模型账号已断开" : "模型账号已不存在"));
+                    return () -> apply(new TerminalUiAction.StatusChanged(removed ? "模型账号已断开" : "模型账号已不存在"));
                 },
                 code -> apply(new TerminalUiAction.RecoverableFailure(code)));
     }

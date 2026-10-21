@@ -228,8 +228,7 @@ public final class TerminalUiReducer {
                             new TerminalSelectorDetail("粘贴到浏览器完成授权", "", "设备码登录"),
                             new TerminalSelectorDetail(instructions.verificationUri(), "", "设备码登录"),
                             new TerminalSelectorDetail("退出本次登录", "", "设备码登录")));
-            return copyWithStatus(
-                    copyWithSelector(state, Optional.of(selector)), "在浏览器输入设备码 · Esc 取消");
+            return copyWithStatus(copyWithSelector(state, Optional.of(selector)), "在浏览器输入设备码 · Esc 取消");
         }
         if (action instanceof TerminalUiAction.BrowserLoginInstructionsPresented instructions) {
             return copyWithStatus(
@@ -1045,8 +1044,7 @@ public final class TerminalUiReducer {
                 switch (code) {
                     case "AUTH_REAUTH_REQUIRED" -> "登录已失效，请运行 /connect 重新连接。";
                     case "AUTH_LOGIN_SERVICE_UNAVAILABLE" -> "登录服务暂不可用，请检查网络后重试。";
-                    case "AUTH_TOKEN_RESPONSE_INVALID", "AUTH_TOKEN_ACCOUNT_INVALID" ->
-                        "登录响应无法接受，请重试；如持续失败，请检查登录配置。";
+                    case "AUTH_TOKEN_RESPONSE_INVALID", "AUTH_TOKEN_ACCOUNT_INVALID" -> "登录响应无法接受，请重试；如持续失败，请检查登录配置。";
                     case "AUTH_STORE_FAILED" -> "凭据已获取，但无法写入系统凭据库；请检查系统凭据管理器权限。";
                     case "AUTH_CALLBACK_TIMEOUT" -> "浏览器授权等待超时，请重试或改用设备码登录。";
                     case "AUTH_CANCELLED" -> "登录已取消。";
