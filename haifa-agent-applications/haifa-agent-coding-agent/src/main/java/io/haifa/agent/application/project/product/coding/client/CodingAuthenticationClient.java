@@ -30,6 +30,11 @@ public interface CodingAuthenticationClient {
         return false;
     }
 
+    /** Safe provider list for the connection center. Unknown implementations expose no providers. */
+    default List<CodingAuthenticationProviderView> providers() {
+        return List.of();
+    }
+
     List<CodingAuthenticationView> connections();
 
     CodingAuthenticationView loginCodexBrowser();
@@ -72,6 +77,14 @@ public interface CodingAuthenticationClient {
 
     default java.util.Optional<java.util.Map<String, String>> providerAttributes(String providerId) {
         return java.util.Optional.empty();
+    }
+
+    /**
+     * Requests cancellation of the currently running interactive login. Only the waiting-user phase is
+     * cancellable; implementations return {@code false} once credential exchange or storage has started.
+     */
+    default boolean cancelLogin() {
+        return false;
     }
 
     boolean logout(String connectionId);

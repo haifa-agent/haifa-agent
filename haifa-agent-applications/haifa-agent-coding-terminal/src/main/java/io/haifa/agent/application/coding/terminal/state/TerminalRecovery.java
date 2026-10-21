@@ -54,7 +54,59 @@ public record TerminalRecovery(Category category, String code, String action) {
             entry(
                     Category.USER_ACTION_REQUIRED,
                     "MODEL_AUTHENTICATION_REQUIRED",
-                    "未登录/凭据不可用；运行 /model 切换可用模型，或运行 /login 登录后继续原草稿。"),
+                    "未登录/凭据不可用；运行 /connect 连接或重新登录，或运行 /model 切换可用模型。"),
+            entry(Category.USER_ACTION_REQUIRED, "AUTH_PROVIDER_LIST_EMPTY", "没有可用模型提供商；检查模型配置后重试。"),
+            entry(Category.USER_ACTION_REQUIRED, "AUTH_PROVIDER_INVALID", "该模型提供商不可用；运行 /connect 重新选择。"),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "AUTH_METHOD_UNSUPPORTED",
+                    "当前环境不支持该登录方式；运行 /connect 选择其他方式。"),
+            entry(Category.INTERRUPTED, "AUTH_CANCELLED", "登录已取消；草稿已保留，可运行 /connect 重试。"),
+            entry(
+                    Category.RETRYABLE,
+                    "AUTH_CALLBACK_TIMEOUT",
+                    "浏览器授权等待超时；重试，或改用设备码登录。"),
+            entry(
+                    Category.RETRYABLE,
+                    "AUTH_CALLBACK_UNAVAILABLE",
+                    "无法启动本机回调端口；检查端口占用或防火墙，或改用设备码登录。"),
+            entry(Category.RETRYABLE, "AUTH_CALLBACK_FAILED", "浏览器回调未能完成；重试登录。"),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "AUTH_STORE_FAILED",
+                    "凭据无法写入系统凭据库；检查系统凭据管理器权限后重试。"),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "AUTH_LOGIN_IN_PROGRESS",
+                    "已有登录正在进行；等待完成，或按 Esc 取消后重试。"),
+            entry(Category.USER_ACTION_REQUIRED, "AUTH_REAUTH_REQUIRED", "登录已失效；运行 /connect 重新登录。"),
+            entry(
+                    Category.RETRYABLE,
+                    "AUTH_LOGIN_SERVICE_UNAVAILABLE",
+                    "登录服务暂不可用；检查网络后重试。"),
+            entry(Category.USER_ACTION_REQUIRED, "AUTH_DEVICE_CODE_EXPIRED", "设备码已过期；重新获取设备码。"),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "AUTH_DEVICE_CODE_DENIED",
+                    "设备码授权被拒绝；重试，或改用浏览器登录。"),
+            entry(Category.USER_ACTION_REQUIRED, "AUTH_SECRET_INVALID", "API Key 为空或格式不正确；返回表单重新输入。"),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "AUTH_WORKSPACE_ID_INVALID",
+                    "Workspace ID 格式不正确；使用小写字母、数字或连字符。"),
+            entry(Category.USER_ACTION_REQUIRED, "AUTH_REGION_INVALID", "地域格式不正确；重新选择地域。"),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "AUTH_SECURE_INPUT_UNAVAILABLE",
+                    "当前环境无法安全输入凭据；检查终端，或改用浏览器登录。"),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "AUTH_API_KEY_UNAVAILABLE",
+                    "该提供商未配置可写的 API Key 凭据；检查模型配置。"),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "AUTH_LOGIN_METHOD_UNAVAILABLE",
+                    "该提供商的登录方式未启用；检查本地兼容配置。"),
             entry(Category.USER_ACTION_REQUIRED, "MODEL_PAYMENT_REQUIRED", "请检查 Provider 账户余额、套餐、模型授权或账单状态后重试"),
             entry(Category.RETRYABLE, "MODEL_TIMEOUT", "Retry the request after checking provider availability."),
             entry(

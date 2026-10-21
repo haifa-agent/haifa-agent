@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationProgressView;
+import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationProviderView;
 import io.haifa.agent.auth.localmodel.ExternalLoginAttemptState;
 import io.haifa.agent.auth.localmodel.InMemoryWindowsCredentialManagerClient;
 import io.haifa.agent.auth.localmodel.LocalModelAuthenticationService;
@@ -67,6 +68,43 @@ class CliCodingAuthenticationClientTest {
                 java.util.List.of("env://DEEPSEEK_API_KEY", "model-auth://openai-codex/default"));
 
         assertThat(client.connectionRequired()).isFalse();
+    }
+
+    @Test
+    void exposesSafeProviderFactsForTheConnectionCenter() {
+        var store = createStore();
+        var client = client(
+                store,
+                "model-auth://deepseek/default",
+                "deepseek",
+                Map.of(),
+                java.util.List.of("model-auth://deepseek/default", "model-auth://kimi/default"));
+        client.saveApiKey("deepseek", "test-secret-key".toCharArray());
+
+        var providers = client.providers();
+        var deepseek = providers.stream()
+                .filter(provider -> provider.providerId().equals("deepseek"))
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(deepseek.category()).isEqualTo(CodingAuthenticationProviderView.Category.API_KEY);
+        assertThat(deepseek.current()).isTrue();
+        assertThat(deepseek.connected()).isTrue();
+        assertThat(deepseek.accountLabel()).hasValueSatisfying(label -> assertThat(label).contains("***"));
+        assertThat(deepseek.methods())
+                .anySatisfy(method -> {
+                    assertThat(method.id()).isEqualTo("api_key");
+                    assertThat(method.available()).isTrue();
+                });
+        assertThat(providers).extracting(CodingAuthenticationProviderView::providerId).doesNotContain("openai-codex");
+    }
+
+    @Test
+    void cancelWithoutAnActiveLoginReturnsFalse() {
+        var store = createStore();
+        var client = client(store, "model-auth://deepseek/default", "deepseek", Map.of());
+
+        assertThat(client.cancelLogin()).isFalse();
     }
 
     @Test

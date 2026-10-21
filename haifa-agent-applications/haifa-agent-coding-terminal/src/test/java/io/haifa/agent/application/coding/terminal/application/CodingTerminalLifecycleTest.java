@@ -12,6 +12,7 @@ import io.haifa.agent.application.project.product.coding.CodingSessionHistoryIte
 import io.haifa.agent.application.project.product.coding.CodingSessionHistoryPage;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationClient;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationProgressView;
+import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationProviderView;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationView;
 import io.haifa.agent.application.project.product.coding.client.CodingBrowserLoginView;
 import io.haifa.agent.application.project.product.coding.client.CodingDeviceLoginView;
@@ -25,7 +26,7 @@ import org.junit.jupiter.api.Test;
 
 class CodingTerminalLifecycleTest {
     @Test
-    void firstStartupOffersOnlyConfiguredAuthenticationMethodsWhenTheSelectedCredentialIsMissing() {
+    void firstStartupOffersTheConnectionCenterWhenTheSelectedCredentialIsMissing() {
         FakeClient client = new FakeClient(view(Optional.empty()));
         CodingAuthenticationClient authentication = new CodingAuthenticationClient() {
             @Override
@@ -36,6 +37,17 @@ class CodingTerminalLifecycleTest {
             @Override
             public String apiKeyProviderId() {
                 return "deepseek";
+            }
+
+            @Override
+            public List<CodingAuthenticationProviderView> providers() {
+                return List.of(provider(
+                        "deepseek",
+                        "DeepSeek",
+                        CodingAuthenticationProviderView.Category.API_KEY,
+                        false,
+                        true,
+                        apiKeyMethod()));
             }
 
             @Override
@@ -70,9 +82,9 @@ class CodingTerminalLifecycleTest {
         controller.start(CodingTerminalStartup.empty());
 
         assertThat(controller.state().selector()).get().satisfies(selector -> {
-            assertThat(selector.kind()).isEqualTo("auth-login");
-            assertThat(selector.title()).isEqualTo("Connect a model to get started");
-            assertThat(selector.options()).containsExactly("DeepSeek (API key)");
+            assertThat(selector.kind()).isEqualTo("auth-provider");
+            assertThat(selector.title()).isEqualTo("连接模型");
+            assertThat(selector.options()).containsExactly("DeepSeek · API Key · 当前");
         });
     }
 
@@ -89,6 +101,25 @@ class CodingTerminalLifecycleTest {
             @Override
             public boolean antigravityConnectionSupported() {
                 return true;
+            }
+
+            @Override
+            public List<CodingAuthenticationProviderView> providers() {
+                return List.of(
+                        provider(
+                                "deepseek",
+                                "DeepSeek",
+                                CodingAuthenticationProviderView.Category.API_KEY,
+                                false,
+                                false,
+                                apiKeyMethod()),
+                        provider(
+                                "google-antigravity",
+                                "Google Antigravity Direct",
+                                CodingAuthenticationProviderView.Category.SUBSCRIPTION,
+                                false,
+                                false,
+                                browserMethod()));
             }
 
             @Override
@@ -143,22 +174,19 @@ class CodingTerminalLifecycleTest {
         controller.start(CodingTerminalStartup.empty());
 
         var options = controller.state().selector().orElseThrow().options();
-        assertThat(options).contains("DeepSeek (API key)", "Antigravity subscription");
-        assertThat(options.get(0)).isEqualTo("DeepSeek (API key)");
-        assertThat(options.get(options.size() - 1)).isEqualTo("Antigravity subscription");
+        assertThat(options).contains("DeepSeek · API Key", "Antigravity · 订阅");
+        assertThat(options.get(0)).isEqualTo("Antigravity · 订阅");
+        assertThat(options.get(options.size() - 1)).isEqualTo("DeepSeek · API Key");
 
-        for (int i = 0; i < options.indexOf("Antigravity subscription"); i++) {
-            controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
-        }
         controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
         controller.drainEvents();
 
         assertThat(started).isTrue();
         assertThat(controller.state().transcript()).anySatisfy(item -> {
-            assertThat(item.title()).isEqualTo("Antigravity connection");
+            assertThat(item.title()).isEqualTo("Antigravity 连接");
             assertThat(item.status()).isEqualTo("CONNECTED");
         });
-        assertThat(controller.state().status()).isEqualTo("Connected to Antigravity (UNOFFICIAL_LOCAL_COMPAT)");
+        assertThat(controller.state().status()).contains("已连接 Antigravity");
     }
 
     @Test
@@ -209,21 +237,21 @@ class CodingTerminalLifecycleTest {
                 TerminalUiState.initial(120, 40),
                 Runnable::run);
 
-        controller.accept(input(TerminalInput.Kind.SUBMIT, "/login codex device"));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "/connect codex device"));
         controller.drainEvents();
 
         assertThat(controller.state().transcript()).anySatisfy(item -> {
-            assertThat(item.title()).isEqualTo("ChatGPT device login");
+            assertThat(item.title()).isEqualTo("ChatGPT 设备码登录");
             assertThat(item.body())
-                    .contains("Browser URL: https://auth.openai.com/codex/device", "Device code: ABCD-1234");
+                    .contains("浏览器地址：https://auth.openai.com/codex/device", "设备码：ABCD-1234");
             assertThat(item.status()).isEqualTo("WAITING");
         });
         assertThat(controller.state().transcript()).anySatisfy(item -> {
-            assertThat(item.title()).isEqualTo("ChatGPT Codex connection");
-            assertThat(item.body()).contains("Credentials were saved to system credential store");
+            assertThat(item.title()).isEqualTo("ChatGPT 连接");
+            assertThat(item.body()).contains("已连接。凭据已保存到系统凭据库。");
             assertThat(item.status()).isEqualTo("CONNECTED");
         });
-        assertThat(controller.state().status()).isEqualTo("Connected to ChatGPT Codex (UNOFFICIAL_LOCAL_COMPAT)");
+        assertThat(controller.state().status()).contains("已连接 ChatGPT");
     }
 
     @Test
@@ -274,25 +302,24 @@ class CodingTerminalLifecycleTest {
                 TerminalUiState.initial(120, 40),
                 Runnable::run);
 
-        controller.accept(input(TerminalInput.Kind.SUBMIT, "/login codex browser"));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "/connect codex browser"));
         controller.drainEvents();
 
         assertThat(controller.state().transcript()).anySatisfy(item -> {
-            assertThat(item.title()).isEqualTo("ChatGPT browser login");
+            assertThat(item.title()).isEqualTo("ChatGPT 浏览器登录");
             assertThat(item.body())
                     .contains(
-                            "A browser sign-in was requested.",
-                            "If it did not open, use this URL: "
+                            "已请求浏览器登录。",
+                            "如果浏览器未打开，请使用此链接："
                                     + "https://auth.openai.com/oauth/authorize?client_id=test&state=state");
         });
         assertThat(controller.state().transcript()).anySatisfy(item -> {
-            assertThat(item.title()).isEqualTo("ChatGPT Codex connection");
-            assertThat(item.body())
-                    .contains("Credentials were saved to system credential store", "UNOFFICIAL_LOCAL_COMPAT");
+            assertThat(item.title()).isEqualTo("ChatGPT 连接");
+            assertThat(item.body()).contains("已连接。凭据已保存到系统凭据库。", "UNOFFICIAL_LOCAL_COMPAT");
             assertThat(item.status()).isEqualTo("CONNECTED");
         });
         assertThat(controller.state().toString()).doesNotContain("client_id=test", "state=state");
-        assertThat(controller.state().status()).isEqualTo("Connected to ChatGPT Codex (UNOFFICIAL_LOCAL_COMPAT)");
+        assertThat(controller.state().status()).contains("已连接 ChatGPT");
     }
 
     @Test
@@ -337,16 +364,16 @@ class CodingTerminalLifecycleTest {
                 TerminalUiState.initial(120, 40),
                 Runnable::run);
 
-        controller.accept(input(TerminalInput.Kind.SUBMIT, "/login codex browser"));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "/connect codex browser"));
         controller.drainEvents();
 
         assertThat(controller.state().transcript()).singleElement().satisfies(item -> {
-            assertThat(item.title()).isEqualTo("ChatGPT Codex connection failed");
+            assertThat(item.title()).isEqualTo("ChatGPT 连接失败");
             assertThat(item.body())
                     .contains(
-                            "Last stage: Authorization received. Exchanging it for Codex credentials.",
-                            "Reason: AUTH_REAUTH_REQUIRED",
-                            "verify the OAuth Client ID and redirect registration");
+                            "阶段：已收到授权，正在换取凭据。",
+                            "原因代码：AUTH_REAUTH_REQUIRED",
+                            "登录已失效，请运行 /connect 重新连接。");
             assertThat(item.status()).isEqualTo("FAILED");
         });
         assertThat(controller.state().recoverableError()).contains("AUTH_REAUTH_REQUIRED");

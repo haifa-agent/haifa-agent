@@ -223,8 +223,8 @@ public final class TerminalUiReducer {
             items.add(new TranscriptItem(
                     "auth-device-code-" + items.size(),
                     TranscriptItem.Kind.RESOURCE,
-                    "ChatGPT device login",
-                    "Browser URL: " + instructions.verificationUri() + "\nDevice code: " + instructions.userCode(),
+                    "ChatGPT 设备码登录",
+                    "浏览器地址：" + instructions.verificationUri() + "\n设备码：" + instructions.userCode(),
                     "WAITING",
                     true));
             return copyWithStatus(copyWithTranscript(state, List.copyOf(items)), "Waiting for ChatGPT authorization");
@@ -234,8 +234,8 @@ public final class TerminalUiReducer {
             items.add(new TranscriptItem(
                     "auth-browser-instructions-" + items.size(),
                     TranscriptItem.Kind.RESOURCE,
-                    instructions.connectionName() + " browser login",
-                    "A browser sign-in was requested.\nIf it did not open, use this URL: "
+                    instructions.connectionName() + " 浏览器登录",
+                    "已请求浏览器登录。\n如果浏览器未打开，请使用此链接："
                             + instructions.authorizationUri(),
                     "WAITING",
                     true));
@@ -265,15 +265,11 @@ public final class TerminalUiReducer {
                     new TranscriptItem(
                             "auth-external-progress",
                             TranscriptItem.Kind.RESOURCE,
-                            completed.connectionName() + " connection",
-                            "Connected. Credentials were saved to system credential store." + compatibility,
+                            completed.connectionName() + " 连接",
+                            "已连接。凭据已保存到系统凭据库。" + compatibility,
                             "CONNECTED",
                             false));
-            return copyWithStatus(
-                    copyWithTranscript(state, List.copyOf(items)),
-                    completed.unofficialLocalCompatibility()
-                            ? "Connected to " + completed.connectionName() + " (UNOFFICIAL_LOCAL_COMPAT)"
-                            : "Connected to " + completed.connectionName());
+            return copyWithTranscript(state, List.copyOf(items));
         }
         if (action instanceof TerminalUiAction.AuthenticationFailed failure) {
             List<TranscriptItem> items = new ArrayList<>(state.transcript());
@@ -288,7 +284,7 @@ public final class TerminalUiReducer {
                     new TranscriptItem(
                             "auth-external-progress",
                             TranscriptItem.Kind.ERROR,
-                            failure.connectionName() + " connection failed",
+                            failure.connectionName() + " 连接失败",
                             authenticationFailureBody(failure.code(), lastStage),
                             "FAILED",
                             true));
@@ -1029,40 +1025,36 @@ public final class TerminalUiReducer {
 
     private static String authenticationProgressBody(CodingAuthenticationProgressView.Phase phase) {
         return switch (phase) {
-            case STARTING -> "Starting the local callback and browser sign-in flow.";
-            case WAITING_USER -> "Waiting for authorization in the browser.";
-            case EXCHANGING -> "Authorization received. Exchanging it for Codex credentials.";
-            case STORING -> "Codex credentials received. Saving them to system credential store.";
+            case STARTING -> "正在启动本机回调与浏览器登录。";
+            case WAITING_USER -> "等待在浏览器中完成授权。";
+            case EXCHANGING -> "已收到授权，正在换取凭据。";
+            case STORING -> "已获取凭据，正在保存到系统凭据库。";
         };
     }
 
     private static String authenticationProgressStatus(CodingAuthenticationProgressView.Phase phase) {
         return switch (phase) {
-            case STARTING -> "Starting ChatGPT sign-in";
-            case WAITING_USER -> "Waiting for ChatGPT authorization";
-            case EXCHANGING -> "Exchanging ChatGPT authorization";
-            case STORING -> "Saving ChatGPT credentials";
+            case STARTING -> "正在启动登录";
+            case WAITING_USER -> "等待浏览器授权";
+            case EXCHANGING -> "正在换取凭据";
+            case STORING -> "正在保存凭据";
         };
     }
 
     private static String authenticationFailureBody(String code, String lastStage) {
         String next =
                 switch (code) {
-                    case "AUTH_REAUTH_REQUIRED" ->
-                        "The token exchange was rejected. Retry /login; if it repeats, verify the OAuth Client ID and redirect registration.";
-                    case "AUTH_LOGIN_SERVICE_UNAVAILABLE" ->
-                        "The token service was unavailable. Check the network and retry /login.";
+                    case "AUTH_REAUTH_REQUIRED" -> "登录已失效，请运行 /connect 重新连接。";
+                    case "AUTH_LOGIN_SERVICE_UNAVAILABLE" -> "登录服务暂不可用，请检查网络后重试。";
                     case "AUTH_TOKEN_RESPONSE_INVALID", "AUTH_TOKEN_ACCOUNT_INVALID" ->
-                        "The token response could not be accepted. Verify the client registration and retry /login.";
-                    case "AUTH_STORE_FAILED" ->
-                        "Token exchange completed, but credentials could not be written to the system credential store.";
-                    case "AUTH_CALLBACK_TIMEOUT" ->
-                        "The local callback did not arrive before the login attempt expired. Retry /login.";
-                    default ->
-                        "The login did not complete. Retry /login and inspect the safe application log entry for this attempt.";
+                        "登录响应无法接受，请重试；如持续失败，请检查登录配置。";
+                    case "AUTH_STORE_FAILED" -> "凭据已获取，但无法写入系统凭据库；请检查系统凭据管理器权限。";
+                    case "AUTH_CALLBACK_TIMEOUT" -> "浏览器授权等待超时，请重试或改用设备码登录。";
+                    case "AUTH_CANCELLED" -> "登录已取消。";
+                    default -> "登录未完成，请重试；如持续失败，请查看应用日志中的安全记录。";
                 };
-        String stage = lastStage.isBlank() ? "" : "Last stage: " + lastStage + "\n";
-        return stage + "Reason: " + code + "\nNext: " + next;
+        String stage = lastStage.isBlank() ? "" : "阶段：" + lastStage + "\n";
+        return stage + "原因代码：" + code + "\n下一步：" + next;
     }
 
     private static String toolTitle(RunEventPayloads.ToolLifecycle lifecycle) {

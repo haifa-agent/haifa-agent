@@ -1,15 +1,19 @@
 package io.haifa.agent.cli;
 
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationClient;
+import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationMethodView;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationProgressView;
+import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationProviderView;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationView;
 import io.haifa.agent.application.project.product.coding.client.CodingBrowserLoginView;
 import io.haifa.agent.application.project.product.coding.client.CodingDeviceLoginView;
 import io.haifa.agent.auth.localmodel.ExternalLoginAttemptId;
 import io.haifa.agent.auth.localmodel.ExternalLoginAttemptSnapshot;
 import io.haifa.agent.auth.localmodel.ExternalLoginAttemptState;
+import io.haifa.agent.auth.localmodel.ExternalLoginMethodDescriptor;
 import io.haifa.agent.auth.localmodel.ExternalLoginMode;
 import io.haifa.agent.auth.localmodel.LocalModelAuthenticationService;
+import io.haifa.agent.auth.localmodel.LocalModelConnectionView;
 import io.haifa.agent.auth.localmodel.antigravity.AntigravityExternalLoginMethod;
 import io.haifa.agent.auth.localmodel.codex.CodexExternalLoginMethod;
 import io.haifa.agent.model.api.CredentialRef;
@@ -18,14 +22,18 @@ import io.haifa.agent.model.core.ModelCatalogManifest;
 import io.haifa.agent.model.core.ModelCatalogProvider;
 import io.haifa.agent.model.core.PackagedModelCatalog;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
 /** Highest-layer adapter from Coding Agent authentication use cases to shared local model auth. */
 final class CliCodingAuthenticationClient implements CodingAuthenticationClient, AutoCloseable {
@@ -40,6 +48,7 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient,
     private final boolean antigravityConnectionSupported;
     private final ModelCatalogManifest catalog;
     private final CodingAuthenticationMapper mapper;
+    private final AtomicReference<ExternalLoginAttemptId> activeLogin = new AtomicReference<>();
 
     CliCodingAuthenticationClient(
             LocalModelAuthenticationService authentication,
@@ -165,6 +174,95 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient,
     }
 
     @Override
+    public List<CodingAuthenticationProviderView> providers() {
+        Map<String, LocalModelConnectionView> connections = authentication.connections().stream()
+                .collect(Collectors.toMap(
+                        LocalModelConnectionView::providerId,
+                        value -> value,
+                        (first, ignored) -> first));
+        List<CodingAuthenticationProviderView> providers = new ArrayList<>();
+        for (ModelCatalogProvider provider : catalog.providers()) {
+            String providerId = provider.id().value();
+            List<CodingAuthenticationMethodView> methods = methods(provider);
+            if (methods.stream().noneMatch(CodingAuthenticationMethodView::available)) {
+                continue;
+            }
+            LocalModelConnectionView connection = connections.get(providerId);
+            boolean subscription = provider.authenticationMethods().contains(ModelAuthenticationMethod.EXTERNAL_LOGIN);
+            providers.add(new CodingAuthenticationProviderView(
+                    providerId,
+                    provider.displayName(),
+                    subscription
+                            ? CodingAuthenticationProviderView.Category.SUBSCRIPTION
+                            : CodingAuthenticationProviderView.Category.API_KEY,
+                    connection != null,
+                    "openai-codex".equals(providerId),
+                    providerId.equals(selectedProviderId),
+                    connection == null ? Optional.empty() : Optional.of(maskAccountLabel(connection.accountLabel())),
+                    Optional.empty(),
+                    methods,
+                    Optional.empty()));
+        }
+        return List.copyOf(providers);
+    }
+
+    private List<CodingAuthenticationMethodView> methods(ModelCatalogProvider provider) {
+        List<CodingAuthenticationMethodView> methods = new ArrayList<>();
+        String providerId = provider.id().value();
+        if (provider.authenticationMethods().contains(ModelAuthenticationMethod.API_KEY)) {
+            boolean writable = hasWritableCredentialReference(providerId);
+            methods.add(new CodingAuthenticationMethodView(
+                    "api_key",
+                    CodingAuthenticationMethodView.Type.API_KEY,
+                    writable,
+                    writable ? Optional.empty() : Optional.of("AUTH_API_KEY_UNAVAILABLE")));
+        }
+        if (provider.authenticationMethods().contains(ModelAuthenticationMethod.EXTERNAL_LOGIN)) {
+            Optional<ExternalLoginMethodDescriptor> descriptor = authentication.externalLoginMethods().stream()
+                    .filter(value -> value.methodId().value().equals(providerId))
+                    .findFirst();
+            if (descriptor.isEmpty()) {
+                methods.add(new CodingAuthenticationMethodView(
+                        "browser",
+                        CodingAuthenticationMethodView.Type.OAUTH,
+                        false,
+                        Optional.of("AUTH_LOGIN_METHOD_UNAVAILABLE")));
+            } else {
+                if (descriptor.orElseThrow().supportedModes().contains(ExternalLoginMode.BROWSER)) {
+                    methods.add(new CodingAuthenticationMethodView(
+                            "browser", CodingAuthenticationMethodView.Type.OAUTH, true, Optional.empty()));
+                }
+                if (descriptor.orElseThrow().supportedModes().contains(ExternalLoginMode.DEVICE_CODE)) {
+                    methods.add(new CodingAuthenticationMethodView(
+                            "device", CodingAuthenticationMethodView.Type.OAUTH, true, Optional.empty()));
+                }
+            }
+        }
+        return List.copyOf(methods);
+    }
+
+    private static String maskAccountLabel(String value) {
+        String label = value == null ? "" : value.strip();
+        if (label.isEmpty()) {
+            return "已连接";
+        }
+        int at = label.indexOf('@');
+        if (at > 0) {
+            return label.substring(0, 1) + "***" + label.substring(at);
+        }
+        if (label.length() <= 4) {
+            return "***";
+        }
+        return label.substring(0, 1) + "***" + label.substring(label.length() - 2);
+    }
+
+    @Override
+    public boolean cancelLogin() {
+        ExternalLoginAttemptId attemptId = activeLogin.get();
+        return attemptId != null && authentication.cancel(attemptId);
+    }
+
+    @Override
     public List<CodingAuthenticationView> connections() {
         return authentication.connections().stream().map(mapper::view).toList();
     }
@@ -253,52 +351,57 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient,
             Consumer<CodingBrowserLoginView> browserInstructions,
             Consumer<CodingDeviceLoginView> deviceInstructions,
             Consumer<CodingAuthenticationProgressView> progress) {
-        AtomicBoolean instructionsSent = new AtomicBoolean();
-        ExternalLoginAttemptState lastProgressState = null;
-        while (true) {
-            ExternalLoginAttemptSnapshot snapshot = authentication.attempt(attemptId);
-            if (lastProgressState != snapshot.state()) {
-                lastProgressState = snapshot.state();
-                progressPhase(snapshot.state())
-                        .ifPresent(phase -> progress.accept(new CodingAuthenticationProgressView(phase)));
-            }
-            if (browserInstructions != null
-                    && snapshot.mode() == ExternalLoginMode.BROWSER
-                    && instructionsSent.compareAndSet(false, true)) {
-                var authorizationUri = authentication.takeBrowserAuthorizationUri(attemptId);
-                if (authorizationUri.isPresent()) {
-                    browserInstructions.accept(new CodingBrowserLoginView(
-                            authorizationUri.orElseThrow(), snapshot.expiresAtEpochMillis()));
-                } else {
-                    instructionsSent.set(false);
+        activeLogin.set(attemptId);
+        try {
+            AtomicBoolean instructionsSent = new AtomicBoolean();
+            ExternalLoginAttemptState lastProgressState = null;
+            while (true) {
+                ExternalLoginAttemptSnapshot snapshot = authentication.attempt(attemptId);
+                if (lastProgressState != snapshot.state()) {
+                    lastProgressState = snapshot.state();
+                    progressPhase(snapshot.state())
+                            .ifPresent(phase -> progress.accept(new CodingAuthenticationProgressView(phase)));
+                }
+                if (browserInstructions != null
+                        && snapshot.mode() == ExternalLoginMode.BROWSER
+                        && instructionsSent.compareAndSet(false, true)) {
+                    var authorizationUri = authentication.takeBrowserAuthorizationUri(attemptId);
+                    if (authorizationUri.isPresent()) {
+                        browserInstructions.accept(new CodingBrowserLoginView(
+                                authorizationUri.orElseThrow(), snapshot.expiresAtEpochMillis()));
+                    } else {
+                        instructionsSent.set(false);
+                    }
+                }
+                if (deviceInstructions != null
+                        && snapshot.verificationUri().isPresent()
+                        && snapshot.userCode().isPresent()
+                        && instructionsSent.compareAndSet(false, true)) {
+                    deviceInstructions.accept(new CodingDeviceLoginView(
+                            snapshot.verificationUri().orElseThrow(),
+                            snapshot.userCode().orElseThrow(),
+                            snapshot.expiresAtEpochMillis()));
+                }
+                if (snapshot.state() == ExternalLoginAttemptState.SUCCEEDED) {
+                    return mapper.view(authentication
+                            .completedConnection(attemptId)
+                            .orElseThrow(() -> new IllegalStateException("AUTH_STORE_FAILED")));
+                }
+                if (snapshot.state() == ExternalLoginAttemptState.FAILED
+                        || snapshot.state() == ExternalLoginAttemptState.CANCELLED
+                        || snapshot.state() == ExternalLoginAttemptState.EXPIRED) {
+                    throw new IllegalStateException(snapshot.reasonCode().orElse("AUTH_LOGIN_FAILED"));
+                }
+                try {
+                    Thread.sleep(POLL_INTERVAL.toMillis());
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    authentication.cancel(attemptId);
+                    throw new IllegalStateException("AUTH_CANCELLED", exception);
                 }
             }
-            if (deviceInstructions != null
-                    && snapshot.verificationUri().isPresent()
-                    && snapshot.userCode().isPresent()
-                    && instructionsSent.compareAndSet(false, true)) {
-                deviceInstructions.accept(new CodingDeviceLoginView(
-                        snapshot.verificationUri().orElseThrow(),
-                        snapshot.userCode().orElseThrow(),
-                        snapshot.expiresAtEpochMillis()));
-            }
-            if (snapshot.state() == ExternalLoginAttemptState.SUCCEEDED) {
-                return mapper.view(authentication
-                        .completedConnection(attemptId)
-                        .orElseThrow(() -> new IllegalStateException("AUTH_STORE_FAILED")));
-            }
-            if (snapshot.state() == ExternalLoginAttemptState.FAILED
-                    || snapshot.state() == ExternalLoginAttemptState.CANCELLED
-                    || snapshot.state() == ExternalLoginAttemptState.EXPIRED) {
-                throw new IllegalStateException(snapshot.reasonCode().orElse("AUTH_LOGIN_FAILED"));
-            }
-            try {
-                Thread.sleep(POLL_INTERVAL.toMillis());
-            } catch (InterruptedException exception) {
-                Thread.currentThread().interrupt();
-                authentication.cancel(attemptId);
-                throw new IllegalStateException("AUTH_CANCELLED", exception);
-            }
+        } finally {
+            activeLogin.compareAndSet(attemptId, null);
         }
     }
 

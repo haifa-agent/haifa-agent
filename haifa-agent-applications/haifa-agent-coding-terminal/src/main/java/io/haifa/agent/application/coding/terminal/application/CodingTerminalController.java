@@ -20,6 +20,8 @@ import io.haifa.agent.application.project.product.coding.CodingShellPlan;
 import io.haifa.agent.application.project.product.coding.CodingShellResult;
 import io.haifa.agent.application.project.product.coding.CodingWorkspaceView;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationClient;
+import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationMethodView;
+import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationProviderView;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationView;
 import io.haifa.agent.application.project.product.coding.client.CodingSessionClient;
 import io.haifa.agent.core.run.AgentRunId;
@@ -63,35 +65,6 @@ public final class CodingTerminalController implements AutoCloseable {
     private static final int COMPLETION_QUEUE_CAPACITY = 256;
     private static final Set<String> RETRYABLE_SESSION_RACES =
             Set.of("ACTIVE_RUN_SETTLED", "ACTIVE_RUN_MISMATCH", "CODING_SESSION_ACTIVE");
-    private static final String CHATGPT_CONNECTION = "ChatGPT subscription";
-    private static final String ANTIGRAVITY_CONNECTION = "Antigravity subscription";
-    private static final String API_KEY_CONNECTION = "Provider API key (secure input)";
-
-    static String providerOptionLabel(String providerId) {
-        return switch (providerId.toLowerCase(java.util.Locale.ROOT)) {
-            case "deepseek" -> "DeepSeek (API key)";
-            case "aliyun-bailian" -> "Aliyun Bailian / 阿里云百炼 (API key)";
-            case "zhipu" -> "Zhipu AI / 智谱 (API key)";
-            case "kimi" -> "Moonshot Kimi / 月之暗面 (API key)";
-            case "siliconflow" -> "SiliconFlow / 硅基流动 (API key)";
-            default -> providerId + " (API key)";
-        };
-    }
-
-    static String parseProviderIdFromOption(String option) {
-        if (option.startsWith("DeepSeek")) return "deepseek";
-        if (option.startsWith("Aliyun Bailian") || option.contains("阿里云百炼")) return "aliyun-bailian";
-        if (option.startsWith("Zhipu") || option.contains("智谱")) return "zhipu";
-        if (option.startsWith("Moonshot") || option.contains("Kimi") || option.contains("月之暗面")) return "kimi";
-        if (option.startsWith("SiliconFlow") || option.contains("硅基流动")) return "siliconflow";
-        if (option.endsWith(" (API key)")) {
-            return option.substring(0, option.length() - " (API key)".length())
-                    .trim()
-                    .toLowerCase(java.util.Locale.ROOT);
-        }
-        return option.toLowerCase(java.util.Locale.ROOT);
-    }
-
     private final ProjectId projectId;
     private final CodingSessionClient client;
     private final CodingAuthenticationClient authentication;
@@ -128,6 +101,10 @@ public final class CodingTerminalController implements AutoCloseable {
     private CodingModelOption inspectedModel;
     private List<CodingModelProviderGroup> modelProviderGroups = List.of();
     private List<CodingAuthenticationView> authenticationOptions = List.of();
+    private List<CodingAuthenticationProviderView> authenticationProviders = List.of();
+    private CodingAuthenticationProviderView activeAuthenticationProvider;
+    private boolean authenticationInProgress;
+    private boolean authenticationCenterLoading;
     private CompletionContext completionContext;
     private CodingShellPlan pendingShellPlan;
     private String preservedDraftBuffer;
@@ -415,9 +392,9 @@ public final class CodingTerminalController implements AutoCloseable {
                         "model-readiness",
                         "Model credential unavailable",
                         List.of(
-                                "Switch model (/model)",
-                                "Connect / Log in to model (/login)",
-                                "Keep draft and dismiss"),
+                                "切换模型 (/model)",
+                                "连接或重新登录模型 (/connect)",
+                                "保留草稿并关闭"),
                         0)));
             }
             return;
@@ -513,9 +490,152 @@ public final class CodingTerminalController implements AutoCloseable {
 
     private void offerAuthenticationOnboarding() {
         if (state.selector().isEmpty() && authentication.connectionRequired()) {
-            apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
-                    "auth-login", "Connect a model to get started", firstRunConnectionOptions(), 0)));
-            apply(new TerminalUiAction.StatusChanged("A model connection is required before the first prompt"));
+            apply(new TerminalUiAction.StatusChanged("尚未连接模型，先选择一个提供商"));
+            openConnectionCenter("");
+        }
+    }
+
+    private void openConnectionCenter(String argument) {
+        String normalized = argument == null ? "" : argument.strip();
+        if (!normalized.isEmpty()) {
+            routeConnectionArgument(normalized);
+            return;
+        }
+        if (authenticationCenterLoading || state.selector().isPresent()) {
+            return;
+        }
+        authenticationCenterLoading = true;
+        apply(new TerminalUiAction.StatusChanged("正在加载模型提供商"));
+        submitEffect(
+                () -> {
+                    List<CodingAuthenticationProviderView> providers = authentication.providers();
+                    return () -> showConnectionCenter(providers);
+                },
+                code -> {
+                    authenticationCenterLoading = false;
+                    apply(new TerminalUiAction.RecoverableFailure(code));
+                });
+    }
+
+    private void showConnectionCenter(List<CodingAuthenticationProviderView> providers) {
+        authenticationCenterLoading = false;
+        authenticationProviders = List.copyOf(providers);
+        if (authenticationProviders.isEmpty()) {
+            apply(new TerminalUiAction.RecoverableFailure("AUTH_PROVIDER_LIST_EMPTY"));
+            return;
+        }
+        authenticationProviders = authenticationProviders.stream()
+                .sorted(java.util.Comparator
+                        .comparingInt((CodingAuthenticationProviderView value) ->
+                                value.category() == CodingAuthenticationProviderView.Category.SUBSCRIPTION ? 0 : 1)
+                        .thenComparing(value -> AuthenticationProviderPresentation.providerName(value)))
+                .toList();
+        List<String> options =
+                authenticationProviders.stream().map(AuthenticationProviderPresentation::providerOption).toList();
+        int selected = java.util.stream.IntStream.range(0, authenticationProviders.size())
+                .filter(index -> authenticationProviders.get(index).current()
+                        || authenticationProviders.get(index).connected())
+                .findFirst()
+                .orElse(0);
+        apply(new TerminalUiAction.SelectorOpened(
+                new TerminalSelector("auth-provider", "连接模型", options, selected)));
+    }
+
+    private void routeConnectionArgument(String argument) {
+        String[] parts = argument.split("\\s+");
+        String provider = parts[0].toLowerCase(java.util.Locale.ROOT);
+        if ("api".equals(provider)) {
+            int separator = argument.indexOf(' ');
+            beginApiKeyInput(separator < 0
+                    ? authentication.apiKeyProviderId()
+                    : argument.substring(separator + 1).strip());
+            return;
+        }
+        if ("openai".equals(provider) || "chatgpt".equals(provider) || "codex".equals(provider)) {
+            if (parts.length > 1 && "browser".equals(parts[1])) {
+                startCodexLogin();
+            } else if (parts.length > 1 && "device".equals(parts[1])) {
+                startCodexDeviceLogin();
+            } else {
+                openProviderMethods("openai-codex");
+            }
+            return;
+        }
+        if ("antigravity".equals(provider) || "google-antigravity".equals(provider)) {
+            startAntigravityLogin();
+            return;
+        }
+        openProviderMethods(provider);
+    }
+
+    private void openProviderMethods(String providerId) {
+        if (authenticationCenterLoading) {
+            apply(new TerminalUiAction.StatusChanged("正在加载模型提供商"));
+            return;
+        }
+        if (authenticationProviders.isEmpty()) {
+            openConnectionCenter("");
+            return;
+        }
+        Optional<CodingAuthenticationProviderView> found = authenticationProviders.stream()
+                .filter(value -> value.providerId().equalsIgnoreCase(providerId))
+                .findFirst();
+        if (found.isEmpty()) {
+            apply(new TerminalUiAction.RecoverableFailure("AUTH_PROVIDER_INVALID"));
+            return;
+        }
+        openProviderMethods(found.orElseThrow());
+    }
+
+    private void openProviderMethods(CodingAuthenticationProviderView provider) {
+        List<CodingAuthenticationMethodView> methods = provider.methods().stream()
+                .filter(CodingAuthenticationMethodView::available)
+                .toList();
+        if (methods.isEmpty()) {
+            String reason = provider.methods().stream()
+                    .map(CodingAuthenticationMethodView::unavailableReason)
+                    .flatMap(Optional::stream)
+                    .findFirst()
+                    .orElse("AUTH_METHOD_UNSUPPORTED");
+            apply(new TerminalUiAction.RecoverableFailure(reason));
+            return;
+        }
+        activeAuthenticationProvider = provider;
+        if (methods.size() == 1) {
+            startAuthenticationMethod(provider, methods.getFirst());
+            return;
+        }
+        apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
+                "auth-method",
+                "连接 " + AuthenticationProviderPresentation.providerName(provider),
+                methods.stream()
+                        .map(method -> AuthenticationProviderPresentation.methodLabel(method) + " · "
+                                + AuthenticationProviderPresentation.methodDescription(method))
+                        .toList(),
+                0)));
+    }
+
+    private void startAuthenticationMethod(
+            CodingAuthenticationProviderView provider, CodingAuthenticationMethodView method) {
+        if (!method.available()) {
+            apply(new TerminalUiAction.RecoverableFailure(
+                    method.unavailableReason().orElse("AUTH_METHOD_UNSUPPORTED")));
+            return;
+        }
+        if (method.type() == CodingAuthenticationMethodView.Type.API_KEY) {
+            beginApiKeyInput(provider.providerId());
+            return;
+        }
+        switch (provider.providerId()) {
+            case "openai-codex" -> {
+                if ("device".equals(method.id())) {
+                    startCodexDeviceLogin();
+                } else {
+                    startCodexLogin();
+                }
+            }
+            case "google-antigravity" -> startAntigravityLogin();
+            default -> apply(new TerminalUiAction.RecoverableFailure("AUTH_METHOD_UNSUPPORTED"));
         }
     }
 
@@ -802,6 +922,10 @@ public final class CodingTerminalController implements AutoCloseable {
                 restorePreservedDraft();
                 return;
             }
+            if (authenticationInProgress) {
+                cancelAuthentication();
+                return;
+            }
             if (hasActiveRun()) {
                 long now = System.currentTimeMillis();
                 if (state.cancelArmed() && (now - cancelArmedAtMillis) <= CANCEL_ARMED_TIMEOUT_MILLIS) {
@@ -851,6 +975,8 @@ public final class CodingTerminalController implements AutoCloseable {
         if (input.kind() == TerminalInput.Kind.INTERRUPT) {
             if (!input.text().isBlank()) {
                 apply(new TerminalUiAction.EditorChanged("", 0));
+            } else if (authenticationInProgress) {
+                cancelAuthentication();
             } else if (!cancelCurrentRunIfPresent()) {
                 apply(new TerminalUiAction.ExitRequested());
             }
@@ -1129,29 +1255,8 @@ public final class CodingTerminalController implements AutoCloseable {
                         },
                         code -> apply(new TerminalUiAction.RecoverableFailure(code)));
             }
-            case LOGIN -> {
-                String[] loginArguments =
-                        argument.toLowerCase(java.util.Locale.ROOT).split("\\s+", 2);
-                String method = loginArguments.length == 0 ? "" : loginArguments[0];
-                if (method.isEmpty()) {
-                    openAuthenticationLoginSelector();
-                } else if (method.equals("chatgpt") || method.equals("codex")) {
-                    if (loginArguments.length == 1 || loginArguments[1].isBlank()) {
-                        openChatGptLoginSelector();
-                    } else if (loginArguments[1].equals("browser")) {
-                        startCodexLogin();
-                    } else if (loginArguments[1].equals("device")) {
-                        startCodexDeviceLogin();
-                    } else {
-                        apply(new TerminalUiAction.RecoverableFailure("AUTH_METHOD_UNSUPPORTED"));
-                    }
-                } else if (method.equals("api")) {
-                    beginApiKeyInput(
-                            loginArguments.length == 2 ? loginArguments[1] : authentication.apiKeyProviderId());
-                } else {
-                    apply(new TerminalUiAction.RecoverableFailure("AUTH_METHOD_UNSUPPORTED"));
-                }
-            }
+            case CONNECT -> openConnectionCenter(argument);
+            case LOGIN_REMOVED -> apply(new TerminalUiAction.StatusChanged("登录命令已改为 /connect"));
             case ACCOUNT -> loadAuthenticationOptions(false);
             case LOGOUT -> loadAuthenticationOptions(true);
             case MODEL -> openModelSelector(argument);
@@ -1506,46 +1611,107 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void startCodexLogin() {
-        apply(new TerminalUiAction.StatusChanged("Opening browser for ChatGPT sign-in"));
+        authenticationInProgress = true;
+        apply(new TerminalUiAction.StatusChanged("正在打开浏览器完成 ChatGPT 授权"));
         submitEffect(
                 () -> {
                     CodingAuthenticationView connected = authentication.loginCodexBrowser(
                             instructions -> pump.offer(new TerminalUiAction.BrowserLoginInstructionsPresented(
-                                    instructions.authorizationUri().toString())),
+                                    "ChatGPT", instructions.authorizationUri().toString())),
                             progress -> pump.offer(new TerminalUiAction.AuthenticationProgressed(progress.phase())));
-                    return () -> pump.offer(
-                            new TerminalUiAction.AuthenticationCompleted(connected.unofficialLocalCompatibility()));
+                    return () -> {
+                        authenticationInProgress = false;
+                        pump.offer(new TerminalUiAction.AuthenticationCompleted(
+                                "ChatGPT", connected.unofficialLocalCompatibility()));
+                        offerConnectionNextStep("openai-codex", "ChatGPT");
+                    };
                 },
-                code -> pump.offer(new TerminalUiAction.AuthenticationFailed(code)));
+                code -> completeAuthenticationFailure("ChatGPT", code));
     }
 
     private void startAntigravityLogin() {
-        apply(new TerminalUiAction.StatusChanged("Opening browser for Antigravity sign-in"));
+        authenticationInProgress = true;
+        apply(new TerminalUiAction.StatusChanged("正在打开浏览器完成 Antigravity 授权"));
         submitEffect(
                 () -> {
                     CodingAuthenticationView connected = authentication.loginAntigravityBrowser(
                             instructions -> pump.offer(new TerminalUiAction.BrowserLoginInstructionsPresented(
-                                    "Antigravity",
-                                    instructions.authorizationUri().toString())),
+                                    "Antigravity", instructions.authorizationUri().toString())),
                             progress -> pump.offer(
                                     new TerminalUiAction.AuthenticationProgressed("Antigravity", progress.phase())));
-                    return () -> pump.offer(new TerminalUiAction.AuthenticationCompleted(
-                            "Antigravity", connected.unofficialLocalCompatibility()));
+                    return () -> {
+                        authenticationInProgress = false;
+                        pump.offer(new TerminalUiAction.AuthenticationCompleted(
+                                "Antigravity", connected.unofficialLocalCompatibility()));
+                        offerConnectionNextStep("google-antigravity", "Antigravity");
+                    };
                 },
-                code -> pump.offer(new TerminalUiAction.AuthenticationFailed("Antigravity", code)));
+                code -> completeAuthenticationFailure("Antigravity", code));
     }
 
-    private void openChatGptLoginSelector() {
-        apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
-                "auth-chatgpt",
-                "ChatGPT subscription login",
-                List.of("Browser callback", "Device code (headless)"),
-                0)));
+    public boolean authenticationInProgress() {
+        return authenticationInProgress;
     }
 
-    private void openAuthenticationLoginSelector() {
-        apply(new TerminalUiAction.SelectorOpened(
-                new TerminalSelector("auth-login", "Connect a model", connectionOptions(), 0)));
+    public void cancelAuthentication() {
+        if (!authenticationInProgress) {
+            return;
+        }
+        apply(new TerminalUiAction.StatusChanged("正在取消登录"));
+        submitControlEffect(
+                () -> {
+                    boolean cancelled = authentication.cancelLogin();
+                    return () -> {
+                        if (!cancelled) {
+                            apply(new TerminalUiAction.StatusChanged("正在保存凭据，无法取消"));
+                        }
+                    };
+                },
+                code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+    }
+
+    private void completeAuthenticationFailure(String connectionName, String code) {
+        authenticationInProgress = false;
+        if ("AUTH_CANCELLED".equals(code)) {
+            pump.offer(new TerminalUiAction.StatusChanged("已取消登录"));
+            return;
+        }
+        pump.offer(new TerminalUiAction.AuthenticationFailed(connectionName, code));
+    }
+
+    private void offerConnectionNextStep(String providerId, String providerName) {
+        pump.offer(new TerminalUiAction.StatusChanged("已连接 " + providerName + "，正在加载模型"));
+        submitEffect(
+                () -> {
+                    List<CodingModelOption> loaded = client.models();
+                    return () -> {
+                        modelOptions = List.copyOf(loaded);
+                        if (state.currentRunId().isPresent()) {
+                            pump.offer(new TerminalUiAction.StatusChanged(
+                                    "已连接 " + providerName + "，当前任务结束后可用 /model 选择模型"));
+                            return;
+                        }
+                        List<CodingModelOption> providerModels = modelOptions.stream()
+                                .filter(option -> option.providerId().equals(providerId))
+                                .toList();
+                        if (providerModels.isEmpty()) {
+                            pump.offer(new TerminalUiAction.StatusChanged("已连接 " + providerName
+                                    + "，但当前配置没有该提供商的模型；请在配置文件的 models 中加入后重启"));
+                            return;
+                        }
+                        if (providerModels.size() == 1
+                                && providerModels.getFirst().state().bindingAvailability()
+                                        == CodingModelState.BindingAvailability.AVAILABLE) {
+                            CodingModelOption only = providerModels.getFirst();
+                            confirmModelSelection(only);
+                            pump.offer(new TerminalUiAction.StatusChanged(
+                                    "已连接 " + providerName + "，已选择 " + only.displayName()));
+                            return;
+                        }
+                        openModelOptions(providerModels, null, "选择 " + providerName + " 模型");
+                    };
+                },
+                code -> apply(new TerminalUiAction.RecoverableFailure(code)));
     }
 
     private void openModelSelector(String argument) {
@@ -1559,51 +1725,23 @@ public final class CodingTerminalController implements AutoCloseable {
                 code -> apply(new TerminalUiAction.RecoverableFailure(code)));
     }
 
-    private List<String> connectionOptions() {
-        List<String> options = new java.util.ArrayList<>();
-        if (authentication.apiKeyConnectionSupported()) {
-            for (String providerId : authentication.supportedApiKeyProviders()) {
-                options.add(providerOptionLabel(providerId));
-            }
-        }
-        if (authentication.codexConnectionSupported()) {
-            options.add(CHATGPT_CONNECTION);
-        }
-        if (authentication.antigravityConnectionSupported()) {
-            options.add(ANTIGRAVITY_CONNECTION);
-        }
-        return List.copyOf(options);
-    }
-
-    private List<String> firstRunConnectionOptions() {
-        if (authentication.apiKeyConnectionSupported()
-                && authentication.supportedApiKeyProviders().stream()
-                        .anyMatch(provider -> provider.equalsIgnoreCase(authentication.apiKeyProviderId()))) {
-            return List.of(providerOptionLabel(authentication.apiKeyProviderId()));
-        }
-        if ("openai-codex".equalsIgnoreCase(authentication.apiKeyProviderId())
-                && authentication.codexConnectionSupported()) {
-            return List.of(CHATGPT_CONNECTION);
-        }
-        if ("google-antigravity".equalsIgnoreCase(authentication.apiKeyProviderId())
-                && authentication.antigravityConnectionSupported()) {
-            return List.of(ANTIGRAVITY_CONNECTION);
-        }
-        return connectionOptions();
-    }
-
     private void startCodexDeviceLogin() {
-        apply(new TerminalUiAction.StatusChanged("Requesting a ChatGPT device code"));
+        authenticationInProgress = true;
+        apply(new TerminalUiAction.StatusChanged("正在获取 ChatGPT 设备码"));
         submitEffect(
                 () -> {
                     CodingAuthenticationView connected = authentication.loginCodexDevice(
                             instruction -> pump.offer(new TerminalUiAction.DeviceLoginInstructionsPresented(
                                     instruction.verificationUri().toString(), instruction.userCode())),
                             progress -> pump.offer(new TerminalUiAction.AuthenticationProgressed(progress.phase())));
-                    return () -> pump.offer(
-                            new TerminalUiAction.AuthenticationCompleted(connected.unofficialLocalCompatibility()));
+                    return () -> {
+                        authenticationInProgress = false;
+                        pump.offer(new TerminalUiAction.AuthenticationCompleted(
+                                "ChatGPT", connected.unofficialLocalCompatibility()));
+                        offerConnectionNextStep("openai-codex", "ChatGPT");
+                    };
                 },
-                code -> pump.offer(new TerminalUiAction.AuthenticationFailed(code)));
+                code -> completeAuthenticationFailure("ChatGPT", code));
     }
 
     private void beginApiKeyInput(String input) {
@@ -1779,8 +1917,11 @@ public final class CodingTerminalController implements AutoCloseable {
                 try {
                     CodingAuthenticationView connected = authentication.saveApiKey(providerId, owned);
                     completion = () -> {
-                        apply(new TerminalUiAction.StatusChanged("API key connected for " + connected.accountLabel()));
+                        String providerName =
+                                AuthenticationProviderPresentation.providerName(providerId, providerId);
+                        apply(new TerminalUiAction.StatusChanged("已连接 " + providerName + "，正在加载模型"));
                         scheduleReconcile();
+                        offerConnectionNextStep(providerId, providerName);
                     };
                 } catch (ProjectProductException exception) {
                     completion = () -> apply(new TerminalUiAction.RecoverableFailure(exception.code()));
@@ -1877,9 +2018,11 @@ public final class CodingTerminalController implements AutoCloseable {
                 try {
                     CodingAuthenticationView connected = authentication.saveApiKey(providerId, key, attributes);
                     completion = () -> {
-                        apply(new TerminalUiAction.StatusChanged("API key and endpoint connected for " + providerId
-                                + " (workspace: " + workspaceId + ", region: " + region + ")"));
+                        String providerName =
+                                AuthenticationProviderPresentation.providerName(providerId, providerId);
+                        apply(new TerminalUiAction.StatusChanged("已连接 " + providerName + "，正在加载模型"));
                         scheduleReconcile();
+                        offerConnectionNextStep(providerId, providerName);
                     };
                 } catch (ProjectProductException exception) {
                     completion = () -> apply(new TerminalUiAction.RecoverableFailure(exception.code()));
@@ -1916,7 +2059,7 @@ public final class CodingTerminalController implements AutoCloseable {
     private void showAuthenticationOptions(List<CodingAuthenticationView> found, boolean logout) {
         authenticationOptions = List.copyOf(found);
         if (authenticationOptions.isEmpty()) {
-            apply(new TerminalUiAction.StatusChanged("No model account is connected; use /login"));
+            apply(new TerminalUiAction.StatusChanged("No model account is connected; use /connect"));
             return;
         }
         List<String> options = authenticationOptions.stream()
@@ -2077,7 +2220,7 @@ public final class CodingTerminalController implements AutoCloseable {
                 apply(new TerminalUiAction.SelectorClosed());
                 switch (selected) {
                     case 0 -> openModelSelector("");
-                    case 1 -> openAuthenticationLoginSelector();
+                    case 1 -> openConnectionCenter("");
                     default -> {}
                 }
             }
@@ -2086,29 +2229,29 @@ public final class CodingTerminalController implements AutoCloseable {
             case "model" -> openModelDetails(modelSelectionOptions.get(selected));
             case "model-detail" -> selectModelDetailAction(selected);
             case "model-settings" -> selectModelSettingsAction(selected);
-            case "auth-login" -> {
-                String option = state.selector().orElseThrow().options().get(selected);
+            case "auth-provider" -> {
                 apply(new TerminalUiAction.SelectorClosed());
-                if (CHATGPT_CONNECTION.equals(option) || "ChatGPT subscription".equals(option)) {
-                    openChatGptLoginSelector();
-                } else if (ANTIGRAVITY_CONNECTION.equals(option)
-                        || "Antigravity subscription".equals(option)
-                        || "Google Antigravity subscription".equals(option)) {
-                    startAntigravityLogin();
-                } else if (API_KEY_CONNECTION.equals(option)) {
-                    beginApiKeyInput(authentication.apiKeyProviderId());
-                } else {
-                    String providerId = parseProviderIdFromOption(option);
-                    beginApiKeyInput(providerId);
+                if (selected < 0 || selected >= authenticationProviders.size()) {
+                    apply(new TerminalUiAction.RecoverableFailure("AUTH_PROVIDER_INVALID"));
+                    return;
                 }
+                openProviderMethods(authenticationProviders.get(selected));
             }
-            case "auth-chatgpt" -> {
+            case "auth-method" -> {
                 apply(new TerminalUiAction.SelectorClosed());
-                if (selected == 0) {
-                    startCodexLogin();
-                } else {
-                    startCodexDeviceLogin();
+                CodingAuthenticationProviderView provider = activeAuthenticationProvider;
+                if (provider == null) {
+                    apply(new TerminalUiAction.RecoverableFailure("AUTH_PROVIDER_INVALID"));
+                    return;
                 }
+                List<CodingAuthenticationMethodView> methods = provider.methods().stream()
+                        .filter(CodingAuthenticationMethodView::available)
+                        .toList();
+                if (selected < 0 || selected >= methods.size()) {
+                    apply(new TerminalUiAction.RecoverableFailure("AUTH_METHOD_UNSUPPORTED"));
+                    return;
+                }
+                startAuthenticationMethod(provider, methods.get(selected));
             }
             case "auth-account" -> apply(new TerminalUiAction.SelectorClosed());
             case "auth-logout" -> {

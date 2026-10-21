@@ -229,7 +229,7 @@ Phase B 的工作流反馈只投影稳定产品 DTO 和 Runtime 事件：
   名称，例如 `WORKING (12s) · execution_run`；内部仅以单调递增 revision 区分阶段，不展示 RunId 或
 - 错误按 Retryable、User action required、Interrupted、Terminal capability、Terminal failure
   五类给出稳定错误码和下一步操作；失败和 Selector 都不清空草稿；遇到 `MODEL_AUTHENTICATION_REQUIRED`
-  时保持用户草稿，并弹出模型就绪恢复选择器，安全默认项为通过 `/model` 切换已就绪模型，次选为 `/login`；
+  时保持用户草稿，并弹出模型就绪恢复选择器，安全默认项为通过 `/model` 切换已就绪模型，次选为 `/connect`；
 
 失败 Run 的 Transcript 使用 `[AgentErrorCode] 安全文案`，并在存在时显示 Diagnostic ID。
 预算超限、模型限流/超时和 Tool Outcome Unknown 使用稳定 code 选择下一步；终端不解析英文
@@ -309,13 +309,18 @@ Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、s
   分组展示（`Provider · N models`），再展示所选 Provider 的模型；在二级模型列表或详情页按向左键可返回上一级列表并保持当前选中项位置。
   返回模型列表时保持刚检查的模型位置。无 Session 或执行 `/new` 后的选择会冻结到下一次 Session 创建，创建失败时保留以便重试；已有 Session
   的选择在活动 Run 期间拒绝切换，成功后只影响下一新 Run；
-- `/login`、`/account` 和 `/logout` 通过 Coding 产品的安全认证客户端实现；首次启动且所选模型凭据缺失时
-  打开同一连接选择器。显式启用本地兼容测试时，选择器同时展示 Antigravity subscription 并启动独立的
-  Google Browser Callback；未启用时不展示该入口。ChatGPT 登录可选 Browser Callback 或 Device Code；设备 URL/设备码作为持久可见的
-  Transcript 指引展示；Browser Callback 尝试自动打开浏览器，同时始终展示可复制授权 URL 并继续等待本机
-  回调，避免系统报告已启动但窗口不可见。认证成功完成（或 API Key 保存成功）后自动触发会话
-  reconcile，实时刷新页脚模型连接状态；API Key 输入使用
-  独立单行掩码缓冲区（自适应首次录入与更新覆盖），不进入 Reducer、Session、Transcript、History 或 Completion，凭据安全持久化至原生系统凭据管理器（Windows Credential Manager）；针对百炼（Aliyun Bailian）等带端点元数据的 Provider，提供单步掩码输入（API Key、Workspace ID、Region 可在同一行提交）与 `/login api aliyun-bailian <workspaceId> [region]` 命令行快捷路径，首次配置要求真实 Workspace ID，更新既有配置时回车可继承已保存 Workspace，Region 缺省为 cn-beijing；
+- `/connect` 是唯一连接入口；`/login` 从命令列表与帮助中移除，输入时只提示改用 `/connect`。`/account` 和
+  `/logout` 继续通过 Coding 产品的安全认证客户端实现。首次启动且所选模型凭据缺失时，连接中心按
+  “订阅登录 / API Key”展示目录中当前可用的 Provider，而不是只展示默认模型对应的一个选项。
+  显式启用本地兼容测试时展示 Antigravity 并启动独立的 Google Browser Callback；未启用时不展示该入口。
+  ChatGPT 登录可选 Browser Callback 或 Device Code。Browser Callback 尝试自动打开浏览器并继续等待本机
+  回调；等待期间按 Escape 可取消，进入凭据换取/保存阶段后拒绝取消。认证成功完成（或 API Key 保存成功）
+  后刷新连接状态，并按 Provider 加载模型：只有一个可用模型时直接选中，多个模型时打开过滤后的模型列表，
+  没有配置模型时明确提示配置位置。API Key 输入使用独立单行掩码缓冲区（自适应首次录入与更新覆盖），
+  不进入 Reducer、Session、Transcript、History 或 Completion，凭据安全持久化至原生系统凭据管理器
+  （Windows Credential Manager）；百炼（Aliyun Bailian）当前仍使用单行掩码输入（API Key、Workspace ID、
+  Region 在同一行提交）与 `/connect api aliyun-bailian <workspaceId> [region]` 快捷路径，首次配置要求
+  真实 Workspace ID，更新既有配置时回车可继承已保存 Workspace，Region 缺省为 cn-beijing；三步向导仍待后续实现；
 - `/trust` 通过标准产品客户端异步展示脱敏的持久 Workspace 授权；
   `/trust revoke <workspaceRef>` 可撤销非初始根，不暴露宿主路径且不阻塞 UI；
 - `/settings`、`/tree`、`/fork`、`/clone` 在没有真实 API 时返回

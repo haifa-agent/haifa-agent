@@ -68,8 +68,9 @@ IdeCodingAgentMain --workspace D:\repos\my-project -m "Fix the failing module te
 ## Model connection and Codex subscription login
 
 Interactive startup checks only the selected model's credential reference. If an `env://...` or `os://...` value is absent or a
-`model-auth://...` entry is missing, the Terminal opens a connection selector before the first prompt. `/login`,
-`/account`, and `/logout` manage the same product-private connection boundary. API keys use a masked, short-lived
+`model-auth://...` entry is missing, the Terminal opens the `/connect` connection center before the first prompt.
+`/account` and `/logout` manage the same product-private connection boundary; `/login` now only prints a migration
+hint. API keys use a masked, short-lived
 character buffer and are saved to the current OS user's secure system credential store (Windows Credential Manager);
 credentials never belong in plaintext files or YAML.
 
@@ -125,8 +126,8 @@ The packaged catalog contains `antigravity-gemini` plus exact bindings for `gemi
 and `gemini-3.1-pro-preview`, but the loader hides all Antigravity bindings unless
 `HAIFA_ANTIGRAVITY_LOCAL_COMPAT_TEST=true`. Direct login additionally requires externally injected
 `HAIFA_ANTIGRAVITY_OAUTH_CLIENT_ID` and `HAIFA_ANTIGRAVITY_OAUTH_CLIENT_SECRET`; no registration is compiled into the
-distribution. With that registration enabled, the Terminal's `Connect a model` selector includes
-`Antigravity subscription` and starts the dedicated Google browser callback. `HAIFA_ANTIGRAVITY_ALLOW_ONBOARDING=true`
+distribution. With that registration enabled, the Terminal's `/connect` center includes `Antigravity`
+and starts the dedicated Google browser callback. `HAIFA_ANTIGRAVITY_ALLOW_ONBOARDING=true`
 is a separate opt-in used only when the account has no existing
 CloudCode Project. The discovered Project is associated with the fixed `model-auth://google-antigravity/default`
 credential and request-level Project overrides are rejected. Direct generation defaults to the governed Daily endpoint.

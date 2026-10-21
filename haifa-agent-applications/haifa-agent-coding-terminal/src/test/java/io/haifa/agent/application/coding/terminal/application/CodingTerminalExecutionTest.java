@@ -258,7 +258,7 @@ class CodingTerminalExecutionTest {
         assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("model-readiness");
         assertThat(controller.state().selector().orElseThrow().options())
                 .containsExactly(
-                        "Switch model (/model)", "Connect / Log in to model (/login)", "Keep draft and dismiss");
+                        "切换模型 (/model)", "连接或重新登录模型 (/connect)", "保留草稿并关闭");
 
         // Choosing index 2 dismisses selector and keeps draft
         controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
@@ -282,12 +282,12 @@ class CodingTerminalExecutionTest {
 
         assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("model-readiness");
 
-        // Select option 1: 登录当前 Provider (/login)
+        // Select option 1: 连接或重新登录模型 (/connect)
         controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
         controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
 
         assertThat(controller.state().selector()).isPresent();
-        assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("auth-login");
+        assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("auth-provider");
         assertThat(controller.state().editorBuffer()).isEqualTo("draft to preserve");
     }
 
@@ -312,9 +312,9 @@ class CodingTerminalExecutionTest {
         assertThat(controller.state().editorBuffer()).isEqualTo("draft to preserve and retry");
         assertThat(controller.state().selector()).isPresent();
         assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("model-readiness");
-        assertThat(controller.state().selector().orElseThrow().options().get(0)).isEqualTo("Switch model (/model)");
+        assertThat(controller.state().selector().orElseThrow().options().get(0)).isEqualTo("切换模型 (/model)");
 
-        // User selects default option 0 ("Switch model (/model)")
+        // User selects default option 0 ("切换模型 (/model)")
         controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
 
         // Selector transitions to model selector; draft remains preserved
