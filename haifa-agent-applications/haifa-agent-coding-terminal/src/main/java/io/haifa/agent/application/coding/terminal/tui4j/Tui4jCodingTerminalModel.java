@@ -7,6 +7,7 @@ import com.williamcallahan.tui4j.compat.bubbletea.KeyPressMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.Message;
 import com.williamcallahan.tui4j.compat.bubbletea.Model;
 import com.williamcallahan.tui4j.compat.bubbletea.PasteMessage;
+import com.williamcallahan.tui4j.compat.bubbletea.QuitMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.UpdateResult;
 import com.williamcallahan.tui4j.compat.bubbletea.WindowSizeMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.input.MouseAction;
@@ -151,13 +152,22 @@ final class Tui4jCodingTerminalModel implements Model {
         // renderer, so an unchanged poll does not reset the renderer cache and repaint every row.
         Command polling = Command.batch(
                 Command.printf(Tui4jTerminalIo.DISABLE_ALTERNATE_SCREEN_SCROLL), Command.checkWindowSize(), nextTick());
-        return mouseReportingEnabled ? Command.batch(Command.enableMouseCellMotion(), polling) : polling;
+        return mouseReportingEnabled ? Command.batch(Command.enableMouseAllMotion(), polling) : polling;
     }
 
     @Override
     public UpdateResult<Tui4jCodingTerminalModel> update(Message message) {
         Command command = Command.none();
-        if (message instanceof SelectionAutoScrollMessage scrolling) {
+        if (message instanceof CtrlCRequestedMessage) {
+            // SIGINT (Ctrl-C) must not terminate the program: with a transcript
+            // selection it copies, without one it keeps the existing interrupt
+            // semantics (clear editor / cancel run).
+            if (selection.range().isPresent()) {
+                command = copySelectedText();
+            } else {
+                accept(TerminalInput.Kind.INTERRUPT);
+            }
+        } else if (message instanceof SelectionAutoScrollMessage scrolling) {
             command = continueSelectionAutoScroll(scrolling);
         } else if (message instanceof ClipboardCopyResultMessage copied) {
             command = completeCopy(copied);
@@ -209,9 +219,10 @@ final class Tui4jCodingTerminalModel implements Model {
         if (controller.mouseReportingEnabled() != mouseReportingEnabled) {
             mouseReportingEnabled = controller.mouseReportingEnabled();
             command = Command.batch(
-                    mouseReportingEnabled ? Command.enableMouseCellMotion() : Command.disableMouse(), command);
+                    mouseReportingEnabled ? Command.enableMouseAllMotion() : Command.disableMouse(), command);
         }
         if (controller.state().exitRequested()) {
+            clearSelection();
             return UpdateResult.from(this, Command.quit());
         }
         return UpdateResult.from(this, command);
@@ -243,6 +254,12 @@ final class Tui4jCodingTerminalModel implements Model {
                 clearSelection();
                 return Command.none();
             }
+            if (selection.selecting()) {
+                // Some Windows terminal backends encode drag motion as another press event.
+                // Keep the original anchor so the drag grows instead of restarting at the cursor.
+                selection.extend(point.orElseThrow());
+                return updateSelectionAutoScroll(mouse, region);
+            }
             stopSelectionAutoScroll();
             selection.start(point.orElseThrow());
             return Command.none();
@@ -266,17 +283,23 @@ final class Tui4jCodingTerminalModel implements Model {
                 }
                 return Command.none();
             }
-            return selection
-                    .range()
-                    .flatMap(range -> TerminalScreenCells.selectedText(
-                            transcriptContent, range, TerminalScreenCells.DEFAULT_MAX_COPY_CHARACTERS))
-                    .map(this::copySelection)
-                    .orElseGet(() -> {
-                        applyCopyFeedback("selection too large to copy");
-                        return Command.none();
-                    });
+            return Command.none();
         }
         return Command.none();
+    }
+
+    private Command copySelectedText() {
+        Optional<String> text = selection
+                .range()
+                .flatMap(range -> TerminalScreenCells.selectedText(
+                        transcriptContent, range, TerminalScreenCells.DEFAULT_MAX_COPY_CHARACTERS));
+        if (text.isEmpty()) {
+            applyCopyFeedback("selection too large to copy");
+            return Command.none();
+        }
+        clearSelection();
+        syncComponents();
+        return copySelection(text.orElseThrow());
     }
 
     private Command copySelection(String text) {
@@ -545,6 +568,9 @@ final class Tui4jCodingTerminalModel implements Model {
             return Command.none();
         }
         if (key.type() == KeyType.keyETX) {
+            if (selection.range().isPresent()) {
+                return copySelectedText();
+            }
             accept(TerminalInput.Kind.INTERRUPT);
             return Command.none();
         }
@@ -1180,6 +1206,26 @@ final class Tui4jCodingTerminalModel implements Model {
      * resize with no change does not make the tui4j renderer clear its line cache and repaint.
      */
     Message filterMessage(Message message) {
+        if (message instanceof KeyPressMessage key
+                && key.type() == KeyType.keyETX
+                && !controller.secureInputRequested()) {
+            // Ctrl-C is handled through the terminal SIGINT handler below so the
+            // signal-driven QuitMessage cannot race the copy and exit the process.
+            return null;
+        }
+        if (message instanceof QuitMessage) {
+            if (controller.secureInputRequested()) {
+                return null;
+            }
+            if (!controller.state().exitRequested()) {
+                return new CtrlCRequestedMessage();
+            }
+        }
+        if (message instanceof MouseMessage mouse
+                && mouse.getAction() == MouseAction.MouseActionMotion
+                && !selection.selecting()) {
+            return null;
+        }
         if (message instanceof WindowSizeMessage size
                 && size.width() == controller.state().columns()
                 && size.height() == controller.state().rows()) {
@@ -1204,6 +1250,8 @@ final class Tui4jCodingTerminalModel implements Model {
     }
 
     record PollMessage() implements Message {}
+
+    private record CtrlCRequestedMessage() implements Message {}
 
     record SelectionAutoScrollMessage(long sequence) implements Message {}
 
