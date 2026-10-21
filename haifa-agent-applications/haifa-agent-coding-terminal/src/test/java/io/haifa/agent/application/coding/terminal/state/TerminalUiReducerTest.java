@@ -56,7 +56,7 @@ class TerminalUiReducerTest {
         assertThat(state.selector()).get().satisfies(selector -> {
             assertThat(selector.kind()).isEqualTo("auth-device");
             assertThat(selector.title()).contains("ABCD-1234");
-            assertThat(selector.options()).containsExactly("复制设备码", "复制浏览器链接", "取消登录");
+            assertThat(selector.options()).containsExactly("Copy device code", "Copy browser link", "Cancel sign-in");
         });
         assertThat(state.transcript()).isEmpty();
     }
@@ -70,9 +70,10 @@ class TerminalUiReducerTest {
 
         assertThat(state.selector()).get().satisfies(selector -> {
             assertThat(selector.kind()).isEqualTo("auth-wait");
-            assertThat(selector.options()).containsExactly("复制授权链接", "重新打开浏览器", "取消登录");
+            assertThat(selector.options())
+                    .containsExactly("Copy authorization link", "Reopen browser", "Cancel sign-in");
         });
-        assertThat(state.status()).contains("等待浏览器授权");
+        assertThat(state.status()).contains("Waiting for browser authorization");
         assertThat(state.transcript()).isEmpty();
         assertThat(state.toString()).doesNotContain("secret-value");
     }

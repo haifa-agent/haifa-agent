@@ -242,7 +242,7 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient,
     private static String maskAccountLabel(String value) {
         String label = value == null ? "" : value.strip();
         if (label.isEmpty()) {
-            return "已连接";
+            return "Connected";
         }
         int at = label.indexOf('@');
         if (at > 0) {

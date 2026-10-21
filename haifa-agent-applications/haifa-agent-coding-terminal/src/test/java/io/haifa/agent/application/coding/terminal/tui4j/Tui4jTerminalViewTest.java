@@ -190,17 +190,20 @@ class Tui4jTerminalViewTest {
                 initial,
                 new TerminalSelector(
                         "auth-provider",
-                        "连接模型",
+                        "Connect a model",
                         List.of("ChatGPT", "Antigravity", "DeepSeek"),
                         0,
                         List.of(
-                                new TerminalSelectorDetail("订阅登录 · 无需 API Key", "推荐", "订阅登录"),
-                                new TerminalSelectorDetail("订阅登录 · 无需 API Key", "", "订阅登录"),
-                                new TerminalSelectorDetail("API Key · 按量计费", "当前", "API Key"))));
+                                new TerminalSelectorDetail(
+                                        "Subscription · No API key required", "Recommended", "Subscription"),
+                                new TerminalSelectorDetail("Subscription · No API key required", "", "Subscription"),
+                                new TerminalSelectorDetail("API Key · Pay as you go", "Current", "API Key"))));
 
         String rendered = view.render(state, transcript(state), editor(88), true, false);
 
-        assertThat(rendered).contains("订阅登录", "API Key", "ChatGPT", "[推荐]", "Antigravity", "DeepSeek", "[当前]");
+        assertThat(rendered)
+                .contains(
+                        "Subscription", "API Key", "ChatGPT", "[Recommended]", "Antigravity", "DeepSeek", "[Current]");
     }
 
     @Test
@@ -210,16 +213,17 @@ class Tui4jTerminalViewTest {
                 initial,
                 new TerminalSelector(
                         "auth-provider",
-                        "连接模型",
+                        "Connect a model",
                         List.of("ChatGPT", "DeepSeek"),
                         0,
                         List.of(
-                                new TerminalSelectorDetail("订阅登录 · 无需 API Key", "推荐", "订阅登录"),
-                                new TerminalSelectorDetail("API Key · 按量计费", "", "API Key"))));
+                                new TerminalSelectorDetail(
+                                        "Subscription · No API key required", "Recommended", "Subscription"),
+                                new TerminalSelectorDetail("API Key · Pay as you go", "", "API Key"))));
 
         String rendered = view.render(state, transcript(state), editor(60), true, false);
 
-        assertThat(rendered).contains("连接模型", "ChatGPT", "enter select");
+        assertThat(rendered).contains("Connect a model", "ChatGPT", "enter select");
         assertThat(rendered.lines()).hasSizeLessThanOrEqualTo(16);
     }
 
@@ -322,10 +326,10 @@ class Tui4jTerminalViewTest {
         Viewport transcript = transcript(state);
 
         String firstTime = view.render(state, transcript, editor(80), true, false, Duration.ZERO, 0, true, false);
-        assertThat(firstTime).contains("Enter 保存 · Esc 取消").doesNotContain("enter send", "Enter 更新");
+        assertThat(firstTime).contains("Enter submit · Esc cancel").doesNotContain("enter send", "Enter update");
 
         String update = view.render(state, transcript, editor(80), true, false, Duration.ZERO, 0, true, true);
-        assertThat(update).contains("Enter 更新 · Esc 取消").doesNotContain("enter send", "Enter 保存");
+        assertThat(update).contains("Enter update · Esc cancel").doesNotContain("enter send", "Enter submit");
     }
 
     @Test

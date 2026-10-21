@@ -221,14 +221,17 @@ public final class TerminalUiReducer {
         if (action instanceof TerminalUiAction.DeviceLoginInstructionsPresented instructions) {
             TerminalSelector selector = new TerminalSelector(
                     "auth-device",
-                    "设备码 " + instructions.userCode(),
-                    List.of("复制设备码", "复制浏览器链接", "取消登录"),
+                    "Device code " + instructions.userCode(),
+                    List.of("Copy device code", "Copy browser link", "Cancel sign-in"),
                     0,
                     List.of(
-                            new TerminalSelectorDetail("粘贴到浏览器完成授权", "", "设备码登录"),
-                            new TerminalSelectorDetail(instructions.verificationUri(), "", "设备码登录"),
-                            new TerminalSelectorDetail("退出本次登录", "", "设备码登录")));
-            return copyWithStatus(copyWithSelector(state, Optional.of(selector)), "在浏览器输入设备码 · Esc 取消");
+                            new TerminalSelectorDetail(
+                                    "Paste it in the browser to finish authorization", "", "Device code sign-in"),
+                            new TerminalSelectorDetail(instructions.verificationUri(), "", "Device code sign-in"),
+                            new TerminalSelectorDetail("Exit this sign-in", "", "Device code sign-in")));
+            return copyWithStatus(
+                    copyWithSelector(state, Optional.of(selector)),
+                    "Enter the device code in the browser · Esc to cancel");
         }
         if (action instanceof TerminalUiAction.BrowserLoginInstructionsPresented instructions) {
             return copyWithStatus(
@@ -236,10 +239,10 @@ public final class TerminalUiReducer {
                             state,
                             Optional.of(new TerminalSelector(
                                     "auth-wait",
-                                    "等待 " + instructions.connectionName() + " 授权",
-                                    List.of("复制授权链接", "重新打开浏览器", "取消登录"),
+                                    "Waiting for " + instructions.connectionName() + " authorization",
+                                    List.of("Copy authorization link", "Reopen browser", "Cancel sign-in"),
                                     0))),
-                    "等待浏览器授权 · Esc 取消");
+                    "Waiting for browser authorization · Esc to cancel");
         }
         if (action instanceof TerminalUiAction.AuthenticationProgressed progress) {
             List<TranscriptItem> items = new ArrayList<>(state.transcript());
@@ -263,8 +266,8 @@ public final class TerminalUiReducer {
                     new TranscriptItem(
                             "auth-external-progress",
                             TranscriptItem.Kind.RESOURCE,
-                            completed.connectionName() + " 连接",
-                            "已连接。凭据已保存到系统凭据库。" + compatibility,
+                            completed.connectionName() + " connection",
+                            "Connected. Credentials were saved to the system credential store." + compatibility,
                             "CONNECTED",
                             false));
             return copyWithTranscript(state, List.copyOf(items));
@@ -282,7 +285,7 @@ public final class TerminalUiReducer {
                     new TranscriptItem(
                             "auth-external-progress",
                             TranscriptItem.Kind.ERROR,
-                            failure.connectionName() + " 连接失败",
+                            failure.connectionName() + " connection failed",
                             authenticationFailureBody(failure.code(), lastStage),
                             "FAILED",
                             true));
@@ -1023,35 +1026,40 @@ public final class TerminalUiReducer {
 
     private static String authenticationProgressBody(CodingAuthenticationProgressView.Phase phase) {
         return switch (phase) {
-            case STARTING -> "正在启动本机回调与浏览器登录。";
-            case WAITING_USER -> "等待在浏览器中完成授权。";
-            case EXCHANGING -> "已收到授权，正在换取凭据。";
-            case STORING -> "已获取凭据，正在保存到系统凭据库。";
+            case STARTING -> "Starting the local callback and browser sign-in.";
+            case WAITING_USER -> "Waiting for authorization in the browser.";
+            case EXCHANGING -> "Authorization received. Exchanging it for credentials.";
+            case STORING -> "Credentials received. Saving them to the system credential store.";
         };
     }
 
     private static String authenticationProgressStatus(CodingAuthenticationProgressView.Phase phase) {
         return switch (phase) {
-            case STARTING -> "正在启动登录";
-            case WAITING_USER -> "等待浏览器授权";
-            case EXCHANGING -> "正在换取凭据";
-            case STORING -> "正在保存凭据";
+            case STARTING -> "Starting sign-in";
+            case WAITING_USER -> "Waiting for browser authorization";
+            case EXCHANGING -> "Exchanging authorization";
+            case STORING -> "Saving credentials";
         };
     }
 
     private static String authenticationFailureBody(String code, String lastStage) {
         String next =
                 switch (code) {
-                    case "AUTH_REAUTH_REQUIRED" -> "登录已失效，请运行 /connect 重新连接。";
-                    case "AUTH_LOGIN_SERVICE_UNAVAILABLE" -> "登录服务暂不可用，请检查网络后重试。";
-                    case "AUTH_TOKEN_RESPONSE_INVALID", "AUTH_TOKEN_ACCOUNT_INVALID" -> "登录响应无法接受，请重试；如持续失败，请检查登录配置。";
-                    case "AUTH_STORE_FAILED" -> "凭据已获取，但无法写入系统凭据库；请检查系统凭据管理器权限。";
-                    case "AUTH_CALLBACK_TIMEOUT" -> "浏览器授权等待超时，请重试或改用设备码登录。";
-                    case "AUTH_CANCELLED" -> "登录已取消。";
-                    default -> "登录未完成，请重试；如持续失败，请查看应用日志中的安全记录。";
+                    case "AUTH_REAUTH_REQUIRED" -> "Sign-in has expired. Run /connect to sign in again.";
+                    case "AUTH_LOGIN_SERVICE_UNAVAILABLE" ->
+                        "The sign-in service is unavailable. Check your network and retry.";
+                    case "AUTH_TOKEN_RESPONSE_INVALID", "AUTH_TOKEN_ACCOUNT_INVALID" ->
+                        "The sign-in response was not accepted. Retry; if it keeps failing, check the sign-in configuration.";
+                    case "AUTH_STORE_FAILED" ->
+                        "Credentials were received but could not be written to the system credential store; check the credential manager permissions.";
+                    case "AUTH_CALLBACK_TIMEOUT" ->
+                        "Browser authorization timed out. Retry or use device code sign-in.";
+                    case "AUTH_CANCELLED" -> "Sign-in was cancelled.";
+                    default ->
+                        "Sign-in did not complete. Retry; if it keeps failing, check the safe application log entry.";
                 };
-        String stage = lastStage.isBlank() ? "" : "阶段：" + lastStage + "\n";
-        return stage + "原因代码：" + code + "\n下一步：" + next;
+        String stage = lastStage.isBlank() ? "" : "Stage: " + lastStage + "\n";
+        return stage + "Reason code: " + code + "\nNext: " + next;
     }
 
     private static String toolTitle(RunEventPayloads.ToolLifecycle lifecycle) {

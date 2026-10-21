@@ -910,15 +910,18 @@ final class Tui4jCodingTerminalModel implements Model {
     }
 
     private Command copyAuthorizationLink() {
-        return copyText(controller.authorizationUri(), "授权链接已失效，请重新连接", "授权链接已复制");
+        return copyText(
+                controller.authorizationUri(),
+                "Authorization link has expired; reconnect",
+                "Authorization link copied");
     }
 
     private Command copyDeviceCode() {
-        return copyText(controller.deviceCode(), "设备码已失效，请重新连接", "设备码已复制");
+        return copyText(controller.deviceCode(), "Device code has expired; reconnect", "Device code copied");
     }
 
     private Command copyVerificationLink() {
-        return copyText(controller.verificationUri(), "浏览器链接已失效，请重新连接", "浏览器链接已复制");
+        return copyText(controller.verificationUri(), "Browser link has expired; reconnect", "Browser link copied");
     }
 
     private Command copyText(Optional<String> value, String missingMessage, String successMessage) {
@@ -930,7 +933,7 @@ final class Tui4jCodingTerminalModel implements Model {
             applyCopyFeedback(successMessage);
             return Command.none();
         }
-        applyCopyFeedback("已通过终端复制：" + successMessage);
+        applyCopyFeedback("Copied via terminal: " + successMessage);
         String encoded = Base64.getEncoder()
                 .encodeToString(value.orElseThrow().getBytes(java.nio.charset.StandardCharsets.UTF_8));
         return Command.printf("\u001B]52;c;" + encoded + "\u0007");

@@ -932,16 +932,16 @@ class Tui4jCodingTerminalModelTest {
         assertThat(fixture.controller.secureInputRequested()).isTrue();
         assertThat(fixture.controller.secureInputIsUpdate()).isFalse();
         assertThat(fixture.controller.state().editorBuffer()).isEmpty();
-        assertThat(fixture.controller.state().status()).contains("输入 DeepSeek 的 API Key");
+        assertThat(fixture.controller.state().status()).contains("Enter the DeepSeek API key");
         assertThat(fixture.model.view())
                 .doesNotContain("private-value", "stored as plaintext", "enter send")
-                .contains("API Key ┃ •••••••••••••", "Enter 保存 · Esc 取消");
+                .contains("API Key ┃ •••••••••••••", "Enter submit · Esc cancel");
 
         fixture.model.update(key(KeyType.keyCR));
 
         assertThat(fixture.controller.secureInputRequested()).isFalse();
         assertThat(saved.get()).containsExactly("private-value".toCharArray());
-        assertThat(fixture.controller.state().status()).contains("已连接 DeepSeek");
+        assertThat(fixture.controller.state().status()).contains("Connected to DeepSeek");
         assertThat(fixture.model.view()).doesNotContain("private-value");
     }
 
@@ -964,8 +964,11 @@ class Tui4jCodingTerminalModelTest {
 
         assertThat(fixture.controller.secureInputRequested()).isTrue();
         assertThat(fixture.controller.secureInputIsUpdate()).isTrue();
-        assertThat(fixture.controller.state().status()).contains("更新 DeepSeek 的 API Key");
-        assertThat(fixture.model.view()).contains("新 Key ┃ 粘贴或输入新的 API Key（Esc 保留现有 Key）", "Enter 更新 · Esc 取消");
+        assertThat(fixture.controller.state().status()).contains("Update the DeepSeek API key");
+        assertThat(fixture.model.view())
+                .contains(
+                        "New key ┃ Paste or enter a new API key (Esc keeps the existing key)",
+                        "Enter update · Esc cancel");
 
         fixture.model.update(new PasteMessage("updated-key"));
         fixture.model.update(key(KeyType.keyCR));
@@ -997,8 +1000,8 @@ class Tui4jCodingTerminalModelTest {
         assertThat(fixture.controller.secureInputRequested()).isTrue();
         assertThat(fixture.controller.secureInputIsMasked()).isTrue();
         assertThat(fixture.controller.secureInputPrompt()).isEqualTo("API Key ┃ ");
-        assertThat(fixture.controller.state().status()).contains("步骤 1/3");
-        assertThat(fixture.model.view()).contains("API Key ┃ ", "Enter 下一步 · Esc 取消");
+        assertThat(fixture.controller.state().status()).contains("Step 1/3");
+        assertThat(fixture.model.view()).contains("API Key ┃ ", "Enter next · Esc cancel");
 
         fixture.model.update(new PasteMessage("sk-bailian-test-key"));
         fixture.model.update(key(KeyType.keyCR));
@@ -1008,7 +1011,7 @@ class Tui4jCodingTerminalModelTest {
                 .isEqualTo(CodingTerminalController.BailianConfigStep.WORKSPACE_ID);
         assertThat(fixture.controller.secureInputIsMasked()).isFalse();
         assertThat(fixture.controller.secureInputPrompt()).isEqualTo("Workspace ┃ ");
-        assertThat(fixture.controller.state().status()).contains("步骤 2/3");
+        assertThat(fixture.controller.state().status()).contains("Step 2/3");
         assertThat(saved.get()).isNull();
         assertThat(savedAttrs.get()).isNull();
 
@@ -1017,7 +1020,7 @@ class Tui4jCodingTerminalModelTest {
 
         assertThat(fixture.controller.bailianConfigStep()).isEqualTo(CodingTerminalController.BailianConfigStep.REGION);
         assertThat(fixture.controller.secureInputPrompt()).isEqualTo("Region ┃ ");
-        assertThat(fixture.controller.state().status()).contains("步骤 3/3");
+        assertThat(fixture.controller.state().status()).contains("Step 3/3");
 
         fixture.model.update(key(KeyType.keyCR));
 
@@ -1026,7 +1029,7 @@ class Tui4jCodingTerminalModelTest {
         assertThat(savedAttrs.get())
                 .containsEntry("workspace_id", "ws-default-01")
                 .containsEntry("region", "cn-beijing");
-        assertThat(fixture.controller.state().status()).contains("已连接 阿里云百炼");
+        assertThat(fixture.controller.state().status()).contains("Connected to Aliyun Bailian");
     }
 
     @Test
@@ -1091,7 +1094,7 @@ class Tui4jCodingTerminalModelTest {
         fixture.model.update(key(KeyType.keyCR));
 
         assertThat(fixture.controller.secureInputRequested()).isTrue();
-        assertThat(fixture.controller.state().status()).contains("Workspace ID 格式不正确");
+        assertThat(fixture.controller.state().status()).contains("Invalid workspace ID");
 
         fixture.model.update(new PasteMessage("ws-valid-1"));
         fixture.model.update(key(KeyType.keyCR));
@@ -1113,7 +1116,7 @@ class Tui4jCodingTerminalModelTest {
         fixture.model.update(key(KeyType.keyCR));
 
         assertThat(fixture.controller.secureInputRequested()).isTrue();
-        assertThat(fixture.controller.state().status()).contains("API Key 不能包含空格");
+        assertThat(fixture.controller.state().status()).contains("The API key cannot contain spaces");
         assertThat(saved.get()).isNull();
         assertThat(savedAttrs.get()).isNull();
     }
@@ -1129,7 +1132,7 @@ class Tui4jCodingTerminalModelTest {
         fixture.model.update(key(KeyType.keyESC));
 
         assertThat(fixture.controller.secureInputRequested()).isFalse();
-        assertThat(fixture.controller.state().status()).isEqualTo("已取消 API Key 输入");
+        assertThat(fixture.controller.state().status()).isEqualTo("API key entry cancelled");
     }
 
     @Test
@@ -1176,7 +1179,7 @@ class Tui4jCodingTerminalModelTest {
 
         // Update API Key -> press Enter directly to keep existing key & attributes
         assertThat(fixture.controller.secureInputIsUpdate()).isTrue();
-        assertThat(fixture.controller.secureInputPrompt()).isEqualTo("新 Key ┃ ");
+        assertThat(fixture.controller.secureInputPrompt()).isEqualTo("New key ┃ ");
         fixture.model.update(key(KeyType.keyCR));
 
         // Saved in single step!

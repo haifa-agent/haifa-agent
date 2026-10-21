@@ -12,8 +12,8 @@ final class AuthenticationProviderPresentation {
             "openai-codex", "ChatGPT (Codex)",
             "google-antigravity", "Antigravity",
             "deepseek", "DeepSeek",
-            "aliyun-bailian", "阿里云百炼",
-            "zhipu", "智谱 AI",
+            "aliyun-bailian", "Aliyun Bailian",
+            "zhipu", "Zhipu AI",
             "kimi", "Kimi",
             "siliconflow", "SiliconFlow",
             "tokenrhythm", "TokenRhythm");
@@ -46,48 +46,51 @@ final class AuthenticationProviderPresentation {
         return new io.haifa.agent.application.coding.terminal.state.TerminalSelectorDetail(
                 providerDescription(provider),
                 providerBadge(provider),
-                provider.category() == CodingAuthenticationProviderView.Category.SUBSCRIPTION ? "订阅登录" : "API Key");
+                provider.category() == CodingAuthenticationProviderView.Category.SUBSCRIPTION
+                        ? "Subscription"
+                        : "API Key");
     }
 
     private static String providerDescription(CodingAuthenticationProviderView provider) {
-        String type =
-                provider.category() == CodingAuthenticationProviderView.Category.SUBSCRIPTION ? "订阅登录" : "API Key";
+        String type = provider.category() == CodingAuthenticationProviderView.Category.SUBSCRIPTION
+                ? "Subscription"
+                : "API Key";
         if (provider.connected()) {
             String account = provider.accountLabel()
                     .map(AuthenticationProviderPresentation::maskAccount)
                     .orElse("");
-            return type + (account.isBlank() ? " · 已连接" : " · " + account);
+            return type + (account.isBlank() ? " · Connected" : " · " + account);
         }
         return type
                 + (provider.category() == CodingAuthenticationProviderView.Category.SUBSCRIPTION
-                        ? " · 无需 API Key"
-                        : " · 按量计费");
+                        ? " · No API key required"
+                        : " · Pay as you go");
     }
 
     private static String providerBadge(CodingAuthenticationProviderView provider) {
         if (provider.current()) {
-            return "当前";
+            return "Current";
         }
         if (provider.connected()) {
-            return "已连接";
+            return "Connected";
         }
-        return provider.recommended() ? "推荐" : "";
+        return provider.recommended() ? "Recommended" : "";
     }
 
     static String methodLabel(CodingAuthenticationMethodView method) {
         return switch (method.id()) {
-            case "browser" -> "浏览器登录（推荐）";
-            case "device" -> "设备码登录";
-            case "api_key" -> "填写 API Key";
+            case "browser" -> "Browser sign-in (recommended)";
+            case "device" -> "Device code sign-in";
+            case "api_key" -> "Enter API key";
             default -> method.id();
         };
     }
 
     static String methodDescription(CodingAuthenticationMethodView method) {
         return switch (method.id()) {
-            case "browser" -> "自动打开浏览器，完成后自动继续";
-            case "device" -> "适合远程终端或浏览器无法打开时";
-            case "api_key" -> "按量计费，需要提供商 API Key";
+            case "browser" -> "Opens the browser and continues automatically";
+            case "device" -> "Best for remote terminals or when a browser cannot open";
+            case "api_key" -> "Pay as you go; requires a provider API key";
             default -> "";
         };
     }

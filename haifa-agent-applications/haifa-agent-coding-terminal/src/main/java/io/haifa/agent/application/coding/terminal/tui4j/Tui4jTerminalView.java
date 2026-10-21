@@ -960,9 +960,9 @@ final class Tui4jTerminalView {
         }
         String hint;
         if ("auth-wait".equals(selector.kind())) {
-            hint = "└─ c 复制链接 · o 重开浏览器 · Enter 选择 · Esc 取消登录";
+            hint = "└─ c copy link · o reopen browser · Enter select · Esc cancel sign-in";
         } else if ("auth-device".equals(selector.kind())) {
-            hint = "└─ c 复制设备码 · l 复制链接 · o 打开页面 · Enter 选择 · Esc 取消登录";
+            hint = "└─ c copy device code · l copy link · o open page · Enter select · Esc cancel sign-in";
         } else {
             hint = "└─ enter select · escape close (editor preserved)";
         }
@@ -1009,7 +1009,7 @@ final class Tui4jTerminalView {
             if (secureInputHint != null && !secureInputHint.isBlank()) {
                 return secureInputHint;
             }
-            return isUpdate ? "Enter 更新 · Esc 取消" : "Enter 保存 · Esc 取消";
+            return isUpdate ? "Enter update · Esc cancel" : "Enter submit · Esc cancel";
         }
         if (state.selector().isPresent()) return "enter select · escape close";
         if (state.currentRunId().isPresent()) {

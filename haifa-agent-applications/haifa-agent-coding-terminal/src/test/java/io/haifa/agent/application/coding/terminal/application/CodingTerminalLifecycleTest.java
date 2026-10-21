@@ -83,11 +83,11 @@ class CodingTerminalLifecycleTest {
 
         assertThat(controller.state().selector()).get().satisfies(selector -> {
             assertThat(selector.kind()).isEqualTo("auth-provider");
-            assertThat(selector.title()).isEqualTo("连接模型");
+            assertThat(selector.title()).isEqualTo("Connect a model");
             assertThat(selector.options()).containsExactly("DeepSeek");
             assertThat(selector.details()).singleElement().satisfies(detail -> {
                 assertThat(detail.category()).isEqualTo("API Key");
-                assertThat(detail.badge()).isEqualTo("当前");
+                assertThat(detail.badge()).isEqualTo("Current");
             });
         });
     }
@@ -143,7 +143,7 @@ class CodingTerminalLifecycleTest {
         assertThat(controller.state().selector()).get().satisfies(selector -> {
             assertThat(selector.kind()).isEqualTo("auth-provider");
             assertThat(selector.options()).containsExactly("Antigravity");
-            assertThat(selector.title()).contains("搜索: anti");
+            assertThat(selector.title()).contains("Search: anti");
         });
 
         controller.accept(input(TerminalInput.Kind.SELECTOR_BACKSPACE, ""));
@@ -244,7 +244,7 @@ class CodingTerminalLifecycleTest {
         assertThat(options).contains("DeepSeek", "Antigravity");
         assertThat(options.get(0)).isEqualTo("Antigravity");
         assertThat(options.get(options.size() - 1)).isEqualTo("DeepSeek");
-        assertThat(selector.details().getFirst().category()).isEqualTo("订阅登录");
+        assertThat(selector.details().getFirst().category()).isEqualTo("Subscription");
         assertThat(selector.details().getLast().category()).isEqualTo("API Key");
 
         controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
@@ -252,10 +252,10 @@ class CodingTerminalLifecycleTest {
 
         assertThat(started).isTrue();
         assertThat(controller.state().transcript()).anySatisfy(item -> {
-            assertThat(item.title()).isEqualTo("Antigravity 连接");
+            assertThat(item.title()).isEqualTo("Antigravity connection");
             assertThat(item.status()).isEqualTo("CONNECTED");
         });
-        assertThat(controller.state().status()).contains("已连接 Antigravity");
+        assertThat(controller.state().status()).contains("Connected to Antigravity");
     }
 
     @Test
@@ -310,13 +310,13 @@ class CodingTerminalLifecycleTest {
         controller.drainEvents();
 
         assertThat(controller.state().transcript())
-                .noneMatch(item -> item.title().equals("ChatGPT 设备码登录"));
+                .noneMatch(item -> item.title().equals("ChatGPT device sign-in"));
         assertThat(controller.state().transcript()).anySatisfy(item -> {
-            assertThat(item.title()).isEqualTo("ChatGPT 连接");
-            assertThat(item.body()).contains("已连接。凭据已保存到系统凭据库。");
+            assertThat(item.title()).isEqualTo("ChatGPT connection");
+            assertThat(item.body()).contains("Connected. Credentials were saved to the system credential store.");
             assertThat(item.status()).isEqualTo("CONNECTED");
         });
-        assertThat(controller.state().status()).contains("已连接 ChatGPT");
+        assertThat(controller.state().status()).contains("Connected to ChatGPT");
     }
 
     @Test
@@ -371,14 +371,17 @@ class CodingTerminalLifecycleTest {
         controller.drainEvents();
 
         assertThat(controller.state().transcript())
-                .noneMatch(item -> item.title().equals("ChatGPT 浏览器登录"));
+                .noneMatch(item -> item.title().equals("ChatGPT browser sign-in"));
         assertThat(controller.state().transcript()).anySatisfy(item -> {
-            assertThat(item.title()).isEqualTo("ChatGPT 连接");
-            assertThat(item.body()).contains("已连接。凭据已保存到系统凭据库。", "UNOFFICIAL_LOCAL_COMPAT");
+            assertThat(item.title()).isEqualTo("ChatGPT connection");
+            assertThat(item.body())
+                    .contains(
+                            "Connected. Credentials were saved to the system credential store.",
+                            "UNOFFICIAL_LOCAL_COMPAT");
             assertThat(item.status()).isEqualTo("CONNECTED");
         });
         assertThat(controller.state().toString()).doesNotContain("client_id=test", "state=state");
-        assertThat(controller.state().status()).contains("已连接 ChatGPT");
+        assertThat(controller.state().status()).contains("Connected to ChatGPT");
     }
 
     @Test
@@ -446,17 +449,17 @@ class CodingTerminalLifecycleTest {
             assertThat(started.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
             controller.accept(input(TerminalInput.Kind.TICK, ""));
             assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("auth-wait");
-            assertThat(controller.state().status()).contains("等待浏览器授权", "剩余");
+            assertThat(controller.state().status()).contains("Waiting for browser authorization", "remaining");
 
             controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
 
             assertThat(cancelRequested).isTrue();
             assertThat(controller.state().selector()).isEmpty();
-            assertThat(controller.state().status()).isEqualTo("正在取消登录");
+            assertThat(controller.state().status()).isEqualTo("Cancelling sign-in");
 
             controller.accept(input(TerminalInput.Kind.SUBMIT, "/connect codex browser"));
             assertThat(loginCalls).hasValue(1);
-            assertThat(controller.state().status()).contains("登录正在进行，请先完成或取消");
+            assertThat(controller.state().status()).contains("A sign-in is already in progress");
         } finally {
             release.countDown();
             executor.shutdownNow();
@@ -509,9 +512,12 @@ class CodingTerminalLifecycleTest {
         controller.drainEvents();
 
         assertThat(controller.state().transcript()).singleElement().satisfies(item -> {
-            assertThat(item.title()).isEqualTo("ChatGPT 连接失败");
+            assertThat(item.title()).isEqualTo("ChatGPT connection failed");
             assertThat(item.body())
-                    .contains("阶段：已收到授权，正在换取凭据。", "原因代码：AUTH_REAUTH_REQUIRED", "登录已失效，请运行 /connect 重新连接。");
+                    .contains(
+                            "Stage: Authorization received. Exchanging it for credentials.",
+                            "Reason code: AUTH_REAUTH_REQUIRED",
+                            "Sign-in has expired. Run /connect to sign in again.");
             assertThat(item.status()).isEqualTo("FAILED");
         });
         assertThat(controller.state().recoverableError()).contains("AUTH_REAUTH_REQUIRED");
@@ -557,20 +563,20 @@ class CodingTerminalLifecycleTest {
 
         assertThat(controller.state().selector()).get().satisfies(selector -> {
             assertThat(selector.kind()).isEqualTo("auth-account");
-            assertThat(selector.options()).containsExactly("DeepSeek · API Key · a***@example.com · 已连接");
+            assertThat(selector.options()).containsExactly("DeepSeek · API Key · a***@example.com · Connected");
         });
 
         controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
         assertThat(controller.state().selector()).get().satisfies(selector -> {
             assertThat(selector.kind()).isEqualTo("auth-account-actions");
-            assertThat(selector.options()).containsExactly("更新 API Key", "断开连接", "返回");
+            assertThat(selector.options()).containsExactly("Update API key", "Disconnect", "Back");
         });
 
         controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
         controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
         assertThat(controller.state().selector()).get().satisfies(selector -> {
             assertThat(selector.kind()).isEqualTo("auth-logout-confirm");
-            assertThat(selector.options().getFirst()).isEqualTo("取消");
+            assertThat(selector.options().getFirst()).isEqualTo("Cancel");
         });
         controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
         assertThat(disconnected).isFalse();
