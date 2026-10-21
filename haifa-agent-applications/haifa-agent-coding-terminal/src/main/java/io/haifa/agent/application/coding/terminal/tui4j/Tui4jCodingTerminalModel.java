@@ -243,6 +243,12 @@ final class Tui4jCodingTerminalModel implements Model {
                 clearSelection();
                 return Command.none();
             }
+            if (selection.selecting()) {
+                // Some Windows terminal backends encode drag motion as another press event.
+                // Keep the original anchor so the drag grows instead of restarting at the cursor.
+                selection.extend(point.orElseThrow());
+                return updateSelectionAutoScroll(mouse, region);
+            }
             stopSelectionAutoScroll();
             selection.start(point.orElseThrow());
             return Command.none();

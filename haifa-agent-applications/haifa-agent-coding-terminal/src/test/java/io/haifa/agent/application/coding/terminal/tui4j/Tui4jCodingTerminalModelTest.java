@@ -244,6 +244,21 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
+    void treatsRepeatedPressEventsDuringDragAsMotion() {
+        var clipboard = new RecordingClipboard(true);
+        var fixture = fixtureWithClipboard(clipboard);
+        seedSelectableTranscript(fixture);
+
+        fixture.model.update(mouse(1, 0, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(1, 20, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        var release = fixture.model.update(mouse(1, 20, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
+        release.command().execute();
+
+        assertThat(clipboard.text).isNotNull();
+        assertThat(clipboard.text.length()).isGreaterThan(1);
+    }
+
+    @Test
     void copiesSelectedTranscriptTextThroughTheClipboardPort() {
         var clipboard = new RecordingClipboard(true);
         var fixture = fixtureWithClipboard(clipboard);
