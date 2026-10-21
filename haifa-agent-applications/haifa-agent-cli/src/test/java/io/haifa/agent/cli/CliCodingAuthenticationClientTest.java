@@ -90,13 +90,15 @@ class CliCodingAuthenticationClientTest {
         assertThat(deepseek.category()).isEqualTo(CodingAuthenticationProviderView.Category.API_KEY);
         assertThat(deepseek.current()).isTrue();
         assertThat(deepseek.connected()).isTrue();
-        assertThat(deepseek.accountLabel()).hasValueSatisfying(label -> assertThat(label).contains("***"));
-        assertThat(deepseek.methods())
-                .anySatisfy(method -> {
-                    assertThat(method.id()).isEqualTo("api_key");
-                    assertThat(method.available()).isTrue();
-                });
-        assertThat(providers).extracting(CodingAuthenticationProviderView::providerId).doesNotContain("openai-codex");
+        assertThat(deepseek.accountLabel())
+                .hasValueSatisfying(label -> assertThat(label).contains("***"));
+        assertThat(deepseek.methods()).anySatisfy(method -> {
+            assertThat(method.id()).isEqualTo("api_key");
+            assertThat(method.available()).isTrue();
+        });
+        assertThat(providers)
+                .extracting(CodingAuthenticationProviderView::providerId)
+                .doesNotContain("openai-codex");
     }
 
     @Test

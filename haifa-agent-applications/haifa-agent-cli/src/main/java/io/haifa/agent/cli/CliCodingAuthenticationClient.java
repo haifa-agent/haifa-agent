@@ -177,9 +177,7 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient,
     public List<CodingAuthenticationProviderView> providers() {
         Map<String, LocalModelConnectionView> connections = authentication.connections().stream()
                 .collect(Collectors.toMap(
-                        LocalModelConnectionView::providerId,
-                        value -> value,
-                        (first, ignored) -> first));
+                        LocalModelConnectionView::providerId, value -> value, (first, ignored) -> first));
         List<CodingAuthenticationProviderView> providers = new ArrayList<>();
         for (ModelCatalogProvider provider : catalog.providers()) {
             String providerId = provider.id().value();
