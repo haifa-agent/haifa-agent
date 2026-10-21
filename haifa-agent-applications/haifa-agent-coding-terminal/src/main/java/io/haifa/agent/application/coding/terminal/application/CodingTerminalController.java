@@ -23,6 +23,7 @@ import io.haifa.agent.application.project.product.coding.client.CodingAuthentica
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationMethodView;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationProviderView;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationView;
+import io.haifa.agent.application.project.product.coding.client.CodingBrowserLoginView;
 import io.haifa.agent.application.project.product.coding.client.CodingSessionClient;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
@@ -53,6 +54,7 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -104,9 +106,16 @@ public final class CodingTerminalController implements AutoCloseable {
     private CodingAuthenticationView selectedAuthenticationConnection;
     private String modelReadinessProviderId = "";
     private List<CodingAuthenticationProviderView> authenticationProviders = List.of();
+    private List<CodingAuthenticationProviderView> allAuthenticationProviders = List.of();
+    private String connectionCenterFilter = "";
     private CodingAuthenticationProviderView activeAuthenticationProvider;
     private boolean authenticationInProgress;
     private boolean authenticationCenterLoading;
+    private final AtomicReference<String> pendingAuthorizationUri = new AtomicReference<>();
+    private final AtomicReference<String> pendingDeviceCode = new AtomicReference<>();
+    private final AtomicReference<String> pendingVerificationUri = new AtomicReference<>();
+    private volatile long authenticationExpiresAtMillis;
+    private long lastAuthenticationCountdownSecond = -1;
     private CompletionContext completionContext;
     private CodingShellPlan pendingShellPlan;
     private String preservedDraftBuffer;
@@ -528,26 +537,63 @@ public final class CodingTerminalController implements AutoCloseable {
 
     private void showConnectionCenter(List<CodingAuthenticationProviderView> providers) {
         authenticationCenterLoading = false;
-        authenticationProviders = List.copyOf(providers);
-        if (authenticationProviders.isEmpty()) {
+        allAuthenticationProviders = List.copyOf(providers);
+        connectionCenterFilter = "";
+        if (allAuthenticationProviders.isEmpty()) {
             apply(new TerminalUiAction.RecoverableFailure("AUTH_PROVIDER_LIST_EMPTY"));
             return;
         }
-        authenticationProviders = authenticationProviders.stream()
+        renderConnectionCenter();
+    }
+
+    private void renderConnectionCenter() {
+        String needle = connectionCenterFilter.strip().toLowerCase(java.util.Locale.ROOT);
+        authenticationProviders = allAuthenticationProviders.stream()
+                .filter(provider -> needle.isEmpty()
+                        || AuthenticationProviderPresentation.providerName(provider)
+                                .toLowerCase(java.util.Locale.ROOT)
+                                .contains(needle)
+                        || provider.providerId().toLowerCase(java.util.Locale.ROOT).contains(needle))
                 .sorted(java.util.Comparator
                         .comparingInt((CodingAuthenticationProviderView value) ->
                                 value.category() == CodingAuthenticationProviderView.Category.SUBSCRIPTION ? 0 : 1)
                         .thenComparing(value -> AuthenticationProviderPresentation.providerName(value)))
                 .toList();
-        List<String> options =
-                authenticationProviders.stream().map(AuthenticationProviderPresentation::providerOption).toList();
+        List<String> options = authenticationProviders.stream()
+                .map(AuthenticationProviderPresentation::providerName)
+                .toList();
+        List<io.haifa.agent.application.coding.terminal.state.TerminalSelectorDetail> details =
+                authenticationProviders.stream()
+                        .map(AuthenticationProviderPresentation::providerDetail)
+                        .toList();
         int selected = java.util.stream.IntStream.range(0, authenticationProviders.size())
                 .filter(index -> authenticationProviders.get(index).current()
                         || authenticationProviders.get(index).connected())
                 .findFirst()
                 .orElse(0);
+        String title = connectionCenterFilter.isBlank()
+                ? "连接模型"
+                : "连接模型 · 搜索: " + connectionCenterFilter;
         apply(new TerminalUiAction.SelectorOpened(
-                new TerminalSelector("auth-provider", "连接模型", options, selected)));
+                new TerminalSelector("auth-provider", title, options, selected, details)));
+        apply(new TerminalUiAction.StatusChanged(
+                authenticationProviders.isEmpty() ? "没有匹配的提供商，按 Esc 返回" : "输入名称以过滤提供商"));
+    }
+
+    private void filterConnectionCenter(String text) {
+        if (text == null || text.isEmpty()) {
+            return;
+        }
+        connectionCenterFilter = connectionCenterFilter + text;
+        renderConnectionCenter();
+    }
+
+    private void filterConnectionCenterBackspace() {
+        if (connectionCenterFilter.isEmpty()) {
+            return;
+        }
+        connectionCenterFilter = connectionCenterFilter.substring(0, connectionCenterFilter.length() - 1);
+        renderConnectionCenter();
     }
 
     private void routeConnectionArgument(String argument) {
@@ -582,11 +628,13 @@ public final class CodingTerminalController implements AutoCloseable {
             apply(new TerminalUiAction.StatusChanged("正在加载模型提供商"));
             return;
         }
-        if (authenticationProviders.isEmpty()) {
+        List<CodingAuthenticationProviderView> available =
+                allAuthenticationProviders.isEmpty() ? authenticationProviders : allAuthenticationProviders;
+        if (available.isEmpty()) {
             openConnectionCenter("");
             return;
         }
-        Optional<CodingAuthenticationProviderView> found = authenticationProviders.stream()
+        Optional<CodingAuthenticationProviderView> found = available.stream()
                 .filter(value -> value.providerId().equalsIgnoreCase(providerId))
                 .findFirst();
         if (found.isEmpty()) {
@@ -861,6 +909,7 @@ public final class CodingTerminalController implements AutoCloseable {
     private void acceptGuarded(TerminalInput input) {
         drainEvents();
         if (input.kind() == TerminalInput.Kind.TICK) {
+            updateAuthenticationCountdown();
             return;
         }
         if (renamingSession) {
@@ -894,6 +943,18 @@ public final class CodingTerminalController implements AutoCloseable {
             executeNonDraftCommand(input.text());
             return;
         }
+        if (input.kind() == TerminalInput.Kind.SELECTOR_FILTER
+                || input.kind() == TerminalInput.Kind.SELECTOR_BACKSPACE) {
+            if (state.selector().filter(selector -> "auth-provider".equals(selector.kind())).isEmpty()) {
+                return;
+            }
+            if (input.kind() == TerminalInput.Kind.SELECTOR_FILTER) {
+                filterConnectionCenter(input.text());
+            } else {
+                filterConnectionCenterBackspace();
+            }
+            return;
+        }
         if (input.kind() == TerminalInput.Kind.EDITOR_CHANGED) {
             apply(new TerminalUiAction.EditorChanged(input.text(), input.cursor()));
             return;
@@ -924,6 +985,12 @@ public final class CodingTerminalController implements AutoCloseable {
             return;
         }
         if (input.kind() == TerminalInput.Kind.CANCEL_OR_CLOSE) {
+            if (state.selector()
+                    .filter(selector -> "auth-wait".equals(selector.kind()) || "auth-device".equals(selector.kind()))
+                    .isPresent()) {
+                cancelAuthentication();
+                return;
+            }
             if (state.selector().isPresent()) {
                 discardPendingShell();
                 apply(new TerminalUiAction.SelectorClosed());
@@ -1625,11 +1692,10 @@ public final class CodingTerminalController implements AutoCloseable {
         submitEffect(
                 () -> {
                     CodingAuthenticationView connected = authentication.loginCodexBrowser(
-                            instructions -> pump.offer(new TerminalUiAction.BrowserLoginInstructionsPresented(
-                                    "ChatGPT", instructions.authorizationUri().toString())),
+                            instructions -> rememberAuthorization("ChatGPT", instructions),
                             progress -> pump.offer(new TerminalUiAction.AuthenticationProgressed(progress.phase())));
                     return () -> {
-                        authenticationInProgress = false;
+                        completeAuthentication();
                         pump.offer(new TerminalUiAction.AuthenticationCompleted(
                                 "ChatGPT", connected.unofficialLocalCompatibility()));
                         offerConnectionNextStep("openai-codex", "ChatGPT");
@@ -1644,12 +1710,11 @@ public final class CodingTerminalController implements AutoCloseable {
         submitEffect(
                 () -> {
                     CodingAuthenticationView connected = authentication.loginAntigravityBrowser(
-                            instructions -> pump.offer(new TerminalUiAction.BrowserLoginInstructionsPresented(
-                                    "Antigravity", instructions.authorizationUri().toString())),
+                            instructions -> rememberAuthorization("Antigravity", instructions),
                             progress -> pump.offer(
                                     new TerminalUiAction.AuthenticationProgressed("Antigravity", progress.phase())));
                     return () -> {
-                        authenticationInProgress = false;
+                        completeAuthentication();
                         pump.offer(new TerminalUiAction.AuthenticationCompleted(
                                 "Antigravity", connected.unofficialLocalCompatibility()));
                         offerConnectionNextStep("google-antigravity", "Antigravity");
@@ -1666,6 +1731,11 @@ public final class CodingTerminalController implements AutoCloseable {
         if (!authenticationInProgress) {
             return;
         }
+        if (state.selector()
+                .filter(selector -> "auth-wait".equals(selector.kind()) || "auth-device".equals(selector.kind()))
+                .isPresent()) {
+            apply(new TerminalUiAction.SelectorClosed());
+        }
         apply(new TerminalUiAction.StatusChanged("正在取消登录"));
         submitControlEffect(
                 () -> {
@@ -1680,7 +1750,7 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void completeAuthenticationFailure(String connectionName, String code) {
-        authenticationInProgress = false;
+        completeAuthentication();
         if ("AUTH_CANCELLED".equals(code)) {
             pump.offer(new TerminalUiAction.StatusChanged("已取消登录"));
             return;
@@ -1740,17 +1810,104 @@ public final class CodingTerminalController implements AutoCloseable {
         submitEffect(
                 () -> {
                     CodingAuthenticationView connected = authentication.loginCodexDevice(
-                            instruction -> pump.offer(new TerminalUiAction.DeviceLoginInstructionsPresented(
-                                    instruction.verificationUri().toString(), instruction.userCode())),
+                            instruction -> rememberDevice(instruction),
                             progress -> pump.offer(new TerminalUiAction.AuthenticationProgressed(progress.phase())));
                     return () -> {
-                        authenticationInProgress = false;
+                        completeAuthentication();
                         pump.offer(new TerminalUiAction.AuthenticationCompleted(
                                 "ChatGPT", connected.unofficialLocalCompatibility()));
                         offerConnectionNextStep("openai-codex", "ChatGPT");
                     };
                 },
                 code -> completeAuthenticationFailure("ChatGPT", code));
+    }
+
+    private void rememberAuthorization(String connectionName, CodingBrowserLoginView instructions) {
+        pendingAuthorizationUri.set(instructions.authorizationUri().toString());
+        authenticationExpiresAtMillis = instructions.expiresAtEpochMillis();
+        lastAuthenticationCountdownSecond = -1;
+        pump.offer(new TerminalUiAction.BrowserLoginInstructionsPresented(connectionName, ""));
+    }
+
+    private void rememberDevice(io.haifa.agent.application.project.product.coding.client.CodingDeviceLoginView instruction) {
+        pendingDeviceCode.set(instruction.userCode());
+        pendingVerificationUri.set(instruction.verificationUri().toString());
+        authenticationExpiresAtMillis = instruction.expiresAtEpochMillis();
+        lastAuthenticationCountdownSecond = -1;
+        pump.offer(new TerminalUiAction.DeviceLoginInstructionsPresented(
+                instruction.verificationUri().toString(), instruction.userCode()));
+    }
+
+    private void completeAuthentication() {
+        authenticationInProgress = false;
+        pendingAuthorizationUri.set(null);
+        pendingDeviceCode.set(null);
+        pendingVerificationUri.set(null);
+        authenticationExpiresAtMillis = 0L;
+        lastAuthenticationCountdownSecond = -1;
+        if (state.selector()
+                .filter(selector -> "auth-wait".equals(selector.kind()) || "auth-device".equals(selector.kind()))
+                .isPresent()) {
+            apply(new TerminalUiAction.SelectorClosed());
+        }
+    }
+
+    public Optional<String> deviceCode() {
+        return Optional.ofNullable(pendingDeviceCode.get());
+    }
+
+    public Optional<String> verificationUri() {
+        return Optional.ofNullable(pendingVerificationUri.get());
+    }
+
+    public Optional<String> authorizationUri() {
+        return Optional.ofNullable(pendingAuthorizationUri.get());
+    }
+
+    public void reopenAuthorization() {
+        openExternal(pendingAuthorizationUri.get(), "授权链接");
+    }
+
+    public void openVerificationPage() {
+        openExternal(pendingVerificationUri.get(), "浏览器链接");
+    }
+
+    private void openExternal(String raw, String label) {
+        if (raw == null || raw.isBlank()) {
+            apply(new TerminalUiAction.StatusChanged(label + "已失效，请重新连接"));
+            return;
+        }
+        java.net.URI uri;
+        try {
+            uri = java.net.URI.create(raw);
+        } catch (IllegalArgumentException exception) {
+            apply(new TerminalUiAction.StatusChanged(label + "无效，请重新连接"));
+            return;
+        }
+        apply(new TerminalUiAction.StatusChanged("正在重新打开浏览器"));
+        submitControlEffect(
+                () -> {
+                    boolean opened = authentication.openAuthorization(uri);
+                    return () -> apply(new TerminalUiAction.StatusChanged(
+                            opened ? "已重新打开浏览器" : "无法打开浏览器，请复制链接后手动打开"));
+                },
+                code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+    }
+
+    private void updateAuthenticationCountdown() {
+        if (!authenticationInProgress || authenticationExpiresAtMillis <= 0L) {
+            return;
+        }
+        long remainingMillis = authenticationExpiresAtMillis - System.currentTimeMillis();
+        long seconds = Math.max(0L, (remainingMillis + 999L) / 1000L);
+        if (seconds == lastAuthenticationCountdownSecond) {
+            return;
+        }
+        lastAuthenticationCountdownSecond = seconds;
+        String remaining = "%02d:%02d".formatted(seconds / 60, seconds % 60);
+        apply(new TerminalUiAction.StatusChanged(
+                seconds == 0 ? "等待浏览器授权 · 授权即将超时 · Esc 取消"
+                        : "等待浏览器授权 · 剩余 " + remaining + " · Esc 取消"));
     }
 
     private void beginApiKeyInput(String input) {
@@ -1814,14 +1971,10 @@ public final class CodingTerminalController implements AutoCloseable {
             pendingBailianRegion =
                     region != null ? region : (existingBailianRegion != null ? existingBailianRegion : "cn-beijing");
             bailianStep = BailianConfigStep.API_KEY;
-            String workspaceLabel = pendingBailianWorkspaceId != null ? pendingBailianWorkspaceId : "待填写";
-            if (hasExistingKey) {
-                apply(new TerminalUiAction.StatusChanged("更新 " + displayName + " 的 API Key（Workspace: "
-                        + workspaceLabel + " · Region: " + pendingBailianRegion + " · 回车可保留现有 Key）" + help));
-            } else {
-                apply(new TerminalUiAction.StatusChanged("请输入 " + displayName + " 的 API Key（Workspace: "
-                        + workspaceLabel + " · Region: " + pendingBailianRegion + "）" + help));
-            }
+            apply(new TerminalUiAction.StatusChanged((hasExistingKey
+                            ? "步骤 1/3 · 更新 " + displayName + " 的 API Key（回车可保留现有 Key）"
+                            : "步骤 1/3 · 输入 " + displayName + " 的 API Key")
+                    + help));
             return;
         }
 
@@ -1857,22 +2010,33 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     public String secureInputPrompt() {
+        if ("aliyun-bailian".equalsIgnoreCase(pendingApiKeyProvider)) {
+            return switch (bailianStep) {
+                case WORKSPACE_ID -> "Workspace ┃ ";
+                case REGION -> "Region ┃ ";
+                default -> secureInputIsUpdate() ? "新 Key ┃ " : "API Key ┃ ";
+            };
+        }
         return secureInputIsUpdate() ? "新 Key ┃ " : "API Key ┃ ";
     }
 
     public String secureInputPlaceholder() {
         if ("aliyun-bailian".equalsIgnoreCase(pendingApiKeyProvider)) {
-            String workspace = pendingBailianWorkspaceId != null ? pendingBailianWorkspaceId : "待填写";
-            String defaultReg = pendingBailianRegion != null ? pendingBailianRegion : "cn-beijing";
-            return secureInputIsUpdate()
-                    ? "粘贴或输入新的 API Key（Esc 保留现有 Key）"
-                    : "粘贴或输入百炼 API Key [Workspace] [Region]（Workspace: " + workspace + " · Region 默认: "
-                            + defaultReg + "）";
+            return switch (bailianStep) {
+                case WORKSPACE_ID -> "输入百炼 Workspace ID";
+                case REGION -> "输入地域，例如 cn-beijing（回车使用默认）";
+                default -> secureInputIsUpdate()
+                        ? "粘贴或输入新的 API Key（Esc 保留现有 Key）"
+                        : "粘贴或输入百炼 API Key";
+            };
         }
         return secureInputIsUpdate() ? "粘贴或输入新的 API Key（Esc 保留现有 Key）" : "粘贴或输入 API Key";
     }
 
     public String secureInputHint() {
+        if ("aliyun-bailian".equalsIgnoreCase(pendingApiKeyProvider)) {
+            return "Enter 下一步 · Esc 取消";
+        }
         return secureInputIsUpdate() ? "Enter 更新 · Esc 取消" : "Enter 保存 · Esc 取消";
     }
 
@@ -1911,7 +2075,7 @@ public final class CodingTerminalController implements AutoCloseable {
             return;
         }
         if ("aliyun-bailian".equalsIgnoreCase(providerId)) {
-            handleBailianInput(apiKey);
+            handleBailianStep(apiKey);
             return;
         }
         pendingApiKeyProvider = null;
@@ -1954,57 +2118,71 @@ public final class CodingTerminalController implements AutoCloseable {
         drainEffectCompletions();
     }
 
-    private void handleBailianInput(char[] input) {
-        String fullText = new String(input).strip();
-        if (fullText.isEmpty() && !pendingApiKeyIsUpdate) {
-            java.util.Arrays.fill(input, '\0');
-            apply(new TerminalUiAction.StatusChanged(
-                    "API key must not be empty · enter DashScope API key for aliyun-bailian"));
-            return;
-        }
-
-        String[] parts = fullText.isEmpty() ? new String[0] : fullText.split("\\s+");
-        if (parts.length > 3) {
-            java.util.Arrays.fill(input, '\0');
-            apply(new TerminalUiAction.StatusChanged(
-                    "Too many arguments: expected API key [workspace] [region] for aliyun-bailian"));
-            return;
-        }
-        if (parts.length > 0 && !parts[0].isEmpty()) {
-            pendingBailianApiKey = parts[0].toCharArray();
-        }
-        if (parts.length > 1) {
-            String ws = parts[1].strip();
-            if (!DNS_LABEL_PATTERN.matcher(ws).matches()) {
-                java.util.Arrays.fill(input, '\0');
-                apply(new TerminalUiAction.StatusChanged(
-                        "Invalid workspace ID: must be lowercase DNS label ([a-z0-9-], 1-63 chars)"));
-                return;
-            }
-            pendingBailianWorkspaceId = ws;
-        }
-        if (parts.length > 2) {
-            String reg = parts[2].strip();
-            if (!DNS_LABEL_PATTERN.matcher(reg).matches()) {
-                java.util.Arrays.fill(input, '\0');
-                apply(new TerminalUiAction.StatusChanged(
-                        "Invalid region: must be lowercase DNS label ([a-z0-9-], 1-63 chars)"));
-                return;
-            }
-            pendingBailianRegion = reg;
-        }
-        if (pendingBailianWorkspaceId == null) {
-            java.util.Arrays.fill(input, '\0');
-            apply(new TerminalUiAction.StatusChanged(
-                    "Workspace ID is required for first-time aliyun-bailian setup; enter API key workspace [region]"));
-            return;
-        }
+    private void handleBailianStep(char[] input) {
+        String text = new String(input).strip();
         java.util.Arrays.fill(input, '\0');
-        if (pendingBailianRegion == null) {
-            pendingBailianRegion = existingBailianRegion != null ? existingBailianRegion : "cn-beijing";
+        switch (bailianStep) {
+            case API_KEY -> {
+                if (text.chars().anyMatch(Character::isWhitespace)) {
+                    apply(new TerminalUiAction.StatusChanged(
+                            "API Key 不能包含空格；Workspace 和 Region 将在后续步骤中填写"));
+                    return;
+                }
+                if (!text.isEmpty()) {
+                    if (pendingBailianApiKey != null) {
+                        java.util.Arrays.fill(pendingBailianApiKey, '\0');
+                    }
+                    pendingBailianApiKey = text.toCharArray();
+                }
+                if (pendingBailianApiKey == null && !pendingApiKeyIsUpdate) {
+                    apply(new TerminalUiAction.StatusChanged("API Key 不能为空；请粘贴百炼 API Key"));
+                    return;
+                }
+                if (pendingBailianWorkspaceId != null && pendingBailianRegion != null) {
+                    saveBailianCredentials();
+                    return;
+                }
+                bailianStep = pendingBailianWorkspaceId == null
+                        ? BailianConfigStep.WORKSPACE_ID
+                        : BailianConfigStep.REGION;
+                applyBailianStepStatus();
+            }
+            case WORKSPACE_ID -> {
+                if (!DNS_LABEL_PATTERN.matcher(text).matches()) {
+                    apply(new TerminalUiAction.StatusChanged(
+                            "Workspace ID 格式不正确：只能使用小写字母、数字和连字符"));
+                    return;
+                }
+                pendingBailianWorkspaceId = text;
+                bailianStep = BailianConfigStep.REGION;
+                applyBailianStepStatus();
+            }
+            case REGION -> {
+                String region = text.isEmpty()
+                        ? (pendingBailianRegion != null
+                                ? pendingBailianRegion
+                                : (existingBailianRegion != null ? existingBailianRegion : "cn-beijing"))
+                        : text;
+                if (!DNS_LABEL_PATTERN.matcher(region).matches()) {
+                    apply(new TerminalUiAction.StatusChanged("Region 格式不正确：只能使用小写字母、数字和连字符"));
+                    return;
+                }
+                pendingBailianRegion = region;
+                saveBailianCredentials();
+            }
+            default -> apply(new TerminalUiAction.StatusChanged("当前没有等待输入的百炼配置步骤"));
         }
+    }
 
-        saveBailianCredentials();
+    private void applyBailianStepStatus() {
+        if (bailianStep == BailianConfigStep.WORKSPACE_ID) {
+            apply(new TerminalUiAction.StatusChanged("步骤 2/3 · 输入百炼 Workspace ID"));
+        } else if (bailianStep == BailianConfigStep.REGION) {
+            apply(new TerminalUiAction.StatusChanged(
+                    "步骤 3/3 · 输入地域，回车使用 " + (pendingBailianRegion != null ? pendingBailianRegion : "cn-beijing")));
+        } else {
+            apply(new TerminalUiAction.StatusChanged("步骤 1/3 · 输入百炼 API Key"));
+        }
     }
 
     private void saveBailianCredentials() {
@@ -2157,7 +2335,7 @@ public final class CodingTerminalController implements AutoCloseable {
                 () -> {
                     List<CodingAuthenticationProviderView> providers = authentication.providers();
                     return () -> {
-                        authenticationProviders = List.copyOf(providers);
+                        allAuthenticationProviders = List.copyOf(providers);
                         openProviderMethods(providerId);
                     };
                 },

@@ -263,6 +263,25 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient,
     }
 
     @Override
+    public boolean openAuthorization(java.net.URI authorizationUri) {
+        if (authorizationUri == null
+                || !("https".equalsIgnoreCase(authorizationUri.getScheme())
+                        || "http".equalsIgnoreCase(authorizationUri.getScheme()))) {
+            return false;
+        }
+        if (!java.awt.Desktop.isDesktopSupported()
+                || !java.awt.Desktop.getDesktop().isSupported(java.awt.Desktop.Action.BROWSE)) {
+            return false;
+        }
+        try {
+            java.awt.Desktop.getDesktop().browse(authorizationUri);
+            return true;
+        } catch (java.io.IOException | SecurityException exception) {
+            return false;
+        }
+    }
+
+    @Override
     public List<CodingAuthenticationView> connections() {
         return authentication.connections().stream().map(mapper::view).toList();
     }

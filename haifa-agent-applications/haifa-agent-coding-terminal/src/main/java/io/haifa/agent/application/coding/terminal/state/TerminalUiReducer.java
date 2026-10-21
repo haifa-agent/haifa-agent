@@ -219,29 +219,28 @@ public final class TerminalUiReducer {
             return copyWithTranscript(state, List.copyOf(items));
         }
         if (action instanceof TerminalUiAction.DeviceLoginInstructionsPresented instructions) {
-            List<TranscriptItem> items = new ArrayList<>(state.transcript());
-            items.add(new TranscriptItem(
-                    "auth-device-code-" + items.size(),
-                    TranscriptItem.Kind.RESOURCE,
-                    "ChatGPT 设备码登录",
-                    "浏览器地址：" + instructions.verificationUri() + "\n设备码：" + instructions.userCode(),
-                    "WAITING",
-                    true));
-            return copyWithStatus(copyWithTranscript(state, List.copyOf(items)), "Waiting for ChatGPT authorization");
+            TerminalSelector selector = new TerminalSelector(
+                    "auth-device",
+                    "设备码 " + instructions.userCode(),
+                    List.of("复制设备码", "复制浏览器链接", "取消登录"),
+                    0,
+                    List.of(
+                            new TerminalSelectorDetail("粘贴到浏览器完成授权", "", "设备码登录"),
+                            new TerminalSelectorDetail(instructions.verificationUri(), "", "设备码登录"),
+                            new TerminalSelectorDetail("退出本次登录", "", "设备码登录")));
+            return copyWithStatus(
+                    copyWithSelector(state, Optional.of(selector)), "在浏览器输入设备码 · Esc 取消");
         }
         if (action instanceof TerminalUiAction.BrowserLoginInstructionsPresented instructions) {
-            List<TranscriptItem> items = new ArrayList<>(state.transcript());
-            items.add(new TranscriptItem(
-                    "auth-browser-instructions-" + items.size(),
-                    TranscriptItem.Kind.RESOURCE,
-                    instructions.connectionName() + " 浏览器登录",
-                    "已请求浏览器登录。\n如果浏览器未打开，请使用此链接："
-                            + instructions.authorizationUri(),
-                    "WAITING",
-                    true));
             return copyWithStatus(
-                    copyWithTranscript(state, List.copyOf(items)),
-                    "Waiting for " + instructions.connectionName() + " authorization");
+                    copyWithSelector(
+                            state,
+                            Optional.of(new TerminalSelector(
+                                    "auth-wait",
+                                    "等待 " + instructions.connectionName() + " 授权",
+                                    List.of("复制授权链接", "重新打开浏览器", "取消登录"),
+                                    0))),
+                    "等待浏览器授权 · Esc 取消");
         }
         if (action instanceof TerminalUiAction.AuthenticationProgressed progress) {
             List<TranscriptItem> items = new ArrayList<>(state.transcript());

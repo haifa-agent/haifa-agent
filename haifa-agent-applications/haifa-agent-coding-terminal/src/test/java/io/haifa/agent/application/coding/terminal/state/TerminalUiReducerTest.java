@@ -47,6 +47,37 @@ class TerminalUiReducerTest {
     private final TerminalUiReducer reducer = new TerminalUiReducer();
 
     @Test
+    void deviceLoginWaitingPanelShowsTheCodeAndCopyActions() {
+        TerminalUiState state = reducer.reduce(
+                TerminalUiState.initial(80, 24),
+                new TerminalUiAction.DeviceLoginInstructionsPresented(
+                        "https://auth.openai.com/codex/device", "ABCD-1234"));
+
+        assertThat(state.selector()).get().satisfies(selector -> {
+            assertThat(selector.kind()).isEqualTo("auth-device");
+            assertThat(selector.title()).contains("ABCD-1234");
+            assertThat(selector.options()).containsExactly("复制设备码", "复制浏览器链接", "取消登录");
+        });
+        assertThat(state.transcript()).isEmpty();
+    }
+
+    @Test
+    void browserLoginWaitingPanelDoesNotPersistTheAuthorizationUrl() {
+        TerminalUiState state = reducer.reduce(
+                TerminalUiState.initial(80, 24),
+                new TerminalUiAction.BrowserLoginInstructionsPresented(
+                        "ChatGPT", "https://auth.example/authorize?state=secret-value"));
+
+        assertThat(state.selector()).get().satisfies(selector -> {
+            assertThat(selector.kind()).isEqualTo("auth-wait");
+            assertThat(selector.options()).containsExactly("复制授权链接", "重新打开浏览器", "取消登录");
+        });
+        assertThat(state.status()).contains("等待浏览器授权");
+        assertThat(state.transcript()).isEmpty();
+        assertThat(state.toString()).doesNotContain("secret-value");
+    }
+
+    @Test
     void projectsCommittedEventsOnceAndAdvancesCursorOnlyAfterProjection() {
         TerminalUiState initial = TerminalUiState.initial(120, 40);
         AgentRunEvent event = event(1, "event-1", new RunEventPayloads.AssistantTextDelta("g-1", "hello"));

@@ -22,8 +22,8 @@ public record CodingAuthenticationProviderView(
         category = Objects.requireNonNull(category, "category must not be null");
         accountLabel = Objects.requireNonNull(accountLabel, "accountLabel must not be null")
                 .map(value -> text(value, "accountLabel"));
-        planLabel = Objects.requireNonNull(planLabel, "planLabel must not be null")
-                .map(value -> text(value, "planLabel"));
+        planLabel =
+                Objects.requireNonNull(planLabel, "planLabel must not be null").map(value -> text(value, "planLabel"));
         methods = List.copyOf(Objects.requireNonNull(methods, "methods must not be null"));
         unavailableReason = Objects.requireNonNull(unavailableReason, "unavailableReason must not be null")
                 .map(value -> text(value, "unavailableReason"));

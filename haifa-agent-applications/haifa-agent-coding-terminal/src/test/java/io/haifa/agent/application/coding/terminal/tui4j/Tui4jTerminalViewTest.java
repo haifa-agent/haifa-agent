@@ -16,6 +16,7 @@ import io.haifa.agent.application.coding.terminal.state.PendingMessage;
 import io.haifa.agent.application.coding.terminal.state.TerminalActivity;
 import io.haifa.agent.application.coding.terminal.state.TerminalFooter;
 import io.haifa.agent.application.coding.terminal.state.TerminalSelector;
+import io.haifa.agent.application.coding.terminal.state.TerminalSelectorDetail;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiReducer;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
 import io.haifa.agent.application.coding.terminal.state.TranscriptItem;
@@ -180,6 +181,47 @@ class Tui4jTerminalViewTest {
         String rendered = view.render(state, transcript(state), editor(60), true, false);
 
         assertThat(rendered).contains("│ > approve", "│   reject");
+    }
+
+    @Test
+    void rendersConnectionCenterCategoriesBadgesAndDescriptions() {
+        TerminalUiState initial = TerminalUiState.initial(88, 30);
+        TerminalUiState state = withSelector(
+                initial,
+                new TerminalSelector(
+                        "auth-provider",
+                        "连接模型",
+                        List.of("ChatGPT", "Antigravity", "DeepSeek"),
+                        0,
+                        List.of(
+                                new TerminalSelectorDetail("订阅登录 · 无需 API Key", "推荐", "订阅登录"),
+                                new TerminalSelectorDetail("订阅登录 · 无需 API Key", "", "订阅登录"),
+                                new TerminalSelectorDetail("API Key · 按量计费", "当前", "API Key"))));
+
+        String rendered = view.render(state, transcript(state), editor(88), true, false);
+
+        assertThat(rendered)
+                .contains("订阅登录", "API Key", "ChatGPT", "[推荐]", "Antigravity", "DeepSeek", "[当前]");
+    }
+
+    @Test
+    void keepsConnectionCenterUsableAtMinimumSize() {
+        TerminalUiState initial = TerminalUiState.initial(60, 16);
+        TerminalUiState state = withSelector(
+                initial,
+                new TerminalSelector(
+                        "auth-provider",
+                        "连接模型",
+                        List.of("ChatGPT", "DeepSeek"),
+                        0,
+                        List.of(
+                                new TerminalSelectorDetail("订阅登录 · 无需 API Key", "推荐", "订阅登录"),
+                                new TerminalSelectorDetail("API Key · 按量计费", "", "API Key"))));
+
+        String rendered = view.render(state, transcript(state), editor(60), true, false);
+
+        assertThat(rendered).contains("连接模型", "ChatGPT", "enter select");
+        assertThat(rendered.lines()).hasSizeLessThanOrEqualTo(16);
     }
 
     @Test
@@ -1116,6 +1158,27 @@ class Tui4jTerminalViewTest {
 
         String expanded = view.transcriptContent(withApproval(initial, details, true));
         assertThat(expanded).contains("line-6", "line-8");
+    }
+
+    private TerminalUiState withSelector(TerminalUiState initial, TerminalSelector selector) {
+        return new TerminalUiState(
+                initial.header(),
+                initial.loadedResources(),
+                initial.transcript(),
+                initial.pending(),
+                initial.status(),
+                initial.editorBuffer(),
+                initial.editorCursor(),
+                Optional.of(selector),
+                initial.footer(),
+                initial.columns(),
+                initial.rows(),
+                initial.session(),
+                initial.currentRunId(),
+                initial.appliedCursor(),
+                initial.seenEventIds(),
+                initial.recoverableError(),
+                initial.exitRequested());
     }
 
     private TerminalUiState withTranscript(TerminalUiState initial, List<TranscriptItem> items) {

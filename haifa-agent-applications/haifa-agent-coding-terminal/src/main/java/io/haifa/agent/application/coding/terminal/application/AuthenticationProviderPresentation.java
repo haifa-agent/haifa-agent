@@ -38,20 +38,40 @@ final class AuthenticationProviderPresentation {
     }
 
     static String providerOption(CodingAuthenticationProviderView provider) {
-        StringBuilder label = new StringBuilder(providerName(provider));
-        label.append(provider.category() == CodingAuthenticationProviderView.Category.SUBSCRIPTION
-                ? " · 订阅"
-                : " · API Key");
-        if (provider.recommended()) {
-            label.append(" · 推荐");
+        return providerName(provider) + " · " + providerDescription(provider);
+    }
+
+    static io.haifa.agent.application.coding.terminal.state.TerminalSelectorDetail providerDetail(
+            CodingAuthenticationProviderView provider) {
+        return new io.haifa.agent.application.coding.terminal.state.TerminalSelectorDetail(
+                providerDescription(provider),
+                providerBadge(provider),
+                provider.category() == CodingAuthenticationProviderView.Category.SUBSCRIPTION
+                        ? "订阅登录"
+                        : "API Key");
+    }
+
+    private static String providerDescription(CodingAuthenticationProviderView provider) {
+        String type = provider.category() == CodingAuthenticationProviderView.Category.SUBSCRIPTION
+                ? "订阅登录"
+                : "API Key";
+        if (provider.connected()) {
+            String account = provider.accountLabel().map(AuthenticationProviderPresentation::maskAccount).orElse("");
+            return type + (account.isBlank() ? " · 已连接" : " · " + account);
+        }
+        return type + (provider.category() == CodingAuthenticationProviderView.Category.SUBSCRIPTION
+                ? " · 无需 API Key"
+                : " · 按量计费");
+    }
+
+    private static String providerBadge(CodingAuthenticationProviderView provider) {
+        if (provider.current()) {
+            return "当前";
         }
         if (provider.connected()) {
-            label.append(" · 已连接");
+            return "已连接";
         }
-        if (provider.current()) {
-            label.append(" · 当前");
-        }
-        return label.toString();
+        return provider.recommended() ? "推荐" : "";
     }
 
     static String methodLabel(CodingAuthenticationMethodView method) {

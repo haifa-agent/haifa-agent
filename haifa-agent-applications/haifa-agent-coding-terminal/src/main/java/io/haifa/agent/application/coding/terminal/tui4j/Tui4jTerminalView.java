@@ -10,6 +10,7 @@ import io.haifa.agent.application.coding.terminal.state.PendingMessage;
 import io.haifa.agent.application.coding.terminal.state.TerminalDurations;
 import io.haifa.agent.application.coding.terminal.state.TerminalRecovery;
 import io.haifa.agent.application.coding.terminal.state.TerminalSelector;
+import io.haifa.agent.application.coding.terminal.state.TerminalSelectorDetail;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
 import io.haifa.agent.application.coding.terminal.state.ToolBodyLines;
 import io.haifa.agent.application.coding.terminal.state.TranscriptItem;
@@ -933,17 +934,37 @@ final class Tui4jTerminalView {
                         selector.selected() - maximumVisibleOptions / 2,
                         selector.options().size() - maximumVisibleOptions));
         int end = Math.min(selector.options().size(), start + maximumVisibleOptions);
+        String category = "";
         for (int index = start; index < end; index++) {
             boolean selected = index == selector.selected();
-            String option =
-                    (selected ? "> " : "  ") + sanitize(selector.options().get(index));
-            lines.add("│ " + (selected ? theme.selected(option) : theme.unselected(option)));
+            TerminalSelectorDetail detail = selector.detail(index).orElse(null);
+            if (detail != null && !detail.category().isBlank() && !detail.category().equals(category)) {
+                category = detail.category();
+                lines.add(theme.muted("│ " + sanitize(category)));
+            }
+            StringBuilder option = new StringBuilder(selected ? "> " : "  ");
+            option.append(sanitize(selector.options().get(index)));
+            if (detail != null && !detail.badge().isBlank()) {
+                option.append(" [").append(sanitize(detail.badge())).append(']');
+            }
+            if (detail != null && !detail.description().isBlank()) {
+                option.append("  · ").append(sanitize(detail.description()));
+            }
+            lines.add("│ " + (selected ? theme.selected(option.toString()) : theme.unselected(option.toString())));
         }
         if (selector.options().size() > maximumVisibleOptions) {
             lines.add(theme.muted(
                     "│ " + (start + 1) + "-" + end + " of " + selector.options().size()));
         }
-        lines.add(theme.muted("└─ enter select · escape close (editor preserved)"));
+        String hint;
+        if ("auth-wait".equals(selector.kind())) {
+            hint = "└─ c 复制链接 · o 重开浏览器 · Enter 选择 · Esc 取消登录";
+        } else if ("auth-device".equals(selector.kind())) {
+            hint = "└─ c 复制设备码 · l 复制链接 · o 打开页面 · Enter 选择 · Esc 取消登录";
+        } else {
+            hint = "└─ enter select · escape close (editor preserved)";
+        }
+        lines.add(theme.muted(hint));
         return lines;
     }
 

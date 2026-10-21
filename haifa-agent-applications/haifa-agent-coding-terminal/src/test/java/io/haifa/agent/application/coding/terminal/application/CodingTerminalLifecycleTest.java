@@ -84,8 +84,75 @@ class CodingTerminalLifecycleTest {
         assertThat(controller.state().selector()).get().satisfies(selector -> {
             assertThat(selector.kind()).isEqualTo("auth-provider");
             assertThat(selector.title()).isEqualTo("连接模型");
-            assertThat(selector.options()).containsExactly("DeepSeek · API Key · 当前");
+            assertThat(selector.options()).containsExactly("DeepSeek");
+            assertThat(selector.details()).singleElement().satisfies(detail -> {
+                assertThat(detail.category()).isEqualTo("API Key");
+                assertThat(detail.badge()).isEqualTo("当前");
+            });
         });
+    }
+
+    @Test
+    void connectionCenterFiltersProvidersByTypedText() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        CodingAuthenticationClient authentication = new CodingAuthenticationClient() {
+            @Override
+            public List<CodingAuthenticationProviderView> providers() {
+                return List.of(
+                        provider(
+                                "deepseek",
+                                "DeepSeek",
+                                CodingAuthenticationProviderView.Category.API_KEY,
+                                false,
+                                false,
+                                apiKeyMethod()),
+                        provider(
+                                "google-antigravity",
+                                "Google Antigravity Direct",
+                                CodingAuthenticationProviderView.Category.SUBSCRIPTION,
+                                false,
+                                false,
+                                browserMethod()));
+            }
+
+            @Override
+            public List<CodingAuthenticationView> connections() {
+                return List.of();
+            }
+
+            @Override
+            public CodingAuthenticationView loginCodexBrowser() {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public CodingAuthenticationView saveApiKey(String providerId, char[] apiKey) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public boolean logout(String connectionId) {
+                return false;
+            }
+        };
+        var controller = controller(client, authentication);
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "/connect"));
+        controller.accept(input(TerminalInput.Kind.SELECTOR_FILTER, "anti"));
+
+        assertThat(controller.state().selector()).get().satisfies(selector -> {
+            assertThat(selector.kind()).isEqualTo("auth-provider");
+            assertThat(selector.options()).containsExactly("Antigravity");
+            assertThat(selector.title()).contains("搜索: anti");
+        });
+
+        controller.accept(input(TerminalInput.Kind.SELECTOR_BACKSPACE, ""));
+        controller.accept(input(TerminalInput.Kind.SELECTOR_BACKSPACE, ""));
+        controller.accept(input(TerminalInput.Kind.SELECTOR_BACKSPACE, ""));
+        controller.accept(input(TerminalInput.Kind.SELECTOR_BACKSPACE, ""));
+
+        assertThat(controller.state().selector().orElseThrow().options())
+                .containsExactly("Antigravity", "DeepSeek");
     }
 
     @Test
@@ -173,10 +240,13 @@ class CodingTerminalLifecycleTest {
 
         controller.start(CodingTerminalStartup.empty());
 
-        var options = controller.state().selector().orElseThrow().options();
-        assertThat(options).contains("DeepSeek · API Key", "Antigravity · 订阅");
-        assertThat(options.get(0)).isEqualTo("Antigravity · 订阅");
-        assertThat(options.get(options.size() - 1)).isEqualTo("DeepSeek · API Key");
+        var selector = controller.state().selector().orElseThrow();
+        var options = selector.options();
+        assertThat(options).contains("DeepSeek", "Antigravity");
+        assertThat(options.get(0)).isEqualTo("Antigravity");
+        assertThat(options.get(options.size() - 1)).isEqualTo("DeepSeek");
+        assertThat(selector.details().getFirst().category()).isEqualTo("订阅登录");
+        assertThat(selector.details().getLast().category()).isEqualTo("API Key");
 
         controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
         controller.drainEvents();
@@ -190,7 +260,7 @@ class CodingTerminalLifecycleTest {
     }
 
     @Test
-    void deviceLoginPrintsTheBrowserUrlAndUserCodeAsPersistentTranscriptContent() {
+    void deviceLoginUsesAShortLivedWaitingPanelInsteadOfPersistingTheCode() {
         FakeClient client = new FakeClient(view(Optional.empty()));
         CodingAuthenticationClient authentication = new CodingAuthenticationClient() {
             @Override
@@ -240,12 +310,8 @@ class CodingTerminalLifecycleTest {
         controller.accept(input(TerminalInput.Kind.SUBMIT, "/connect codex device"));
         controller.drainEvents();
 
-        assertThat(controller.state().transcript()).anySatisfy(item -> {
-            assertThat(item.title()).isEqualTo("ChatGPT 设备码登录");
-            assertThat(item.body())
-                    .contains("浏览器地址：https://auth.openai.com/codex/device", "设备码：ABCD-1234");
-            assertThat(item.status()).isEqualTo("WAITING");
-        });
+        assertThat(controller.state().transcript())
+                .noneMatch(item -> item.title().equals("ChatGPT 设备码登录"));
         assertThat(controller.state().transcript()).anySatisfy(item -> {
             assertThat(item.title()).isEqualTo("ChatGPT 连接");
             assertThat(item.body()).contains("已连接。凭据已保存到系统凭据库。");
@@ -305,14 +371,8 @@ class CodingTerminalLifecycleTest {
         controller.accept(input(TerminalInput.Kind.SUBMIT, "/connect codex browser"));
         controller.drainEvents();
 
-        assertThat(controller.state().transcript()).anySatisfy(item -> {
-            assertThat(item.title()).isEqualTo("ChatGPT 浏览器登录");
-            assertThat(item.body())
-                    .contains(
-                            "已请求浏览器登录。",
-                            "如果浏览器未打开，请使用此链接："
-                                    + "https://auth.openai.com/oauth/authorize?client_id=test&state=state");
-        });
+        assertThat(controller.state().transcript())
+                .noneMatch(item -> item.title().equals("ChatGPT 浏览器登录"));
         assertThat(controller.state().transcript()).anySatisfy(item -> {
             assertThat(item.title()).isEqualTo("ChatGPT 连接");
             assertThat(item.body()).contains("已连接。凭据已保存到系统凭据库。", "UNOFFICIAL_LOCAL_COMPAT");
@@ -320,6 +380,82 @@ class CodingTerminalLifecycleTest {
         });
         assertThat(controller.state().toString()).doesNotContain("client_id=test", "state=state");
         assertThat(controller.state().status()).contains("已连接 ChatGPT");
+    }
+
+    @Test
+    void escapeRequestsCancellationWithoutWaitingForTheBlockingLogin() throws Exception {
+        var started = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var cancelRequested = new java.util.concurrent.atomic.AtomicBoolean();
+        CodingAuthenticationClient authentication = new CodingAuthenticationClient() {
+            @Override
+            public List<CodingAuthenticationView> connections() {
+                return List.of();
+            }
+
+            @Override
+            public CodingAuthenticationView loginCodexBrowser() {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public CodingAuthenticationView loginCodexBrowser(
+                    java.util.function.Consumer<CodingBrowserLoginView> instructions,
+                    java.util.function.Consumer<CodingAuthenticationProgressView> progress) {
+                instructions.accept(new CodingBrowserLoginView(
+                        URI.create("https://auth.openai.com/oauth/authorize?state=test"),
+                        System.currentTimeMillis() + 60_000));
+                started.countDown();
+                try {
+                    release.await(5, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                }
+                throw new IllegalStateException("AUTH_CANCELLED");
+            }
+
+            @Override
+            public boolean cancelLogin() {
+                cancelRequested.set(true);
+                return true;
+            }
+
+            @Override
+            public CodingAuthenticationView saveApiKey(String providerId, char[] apiKey) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public boolean logout(String connectionId) {
+                return false;
+            }
+        };
+        var executor = java.util.concurrent.Executors.newFixedThreadPool(3);
+        try {
+            var controller = new CodingTerminalController(
+                    PROJECT_ID,
+                    new FakeClient(view(Optional.empty())),
+                    authentication,
+                    new TerminalEventPump(32),
+                    new TerminalUiReducer(),
+                    TerminalUiState.initial(120, 40),
+                    executor);
+
+            controller.accept(input(TerminalInput.Kind.SUBMIT, "/connect codex browser"));
+            assertThat(started.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            controller.accept(input(TerminalInput.Kind.TICK, ""));
+            assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("auth-wait");
+            assertThat(controller.state().status()).contains("等待浏览器授权", "剩余");
+
+            controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
+
+            assertThat(cancelRequested).isTrue();
+            assertThat(controller.state().selector()).isEmpty();
+            assertThat(controller.state().status()).isEqualTo("正在取消登录");
+        } finally {
+            release.countDown();
+            executor.shutdownNow();
+        }
     }
 
     @Test

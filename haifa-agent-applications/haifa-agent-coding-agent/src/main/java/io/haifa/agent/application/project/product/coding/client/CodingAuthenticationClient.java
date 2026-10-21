@@ -87,6 +87,11 @@ public interface CodingAuthenticationClient {
         return false;
     }
 
+    /** Reopens a still-valid browser authorization URL. Implementations must not block the UI thread. */
+    default boolean openAuthorization(java.net.URI authorizationUri) {
+        return false;
+    }
+
     boolean logout(String connectionId);
 
     static CodingAuthenticationClient unavailable() {
