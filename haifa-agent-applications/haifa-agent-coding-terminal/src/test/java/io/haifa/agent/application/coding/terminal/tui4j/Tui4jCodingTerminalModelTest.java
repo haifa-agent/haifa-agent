@@ -9,6 +9,7 @@ import com.williamcallahan.tui4j.compat.bubbletea.Command;
 import com.williamcallahan.tui4j.compat.bubbletea.KeyPressMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.Message;
 import com.williamcallahan.tui4j.compat.bubbletea.PasteMessage;
+import com.williamcallahan.tui4j.compat.bubbletea.QuitMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.WindowSizeMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.input.MouseAction;
 import com.williamcallahan.tui4j.compat.bubbletea.input.MouseButton;
@@ -92,10 +93,24 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
-    void enablesMouseCellMotionAtStartupUnlessDisabled() {
-        assertThat(requestsMouseCellMotion(fixture().model.init())).isTrue();
-        assertThat(requestsMouseCellMotion(modelWithMouseReporting(false).init()))
+    void enablesMouseAllMotionAtStartupUnlessDisabled() {
+        assertThat(requestsMouseAllMotion(fixture().model.init())).isTrue();
+        assertThat(requestsMouseAllMotion(modelWithMouseReporting(false).init()))
                 .isFalse();
+    }
+
+    @Test
+    void dropsIdleMouseMotionButKeepsDragMotion() {
+        var fixture = fixture();
+        seedSelectableTranscript(fixture);
+
+        assertThat(fixture.model.filterMessage(mouse(1, 0, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft)))
+                .isNull();
+
+        fixture.model.update(mouse(1, 0, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        assertThat(fixture.model.filterMessage(
+                        mouse(1, 20, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft)))
+                .isNotNull();
     }
 
     @Test
@@ -216,20 +231,48 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
+    void highlightsSelectionWhileTheMouseIsStillDragging() {
+        var fixture = fixture();
+        seedSelectableTranscript(fixture);
+
+        fixture.model.update(mouse(1, 0, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        String pressed = fixture.model.view();
+        fixture.model.update(mouse(1, 20, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft));
+        String dragged = fixture.model.view();
+
+        assertThat(dragged).isNotEqualTo(pressed);
+        assertThat(dragged).contains("\u001B[7m");
+    }
+
+    @Test
+    void treatsRepeatedPressEventsDuringDragAsMotion() {
+        var clipboard = new RecordingClipboard(true);
+        var fixture = fixtureWithClipboard(clipboard);
+        seedSelectableTranscript(fixture);
+
+        fixture.model.update(mouse(1, 0, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(1, 20, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(1, 20, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
+
+        assertThat(clipboard.text).isNull();
+        fixture.model.update(key(KeyType.keyETX)).command().execute();
+        assertThat(clipboard.text).isNotNull();
+        assertThat(clipboard.text.length()).isGreaterThan(1);
+    }
+
+    @Test
     void copiesSelectedTranscriptTextThroughTheClipboardPort() {
         var clipboard = new RecordingClipboard(true);
         var fixture = fixtureWithClipboard(clipboard);
-        fixture.model.init();
-        for (int index = 1; index <= 6; index++) {
-            fixture.pump.offer(new TerminalUiAction.UserMessageCommitted("m", "line-" + index));
-        }
-        fixture.model.update(new WindowSizeMessage(120, 30));
-        fixture.model.view();
+        seedSelectableTranscript(fixture);
 
         fixture.model.update(mouse(1, 0, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
         fixture.model.update(mouse(1, 30, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft));
-        var release = fixture.model.update(mouse(1, 30, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
-        release.command().execute();
+        fixture.model.update(mouse(1, 30, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
+
+        assertThat(clipboard.text).isNull();
+        assertThat(fixture.model.view()).contains("\u001B[7m");
+        fixture.model.update(key(KeyType.keyETX)).command().execute();
 
         assertThat(clipboard.text).isNotNull().isNotBlank();
     }
@@ -276,14 +319,16 @@ class Tui4jCodingTerminalModelTest {
 
         fixture.model.update(mouse(0, 1, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
         fixture.model.update(mouse(0, 20, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft));
-        var release = fixture.model.update(mouse(0, 20, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
-        release.command().execute();
+        fixture.model.update(mouse(0, 20, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
 
         var item = fixture.controller.state().transcript().stream()
                 .filter(value -> value.id().equals("tool-tool-1"))
                 .findFirst()
                 .orElseThrow();
         assertThat(item.expanded()).isFalse();
+        assertThat(clipboard.text).isNull();
+
+        fixture.model.update(key(KeyType.keyETX)).command().execute();
         assertThat(clipboard.text).isNotNull().isNotBlank();
     }
 
@@ -299,9 +344,11 @@ class Tui4jCodingTerminalModelTest {
         fixture.model.view();
         fixture.model.update(mouse(1, 0, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
         fixture.model.update(mouse(1, 30, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft));
-        var release = fixture.model.update(mouse(1, 30, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(1, 30, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
+
+        assertThat(clipboard.text).isNull();
         var copied = (Tui4jCodingTerminalModel.ClipboardCopyResultMessage)
-                release.command().execute();
+                fixture.model.update(key(KeyType.keyETX)).command().execute();
 
         var followUp = fixture.model.update(copied);
         fixture.controller.drainEvents();
@@ -343,9 +390,68 @@ class Tui4jCodingTerminalModelTest {
         fixture.model.update(new PasteMessage("  private-value  "));
         assertThat(fixture.controller.secureInputRequested()).isTrue();
 
+        assertThat(fixture.model.filterMessage(new QuitMessage())).isNull();
+        assertThat(fixture.model.filterMessage(key(KeyType.keyETX))).isNotNull();
+
         fixture.model.update(mouse(1, 30, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
 
         assertThat(clipboard.text).isNull();
+    }
+
+    @Test
+    void copiesSelectionInsteadOfQuittingWhenSignalQuitArrivesDuringSelection() {
+        var clipboard = new RecordingClipboard(true);
+        var fixture = fixtureWithClipboard(clipboard);
+        seedSelectableTranscript(fixture);
+
+        fixture.model.update(mouse(1, 0, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(1, 20, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(1, 20, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
+
+        QuitMessage quit = new QuitMessage();
+        Message filtered = fixture.model.filterMessage(quit);
+        assertThat(filtered).isNotNull().isNotSameAs(quit);
+
+        fixture.model.update(filtered).command().execute();
+
+        assertThat(clipboard.text).isNotNull().isNotBlank();
+        assertThat(fixture.controller.state().exitRequested()).isFalse();
+    }
+
+    @Test
+    void signalQuitWithoutSelectionKeepsTheExistingExitSemantics() {
+        var fixture = fixture();
+        seedSelectableTranscript(fixture);
+
+        QuitMessage quit = new QuitMessage();
+        Message filtered = fixture.model.filterMessage(quit);
+        assertThat(filtered).isNotNull().isNotSameAs(quit);
+
+        fixture.model.update(filtered);
+
+        assertThat(fixture.controller.state().exitRequested()).isTrue();
+    }
+
+    @Test
+    void explicitQuitStillQuitsWhileASelectionIsHighlighted() {
+        var fixture = fixture();
+        seedSelectableTranscript(fixture);
+        fixture.model.update(mouse(1, 0, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(1, 20, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft));
+
+        fixture.controller.accept(new TerminalInput(TerminalInput.Kind.EXECUTE_COMMAND, "/quit", 5));
+
+        assertThat(fixture.controller.state().exitRequested()).isTrue();
+        QuitMessage quit = new QuitMessage();
+        assertThat(fixture.model.filterMessage(quit)).isSameAs(quit);
+    }
+
+    @Test
+    void directCtrlCKeyIsDroppedSoTheSignalHandlerOwnsTheInterrupt() {
+        var fixture = fixture();
+        seedSelectableTranscript(fixture);
+
+        assertThat(fixture.model.filterMessage(key(KeyType.keyETX))).isNull();
     }
 
     @Test
@@ -1524,17 +1630,17 @@ class Tui4jCodingTerminalModelTest {
         return false;
     }
 
-    private boolean requestsMouseCellMotion(Command command) {
+    private boolean requestsMouseAllMotion(Command command) {
         if (Command.isNone(command)) {
             return false;
         }
         Message message = command.execute();
-        if (message instanceof com.williamcallahan.tui4j.compat.bubbletea.EnableMouseCellMotionMessage) {
+        if (message instanceof com.williamcallahan.tui4j.compat.bubbletea.EnableMouseAllMotionMessage) {
             return true;
         }
         if (message instanceof BatchMessage batch) {
             for (Command child : batch.commands()) {
-                if (requestsMouseCellMotion(child)) {
+                if (requestsMouseAllMotion(child)) {
                     return true;
                 }
             }
