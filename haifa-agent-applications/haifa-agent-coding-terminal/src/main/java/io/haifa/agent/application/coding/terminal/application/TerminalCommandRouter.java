@@ -24,7 +24,8 @@ public final class TerminalCommandRouter {
             case "/reload" -> TerminalCommand.RELOAD;
             case "/compact" -> TerminalCommand.COMPACT;
             case "/export" -> TerminalCommand.EXPORT;
-            case "/login" -> TerminalCommand.LOGIN;
+            case "/connect" -> TerminalCommand.CONNECT;
+            case "/login" -> TerminalCommand.LOGIN_REMOVED;
             case "/logout" -> TerminalCommand.LOGOUT;
             case "/account" -> TerminalCommand.ACCOUNT;
             case "/model" -> TerminalCommand.MODEL;

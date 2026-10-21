@@ -54,7 +54,81 @@ public record TerminalRecovery(Category category, String code, String action) {
             entry(
                     Category.USER_ACTION_REQUIRED,
                     "MODEL_AUTHENTICATION_REQUIRED",
-                    "未登录/凭据不可用；运行 /model 切换可用模型，或运行 /login 登录后继续原草稿。"),
+                    "Not signed in or credentials unavailable; run /connect to connect or sign in again, or run /model to switch models."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "AUTH_PROVIDER_LIST_EMPTY",
+                    "No model provider is available; check the model configuration and retry."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "AUTH_PROVIDER_INVALID",
+                    "This model provider is unavailable; run /connect to choose another."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "AUTH_ACCOUNT_NOT_SELECTED",
+                    "No model account is selected; run /account to choose one."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "AUTH_METHOD_UNSUPPORTED",
+                    "This sign-in method is not supported here; run /connect to choose another method."),
+            entry(
+                    Category.INTERRUPTED,
+                    "AUTH_CANCELLED",
+                    "Sign-in cancelled; your draft is preserved. Run /connect to retry."),
+            entry(
+                    Category.RETRYABLE,
+                    "AUTH_CALLBACK_TIMEOUT",
+                    "Browser authorization timed out; retry or use device code sign-in."),
+            entry(
+                    Category.RETRYABLE,
+                    "AUTH_CALLBACK_UNAVAILABLE",
+                    "Could not start the local callback port; check port usage or the firewall, or use device code sign-in."),
+            entry(Category.RETRYABLE, "AUTH_CALLBACK_FAILED", "Browser callback did not complete; retry sign-in."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "AUTH_STORE_FAILED",
+                    "Credentials could not be written to the system credential store; check credential manager permissions and retry."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "AUTH_LOGIN_IN_PROGRESS",
+                    "A sign-in is already in progress; wait for it to finish, or press Esc to cancel and retry."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "AUTH_REAUTH_REQUIRED",
+                    "Sign-in has expired; run /connect to sign in again."),
+            entry(
+                    Category.RETRYABLE,
+                    "AUTH_LOGIN_SERVICE_UNAVAILABLE",
+                    "The sign-in service is temporarily unavailable; check your network and retry."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "AUTH_DEVICE_CODE_EXPIRED",
+                    "Device code expired; request a new device code."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "AUTH_DEVICE_CODE_DENIED",
+                    "Device code authorization was denied; retry or use browser sign-in."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "AUTH_SECRET_INVALID",
+                    "The API key is empty or malformed; return to the form and enter it again."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "AUTH_WORKSPACE_ID_INVALID",
+                    "Invalid workspace ID; use lowercase letters, digits, or hyphens."),
+            entry(Category.USER_ACTION_REQUIRED, "AUTH_REGION_INVALID", "Invalid region; choose the region again."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "AUTH_SECURE_INPUT_UNAVAILABLE",
+                    "Credentials cannot be entered securely in this environment; check the terminal or use browser sign-in."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "AUTH_API_KEY_UNAVAILABLE",
+                    "This provider has no writable API key credential; check the model configuration."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "AUTH_LOGIN_METHOD_UNAVAILABLE",
+                    "Sign-in methods are not enabled for this provider; check the local compatibility configuration."),
             entry(Category.USER_ACTION_REQUIRED, "MODEL_PAYMENT_REQUIRED", "请检查 Provider 账户余额、套餐、模型授权或账单状态后重试"),
             entry(Category.RETRYABLE, "MODEL_TIMEOUT", "Retry the request after checking provider availability."),
             entry(

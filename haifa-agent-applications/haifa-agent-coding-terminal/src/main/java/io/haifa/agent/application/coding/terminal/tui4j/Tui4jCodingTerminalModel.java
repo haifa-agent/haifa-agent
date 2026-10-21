@@ -475,8 +475,7 @@ final class Tui4jCodingTerminalModel implements Model {
             if ("completion".equals(state.selector().orElseThrow().kind()) && editCompletion(key)) {
                 return Command.none();
             }
-            selectorKey(key);
-            return Command.none();
+            return selectorKey(key);
         }
 
         if (shortcuts.matchesCommandPalette(key)) {
@@ -824,10 +823,101 @@ final class Tui4jCodingTerminalModel implements Model {
         return true;
     }
 
-    private void selectorKey(KeyPressMessage key) {
+    private Command selectorKey(KeyPressMessage key) {
+        boolean providerSearch = controller
+                .state()
+                .selector()
+                .map(selector -> "auth-provider".equals(selector.kind()))
+                .orElse(false);
+        if (providerSearch) {
+            if (key.type() == KeyType.KeyRunes) {
+                char[] runes = key.runes();
+                if (runes != null) {
+                    controller.accept(new TerminalInput(TerminalInput.Kind.SELECTOR_FILTER, new String(runes)));
+                    syncComponents();
+                    return Command.none();
+                }
+            }
+            if (key.type() == KeyType.keyBS || key.type() == KeyType.keyDEL) {
+                accept(TerminalInput.Kind.SELECTOR_BACKSPACE);
+                return Command.none();
+            }
+        }
+        boolean authorizationWait = controller
+                .state()
+                .selector()
+                .map(selector -> "auth-wait".equals(selector.kind()))
+                .orElse(false);
+        if (authorizationWait) {
+            if (key.type() == KeyType.keyESC || key.type() == KeyType.keyETX) {
+                controller.cancelAuthentication();
+                return Command.none();
+            }
+            if (key.type() == KeyType.KeyRunes) {
+                char[] runes = key.runes();
+                if (runes != null && runes.length == 1) {
+                    if (runes[0] == 'c' || runes[0] == 'C') {
+                        return copyAuthorizationLink();
+                    }
+                    if (runes[0] == 'o' || runes[0] == 'O') {
+                        controller.reopenAuthorization();
+                        return Command.none();
+                    }
+                }
+            }
+            if (key.type() == KeyType.keyCR) {
+                int selected = controller.state().selector().orElseThrow().selected();
+                if (selected == 0) {
+                    return copyAuthorizationLink();
+                }
+                if (selected == 1) {
+                    controller.reopenAuthorization();
+                    return Command.none();
+                }
+                controller.cancelAuthentication();
+                return Command.none();
+            }
+        }
+        boolean deviceWait = controller
+                .state()
+                .selector()
+                .map(selector -> "auth-device".equals(selector.kind()))
+                .orElse(false);
+        if (deviceWait) {
+            if (key.type() == KeyType.keyESC || key.type() == KeyType.keyETX) {
+                controller.cancelAuthentication();
+                return Command.none();
+            }
+            if (key.type() == KeyType.KeyRunes) {
+                char[] runes = key.runes();
+                if (runes != null && runes.length == 1) {
+                    if (runes[0] == 'c' || runes[0] == 'C') {
+                        return copyDeviceCode();
+                    }
+                    if (runes[0] == 'l' || runes[0] == 'L') {
+                        return copyVerificationLink();
+                    }
+                    if (runes[0] == 'o' || runes[0] == 'O') {
+                        controller.openVerificationPage();
+                        return Command.none();
+                    }
+                }
+            }
+            if (key.type() == KeyType.keyCR) {
+                int selected = controller.state().selector().orElseThrow().selected();
+                if (selected == 0) {
+                    return copyDeviceCode();
+                }
+                if (selected == 1) {
+                    return copyVerificationLink();
+                }
+                controller.cancelAuthentication();
+                return Command.none();
+            }
+        }
         if (shortcuts.matchesToggleExpansion(key)) {
             accept(TerminalInput.Kind.TOGGLE_EXPANSION);
-            return;
+            return Command.none();
         }
         if (key.type() == KeyType.KeyUp) {
             accept(TerminalInput.Kind.SELECT_PREVIOUS);
@@ -842,6 +932,37 @@ final class Tui4jCodingTerminalModel implements Model {
         } else if (key.type() == KeyType.keyETX) {
             accept(TerminalInput.Kind.INTERRUPT);
         }
+        return Command.none();
+    }
+
+    private Command copyAuthorizationLink() {
+        return copyText(
+                controller.authorizationUri(),
+                "Authorization link has expired; reconnect",
+                "Authorization link copied");
+    }
+
+    private Command copyDeviceCode() {
+        return copyText(controller.deviceCode(), "Device code has expired; reconnect", "Device code copied");
+    }
+
+    private Command copyVerificationLink() {
+        return copyText(controller.verificationUri(), "Browser link has expired; reconnect", "Browser link copied");
+    }
+
+    private Command copyText(Optional<String> value, String missingMessage, String successMessage) {
+        if (value.isEmpty()) {
+            applyCopyFeedback(missingMessage);
+            return Command.none();
+        }
+        if (clipboard.copy(value.orElseThrow())) {
+            applyCopyFeedback(successMessage);
+            return Command.none();
+        }
+        applyCopyFeedback("Copied via terminal: " + successMessage);
+        String encoded = Base64.getEncoder()
+                .encodeToString(value.orElseThrow().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        return Command.printf("\u001B]52;c;" + encoded + "\u0007");
     }
 
     private Command edit(Message message) {

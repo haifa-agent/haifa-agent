@@ -16,6 +16,7 @@ import io.haifa.agent.application.coding.terminal.state.PendingMessage;
 import io.haifa.agent.application.coding.terminal.state.TerminalActivity;
 import io.haifa.agent.application.coding.terminal.state.TerminalFooter;
 import io.haifa.agent.application.coding.terminal.state.TerminalSelector;
+import io.haifa.agent.application.coding.terminal.state.TerminalSelectorDetail;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiReducer;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
 import io.haifa.agent.application.coding.terminal.state.TranscriptItem;
@@ -183,6 +184,50 @@ class Tui4jTerminalViewTest {
     }
 
     @Test
+    void rendersConnectionCenterCategoriesBadgesAndDescriptions() {
+        TerminalUiState initial = TerminalUiState.initial(88, 30);
+        TerminalUiState state = withSelector(
+                initial,
+                new TerminalSelector(
+                        "auth-provider",
+                        "Connect a model",
+                        List.of("ChatGPT", "Antigravity", "DeepSeek"),
+                        0,
+                        List.of(
+                                new TerminalSelectorDetail(
+                                        "Subscription · No API key required", "Recommended", "Subscription"),
+                                new TerminalSelectorDetail("Subscription · No API key required", "", "Subscription"),
+                                new TerminalSelectorDetail("API Key · Pay as you go", "Current", "API Key"))));
+
+        String rendered = view.render(state, transcript(state), editor(88), true, false);
+
+        assertThat(rendered)
+                .contains(
+                        "Subscription", "API Key", "ChatGPT", "[Recommended]", "Antigravity", "DeepSeek", "[Current]");
+    }
+
+    @Test
+    void keepsConnectionCenterUsableAtMinimumSize() {
+        TerminalUiState initial = TerminalUiState.initial(60, 16);
+        TerminalUiState state = withSelector(
+                initial,
+                new TerminalSelector(
+                        "auth-provider",
+                        "Connect a model",
+                        List.of("ChatGPT", "DeepSeek"),
+                        0,
+                        List.of(
+                                new TerminalSelectorDetail(
+                                        "Subscription · No API key required", "Recommended", "Subscription"),
+                                new TerminalSelectorDetail("API Key · Pay as you go", "", "API Key"))));
+
+        String rendered = view.render(state, transcript(state), editor(60), true, false);
+
+        assertThat(rendered).contains("Connect a model", "ChatGPT", "enter select");
+        assertThat(rendered.lines()).hasSizeLessThanOrEqualTo(16);
+    }
+
+    @Test
     void usesAStableDiagnosticBelowThePrototypeMinimumSize() {
         TerminalUiState state = TerminalUiState.initial(40, 10);
 
@@ -281,10 +326,10 @@ class Tui4jTerminalViewTest {
         Viewport transcript = transcript(state);
 
         String firstTime = view.render(state, transcript, editor(80), true, false, Duration.ZERO, 0, true, false);
-        assertThat(firstTime).contains("enter submit · escape cancel").doesNotContain("enter send", "enter update");
+        assertThat(firstTime).contains("Enter submit · Esc cancel").doesNotContain("enter send", "Enter update");
 
         String update = view.render(state, transcript, editor(80), true, false, Duration.ZERO, 0, true, true);
-        assertThat(update).contains("enter update · escape cancel").doesNotContain("enter send", "enter submit");
+        assertThat(update).contains("Enter update · Esc cancel").doesNotContain("enter send", "Enter submit");
     }
 
     @Test
@@ -1116,6 +1161,27 @@ class Tui4jTerminalViewTest {
 
         String expanded = view.transcriptContent(withApproval(initial, details, true));
         assertThat(expanded).contains("line-6", "line-8");
+    }
+
+    private TerminalUiState withSelector(TerminalUiState initial, TerminalSelector selector) {
+        return new TerminalUiState(
+                initial.header(),
+                initial.loadedResources(),
+                initial.transcript(),
+                initial.pending(),
+                initial.status(),
+                initial.editorBuffer(),
+                initial.editorCursor(),
+                Optional.of(selector),
+                initial.footer(),
+                initial.columns(),
+                initial.rows(),
+                initial.session(),
+                initial.currentRunId(),
+                initial.appliedCursor(),
+                initial.seenEventIds(),
+                initial.recoverableError(),
+                initial.exitRequested());
     }
 
     private TerminalUiState withTranscript(TerminalUiState initial, List<TranscriptItem> items) {
