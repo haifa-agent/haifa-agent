@@ -258,7 +258,7 @@ class CodingTerminalExecutionTest {
         assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("model-readiness");
         assertThat(controller.state().selector().orElseThrow().options())
                 .containsExactly(
-                        "切换模型 (/model)", "连接或重新登录模型 (/connect)", "保留草稿并关闭");
+                        "切换模型 (/model)", "重新登录 provider (/connect)", "保留草稿并关闭");
 
         // Choosing index 2 dismisses selector and keeps draft
         controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
@@ -270,8 +270,9 @@ class CodingTerminalExecutionTest {
     }
 
     @Test
-    void modelReadinessSelectorOptionLoginOpensLoginSelector() {
-        FakeClient client = new FakeClient(view(Optional.empty()));
+    void modelReadinessSelectorOptionLoginOpensTheCurrentProviderFlow() {
+        FakeClient client = new FakeClient(
+                view(Optional.empty(), 0, "session", model("deepseek-v4", "DeepSeek V4", "deepseek", "DeepSeek")));
         FakeAuthenticationClient authentication = new FakeAuthenticationClient();
         client.submitFailure =
                 new ProjectProductException("MODEL_AUTHENTICATION_REQUIRED", "Model credentials are not ready");
@@ -282,12 +283,11 @@ class CodingTerminalExecutionTest {
 
         assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("model-readiness");
 
-        // Select option 1: 连接或重新登录模型 (/connect)
+        // Select option 1: 重新登录当前 Provider (/connect)
         controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
         controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
 
-        assertThat(controller.state().selector()).isPresent();
-        assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("auth-provider");
+        assertThat(controller.secureInputRequested()).isTrue();
         assertThat(controller.state().editorBuffer()).isEqualTo("draft to preserve");
     }
 

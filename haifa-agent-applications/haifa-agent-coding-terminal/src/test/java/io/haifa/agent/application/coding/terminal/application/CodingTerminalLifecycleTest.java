@@ -380,6 +380,75 @@ class CodingTerminalLifecycleTest {
     }
 
     @Test
+    void accountManagementMasksLabelsAndConfirmsBeforeDisconnect() {
+        var disconnected = new java.util.concurrent.atomic.AtomicBoolean();
+        CodingAuthenticationView connection = new CodingAuthenticationView(
+                "model-auth://deepseek/default",
+                "deepseek",
+                CodingAuthenticationView.Method.API_KEY,
+                CodingAuthenticationView.Status.AUTHENTICATED,
+                "alice@example.com",
+                Optional.empty(),
+                OptionalLong.empty(),
+                true);
+        CodingAuthenticationClient authentication = new CodingAuthenticationClient() {
+            @Override
+            public List<CodingAuthenticationView> connections() {
+                return List.of(connection);
+            }
+
+            @Override
+            public CodingAuthenticationView loginCodexBrowser() {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public CodingAuthenticationView saveApiKey(String providerId, char[] apiKey) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public boolean logout(String connectionId) {
+                disconnected.set(true);
+                return true;
+            }
+        };
+        var controller = controller(new FakeClient(view(Optional.empty())), authentication);
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "/account"));
+
+        assertThat(controller.state().selector()).get().satisfies(selector -> {
+            assertThat(selector.kind()).isEqualTo("auth-account");
+            assertThat(selector.options()).containsExactly("DeepSeek · API Key · a***@example.com · 已连接");
+        });
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+        assertThat(controller.state().selector()).get().satisfies(selector -> {
+            assertThat(selector.kind()).isEqualTo("auth-account-actions");
+            assertThat(selector.options()).containsExactly("更新 API Key", "断开连接", "返回");
+        });
+
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+        assertThat(controller.state().selector()).get().satisfies(selector -> {
+            assertThat(selector.kind()).isEqualTo("auth-logout-confirm");
+            assertThat(selector.options().getFirst()).isEqualTo("取消");
+        });
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+        assertThat(disconnected).isFalse();
+        assertThat(controller.state().selector()).isEmpty();
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "/account"));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+
+        assertThat(disconnected).isTrue();
+    }
+
+    @Test
     void resumeSelectorOpensTheSelectedRealSession() {
         FakeClient client = new FakeClient(view(Optional.empty()));
         client.summaries = List.of(client.view.summary());

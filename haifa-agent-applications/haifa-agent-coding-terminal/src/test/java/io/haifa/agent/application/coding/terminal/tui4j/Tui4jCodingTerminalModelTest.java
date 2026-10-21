@@ -933,10 +933,10 @@ class Tui4jCodingTerminalModelTest {
         assertThat(fixture.controller.secureInputIsUpdate()).isFalse();
         assertThat(fixture.controller.state().editorBuffer()).isEmpty();
         assertThat(fixture.controller.state().status())
-                .isEqualTo("Enter API key for deepseek (first-time setup · saved to system credential store)");
+                .contains("输入 DeepSeek 的 API Key");
         assertThat(fixture.model.view())
                 .doesNotContain("private-value", "stored as plaintext", "enter send")
-                .contains("API key ┃ •••••••••••••", "enter submit · escape cancel");
+                .contains("API Key ┃ •••••••••••••", "Enter 保存 · Esc 取消");
 
         fixture.model.update(key(KeyType.keyCR));
 
@@ -965,12 +965,10 @@ class Tui4jCodingTerminalModelTest {
 
         assertThat(fixture.controller.secureInputRequested()).isTrue();
         assertThat(fixture.controller.secureInputIsUpdate()).isTrue();
-        assertThat(fixture.controller.state().status())
-                .isEqualTo(
-                        "Update API key for deepseek (existing key found · will overwrite in system credential store)");
+        assertThat(fixture.controller.state().status()).contains("更新 DeepSeek 的 API Key");
         assertThat(fixture.model.view())
                 .contains(
-                        "New key ┃ Paste or enter new API key (Esc to keep existing)", "enter update · escape cancel");
+                        "新 Key ┃ 粘贴或输入新的 API Key（Esc 保留现有 Key）", "Enter 更新 · Esc 取消");
 
         fixture.model.update(new PasteMessage("updated-key"));
         fixture.model.update(key(KeyType.keyCR));
@@ -1002,10 +1000,10 @@ class Tui4jCodingTerminalModelTest {
         // API Key input (masked); workspace is required on first setup.
         assertThat(fixture.controller.secureInputRequested()).isTrue();
         assertThat(fixture.controller.secureInputIsMasked()).isTrue();
-        assertThat(fixture.controller.secureInputPrompt()).isEqualTo("API key ┃ ");
+        assertThat(fixture.controller.secureInputPrompt()).isEqualTo("API Key ┃ ");
         assertThat(fixture.controller.state().status())
-                .contains("Enter DashScope API key for aliyun-bailian (workspace: required, region: cn-beijing");
-        assertThat(fixture.model.view()).contains("API key ┃ ", "enter submit · escape cancel");
+                .contains("输入 阿里云百炼 的 API Key");
+        assertThat(fixture.model.view()).contains("API Key ┃ ", "Enter 保存 · Esc 取消");
 
         fixture.model.update(new PasteMessage("sk-bailian-test-key"));
         fixture.model.update(key(KeyType.keyCR));
@@ -1125,7 +1123,7 @@ class Tui4jCodingTerminalModelTest {
         fixture.model.update(key(KeyType.keyESC));
 
         assertThat(fixture.controller.secureInputRequested()).isFalse();
-        assertThat(fixture.controller.state().status()).isEqualTo("API key entry cancelled");
+        assertThat(fixture.controller.state().status()).isEqualTo("已取消 API Key 输入");
     }
 
     @Test
@@ -1172,7 +1170,7 @@ class Tui4jCodingTerminalModelTest {
 
         // Update API Key -> press Enter directly to keep existing key & attributes
         assertThat(fixture.controller.secureInputIsUpdate()).isTrue();
-        assertThat(fixture.controller.secureInputPrompt()).isEqualTo("New key ┃ ");
+        assertThat(fixture.controller.secureInputPrompt()).isEqualTo("新 Key ┃ ");
         fixture.model.update(key(KeyType.keyCR));
 
         // Saved in single step!

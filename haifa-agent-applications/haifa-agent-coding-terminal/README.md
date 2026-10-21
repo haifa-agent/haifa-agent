@@ -316,7 +316,9 @@ Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、s
   ChatGPT 登录可选 Browser Callback 或 Device Code。Browser Callback 尝试自动打开浏览器并继续等待本机
   回调；等待期间按 Escape 可取消，进入凭据换取/保存阶段后拒绝取消。认证成功完成（或 API Key 保存成功）
   后刷新连接状态，并按 Provider 加载模型：只有一个可用模型时直接选中，多个模型时打开过滤后的模型列表，
-  没有配置模型时明确提示配置位置。API Key 输入使用独立单行掩码缓冲区（自适应首次录入与更新覆盖），
+  没有配置模型时明确提示配置位置。`/account` 显示脱敏账号并提供更新 Key、重新登录和断开动作；断开需要
+  二次确认，默认焦点在取消。模型凭据失效时，恢复选择器的次选项直接进入当前 Provider 的登录方式，
+  不再要求用户从连接中心顶部重新选择。API Key 输入使用独立单行掩码缓冲区（自适应首次录入与更新覆盖），
   不进入 Reducer、Session、Transcript、History 或 Completion，凭据安全持久化至原生系统凭据管理器
   （Windows Credential Manager）；百炼（Aliyun Bailian）当前仍使用单行掩码输入（API Key、Workspace ID、
   Region 在同一行提交）与 `/connect api aliyun-bailian <workspaceId> [region]` 快捷路径，首次配置要求

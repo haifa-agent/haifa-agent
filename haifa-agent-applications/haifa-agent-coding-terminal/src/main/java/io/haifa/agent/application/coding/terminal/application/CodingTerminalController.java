@@ -101,6 +101,8 @@ public final class CodingTerminalController implements AutoCloseable {
     private CodingModelOption inspectedModel;
     private List<CodingModelProviderGroup> modelProviderGroups = List.of();
     private List<CodingAuthenticationView> authenticationOptions = List.of();
+    private CodingAuthenticationView selectedAuthenticationConnection;
+    private String modelReadinessProviderId = "";
     private List<CodingAuthenticationProviderView> authenticationProviders = List.of();
     private CodingAuthenticationProviderView activeAuthenticationProvider;
     private boolean authenticationInProgress;
@@ -388,12 +390,19 @@ public final class CodingTerminalController implements AutoCloseable {
             }
             apply(new TerminalUiAction.RecoverableFailure(code));
             if ("MODEL_AUTHENTICATION_REQUIRED".equals(code) && state.selector().isEmpty()) {
+                modelReadinessProviderId = state.session()
+                        .map(value -> value.model().model().providerId())
+                        .orElse("");
+                String providerName = modelReadinessProviderId.isBlank()
+                        ? "模型"
+                        : AuthenticationProviderPresentation.providerName(
+                                modelReadinessProviderId, modelReadinessProviderId);
                 apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
                         "model-readiness",
-                        "Model credential unavailable",
+                        "模型凭据不可用",
                         List.of(
                                 "切换模型 (/model)",
-                                "连接或重新登录模型 (/connect)",
+                                "重新登录 " + providerName + " (/connect)",
                                 "保留草稿并关闭"),
                         0)));
             }
@@ -1794,6 +1803,10 @@ public final class CodingTerminalController implements AutoCloseable {
         pendingApiKeyProvider = providerId;
         pendingApiKeyIsUpdate = hasExistingKey;
 
+        String displayName = AuthenticationProviderPresentation.providerName(providerId, providerId);
+        String help = AuthenticationProviderPresentation.helpUrl(providerId)
+                .map(url -> " · 获取 Key：" + url)
+                .orElse("");
         if ("aliyun-bailian".equalsIgnoreCase(providerId)) {
             existingBailianWorkspaceId = attributes.get("workspace_id");
             existingBailianRegion = attributes.get("region");
@@ -1801,27 +1814,22 @@ public final class CodingTerminalController implements AutoCloseable {
             pendingBailianRegion =
                     region != null ? region : (existingBailianRegion != null ? existingBailianRegion : "cn-beijing");
             bailianStep = BailianConfigStep.API_KEY;
-            String workspaceLabel = pendingBailianWorkspaceId != null ? pendingBailianWorkspaceId : "required";
+            String workspaceLabel = pendingBailianWorkspaceId != null ? pendingBailianWorkspaceId : "待填写";
             if (hasExistingKey) {
-                apply(new TerminalUiAction.StatusChanged(
-                        "Update API key for aliyun-bailian (workspace: " + workspaceLabel
-                                + ", region: " + pendingBailianRegion
-                                + " · press Enter to keep existing)"));
+                apply(new TerminalUiAction.StatusChanged("更新 " + displayName + " 的 API Key（Workspace: "
+                        + workspaceLabel + " · Region: " + pendingBailianRegion + " · 回车可保留现有 Key）" + help));
             } else {
-                apply(new TerminalUiAction.StatusChanged(
-                        "Enter DashScope API key for aliyun-bailian (workspace: " + workspaceLabel
-                                + ", region: " + pendingBailianRegion
-                                + " · saved to system credential store)"));
+                apply(new TerminalUiAction.StatusChanged("请输入 " + displayName + " 的 API Key（Workspace: "
+                        + workspaceLabel + " · Region: " + pendingBailianRegion + "）" + help));
             }
             return;
         }
 
         if (hasExistingKey) {
-            apply(new TerminalUiAction.StatusChanged("Update API key for " + providerId
-                    + " (existing key found · will overwrite in system credential store)"));
-        } else {
             apply(new TerminalUiAction.StatusChanged(
-                    "Enter API key for " + providerId + " (first-time setup · saved to system credential store)"));
+                    "更新 " + displayName + " 的 API Key（将覆盖系统凭据库中的现有 Key）" + help));
+        } else {
+            apply(new TerminalUiAction.StatusChanged("请输入 " + displayName + " 的 API Key" + help));
         }
     }
 
@@ -1849,23 +1857,23 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     public String secureInputPrompt() {
-        return secureInputIsUpdate() ? "New key ┃ " : "API key ┃ ";
+        return secureInputIsUpdate() ? "新 Key ┃ " : "API Key ┃ ";
     }
 
     public String secureInputPlaceholder() {
         if ("aliyun-bailian".equalsIgnoreCase(pendingApiKeyProvider)) {
-            String workspace = pendingBailianWorkspaceId != null ? pendingBailianWorkspaceId : "workspace-required";
+            String workspace = pendingBailianWorkspaceId != null ? pendingBailianWorkspaceId : "待填写";
             String defaultReg = pendingBailianRegion != null ? pendingBailianRegion : "cn-beijing";
             return secureInputIsUpdate()
-                    ? "Paste or enter new API key (Esc to keep existing)"
-                    : "Paste or enter API key [workspace] [region] (workspace: " + workspace + ", region default: "
-                            + defaultReg + ")";
+                    ? "粘贴或输入新的 API Key（Esc 保留现有 Key）"
+                    : "粘贴或输入百炼 API Key [Workspace] [Region]（Workspace: " + workspace + " · Region 默认: "
+                            + defaultReg + "）";
         }
-        return secureInputIsUpdate() ? "Paste or enter new API key (Esc to keep existing)" : "Paste or enter API key";
+        return secureInputIsUpdate() ? "粘贴或输入新的 API Key（Esc 保留现有 Key）" : "粘贴或输入 API Key";
     }
 
     public String secureInputHint() {
-        return secureInputIsUpdate() ? "enter update · escape cancel" : "enter submit · escape cancel";
+        return secureInputIsUpdate() ? "Enter 更新 · Esc 取消" : "Enter 保存 · Esc 取消";
     }
 
     public BailianConfigStep bailianConfigStep() {
@@ -1879,7 +1887,7 @@ public final class CodingTerminalController implements AutoCloseable {
         resetBailianState();
         pendingApiKeyProvider = null;
         pendingApiKeyIsUpdate = false;
-        apply(new TerminalUiAction.StatusChanged("API key entry cancelled"));
+        apply(new TerminalUiAction.StatusChanged("已取消 API Key 输入"));
     }
 
     private void resetBailianState() {
@@ -1910,7 +1918,8 @@ public final class CodingTerminalController implements AutoCloseable {
         pendingApiKeyIsUpdate = false;
         char[] owned = new String(apiKey).strip().toCharArray();
         java.util.Arrays.fill(apiKey, '\0');
-        apply(new TerminalUiAction.StatusChanged("Saving API key for " + providerId));
+        apply(new TerminalUiAction.StatusChanged(
+                "正在保存 " + AuthenticationProviderPresentation.providerName(providerId, providerId) + " 的 API Key"));
         try {
             effects.execute(() -> {
                 Runnable completion;
@@ -2011,7 +2020,8 @@ public final class CodingTerminalController implements AutoCloseable {
         pendingApiKeyProvider = null;
         pendingApiKeyIsUpdate = false;
 
-        apply(new TerminalUiAction.StatusChanged("Saving credentials for " + providerId));
+        apply(new TerminalUiAction.StatusChanged(
+                "正在保存 " + AuthenticationProviderPresentation.providerName(providerId, providerId) + " 的凭据"));
         try {
             effects.execute(() -> {
                 Runnable completion;
@@ -2047,7 +2057,7 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void loadAuthenticationOptions(boolean logout) {
-        apply(new TerminalUiAction.StatusChanged(logout ? "Loading model accounts" : "Loading account status"));
+        apply(new TerminalUiAction.StatusChanged(logout ? "正在加载模型账号" : "正在加载账号状态"));
         submitEffect(
                 () -> {
                     List<CodingAuthenticationView> found = authentication.connections();
@@ -2059,20 +2069,99 @@ public final class CodingTerminalController implements AutoCloseable {
     private void showAuthenticationOptions(List<CodingAuthenticationView> found, boolean logout) {
         authenticationOptions = List.copyOf(found);
         if (authenticationOptions.isEmpty()) {
-            apply(new TerminalUiAction.StatusChanged("No model account is connected; use /connect"));
+            apply(new TerminalUiAction.StatusChanged("尚未连接模型账号，使用 /connect 连接"));
             return;
         }
-        List<String> options = authenticationOptions.stream()
-                .map(connection -> connection.method()
-                        + " | "
-                        + connection.accountLabel()
-                        + (connection.unofficialLocalCompatibility() ? " | UNOFFICIAL_LOCAL_COMPAT" : ""))
-                .toList();
+        List<String> options = authenticationOptions.stream().map(this::accountLabel).toList();
         apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
                 logout ? "auth-logout" : "auth-account",
-                logout ? "Disconnect model account" : "Model account",
+                logout ? "断开模型账号" : "模型账号",
                 options,
                 0)));
+    }
+
+    private String accountLabel(CodingAuthenticationView connection) {
+        String providerName =
+                AuthenticationProviderPresentation.providerName(connection.providerId(), connection.providerId());
+        String method = connection.method() == CodingAuthenticationView.Method.API_KEY ? "API Key" : "订阅";
+        String account = AuthenticationProviderPresentation.maskAccount(connection.accountLabel());
+        String status = switch (connection.status()) {
+            case AUTHENTICATED -> "已连接";
+            case REAUTH_REQUIRED -> "需要重新登录";
+            case RATE_LIMITED -> "已限流";
+        };
+        return providerName + " · " + method + (account.isBlank() ? "" : " · " + account) + " · " + status;
+    }
+
+    private void openAccountActions(CodingAuthenticationView connection) {
+        selectedAuthenticationConnection = connection;
+        List<String> actions = new java.util.ArrayList<>();
+        if (connection.method() == CodingAuthenticationView.Method.API_KEY) {
+            actions.add("更新 API Key");
+        } else {
+            actions.add("重新登录");
+        }
+        actions.add("断开连接");
+        actions.add("返回");
+        String providerName =
+                AuthenticationProviderPresentation.providerName(connection.providerId(), connection.providerId());
+        apply(new TerminalUiAction.SelectorOpened(
+                new TerminalSelector("auth-account-actions", "管理 " + providerName, actions, 0)));
+    }
+
+    private void confirmDisconnect(CodingAuthenticationView connection) {
+        selectedAuthenticationConnection = connection;
+        String providerName =
+                AuthenticationProviderPresentation.providerName(connection.providerId(), connection.providerId());
+        apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
+                "auth-logout-confirm",
+                "断开 " + providerName + "？",
+                List.of("取消", "确认断开 " + providerName),
+                0)));
+    }
+
+    private void disconnectSelectedAccount() {
+        CodingAuthenticationView connection = selectedAuthenticationConnection;
+        if (connection == null) {
+            apply(new TerminalUiAction.RecoverableFailure("AUTH_ACCOUNT_NOT_SELECTED"));
+            return;
+        }
+        selectedAuthenticationConnection = null;
+        apply(new TerminalUiAction.StatusChanged("正在断开模型账号"));
+        submitEffect(
+                () -> {
+                    boolean removed = authentication.logout(connection.connectionId());
+                    return () -> apply(new TerminalUiAction.StatusChanged(
+                            removed ? "模型账号已断开" : "模型账号已不存在"));
+                },
+                code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+    }
+
+    private void reloginSelectedAccount() {
+        CodingAuthenticationView connection = selectedAuthenticationConnection;
+        if (connection == null) {
+            apply(new TerminalUiAction.RecoverableFailure("AUTH_ACCOUNT_NOT_SELECTED"));
+            return;
+        }
+        selectedAuthenticationConnection = null;
+        openProviderMethodsAfterLoad(connection.providerId());
+    }
+
+    private void openProviderMethodsAfterLoad(String providerId) {
+        if (!authenticationProviders.isEmpty()) {
+            openProviderMethods(providerId);
+            return;
+        }
+        apply(new TerminalUiAction.StatusChanged("正在加载模型提供商"));
+        submitEffect(
+                () -> {
+                    List<CodingAuthenticationProviderView> providers = authentication.providers();
+                    return () -> {
+                        authenticationProviders = List.copyOf(providers);
+                        openProviderMethods(providerId);
+                    };
+                },
+                code -> apply(new TerminalUiAction.RecoverableFailure(code)));
     }
 
     public void openCommandSelector() {
@@ -2220,9 +2309,16 @@ public final class CodingTerminalController implements AutoCloseable {
                 apply(new TerminalUiAction.SelectorClosed());
                 switch (selected) {
                     case 0 -> openModelSelector("");
-                    case 1 -> openConnectionCenter("");
+                    case 1 -> {
+                        if (modelReadinessProviderId == null || modelReadinessProviderId.isBlank()) {
+                            openConnectionCenter("");
+                        } else {
+                            openProviderMethodsAfterLoad(modelReadinessProviderId);
+                        }
+                    }
                     default -> {}
                 }
+                modelReadinessProviderId = "";
             }
             case "model-provider" ->
                 openProviderModelList(modelProviderGroups.get(selected).providerId());
@@ -2253,18 +2349,49 @@ public final class CodingTerminalController implements AutoCloseable {
                 }
                 startAuthenticationMethod(provider, methods.get(selected));
             }
-            case "auth-account" -> apply(new TerminalUiAction.SelectorClosed());
-            case "auth-logout" -> {
-                CodingAuthenticationView connection = authenticationOptions.get(selected);
+            case "auth-account" -> {
                 apply(new TerminalUiAction.SelectorClosed());
-                apply(new TerminalUiAction.StatusChanged("Disconnecting model account"));
-                submitEffect(
-                        () -> {
-                            boolean removed = authentication.logout(connection.connectionId());
-                            return () -> apply(new TerminalUiAction.StatusChanged(
-                                    removed ? "Model account disconnected" : "Model account was already absent"));
-                        },
-                        code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+                if (selected < 0 || selected >= authenticationOptions.size()) {
+                    apply(new TerminalUiAction.RecoverableFailure("AUTH_ACCOUNT_NOT_SELECTED"));
+                    return;
+                }
+                openAccountActions(authenticationOptions.get(selected));
+            }
+            case "auth-logout" -> {
+                apply(new TerminalUiAction.SelectorClosed());
+                if (selected < 0 || selected >= authenticationOptions.size()) {
+                    apply(new TerminalUiAction.RecoverableFailure("AUTH_ACCOUNT_NOT_SELECTED"));
+                    return;
+                }
+                confirmDisconnect(authenticationOptions.get(selected));
+            }
+            case "auth-account-actions" -> {
+                CodingAuthenticationView connection = selectedAuthenticationConnection;
+                apply(new TerminalUiAction.SelectorClosed());
+                if (connection == null) {
+                    apply(new TerminalUiAction.RecoverableFailure("AUTH_ACCOUNT_NOT_SELECTED"));
+                    return;
+                }
+                if (selected == 0) {
+                    if (connection.method() == CodingAuthenticationView.Method.API_KEY) {
+                        selectedAuthenticationConnection = null;
+                        beginApiKeyInput(connection.providerId());
+                    } else {
+                        reloginSelectedAccount();
+                    }
+                } else if (selected == 1) {
+                    confirmDisconnect(connection);
+                } else {
+                    selectedAuthenticationConnection = null;
+                }
+            }
+            case "auth-logout-confirm" -> {
+                apply(new TerminalUiAction.SelectorClosed());
+                if (selected == 1) {
+                    disconnectSelectedAccount();
+                } else {
+                    selectedAuthenticationConnection = null;
+                }
             }
             case "theme-selector" -> {
                 String selectedTheme = selector.options().get(selected);

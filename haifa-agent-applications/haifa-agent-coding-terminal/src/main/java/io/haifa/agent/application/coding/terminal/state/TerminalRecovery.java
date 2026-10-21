@@ -57,6 +57,7 @@ public record TerminalRecovery(Category category, String code, String action) {
                     "未登录/凭据不可用；运行 /connect 连接或重新登录，或运行 /model 切换可用模型。"),
             entry(Category.USER_ACTION_REQUIRED, "AUTH_PROVIDER_LIST_EMPTY", "没有可用模型提供商；检查模型配置后重试。"),
             entry(Category.USER_ACTION_REQUIRED, "AUTH_PROVIDER_INVALID", "该模型提供商不可用；运行 /connect 重新选择。"),
+            entry(Category.USER_ACTION_REQUIRED, "AUTH_ACCOUNT_NOT_SELECTED", "未选择模型账号；运行 /account 重新选择。"),
             entry(
                     Category.USER_ACTION_REQUIRED,
                     "AUTH_METHOD_UNSUPPORTED",

@@ -75,4 +75,19 @@ final class AuthenticationProviderPresentation {
     static Optional<String> helpUrl(String providerId) {
         return Optional.ofNullable(HELP_URLS.get(providerId.toLowerCase(Locale.ROOT)));
     }
+
+    static String maskAccount(String value) {
+        String label = value == null ? "" : value.strip();
+        if (label.isEmpty()) {
+            return "";
+        }
+        int at = label.indexOf('@');
+        if (at > 0) {
+            return label.substring(0, 1) + "***" + label.substring(at);
+        }
+        if (label.length() <= 4) {
+            return "***";
+        }
+        return label.substring(0, 1) + "***" + label.substring(label.length() - 2);
+    }
 }

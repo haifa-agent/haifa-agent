@@ -281,10 +281,10 @@ class Tui4jTerminalViewTest {
         Viewport transcript = transcript(state);
 
         String firstTime = view.render(state, transcript, editor(80), true, false, Duration.ZERO, 0, true, false);
-        assertThat(firstTime).contains("enter submit · escape cancel").doesNotContain("enter send", "enter update");
+        assertThat(firstTime).contains("Enter 保存 · Esc 取消").doesNotContain("enter send", "Enter 更新");
 
         String update = view.render(state, transcript, editor(80), true, false, Duration.ZERO, 0, true, true);
-        assertThat(update).contains("enter update · escape cancel").doesNotContain("enter send", "enter submit");
+        assertThat(update).contains("Enter 更新 · Esc 取消").doesNotContain("enter send", "Enter 保存");
     }
 
     @Test

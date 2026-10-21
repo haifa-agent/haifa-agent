@@ -986,7 +986,7 @@ final class Tui4jTerminalView {
             if (secureInputHint != null && !secureInputHint.isBlank()) {
                 return secureInputHint;
             }
-            return isUpdate ? "enter update · escape cancel" : "enter submit · escape cancel";
+            return isUpdate ? "Enter 更新 · Esc 取消" : "Enter 保存 · Esc 取消";
         }
         if (state.selector().isPresent()) return "enter select · escape close";
         if (state.currentRunId().isPresent()) {
