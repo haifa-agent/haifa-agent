@@ -251,9 +251,10 @@ class Tui4jCodingTerminalModelTest {
 
         fixture.model.update(mouse(1, 0, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
         fixture.model.update(mouse(1, 20, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
-        var release = fixture.model.update(mouse(1, 20, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
-        release.command().execute();
+        fixture.model.update(mouse(1, 20, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
 
+        assertThat(clipboard.text).isNull();
+        fixture.model.update(key(KeyType.keyETX)).command().execute();
         assertThat(clipboard.text).isNotNull();
         assertThat(clipboard.text.length()).isGreaterThan(1);
     }
@@ -262,17 +263,15 @@ class Tui4jCodingTerminalModelTest {
     void copiesSelectedTranscriptTextThroughTheClipboardPort() {
         var clipboard = new RecordingClipboard(true);
         var fixture = fixtureWithClipboard(clipboard);
-        fixture.model.init();
-        for (int index = 1; index <= 6; index++) {
-            fixture.pump.offer(new TerminalUiAction.UserMessageCommitted("m", "line-" + index));
-        }
-        fixture.model.update(new WindowSizeMessage(120, 30));
-        fixture.model.view();
+        seedSelectableTranscript(fixture);
 
         fixture.model.update(mouse(1, 0, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
         fixture.model.update(mouse(1, 30, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft));
-        var release = fixture.model.update(mouse(1, 30, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
-        release.command().execute();
+        fixture.model.update(mouse(1, 30, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
+
+        assertThat(clipboard.text).isNull();
+        assertThat(fixture.model.view()).contains("\u001B[7m");
+        fixture.model.update(key(KeyType.keyETX)).command().execute();
 
         assertThat(clipboard.text).isNotNull().isNotBlank();
     }
@@ -319,14 +318,16 @@ class Tui4jCodingTerminalModelTest {
 
         fixture.model.update(mouse(0, 1, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
         fixture.model.update(mouse(0, 20, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft));
-        var release = fixture.model.update(mouse(0, 20, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
-        release.command().execute();
+        fixture.model.update(mouse(0, 20, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
 
         var item = fixture.controller.state().transcript().stream()
                 .filter(value -> value.id().equals("tool-tool-1"))
                 .findFirst()
                 .orElseThrow();
         assertThat(item.expanded()).isFalse();
+        assertThat(clipboard.text).isNull();
+
+        fixture.model.update(key(KeyType.keyETX)).command().execute();
         assertThat(clipboard.text).isNotNull().isNotBlank();
     }
 
@@ -342,9 +343,11 @@ class Tui4jCodingTerminalModelTest {
         fixture.model.view();
         fixture.model.update(mouse(1, 0, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
         fixture.model.update(mouse(1, 30, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft));
-        var release = fixture.model.update(mouse(1, 30, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(1, 30, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
+
+        assertThat(clipboard.text).isNull();
         var copied = (Tui4jCodingTerminalModel.ClipboardCopyResultMessage)
-                release.command().execute();
+                fixture.model.update(key(KeyType.keyETX)).command().execute();
 
         var followUp = fixture.model.update(copied);
         fixture.controller.drainEvents();

@@ -272,17 +272,23 @@ final class Tui4jCodingTerminalModel implements Model {
                 }
                 return Command.none();
             }
-            return selection
-                    .range()
-                    .flatMap(range -> TerminalScreenCells.selectedText(
-                            transcriptContent, range, TerminalScreenCells.DEFAULT_MAX_COPY_CHARACTERS))
-                    .map(this::copySelection)
-                    .orElseGet(() -> {
-                        applyCopyFeedback("selection too large to copy");
-                        return Command.none();
-                    });
+            return Command.none();
         }
         return Command.none();
+    }
+
+    private Command copySelectedText() {
+        Optional<String> text = selection
+                .range()
+                .flatMap(range -> TerminalScreenCells.selectedText(
+                        transcriptContent, range, TerminalScreenCells.DEFAULT_MAX_COPY_CHARACTERS));
+        if (text.isEmpty()) {
+            applyCopyFeedback("selection too large to copy");
+            return Command.none();
+        }
+        clearSelection();
+        syncComponents();
+        return copySelection(text.orElseThrow());
     }
 
     private Command copySelection(String text) {
@@ -551,6 +557,9 @@ final class Tui4jCodingTerminalModel implements Model {
             return Command.none();
         }
         if (key.type() == KeyType.keyETX) {
+            if (selection.range().isPresent()) {
+                return copySelectedText();
+            }
             accept(TerminalInput.Kind.INTERRUPT);
             return Command.none();
         }
