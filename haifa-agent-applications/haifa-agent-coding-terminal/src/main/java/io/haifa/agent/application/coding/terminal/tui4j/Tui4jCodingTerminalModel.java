@@ -151,7 +151,7 @@ final class Tui4jCodingTerminalModel implements Model {
         // renderer, so an unchanged poll does not reset the renderer cache and repaint every row.
         Command polling = Command.batch(
                 Command.printf(Tui4jTerminalIo.DISABLE_ALTERNATE_SCREEN_SCROLL), Command.checkWindowSize(), nextTick());
-        return mouseReportingEnabled ? Command.batch(Command.enableMouseCellMotion(), polling) : polling;
+        return mouseReportingEnabled ? Command.batch(Command.enableMouseAllMotion(), polling) : polling;
     }
 
     @Override
@@ -209,7 +209,7 @@ final class Tui4jCodingTerminalModel implements Model {
         if (controller.mouseReportingEnabled() != mouseReportingEnabled) {
             mouseReportingEnabled = controller.mouseReportingEnabled();
             command = Command.batch(
-                    mouseReportingEnabled ? Command.enableMouseCellMotion() : Command.disableMouse(), command);
+                    mouseReportingEnabled ? Command.enableMouseAllMotion() : Command.disableMouse(), command);
         }
         if (controller.state().exitRequested()) {
             return UpdateResult.from(this, Command.quit());
@@ -1180,6 +1180,11 @@ final class Tui4jCodingTerminalModel implements Model {
      * resize with no change does not make the tui4j renderer clear its line cache and repaint.
      */
     Message filterMessage(Message message) {
+        if (message instanceof MouseMessage mouse
+                && mouse.getAction() == MouseAction.MouseActionMotion
+                && !selection.selecting()) {
+            return null;
+        }
         if (message instanceof WindowSizeMessage size
                 && size.width() == controller.state().columns()
                 && size.height() == controller.state().rows()) {

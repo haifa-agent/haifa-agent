@@ -92,10 +92,24 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
-    void enablesMouseCellMotionAtStartupUnlessDisabled() {
-        assertThat(requestsMouseCellMotion(fixture().model.init())).isTrue();
-        assertThat(requestsMouseCellMotion(modelWithMouseReporting(false).init()))
+    void enablesMouseAllMotionAtStartupUnlessDisabled() {
+        assertThat(requestsMouseAllMotion(fixture().model.init())).isTrue();
+        assertThat(requestsMouseAllMotion(modelWithMouseReporting(false).init()))
                 .isFalse();
+    }
+
+    @Test
+    void dropsIdleMouseMotionButKeepsDragMotion() {
+        var fixture = fixture();
+        seedSelectableTranscript(fixture);
+
+        assertThat(fixture.model.filterMessage(mouse(1, 0, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft)))
+                .isNull();
+
+        fixture.model.update(mouse(1, 0, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        assertThat(fixture.model.filterMessage(
+                        mouse(1, 20, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft)))
+                .isNotNull();
     }
 
     @Test
@@ -213,6 +227,20 @@ class Tui4jCodingTerminalModelTest {
         "next".chars().forEach(value -> fixture.model.update(runes((char) value)));
 
         assertThat(fixture.controller.state().editorBuffer()).isEqualTo("/rename next");
+    }
+
+    @Test
+    void highlightsSelectionWhileTheMouseIsStillDragging() {
+        var fixture = fixture();
+        seedSelectableTranscript(fixture);
+
+        fixture.model.update(mouse(1, 0, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        String pressed = fixture.model.view();
+        fixture.model.update(mouse(1, 20, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft));
+        String dragged = fixture.model.view();
+
+        assertThat(dragged).isNotEqualTo(pressed);
+        assertThat(dragged).contains("\u001B[7m");
     }
 
     @Test
@@ -1524,17 +1552,17 @@ class Tui4jCodingTerminalModelTest {
         return false;
     }
 
-    private boolean requestsMouseCellMotion(Command command) {
+    private boolean requestsMouseAllMotion(Command command) {
         if (Command.isNone(command)) {
             return false;
         }
         Message message = command.execute();
-        if (message instanceof com.williamcallahan.tui4j.compat.bubbletea.EnableMouseCellMotionMessage) {
+        if (message instanceof com.williamcallahan.tui4j.compat.bubbletea.EnableMouseAllMotionMessage) {
             return true;
         }
         if (message instanceof BatchMessage batch) {
             for (Command child : batch.commands()) {
-                if (requestsMouseCellMotion(child)) {
+                if (requestsMouseAllMotion(child)) {
                     return true;
                 }
             }
