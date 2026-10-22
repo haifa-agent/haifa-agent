@@ -12,7 +12,7 @@ from xml.sax.saxutils import escape
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repository", type=Path)
-    parser.add_argument("--version", default="0.1.3-SNAPSHOT")
+    parser.add_argument("--version", default="0.1.3")
     args = parser.parse_args()
     directory = Path(__file__).resolve().parent
     root = directory.parent.parent
