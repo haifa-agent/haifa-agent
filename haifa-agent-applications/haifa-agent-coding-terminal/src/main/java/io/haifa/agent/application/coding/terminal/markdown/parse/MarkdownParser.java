@@ -29,10 +29,10 @@ public final class MarkdownParser {
             lines.add(new Line(source.substring(start, end), start, newline < 0 ? end : end + 1, newline >= 0));
             start = newline < 0 ? source.length() : end + 1;
         }
-        return new MarkdownDocument(blocks(lines, 0));
+        return new MarkdownDocument(blocks(lines, 0, 0));
     }
 
-    private List<LocatedBlock> blocks(List<Line> lines, int depth) {
+    private List<LocatedBlock> blocks(List<Line> lines, int depth, int listDepth) {
         List<LocatedBlock> result = new ArrayList<>();
         for (int i = 0; i < lines.size(); ) {
             int first = i;
@@ -77,7 +77,7 @@ public final class MarkdownParser {
                     quoted.add(next.withText(
                             next.text().stripLeading().substring(1).replaceFirst("^ ", "")));
                 }
-                List<LocatedBlock> children = blocks(quoted, depth + 1);
+                List<LocatedBlock> children = blocks(quoted, depth + 1, listDepth);
                 block = new Quote(children.stream().map(LocatedBlock::block).toList());
                 closed = children.stream().allMatch(LocatedBlock::closed);
             } else if (list.matches() && depth < MAX_DEPTH) {
@@ -109,10 +109,10 @@ public final class MarkdownParser {
                             i++;
                         } else break;
                     }
-                    List<LocatedBlock> children = blocks(body, depth + 1);
+                    List<LocatedBlock> children = blocks(body, depth + 1, listDepth + base / 2 + 1);
                     items.add(new ListItem(
                             ordered ? marker.group(2).replace(')', '.') : "•",
-                            depth + base / 2,
+                            listDepth + base / 2,
                             children.stream().map(LocatedBlock::block).toList()));
                     closed &= children.stream().allMatch(LocatedBlock::closed);
                     int after = i;

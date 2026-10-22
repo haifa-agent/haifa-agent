@@ -27,6 +27,8 @@ class MarkdownParserTest {
         assertThat(leaf.items().getFirst().depth()).isEqualTo(2);
         var quote = (Quote) document.blocks().getLast().block();
         assertThat(quote.blocks().getFirst()).isInstanceOf(ListBlock.class);
+        assertThat(((ListBlock) quote.blocks().getFirst()).items().getFirst().depth())
+                .isZero();
     }
 
     @Test

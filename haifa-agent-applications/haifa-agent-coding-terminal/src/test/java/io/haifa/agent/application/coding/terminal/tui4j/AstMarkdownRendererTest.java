@@ -71,7 +71,7 @@ class AstMarkdownRendererTest {
         String input =
                 "- first\n  - second\n    - third\n      - fourth\n\n  ```java\n  int x = 1;\n  ```\n\n> - quoted\n";
         String rendered = markdown.render("nested", input, 60);
-        assertThat(rendered).contains("• first\n  • second\n    • third\n      • fourth", "▎ int x = 1;", "│ ");
+        assertThat(rendered).contains("• first\n  • second\n    • third\n      • fourth", "▎ int x = 1;", "│ • quoted");
         assertThat(rendered.lines()).allMatch(line -> TextWidth.measureCellWidth(line) <= 60);
     }
 
