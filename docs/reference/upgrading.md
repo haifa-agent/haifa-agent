@@ -12,6 +12,23 @@ Haifa Agent 仍处于 Pre-1.0。
 4. 按产品运维流程备份 Durable SQLite / Application Data。
 5. 用新版本运行自己的 Product Test。
 
+## 0.1.2 升级到 0.1.3
+
+0.1.3 没有新增 SQLite 迁移，现有 0.1.2 数据库可以原地打开；仍建议先停止应用并备份完整数据目录。
+
+历史 Tool Call 参数不再改写为截断占位符，`truncatedToolCalls` 状态与
+`truncatedToolCallsCount` 遥测，以及旧的参数截断 Plan API 已移除。依赖这些内部/高级接口的
+SDK 或产品代码需要删除对应调用并重新编译。历史纯读结果只在冻结 Tool Binding 证明可安全重建时
+裁剪，模型会看到固定的省略说明。
+
+工具现在可以声明可选 `description`，Runtime 将其投影为 Tool Lifecycle 的 `intentSummary`，
+Coding Terminal 优先用它作为折叠工具卡标题。该字段为增量协议字段，旧事件缺少它时仍可正常读取。
+自定义 Tool Schema 若增加同名 `description` 参数，应避免与模型说明混淆。
+
+Coding Terminal 的鼠标与复制行为有变化：滚轮在 transcript 区域滚动历史，拖拽只建立高亮选择，
+Ctrl-C 复制非空选择（没有选择时仍是中断），`/mouse off` 恢复宿主原生选择。
+发行包的一次性任务 wall time 默认为 24 小时，单条命令超时仍保持 2 小时上限。
+
 ## 0.1.1 升级到 0.1.2
 
 0.1.2 的 Memory API 改为直接 CRUD，移除了 Candidate / Review 与旧 Memory 类型。
