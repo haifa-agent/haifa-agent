@@ -9,6 +9,7 @@ import com.williamcallahan.tui4j.compat.bubbletea.Command;
 import com.williamcallahan.tui4j.compat.bubbletea.KeyPressMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.Message;
 import com.williamcallahan.tui4j.compat.bubbletea.PasteMessage;
+import com.williamcallahan.tui4j.compat.bubbletea.QuitMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.WindowSizeMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.input.MouseAction;
 import com.williamcallahan.tui4j.compat.bubbletea.input.MouseButton;
@@ -89,6 +90,38 @@ class Tui4jCodingTerminalModelTest {
 
         fixture.model.update(key(KeyType.keyETX));
         assertThat(fixture.controller.state().exitRequested()).isTrue();
+    }
+
+    @Test
+    void enablesMouseAllMotionAtStartupUnlessDisabled() {
+        assertThat(requestsMouseAllMotion(fixture().model.init())).isTrue();
+        assertThat(requestsMouseAllMotion(modelWithMouseReporting(false).init()))
+                .isFalse();
+    }
+
+    @Test
+    void dropsIdleMouseMotionButKeepsDragMotion() {
+        var fixture = fixture();
+        seedSelectableTranscript(fixture);
+
+        assertThat(fixture.model.filterMessage(mouse(1, 0, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft)))
+                .isNull();
+
+        fixture.model.update(mouse(1, 0, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        assertThat(fixture.model.filterMessage(
+                        mouse(1, 20, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft)))
+                .isNotNull();
+    }
+
+    @Test
+    void disablesMouseReportingWhenTheControllerTurnsItOff() {
+        var fixture = fixture();
+        fixture.model.init();
+        fixture.controller.initializeMouseReporting(false);
+
+        var updated = fixture.model.update(new Tui4jCodingTerminalModel.PollMessage());
+
+        assertThat(requestsDisableMouse(updated.command())).isTrue();
     }
 
     @Test
@@ -185,6 +218,299 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
+    void keepsTheSpaceTypedAfterACommandWhileCompletionIsOpen() {
+        var fixture = fixture();
+
+        "/rename".chars().forEach(value -> fixture.model.update(runes((char) value)));
+        assertThat(fixture.controller.state().selector()).isPresent();
+
+        fixture.model.update(key(KeyType.KeySpace));
+        "next".chars().forEach(value -> fixture.model.update(runes((char) value)));
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("/rename next");
+    }
+
+    @Test
+    void highlightsSelectionWhileTheMouseIsStillDragging() {
+        var fixture = fixture();
+        seedSelectableTranscript(fixture);
+
+        fixture.model.update(mouse(1, 0, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        String pressed = fixture.model.view();
+        fixture.model.update(mouse(1, 20, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft));
+        String dragged = fixture.model.view();
+
+        assertThat(dragged).isNotEqualTo(pressed);
+        assertThat(dragged).contains("\u001B[7m");
+    }
+
+    @Test
+    void treatsRepeatedPressEventsDuringDragAsMotion() {
+        var clipboard = new RecordingClipboard(true);
+        var fixture = fixtureWithClipboard(clipboard);
+        seedSelectableTranscript(fixture);
+
+        fixture.model.update(mouse(1, 0, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(1, 20, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(1, 20, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
+
+        assertThat(clipboard.text).isNull();
+        fixture.model.update(key(KeyType.keyETX)).command().execute();
+        assertThat(clipboard.text).isNotNull();
+        assertThat(clipboard.text.length()).isGreaterThan(1);
+    }
+
+    @Test
+    void copiesSelectedTranscriptTextThroughTheClipboardPort() {
+        var clipboard = new RecordingClipboard(true);
+        var fixture = fixtureWithClipboard(clipboard);
+        seedSelectableTranscript(fixture);
+
+        fixture.model.update(mouse(1, 0, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(1, 30, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(1, 30, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
+
+        assertThat(clipboard.text).isNull();
+        assertThat(fixture.model.view()).contains("\u001B[7m");
+        fixture.model.update(key(KeyType.keyETX)).command().execute();
+
+        assertThat(clipboard.text).isNotNull().isNotBlank();
+    }
+
+    @Test
+    void clickTogglesACollapsedTranscriptItemWithoutCopying() {
+        var clipboard = new RecordingClipboard(true);
+        var fixture = fixtureWithClipboard(clipboard);
+        seedSingleToolTranscript(fixture);
+
+        fixture.model.update(mouse(0, 2, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(0, 2, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
+
+        var item = fixture.controller.state().transcript().stream()
+                .filter(value -> value.id().equals("tool-tool-1"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(item.expanded()).isTrue();
+        assertThat(clipboard.text).isNull();
+    }
+
+    @Test
+    void clickBelowTheLastTranscriptLineDoesNotToggleAnItem() {
+        var clipboard = new RecordingClipboard(true);
+        var fixture = fixtureWithClipboard(clipboard);
+        seedSingleToolTranscript(fixture);
+
+        fixture.model.update(mouse(5, 2, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(5, 2, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
+
+        var item = fixture.controller.state().transcript().stream()
+                .filter(value -> value.id().equals("tool-tool-1"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(item.expanded()).isFalse();
+        assertThat(clipboard.text).isNull();
+    }
+
+    @Test
+    void finishingATextSelectionDoesNotToggleTheTranscriptItem() {
+        var clipboard = new RecordingClipboard(true);
+        var fixture = fixtureWithClipboard(clipboard);
+        seedSingleToolTranscript(fixture);
+
+        fixture.model.update(mouse(0, 1, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(0, 20, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(0, 20, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
+
+        var item = fixture.controller.state().transcript().stream()
+                .filter(value -> value.id().equals("tool-tool-1"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(item.expanded()).isFalse();
+        assertThat(clipboard.text).isNull();
+
+        fixture.model.update(key(KeyType.keyETX)).command().execute();
+        assertThat(clipboard.text).isNotNull().isNotBlank();
+    }
+
+    @Test
+    void fallsBackToOsc52WhenTheLocalClipboardFails() {
+        var clipboard = new RecordingClipboard(false);
+        var fixture = fixtureWithClipboard(clipboard);
+        fixture.model.init();
+        for (int index = 1; index <= 6; index++) {
+            fixture.pump.offer(new TerminalUiAction.UserMessageCommitted("m", "line-" + index));
+        }
+        fixture.model.update(new WindowSizeMessage(120, 30));
+        fixture.model.view();
+        fixture.model.update(mouse(1, 0, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(1, 30, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(1, 30, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
+
+        assertThat(clipboard.text).isNull();
+        var copied = (Tui4jCodingTerminalModel.ClipboardCopyResultMessage)
+                fixture.model.update(key(KeyType.keyETX)).command().execute();
+
+        var followUp = fixture.model.update(copied);
+        fixture.controller.drainEvents();
+
+        assertThat(copied.success()).isFalse();
+        assertThat(followUp.command().execute()).isNotNull();
+        assertThat(fixture.controller.state().status()).contains("OSC 52");
+    }
+
+    @Test
+    void escapeClearsTheSelectionWithoutCopying() {
+        var clipboard = new RecordingClipboard(true);
+        var fixture = fixtureWithClipboard(clipboard);
+        fixture.model.init();
+        for (int index = 1; index <= 6; index++) {
+            fixture.pump.offer(new TerminalUiAction.UserMessageCommitted("m", "line-" + index));
+        }
+        fixture.model.update(new WindowSizeMessage(120, 30));
+        fixture.model.view();
+        fixture.model.update(mouse(1, 0, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(1, 30, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft));
+
+        fixture.model.update(key(KeyType.keyESC));
+
+        assertThat(clipboard.text).isNull();
+    }
+
+    @Test
+    void doesNotCopyWhileSecureInputIsActive() {
+        var clipboard = new RecordingClipboard(true);
+        var fixture = fixtureWithClipboard(
+                new CapturingAuthenticationClient(new java.util.concurrent.atomic.AtomicReference<>()), clipboard);
+        seedSelectableTranscript(fixture);
+        fixture.model.update(mouse(1, 0, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(1, 30, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft));
+
+        fixture.model.update(new PasteMessage("/connect api deepseek"));
+        commitPlainEnter(fixture);
+        fixture.model.update(new PasteMessage("  private-value  "));
+        assertThat(fixture.controller.secureInputRequested()).isTrue();
+
+        assertThat(fixture.model.filterMessage(new QuitMessage())).isNull();
+        assertThat(fixture.model.filterMessage(key(KeyType.keyETX))).isNotNull();
+
+        fixture.model.update(mouse(1, 30, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
+
+        assertThat(clipboard.text).isNull();
+    }
+
+    @Test
+    void copiesSelectionInsteadOfQuittingWhenSignalQuitArrivesDuringSelection() {
+        var clipboard = new RecordingClipboard(true);
+        var fixture = fixtureWithClipboard(clipboard);
+        seedSelectableTranscript(fixture);
+
+        fixture.model.update(mouse(1, 0, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(1, 20, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(1, 20, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
+
+        QuitMessage quit = new QuitMessage();
+        Message filtered = fixture.model.filterMessage(quit);
+        assertThat(filtered).isNotNull().isNotSameAs(quit);
+
+        fixture.model.update(filtered).command().execute();
+
+        assertThat(clipboard.text).isNotNull().isNotBlank();
+        assertThat(fixture.controller.state().exitRequested()).isFalse();
+    }
+
+    @Test
+    void signalQuitWithoutSelectionKeepsTheExistingExitSemantics() {
+        var fixture = fixture();
+        seedSelectableTranscript(fixture);
+
+        QuitMessage quit = new QuitMessage();
+        Message filtered = fixture.model.filterMessage(quit);
+        assertThat(filtered).isNotNull().isNotSameAs(quit);
+
+        fixture.model.update(filtered);
+
+        assertThat(fixture.controller.state().exitRequested()).isTrue();
+    }
+
+    @Test
+    void explicitQuitStillQuitsWhileASelectionIsHighlighted() {
+        var fixture = fixture();
+        seedSelectableTranscript(fixture);
+        fixture.model.update(mouse(1, 0, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(1, 20, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft));
+
+        fixture.controller.accept(new TerminalInput(TerminalInput.Kind.EXECUTE_COMMAND, "/quit", 5));
+
+        assertThat(fixture.controller.state().exitRequested()).isTrue();
+        QuitMessage quit = new QuitMessage();
+        assertThat(fixture.model.filterMessage(quit)).isSameAs(quit);
+    }
+
+    @Test
+    void directCtrlCKeyIsDroppedSoTheSignalHandlerOwnsTheInterrupt() {
+        var fixture = fixture();
+        seedSelectableTranscript(fixture);
+
+        assertThat(fixture.model.filterMessage(key(KeyType.keyETX))).isNull();
+    }
+
+    @Test
+    void pressOutsideTheTranscriptRegionClearsTheSelection() {
+        var clipboard = new RecordingClipboard(true);
+        var fixture = fixtureWithClipboard(clipboard);
+        seedSelectableTranscript(fixture);
+        fixture.model.update(mouse(1, 0, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(1, 30, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft));
+
+        fixture.model.update(mouse(1, 500, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(1, 500, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
+
+        assertThat(clipboard.text).isNull();
+    }
+
+    @Test
+    void sidebarColumnDoesNotSelectTranscriptText() {
+        var clipboard = new RecordingClipboard(true);
+        var fixture = fixtureWithClipboard(clipboard);
+        seedSelectableTranscript(fixture);
+
+        fixture.model.update(mouse(1, 110, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(1, 118, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(1, 118, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
+
+        assertThat(clipboard.text).isNull();
+    }
+
+    @Test
+    void resizingClearsTheSelection() {
+        var clipboard = new RecordingClipboard(true);
+        var fixture = fixtureWithClipboard(clipboard);
+        seedSelectableTranscript(fixture);
+        fixture.model.update(mouse(1, 0, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(1, 30, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft));
+
+        fixture.model.update(new WindowSizeMessage(110, 30));
+        fixture.model.update(mouse(1, 30, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
+
+        assertThat(clipboard.text).isNull();
+    }
+
+    @Test
+    void togglingTheSidebarClearsTheSelection() {
+        var clipboard = new RecordingClipboard(true);
+        var fixture = fixtureWithClipboard(clipboard);
+        seedSelectableTranscript(fixture);
+        fixture.model.update(mouse(1, 0, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(1, 30, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft));
+
+        fixture.pump.offer(new TerminalUiAction.SidebarToggled());
+        fixture.model.update(new WindowSizeMessage(120, 30));
+        fixture.model.update(mouse(1, 30, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
+
+        assertThat(clipboard.text).isNull();
+    }
+
+    @Test
     void rendersConversationSubmissionBeforeClientIoRuns() {
         var fixture = fixture();
         fixture.model.update(new PasteMessage("inspect the repository"));
@@ -222,9 +548,22 @@ class Tui4jCodingTerminalModelTest {
     void keepsShortBracketedPasteVerbatim() {
         var fixture = fixture();
 
+        fixture.model.update(new PasteMessage("single line snippet"));
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("single line snippet");
+    }
+
+    @Test
+    void summarizesTwoLineBracketedPasteAndDeletesItInOneStroke() {
+        var fixture = fixture();
+
         fixture.model.update(new PasteMessage("one\ntwo"));
 
-        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("one\ntwo");
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~2 lines]");
+
+        fixture.model.update(key(KeyType.keyBS));
+
+        assertThat(fixture.controller.state().editorBuffer()).isEmpty();
     }
 
     @Test
@@ -638,25 +977,25 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
-    void editsEmojiCombiningTextAndMultilinePasteOnlyAtGraphemeBoundaries() {
+    void editsEmojiCombiningTextAtGraphemeBoundaries() {
         var fixture = fixture();
         String family = "👨‍👩‍👧‍👦";
 
-        fixture.model.update(new PasteMessage("A" + family + "e\u0301\r\n中x\u001B"));
-        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("A" + family + "e\u0301\n中x");
+        fixture.model.update(new PasteMessage("A" + family + "e\u0301-中x\u001B"));
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("A" + family + "e\u0301-中x");
         int afterCombining = 1 + family.length() + "e\u0301".length();
         fixture.controller.accept(new TerminalInput(
                 TerminalInput.Kind.EDITOR_CHANGED, fixture.controller.state().editorBuffer(), afterCombining));
         fixture.model.update(new WindowSizeMessage(80, 24));
         fixture.model.update(key(KeyType.keyBS));
 
-        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("A" + family + "\n中x");
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("A" + family + "-中x");
         assertThat(fixture.controller.state().editorCursor()).isEqualTo(1 + family.length());
 
         fixture.model.update(key(KeyType.KeyLeft));
         fixture.model.update(key(KeyType.KeyDelete));
 
-        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("A\n中x");
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("A-中x");
         assertThat(fixture.controller.state().editorCursor()).isEqualTo(1);
     }
 
@@ -692,24 +1031,23 @@ class Tui4jCodingTerminalModelTest {
         AtomicReference<char[]> saved = new AtomicReference<>();
         var fixture = fixture(new CapturingAuthenticationClient(saved));
 
-        fixture.model.update(new PasteMessage("/login api deepseek"));
+        fixture.model.update(new PasteMessage("/connect api deepseek"));
         commitPlainEnter(fixture);
         fixture.model.update(new PasteMessage("  private-value  "));
 
         assertThat(fixture.controller.secureInputRequested()).isTrue();
         assertThat(fixture.controller.secureInputIsUpdate()).isFalse();
         assertThat(fixture.controller.state().editorBuffer()).isEmpty();
-        assertThat(fixture.controller.state().status())
-                .isEqualTo("Enter API key for deepseek (first-time setup · saved to system credential store)");
+        assertThat(fixture.controller.state().status()).contains("Enter the DeepSeek API key");
         assertThat(fixture.model.view())
                 .doesNotContain("private-value", "stored as plaintext", "enter send")
-                .contains("API key ┃ •••••••••••••", "enter submit · escape cancel");
+                .contains("API Key ┃ •••••••••••••", "Enter submit · Esc cancel");
 
         fixture.model.update(key(KeyType.keyCR));
 
         assertThat(fixture.controller.secureInputRequested()).isFalse();
         assertThat(saved.get()).containsExactly("private-value".toCharArray());
-        assertThat(fixture.controller.state().status()).isEqualTo("API key connected for deepseek account");
+        assertThat(fixture.controller.state().status()).contains("Connected to DeepSeek");
         assertThat(fixture.model.view()).doesNotContain("private-value");
     }
 
@@ -727,17 +1065,16 @@ class Tui4jCodingTerminalModelTest {
                 false);
         var fixture = fixture(new CapturingAuthenticationClient(saved, List.of(existing)));
 
-        fixture.model.update(new PasteMessage("/login api deepseek"));
+        fixture.model.update(new PasteMessage("/connect api deepseek"));
         commitPlainEnter(fixture);
 
         assertThat(fixture.controller.secureInputRequested()).isTrue();
         assertThat(fixture.controller.secureInputIsUpdate()).isTrue();
-        assertThat(fixture.controller.state().status())
-                .isEqualTo(
-                        "Update API key for deepseek (existing key found · will overwrite in system credential store)");
+        assertThat(fixture.controller.state().status()).contains("Update the DeepSeek API key");
         assertThat(fixture.model.view())
                 .contains(
-                        "New key ┃ Paste or enter new API key (Esc to keep existing)", "enter update · escape cancel");
+                        "New key ┃ Paste or enter a new API key (Esc keeps the existing key)",
+                        "Enter update · Esc cancel");
 
         fixture.model.update(new PasteMessage("updated-key"));
         fixture.model.update(key(KeyType.keyCR));
@@ -750,7 +1087,7 @@ class Tui4jCodingTerminalModelTest {
     void rejectsApiKeyLoginForUnsupportedProvider() {
         var fixture = fixture();
 
-        fixture.model.update(new PasteMessage("/login api openai-codex"));
+        fixture.model.update(new PasteMessage("/connect api openai-codex"));
         commitPlainEnter(fixture);
 
         assertThat(fixture.controller.secureInputRequested()).isFalse();
@@ -763,27 +1100,34 @@ class Tui4jCodingTerminalModelTest {
         AtomicReference<Map<String, String>> savedAttrs = new AtomicReference<>();
         var fixture = fixture(new CapturingAuthenticationClient(saved, savedAttrs, List.of(), Map.of()));
 
-        fixture.model.update(new PasteMessage("/login api aliyun-bailian"));
+        fixture.model.update(new PasteMessage("/connect api aliyun-bailian"));
         commitPlainEnter(fixture);
 
-        // API Key input (masked); workspace is required on first setup.
         assertThat(fixture.controller.secureInputRequested()).isTrue();
         assertThat(fixture.controller.secureInputIsMasked()).isTrue();
-        assertThat(fixture.controller.secureInputPrompt()).isEqualTo("API key ┃ ");
-        assertThat(fixture.controller.state().status())
-                .contains("Enter DashScope API key for aliyun-bailian (workspace: required, region: cn-beijing");
-        assertThat(fixture.model.view()).contains("API key ┃ ", "enter submit · escape cancel");
+        assertThat(fixture.controller.secureInputPrompt()).isEqualTo("API Key ┃ ");
+        assertThat(fixture.controller.state().status()).contains("Step 1/3");
+        assertThat(fixture.model.view()).contains("API Key ┃ ", "Enter next · Esc cancel");
 
         fixture.model.update(new PasteMessage("sk-bailian-test-key"));
         fixture.model.update(key(KeyType.keyCR));
 
         assertThat(fixture.controller.secureInputRequested()).isTrue();
-        assertThat(fixture.controller.state().status())
-                .contains("Workspace ID is required for first-time aliyun-bailian setup");
+        assertThat(fixture.controller.bailianConfigStep())
+                .isEqualTo(CodingTerminalController.BailianConfigStep.WORKSPACE_ID);
+        assertThat(fixture.controller.secureInputIsMasked()).isFalse();
+        assertThat(fixture.controller.secureInputPrompt()).isEqualTo("Workspace ┃ ");
+        assertThat(fixture.controller.state().status()).contains("Step 2/3");
         assertThat(saved.get()).isNull();
         assertThat(savedAttrs.get()).isNull();
 
-        fixture.model.update(new PasteMessage("sk-bailian-test-key ws-default-01"));
+        fixture.model.update(new PasteMessage("ws-default-01"));
+        fixture.model.update(key(KeyType.keyCR));
+
+        assertThat(fixture.controller.bailianConfigStep()).isEqualTo(CodingTerminalController.BailianConfigStep.REGION);
+        assertThat(fixture.controller.secureInputPrompt()).isEqualTo("Region ┃ ");
+        assertThat(fixture.controller.state().status()).contains("Step 3/3");
+
         fixture.model.update(key(KeyType.keyCR));
 
         assertThat(fixture.controller.secureInputRequested()).isFalse();
@@ -791,21 +1135,23 @@ class Tui4jCodingTerminalModelTest {
         assertThat(savedAttrs.get())
                 .containsEntry("workspace_id", "ws-default-01")
                 .containsEntry("region", "cn-beijing");
-        assertThat(fixture.controller.state().status())
-                .contains(
-                        "API key and endpoint connected for aliyun-bailian (workspace: ws-default-01, region: cn-beijing)");
+        assertThat(fixture.controller.state().status()).contains("Connected to Aliyun Bailian");
     }
 
     @Test
-    void configuresAliyunBailianInSingleStepWithCustomWorkspaceAndRegion() {
+    void configuresAliyunBailianInThreeStepsWithCustomWorkspaceAndRegion() {
         AtomicReference<char[]> saved = new AtomicReference<>();
         AtomicReference<Map<String, String>> savedAttrs = new AtomicReference<>();
         var fixture = fixture(new CapturingAuthenticationClient(saved, savedAttrs, List.of(), Map.of()));
 
-        fixture.model.update(new PasteMessage("/login api aliyun-bailian"));
+        fixture.model.update(new PasteMessage("/connect api aliyun-bailian"));
         commitPlainEnter(fixture);
 
-        fixture.model.update(new PasteMessage("sk-bailian-custom-key ws-custom-88 cn-shanghai"));
+        fixture.model.update(new PasteMessage("sk-bailian-custom-key"));
+        fixture.model.update(key(KeyType.keyCR));
+        fixture.model.update(new PasteMessage("ws-custom-88"));
+        fixture.model.update(key(KeyType.keyCR));
+        fixture.model.update(new PasteMessage("cn-shanghai"));
         fixture.model.update(key(KeyType.keyCR));
 
         assertThat(fixture.controller.secureInputRequested()).isFalse();
@@ -821,7 +1167,7 @@ class Tui4jCodingTerminalModelTest {
         AtomicReference<Map<String, String>> savedAttrs = new AtomicReference<>();
         var fixture = fixture(new CapturingAuthenticationClient(saved, savedAttrs, List.of(), Map.of()));
 
-        fixture.model.update(new PasteMessage("/login api aliyun-bailian ws-quick-99 cn-shanghai"));
+        fixture.model.update(new PasteMessage("/connect api aliyun-bailian ws-quick-99 cn-shanghai"));
         commitPlainEnter(fixture);
 
         // Directly at API Key step (skipping workspace and region questions)
@@ -840,25 +1186,24 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
-    void rejectsInvalidWorkspaceIdInSingleStep() {
+    void rejectsInvalidWorkspaceIdInTheWorkspaceStep() {
         AtomicReference<char[]> saved = new AtomicReference<>();
         AtomicReference<Map<String, String>> savedAttrs = new AtomicReference<>();
         var fixture = fixture(new CapturingAuthenticationClient(saved, savedAttrs, List.of(), Map.of()));
 
-        fixture.model.update(new PasteMessage("/login api aliyun-bailian"));
+        fixture.model.update(new PasteMessage("/connect api aliyun-bailian"));
         commitPlainEnter(fixture);
-
-        // Invalid workspace ID in single step
-        fixture.model.update(new PasteMessage("sk-test-key INVALID_WS"));
+        fixture.model.update(new PasteMessage("sk-test-key"));
         fixture.model.update(key(KeyType.keyCR));
 
-        // Validation error shown, still in secure input
-        assertThat(fixture.controller.secureInputRequested()).isTrue();
-        assertThat(fixture.controller.state().status())
-                .contains("Invalid workspace ID: must be lowercase DNS label ([a-z0-9-], 1-63 chars)");
+        fixture.model.update(new PasteMessage("INVALID_WS"));
+        fixture.model.update(key(KeyType.keyCR));
 
-        // Now enter valid
-        fixture.model.update(new PasteMessage("sk-test-key ws-valid-1"));
+        assertThat(fixture.controller.secureInputRequested()).isTrue();
+        assertThat(fixture.controller.state().status()).contains("Invalid workspace ID");
+
+        fixture.model.update(new PasteMessage("ws-valid-1"));
+        fixture.model.update(key(KeyType.keyCR));
         fixture.model.update(key(KeyType.keyCR));
 
         assertThat(fixture.controller.secureInputRequested()).isFalse();
@@ -866,19 +1211,18 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
-    void rejectsExtraAliyunBailianArgumentsInsteadOfIgnoringThem() {
+    void rejectsPositionalWorkspaceArgumentsInTheApiKeyStep() {
         AtomicReference<char[]> saved = new AtomicReference<>();
         AtomicReference<Map<String, String>> savedAttrs = new AtomicReference<>();
         var fixture = fixture(new CapturingAuthenticationClient(saved, savedAttrs, List.of(), Map.of()));
 
-        fixture.model.update(new PasteMessage("/login api aliyun-bailian"));
+        fixture.model.update(new PasteMessage("/connect api aliyun-bailian"));
         commitPlainEnter(fixture);
         fixture.model.update(new PasteMessage("sk-test-key ws-valid-1 cn-beijing unexpected"));
         fixture.model.update(key(KeyType.keyCR));
 
         assertThat(fixture.controller.secureInputRequested()).isTrue();
-        assertThat(fixture.controller.state().status())
-                .contains("Too many arguments: expected API key [workspace] [region] for aliyun-bailian");
+        assertThat(fixture.controller.state().status()).contains("The API key cannot contain spaces");
         assertThat(saved.get()).isNull();
         assertThat(savedAttrs.get()).isNull();
     }
@@ -887,7 +1231,7 @@ class Tui4jCodingTerminalModelTest {
     void cancelsAliyunBailianOnEscape() {
         var fixture = fixture();
 
-        fixture.model.update(new PasteMessage("/login api aliyun-bailian"));
+        fixture.model.update(new PasteMessage("/connect api aliyun-bailian"));
         commitPlainEnter(fixture);
 
         assertThat(fixture.controller.secureInputRequested()).isTrue();
@@ -904,7 +1248,7 @@ class Tui4jCodingTerminalModelTest {
         authentication.attributeLookupFailure = new IllegalStateException("AUTH_STORE_UNAVAILABLE");
         var fixture = fixture(authentication);
 
-        fixture.model.update(new PasteMessage("/login api aliyun-bailian"));
+        fixture.model.update(new PasteMessage("/connect api aliyun-bailian"));
         commitPlainEnter(fixture);
 
         assertThat(fixture.controller.secureInputRequested()).isFalse();
@@ -912,7 +1256,7 @@ class Tui4jCodingTerminalModelTest {
         assertThat(fixture.controller.state().recoverableError()).isPresent();
 
         authentication.attributeLookupFailure = null;
-        fixture.model.update(new PasteMessage("/login api aliyun-bailian"));
+        fixture.model.update(new PasteMessage("/connect api aliyun-bailian"));
         commitPlainEnter(fixture);
 
         assertThat(fixture.controller.secureInputRequested()).isTrue();
@@ -936,7 +1280,7 @@ class Tui4jCodingTerminalModelTest {
         Map<String, String> existingAttrs = Map.of("workspace_id", "ws-existing-01", "region", "cn-beijing");
         var fixture = fixture(new CapturingAuthenticationClient(saved, savedAttrs, List.of(existing), existingAttrs));
 
-        fixture.model.update(new PasteMessage("/login api aliyun-bailian"));
+        fixture.model.update(new PasteMessage("/connect api aliyun-bailian"));
         commitPlainEnter(fixture);
 
         // Update API Key -> press Enter directly to keep existing key & attributes
@@ -1261,6 +1605,54 @@ class Tui4jCodingTerminalModelTest {
         fixture.model.update(guarded.command().execute());
     }
 
+    private Tui4jCodingTerminalModel modelWithMouseReporting(boolean enabled) {
+        var pump = new TerminalEventPump(64);
+        var controller = new CodingTerminalController(
+                new ProjectId("project-1"),
+                new UnusedClient(),
+                pump,
+                new TerminalUiReducer(),
+                TerminalUiState.initial(80, 24),
+                Runnable::run);
+        return new Tui4jCodingTerminalModel(controller, pump, System::nanoTime, null, enabled);
+    }
+
+    private boolean requestsDisableMouse(Command command) {
+        if (Command.isNone(command)) {
+            return false;
+        }
+        Message message = command.execute();
+        if (message instanceof com.williamcallahan.tui4j.compat.bubbletea.DisableMouseMessage) {
+            return true;
+        }
+        if (message instanceof BatchMessage batch) {
+            for (Command child : batch.commands()) {
+                if (requestsDisableMouse(child)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private boolean requestsMouseAllMotion(Command command) {
+        if (Command.isNone(command)) {
+            return false;
+        }
+        Message message = command.execute();
+        if (message instanceof com.williamcallahan.tui4j.compat.bubbletea.EnableMouseAllMotionMessage) {
+            return true;
+        }
+        if (message instanceof BatchMessage batch) {
+            for (Command child : batch.commands()) {
+                if (requestsMouseAllMotion(child)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     private boolean requestsWindowSizeCheck(Command command) {
         if (Command.isNone(command)) {
             return false;
@@ -1302,6 +1694,74 @@ class Tui4jCodingTerminalModelTest {
 
     private KeyPressMessage runes(char value) {
         return new KeyPressMessage(new Key(KeyType.KeyRunes, new char[] {value}));
+    }
+
+    private MouseMessage mouse(int row, int column, MouseAction action, MouseButton button) {
+        return new MouseMessage(column, row, false, false, false, action, button);
+    }
+
+    private Fixture fixtureWithClipboard(CodingAuthenticationClient authentication, TerminalClipboard clipboard) {
+        var pump = new TerminalEventPump(64);
+        var controller = new CodingTerminalController(
+                new ProjectId("project-1"),
+                new UnusedClient(),
+                authentication,
+                pump,
+                new TerminalUiReducer(),
+                TerminalUiState.initial(120, 30),
+                Runnable::run);
+        return new Fixture(
+                controller,
+                pump,
+                new Tui4jCodingTerminalModel(controller, pump, System::nanoTime, null, true, clipboard));
+    }
+
+    private void seedSelectableTranscript(Fixture fixture) {
+        fixture.model.init();
+        for (int index = 1; index <= 6; index++) {
+            fixture.pump.offer(new TerminalUiAction.UserMessageCommitted("m", "line-" + index));
+        }
+        fixture.model.update(new WindowSizeMessage(120, 30));
+        fixture.model.view();
+    }
+
+    private void seedSingleToolTranscript(Fixture fixture) {
+        fixture.model.init();
+        fixture.pump.offer(new TerminalUiAction.RunEventReceived(event(
+                1,
+                new RunEventPayloads.ToolLifecycle("tool-1", "execution_run", "SUCCEEDED", "NONE", "git status", ""))));
+        fixture.model.update(new WindowSizeMessage(120, 30));
+        fixture.model.view();
+    }
+
+    private Fixture fixtureWithClipboard(TerminalClipboard clipboard) {
+        var pump = new TerminalEventPump(64);
+        var controller = new CodingTerminalController(
+                new ProjectId("project-1"),
+                new UnusedClient(),
+                pump,
+                new TerminalUiReducer(),
+                TerminalUiState.initial(120, 30),
+                Runnable::run);
+        return new Fixture(
+                controller,
+                pump,
+                new Tui4jCodingTerminalModel(controller, pump, System::nanoTime, null, true, clipboard));
+    }
+
+    private static final class RecordingClipboard implements TerminalClipboard {
+        private final boolean succeed;
+        private String text;
+
+        RecordingClipboard(boolean succeed) {
+            this.succeed = succeed;
+        }
+
+        @Override
+        public boolean copy(String value) {
+            this.text = value;
+            return succeed;
+        }
     }
 
     private MouseMessage wheel(MouseButton button) {

@@ -68,8 +68,9 @@ IdeCodingAgentMain --workspace D:\repos\my-project -m "Fix the failing module te
 ## Model connection and Codex subscription login
 
 Interactive startup checks only the selected model's credential reference. If an `env://...` or `os://...` value is absent or a
-`model-auth://...` entry is missing, the Terminal opens a connection selector before the first prompt. `/login`,
-`/account`, and `/logout` manage the same product-private connection boundary. API keys use a masked, short-lived
+`model-auth://...` entry is missing, the Terminal opens the `/connect` connection center before the first prompt.
+`/account` and `/logout` manage the same product-private connection boundary; `/login` now only prints a migration
+hint. API keys use a masked, short-lived
 character buffer and are saved to the current OS user's secure system credential store (Windows Credential Manager);
 credentials never belong in plaintext files or YAML.
 
@@ -125,8 +126,8 @@ The packaged catalog contains `antigravity-gemini` plus exact bindings for `gemi
 and `gemini-3.1-pro-preview`, but the loader hides all Antigravity bindings unless
 `HAIFA_ANTIGRAVITY_LOCAL_COMPAT_TEST=true`. Direct login additionally requires externally injected
 `HAIFA_ANTIGRAVITY_OAUTH_CLIENT_ID` and `HAIFA_ANTIGRAVITY_OAUTH_CLIENT_SECRET`; no registration is compiled into the
-distribution. With that registration enabled, the Terminal's `Connect a model` selector includes
-`Antigravity subscription` and starts the dedicated Google browser callback. `HAIFA_ANTIGRAVITY_ALLOW_ONBOARDING=true`
+distribution. With that registration enabled, the Terminal's `/connect` center includes `Antigravity`
+and starts the dedicated Google browser callback. `HAIFA_ANTIGRAVITY_ALLOW_ONBOARDING=true`
 is a separate opt-in used only when the account has no existing
 CloudCode Project. The discovered Project is associated with the fixed `model-auth://google-antigravity/default`
 credential and request-level Project overrides are rejected. Direct generation defaults to the governed Daily endpoint.
@@ -600,7 +601,11 @@ Java `file_search` 仍是 Project Tool Catalog 支持的有界兼容能力，可
 确定性重读一次；跨路径复用仍作为无效游标拒绝。敏感路径返回 `USER_ACTION_REQUIRED`，明确要求用户
 调整边界或授权，不建议模型通过随机改名、移动或复制绕过。`file_write` 会在目标不存在时原子创建文件；
 目标已存在时仍以版本和内容哈希保护整体替换。`file_create` 遇到已有目标返回
-`USE_FILE_WRITE_OR_PATCH`，不是原样重试信号。
+`USE_FILE_WRITE_OR_PATCH`，不是原样重试信号。`file_create`、`file_write` 和 `file_patch` 在产生任何文件副作用前，
+会拒绝整个待写值恰好是已知历史占位符（如 `[Code content truncated (...)]`、`[Content truncated (...)]` 或历史
+纯读省略提示）的请求，返回既有失败信封中的固定原因 `CORRUPTED_ARGUMENT_PLACEHOLDER` 和有界修复提示，不回显被拒
+正文。该匹配仅针对完整的单行旧占位符，普通文档、代码和补丁中作为引用出现的同名标记，以及 `[REDACTED]` /
+`[TRUNCATED]` 字面文本仍可正常写入；这只是一道有限兜底，不证明文本来源，也不覆盖任意模型幻觉。
 
 只有当 `tools.enabled` 显式包含 `workspace_attach` 时，用户要求读取或修改当前 Workspace 外的目录，模型才可
 请求 `workspace_attach`：必须给出主机绝对路径和最小 mode（`read` 或 `develop`）。默认 `ask` 模式会向用户

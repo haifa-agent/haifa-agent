@@ -47,6 +47,8 @@ public final class TerminalUiReducer {
             var footer = new TerminalFooter(
                     state.footer().project(),
                     state.footer().gitBranch(),
+                    state.footer().worktree(),
+                    state.footer().worktreeBranch(),
                     active.isPresent()
                             ? "task: " + view.activeRunTaskSummary().orElse("description unavailable")
                             : "session: " + view.summary().displayName(),
@@ -85,7 +87,16 @@ public final class TerminalUiReducer {
                     0,
                     Optional.empty(),
                     new TerminalFooter(
-                            state.footer().project(), state.footer().gitBranch(), "", "context: —", "", "", "IDLE", ""),
+                            state.footer().project(),
+                            state.footer().gitBranch(),
+                            state.footer().worktree(),
+                            state.footer().worktreeBranch(),
+                            "",
+                            "context: —",
+                            "",
+                            "",
+                            "IDLE",
+                            ""),
                     state.columns(),
                     state.rows(),
                     Optional.empty(),
@@ -168,6 +179,8 @@ public final class TerminalUiReducer {
                     new TerminalFooter(
                             footer.project(),
                             footer.gitBranch(),
+                            footer.worktree(),
+                            footer.worktreeBranch(),
                             footer.session(),
                             context.indicator(),
                             footer.provider(),
@@ -206,29 +219,30 @@ public final class TerminalUiReducer {
             return copyWithTranscript(state, List.copyOf(items));
         }
         if (action instanceof TerminalUiAction.DeviceLoginInstructionsPresented instructions) {
-            List<TranscriptItem> items = new ArrayList<>(state.transcript());
-            items.add(new TranscriptItem(
-                    "auth-device-code-" + items.size(),
-                    TranscriptItem.Kind.RESOURCE,
-                    "ChatGPT device login",
-                    "Browser URL: " + instructions.verificationUri() + "\nDevice code: " + instructions.userCode(),
-                    "WAITING",
-                    true));
-            return copyWithStatus(copyWithTranscript(state, List.copyOf(items)), "Waiting for ChatGPT authorization");
+            TerminalSelector selector = new TerminalSelector(
+                    "auth-device",
+                    "Device code " + instructions.userCode(),
+                    List.of("Copy device code", "Copy browser link", "Cancel sign-in"),
+                    0,
+                    List.of(
+                            new TerminalSelectorDetail(
+                                    "Paste it in the browser to finish authorization", "", "Device code sign-in"),
+                            new TerminalSelectorDetail(instructions.verificationUri(), "", "Device code sign-in"),
+                            new TerminalSelectorDetail("Exit this sign-in", "", "Device code sign-in")));
+            return copyWithStatus(
+                    copyWithSelector(state, Optional.of(selector)),
+                    "Enter the device code in the browser · Esc to cancel");
         }
         if (action instanceof TerminalUiAction.BrowserLoginInstructionsPresented instructions) {
-            List<TranscriptItem> items = new ArrayList<>(state.transcript());
-            items.add(new TranscriptItem(
-                    "auth-browser-instructions-" + items.size(),
-                    TranscriptItem.Kind.RESOURCE,
-                    instructions.connectionName() + " browser login",
-                    "A browser sign-in was requested.\nIf it did not open, use this URL: "
-                            + instructions.authorizationUri(),
-                    "WAITING",
-                    true));
             return copyWithStatus(
-                    copyWithTranscript(state, List.copyOf(items)),
-                    "Waiting for " + instructions.connectionName() + " authorization");
+                    copyWithSelector(
+                            state,
+                            Optional.of(new TerminalSelector(
+                                    "auth-wait",
+                                    "Waiting for " + instructions.connectionName() + " authorization",
+                                    List.of("Copy authorization link", "Reopen browser", "Cancel sign-in"),
+                                    0))),
+                    "Waiting for browser authorization · Esc to cancel");
         }
         if (action instanceof TerminalUiAction.AuthenticationProgressed progress) {
             List<TranscriptItem> items = new ArrayList<>(state.transcript());
@@ -253,14 +267,10 @@ public final class TerminalUiReducer {
                             "auth-external-progress",
                             TranscriptItem.Kind.RESOURCE,
                             completed.connectionName() + " connection",
-                            "Connected. Credentials were saved to system credential store." + compatibility,
+                            "Connected. Credentials were saved to the system credential store." + compatibility,
                             "CONNECTED",
                             false));
-            return copyWithStatus(
-                    copyWithTranscript(state, List.copyOf(items)),
-                    completed.unofficialLocalCompatibility()
-                            ? "Connected to " + completed.connectionName() + " (UNOFFICIAL_LOCAL_COMPAT)"
-                            : "Connected to " + completed.connectionName());
+            return copyWithTranscript(state, List.copyOf(items));
         }
         if (action instanceof TerminalUiAction.AuthenticationFailed failure) {
             List<TranscriptItem> items = new ArrayList<>(state.transcript());
@@ -503,6 +513,36 @@ public final class TerminalUiReducer {
         if (action instanceof TerminalUiAction.ThemeChanged theme) {
             return state.withThemeName(theme.themeName());
         }
+        if (action instanceof TerminalUiAction.CancelArmedChanged armed) {
+            String newStatus = armed.armed()
+                    ? "Press esc again to cancel"
+                    : ("Press esc again to cancel".equals(state.status())
+                            ? (state.currentRunId().isPresent() ? "Thinking" : "Idle")
+                            : state.status());
+            return new TerminalUiState(
+                    state.header(),
+                    state.loadedResources(),
+                    state.transcript(),
+                    state.pending(),
+                    newStatus,
+                    state.editorBuffer(),
+                    state.editorCursor(),
+                    state.selector(),
+                    state.footer(),
+                    state.columns(),
+                    state.rows(),
+                    state.session(),
+                    state.currentRunId(),
+                    state.appliedCursor(),
+                    state.seenEventIds(),
+                    state.recoverableError(),
+                    state.activity(),
+                    state.exitRequested(),
+                    state.sidebarVisible(),
+                    state.sidebarExplicitlyToggled(),
+                    state.themeName(),
+                    armed.armed());
+        }
         throw new IllegalArgumentException("Unsupported Terminal UI action");
     }
 
@@ -580,7 +620,10 @@ public final class TerminalUiReducer {
                 seen,
                 executionFailure,
                 projectedActivity,
-                state.exitRequested());
+                state.exitRequested(),
+                state.sidebarVisible(),
+                state.sidebarExplicitlyToggled(),
+                runSettled ? false : state.cancelArmed());
     }
 
     private static Optional<TerminalSelector> selectorAfterSessionLoad(
@@ -631,6 +674,7 @@ public final class TerminalUiReducer {
             if (terminalToolStatus(projectedStatus)) {
                 duration = Optional.of(Math.max(0, event.occurredAt().toEpochMilli() - startedAt.orElseThrow()));
             }
+            boolean expanded = existing >= 0 && items.get(existing).expanded();
             upsert(
                     items,
                     new TranscriptItem(
@@ -639,10 +683,11 @@ public final class TerminalUiReducer {
                             toolTitle(payload),
                             toolBody(payload),
                             projectedStatus,
-                            false,
+                            expanded,
                             Optional.empty(),
                             startedAt,
-                            duration));
+                            duration,
+                            payload.observation().flatMap(RunEventPayloads.ToolObservation::exitCode)));
         } else if (event.payload() instanceof RunEventPayloads.ResourceAvailable payload
                 && !isInternalCheckpoint(payload)) {
             upsert(
@@ -869,6 +914,8 @@ public final class TerminalUiReducer {
         return new TerminalFooter(
                 current.project(),
                 current.gitBranch(),
+                current.worktree(),
+                current.worktreeBranch(),
                 current.session(),
                 current.metrics(),
                 current.provider(),
@@ -893,7 +940,9 @@ public final class TerminalUiReducer {
     private static String toolBody(RunEventPayloads.ToolLifecycle lifecycle) {
         List<String> lines = new ArrayList<>();
         String target = boundedTarget(lifecycle.targetSummary());
-        if (!target.isBlank()) lines.add(ToolBodyLines.TARGET_PREFIX + " " + target);
+        if (!target.isBlank() && !target.equalsIgnoreCase(lifecycle.displayName())) {
+            lines.add(ToolBodyLines.TARGET_PREFIX + " " + target);
+        }
         Optional<String> reasonCode = normalizedReasonCode(lifecycle.reasonCode());
         if (isOutcomeUnknown(lifecycle.status(), lifecycle.reasonCode())) {
             lines.add(ToolBodyLines.OUTCOME_PREFIX + " UNKNOWN");
@@ -977,59 +1026,71 @@ public final class TerminalUiReducer {
 
     private static String authenticationProgressBody(CodingAuthenticationProgressView.Phase phase) {
         return switch (phase) {
-            case STARTING -> "Starting the local callback and browser sign-in flow.";
+            case STARTING -> "Starting the local callback and browser sign-in.";
             case WAITING_USER -> "Waiting for authorization in the browser.";
-            case EXCHANGING -> "Authorization received. Exchanging it for Codex credentials.";
-            case STORING -> "Codex credentials received. Saving them to system credential store.";
+            case EXCHANGING -> "Authorization received. Exchanging it for credentials.";
+            case STORING -> "Credentials received. Saving them to the system credential store.";
         };
     }
 
     private static String authenticationProgressStatus(CodingAuthenticationProgressView.Phase phase) {
         return switch (phase) {
-            case STARTING -> "Starting ChatGPT sign-in";
-            case WAITING_USER -> "Waiting for ChatGPT authorization";
-            case EXCHANGING -> "Exchanging ChatGPT authorization";
-            case STORING -> "Saving ChatGPT credentials";
+            case STARTING -> "Starting sign-in";
+            case WAITING_USER -> "Waiting for browser authorization";
+            case EXCHANGING -> "Exchanging authorization";
+            case STORING -> "Saving credentials";
         };
     }
 
     private static String authenticationFailureBody(String code, String lastStage) {
         String next =
                 switch (code) {
-                    case "AUTH_REAUTH_REQUIRED" ->
-                        "The token exchange was rejected. Retry /login; if it repeats, verify the OAuth Client ID and redirect registration.";
+                    case "AUTH_REAUTH_REQUIRED" -> "Sign-in has expired. Run /connect to sign in again.";
                     case "AUTH_LOGIN_SERVICE_UNAVAILABLE" ->
-                        "The token service was unavailable. Check the network and retry /login.";
+                        "The sign-in service is unavailable. Check your network and retry.";
                     case "AUTH_TOKEN_RESPONSE_INVALID", "AUTH_TOKEN_ACCOUNT_INVALID" ->
-                        "The token response could not be accepted. Verify the client registration and retry /login.";
+                        "The sign-in response was not accepted. Retry; if it keeps failing, check the sign-in configuration.";
                     case "AUTH_STORE_FAILED" ->
-                        "Token exchange completed, but credentials could not be written to the system credential store.";
+                        "Credentials were received but could not be written to the system credential store; check the credential manager permissions.";
                     case "AUTH_CALLBACK_TIMEOUT" ->
-                        "The local callback did not arrive before the login attempt expired. Retry /login.";
+                        "Browser authorization timed out. Retry or use device code sign-in.";
+                    case "AUTH_CANCELLED" -> "Sign-in was cancelled.";
                     default ->
-                        "The login did not complete. Retry /login and inspect the safe application log entry for this attempt.";
+                        "Sign-in did not complete. Retry; if it keeps failing, check the safe application log entry.";
                 };
-        String stage = lastStage.isBlank() ? "" : "Last stage: " + lastStage + "\n";
-        return stage + "Reason: " + code + "\nNext: " + next;
+        String stage = lastStage.isBlank() ? "" : "Stage: " + lastStage + "\n";
+        return stage + "Reason code: " + code + "\nNext: " + next;
     }
 
     private static String toolTitle(RunEventPayloads.ToolLifecycle lifecycle) {
         String toolName = lifecycle.displayName();
-        String target = boundedTarget(lifecycle.targetSummary());
-        if (target.isBlank() || target.equalsIgnoreCase(toolName)) {
+        String headline = toolHeadline(lifecycle);
+        if (headline.isBlank() || headline.equalsIgnoreCase(toolName)) {
             return toolName;
         }
         String prefix = toolName + " · ";
         int available = MAX_TRANSCRIPT_TITLE_LENGTH - prefix.length();
-        if (target.length() <= available) return prefix + target;
+        if (headline.length() <= available) return prefix + headline;
         int end = Math.max(0, available - 1);
         if (end > 0
-                && end < target.length()
-                && Character.isLowSurrogate(target.charAt(end))
-                && Character.isHighSurrogate(target.charAt(end - 1))) {
+                && end < headline.length()
+                && Character.isLowSurrogate(headline.charAt(end))
+                && Character.isHighSurrogate(headline.charAt(end - 1))) {
             end--;
         }
-        return prefix + target.substring(0, end) + "…";
+        return prefix + headline.substring(0, end) + "…";
+    }
+
+    /**
+     * Display priority for the collapsed tool headline: model intent description, then the existing
+     * safe target summary, then the tool name (handled by the caller when this returns blank).
+     */
+    private static String toolHeadline(RunEventPayloads.ToolLifecycle lifecycle) {
+        String intent = boundedTarget(lifecycle.intentSummary());
+        if (!intent.isBlank()) {
+            return intent;
+        }
+        return boundedTarget(lifecycle.targetSummary());
     }
 
     private static TranscriptItem runSummaryItem(RunEventPayloads.RunLifecycle payload, AgentRunEvent event) {
@@ -1291,6 +1352,52 @@ public final class TerminalUiReducer {
             boolean exit,
             boolean sidebarVisible,
             boolean sidebarExplicitlyToggled) {
+        return copy(
+                state,
+                resources,
+                transcript,
+                pending,
+                status,
+                buffer,
+                cursor,
+                selector,
+                footer,
+                columns,
+                rows,
+                session,
+                runId,
+                eventCursor,
+                seen,
+                error,
+                activity,
+                exit,
+                sidebarVisible,
+                sidebarExplicitlyToggled,
+                state.cancelArmed());
+    }
+
+    private static TerminalUiState copy(
+            TerminalUiState state,
+            List<String> resources,
+            List<TranscriptItem> transcript,
+            List<PendingMessage> pending,
+            String status,
+            String buffer,
+            int cursor,
+            Optional<TerminalSelector> selector,
+            TerminalFooter footer,
+            int columns,
+            int rows,
+            Optional<io.haifa.agent.application.project.product.coding.CodingSessionView> session,
+            Optional<io.haifa.agent.core.run.AgentRunId> runId,
+            Optional<io.haifa.agent.runtime.api.RunEventCursor> eventCursor,
+            java.util.Set<String> seen,
+            Optional<String> error,
+            TerminalActivity activity,
+            boolean exit,
+            boolean sidebarVisible,
+            boolean sidebarExplicitlyToggled,
+            boolean cancelArmed) {
         return new TerminalUiState(
                 state.header(),
                 resources,
@@ -1312,6 +1419,7 @@ public final class TerminalUiReducer {
                 exit,
                 sidebarVisible,
                 sidebarExplicitlyToggled,
-                state.themeName());
+                state.themeName(),
+                cancelArmed);
     }
 }

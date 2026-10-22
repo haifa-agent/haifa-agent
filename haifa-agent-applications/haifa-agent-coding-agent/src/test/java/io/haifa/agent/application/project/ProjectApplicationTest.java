@@ -103,8 +103,8 @@ class ProjectApplicationTest {
                 .containsExactly("execution_run", "file_read");
         var execution = disclosed.snapshot().bindings().getFirst();
         var fileRead = disclosed.snapshot().bindings().get(1);
-        assertThat(execution.definition().version().value()).isEqualTo("4.0.0");
-        assertThat(fileRead.definition().version().value()).isEqualTo("2.0.0");
+        assertThat(execution.definition().version().value()).isEqualTo("4.1.0");
+        assertThat(fileRead.definition().version().value()).isEqualTo("2.1.0");
         @SuppressWarnings("unchecked")
         var properties = (java.util.Map<String, Object>)
                 execution.definition().inputSchema().document().get("properties");
@@ -160,8 +160,21 @@ class ProjectApplicationTest {
         assertThat(commandSchema.get("description").toString())
                 .contains("Complete non-interactive command text", "Select available CLI programs");
         @SuppressWarnings("unchecked")
+        var callDescription = (java.util.Map<String, Object>) properties.get("description");
+        assertThat(callDescription)
+                .containsEntry("type", "string")
+                .containsEntry("maxLength", 256)
+                .doesNotContainKey("minLength");
+        assertThat(callDescription.get("description").toString())
+                .contains("user-facing explanation", "intent, not a completed outcome", "credentials");
+        @SuppressWarnings("unchecked")
+        var required = (java.util.List<String>)
+                execution.definition().inputSchema().document().get("required");
+        assertThat(required).doesNotContain("description");
+        @SuppressWarnings("unchecked")
         var fileProperties = (java.util.Map<String, Object>)
                 fileRead.definition().inputSchema().document().get("properties");
+        assertThat(fileProperties).containsKey("description");
         @SuppressWarnings("unchecked")
         var pathSchema = (java.util.Map<String, Object>) fileProperties.get("path");
         assertThat(pathSchema.get("description"))
@@ -195,7 +208,7 @@ class ProjectApplicationTest {
                 .containsExactlyInAnyOrder("file_list", "file_search", "file_diff");
         assertThat(bindings)
                 .allSatisfy(binding ->
-                        assertThat(binding.definition().version().value()).isEqualTo("2.0.0"));
+                        assertThat(binding.definition().version().value()).isEqualTo("2.1.0"));
     }
 
     @Test
@@ -335,14 +348,14 @@ class ProjectApplicationTest {
                 .filteredOn(binding -> binding.alias().value().equals("file_write"))
                 .singleElement()
                 .satisfies(binding -> {
-                    assertThat(binding.definition().version().value()).isEqualTo("2.0.0");
+                    assertThat(binding.definition().version().value()).isEqualTo("2.1.0");
                     assertThat(binding.definition().description()).contains("creates the file atomically");
                 });
         assertThat(frozen.snapshot().bindings())
                 .filteredOn(binding -> binding.alias().value().equals("file_patch"))
                 .singleElement()
                 .satisfies(binding -> {
-                    assertThat(binding.definition().version().value()).isEqualTo("2.1.0");
+                    assertThat(binding.definition().version().value()).isEqualTo("2.2.0");
                     assertThat(binding.definition().description())
                             .contains("optional navigation hint", "unique exact match", "ambiguous");
                     assertThat(binding.definition().inputSchema().document().toString())

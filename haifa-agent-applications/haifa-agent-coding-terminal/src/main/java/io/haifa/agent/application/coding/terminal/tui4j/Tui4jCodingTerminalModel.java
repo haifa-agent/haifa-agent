@@ -7,8 +7,10 @@ import com.williamcallahan.tui4j.compat.bubbletea.KeyPressMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.Message;
 import com.williamcallahan.tui4j.compat.bubbletea.Model;
 import com.williamcallahan.tui4j.compat.bubbletea.PasteMessage;
+import com.williamcallahan.tui4j.compat.bubbletea.QuitMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.UpdateResult;
 import com.williamcallahan.tui4j.compat.bubbletea.WindowSizeMessage;
+import com.williamcallahan.tui4j.compat.bubbletea.input.MouseAction;
 import com.williamcallahan.tui4j.compat.bubbletea.input.MouseButton;
 import com.williamcallahan.tui4j.compat.bubbletea.input.MouseMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.input.key.Key;
@@ -26,6 +28,7 @@ import io.haifa.agent.application.coding.terminal.state.TranscriptItem;
 import io.haifa.agent.core.run.AgentRunId;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -36,11 +39,12 @@ import java.util.function.LongSupplier;
 final class Tui4jCodingTerminalModel implements Model {
     private static final Duration EVENT_POLL_INTERVAL = Duration.ofMillis(50);
     private static final Duration UNBRACKETED_PASTE_GUARD_INTERVAL = Duration.ofMillis(100);
-    private static final int PASTE_SUMMARY_MIN_LINES = 3;
+    private static final int PASTE_SUMMARY_MIN_LINES = 2;
     private static final int PASTE_SUMMARY_MAX_CHARACTERS = 150;
     static final int WINDOW_SIZE_POLL_TICKS = 10;
     private static final int MAX_SECRET_CHARACTERS = 65_536;
     private static final long LEADER_TIMEOUT_NANOS = Duration.ofMillis(1500).toNanos();
+    private static final Duration SELECTION_AUTO_SCROLL_INTERVAL = Duration.ofMillis(75);
 
     private final CodingTerminalController controller;
     private final TerminalEventPump pump;
@@ -53,6 +57,9 @@ final class Tui4jCodingTerminalModel implements Model {
     private final Map<String, String> pastedContent = new LinkedHashMap<>();
     private final LongSupplier monotonicNanos;
     private final boolean pollWindowSize;
+    private boolean mouseReportingEnabled;
+    private final TerminalClipboard clipboard;
+    private final TerminalTextSelection selection = new TerminalTextSelection();
 
     private String transcriptContent = "";
     private List<TranscriptItem> renderedTranscript = List.of();
@@ -64,6 +71,10 @@ final class Tui4jCodingTerminalModel implements Model {
     private boolean followTranscript = true;
     private boolean newOutputPending;
     private int pendingTranscriptScrollRows;
+    private String displayedTranscriptContent = "";
+    private long selectionAutoScrollSequence;
+    private int selectionAutoScrollDirection;
+    private int selectionAutoScrollColumn;
     private AgentRunId timedRunId;
     private long timedActivityRevision = -1;
     private long activityStartedNanos;
@@ -89,9 +100,30 @@ final class Tui4jCodingTerminalModel implements Model {
             TerminalEventPump pump,
             LongSupplier monotonicNanos,
             TerminalHostInfo hostInfo) {
+        this(controller, pump, monotonicNanos, hostInfo, true);
+    }
+
+    Tui4jCodingTerminalModel(
+            CodingTerminalController controller,
+            TerminalEventPump pump,
+            LongSupplier monotonicNanos,
+            TerminalHostInfo hostInfo,
+            boolean mouseReportingEnabled) {
+        this(controller, pump, monotonicNanos, hostInfo, mouseReportingEnabled, TerminalClipboard.system());
+    }
+
+    Tui4jCodingTerminalModel(
+            CodingTerminalController controller,
+            TerminalEventPump pump,
+            LongSupplier monotonicNanos,
+            TerminalHostInfo hostInfo,
+            boolean mouseReportingEnabled,
+            TerminalClipboard clipboard) {
         this.controller = controller;
         this.pump = pump;
         this.monotonicNanos = monotonicNanos;
+        this.mouseReportingEnabled = mouseReportingEnabled;
+        this.clipboard = clipboard;
         this.pollWindowSize =
                 hostInfo == null || hostInfo.operatingSystem() == TerminalHostInfo.OperatingSystem.WINDOWS;
         this.shortcuts =
@@ -118,13 +150,28 @@ final class Tui4jCodingTerminalModel implements Model {
         // relies on the POSIX WINCH signal, which does not exist on Windows. On Windows the 50ms
         // poll carries a bounded size re-check; Tui4jTerminalIo drops unchanged sizes before the
         // renderer, so an unchanged poll does not reset the renderer cache and repaint every row.
-        return Command.batch(Command.checkWindowSize(), nextTick());
+        Command polling = Command.batch(
+                Command.printf(Tui4jTerminalIo.DISABLE_ALTERNATE_SCREEN_SCROLL), Command.checkWindowSize(), nextTick());
+        return mouseReportingEnabled ? Command.batch(Command.enableMouseAllMotion(), polling) : polling;
     }
 
     @Override
     public UpdateResult<Tui4jCodingTerminalModel> update(Message message) {
         Command command = Command.none();
-        if (message instanceof PollMessage) {
+        if (message instanceof CtrlCRequestedMessage) {
+            // SIGINT (Ctrl-C) must not terminate the program: with a transcript
+            // selection it copies, without one it keeps the existing interrupt
+            // semantics (clear editor / cancel run).
+            if (selection.range().isPresent()) {
+                command = copySelectedText();
+            } else {
+                accept(TerminalInput.Kind.INTERRUPT);
+            }
+        } else if (message instanceof SelectionAutoScrollMessage scrolling) {
+            command = continueSelectionAutoScroll(scrolling);
+        } else if (message instanceof ClipboardCopyResultMessage copied) {
+            command = completeCopy(copied);
+        } else if (message instanceof PollMessage) {
             controller.drainEvents();
             syncComponents();
             command = nextTick();
@@ -169,27 +216,200 @@ final class Tui4jCodingTerminalModel implements Model {
         } else {
             editor.update(message);
         }
+        if (controller.mouseReportingEnabled() != mouseReportingEnabled) {
+            mouseReportingEnabled = controller.mouseReportingEnabled();
+            command = Command.batch(
+                    mouseReportingEnabled ? Command.enableMouseAllMotion() : Command.disableMouse(), command);
+        }
         if (controller.state().exitRequested()) {
+            clearSelection();
             return UpdateResult.from(this, Command.quit());
         }
         return UpdateResult.from(this, command);
     }
 
     private Command mouse(MouseMessage mouse) {
-        if (!mouse.isWheel()) {
+        if (!mouseReportingEnabled) {
             return Command.none();
         }
-        if (mouse.getButton() == MouseButton.MouseButtonWheelUp) {
-            requestTranscriptScroll(-transcript.getMouseWheelDelta());
-        } else if (mouse.getButton() == MouseButton.MouseButtonWheelDown) {
-            requestTranscriptScroll(transcript.getMouseWheelDelta());
+        Tui4jTerminalView.TranscriptRegion region = view.transcriptRegion();
+        if (mouse.isWheel()) {
+            if (!region.contains(mouse.row(), mouse.column())) {
+                return Command.none();
+            }
+            if (mouse.getButton() == MouseButton.MouseButtonWheelUp) {
+                requestTranscriptScroll(-transcript.getMouseWheelDelta());
+            } else if (mouse.getButton() == MouseButton.MouseButtonWheelDown) {
+                requestTranscriptScroll(transcript.getMouseWheelDelta());
+            }
+            return Command.none();
+        }
+        if (controller.secureInputRequested()) {
+            clearSelection();
+            return Command.none();
+        }
+        if (mouse.getAction() == MouseAction.MouseActionPress && mouse.getButton() == MouseButton.MouseButtonLeft) {
+            Optional<TerminalTextSelection.Point> point = transcriptPoint(mouse, false);
+            if (point.isEmpty()) {
+                clearSelection();
+                return Command.none();
+            }
+            if (selection.selecting()) {
+                // Some Windows terminal backends encode drag motion as another press event.
+                // Keep the original anchor so the drag grows instead of restarting at the cursor.
+                selection.extend(point.orElseThrow());
+                return updateSelectionAutoScroll(mouse, region);
+            }
+            stopSelectionAutoScroll();
+            selection.start(point.orElseThrow());
+            return Command.none();
+        }
+        if (mouse.getAction() == MouseAction.MouseActionMotion && selection.selecting()) {
+            transcriptPoint(mouse, true).ifPresent(selection::extend);
+            return updateSelectionAutoScroll(mouse, region);
+        }
+        if (mouse.getAction() == MouseAction.MouseActionRelease && selection.selecting()) {
+            transcriptPoint(mouse, true).ifPresent(selection::finish);
+            stopSelectionAutoScroll();
+            Optional<Integer> clickedRow =
+                    selection.range().map(range -> range.start().row());
+            if (selection.isClick()) {
+                clearSelection();
+                if (isTranscriptContentRow(mouse)) {
+                    clickedRow.ifPresent(row -> view.toggleableItemAt(row).ifPresent(itemId -> {
+                        controller.toggleTranscriptItem(itemId);
+                        syncComponents();
+                    }));
+                }
+                return Command.none();
+            }
+            return Command.none();
         }
         return Command.none();
+    }
+
+    private Command copySelectedText() {
+        Optional<String> text = selection
+                .range()
+                .flatMap(range -> TerminalScreenCells.selectedText(
+                        transcriptContent, range, TerminalScreenCells.DEFAULT_MAX_COPY_CHARACTERS));
+        if (text.isEmpty()) {
+            applyCopyFeedback("selection too large to copy");
+            return Command.none();
+        }
+        clearSelection();
+        syncComponents();
+        return copySelection(text.orElseThrow());
+    }
+
+    private Command copySelection(String text) {
+        return () -> new ClipboardCopyResultMessage(clipboard.copy(text), text.codePointCount(0, text.length()), text);
+    }
+
+    private Command completeCopy(ClipboardCopyResultMessage copied) {
+        if (copied.success()) {
+            applyCopyFeedback("copied " + copied.characters() + " chars");
+            return Command.none();
+        }
+        String encoded =
+                Base64.getEncoder().encodeToString(copied.text().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        applyCopyFeedback("copied via terminal (OSC 52)");
+        return Command.printf("\u001B]52;c;" + encoded + "\u0007");
+    }
+
+    private void applyCopyFeedback(String message) {
+        pump.offer(new TerminalUiAction.StatusChanged(message));
+        syncComponents();
+    }
+
+    private Optional<TerminalTextSelection.Point> transcriptPoint(MouseMessage mouse, boolean clampToRegion) {
+        Tui4jTerminalView.TranscriptRegion region = view.transcriptRegion();
+        if (region.height() < 1 || region.width() < 1) {
+            return Optional.empty();
+        }
+        if (!clampToRegion && !region.contains(mouse.row(), mouse.column())) {
+            return Optional.empty();
+        }
+        int lastRow = TerminalScreenCells.lineCount(transcriptContent) - 1;
+        if (lastRow < 0) {
+            return Optional.empty();
+        }
+        int visibleRow = region.relativeRow(region.clampRow(mouse.row()));
+        int logicalRow = Math.max(0, Math.min(lastRow, transcript.getYOffset() + visibleRow));
+        int column = region.clampColumn(mouse.column()) - region.leftColumn();
+        return Optional.of(new TerminalTextSelection.Point(logicalRow, column));
+    }
+
+    private boolean isTranscriptContentRow(MouseMessage mouse) {
+        Tui4jTerminalView.TranscriptRegion region = view.transcriptRegion();
+        if (!region.contains(mouse.row(), mouse.column())) {
+            return false;
+        }
+        int logicalRow = transcript.getYOffset() + region.relativeRow(mouse.row());
+        return logicalRow >= 0 && logicalRow < TerminalScreenCells.lineCount(transcriptContent);
+    }
+
+    private Command updateSelectionAutoScroll(MouseMessage mouse, Tui4jTerminalView.TranscriptRegion region) {
+        int direction = mouse.row() <= region.topRow() ? -1 : mouse.row() >= region.bottomRow() ? 1 : 0;
+        selectionAutoScrollColumn = Math.max(0, region.clampColumn(mouse.column()) - region.leftColumn());
+        if (direction == 0) {
+            stopSelectionAutoScroll();
+            return Command.none();
+        }
+        if (selectionAutoScrollDirection == direction) {
+            return Command.none();
+        }
+        selectionAutoScrollDirection = direction;
+        long sequence = ++selectionAutoScrollSequence;
+        return selectionAutoScrollTick(sequence);
+    }
+
+    private Command continueSelectionAutoScroll(SelectionAutoScrollMessage scrolling) {
+        if (scrolling.sequence() != selectionAutoScrollSequence
+                || selectionAutoScrollDirection == 0
+                || !selection.selecting()) {
+            return Command.none();
+        }
+        if ((selectionAutoScrollDirection < 0 && transcript.atTop())
+                || (selectionAutoScrollDirection > 0 && transcript.atBottom())) {
+            stopSelectionAutoScroll();
+            return Command.none();
+        }
+        requestTranscriptScroll(selectionAutoScrollDirection);
+        Tui4jTerminalView.TranscriptRegion region = view.transcriptRegion();
+        int nextOffset = Math.max(
+                0, Math.min(transcript.getMaxYOffset(), transcript.getYOffset() + selectionAutoScrollDirection));
+        int visibleRow = selectionAutoScrollDirection < 0 ? 0 : Math.max(0, region.height() - 1);
+        int row = Math.min(TerminalScreenCells.lineCount(transcriptContent) - 1, nextOffset + visibleRow);
+        selection.extend(new TerminalTextSelection.Point(Math.max(0, row), selectionAutoScrollColumn));
+        return selectionAutoScrollTick(scrolling.sequence());
+    }
+
+    private Command selectionAutoScrollTick(long sequence) {
+        return Command.tick(SELECTION_AUTO_SCROLL_INTERVAL, ignored -> new SelectionAutoScrollMessage(sequence));
+    }
+
+    private void stopSelectionAutoScroll() {
+        selectionAutoScrollDirection = 0;
+        selectionAutoScrollSequence++;
+    }
+
+    void clearSelection() {
+        selection.clear();
+        stopSelectionAutoScroll();
     }
 
     @Override
     public String view() {
         TerminalUiState state = controller.state();
+        String desiredTranscript = selection
+                .range()
+                .map(range -> TerminalScreenCells.highlight(transcriptContent, range))
+                .orElse(transcriptContent);
+        if (!desiredTranscript.equals(displayedTranscriptContent)) {
+            transcript.setContent(desiredTranscript);
+            displayedTranscriptContent = desiredTranscript;
+        }
         int requestedScrollRows = pendingTranscriptScrollRows;
         pendingTranscriptScrollRows = 0;
         Duration elapsed = activityElapsed(state);
@@ -206,7 +426,8 @@ final class Tui4jCodingTerminalModel implements Model {
                 requestedScrollRows,
                 secureInput,
                 isUpdate,
-                secureInputHint);
+                secureInputHint,
+                mouseReportingEnabled);
         if (requestedScrollRows > 0 && transcript.atBottom()) {
             followTranscript = true;
             newOutputPending = false;
@@ -234,6 +455,10 @@ final class Tui4jCodingTerminalModel implements Model {
     }
 
     private Command key(KeyPressMessage key) {
+        if (key.type() == KeyType.keyESC && selection.range().isPresent()) {
+            clearSelection();
+            return Command.none();
+        }
         if (pendingEnter != null && isUnbracketedPasteContinuation(key)) {
             resolvePendingEnterAsNewline();
             if (key.type() == KeyType.keyLF) {
@@ -250,8 +475,7 @@ final class Tui4jCodingTerminalModel implements Model {
             if ("completion".equals(state.selector().orElseThrow().kind()) && editCompletion(key)) {
                 return Command.none();
             }
-            selectorKey(key);
-            return Command.none();
+            return selectorKey(key);
         }
 
         if (shortcuts.matchesCommandPalette(key)) {
@@ -343,6 +567,9 @@ final class Tui4jCodingTerminalModel implements Model {
             return Command.none();
         }
         if (key.type() == KeyType.keyETX) {
+            if (selection.range().isPresent()) {
+                return copySelectedText();
+            }
             accept(TerminalInput.Kind.INTERRUPT);
             return Command.none();
         }
@@ -414,14 +641,18 @@ final class Tui4jCodingTerminalModel implements Model {
             moveCursor(TerminalTextCursor.lineEnd(state.editorBuffer(), state.editorCursor()));
             return Command.none();
         }
-        if (key.type() == KeyType.keyBS || key.type() == KeyType.keyDEL) {
+        if (isBackspaceKey(key)) {
             String buffer = state.editorBuffer();
             int cursor = state.editorCursor();
             String token = pastedTokenBefore(buffer, cursor);
             if (token != null) {
                 int start = buffer.indexOf(token);
+                int end = start + token.length();
+                if (end < buffer.length() && buffer.charAt(end) == ' ') {
+                    end++;
+                }
                 pastedContent.remove(token);
-                replaceEditor(buffer.substring(0, start) + buffer.substring(start + token.length()), start);
+                replaceEditor(buffer.substring(0, start) + buffer.substring(end), start);
                 return Command.none();
             }
             int previous = TerminalTextCursor.previous(buffer, cursor);
@@ -434,8 +665,12 @@ final class Tui4jCodingTerminalModel implements Model {
             String token = pastedTokenAfter(buffer, cursor);
             if (token != null) {
                 int start = buffer.indexOf(token);
+                int end = start + token.length();
+                if (end < buffer.length() && buffer.charAt(end) == ' ') {
+                    end++;
+                }
                 pastedContent.remove(token);
-                replaceEditor(buffer.substring(0, start) + buffer.substring(start + token.length()), start);
+                replaceEditor(buffer.substring(0, start) + buffer.substring(end), start);
                 return Command.none();
             }
             replaceEditor(TerminalTextCursor.delete(buffer, cursor), cursor);
@@ -558,6 +793,11 @@ final class Tui4jCodingTerminalModel implements Model {
             }
             updated = buffer.substring(0, cursor) + inserted + buffer.substring(cursor);
             updatedCursor = cursor + inserted.length();
+        } else if (key.type() == KeyType.KeySpace) {
+            // tui4j reports Space as KeySpace, not KeyRunes. Without this branch the completion
+            // selector swallows the space, so "/rename <arg>" would become "/rename<arg>".
+            updated = buffer.substring(0, cursor) + " " + buffer.substring(cursor);
+            updatedCursor = cursor + 1;
         } else if (key.type() == KeyType.keyBS || key.type() == KeyType.keyDEL) {
             updatedCursor = TerminalTextCursor.previous(buffer, cursor);
             updated = TerminalTextCursor.backspace(buffer, cursor);
@@ -583,10 +823,101 @@ final class Tui4jCodingTerminalModel implements Model {
         return true;
     }
 
-    private void selectorKey(KeyPressMessage key) {
+    private Command selectorKey(KeyPressMessage key) {
+        boolean providerSearch = controller
+                .state()
+                .selector()
+                .map(selector -> "auth-provider".equals(selector.kind()))
+                .orElse(false);
+        if (providerSearch) {
+            if (key.type() == KeyType.KeyRunes) {
+                char[] runes = key.runes();
+                if (runes != null) {
+                    controller.accept(new TerminalInput(TerminalInput.Kind.SELECTOR_FILTER, new String(runes)));
+                    syncComponents();
+                    return Command.none();
+                }
+            }
+            if (key.type() == KeyType.keyBS || key.type() == KeyType.keyDEL) {
+                accept(TerminalInput.Kind.SELECTOR_BACKSPACE);
+                return Command.none();
+            }
+        }
+        boolean authorizationWait = controller
+                .state()
+                .selector()
+                .map(selector -> "auth-wait".equals(selector.kind()))
+                .orElse(false);
+        if (authorizationWait) {
+            if (key.type() == KeyType.keyESC || key.type() == KeyType.keyETX) {
+                controller.cancelAuthentication();
+                return Command.none();
+            }
+            if (key.type() == KeyType.KeyRunes) {
+                char[] runes = key.runes();
+                if (runes != null && runes.length == 1) {
+                    if (runes[0] == 'c' || runes[0] == 'C') {
+                        return copyAuthorizationLink();
+                    }
+                    if (runes[0] == 'o' || runes[0] == 'O') {
+                        controller.reopenAuthorization();
+                        return Command.none();
+                    }
+                }
+            }
+            if (key.type() == KeyType.keyCR) {
+                int selected = controller.state().selector().orElseThrow().selected();
+                if (selected == 0) {
+                    return copyAuthorizationLink();
+                }
+                if (selected == 1) {
+                    controller.reopenAuthorization();
+                    return Command.none();
+                }
+                controller.cancelAuthentication();
+                return Command.none();
+            }
+        }
+        boolean deviceWait = controller
+                .state()
+                .selector()
+                .map(selector -> "auth-device".equals(selector.kind()))
+                .orElse(false);
+        if (deviceWait) {
+            if (key.type() == KeyType.keyESC || key.type() == KeyType.keyETX) {
+                controller.cancelAuthentication();
+                return Command.none();
+            }
+            if (key.type() == KeyType.KeyRunes) {
+                char[] runes = key.runes();
+                if (runes != null && runes.length == 1) {
+                    if (runes[0] == 'c' || runes[0] == 'C') {
+                        return copyDeviceCode();
+                    }
+                    if (runes[0] == 'l' || runes[0] == 'L') {
+                        return copyVerificationLink();
+                    }
+                    if (runes[0] == 'o' || runes[0] == 'O') {
+                        controller.openVerificationPage();
+                        return Command.none();
+                    }
+                }
+            }
+            if (key.type() == KeyType.keyCR) {
+                int selected = controller.state().selector().orElseThrow().selected();
+                if (selected == 0) {
+                    return copyDeviceCode();
+                }
+                if (selected == 1) {
+                    return copyVerificationLink();
+                }
+                controller.cancelAuthentication();
+                return Command.none();
+            }
+        }
         if (shortcuts.matchesToggleExpansion(key)) {
             accept(TerminalInput.Kind.TOGGLE_EXPANSION);
-            return;
+            return Command.none();
         }
         if (key.type() == KeyType.KeyUp) {
             accept(TerminalInput.Kind.SELECT_PREVIOUS);
@@ -601,6 +932,37 @@ final class Tui4jCodingTerminalModel implements Model {
         } else if (key.type() == KeyType.keyETX) {
             accept(TerminalInput.Kind.INTERRUPT);
         }
+        return Command.none();
+    }
+
+    private Command copyAuthorizationLink() {
+        return copyText(
+                controller.authorizationUri(),
+                "Authorization link has expired; reconnect",
+                "Authorization link copied");
+    }
+
+    private Command copyDeviceCode() {
+        return copyText(controller.deviceCode(), "Device code has expired; reconnect", "Device code copied");
+    }
+
+    private Command copyVerificationLink() {
+        return copyText(controller.verificationUri(), "Browser link has expired; reconnect", "Browser link copied");
+    }
+
+    private Command copyText(Optional<String> value, String missingMessage, String successMessage) {
+        if (value.isEmpty()) {
+            applyCopyFeedback(missingMessage);
+            return Command.none();
+        }
+        if (clipboard.copy(value.orElseThrow())) {
+            applyCopyFeedback(successMessage);
+            return Command.none();
+        }
+        applyCopyFeedback("Copied via terminal: " + successMessage);
+        String encoded = Base64.getEncoder()
+                .encodeToString(value.orElseThrow().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        return Command.printf("\u001B]52;c;" + encoded + "\u0007");
     }
 
     private Command edit(Message message) {
@@ -611,6 +973,20 @@ final class Tui4jCodingTerminalModel implements Model {
         String after = editor.value();
         int afterCursor = cursorAfter(message, before, beforeCursor, after);
         if (lostPastedToken(before, after)) {
+            if (message instanceof KeyPressMessage key && isBackspaceKey(key)) {
+                for (String token : List.copyOf(pastedContent.keySet())) {
+                    if (before.contains(token) && !after.contains(token)) {
+                        int start = before.indexOf(token);
+                        int end = start + token.length();
+                        if (end < before.length() && before.charAt(end) == ' ') {
+                            end++;
+                        }
+                        pastedContent.remove(token);
+                        replaceEditor(before.substring(0, start) + before.substring(end), start);
+                        return Command.none();
+                    }
+                }
+            }
             rejectProtectedPaste(before, beforeCursor);
             return Command.none();
         }
@@ -777,11 +1153,29 @@ final class Tui4jCodingTerminalModel implements Model {
                         && preserved.map(p -> !p.contains(token)).orElse(true));
     }
 
+    private static boolean isBackspaceKey(KeyPressMessage key) {
+        if (key.type() == KeyType.keyBS || key.type() == KeyType.keyDEL) {
+            return true;
+        }
+        if ("backspace".equalsIgnoreCase(key.key())) {
+            return true;
+        }
+        if (key.type() == KeyType.KeyRunes) {
+            char[] runes = key.runes();
+            return runes != null && runes.length == 1 && (runes[0] == '\b' || runes[0] == 0x7f);
+        }
+        return false;
+    }
+
     private String pastedTokenBefore(String buffer, int cursor) {
         for (String token : pastedContent.keySet()) {
             int start = buffer.indexOf(token);
-            if (start >= 0 && start < cursor && cursor <= start + token.length()) {
-                return token;
+            if (start >= 0) {
+                int end = start + token.length();
+                if ((start < cursor && cursor <= end)
+                        || (cursor == end + 1 && end < buffer.length() && buffer.charAt(end) == ' ')) {
+                    return token;
+                }
             }
         }
         return null;
@@ -790,8 +1184,11 @@ final class Tui4jCodingTerminalModel implements Model {
     private String pastedTokenAfter(String buffer, int cursor) {
         for (String token : pastedContent.keySet()) {
             int start = buffer.indexOf(token);
-            if (start >= 0 && start <= cursor && cursor < start + token.length()) {
-                return token;
+            if (start >= 0) {
+                int end = start + token.length();
+                if (start <= cursor && cursor < end) {
+                    return token;
+                }
             }
         }
         return null;
@@ -870,9 +1267,12 @@ final class Tui4jCodingTerminalModel implements Model {
 
         int effectiveTranscriptColumns =
                 (state.sidebarVisible() && state.columns() >= 100) ? state.columns() - 42 : state.columns();
-        boolean transcriptChanged =
-                renderedTranscript != state.transcript() || renderedTranscriptColumns != effectiveTranscriptColumns;
+        boolean columnsChanged = renderedTranscriptColumns != effectiveTranscriptColumns;
+        boolean transcriptChanged = renderedTranscript != state.transcript() || columnsChanged;
         if (transcriptChanged) {
+            if (columnsChanged) {
+                clearSelection();
+            }
             String nextTranscript = view.transcriptContent(state);
             if (!nextTranscript.equals(transcriptContent)) {
                 transcript.setContent(nextTranscript);
@@ -927,6 +1327,26 @@ final class Tui4jCodingTerminalModel implements Model {
      * resize with no change does not make the tui4j renderer clear its line cache and repaint.
      */
     Message filterMessage(Message message) {
+        if (message instanceof KeyPressMessage key
+                && key.type() == KeyType.keyETX
+                && !controller.secureInputRequested()) {
+            // Ctrl-C is handled through the terminal SIGINT handler below so the
+            // signal-driven QuitMessage cannot race the copy and exit the process.
+            return null;
+        }
+        if (message instanceof QuitMessage) {
+            if (controller.secureInputRequested()) {
+                return null;
+            }
+            if (!controller.state().exitRequested()) {
+                return new CtrlCRequestedMessage();
+            }
+        }
+        if (message instanceof MouseMessage mouse
+                && mouse.getAction() == MouseAction.MouseActionMotion
+                && !selection.selecting()) {
+            return null;
+        }
         if (message instanceof WindowSizeMessage size
                 && size.width() == controller.state().columns()
                 && size.height() == controller.state().rows()) {
@@ -951,6 +1371,12 @@ final class Tui4jCodingTerminalModel implements Model {
     }
 
     record PollMessage() implements Message {}
+
+    private record CtrlCRequestedMessage() implements Message {}
+
+    record SelectionAutoScrollMessage(long sequence) implements Message {}
+
+    record ClipboardCopyResultMessage(boolean success, int characters, String text) implements Message {}
 
     private record DeferredEnter(long sequence, TerminalInput.Kind kind) {}
 

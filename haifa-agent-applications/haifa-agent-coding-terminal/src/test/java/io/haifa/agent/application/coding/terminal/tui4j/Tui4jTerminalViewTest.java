@@ -16,11 +16,18 @@ import io.haifa.agent.application.coding.terminal.state.PendingMessage;
 import io.haifa.agent.application.coding.terminal.state.TerminalActivity;
 import io.haifa.agent.application.coding.terminal.state.TerminalFooter;
 import io.haifa.agent.application.coding.terminal.state.TerminalSelector;
+import io.haifa.agent.application.coding.terminal.state.TerminalSelectorDetail;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiReducer;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
 import io.haifa.agent.application.coding.terminal.state.TranscriptItem;
+import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
+import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.core.session.AgentSessionStatus;
+import io.haifa.agent.project.domain.ProjectId;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -177,6 +184,50 @@ class Tui4jTerminalViewTest {
     }
 
     @Test
+    void rendersConnectionCenterCategoriesBadgesAndDescriptions() {
+        TerminalUiState initial = TerminalUiState.initial(88, 30);
+        TerminalUiState state = withSelector(
+                initial,
+                new TerminalSelector(
+                        "auth-provider",
+                        "Connect a model",
+                        List.of("ChatGPT", "Antigravity", "DeepSeek"),
+                        0,
+                        List.of(
+                                new TerminalSelectorDetail(
+                                        "Subscription · No API key required", "Recommended", "Subscription"),
+                                new TerminalSelectorDetail("Subscription · No API key required", "", "Subscription"),
+                                new TerminalSelectorDetail("API Key · Pay as you go", "Current", "API Key"))));
+
+        String rendered = view.render(state, transcript(state), editor(88), true, false);
+
+        assertThat(rendered)
+                .contains(
+                        "Subscription", "API Key", "ChatGPT", "[Recommended]", "Antigravity", "DeepSeek", "[Current]");
+    }
+
+    @Test
+    void keepsConnectionCenterUsableAtMinimumSize() {
+        TerminalUiState initial = TerminalUiState.initial(60, 16);
+        TerminalUiState state = withSelector(
+                initial,
+                new TerminalSelector(
+                        "auth-provider",
+                        "Connect a model",
+                        List.of("ChatGPT", "DeepSeek"),
+                        0,
+                        List.of(
+                                new TerminalSelectorDetail(
+                                        "Subscription · No API key required", "Recommended", "Subscription"),
+                                new TerminalSelectorDetail("API Key · Pay as you go", "", "API Key"))));
+
+        String rendered = view.render(state, transcript(state), editor(60), true, false);
+
+        assertThat(rendered).contains("Connect a model", "ChatGPT", "enter select");
+        assertThat(rendered.lines()).hasSizeLessThanOrEqualTo(16);
+    }
+
+    @Test
     void usesAStableDiagnosticBelowThePrototypeMinimumSize() {
         TerminalUiState state = TerminalUiState.initial(40, 10);
 
@@ -275,10 +326,10 @@ class Tui4jTerminalViewTest {
         Viewport transcript = transcript(state);
 
         String firstTime = view.render(state, transcript, editor(80), true, false, Duration.ZERO, 0, true, false);
-        assertThat(firstTime).contains("enter submit · escape cancel").doesNotContain("enter send", "enter update");
+        assertThat(firstTime).contains("Enter submit · Esc cancel").doesNotContain("enter send", "Enter update");
 
         String update = view.render(state, transcript, editor(80), true, false, Duration.ZERO, 0, true, true);
-        assertThat(update).contains("enter update · escape cancel").doesNotContain("enter send", "enter submit");
+        assertThat(update).contains("Enter update · Esc cancel").doesNotContain("enter send", "Enter submit");
     }
 
     @Test
@@ -476,12 +527,13 @@ class Tui4jTerminalViewTest {
                 .containsSubsequence(
                         "You",
                         "Assistant",
-                        "✓ workspace.read",
-                        "● mvn test",
+                        "✓ [workspace.read]",
+                        "● [mvn test]",
                         "Approval · SHELL [pending]",
                         "Resource · Test report [exported]",
                         "Error · Tool failed [failed]")
-                .contains("ctrl+o expand")
+                .contains("›")
+                .doesNotContain("ctrl+o expand")
                 .doesNotContain("\u001B");
     }
 
@@ -516,19 +568,57 @@ class Tui4jTerminalViewTest {
                 initial.exitRequested());
 
         String content = view.transcriptContent(state);
-        String withoutBlockPadding =
-                content.lines().map(String::strip).collect(java.util.stream.Collectors.joining("\n"));
+        List<String> lines = content.lines()
+                .map(String::strip)
+                .filter(line -> !line.isBlank())
+                .toList();
 
-        assertThat(withoutBlockPadding)
-                .isEqualTo(
-                        """
-                        ✓ file_stat · ctrl+o expand
-                        ✓ file_read · README.md · ctrl+o expand""")
-                .doesNotContain("Target:");
+        assertThat(lines).hasSize(2);
+        assertThat(lines.get(0)).contains("[file_stat]", "›").doesNotContain("Target:");
+        assertThat(lines.get(1)).contains("[file_read]", "README.md", "›").doesNotContain("Target:");
+        assertThat(content).doesNotContain("ctrl+o expand");
     }
 
     @Test
-    void showsOneCollapsedBodyPreviewLineForToolAndExecutionCards() {
+    void mapsClickRowsToTheCorrectTranscriptItems() {
+        TerminalUiState state = withTranscript(
+                defaultState(),
+                List.of(
+                        item("tool-1", TranscriptItem.Kind.TOOL, "file_read · a", "Output:\na", "SUCCEEDED", false),
+                        item("tool-2", TranscriptItem.Kind.TOOL, "file_read · b", "Output:\nb", "SUCCEEDED", false),
+                        item("tool-3", TranscriptItem.Kind.TOOL, "file_read · c", "Output:\nc", "SUCCEEDED", false)));
+
+        view.transcriptContent(state);
+
+        assertThat(view.toggleableItemAt(0)).contains("tool-1");
+        assertThat(view.toggleableItemAt(1)).contains("tool-2");
+        assertThat(view.toggleableItemAt(2)).contains("tool-3");
+    }
+
+    @Test
+    void keepsNonZeroExitCodeWhenTheTargetCannotFit() {
+        String target = "x".repeat(120);
+        TerminalUiState state = withTranscript(
+                TerminalUiState.initial(60, 30),
+                List.of(new TranscriptItem(
+                        "exec-1",
+                        TranscriptItem.Kind.EXECUTION,
+                        "execution_run · " + target,
+                        "Command exited (exit 1)",
+                        "EXITED",
+                        false,
+                        Optional.empty(),
+                        Optional.of(1_000L),
+                        Optional.of(850L),
+                        Optional.of(1))));
+
+        String content = view.transcriptContent(state);
+
+        assertThat(content).contains("exit 1", "850 ms", "›").doesNotContain(target);
+    }
+
+    @Test
+    void keepsCollapsedToolAndExecutionCardsToOneLineWithoutBodyPreview() {
         TerminalUiState toolState = withTranscript(
                 defaultState(),
                 List.of(new TranscriptItem(
@@ -558,21 +648,26 @@ class Tui4jTerminalViewTest {
         String toolContent = view.transcriptContent(toolState);
         String executionContent = view.transcriptContent(executionState);
 
+        assertThat(toolContent.lines().filter(line -> !line.isBlank()).count()).isEqualTo(1);
         assertThat(toolContent)
-                .contains("✓ file_read · README.md · ctrl+o expand", "BUILD SUCCESS")
-                .doesNotContain("Target:", "Result:", "Duration", "· 300 ms");
+                .contains("[file_read]", "README.md", "300 ms", "›")
+                .doesNotContain("BUILD SUCCESS", "Target:", "Result:", "Duration", "ctrl+o expand");
+        assertThat(executionContent.lines().filter(line -> !line.isBlank()).count())
+                .isEqualTo(1);
         assertThat(executionContent)
-                .contains("M src/App.java")
+                .contains("[execution_run]", "./mvnw test", "›")
                 .doesNotContain(
+                        "M src/App.java",
                         "Target:",
                         "Output (streaming):",
                         "[execution output truncated]",
                         "[preview output dropped]",
-                        "Result:");
+                        "Result:",
+                        "ctrl+o expand");
     }
 
     @Test
-    void rendersToolCardsWithNeutralBackgroundAndLocalizedStatusGlyph() {
+    void rendersToolCardsWithLocalizedStatusGlyphAndMutedBadge() {
         Renderer renderer = Renderer.defaultRenderer();
         renderer.setColorProfile(ColorProfile.TrueColor);
         renderer.setHasDarkBackground(true);
@@ -599,15 +694,13 @@ class Tui4jTerminalViewTest {
 
             String stripped = com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(content);
             assertThat(stripped)
-                    .contains("file_stat · local-tmp/test.log · ctrl+o expand")
-                    .contains("Inspected local-tmp/test.log")
-                    .contains("execution_run · ./mvnw test · ctrl+o expand")
-                    .contains("Command exited (exit 0)");
+                    .contains("file_stat", "local-tmp/test.log")
+                    .contains("execution_run", "./mvnw test")
+                    .doesNotContain("Inspected local-tmp/test.log", "Command exited (exit 0)", "ctrl+o expand");
 
-            // Must have foreground color for glyph (e.g. \u001B[38 or \u001B[32)
+            // The status glyph and badge still use foreground/background colors.
             assertThat(content).contains("\u001B[3");
-            // Must NOT have any background fill (no [4 or [10)
-            assertThat(content).doesNotContain("\u001B[4").doesNotContain("\u001B[10");
+            assertThat(content).contains("\u001B[4");
         } finally {
             renderer.setColorProfile(ColorProfile.Ascii);
             renderer.setHasDarkBackground(false);
@@ -615,7 +708,7 @@ class Tui4jTerminalViewTest {
     }
 
     @Test
-    void omitsThePreviewWhenEveryBodyLineIsStructural() {
+    void omitsCollapsedBodyContentWhenEveryLineIsStructural() {
         TerminalUiState state = withTranscript(
                 defaultState(),
                 List.of(new TranscriptItem(
@@ -628,29 +721,32 @@ class Tui4jTerminalViewTest {
 
         String content = view.transcriptContent(state);
 
-        assertThat(content.strip()).isEqualTo("✓ file_write · src/x.java · ctrl+o expand");
+        assertThat(content.lines().filter(line -> !line.isBlank()).count()).isEqualTo(1);
+        assertThat(content.strip())
+                .contains("[file_write]", "src/x.java", "›")
+                .doesNotContain("Target:", "Result:", "ctrl+o expand");
     }
 
     @Test
-    void truncatesTheCollapsedPreviewToTheTranscriptWidth() {
+    void truncatesTheCollapsedToolTitleToTheTranscriptWidth() {
         String longLine = "x".repeat(200);
         TerminalUiState state = withTranscript(
                 defaultState(),
                 List.of(new TranscriptItem(
                         "tool-1",
                         TranscriptItem.Kind.TOOL,
-                        "file_read · big.txt",
-                        "Output:\n" + longLine,
+                        "file_read · " + longLine,
+                        "Output:\ncontent",
                         "SUCCEEDED",
                         false)));
 
         String content = view.transcriptContent(state);
 
-        assertThat(content).contains("…").doesNotContain(longLine);
+        assertThat(content).contains("…", "[file_read]", "›").doesNotContain(longLine);
     }
 
     @Test
-    void hidesCollapsedDurationsAtOrBelowTenSecondsAndAlwaysShowsThemWhenExpanded() {
+    void showsCollapsedDurationsAtEveryDurationAndKeepsThemWhenExpanded() {
         String atThreshold =
                 view.transcriptContent(withTranscript(defaultState(), List.of(toolWithDuration(false, 10_000L))));
         String aboveThreshold =
@@ -658,9 +754,49 @@ class Tui4jTerminalViewTest {
         String shortExpanded =
                 view.transcriptContent(withTranscript(defaultState(), List.of(toolWithDuration(true, 9_000L))));
 
-        assertThat(atThreshold.strip()).isEqualTo("✓ file_read · README.md · ctrl+o expand");
-        assertThat(aboveThreshold).contains("✓ file_read · README.md · 10s · ctrl+o expand");
-        assertThat(shortExpanded).contains("✓ file_read · README.md · 9s");
+        assertThat(atThreshold).contains("[file_read]", "README.md", "10s", "›");
+        assertThat(aboveThreshold).contains("[file_read]", "README.md", "10s", "›");
+        assertThat(shortExpanded).contains("[file_read]", "README.md", "9s", "⌄");
+    }
+
+    @Test
+    void showsNonZeroExitCodeAsMutedFactWithoutMarkingExecutionAsFailure() {
+        TerminalUiState nonZero = withTranscript(
+                defaultState(),
+                List.of(new TranscriptItem(
+                        "exec-1",
+                        TranscriptItem.Kind.EXECUTION,
+                        "execution_run · python -m unittest",
+                        "Command exited (exit 1)\nFAILED",
+                        "EXITED",
+                        false,
+                        Optional.empty(),
+                        Optional.of(1_000L),
+                        Optional.of(850L),
+                        Optional.of(1))));
+        TerminalUiState zero = withTranscript(
+                defaultState(),
+                List.of(new TranscriptItem(
+                        "exec-2",
+                        TranscriptItem.Kind.EXECUTION,
+                        "execution_run · git status",
+                        "Command exited (exit 0)\nclean",
+                        "EXITED",
+                        false,
+                        Optional.empty(),
+                        Optional.of(1_000L),
+                        Optional.of(20L),
+                        Optional.of(0))));
+
+        String nonZeroContent = view.transcriptContent(nonZero);
+        String zeroContent = view.transcriptContent(zero);
+
+        assertThat(nonZeroContent.lines().filter(line -> !line.isBlank()).count())
+                .isEqualTo(1);
+        assertThat(nonZeroContent)
+                .contains("✓", "[execution_run]", "exit 1", "850 ms", "›")
+                .doesNotContain("✗", "Command exited (exit 1)", "ctrl+o expand");
+        assertThat(zeroContent).contains("✓", "[execution_run]", "20 ms", "›").doesNotContain("exit 0");
     }
 
     @Test
@@ -694,8 +830,8 @@ class Tui4jTerminalViewTest {
         String content = view.transcriptContent(state);
 
         assertThat(content)
-                .contains("✗ workspace.read · missing.txt · ctrl+o expand", "Reason: NOT_FOUND", "Result: safe-ref")
-                .doesNotContain("Hidden detail");
+                .contains("✗ [workspace.read] missing.txt", "Reason: NOT_FOUND", "Result: safe-ref")
+                .doesNotContain("Hidden detail", "ctrl+o expand");
     }
 
     @Test
@@ -729,11 +865,8 @@ class Tui4jTerminalViewTest {
         String content = view.transcriptContent(state);
 
         assertThat(content)
-                .contains(
-                        "? execution_run · rm -rf build · ctrl+o expand",
-                        "Outcome: UNKNOWN",
-                        "Reason: AUTOMATIC_REPLAY_FORBIDDEN")
-                .doesNotContain("✓", "✗");
+                .contains("? [execution_run] rm -rf build", "Outcome: UNKNOWN", "Reason: AUTOMATIC_REPLAY_FORBIDDEN")
+                .doesNotContain("✓", "✗", "ctrl+o expand");
     }
 
     @Test
@@ -779,10 +912,8 @@ class Tui4jTerminalViewTest {
 
         assertThat(content)
                 .contains(
-                        "✓ file_read · README.md · 300 ms",
-                        "Duration 300 ms · 2 lines",
-                        "✓ Run completed · 4s · ctrl+o expand")
-                .doesNotContain("Status: COMPLETED");
+                        "[file_read]", "README.md", "300 ms", "Duration 300 ms · 2 lines", "✓ Run completed · 4s", "›")
+                .doesNotContain("Status: COMPLETED", "ctrl+o expand");
     }
 
     @Test
@@ -1032,6 +1163,27 @@ class Tui4jTerminalViewTest {
         assertThat(expanded).contains("line-6", "line-8");
     }
 
+    private TerminalUiState withSelector(TerminalUiState initial, TerminalSelector selector) {
+        return new TerminalUiState(
+                initial.header(),
+                initial.loadedResources(),
+                initial.transcript(),
+                initial.pending(),
+                initial.status(),
+                initial.editorBuffer(),
+                initial.editorCursor(),
+                Optional.of(selector),
+                initial.footer(),
+                initial.columns(),
+                initial.rows(),
+                initial.session(),
+                initial.currentRunId(),
+                initial.appliedCursor(),
+                initial.seenEventIds(),
+                initial.recoverableError(),
+                initial.exitRequested());
+    }
+
     private TerminalUiState withTranscript(TerminalUiState initial, List<TranscriptItem> items) {
         return new TerminalUiState(
                 initial.header(),
@@ -1090,7 +1242,7 @@ class Tui4jTerminalViewTest {
 
         String rendered = view.render(state, transcript(state), editor(120), true, false);
 
-        assertThat(rendered).contains("Resources", "Haifa Agent v0.1.2", "ctrl+x b toggle");
+        assertThat(rendered).contains("Resources", "Haifa Agent v0.1.3", "ctrl+x b toggle");
     }
 
     @Test
@@ -1264,7 +1416,7 @@ class Tui4jTerminalViewTest {
 
         String content = view.transcriptContent(state);
 
-        assertThat(content).contains("✗ file_patch · src/App.java");
+        assertThat(content).contains("✗ [file_patch] src/App.java");
         assertThat(content).contains("-old", "+new");
         // No background sequence anywhere in tool error output
         assertThat(content).doesNotContain("\u001B[4").doesNotContain("\u001B[10");
@@ -1337,6 +1489,168 @@ class Tui4jTerminalViewTest {
         for (String line : lines) {
             assertThat(TextWidth.measureCellWidth(line)).isEqualTo(80);
         }
+    }
+
+    @Test
+    void rendersWorktreeAndWorktreeBranchUnderProjectAndBranchInSidebar() {
+        TerminalUiState state = new TerminalUiState(
+                "Haifa Coding Agent",
+                List.of(),
+                List.of(),
+                List.of(),
+                "Idle",
+                "",
+                0,
+                Optional.empty(),
+                new TerminalFooter(
+                        "D:/workspace/haifa-agent",
+                        "dev",
+                        "D:/worktrees/feat-worktree",
+                        "feat-worktree",
+                        "session",
+                        "queue: 0",
+                        "provider",
+                        "model",
+                        "IDLE",
+                        ""),
+                120,
+                30,
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                java.util.Set.of(),
+                Optional.empty(),
+                TerminalActivity.initial(),
+                false,
+                true,
+                true);
+
+        String rendered = view.render(state, transcript(state), editor(80), true, false);
+
+        assertThat(rendered)
+                .contains("📁 D:/workspace/haifa-agent")
+                .contains("🌿 dev")
+                .contains("🌳 D:/worktrees/feat-worktree")
+                .contains("  🌿 feat-worktree");
+    }
+
+    @Test
+    void rendersDynamicSidebarTitleFromActiveRunTaskSummaryAndUserTranscript() {
+        CodingSessionSummary summary = new CodingSessionSummary(
+                new AgentSessionId("s-1"),
+                new ProjectId("p-1"),
+                "Original Session Name",
+                AgentSessionStatus.ACTIVE,
+                Optional.empty(),
+                Optional.empty(),
+                0,
+                Instant.EPOCH,
+                0);
+        CodingSessionView sessionWithTask = new CodingSessionView(
+                summary,
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                "digest",
+                "profile",
+                new io.haifa.agent.application.project.product.coding.CodingModelSelection(
+                        new io.haifa.agent.application.project.product.coding.CodingModelOption(
+                                "profile", "profile", "cfg", "Configured", java.util.Set.of(), 1),
+                        0,
+                        true),
+                Optional.of("Dynamic Active Task"));
+
+        TerminalUiState runningState = new TerminalUiState(
+                "Haifa Coding Agent",
+                List.of(),
+                List.of(),
+                List.of(),
+                "THINKING",
+                "",
+                0,
+                Optional.empty(),
+                TerminalFooter.empty(),
+                120,
+                30,
+                Optional.of(sessionWithTask),
+                Optional.of(new AgentRunId("r-1")),
+                Optional.empty(),
+                java.util.Set.of(),
+                Optional.empty(),
+                TerminalActivity.initial(),
+                false,
+                true,
+                true);
+
+        String runningRendered = view.render(runningState, transcript(runningState), editor(80), true, false);
+        assertThat(runningRendered).contains("Dynamic Active Task");
+
+        CodingSessionView settledSession = new CodingSessionView(
+                summary,
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                "digest",
+                "profile",
+                sessionWithTask.model(),
+                Optional.empty());
+
+        TerminalUiState settledState = new TerminalUiState(
+                "Haifa Coding Agent",
+                List.of(),
+                List.of(
+                        item("u-1", TranscriptItem.Kind.USER, "You", "First user prompt", "SENT", true),
+                        item("u-2", TranscriptItem.Kind.USER, "You", "Second updated user prompt", "SENT", true)),
+                List.of(),
+                "Idle",
+                "",
+                0,
+                Optional.empty(),
+                TerminalFooter.empty(),
+                120,
+                30,
+                Optional.of(settledSession),
+                Optional.empty(),
+                Optional.empty(),
+                java.util.Set.of(),
+                Optional.empty(),
+                TerminalActivity.initial(),
+                false,
+                true,
+                true);
+
+        String settledRendered = view.render(settledState, transcript(settledState), editor(80), true, false);
+        assertThat(settledRendered).contains("Second updated user prompt");
+    }
+
+    @Test
+    void rendersArmedInterruptHintWhenCancelArmed() {
+        TerminalUiState armedState = new TerminalUiState(
+                "Haifa Coding Agent",
+                List.of(),
+                List.of(),
+                List.of(),
+                "Press esc again to cancel",
+                "",
+                0,
+                Optional.empty(),
+                TerminalFooter.empty(),
+                80,
+                24,
+                Optional.empty(),
+                Optional.of(new AgentRunId("r-1")),
+                Optional.empty(),
+                java.util.Set.of(),
+                Optional.empty(),
+                TerminalActivity.initial(),
+                false,
+                false,
+                false,
+                "dark",
+                true);
+
+        String rendered = view.render(armedState, transcript(armedState), editor(80), true, false);
+        assertThat(rendered).contains("again to interrupt");
     }
 
     private TranscriptItem item(

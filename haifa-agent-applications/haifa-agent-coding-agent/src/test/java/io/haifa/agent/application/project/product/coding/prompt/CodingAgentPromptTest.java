@@ -11,12 +11,17 @@ class CodingAgentPromptTest {
         CodingAgentPrompt.Snapshot second = CodingAgentPrompt.current();
 
         assertThat(second).isEqualTo(first);
-        assertThat(first.version()).isEqualTo("1.8.4");
+        assertThat(first.version()).isEqualTo("1.8.5");
         assertThat(first.digest()).matches("sha256:[0-9a-f]{64}");
-        assertThat(first.identity()).startsWith("coding-agent-prompt@1.8.4#sha256:");
+        assertThat(first.identity()).startsWith("coding-agent-prompt@1.8.5#sha256:");
         assertThat(first.text())
                 .contains(
                         "You are Haifa Coding Agent",
+                        "Tool Call Descriptions",
+                        "concise, user-facing explanation",
+                        "Describe intent, not a completed outcome",
+                        "without additional",
+                        "model requests",
                         "complete task contract as the source of truth",
                         "Correct core logic alone is insufficient",
                         "compact, risk-proportionate checklist",

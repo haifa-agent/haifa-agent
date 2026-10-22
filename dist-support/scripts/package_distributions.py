@@ -198,10 +198,10 @@ CA_CONFIG_SOURCE = (
 # Deployment overrides applied on top of the canonical CLI distribution template.
 # Only values accepted by the CLI configuration validators may be used here.
 # execution.maxTimeoutMillis stays within ExecutionLimits.MAXIMUM_ALLOWED_TIMEOUT (2 hours);
-# runtime.maxWallTimeMillis keeps the one-shot task wall time at 30 minutes.
+# runtime.maxWallTimeMillis keeps the one-shot task wall time at 24 hours.
 CA_SECTION_VALUE_OVERRIDES = {
     "execution": {"maxTimeoutMillis": "7200000"},
-    "runtime": {"maxWallTimeMillis": "1800000"},
+    "runtime": {"maxWallTimeMillis": "86400000"},
     "approval": {"threshold": "high"},
 }
 

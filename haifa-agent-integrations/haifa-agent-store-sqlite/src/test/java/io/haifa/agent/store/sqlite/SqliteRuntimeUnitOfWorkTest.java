@@ -230,6 +230,44 @@ class SqliteRuntimeUnitOfWorkTest {
     }
 
     @Test
+    void queuedWriterToleratesContentionBeyondOneBusyTimeout() throws Exception {
+        Path database = directory.resolve("queued-busy.db");
+        try (SqliteStoreFoundation foundation = SqliteStoreFoundation.initialize(
+                new SqliteStoreConfiguration(database, 800, 4 * 1024 * 1024), java.time.Clock.systemUTC())) {
+            CountDownLatch holderRunning = new CountDownLatch(1);
+            AtomicReference<Throwable> holderFailure = new AtomicReference<>();
+            Thread holder = Thread.ofVirtual().start(() -> {
+                try {
+                    foundation.unitOfWork().execute(() -> {
+                        holderRunning.countDown();
+                        try {
+                            Thread.sleep(1_200);
+                        } catch (InterruptedException exception) {
+                            Thread.currentThread().interrupt();
+                        }
+                        return null;
+                    });
+                } catch (Throwable exception) {
+                    holderFailure.set(exception);
+                    holderRunning.countDown();
+                }
+            });
+            assertThat(holderRunning.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(holderFailure.get()).isNull();
+
+            AtomicInteger workCalls = new AtomicInteger();
+            foundation.unitOfWork().execute(() -> {
+                workCalls.incrementAndGet();
+                return null;
+            });
+
+            holder.join();
+            assertThat(holderFailure.get()).isNull();
+            assertThat(workCalls).hasValue(1);
+        }
+    }
+
+    @Test
     void closingManagedMyBatisSessionDoesNotCloseCommitOrRollbackUowConnection() throws Exception {
         SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory);
         try (Connection connection = foundation.connections().openConnection()) {

@@ -66,6 +66,7 @@ import io.haifa.agent.runtime.core.tool.ToolInputValidationException;
 import io.haifa.agent.runtime.core.tool.ToolPipeline;
 import io.haifa.agent.runtime.core.tool.ToolPipelineOutcome;
 import io.haifa.agent.runtime.core.tool.ToolPolicyDeniedException;
+import io.haifa.agent.runtime.core.tool.ToolTargetSummary;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -846,7 +847,7 @@ public final class DecisionExecutor {
                             "reasonCode",
                             stopReasonCode(signal),
                             "targetSummary",
-                            call.toolName(),
+                            ToolTargetSummary.from(call),
                             "resultRef",
                             ""),
                     time.now());
@@ -904,7 +905,7 @@ public final class DecisionExecutor {
                             "reasonCode",
                             reasonCode,
                             "targetSummary",
-                            sibling.toolName(),
+                            ToolTargetSummary.from(sibling),
                             "resultRef",
                             ""),
                     time.now());
@@ -1167,7 +1168,7 @@ public final class DecisionExecutor {
                         "reasonCode",
                         reasonCode,
                         "targetSummary",
-                        targetSummary,
+                        targetSummary == null || targetSummary.isBlank() ? ToolTargetSummary.from(call) : targetSummary,
                         "resultRef",
                         resultRef),
                 time.now());

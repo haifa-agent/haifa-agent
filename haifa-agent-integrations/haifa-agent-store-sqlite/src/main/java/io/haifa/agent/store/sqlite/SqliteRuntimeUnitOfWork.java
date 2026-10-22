@@ -17,7 +17,8 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
     private static final Logger LOGGER = LoggerFactory.getLogger(SqliteRuntimeUnitOfWork.class);
     private static final AtomicLong UNIT_OF_WORK_IDS = new AtomicLong();
     private static final long SLOW_OPERATION_MILLIS = 50;
-    private static final int MAX_BEGIN_ATTEMPTS = 2;
+    /** Cross-process retry budget; shared with the in-process writer queue so the tolerated window stays identical. */
+    private static final int MAX_BEGIN_ATTEMPTS = SqliteConnectionFactory.WRITER_SLOT_ATTEMPTS;
 
     private final SqliteConnectionFactory connections;
     private final SqliteMyBatisSessionFactory myBatis;
@@ -106,7 +107,12 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
             Context context = new Context(unitOfWorkId, connection, session, mode == TransactionMode.READ_ONLY);
             active.set(context);
             boolean transactionStarted = false;
+            boolean writerHeld = false;
             try {
+                if (mode == TransactionMode.WRITE) {
+                    connections.acquireWriter();
+                    writerHeld = true;
+                }
                 long phaseStarted = System.nanoTime();
                 begin(connection, mode);
                 long beginMillis = elapsedMillis(phaseStarted);
@@ -147,6 +153,9 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
                 throw new SqliteStoreException(
                         SqliteStoreFailure.TRANSACTION_FAILED, "SQLite unit of work failed", exception);
             } finally {
+                if (writerHeld) {
+                    connections.releaseWriter();
+                }
                 active.remove();
             }
         } catch (SQLException exception) {

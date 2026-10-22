@@ -21,7 +21,9 @@ class TerminalRecoveryTest {
 
         assertThat(recovery.category()).isEqualTo(TerminalRecovery.Category.USER_ACTION_REQUIRED);
         assertThat(recovery.code()).isEqualTo("MODEL_AUTHENTICATION_REQUIRED");
-        assertThat(recovery.action()).isEqualTo("未登录/凭据不可用；运行 /model 切换可用模型，或运行 /login 登录后继续原草稿。");
+        assertThat(recovery.action())
+                .isEqualTo(
+                        "Not signed in or credentials unavailable; run /connect to connect or sign in again, or run /model to switch models.");
     }
 
     @Test

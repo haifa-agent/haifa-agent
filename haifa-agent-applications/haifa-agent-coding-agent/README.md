@@ -52,7 +52,11 @@ Runtime 只保留确定性的收尾事实（未完成 ToolCall/Interaction/Child
 预算/资源耗尽和结构化输出协议），不再判断开放式开发任务是否业务完成。修改工作区不会隐式产生
 commit、push 或 PR 意图。
 
-`execution_run` 4.0.0 按可信有效操作族限制每通道输出：INSPECT 使用模型输出预算 1×、DIFF 4×，
+内置工具输入 Schema 提供可选的 LLM `description` 字段：模型在发起工具调用时生成一句面向用户的操作意图说明；
+Runtime 将其作为展示用 `intentSummary` 投影到 Tool 生命周期事件，Coding Terminal 折叠卡片优先显示该说明，
+再回退到既有安全 Target Summary。该字段不参与 Policy、授权、成功判定或 Schema Repair 必填约束。
+
+`execution_run` 4.1.0 按可信有效操作族限制每通道输出：INSPECT 使用模型输出预算 1×、DIFF 4×，
 TEST/BUILD/MUTATE/UNKNOWN 8×，同时受硬上限约束。Diff 结果提供观察到的文件/分块数、计数是否完整和
 可选 Artifact Ref；截断后必须使用返回引用或更窄的分页命令，不能把观察计数当作完整 Diff。
 任何正常退出都以唯一 `processState=EXITED` 和原始 exit code 通过权威 `ToolResult` 进入后续模型上下文；
@@ -197,7 +201,7 @@ Policy/Approval/ExecutionBroker/Sandbox 和 Runtime Message Store。Session Tree
 Catalog 保留 `file_search` 供显式配置兼容，但 Coding CLI 默认不冻结该能力；大型仓库的文件发现和内容
 搜索使用通用 `execution_run`，由模型根据冻结 Shell 与 `PATH` 选择 `rg`、`rg --files` 或平台适配的
 替代命令。应用不增加搜索专用 Executor、不解析搜索意图，也不在 Java 中拼接命令选项。
-普通手工源码更新优先使用 `file_patch` 2.1.0：它接受 Codex 风格的上下文 Patch，覆盖新增、更新和同一授权
+普通手工源码更新优先使用 `file_patch` 2.2.0：它接受 Codex 风格的上下文 Patch，覆盖新增、更新和同一授权
 目录内的多文件调用；删除和移动分别使用 `file_delete`、`file_move`。Update hunk 的 `@@ <text>` 只是可选
 导航提示，旧正文/context 的唯一精确匹配才决定落点；多处匹配无法由唯一提示消歧时 fail closed，不选择第一个位置。
 `file_write` 保留给有意整体替换的小文件；目标不存在时会原子创建，生成代码和机械批量修改继续通过通用 CLI/生成器完成。
@@ -282,4 +286,4 @@ CA 不再提供 Worktree 专用 Tool 或 Sandbox Provider。系统 Git 是 Workt
 
 Runtime 的泛型 `CompletionPolicy` SPI 仍可供其他产品返回结构化完成阻塞与证据；Runtime 不再提供单独的 `RequiredArtifactChecker` 配置入口，Coding Agent 不再内置 Artifact completion checker。
 
-Coding base prompt 1.8.4 将任务进展和方法选择交给主模型；Runtime 不再按普通失败簇次数裁决任务终止。权限、unknown、资源上限与产品 Completion 门禁保持独立。
+Coding base prompt 1.8.5 将任务进展和方法选择交给主模型，并要求在带 `description` 参数的工具调用中直接生成面向用户的简短意图说明；Runtime 不再按普通失败簇次数裁决任务终止。权限、unknown、资源上限与产品 Completion 门禁保持独立。

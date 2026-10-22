@@ -1,5 +1,58 @@
 # Changelog
 
+## 0.1.3 - 2026-10-22
+
+- Release distributions include Windows x64 Coding Agent and Personal Assistant packages plus the complete
+  SDK Maven file repository for 0.1.3. The argument-truncation plan API, `truncatedToolCalls` state and
+  `truncatedToolCallsCount` telemetry are removed; no new SQLite migration is required. Follow
+  [the upgrade guide](docs/reference/upgrading.md).
+- Coding Terminal replaces the `/login` flow with a provider-first `/connect` connection center, `/account`
+  management and OAuth waiting panels. The panels support copying or reopening the authorization link,
+  device-code actions, countdown and cancellation, and reject concurrent logins; the connection UI copy is English.
+- Built-in Coding, web and Skill tools accept an optional user-facing `description`. Runtime projects it as
+  `intentSummary` on tool lifecycle events with exact-value credential redaction and Unicode-safe single-line
+  sanitization, and Coding Terminal prefers it in collapsed tool cards.
+- Tool lifecycle events now carry a bounded, credential-redacted target summary for execution commands, file
+  paths, patch headers and search queries. Coding Terminal suppresses redundant target lines and preserves
+  expansion state across lifecycle updates.
+- Coding Terminal renders normal and completed tool rows as one compact line with a muted status badge,
+  duration, non-zero exit code and expand chevron, and adds click-to-expand while keeping drag selection ahead
+  of click handling.
+- Coding Terminal owns mouse input by default: the wheel scrolls the transcript, drag builds a highlighted
+  selection, and Ctrl-C copies a non-empty selection through a clipboard port with an OSC 52 fallback.
+  `/mouse`, `/mouse on|off` and `HAIFA_TERMINAL_MOUSE=off` switch between application capture and host-native
+  selection; all-motion tracking keeps drag selection working in terminals such as VS Code.
+- Coding Terminal sidebar titles now follow the active task or latest user prompt, worktree sessions show both
+  repository and worktree paths/branches, the first Esc arms a five-second cancellation window, and multiline
+  or long pastes collapse into one atomic placeholder.
+- Coding Terminal shell `ASK` decisions once again open the Shell confirmation selector before execution.
+  A regression had mapped `ASK` to `READY` while `execute` still rejected unapproved decisions, so
+  `!command` failed with `APPROVAL_REQUIRED` and the selector was unreachable.
+- Command completion preserves spaces typed after a command. tui4j reports Space as `KeyType.KeySpace`;
+  it was previously dropped, turning `/rename <arg>` into `/rename<arg>` and failing with `COMMAND_UNKNOWN`.
+- `McpToolPlatforms.connect(specs, tenant, principal, baseCredentials)` composes the caller's credential broker behind the
+  MCP header secrets, so one Agent keeps a single credential boundary: `mcp:*` ids stay authoritative and every other id,
+  such as a Java Tool's declared `credentialRequirements`, resolves from the caller's broker instead of failing closed
+  whenever MCP servers are configured. Values resolved through the fallback join the same scoped redaction.
+- `JavaToolSpec.Builder.credentialRequirements(CredentialRequirement...)` declares the credentials a Java Tool needs.
+  The SDK resolves them through the configured Credential broker before dispatch, injects the values into
+  `JavaToolContext#credentials()` and registers them for scoped redaction, so a provider that reflects an
+  `Authorization` header cannot leak it into events, history or logs. Blank or duplicate credential ids fail closed,
+  and declaring credentials drops a `pure()` declaration.
+- Historical structured Tool Call arguments are always serialized from the authoritative `ToolCall` and are no longer
+  rewritten as truncation placeholders by any tool name, argument key or length. Large historical pure-read results are
+  pruned only when the historical call's own frozen Tool Binding proves a successful local pure read, and the fixed
+  omission notice states that a reread shows current state rather than the historical bytes. The previous
+  argument-truncation plan API, the `truncatedToolCalls` state and the argument-specific `truncatedToolCallsCount`
+  telemetry are removed; the Tier 2 bypass decision now lives in `SemanticCompactionCoordinator`.
+- Local file create, overwrite and patch reject a whole value that is exactly a known historical truncation placeholder
+  with the existing failure envelope (`CORRUPTED_ARGUMENT_PLACEHOLDER`) before any side effect. Ordinary documents,
+  code, patches and literal `[REDACTED]`/`[TRUNCATED]` examples remain writable.
+- SQLite in-process writers now queue on a fair write slot with the same bounded retry budget instead of repeatedly
+  contending on `BEGIN IMMEDIATE`; writers in other processes keep the busy timeout.
+- Packaged Coding Agent and CLI deployments raise the run wall time to 24 hours; the per-command timeout remains
+  capped at 2 hours.
+
 ## 0.1.2 - 2026-10-15
 
 - Release distributions now include a complete SDK Maven file repository with resolved parent/BOM POMs,

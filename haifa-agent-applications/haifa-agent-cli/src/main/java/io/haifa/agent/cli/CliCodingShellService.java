@@ -202,7 +202,8 @@ final class CliCodingShellService implements CodingShellService {
 
     static CodingShellPlan.State planState(PolicyEffect effect) {
         return switch (effect) {
-            case ALLOW, ASK -> CodingShellPlan.State.READY;
+            case ALLOW -> CodingShellPlan.State.READY;
+            case ASK -> CodingShellPlan.State.APPROVAL_REQUIRED;
             case DENY -> CodingShellPlan.State.DENIED;
         };
     }

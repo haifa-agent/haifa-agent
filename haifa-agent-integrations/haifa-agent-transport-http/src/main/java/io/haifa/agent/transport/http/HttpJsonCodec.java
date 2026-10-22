@@ -337,6 +337,9 @@ final class HttpJsonCodec {
             node.put("reasonCode", value.reasonCode());
             node.put("targetSummary", value.targetSummary());
             node.put("resultRef", value.resultRef());
+            if (!value.intentSummary().isBlank()) {
+                node.put("intentSummary", value.intentSummary());
+            }
             value.observation().ifPresent(observation -> {
                 ObjectNode observed = node.putObject("observation");
                 observed.put("outputPreview", observation.outputPreview());

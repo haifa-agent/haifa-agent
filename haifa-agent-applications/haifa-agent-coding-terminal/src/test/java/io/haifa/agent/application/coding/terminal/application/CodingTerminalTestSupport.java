@@ -20,6 +20,8 @@ import io.haifa.agent.application.project.product.coding.CodingShellPlan;
 import io.haifa.agent.application.project.product.coding.CodingShellResult;
 import io.haifa.agent.application.project.product.coding.CodingWorkspaceView;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationClient;
+import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationMethodView;
+import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationProviderView;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationView;
 import io.haifa.agent.application.project.product.coding.client.CodingSessionClient;
 import io.haifa.agent.core.run.AgentRunId;
@@ -81,10 +83,22 @@ public final class CodingTerminalTestSupport {
 
     static class FakeAuthenticationClient implements CodingAuthenticationClient {
         boolean apiKeyConnectionSupported = true;
+        List<CodingAuthenticationProviderView> providers = List.of(provider(
+                "deepseek",
+                "DeepSeek",
+                CodingAuthenticationProviderView.Category.API_KEY,
+                false,
+                true,
+                apiKeyMethod()));
 
         @Override
         public boolean apiKeyConnectionSupported() {
             return apiKeyConnectionSupported;
+        }
+
+        @Override
+        public List<CodingAuthenticationProviderView> providers() {
+            return providers;
         }
 
         @Override
@@ -175,6 +189,41 @@ public final class CodingTerminalTestSupport {
                 CodingModelControls.unavailable(),
                 CodingModelPreferences.recommended(),
                 Optional.empty());
+    }
+
+    static CodingAuthenticationProviderView provider(
+            String providerId,
+            String displayName,
+            CodingAuthenticationProviderView.Category category,
+            boolean connected,
+            boolean current,
+            CodingAuthenticationMethodView... methods) {
+        return new CodingAuthenticationProviderView(
+                providerId,
+                displayName,
+                category,
+                connected,
+                false,
+                current,
+                connected ? Optional.of("Saved API key") : Optional.empty(),
+                Optional.empty(),
+                List.of(methods),
+                Optional.empty());
+    }
+
+    static CodingAuthenticationMethodView apiKeyMethod() {
+        return new CodingAuthenticationMethodView(
+                "api_key", CodingAuthenticationMethodView.Type.API_KEY, true, Optional.empty());
+    }
+
+    static CodingAuthenticationMethodView browserMethod() {
+        return new CodingAuthenticationMethodView(
+                "browser", CodingAuthenticationMethodView.Type.OAUTH, true, Optional.empty());
+    }
+
+    static CodingAuthenticationMethodView deviceMethod() {
+        return new CodingAuthenticationMethodView(
+                "device", CodingAuthenticationMethodView.Type.OAUTH, true, Optional.empty());
     }
 
     static CodingAuthenticationView authenticatedCodexConnection() {

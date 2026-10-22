@@ -164,9 +164,9 @@ public final class SkillToolProvider implements ToolProvider {
                 "Activate one Skill allowed by the frozen run configuration for the next context build.",
                 schema(
                         "haifa.skill.load.input",
-                        Map.of(
+                        callDescriptionProperties(Map.of(
                                 "skill", Map.of("type", "string"),
-                                "reason", Map.of("type", "string", "maxLength", 512)),
+                                "reason", Map.of("type", "string", "maxLength", 512))),
                         List.of("skill")),
                 schema(
                         "haifa.skill.load.output",
@@ -194,10 +194,10 @@ public final class SkillToolProvider implements ToolProvider {
                 "Read an indexed text resource from a Skill that is already activated for this run.",
                 schema(
                         "haifa.skill.resource.read.input",
-                        Map.of(
+                        callDescriptionProperties(Map.of(
                                 "skill", Map.of("type", "string"),
                                 "path", Map.of("type", "string"),
-                                "reason", Map.of("type", "string", "maxLength", 512)),
+                                "reason", Map.of("type", "string", "maxLength", 512))),
                         List.of("skill", "path")),
                 schema(
                         "haifa.skill.resource.read.output",
@@ -216,7 +216,7 @@ public final class SkillToolProvider implements ToolProvider {
             String name, String title, String description, ToolSchema input, ToolSchema output) {
         return new ToolDefinition(
                 new ToolName(name),
-                new SemanticVersion("1.0.0"),
+                new SemanticVersion("1.1.0"),
                 PROVIDER_ID,
                 title,
                 description,
@@ -240,7 +240,7 @@ public final class SkillToolProvider implements ToolProvider {
     private static ToolSchema schema(String id, Map<String, Object> properties, List<String> required) {
         return new ToolSchema(
                 id,
-                "1.0.0",
+                "1.1.0",
                 Map.of(
                         "$schema",
                         "https://json-schema.org/draft/2020-12/schema",
@@ -252,5 +252,27 @@ public final class SkillToolProvider implements ToolProvider {
                         properties,
                         "required",
                         required));
+    }
+
+    /**
+     * Optional LLM-authored user-facing intent for this tool call. Kept out of {@code required} so
+     * missing values never block an otherwise safe invocation or trigger schema repair. Distinct from
+     * {@code reason}, which remains an optional activation/read rationale for the Skill pipeline.
+     */
+    private static Map<String, Object> callDescriptionProperties(Map<String, Object> base) {
+        var properties = new java.util.LinkedHashMap<>(base);
+        properties.put(
+                "description",
+                Map.of(
+                        "type",
+                        "string",
+                        "maxLength",
+                        256,
+                        "description",
+                        "Concise user-facing explanation of this tool call's intended operation. "
+                                + "Use the user's language. Name the specific action and target as intent, "
+                                + "not a completed outcome. Do not merely repeat the tool name, and do not "
+                                + "expose credentials, secrets, or internal reasoning."));
+        return Map.copyOf(properties);
     }
 }

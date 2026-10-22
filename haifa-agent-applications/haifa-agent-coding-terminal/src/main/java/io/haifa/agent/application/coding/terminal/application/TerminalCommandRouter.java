@@ -24,7 +24,8 @@ public final class TerminalCommandRouter {
             case "/reload" -> TerminalCommand.RELOAD;
             case "/compact" -> TerminalCommand.COMPACT;
             case "/export" -> TerminalCommand.EXPORT;
-            case "/login" -> TerminalCommand.LOGIN;
+            case "/connect" -> TerminalCommand.CONNECT;
+            case "/login" -> TerminalCommand.LOGIN_REMOVED;
             case "/logout" -> TerminalCommand.LOGOUT;
             case "/account" -> TerminalCommand.ACCOUNT;
             case "/model" -> TerminalCommand.MODEL;
@@ -33,6 +34,7 @@ public final class TerminalCommandRouter {
             case "/session" -> TerminalCommand.SESSION;
             case "/command", "/commands", "/help" -> TerminalCommand.COMMANDS;
             case "/theme" -> TerminalCommand.THEME;
+            case "/mouse" -> TerminalCommand.MOUSE;
             case "/quit" -> TerminalCommand.QUIT;
             default -> DEFERRED.contains(command) ? TerminalCommand.NOT_IMPLEMENTED : TerminalCommand.UNKNOWN;
         };

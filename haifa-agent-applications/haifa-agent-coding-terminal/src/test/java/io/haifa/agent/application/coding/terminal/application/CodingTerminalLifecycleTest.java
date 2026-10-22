@@ -12,6 +12,7 @@ import io.haifa.agent.application.project.product.coding.CodingSessionHistoryIte
 import io.haifa.agent.application.project.product.coding.CodingSessionHistoryPage;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationClient;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationProgressView;
+import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationProviderView;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationView;
 import io.haifa.agent.application.project.product.coding.client.CodingBrowserLoginView;
 import io.haifa.agent.application.project.product.coding.client.CodingDeviceLoginView;
@@ -25,7 +26,7 @@ import org.junit.jupiter.api.Test;
 
 class CodingTerminalLifecycleTest {
     @Test
-    void firstStartupOffersOnlyConfiguredAuthenticationMethodsWhenTheSelectedCredentialIsMissing() {
+    void firstStartupOffersTheConnectionCenterWhenTheSelectedCredentialIsMissing() {
         FakeClient client = new FakeClient(view(Optional.empty()));
         CodingAuthenticationClient authentication = new CodingAuthenticationClient() {
             @Override
@@ -36,6 +37,17 @@ class CodingTerminalLifecycleTest {
             @Override
             public String apiKeyProviderId() {
                 return "deepseek";
+            }
+
+            @Override
+            public List<CodingAuthenticationProviderView> providers() {
+                return List.of(provider(
+                        "deepseek",
+                        "DeepSeek",
+                        CodingAuthenticationProviderView.Category.API_KEY,
+                        false,
+                        true,
+                        apiKeyMethod()));
             }
 
             @Override
@@ -70,10 +82,76 @@ class CodingTerminalLifecycleTest {
         controller.start(CodingTerminalStartup.empty());
 
         assertThat(controller.state().selector()).get().satisfies(selector -> {
-            assertThat(selector.kind()).isEqualTo("auth-login");
-            assertThat(selector.title()).isEqualTo("Connect a model to get started");
-            assertThat(selector.options()).containsExactly("DeepSeek (API key)");
+            assertThat(selector.kind()).isEqualTo("auth-provider");
+            assertThat(selector.title()).isEqualTo("Connect a model");
+            assertThat(selector.options()).containsExactly("DeepSeek");
+            assertThat(selector.details()).singleElement().satisfies(detail -> {
+                assertThat(detail.category()).isEqualTo("API Key");
+                assertThat(detail.badge()).isEqualTo("Current");
+            });
         });
+    }
+
+    @Test
+    void connectionCenterFiltersProvidersByTypedText() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        CodingAuthenticationClient authentication = new CodingAuthenticationClient() {
+            @Override
+            public List<CodingAuthenticationProviderView> providers() {
+                return List.of(
+                        provider(
+                                "deepseek",
+                                "DeepSeek",
+                                CodingAuthenticationProviderView.Category.API_KEY,
+                                false,
+                                false,
+                                apiKeyMethod()),
+                        provider(
+                                "google-antigravity",
+                                "Google Antigravity Direct",
+                                CodingAuthenticationProviderView.Category.SUBSCRIPTION,
+                                false,
+                                false,
+                                browserMethod()));
+            }
+
+            @Override
+            public List<CodingAuthenticationView> connections() {
+                return List.of();
+            }
+
+            @Override
+            public CodingAuthenticationView loginCodexBrowser() {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public CodingAuthenticationView saveApiKey(String providerId, char[] apiKey) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public boolean logout(String connectionId) {
+                return false;
+            }
+        };
+        var controller = controller(client, authentication);
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "/connect"));
+        controller.accept(input(TerminalInput.Kind.SELECTOR_FILTER, "anti"));
+
+        assertThat(controller.state().selector()).get().satisfies(selector -> {
+            assertThat(selector.kind()).isEqualTo("auth-provider");
+            assertThat(selector.options()).containsExactly("Antigravity");
+            assertThat(selector.title()).contains("Search: anti");
+        });
+
+        controller.accept(input(TerminalInput.Kind.SELECTOR_BACKSPACE, ""));
+        controller.accept(input(TerminalInput.Kind.SELECTOR_BACKSPACE, ""));
+        controller.accept(input(TerminalInput.Kind.SELECTOR_BACKSPACE, ""));
+        controller.accept(input(TerminalInput.Kind.SELECTOR_BACKSPACE, ""));
+
+        assertThat(controller.state().selector().orElseThrow().options()).containsExactly("Antigravity", "DeepSeek");
     }
 
     @Test
@@ -89,6 +167,25 @@ class CodingTerminalLifecycleTest {
             @Override
             public boolean antigravityConnectionSupported() {
                 return true;
+            }
+
+            @Override
+            public List<CodingAuthenticationProviderView> providers() {
+                return List.of(
+                        provider(
+                                "deepseek",
+                                "DeepSeek",
+                                CodingAuthenticationProviderView.Category.API_KEY,
+                                false,
+                                false,
+                                apiKeyMethod()),
+                        provider(
+                                "google-antigravity",
+                                "Google Antigravity Direct",
+                                CodingAuthenticationProviderView.Category.SUBSCRIPTION,
+                                false,
+                                false,
+                                browserMethod()));
             }
 
             @Override
@@ -142,14 +239,14 @@ class CodingTerminalLifecycleTest {
 
         controller.start(CodingTerminalStartup.empty());
 
-        var options = controller.state().selector().orElseThrow().options();
-        assertThat(options).contains("DeepSeek (API key)", "Antigravity subscription");
-        assertThat(options.get(0)).isEqualTo("DeepSeek (API key)");
-        assertThat(options.get(options.size() - 1)).isEqualTo("Antigravity subscription");
+        var selector = controller.state().selector().orElseThrow();
+        var options = selector.options();
+        assertThat(options).contains("DeepSeek", "Antigravity");
+        assertThat(options.get(0)).isEqualTo("Antigravity");
+        assertThat(options.get(options.size() - 1)).isEqualTo("DeepSeek");
+        assertThat(selector.details().getFirst().category()).isEqualTo("Subscription");
+        assertThat(selector.details().getLast().category()).isEqualTo("API Key");
 
-        for (int i = 0; i < options.indexOf("Antigravity subscription"); i++) {
-            controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
-        }
         controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
         controller.drainEvents();
 
@@ -158,11 +255,11 @@ class CodingTerminalLifecycleTest {
             assertThat(item.title()).isEqualTo("Antigravity connection");
             assertThat(item.status()).isEqualTo("CONNECTED");
         });
-        assertThat(controller.state().status()).isEqualTo("Connected to Antigravity (UNOFFICIAL_LOCAL_COMPAT)");
+        assertThat(controller.state().status()).contains("Connected to Antigravity");
     }
 
     @Test
-    void deviceLoginPrintsTheBrowserUrlAndUserCodeAsPersistentTranscriptContent() {
+    void deviceLoginUsesAShortLivedWaitingPanelInsteadOfPersistingTheCode() {
         FakeClient client = new FakeClient(view(Optional.empty()));
         CodingAuthenticationClient authentication = new CodingAuthenticationClient() {
             @Override
@@ -209,21 +306,17 @@ class CodingTerminalLifecycleTest {
                 TerminalUiState.initial(120, 40),
                 Runnable::run);
 
-        controller.accept(input(TerminalInput.Kind.SUBMIT, "/login codex device"));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "/connect codex device"));
         controller.drainEvents();
 
+        assertThat(controller.state().transcript())
+                .noneMatch(item -> item.title().equals("ChatGPT device sign-in"));
         assertThat(controller.state().transcript()).anySatisfy(item -> {
-            assertThat(item.title()).isEqualTo("ChatGPT device login");
-            assertThat(item.body())
-                    .contains("Browser URL: https://auth.openai.com/codex/device", "Device code: ABCD-1234");
-            assertThat(item.status()).isEqualTo("WAITING");
-        });
-        assertThat(controller.state().transcript()).anySatisfy(item -> {
-            assertThat(item.title()).isEqualTo("ChatGPT Codex connection");
-            assertThat(item.body()).contains("Credentials were saved to system credential store");
+            assertThat(item.title()).isEqualTo("ChatGPT connection");
+            assertThat(item.body()).contains("Connected. Credentials were saved to the system credential store.");
             assertThat(item.status()).isEqualTo("CONNECTED");
         });
-        assertThat(controller.state().status()).isEqualTo("Connected to ChatGPT Codex (UNOFFICIAL_LOCAL_COMPAT)");
+        assertThat(controller.state().status()).contains("Connected to ChatGPT");
     }
 
     @Test
@@ -274,25 +367,108 @@ class CodingTerminalLifecycleTest {
                 TerminalUiState.initial(120, 40),
                 Runnable::run);
 
-        controller.accept(input(TerminalInput.Kind.SUBMIT, "/login codex browser"));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "/connect codex browser"));
         controller.drainEvents();
 
+        assertThat(controller.state().transcript())
+                .noneMatch(item -> item.title().equals("ChatGPT browser sign-in"));
         assertThat(controller.state().transcript()).anySatisfy(item -> {
-            assertThat(item.title()).isEqualTo("ChatGPT browser login");
+            assertThat(item.title()).isEqualTo("ChatGPT connection");
             assertThat(item.body())
                     .contains(
-                            "A browser sign-in was requested.",
-                            "If it did not open, use this URL: "
-                                    + "https://auth.openai.com/oauth/authorize?client_id=test&state=state");
-        });
-        assertThat(controller.state().transcript()).anySatisfy(item -> {
-            assertThat(item.title()).isEqualTo("ChatGPT Codex connection");
-            assertThat(item.body())
-                    .contains("Credentials were saved to system credential store", "UNOFFICIAL_LOCAL_COMPAT");
+                            "Connected. Credentials were saved to the system credential store.",
+                            "UNOFFICIAL_LOCAL_COMPAT");
             assertThat(item.status()).isEqualTo("CONNECTED");
         });
         assertThat(controller.state().toString()).doesNotContain("client_id=test", "state=state");
-        assertThat(controller.state().status()).isEqualTo("Connected to ChatGPT Codex (UNOFFICIAL_LOCAL_COMPAT)");
+        assertThat(controller.state().status()).contains("Connected to ChatGPT");
+    }
+
+    @Test
+    void escapeRequestsCancellationWithoutWaitingForTheBlockingLogin() throws Exception {
+        var started = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var cancelSeen = new java.util.concurrent.CountDownLatch(1);
+        var cancelRequested = new java.util.concurrent.atomic.AtomicBoolean();
+        var loginCalls = new java.util.concurrent.atomic.AtomicInteger();
+        CodingAuthenticationClient authentication = new CodingAuthenticationClient() {
+            @Override
+            public List<CodingAuthenticationView> connections() {
+                return List.of();
+            }
+
+            @Override
+            public CodingAuthenticationView loginCodexBrowser() {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public CodingAuthenticationView loginCodexBrowser(
+                    java.util.function.Consumer<CodingBrowserLoginView> instructions,
+                    java.util.function.Consumer<CodingAuthenticationProgressView> progress) {
+                loginCalls.incrementAndGet();
+                instructions.accept(new CodingBrowserLoginView(
+                        URI.create("https://auth.openai.com/oauth/authorize?state=test"),
+                        System.currentTimeMillis() + 60_000));
+                started.countDown();
+                try {
+                    release.await(5, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                }
+                throw new IllegalStateException("AUTH_CANCELLED");
+            }
+
+            @Override
+            public boolean cancelLogin() {
+                cancelRequested.set(true);
+                cancelSeen.countDown();
+                return true;
+            }
+
+            @Override
+            public CodingAuthenticationView saveApiKey(String providerId, char[] apiKey) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public boolean logout(String connectionId) {
+                return false;
+            }
+        };
+        var executor = java.util.concurrent.Executors.newFixedThreadPool(3);
+        try {
+            var controller = new CodingTerminalController(
+                    PROJECT_ID,
+                    new FakeClient(view(Optional.empty())),
+                    authentication,
+                    new TerminalEventPump(32),
+                    new TerminalUiReducer(),
+                    TerminalUiState.initial(120, 40),
+                    executor);
+
+            controller.accept(input(TerminalInput.Kind.SUBMIT, "/connect codex browser"));
+            assertThat(started.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            controller.accept(input(TerminalInput.Kind.TICK, ""));
+            assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("auth-wait");
+            assertThat(controller.state().status()).contains("Waiting for browser authorization", "remaining");
+
+            controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
+
+            // cancelLogin runs on the control-effect executor; Escape must not block on it.
+            assertThat(cancelSeen.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                    .isTrue();
+            assertThat(cancelRequested).isTrue();
+            assertThat(controller.state().selector()).isEmpty();
+            assertThat(controller.state().status()).isEqualTo("Cancelling sign-in");
+
+            controller.accept(input(TerminalInput.Kind.SUBMIT, "/connect codex browser"));
+            assertThat(loginCalls).hasValue(1);
+            assertThat(controller.state().status()).contains("A sign-in is already in progress");
+        } finally {
+            release.countDown();
+            executor.shutdownNow();
+        }
     }
 
     @Test
@@ -337,19 +513,88 @@ class CodingTerminalLifecycleTest {
                 TerminalUiState.initial(120, 40),
                 Runnable::run);
 
-        controller.accept(input(TerminalInput.Kind.SUBMIT, "/login codex browser"));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "/connect codex browser"));
         controller.drainEvents();
 
         assertThat(controller.state().transcript()).singleElement().satisfies(item -> {
-            assertThat(item.title()).isEqualTo("ChatGPT Codex connection failed");
+            assertThat(item.title()).isEqualTo("ChatGPT connection failed");
             assertThat(item.body())
                     .contains(
-                            "Last stage: Authorization received. Exchanging it for Codex credentials.",
-                            "Reason: AUTH_REAUTH_REQUIRED",
-                            "verify the OAuth Client ID and redirect registration");
+                            "Stage: Authorization received. Exchanging it for credentials.",
+                            "Reason code: AUTH_REAUTH_REQUIRED",
+                            "Sign-in has expired. Run /connect to sign in again.");
             assertThat(item.status()).isEqualTo("FAILED");
         });
         assertThat(controller.state().recoverableError()).contains("AUTH_REAUTH_REQUIRED");
+    }
+
+    @Test
+    void accountManagementMasksLabelsAndConfirmsBeforeDisconnect() {
+        var disconnected = new java.util.concurrent.atomic.AtomicBoolean();
+        CodingAuthenticationView connection = new CodingAuthenticationView(
+                "model-auth://deepseek/default",
+                "deepseek",
+                CodingAuthenticationView.Method.API_KEY,
+                CodingAuthenticationView.Status.AUTHENTICATED,
+                "alice@example.com",
+                Optional.empty(),
+                OptionalLong.empty(),
+                true);
+        CodingAuthenticationClient authentication = new CodingAuthenticationClient() {
+            @Override
+            public List<CodingAuthenticationView> connections() {
+                return List.of(connection);
+            }
+
+            @Override
+            public CodingAuthenticationView loginCodexBrowser() {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public CodingAuthenticationView saveApiKey(String providerId, char[] apiKey) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public boolean logout(String connectionId) {
+                disconnected.set(true);
+                return true;
+            }
+        };
+        var controller = controller(new FakeClient(view(Optional.empty())), authentication);
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "/account"));
+
+        assertThat(controller.state().selector()).get().satisfies(selector -> {
+            assertThat(selector.kind()).isEqualTo("auth-account");
+            assertThat(selector.options()).containsExactly("DeepSeek · API Key · a***@example.com · Connected");
+        });
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+        assertThat(controller.state().selector()).get().satisfies(selector -> {
+            assertThat(selector.kind()).isEqualTo("auth-account-actions");
+            assertThat(selector.options()).containsExactly("Update API key", "Disconnect", "Back");
+        });
+
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+        assertThat(controller.state().selector()).get().satisfies(selector -> {
+            assertThat(selector.kind()).isEqualTo("auth-logout-confirm");
+            assertThat(selector.options().getFirst()).isEqualTo("Cancel");
+        });
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+        assertThat(disconnected).isFalse();
+        assertThat(controller.state().selector()).isEmpty();
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "/account"));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+
+        assertThat(disconnected).isTrue();
     }
 
     @Test

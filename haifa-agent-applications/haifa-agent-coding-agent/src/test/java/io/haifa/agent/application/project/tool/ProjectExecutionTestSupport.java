@@ -128,7 +128,7 @@ final class ProjectExecutionTestSupport {
                 new AgentRunId("run-1"),
                 new TenantRef("tenant-1"),
                 new PrincipalRef("operator", "user"),
-                new ToolArguments("haifa.execution.run.input", "4.0.0", arguments),
+                new ToolArguments("haifa.execution.run.input", "4.1.0", arguments),
                 NOW.plusSeconds(30),
                 Optional.of("execution-key"),
                 cancellation,
