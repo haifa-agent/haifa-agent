@@ -274,8 +274,8 @@ public final class ProjectToolCatalog {
                 execution ? Set.of(executionProfileIdentity(executionProfile)) : Set.of());
         String version =
                 switch (name) {
-                    case "execution_run" -> "4.0.0";
-                    case "file_patch" -> "2.1.0";
+                    case "execution_run" -> "4.1.0";
+                    case "file_patch" -> "2.2.0";
                     case "file_list",
                             "file_read",
                             "file_search",
@@ -284,8 +284,8 @@ public final class ProjectToolCatalog {
                             "file_delete",
                             "file_move",
                             "file_diff",
-                            "file_stat" -> "2.0.0";
-                    case "workspace_attach" -> "3.0.0";
+                            "file_stat" -> "2.1.0";
+                    case "workspace_attach" -> "3.1.0";
                     default -> "1.0.0";
                 };
         return new ToolDefinition(
@@ -518,7 +518,6 @@ public final class ProjectToolCatalog {
                                 "description",
                                 "Optional explicit limit. When omitted, the product maximum is used; the Run "
                                         + "deadline may further reduce the effective timeout."));
-                properties.put("description", Map.of("type", "string", "minLength", 1, "maxLength", 256));
                 properties.put(
                         "operationFamily",
                         Map.of(
@@ -534,6 +533,7 @@ public final class ProjectToolCatalog {
             }
             default -> throw new IllegalArgumentException("unknown project tool " + name);
         }
+        putCallDescription(properties);
         var schema = new LinkedHashMap<String, Object>();
         schema.put("$schema", ToolSchema.DRAFT_2020_12);
         if (scratchSpecDigest != null) {
@@ -648,5 +648,24 @@ public final class ProjectToolCatalog {
     private static void string(Map<String, Object> properties, List<String> required, String name) {
         properties.put(name, Map.of("type", "string"));
         required.add(name);
+    }
+
+    /**
+     * Optional LLM-authored user-facing intent for this tool call. Kept out of {@code required} so
+     * missing or blank values never block an otherwise safe invocation or trigger schema repair.
+     */
+    static void putCallDescription(Map<String, Object> properties) {
+        properties.put(
+                "description",
+                Map.of(
+                        "type",
+                        "string",
+                        "maxLength",
+                        256,
+                        "description",
+                        "Concise user-facing explanation of this tool call's intended operation. "
+                                + "Use the user's language. Name the specific action and target as intent, "
+                                + "not a completed outcome. Do not merely repeat the tool name, and do not "
+                                + "expose credentials, secrets, or internal reasoning."));
     }
 }

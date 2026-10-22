@@ -304,7 +304,10 @@ class RuntimeEventFeedTest {
                     assertThat(payload.toString()).doesNotContain("must-not-project");
                 });
         assertThat(tool.eventType()).isEqualTo("tool.call.succeeded");
-        assertThat(tool.payload()).isInstanceOf(RunEventPayloads.ToolLifecycle.class);
+        assertThat(tool.payload()).isInstanceOfSatisfying(RunEventPayloads.ToolLifecycle.class, payload -> {
+            assertThat(payload.targetSummary()).isEqualTo("workspace command");
+            assertThat(payload.intentSummary()).isEmpty();
+        });
         assertThat(execution).isEmpty();
         assertThat(resource.eventType()).isEqualTo("checkpoint.available");
         assertThat(resource.payload()).isInstanceOf(RunEventPayloads.ResourceAvailable.class);
@@ -329,6 +332,7 @@ class RuntimeEventFeedTest {
                                 Map.entry("status", "SUCCEEDED"),
                                 Map.entry("reasonCode", "NONE"),
                                 Map.entry("targetSummary", "execution_run"),
+                                Map.entry("intentSummary", "运行单元测试"),
                                 Map.entry("resultRef", "asset-1"),
                                 Map.entry("outputPreview", "Command exited (exit 0)"),
                                 Map.entry("outputPreviewTruncated", true),
@@ -346,6 +350,7 @@ class RuntimeEventFeedTest {
 
         assertThat(succeeded.payload()).isInstanceOfSatisfying(RunEventPayloads.ToolLifecycle.class, payload -> {
             assertThat(payload.toString()).doesNotContain("must-not-project");
+            assertThat(payload.intentSummary()).isEqualTo("运行单元测试");
             assertThat(payload.observation()).hasValueSatisfying(observation -> {
                 assertThat(observation.processState()).contains("EXITED");
                 assertThat(observation.exitCode()).contains(0);

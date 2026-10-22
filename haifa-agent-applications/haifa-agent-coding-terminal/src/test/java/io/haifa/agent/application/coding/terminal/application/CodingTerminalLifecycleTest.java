@@ -388,6 +388,7 @@ class CodingTerminalLifecycleTest {
     void escapeRequestsCancellationWithoutWaitingForTheBlockingLogin() throws Exception {
         var started = new java.util.concurrent.CountDownLatch(1);
         var release = new java.util.concurrent.CountDownLatch(1);
+        var cancelSeen = new java.util.concurrent.CountDownLatch(1);
         var cancelRequested = new java.util.concurrent.atomic.AtomicBoolean();
         var loginCalls = new java.util.concurrent.atomic.AtomicInteger();
         CodingAuthenticationClient authentication = new CodingAuthenticationClient() {
@@ -421,6 +422,7 @@ class CodingTerminalLifecycleTest {
             @Override
             public boolean cancelLogin() {
                 cancelRequested.set(true);
+                cancelSeen.countDown();
                 return true;
             }
 
@@ -453,6 +455,9 @@ class CodingTerminalLifecycleTest {
 
             controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
 
+            // cancelLogin runs on the control-effect executor; Escape must not block on it.
+            assertThat(cancelSeen.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                    .isTrue();
             assertThat(cancelRequested).isTrue();
             assertThat(controller.state().selector()).isEmpty();
             assertThat(controller.state().status()).isEqualTo("Cancelling sign-in");
