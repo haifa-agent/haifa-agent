@@ -98,7 +98,7 @@ Windows ConPTY Gate B。
 │                                                             │  Git branch: main              │
 │                                                             │  Model: <model> (<provider>)   │
 │                                                             │  Resources: skills, MCP        │
-│                                                             │  Haifa Agent v0.1.2            │
+│                                                             │  Haifa Agent v0.1.3            │
 ├─────────────────────────────────────────────────────────────┴────────────────────────────────┤
 │ [交互卡片槽位] (审批确认 Approval / 交互选择器 Selector / 命令面板)                          │
 ├──────────────────────────────────────────────────────────────────────────────────────────────┤
@@ -144,7 +144,7 @@ Windows ConPTY Gate B。
 5. **状态栏信息与提示层级契约 (Status Bar & Feedback Contract)**：
    - 活动 Run 期间：底部状态栏左侧显示单调计时的运行状态 `⠋ <timedActivity> · esc interrupt`；新输出在视口外产生时追加 ` · new output below`，严禁使用路径文字覆盖活动状态指示；
    - 空闲（Idle）期间：左侧优先显示操作反馈与引导状态（如 `/new` 提示、切模成功反馈、重命名状态等）；无反馈时显示当前工程路径；
-   - 右侧展示快捷键提示（`[f2] models  [ctrl+p] commands`）及 Session 性能指标；空间受限时优先丢弃指标、次选裁剪工程路径，核心操作反馈与活动运行状态具有最高显示优先级；
+   - 右侧展示快捷键提示（`[ctrl+o] details  [f2] models  [ctrl+p] commands`）及 Session 性能指标；空间受限时优先回退为不含 `[ctrl+o]` 的短提示并优先丢弃指标、次选裁剪工程路径，核心操作反馈与活动运行状态具有最高显示优先级；
    - 输入框上方 Meta 条右侧保持显示编辑器操作提示（如 `enter steer · alt+enter follow-up` 或 `enter send · shift+enter newline`）。
 
 Theme 使用 tui4j Lip Gloss 的 Adaptive Color 表达 Accent、Muted、Surface Panel、Surface Element、Border Subtle、User、Success、Pending、
@@ -159,14 +159,15 @@ Error、Queued 和 Focus。TrueColor 参考色会按明暗背景自适应；NoCo
 - Assistant 正文保持 2-cell 左对齐以与 User 边线气泡形成清晰的视觉层级；输入框 Prompt Box 适配
   Surface Element 底色，侧栏垂直分割线统一使用 Border Subtle，消除界面视觉断层；
 - 高频 Markdown 子集只在 View 层转换为终端样式，`TranscriptItem`、Session 与持久化继续保留原始 Markdown；
-- Tool 根据 `requested/started/succeeded/failed/cancelled` 使用状态色。折叠项默认占一行：
-  以 `✓`/`✗`/`●` 状态符号开头，随后是 `名称 · 目标`，并把 `ctrl+o expand` 放在同一行；连续折叠项
-  之间不插入空行。成功的 Tool/Execution 折叠时再追加一行灰色正文预览（取正文里第一条有效内容；
-  流式长输出只保留尾部窗口时，预览取该窗口首行），结构行统一由 `ToolBodyLines` 判定并跳过：`Target:`、`Reason:`、`Next:`、`Outcome:`、`Status:`、
-  `Result:`、`Output:`、`Output (truncated):`、`Output (streaming):`、`Output truncated · …`、
-  `[stdout]`/`[stderr]` 以及预览截断/丢弃标记；正文全为结构行时不显示预览。失败/未决项在折叠
-  状态保留最多两行安全原因。折叠时完成耗时只在超过 10s 时显示，避免短调用刷屏；按 `ctrl+o`
-  展开后始终显示既有有界详情和 `Duration … · N lines · X KB` 元数据尾行；
+- Tool 根据 `requested/started/succeeded/failed/cancelled` 使用状态色。正常完成/`EXITED` 的折叠项严格占一行：
+  以 `✓` 状态符号开头，随后是工具名背景徽标、调用说明（优先模型 `intentSummary`/`description`，否则安全
+  Target Summary，再否则工具名）、辅助信息（非零退出码与耗时）和右端折叠符 `›`；说明在 `REQUESTED`
+  阶段即可展示，不提前显示成功。连续折叠项之间不插入空行，不再渲染正文预览行或 `ctrl+o expand`
+  长提示。`EXITED` 始终是成功状态，
+  非零退出码（如 `exit 1`）只作为弱化事实展示，不会变成红色故障；`exit 0` 不重复展示。
+  真实 `FAILED`/`DENIED`/`TIMEOUT`/`UNKNOWN` 仍保留错误或未知语义，并在折叠态保留最多两行安全原因。
+  折叠态耗时始终显示；按 `ctrl+o` 或点击条目可展开/收起，展开后显示既有有界详情和
+  `Duration … · N lines · X KB` 元数据尾行。点击仅在鼠标捕获开启时可用，且完成文本选择后不触发展开。
 - 运行中的执行工具通过进程内 transient publisher 增量刷新同一 Tool Call 卡片的
   `Output (streaming):` 段；每批最多 4 KiB，卡片正文最多保留 16 KiB 尾部，stderr 和 preview
   丢弃会显式标记；执行侧达到输出上限时使用独立截断标记，避免与预览丢批混淆。该内容不持久化、
@@ -230,7 +231,7 @@ Phase B 的工作流反馈只投影稳定产品 DTO 和 Runtime 事件：
   名称，例如 `WORKING (12s) · execution_run`；内部仅以单调递增 revision 区分阶段，不展示 RunId 或
 - 错误按 Retryable、User action required、Interrupted、Terminal capability、Terminal failure
   五类给出稳定错误码和下一步操作；失败和 Selector 都不清空草稿；遇到 `MODEL_AUTHENTICATION_REQUIRED`
-  时保持用户草稿，并弹出模型就绪恢复选择器，安全默认项为通过 `/model` 切换已就绪模型，次选为 `/login`；
+  时保持用户草稿，并弹出模型就绪恢复选择器，安全默认项为通过 `/model` 切换已就绪模型，次选为 `/connect`；
 
 失败 Run 的 Transcript 使用 `[AgentErrorCode] 安全文案`，并在存在时显示 Diagnostic ID。
 预算超限、模型限流/超时和 Tool Outcome Unknown 使用稳定 code 选择下一步；终端不解析英文
@@ -293,26 +294,40 @@ Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、s
   当前返回 `COMPACTION_INSTRUCTION_NOT_SUPPORTED`；
 - `/reload` 重新发现 Workspace 根 `AGENTS.md`，只影响后续新 Run；当前 Run 不热替换；
 - `!command` 与 `!!command` 都通过产品 Shell 服务进入同一 Policy/Approval/ExecutionBroker/
-  Sandbox 链；用户在 Terminal 中输入精确命令并按 Enter 是该次 `ASK` 决策的显式一次授权，仍写入
-  精确绑定的 Decision/Evidence，但不再对同一用户重复弹确认；`DENY` 仍拒绝。前者的安全结果进入
-  后续模型 Context，后者只保留内部 Session 事实和审计；安全命令输出默认展开显示，长输出仍有界；
+  Sandbox 链；`ASK` 决策会打开 Shell 确认选择器（`Run governed shell command?`），显式批准后才
+  执行，`DENY` 仍拒绝。前者的安全结果进入后续模型 Context，后者只保留内部 Session 事实和审计；
+  安全命令输出默认展开显示，长输出仍有界；
 - `/export <workspace-relative-path>` 新建版本化、脱敏 JSONL，不覆盖文件、不跟随符号链接；
 - 输入 `/` 或 `@` 后立即打开可见候选选择器，Tab 仍可按当前 token 重新打开；方向键选择、Enter
-  回填；空闲时 Escape 关闭并保留草稿，活动 Run 时 Escape 优先取消任务；
+  回填；选择器打开期间普通字符（含空格）继续编辑草稿；空闲时 Escape 关闭并保留草稿，活动 Run
+  时 Escape 优先取消任务；
 - `/command` 与 `/commands` 打开同一命令选择器；`@path` 候选来自受限 Workspace 文件和目录，
   目录以 `/` 结尾，不列出任意路径层级中点号开头的隐藏文件/目录、敏感路径、版本库元数据和常见生成目录；
+- 默认由应用接管鼠标：滚轮在 transcript 区域内上下回溯，左键拖拽建立选区并在释放时复制，
+  本地剪贴板失败时回退 OSC 52；`/mouse` 切换开关，`/mouse on|off` 显式设置，
+  `HAIFA_TERMINAL_MOUSE=off` 决定启动初始态。关闭后恢复宿主原生选择，两种模式都保留 PageUp/PageDown；
 - pending Approval 在同一 tui4j Program input owner 中 approve/reject；
 - `/model` 打开安全 Selector，也支持 `/model <internal-id>`；当模型来自多个 Provider 时先按 Provider
   分组展示（`Provider · N models`），再展示所选 Provider 的模型；在二级模型列表或详情页按向左键可返回上一级列表并保持当前选中项位置。
   返回模型列表时保持刚检查的模型位置。无 Session 或执行 `/new` 后的选择会冻结到下一次 Session 创建，创建失败时保留以便重试；已有 Session
   的选择在活动 Run 期间拒绝切换，成功后只影响下一新 Run；
-- `/login`、`/account` 和 `/logout` 通过 Coding 产品的安全认证客户端实现；首次启动且所选模型凭据缺失时
-  打开同一连接选择器。显式启用本地兼容测试时，选择器同时展示 Antigravity subscription 并启动独立的
-  Google Browser Callback；未启用时不展示该入口。ChatGPT 登录可选 Browser Callback 或 Device Code；设备 URL/设备码作为持久可见的
-  Transcript 指引展示；Browser Callback 尝试自动打开浏览器，同时始终展示可复制授权 URL 并继续等待本机
-  回调，避免系统报告已启动但窗口不可见。认证成功完成（或 API Key 保存成功）后自动触发会话
-  reconcile，实时刷新页脚模型连接状态；API Key 输入使用
-  独立单行掩码缓冲区（自适应首次录入与更新覆盖），不进入 Reducer、Session、Transcript、History 或 Completion，凭据安全持久化至原生系统凭据管理器（Windows Credential Manager）；针对百炼（Aliyun Bailian）等带端点元数据的 Provider，提供单步掩码输入（API Key、Workspace ID、Region 可在同一行提交）与 `/login api aliyun-bailian <workspaceId> [region]` 命令行快捷路径，首次配置要求真实 Workspace ID，更新既有配置时回车可继承已保存 Workspace，Region 缺省为 cn-beijing；
+- `/connect` 是唯一连接入口；`/login` 从命令列表与帮助中移除，输入时只提示改用 `/connect`。`/account` 和
+  `/logout` 继续通过 Coding 产品的安全认证客户端实现。首次启动且所选模型凭据缺失时，连接中心按
+  “订阅登录 / API Key”展示目录中当前可用的 Provider，而不是只展示默认模型对应的一个选项。连接中心显示
+  分类、推荐/已连接/当前徽标和说明，并支持直接输入名称过滤。显式启用本地兼容测试时展示 Antigravity 并
+  启动独立的 Google Browser Callback；未启用时不展示该入口。ChatGPT 登录可选 Browser Callback 或
+  Device Code。Browser Callback 尝试自动打开浏览器并继续等待本机回调；授权链接不进入 Transcript，
+  等待面板提供倒计时、复制链接和重新打开浏览器，按 Escape 可取消，进入凭据换取/保存阶段后拒绝取消。
+  设备码等待面板显示设备码并提供复制设备码、复制链接和打开页面动作。认证成功完成（或 API Key 保存成功）
+  后刷新连接状态，并按 Provider 加载模型：只有一个可用模型时直接选中，多个模型时打开过滤后的模型列表，
+  没有配置模型时明确提示配置位置。`/account` 显示脱敏账号并提供更新 Key、重新登录和断开动作；断开需要
+  二次确认，默认焦点在取消。模型凭据失效时，恢复选择器的次选项直接进入当前 Provider 的登录方式，
+  不再要求用户从连接中心顶部重新选择。API Key 输入使用独立单行掩码缓冲区（自适应首次录入与更新覆盖），
+  不进入 Reducer、Session、Transcript、History 或 Completion，凭据安全持久化至原生系统凭据管理器
+  （Windows Credential Manager）；百炼（Aliyun Bailian）使用三步向导依次录入 API Key、Workspace ID 和
+  Region，仅 Key 掩码，Workspace/Region 明文校验；`/connect api aliyun-bailian <workspaceId> [region]`
+  仍可用于预填并快速完成，首次配置要求真实 Workspace ID，更新既有配置时在 Key 步骤回车可继承现有值，
+  Region 缺省为 cn-beijing；
 - `/trust` 通过标准产品客户端异步展示脱敏的持久 Workspace 授权；
   `/trust revoke <workspaceRef>` 可撤销非初始根，不暴露宿主路径且不阻塞 UI；
 - `/settings`、`/tree`、`/fork`、`/clone` 在没有真实 API 时返回
@@ -365,8 +380,9 @@ key，并在所有重启间保持不变。
 10. Terminal 模式使用 `--trace detail` 但不提供 `--trace-file`，确认 Trace 不写入 TUI；提供
     `--trace-file` 后确认诊断仅进入文件。
 11. 用 Stub/Fake Tool 走通 requested → started → succeeded/failed/cancelled，确认同一 Tool
-    只更新一张卡片，折叠行带 `✓`/`✗`/`●` 状态符号、成功/运行项的一行正文预览行和（超过 10s 的）
-    耗时，Ctrl+O 可折叠/展开最近项（含 Run Summary 与可折叠 Resource 项）；Run 终态确认追加 Run
+    只更新一张卡片，正常完成/EXITED 折叠行严格一行并带 `✓` 状态符号、工具名徽标、耗时和右端 `›`；
+    `exit 1` 仍为 `✓` 且只显示为弱化事实，真实失败保留最多两行诊断；`/mouse on` 时点击条目可展开/收起，
+    完成文本选择后不触发展开，`/mouse off` 时 Ctrl+O 仍可折叠/展开最近项；Run 终态确认追加 Run
     Summary 卡片。
 12. 用 Stub/Fake Approval 检查结构化字段、approve/reject 回执与 editor 草稿恢复；审批期间输入只由
     Selector 消费。

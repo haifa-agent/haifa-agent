@@ -114,7 +114,7 @@ Starter 的 `standardApproval()` preset 对任何带 NETWORK_ACCESS 的 Tool 都
 调用会产生一次 Interaction。宿主用 `agent.runs().pendingInteraction(runId)` 和
 `agent.runs().respond(...)` 响应；需要无人值守时应通过 `haifa-agent-sdk` 显式装配自己的 Policy 规则。
 
-0.1.2-SNAPSHOT Native MCP Client 只提供 Streamable HTTP；stdio 需要 Execution Broker，暂不在 Starter 公开。
+0.1.3 Native MCP Client 只提供 Streamable HTTP；stdio 需要 Execution Broker，暂不在 Starter 公开。
 
 ### 自定义装配：把声明式 MCP 接入任意 Builder
 
@@ -143,8 +143,22 @@ try {
 
 `applyTo` 会占用 builder 唯一的 Credential 槽：若 builder 已设置了另一个 Credential 贡献，`applyTo` 在添加任何
 Tool、resource 或诊断之前抛 `IllegalStateException`，builder 保持原状，平台仍未应用、可交给其它 builder 或关闭；
-`applyTo` 之后再设置不同的 Credential 贡献同样失败。需要与宿主自有凭据并存时，请提供一个组合 broker，不要依赖
-后写覆盖。若 `HaifaAgentBuilder.build()` 在装配中途失败，平台不会被自动关闭，调用方须自行 `close()`。
+`applyTo` 之后再设置不同的 Credential 贡献同样失败。若 `HaifaAgentBuilder.build()` 在装配中途失败，平台不会被自动
+关闭，调用方须自行 `close()`。
+
+需要与宿主自有凭据并存时，用四参数 `connect` 把宿主 broker 作为兜底交给平台，不要依赖后写覆盖：
+
+```java
+CredentialPlatformContribution toolCredentials =
+        new CredentialPlatformContribution(id -> Optional.ofNullable(System.getenv(id)));
+var mcp = McpToolPlatforms.connect(List.of(search, jobs), tenant, principal, toolCredentials.broker());
+```
+
+兜底只覆盖 MCP 声明**之外**的 id：spec 声明的 `mcp:<server>:<header>` 只认 MCP 解析结果，header 缺失或为空时保持
+缺失（fail closed），不会改从兜底 broker 取值；回退取到的值同样注册进同一个作用域打码，因此整个 Agent 仍只有一个
+凭证边界和一个打码域。这样声明了 `credentialRequirements` 的普通 Java Tool（例如 web 工具的
+`DEEPSEEK_TOOL_API_KEY`）在配置了 MCP Server 时仍能解析，而不是在调用前 fail closed。三参数重载等价于传 `null`，
+行为与之前一致。
 
 默认 instructions 只是 Quickstart fallback；使用它时 `agent.diagnostics()` 包含
 `DEFAULT_INSTRUCTIONS_IN_USE`，显式调用 `instructions(...)` 后该诊断消失。`name` 仅用于展示和

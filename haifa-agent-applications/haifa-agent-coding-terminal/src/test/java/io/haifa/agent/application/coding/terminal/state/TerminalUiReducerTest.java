@@ -47,6 +47,38 @@ class TerminalUiReducerTest {
     private final TerminalUiReducer reducer = new TerminalUiReducer();
 
     @Test
+    void deviceLoginWaitingPanelShowsTheCodeAndCopyActions() {
+        TerminalUiState state = reducer.reduce(
+                TerminalUiState.initial(80, 24),
+                new TerminalUiAction.DeviceLoginInstructionsPresented(
+                        "https://auth.openai.com/codex/device", "ABCD-1234"));
+
+        assertThat(state.selector()).get().satisfies(selector -> {
+            assertThat(selector.kind()).isEqualTo("auth-device");
+            assertThat(selector.title()).contains("ABCD-1234");
+            assertThat(selector.options()).containsExactly("Copy device code", "Copy browser link", "Cancel sign-in");
+        });
+        assertThat(state.transcript()).isEmpty();
+    }
+
+    @Test
+    void browserLoginWaitingPanelDoesNotPersistTheAuthorizationUrl() {
+        TerminalUiState state = reducer.reduce(
+                TerminalUiState.initial(80, 24),
+                new TerminalUiAction.BrowserLoginInstructionsPresented(
+                        "ChatGPT", "https://auth.example/authorize?state=secret-value"));
+
+        assertThat(state.selector()).get().satisfies(selector -> {
+            assertThat(selector.kind()).isEqualTo("auth-wait");
+            assertThat(selector.options())
+                    .containsExactly("Copy authorization link", "Reopen browser", "Cancel sign-in");
+        });
+        assertThat(state.status()).contains("Waiting for browser authorization");
+        assertThat(state.transcript()).isEmpty();
+        assertThat(state.toString()).doesNotContain("secret-value");
+    }
+
+    @Test
     void projectsCommittedEventsOnceAndAdvancesCursorOnlyAfterProjection() {
         TerminalUiState initial = TerminalUiState.initial(120, 40);
         AgentRunEvent event = event(1, "event-1", new RunEventPayloads.AssistantTextDelta("g-1", "hello"));
@@ -220,6 +252,82 @@ class TerminalUiReducerTest {
                     assertThat(item.title()).isEqualTo("workspace.write · src/App.java");
                     assertThat(item.body()).contains("Target: src/App.java", "Result: artifact:tool-1");
                 });
+    }
+
+    @Test
+    void prefersIntentSummaryOverTargetSummaryFromRequestedThroughSucceeded() {
+        TerminalUiState requested = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1",
+                                "execution_run",
+                                "REQUESTED",
+                                "NONE",
+                                "rg -l ToolCall .",
+                                "",
+                                Optional.empty(),
+                                "查找包含 ToolCall 的文件"))));
+        assertThat(requested.transcript())
+                .filteredOn(item -> item.id().equals("tool-tool-1"))
+                .singleElement()
+                .satisfies(item -> {
+                    assertThat(item.status()).isEqualTo("REQUESTED");
+                    assertThat(item.title()).isEqualTo("execution_run · 查找包含 ToolCall 的文件");
+                    assertThat(item.body()).contains("Target: rg -l ToolCall .");
+                });
+
+        TerminalUiState started = reducer.reduce(
+                requested,
+                new TerminalUiAction.RunEventReceived(event(
+                        2,
+                        "event-2",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1",
+                                "execution_run",
+                                "STARTED",
+                                "NONE",
+                                "rg -l ToolCall .",
+                                "",
+                                Optional.empty(),
+                                "查找包含 ToolCall 的文件"))));
+        TerminalUiState succeeded = reducer.reduce(
+                started,
+                new TerminalUiAction.RunEventReceived(event(
+                        3,
+                        "event-3",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1",
+                                "execution_run",
+                                "SUCCEEDED",
+                                "NONE",
+                                "rg -l ToolCall .",
+                                "artifact:tool-1",
+                                Optional.empty(),
+                                "查找包含 ToolCall 的文件"))));
+        assertThat(succeeded.transcript())
+                .filteredOn(item -> item.id().equals("tool-tool-1"))
+                .singleElement()
+                .satisfies(item -> {
+                    assertThat(item.status()).isEqualTo("SUCCEEDED");
+                    assertThat(item.title()).isEqualTo("execution_run · 查找包含 ToolCall 的文件");
+                    assertThat(item.body()).contains("Target: rg -l ToolCall .", "Result: artifact:tool-1");
+                });
+    }
+
+    @Test
+    void fallsBackToTargetSummaryWhenIntentSummaryMissing() {
+        TerminalUiState state = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1", "file_read", "REQUESTED", "NONE", "RuntimeCore.java", ""))));
+        assertThat(state.transcript()).singleElement().satisfies(item -> assertThat(item.title())
+                .isEqualTo("file_read · RuntimeCore.java"));
     }
 
     @Test
@@ -622,6 +730,7 @@ class TerminalUiReducerTest {
         assertThat(state.transcript()).singleElement().satisfies(item -> {
             assertThat(item.status()).isEqualTo("TIMEOUT");
             assertThat(item.durationMillis()).isPresent();
+            assertThat(item.exitCode()).contains(137);
             assertThat(item.body())
                     .contains(
                             "Target: long run",
@@ -630,6 +739,32 @@ class TerminalUiReducerTest {
                             "Output truncated · 2500 bytes · 501 lines",
                             "Result: asset-1")
                     .doesNotContain("Outcome: UNKNOWN");
+        });
+    }
+
+    @Test
+    void keepsNonZeroExitCodeSeparateFromTheSuccessfulExecutionOutcome() {
+        TerminalUiState state = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1",
+                                "execution_run",
+                                "EXITED",
+                                "NONE",
+                                "python -m unittest",
+                                "",
+                                Optional.of(new RunEventPayloads.ToolObservation(
+                                        Optional.of(BoundedText.of(
+                                                "Command exited (exit 1)", new ToolDisplayBudget(1_024, 20))),
+                                        Optional.of("EXITED"),
+                                        Optional.of(1)))))));
+
+        assertThat(state.transcript()).singleElement().satisfies(item -> {
+            assertThat(item.status()).isEqualTo("EXITED");
+            assertThat(item.exitCode()).contains(1);
         });
     }
 
@@ -696,8 +831,38 @@ class TerminalUiReducerTest {
                         new RunEventPayloads.ToolLifecycle(
                                 "tool-1", "file_stat", "SUCCEEDED", "NONE", "file_stat", "artifact:tool-1"))));
 
-        assertThat(state.transcript()).singleElement().satisfies(item -> assertThat(item.title())
-                .isEqualTo("file_stat"));
+        assertThat(state.transcript()).singleElement().satisfies(item -> {
+            assertThat(item.title()).isEqualTo("file_stat");
+            assertThat(item.body()).doesNotContain("Target: file_stat");
+        });
+    }
+
+    @Test
+    void toolItemPreservesExpandedStateAcrossLifecycleEvents() {
+        TerminalUiState started = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1", "execution_run", "STARTED", "NONE", "git status", ""))));
+
+        TerminalUiState expanded = reducer.reduce(started, new TerminalUiAction.ToggleExpanded("tool-tool-1"));
+        assertThat(expanded.transcript()).singleElement().satisfies(item -> assertThat(item.expanded())
+                .isTrue());
+
+        TerminalUiState succeeded = reducer.reduce(
+                expanded,
+                new TerminalUiAction.RunEventReceived(event(
+                        2,
+                        "event-2",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1", "execution_run", "SUCCEEDED", "NONE", "git status", "asset-1"))));
+
+        assertThat(succeeded.transcript()).singleElement().satisfies(item -> {
+            assertThat(item.expanded()).isTrue();
+            assertThat(item.status()).isEqualTo("SUCCEEDED");
+        });
     }
 
     @Test

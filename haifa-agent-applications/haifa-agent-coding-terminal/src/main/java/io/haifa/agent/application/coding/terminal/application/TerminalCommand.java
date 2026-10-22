@@ -10,7 +10,8 @@ public enum TerminalCommand {
     RELOAD,
     COMPACT,
     EXPORT,
-    LOGIN,
+    CONNECT,
+    LOGIN_REMOVED,
     LOGOUT,
     ACCOUNT,
     MODEL,
@@ -19,6 +20,7 @@ public enum TerminalCommand {
     SESSION,
     COMMANDS,
     THEME,
+    MOUSE,
     QUIT,
     NOT_IMPLEMENTED,
     UNKNOWN

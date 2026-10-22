@@ -281,8 +281,12 @@ final class LocalFileToolOperations implements ProjectToolOperations {
 
     private ToolResult create(MutationContext mutationContext, Map<String, Object> values) {
         String pathStr = string(values, "path");
+        String content = string(values, "content");
+        if (HistoricalTruncationPlaceholder.isEntireValue(content)) {
+            return corruptedArgumentFailure(pathStr);
+        }
         ResolvedTarget target = resolveTarget(pathStr, WorkspaceAccessMode.DEVELOP);
-        byte[] bytes = string(values, "content").getBytes(StandardCharsets.UTF_8);
+        byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
         ensureAbsent(target);
         createTarget(mutationContext, target, bytes);
         recordCreate(target, bytes, mutationContext);
@@ -294,8 +298,12 @@ final class LocalFileToolOperations implements ProjectToolOperations {
 
     private ToolResult write(MutationContext mutationContext, Map<String, Object> values) {
         String pathStr = string(values, "path");
+        String content = string(values, "content");
+        if (HistoricalTruncationPlaceholder.isEntireValue(content)) {
+            return corruptedArgumentFailure(pathStr);
+        }
         ResolvedTarget target = resolveTarget(pathStr, WorkspaceAccessMode.DEVELOP);
-        byte[] bytes = string(values, "content").getBytes(StandardCharsets.UTF_8);
+        byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
 
         TargetMetadata before;
         try {
@@ -538,6 +546,9 @@ final class LocalFileToolOperations implements ProjectToolOperations {
 
     private ToolResult patch(WorkspaceId workspaceId, MutationContext mutationContext, Map<String, Object> values) {
         String patchText = string(values, "patch");
+        if (HistoricalTruncationPlaceholder.isEntireValue(patchText)) {
+            return corruptedArgumentFailure(null);
+        }
         List<String> lines = patchText.strip().lines().toList();
         List<String> rewrittenLines = new ArrayList<>(lines.size());
         WorkspaceId patchWorkspace = null;
@@ -1018,6 +1029,27 @@ final class LocalFileToolOperations implements ProjectToolOperations {
 
     private static ToolResult failure(String summary, Map<String, Object> data) {
         return new ToolResult(false, summary, data, List.of(), List.of(), false);
+    }
+
+    /**
+     * Rejects a write whose entire content is a known historical truncation placeholder. The reason is fixed and the
+     * rejected content is never echoed; the model can re-read an authorized source or regenerate the full text.
+     */
+    private static ToolResult corruptedArgumentFailure(String path) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("errorCode", "CORRUPTED_ARGUMENT_PLACEHOLDER");
+        data.put("stableFailureCode", "CORRUPTED_ARGUMENT_PLACEHOLDER");
+        data.put("failureCategory", "INVALID_INPUT");
+        data.put("failureActionCode", "REGENERATE_CONTENT_FROM_SOURCE");
+        data.put("retryable", false);
+        data.put(
+                "repairHint",
+                "The content was a historical truncation placeholder, not file text. Re-read an authorized source or"
+                        + " regenerate the complete content before writing.");
+        if (path != null) {
+            data.put("path", path);
+        }
+        return failure("Refusing to write a historical truncation placeholder as file content", Map.copyOf(data));
     }
 
     private Map<String, Object> workspaceScopeFailure(String toolName, HostWorkspaceScopeException exception) {

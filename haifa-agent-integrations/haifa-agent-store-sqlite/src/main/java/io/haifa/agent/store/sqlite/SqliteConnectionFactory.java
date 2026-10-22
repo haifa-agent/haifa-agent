@@ -19,6 +19,7 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantLock;
 import org.apache.ibatis.datasource.pooled.PooledDataSource;
 import org.apache.ibatis.datasource.unpooled.UnpooledDataSource;
 import org.slf4j.Logger;
@@ -47,6 +48,17 @@ public final class SqliteConnectionFactory implements AutoCloseable {
     // reclaim, a connection that is still in use.
     private final Semaphore leases = new Semaphore(MAXIMUM_POOLED_CONNECTIONS, true);
     private final AtomicLong physicalConnectionsOpened = new AtomicLong();
+    /**
+     * In-process writers queue for the window that the direct {@code BEGIN IMMEDIATE} attempts used to provide, so
+     * contention that previously succeeded by retrying never becomes {@code DATABASE_BUSY} just because it now waits
+     * in the local queue instead. The same count still bounds the cross-process retry in
+     * {@link SqliteRuntimeUnitOfWork}.
+     */
+    static final int WRITER_SLOT_ATTEMPTS = 2;
+    // SQLite admits one writer. Writers of this process queue here and are woken as soon as the
+    // previous one finishes, instead of retrying BEGIN IMMEDIATE through SQLite's busy handler,
+    // whose back-off sleeps add tens of milliseconds per contended write.
+    private final ReentrantLock writer = new ReentrantLock(true);
     private volatile PooledDataSource pool;
     private SecureFilePermissions.PermissionStrategy permissionStrategy;
     private volatile boolean initialized;
@@ -126,6 +138,39 @@ public final class SqliteConnectionFactory implements AutoCloseable {
             leases.release();
             throw failure;
         }
+    }
+
+    /**
+     * Waits, at most for the retry window of the direct {@code BEGIN IMMEDIATE} attempts, until no other unit of
+     * work of this process holds the write transaction. Interruption does not abort the wait (a cancelled run must
+     * still persist its state); the interrupt is restored for the caller.
+     */
+    void acquireWriter() {
+        long deadline = System.nanoTime()
+                + TimeUnit.MILLISECONDS.toNanos((long) configuration.busyTimeoutMillis() * WRITER_SLOT_ATTEMPTS);
+        boolean interrupted = Thread.interrupted();
+        try {
+            while (true) {
+                try {
+                    if (writer.tryLock(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS)) {
+                        return;
+                    }
+                    break;
+                } catch (InterruptedException exception) {
+                    interrupted = true;
+                }
+            }
+        } finally {
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        throw new SqliteStoreException(
+                SqliteStoreFailure.DATABASE_BUSY, "SQLite writer is busy before the unit of work began");
+    }
+
+    void releaseWriter() {
+        writer.unlock();
     }
 
     /** Number of physical connections opened so far; a reused connection is not counted again. */

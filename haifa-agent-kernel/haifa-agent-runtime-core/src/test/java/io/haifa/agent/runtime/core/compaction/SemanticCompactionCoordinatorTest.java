@@ -440,7 +440,7 @@ class SemanticCompactionCoordinatorTest {
         DeterministicContextCompressor deterministic = new DeterministicContextCompressor();
 
         SemanticCompactionCoordinator coordinator = new SemanticCompactionCoordinator(
-                store, store, invoker, evaluator, policy, deterministic, ids, time, store);
+                store, store, invoker, evaluator, policy, deterministic, ids, time, store, fileReadPruningPlanner());
 
         AgentRun run = createAndSaveRun(store);
         AgentSessionId session = run.sessionId();
@@ -1719,6 +1719,14 @@ class SemanticCompactionCoordinatorTest {
 
     private static SemanticCompactionCoordinator coordinator(
             InMemoryRuntimeStore store, IdentifierGenerator ids, CompressionPolicy policy) {
+        return coordinator(store, ids, policy, new ModelMessageProjectionPlanner(store));
+    }
+
+    private static SemanticCompactionCoordinator coordinator(
+            InMemoryRuntimeStore store,
+            IdentifierGenerator ids,
+            CompressionPolicy policy,
+            ModelMessageProjectionPlanner projectionPlanner) {
         TimeProvider time = () -> NOW;
         RunTransitionCoordinator transitions =
                 new RunTransitionCoordinator(store, store, store, store, ids, time, new RunAwaiter(), store);
@@ -1731,7 +1739,12 @@ class SemanticCompactionCoordinatorTest {
                 new DeterministicContextCompressor(),
                 ids,
                 time,
-                store);
+                store,
+                projectionPlanner);
+    }
+
+    private static ModelMessageProjectionPlanner fileReadPruningPlanner() {
+        return new ModelMessageProjectionPlanner((call, binding) -> "file_read".equals(call.toolName()));
     }
 
     @Test
@@ -1892,7 +1905,7 @@ class SemanticCompactionCoordinatorTest {
         CompressionPolicy policy =
                 CompressionPolicy.defaults().withSemanticCompactionEnabled(true).withTailTokenBounds(5, 50);
 
-        SemanticCompactionCoordinator coordinator = coordinator(store, ids, policy);
+        SemanticCompactionCoordinator coordinator = coordinator(store, ids, policy, fileReadPruningPlanner());
         AgentRun run = createAndSaveRun(store);
         AgentSessionId session = run.sessionId();
 

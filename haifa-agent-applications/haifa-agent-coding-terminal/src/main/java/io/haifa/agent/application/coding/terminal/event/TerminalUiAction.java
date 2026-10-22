@@ -99,4 +99,6 @@ public sealed interface TerminalUiAction {
     record SidebarToggled() implements TerminalUiAction {}
 
     record ThemeChanged(String themeName) implements TerminalUiAction {}
+
+    record CancelArmedChanged(boolean armed) implements TerminalUiAction {}
 }

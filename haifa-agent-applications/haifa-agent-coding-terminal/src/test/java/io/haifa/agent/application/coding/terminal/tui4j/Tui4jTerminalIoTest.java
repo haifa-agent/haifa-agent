@@ -40,14 +40,14 @@ class Tui4jTerminalIoTest {
     }
 
     @Test
-    void productionProgramLeavesMouseReportingDisabledForNativeTextSelection() throws Exception {
+    void writesDefensiveMouseReportingResetAroundTheProgram() throws Exception {
         String terminalOutput = runSpikeProgramToQuit();
 
-        String reset = "\u001B[?1000l\u001B[?1002l\u001B[?1003l\u001B[?1006l";
+        String reset = "\u001B[?1000l\u001B[?1002l\u001B[?1003l\u001B[?1006l\u001B[?1007l";
         assertThat(terminalOutput)
                 .startsWith(reset)
                 .endsWith(reset)
-                .doesNotContain("\u001B[?1000h", "\u001B[?1002h", "\u001B[?1003h", "\u001B[?1006h");
+                .doesNotContain("\u001B[?1000h", "\u001B[?1002h", "\u001B[?1003h", "\u001B[?1006h", "\u001B[?1007h");
         assertThat(terminalOutput.split(java.util.regex.Pattern.quote(reset), -1))
                 .hasSizeGreaterThanOrEqualTo(3);
     }
@@ -60,6 +60,15 @@ class Tui4jTerminalIoTest {
                 .contains("\u001B[22;2t")
                 .contains("\u001B]2;Haifa Coding Agent\u0007")
                 .contains("\u001B[23;2t");
+    }
+
+    @Test
+    void honorsTheMouseReportingOptOut() {
+        assertThat(io("HAIFA_TERMINAL_MOUSE=off").initialMouseReportingEnabled())
+                .isFalse();
+        assertThat(io("HAIFA_TERMINAL_MOUSE=OFF").initialMouseReportingEnabled())
+                .isFalse();
+        assertThat(io("TERM=xterm-256color").initialMouseReportingEnabled()).isTrue();
     }
 
     private String runSpikeProgramToQuit() throws Exception {

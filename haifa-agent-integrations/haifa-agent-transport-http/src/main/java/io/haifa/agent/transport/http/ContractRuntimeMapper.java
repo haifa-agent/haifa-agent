@@ -255,7 +255,8 @@ public final class ContractRuntimeMapper {
                     value.reasonCode(),
                     value.targetSummary(),
                     value.resultRef(),
-                    value.observation().map(ContractRuntimeMapper::toolObservation));
+                    value.observation().map(ContractRuntimeMapper::toolObservation),
+                    value.intentSummary());
         }
         if (payload instanceof RunEventPayloads.ResourceAvailable value) {
             return new RunEventPayload.ResourceAvailable(

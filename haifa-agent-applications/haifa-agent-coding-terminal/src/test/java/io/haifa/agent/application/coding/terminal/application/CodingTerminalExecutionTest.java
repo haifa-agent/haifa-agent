@@ -85,7 +85,7 @@ class CodingTerminalExecutionTest {
     }
 
     @Test
-    void escapeCancelsAnActiveRunEvenWhenASelectorIsOpen() {
+    void escapeClosesSelectorFirstAndDoubleEscapeCancelsTheActiveRun() {
         FakeClient client = new FakeClient(activeView());
         TerminalUiReducer reducer = new TerminalUiReducer();
         TerminalUiState activeState = reducer.reduce(
@@ -101,10 +101,19 @@ class CodingTerminalExecutionTest {
                 PROJECT_ID, client, new TerminalEventPump(32), reducer, activeState, Runnable::run);
 
         controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, "draft"));
+        assertThat(controller.state().selector()).isEmpty();
+        assertThat(client.cancelledSessions).isEmpty();
+        assertThat(controller.state().cancelArmed()).isFalse();
 
+        controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, "draft"));
+        assertThat(controller.state().cancelArmed()).isTrue();
+        assertThat(controller.state().status()).isEqualTo("Press esc again to cancel");
+        assertThat(client.cancelledSessions).isEmpty();
+
+        controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, "draft"));
         assertThat(client.cancelledSessions).containsExactly(SESSION_ID);
         assertThat(controller.state().status()).isEqualTo("Cancelling");
-        assertThat(controller.state().selector()).isEmpty();
+        assertThat(controller.state().cancelArmed()).isFalse();
         assertThat(controller.state().editorBuffer()).isEqualTo("draft");
     }
 
@@ -249,7 +258,7 @@ class CodingTerminalExecutionTest {
         assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("model-readiness");
         assertThat(controller.state().selector().orElseThrow().options())
                 .containsExactly(
-                        "Switch model (/model)", "Connect / Log in to model (/login)", "Keep draft and dismiss");
+                        "Switch model (/model)", "Sign in to provider again (/connect)", "Keep draft and close");
 
         // Choosing index 2 dismisses selector and keeps draft
         controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
@@ -261,8 +270,9 @@ class CodingTerminalExecutionTest {
     }
 
     @Test
-    void modelReadinessSelectorOptionLoginOpensLoginSelector() {
-        FakeClient client = new FakeClient(view(Optional.empty()));
+    void modelReadinessSelectorOptionLoginOpensTheCurrentProviderFlow() {
+        FakeClient client = new FakeClient(
+                view(Optional.empty(), 0, "session", model("deepseek-v4", "DeepSeek V4", "deepseek", "DeepSeek")));
         FakeAuthenticationClient authentication = new FakeAuthenticationClient();
         client.submitFailure =
                 new ProjectProductException("MODEL_AUTHENTICATION_REQUIRED", "Model credentials are not ready");
@@ -273,12 +283,11 @@ class CodingTerminalExecutionTest {
 
         assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("model-readiness");
 
-        // Select option 1: 登录当前 Provider (/login)
+        // Select option 1: sign in to the current provider again (/connect)
         controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
         controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
 
-        assertThat(controller.state().selector()).isPresent();
-        assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("auth-login");
+        assertThat(controller.secureInputRequested()).isTrue();
         assertThat(controller.state().editorBuffer()).isEqualTo("draft to preserve");
     }
 

@@ -27,14 +27,19 @@ class TerminalCommandRouterTest {
         assertThat(router.route("/help")).isEqualTo(TerminalCommand.COMMANDS);
         assertThat(router.route("/theme")).isEqualTo(TerminalCommand.THEME);
         assertThat(router.route("/theme nord")).isEqualTo(TerminalCommand.THEME);
+        assertThat(router.route("/mouse")).isEqualTo(TerminalCommand.MOUSE);
+        assertThat(router.route("/mouse on")).isEqualTo(TerminalCommand.MOUSE);
+        assertThat(router.route("/mouse off")).isEqualTo(TerminalCommand.MOUSE);
         assertThat(router.route("/quit")).isEqualTo(TerminalCommand.QUIT);
     }
 
     @Test
     void rejectsDeferredCapabilitiesWithoutPretendingTheyExist() {
         assertThat(router.route("/model")).isEqualTo(TerminalCommand.MODEL);
-        assertThat(router.route("/login")).isEqualTo(TerminalCommand.LOGIN);
-        assertThat(router.route("/login chatgpt")).isEqualTo(TerminalCommand.LOGIN);
+        assertThat(router.route("/connect")).isEqualTo(TerminalCommand.CONNECT);
+        assertThat(router.route("/connect chatgpt")).isEqualTo(TerminalCommand.CONNECT);
+        assertThat(router.route("/login")).isEqualTo(TerminalCommand.LOGIN_REMOVED);
+        assertThat(router.route("/login chatgpt")).isEqualTo(TerminalCommand.LOGIN_REMOVED);
         assertThat(router.route("/logout")).isEqualTo(TerminalCommand.LOGOUT);
         assertThat(router.route("/account")).isEqualTo(TerminalCommand.ACCOUNT);
         assertThat(router.route("/tree")).isEqualTo(TerminalCommand.NOT_IMPLEMENTED);

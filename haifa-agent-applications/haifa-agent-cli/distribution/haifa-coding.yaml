@@ -72,7 +72,7 @@ runtime:
   maxIterations: 256
   maxModelCalls: 256
   maxToolCalls: 256
-  maxWallTimeMillis: 3600000
+  maxWallTimeMillis: 86400000
   abandonedRunStalenessMillis: 1800000
 persistence:
   mode: SQLITE_WITH_JSONL

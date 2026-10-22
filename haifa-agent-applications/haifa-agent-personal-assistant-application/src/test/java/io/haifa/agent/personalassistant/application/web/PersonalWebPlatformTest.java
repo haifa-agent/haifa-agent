@@ -61,7 +61,8 @@ class PersonalWebPlatformTest {
                 .findFirst()
                 .orElseThrow();
         assertThat(inputProperties(search.definition().inputSchema().document()))
-                .containsOnlyKeys("query", "maxResults", "freshness", "includeDomains", "excludeDomains");
+                .containsOnlyKeys(
+                        "query", "maxResults", "freshness", "includeDomains", "excludeDomains", "description");
     }
 
     @Test

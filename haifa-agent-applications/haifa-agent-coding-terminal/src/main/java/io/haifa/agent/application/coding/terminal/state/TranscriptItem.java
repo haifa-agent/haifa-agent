@@ -12,7 +12,8 @@ public record TranscriptItem(
         boolean expanded,
         Optional<ApprovalDetails> approvalDetails,
         Optional<Long> startedAtEpochMillis,
-        Optional<Long> durationMillis) {
+        Optional<Long> durationMillis,
+        Optional<Integer> exitCode) {
     public TranscriptItem {
         id = text(id, "id", 256);
         kind = Objects.requireNonNull(kind, "kind must not be null");
@@ -22,6 +23,7 @@ public record TranscriptItem(
         approvalDetails = Objects.requireNonNull(approvalDetails, "approvalDetails must not be null");
         startedAtEpochMillis = Objects.requireNonNull(startedAtEpochMillis, "startedAtEpochMillis must not be null");
         durationMillis = Objects.requireNonNull(durationMillis, "durationMillis must not be null");
+        exitCode = Objects.requireNonNull(exitCode, "exitCode must not be null");
         if (startedAtEpochMillis.isPresent() && startedAtEpochMillis.orElseThrow() < 0) {
             throw new IllegalArgumentException("startedAtEpochMillis must not be negative");
         }
@@ -31,6 +33,29 @@ public record TranscriptItem(
         if (kind != Kind.APPROVAL && approvalDetails.isPresent()) {
             throw new IllegalArgumentException("approval details require an approval transcript item");
         }
+    }
+
+    public TranscriptItem(
+            String id,
+            Kind kind,
+            String title,
+            String body,
+            String status,
+            boolean expanded,
+            Optional<ApprovalDetails> approvalDetails,
+            Optional<Long> startedAtEpochMillis,
+            Optional<Long> durationMillis) {
+        this(
+                id,
+                kind,
+                title,
+                body,
+                status,
+                expanded,
+                approvalDetails,
+                startedAtEpochMillis,
+                durationMillis,
+                Optional.empty());
     }
 
     public TranscriptItem(String id, Kind kind, String title, String body, String status, boolean expanded) {
@@ -52,17 +77,44 @@ public record TranscriptItem(
         String merged = body + bounded(delta, "delta", 65_536);
         if (merged.length() > 16_384) merged = merged.substring(merged.length() - 16_384);
         return new TranscriptItem(
-                id, kind, title, merged, status, expanded, approvalDetails, startedAtEpochMillis, durationMillis);
+                id,
+                kind,
+                title,
+                merged,
+                status,
+                expanded,
+                approvalDetails,
+                startedAtEpochMillis,
+                durationMillis,
+                exitCode);
     }
 
     public TranscriptItem withStatus(String value, String valueBody) {
         return new TranscriptItem(
-                id, kind, title, valueBody, value, expanded, approvalDetails, startedAtEpochMillis, durationMillis);
+                id,
+                kind,
+                title,
+                valueBody,
+                value,
+                expanded,
+                approvalDetails,
+                startedAtEpochMillis,
+                durationMillis,
+                exitCode);
     }
 
     public TranscriptItem toggle() {
         return new TranscriptItem(
-                id, kind, title, body, status, !expanded, approvalDetails, startedAtEpochMillis, durationMillis);
+                id,
+                kind,
+                title,
+                body,
+                status,
+                !expanded,
+                approvalDetails,
+                startedAtEpochMillis,
+                durationMillis,
+                exitCode);
     }
 
     /**

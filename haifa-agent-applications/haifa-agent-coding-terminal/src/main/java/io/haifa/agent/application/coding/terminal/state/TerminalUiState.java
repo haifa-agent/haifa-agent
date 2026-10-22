@@ -29,7 +29,8 @@ public record TerminalUiState(
         boolean exitRequested,
         boolean sidebarVisible,
         boolean sidebarExplicitlyToggled,
-        String themeName) {
+        String themeName,
+        boolean cancelArmed) {
     public TerminalUiState {
         header = Objects.requireNonNull(header, "header must not be null");
         loadedResources = List.copyOf(loadedResources);
@@ -76,7 +77,107 @@ public record TerminalUiState(
                 exitRequested,
                 sidebarVisible,
                 sidebarExplicitlyToggled,
-                newThemeName);
+                newThemeName,
+                cancelArmed);
+    }
+
+    public TerminalUiState withCancelArmed(boolean newCancelArmed) {
+        return new TerminalUiState(
+                header,
+                loadedResources,
+                transcript,
+                pending,
+                status,
+                editorBuffer,
+                editorCursor,
+                selector,
+                footer,
+                columns,
+                rows,
+                session,
+                currentRunId,
+                appliedCursor,
+                seenEventIds,
+                recoverableError,
+                activity,
+                exitRequested,
+                sidebarVisible,
+                sidebarExplicitlyToggled,
+                themeName,
+                newCancelArmed);
+    }
+
+    public TerminalUiState withStatus(String newStatus) {
+        return new TerminalUiState(
+                header,
+                loadedResources,
+                transcript,
+                pending,
+                newStatus,
+                editorBuffer,
+                editorCursor,
+                selector,
+                footer,
+                columns,
+                rows,
+                session,
+                currentRunId,
+                appliedCursor,
+                seenEventIds,
+                recoverableError,
+                activity,
+                exitRequested,
+                sidebarVisible,
+                sidebarExplicitlyToggled,
+                themeName,
+                cancelArmed);
+    }
+
+    public TerminalUiState(
+            String header,
+            List<String> loadedResources,
+            List<TranscriptItem> transcript,
+            List<PendingMessage> pending,
+            String status,
+            String editorBuffer,
+            int editorCursor,
+            Optional<TerminalSelector> selector,
+            TerminalFooter footer,
+            int columns,
+            int rows,
+            Optional<CodingSessionView> session,
+            Optional<AgentRunId> currentRunId,
+            Optional<RunEventCursor> appliedCursor,
+            Set<String> seenEventIds,
+            Optional<String> recoverableError,
+            TerminalActivity activity,
+            boolean exitRequested,
+            boolean sidebarVisible,
+            boolean sidebarExplicitlyToggled,
+            String themeName) {
+        this(
+                header,
+                loadedResources,
+                transcript,
+                pending,
+                status,
+                editorBuffer,
+                editorCursor,
+                selector,
+                footer,
+                columns,
+                rows,
+                session,
+                currentRunId,
+                appliedCursor,
+                seenEventIds,
+                recoverableError,
+                activity,
+                exitRequested,
+                sidebarVisible,
+                sidebarExplicitlyToggled,
+                themeName,
+                false);
     }
 
     public TerminalUiState(
@@ -266,7 +367,16 @@ public record TerminalUiState(
                 0,
                 Optional.empty(),
                 new TerminalFooter(
-                        workspace.workingDirectory(), workspace.gitBranch(), "", "context: —", "", "", "IDLE", ""),
+                        workspace.workingDirectory(),
+                        workspace.gitBranch(),
+                        workspace.worktree(),
+                        workspace.worktreeBranch(),
+                        "",
+                        "context: —",
+                        "",
+                        "",
+                        "IDLE",
+                        ""),
                 columns,
                 rows,
                 Optional.empty(),
@@ -277,6 +387,8 @@ public record TerminalUiState(
                 TerminalActivity.initial(),
                 false,
                 columns >= 100,
+                false,
+                "dark",
                 false);
     }
 }

@@ -4,8 +4,8 @@
     Publishes the Haifa Agent SDK to the local Maven repository with versioned coordinates.
 .DESCRIPTION
     Follows ENG-SdkWorktreeVersionedPublish rules:
-    - Main checkout on 'dev': publishes baseline 0.1.2-SNAPSHOT.
-    - Other worktrees: publishes 0.1.2-<identifier>-SNAPSHOT where <identifier> is the worktree directory name.
+    - Main checkout on 'dev': publishes baseline 0.1.3-SNAPSHOT.
+    - Other worktrees: publishes 0.1.3-<identifier>-SNAPSHOT where <identifier> is the worktree directory name.
     - Requires clean working tree and runs 'clean install'.
     - Deletes old manifest before publish starts, verifies installed artifacts, and atomically writes haifa-sdk-publish-manifest.json.
 #>

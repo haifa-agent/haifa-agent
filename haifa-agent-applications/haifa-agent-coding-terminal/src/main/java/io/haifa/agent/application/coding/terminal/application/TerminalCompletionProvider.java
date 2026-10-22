@@ -7,7 +7,7 @@ import java.util.function.Supplier;
 /** Bounded completion over supported commands and product-provided logical paths only. */
 public final class TerminalCompletionProvider {
     public static final List<String> COMMANDS = List.of(
-            "/login",
+            "/connect",
             "/logout",
             "/account",
             "/model",
@@ -23,6 +23,7 @@ public final class TerminalCompletionProvider {
             "/delete",
             "/commands",
             "/theme",
+            "/mouse",
             "/help",
             "/quit");
     private static final int MAX_CANDIDATES = 20;

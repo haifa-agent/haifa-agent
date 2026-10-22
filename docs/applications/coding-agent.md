@@ -35,6 +35,10 @@ File Mutation 与 Model-triggered Execution 会在实际执行时重新检查当
 
 Model 使用通用 execution_run Tool 执行 Build、Test、Shell、git、gh 与客户脚本。
 
+内置工具（含 Web / Skill）的输入 Schema 披露可选 `description` 字段：Model 在同一次 Tool Call 中生成
+面向用户的简短操作意图说明；Coding Terminal 折叠卡片优先展示该说明，展开后仍保留命令/路径等安全
+Target 与结果详情。说明仅用于展示，不参与授权或成功判定。
+
 Haifa 不再在 Java 中维护一套试图理解所有 git / gh 子命令的大型 Grammar。
 
 系统仍保留一条很窄的 fail-closed Credential Protection Boundary，用来阻止已知会泄露 Credential 或修改 Authentication State 的命令流经 Model Execution Path。

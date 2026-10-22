@@ -25,10 +25,13 @@ public record Tui4jTerminalIo(
     private static final String WINDOW_TITLE = "Haifa Coding Agent";
     private static final String SAVE_WINDOW_TITLE = "\u001B[22;2t";
     private static final String RESTORE_WINDOW_TITLE = "\u001B[23;2t";
-    private static final byte[] RESET_MOUSE_REPORTING =
-            "\u001B[?1000l\u001B[?1002l\u001B[?1003l\u001B[?1006l".getBytes(StandardCharsets.US_ASCII);
+    static final String DISABLE_ALTERNATE_SCREEN_SCROLL = "\u001B[?1007l";
+    private static final byte[] RESET_MOUSE_REPORTING = ("\u001B[?1000l\u001B[?1002l\u001B[?1003l\u001B[?1006l"
+                    + DISABLE_ALTERNATE_SCREEN_SCROLL)
+            .getBytes(StandardCharsets.US_ASCII);
     private static final Set<String> SAFE_TERMINAL_ENVIRONMENT = Set.of(
             "COLORTERM",
+            "HAIFA_TERMINAL_MOUSE",
             "NO_COLOR",
             "TERM",
             "TERM_PROGRAM",
@@ -100,6 +103,17 @@ public record Tui4jTerminalIo(
         return TerminalHostInfo.system(environment);
     }
 
+    /**
+     * Startup mouse reporting preference. {@code HAIFA_TERMINAL_MOUSE=off} opts into host-native
+     * selection; every other value (including absence) defaults to application mouse capture.
+     */
+    boolean initialMouseReportingEnabled() {
+        return !value("HAIFA_TERMINAL_MOUSE")
+                .map(String::strip)
+                .map("off"::equalsIgnoreCase)
+                .orElse(false);
+    }
+
     private Optional<String> value(String name) {
         String prefix = name + "=";
         return environment.stream()
@@ -129,8 +143,9 @@ public record Tui4jTerminalIo(
         // reset tui4j's line cache and repaint the whole screen.
         options.add(ProgramOption.withFilter((candidate, message) ->
                 candidate instanceof Tui4jCodingTerminalModel terminal ? terminal.filterMessage(message) : message));
-        // Keep mouse reporting disabled. The host terminal must own ordinary drag selection and
-        // clipboard copy; transcript navigation remains available through PageUp/PageDown.
+        // Mouse reporting is toggled at runtime by the model (Command.enableMouseCellMotion /
+        // Command.disableMouse). This IO only owns the startup/exit reset so a failed run cannot
+        // leave the host terminal in mouse mode.
         return new Program(model, options.toArray(ProgramOption[]::new));
     }
 
