@@ -57,7 +57,7 @@ class IncrementalTerminalMarkdownRendererTest {
                         "  2. second",
                         "│ quoted",
                         "code · java",
-                        "  int value = 1;")
+                        "▎ int value = 1;")
                 .doesNotContain("# Heading", "**", "```", "\u001B");
     }
 
@@ -200,5 +200,39 @@ class IncrementalTerminalMarkdownRendererTest {
 
         assertThat(charsAfterResize).isEqualTo(charsBeforeResize);
         assertThat(Strip.strip(resized)).contains("String s = \"pending");
+    }
+
+    @Test
+    void spacesBlocksWithoutSplittingParagraphsListsOrCode() {
+        String input = "# Title\nfirst\nsecond\n- one\n- two\n```text\na\n\nb\n```\nlast";
+        assertThat(markdownRenderer.render("spacing", input, 60)).isEqualTo(
+                "Title\n\nfirst\nsecond\n\n• one\n• two\n\n▎ code · text\n▎ a\n▎ \n▎ b\n\nlast");
+    }
+
+    @Test
+    void collapsesOnlyStructuralBlankLinesAndRecognizesRules() {
+        assertThat(markdownRenderer.render("blank", "\n\na\n\n\nb\n- - -\nc\n\n", 20))
+                .isEqualTo("a\n\nb\n\n" + "─".repeat(20) + "\n\nc");
+    }
+
+    @Test
+    void retainsThreeLevelsAndProtectsNarrowListContent() {
+        String value = "  - a\n    - b\n      - c\n        - d";
+        assertThat(markdownRenderer.render("list", value, 60))
+                .isEqualTo("  • a\n    • b\n      • c\n      • d");
+        assertThat(markdownRenderer.render("list", value, 12))
+                .isEqualTo("• a\n• b\n• c\n• d");
+    }
+
+    @Test
+    void reusesCompletedRenderingAndInvalidatesOnReplacementOrResize() {
+        markdownRenderer.render("cache", "one\ntwo", 30);
+        markdownRenderer.render("cache", "one\ntwo more", 30);
+        assertThat(markdownRenderer.lastRenderedLines()).isEqualTo(1);
+        markdownRenderer.render("cache", "one\ntwo more", 30);
+        assertThat(markdownRenderer.lastRenderedLines()).isZero();
+        markdownRenderer.render("cache", "one\ntwo more", 20);
+        assertThat(markdownRenderer.lastRenderedLines()).isEqualTo(2);
+        assertThat(markdownRenderer.render("cache", "replacement", 20)).isEqualTo("replacement");
     }
 }

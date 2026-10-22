@@ -4,6 +4,8 @@ import com.williamcallahan.tui4j.compat.lipgloss.Renderer;
 import com.williamcallahan.tui4j.compat.lipgloss.Style;
 import com.williamcallahan.tui4j.compat.lipgloss.color.AdaptiveColor;
 import com.williamcallahan.tui4j.compat.lipgloss.color.ColorProfile;
+import io.haifa.agent.application.coding.terminal.markdown.render.MarkdownStyles;
+import io.haifa.agent.application.coding.terminal.markdown.style.MarkdownTokens;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -236,31 +238,43 @@ final class Tui4jTerminalTheme {
         return Style.newStyle().foreground(palette.muted()).render(value);
     }
 
+    MarkdownTokens markdownTokens() {
+        return MarkdownTokens.forTheme(palette.name());
+    }
+
     String heading(String value) {
-        return Style.newStyle().foreground(palette.accent()).bold(true).render(value);
+        return heading(1, value);
+    }
+
+    String heading(int level, String value) {
+        return MarkdownStyles.heading(markdownTokens(), level, value);
     }
 
     String strong(String value) {
-        return Style.newStyle().bold(true).render(value);
+        return MarkdownStyles.strong(markdownTokens(), value);
     }
 
     String emphasis(String value) {
-        return Style.newStyle().italic(true).render(value);
+        return MarkdownStyles.emphasis(markdownTokens(), value);
     }
 
     String inlineCode(String value) {
-        return Style.newStyle()
-                .foreground(palette.queuedForeground())
-                .background(palette.queuedBackground())
-                .inline(true)
-                .render(value);
+        return MarkdownStyles.inlineCode(markdownTokens(), value);
     }
 
     String codeBlock(String value) {
-        return Style.newStyle()
-                .foreground(palette.userForeground())
-                .background(palette.userBackground())
-                .render(value);
+        return Style.newStyle().foreground(palette.userForeground())
+                .background(codeBlockBackground()).render(value);
+    }
+
+    String markdownList(String marker, boolean ordered) {
+        return Style.newStyle().foreground(MarkdownStyles.color(ordered
+                ? markdownTokens().listNumber() : markdownTokens().listBullet())).render(marker);
+    }
+
+    String codePanelLine(String value) {
+        return Style.newStyle().foreground(MarkdownStyles.color(markdownTokens().blockBorder()))
+                .background(codeBlockBackground()).render("▎ ") + codeBlock(value);
     }
 
     String quote(String value) {
@@ -337,7 +351,7 @@ final class Tui4jTerminalTheme {
     String syntaxKeyword(String value) {
         return Style.newStyle()
                 .foreground(palette.syntaxKeyword())
-                .background(palette.userBackground())
+                .background(codeBlockBackground())
                 .bold(true)
                 .render(value);
     }
@@ -345,14 +359,14 @@ final class Tui4jTerminalTheme {
     String syntaxString(String value) {
         return Style.newStyle()
                 .foreground(palette.syntaxString())
-                .background(palette.userBackground())
+                .background(codeBlockBackground())
                 .render(value);
     }
 
     String syntaxComment(String value) {
         return Style.newStyle()
                 .foreground(palette.syntaxComment())
-                .background(palette.userBackground())
+                .background(codeBlockBackground())
                 .faint(true)
                 .render(value);
     }
@@ -360,40 +374,40 @@ final class Tui4jTerminalTheme {
     String syntaxNumber(String value) {
         return Style.newStyle()
                 .foreground(palette.syntaxNumber())
-                .background(palette.userBackground())
+                .background(codeBlockBackground())
                 .render(value);
     }
 
     String syntaxType(String value) {
         return Style.newStyle()
                 .foreground(palette.syntaxType())
-                .background(palette.userBackground())
+                .background(codeBlockBackground())
                 .render(value);
     }
 
     String syntaxLiteral(String value) {
         return Style.newStyle()
                 .foreground(palette.syntaxLiteral())
-                .background(palette.userBackground())
+                .background(codeBlockBackground())
                 .render(value);
     }
 
     String syntaxPunctuation(String value) {
         return Style.newStyle()
                 .foreground(palette.syntaxPunctuation())
-                .background(palette.userBackground())
+                .background(codeBlockBackground())
                 .render(value);
     }
 
     String syntaxPlain(String value) {
         return Style.newStyle()
                 .foreground(palette.userForeground())
-                .background(palette.userBackground())
+                .background(codeBlockBackground())
                 .render(value);
     }
 
     AdaptiveColor codeBlockBackground() {
-        return palette.userBackground();
+        return MarkdownStyles.color(markdownTokens().blockBackground());
     }
 
     AdaptiveColor codeBlockForeground() {
