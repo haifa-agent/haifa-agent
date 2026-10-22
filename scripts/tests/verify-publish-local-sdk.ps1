@@ -141,10 +141,10 @@ try {
     # 3. Main checkout on branch 'dev' succeeds and publishes baseline
     git -C $tempRepoMain checkout -q -b dev
     $mainDevVersion = Resolve-WorktreePublishVersion -RepoRoot $tempRepoMain
-    if ($mainDevVersion.Version -ne '0.1.3-SNAPSHOT' -or -not $mainDevVersion.IsBaseline) {
-        throw "Expected baseline 0.1.3-SNAPSHOT from main checkout on dev, got: $($mainDevVersion.Version)"
+    if ($mainDevVersion.Version -ne '0.1.4-SNAPSHOT' -or -not $mainDevVersion.IsBaseline) {
+        throw "Expected baseline 0.1.4-SNAPSHOT from main checkout on dev, got: $($mainDevVersion.Version)"
     }
-    Write-Host "[V5-MainDevBaseline] PASS (main checkout on dev resolves to baseline 0.1.3-SNAPSHOT)"
+    Write-Host "[V5-MainDevBaseline] PASS (main checkout on dev resolves to baseline 0.1.4-SNAPSHOT)"
 
     # 4. Linked worktree on a feature branch produces versioned identifier and is not baseline
     $worktreePath = Join-Path $repoRoot 'local-tmp\test-worktree-feat-one'
@@ -152,10 +152,10 @@ try {
     git -C $tempRepoMain worktree add -q -b feat-one $worktreePath dev
     try {
         $wtVersion = Resolve-WorktreePublishVersion -RepoRoot $worktreePath
-        if ($wtVersion.Version -ne '0.1.3-test-worktree-feat-one-SNAPSHOT' -or $wtVersion.IsBaseline) {
-            throw "Expected 0.1.3-test-worktree-feat-one-SNAPSHOT, got: $($wtVersion.Version)"
+        if ($wtVersion.Version -ne '0.1.4-test-worktree-feat-one-SNAPSHOT' -or $wtVersion.IsBaseline) {
+            throw "Expected 0.1.4-test-worktree-feat-one-SNAPSHOT, got: $($wtVersion.Version)"
         }
-        Write-Host "[V5-WorktreeVersioned] PASS (worktree resolves to 0.1.3-test-worktree-feat-one-SNAPSHOT)"
+        Write-Host "[V5-WorktreeVersioned] PASS (worktree resolves to 0.1.4-test-worktree-feat-one-SNAPSHOT)"
     } finally {
         git -C $tempRepoMain worktree remove -f $worktreePath 2>$null
         if (Test-Path $worktreePath) { Remove-Item -Recurse -Force $worktreePath }
@@ -172,7 +172,7 @@ try {
 Write-Host "`n--- Testing P1 Probe: Locked Manifest Deletion Abort ---"
 $tempRepoP1 = Join-Path $repoRoot 'local-tmp\test-m2-repo-p1'
 if (Test-Path $tempRepoP1) { Remove-Item -Recurse -Force $tempRepoP1 }
-$p1Version = '0.1.3-p1-locked-SNAPSHOT'
+$p1Version = '0.1.4-p1-locked-SNAPSHOT'
 $p1BomDir = Join-Path $tempRepoP1 "io\haifa\haifa-agent-bom\$p1Version"
 New-Item -ItemType Directory -Path $p1BomDir -Force | Out-Null
 $p1Manifest = Join-Path $p1BomDir 'haifa-sdk-publish-manifest.json'
@@ -197,7 +197,7 @@ $testResults['P1-LockedManifestGuard'] = 'PASS'
 Write-Host "`n--- Testing P1 Probe: Product Artifacts Purged on Failure ---"
 $tempRepoProd = Join-Path $repoRoot 'local-tmp\test-m2-repo-prod'
 if (Test-Path $tempRepoProd) { Remove-Item -Recurse -Force $tempRepoProd }
-$prodVersion = '0.1.3-prod-test-SNAPSHOT'
+$prodVersion = '0.1.4-prod-test-SNAPSHOT'
 
 # Simulate intermediate product JAR installed before a failure
 $prodJarDir = Join-Path $tempRepoProd "io\haifa\haifa-agent-cli\$prodVersion"
@@ -226,18 +226,18 @@ New-Item -ItemType Directory -Path $tempPomDir -Force | Out-Null
 $unexpandedPom = Join-Path $tempPomDir 'unexpanded.pom'
 Set-Content -Path $unexpandedPom -Value '<project><parent><version>${revision}</version></parent><artifactId>test</artifactId></project>' -Encoding utf8
 Assert-Throws {
-    Assert-InstalledPomValid -InstalledPomPath $unexpandedPom -ArtifactId 'test' -ExpectedVersion '0.1.3-slot-SNAPSHOT'
+    Assert-InstalledPomValid -InstalledPomPath $unexpandedPom -ArtifactId 'test' -ExpectedVersion '0.1.4-slot-SNAPSHOT'
 } 'still contains unresolved' 'P2-UnresolvedRevisionRejected'
 
 $mismatchedPom = Join-Path $tempPomDir 'mismatched.pom'
-Set-Content -Path $mismatchedPom -Value '<project><parent><version>0.1.3-SNAPSHOT</version></parent><artifactId>test</artifactId></project>' -Encoding utf8
+Set-Content -Path $mismatchedPom -Value '<project><parent><version>0.1.4-SNAPSHOT</version></parent><artifactId>test</artifactId></project>' -Encoding utf8
 Assert-Throws {
-    Assert-InstalledPomValid -InstalledPomPath $mismatchedPom -ArtifactId 'test' -ExpectedVersion '0.1.3-slot-SNAPSHOT'
-} 'has version ''0.1.3-SNAPSHOT'', expected ''0.1.3-slot-SNAPSHOT''' 'P2-MismatchedVersionRejected'
+    Assert-InstalledPomValid -InstalledPomPath $mismatchedPom -ArtifactId 'test' -ExpectedVersion '0.1.4-slot-SNAPSHOT'
+} 'has version ''0.1.4-SNAPSHOT'', expected ''0.1.4-slot-SNAPSHOT''' 'P2-MismatchedVersionRejected'
 
 $validPom = Join-Path $tempPomDir 'valid.pom'
-Set-Content -Path $validPom -Value '<project><parent><version>0.1.3-slot-SNAPSHOT</version></parent><artifactId>test</artifactId></project>' -Encoding utf8
-Assert-InstalledPomValid -InstalledPomPath $validPom -ArtifactId 'test' -ExpectedVersion '0.1.3-slot-SNAPSHOT'
+Set-Content -Path $validPom -Value '<project><parent><version>0.1.4-slot-SNAPSHOT</version></parent><artifactId>test</artifactId></project>' -Encoding utf8
+Assert-InstalledPomValid -InstalledPomPath $validPom -ArtifactId 'test' -ExpectedVersion '0.1.4-slot-SNAPSHOT'
 Write-Host "[P2-ValidPomVersion] PASS (POM with correctly expanded target version accepted)"
 
 Remove-Item -Recurse -Force $tempPomDir
@@ -289,8 +289,8 @@ if (Test-Path $tempRepoV3) { Remove-Item -Recurse -Force $tempRepoV3 }
 
 $wt1Path = 'D:\workspace\haifa-agent-worktrees\slot-1-feat-a'
 $wt2Path = 'D:\workspace\haifa-agent-worktrees\slot-2-feat-b'
-$wt1Version = '0.1.3-slot-1-feat-a-SNAPSHOT'
-$wt2Version = '0.1.3-slot-2-feat-b-SNAPSHOT'
+$wt1Version = '0.1.4-slot-1-feat-a-SNAPSHOT'
+$wt2Version = '0.1.4-slot-2-feat-b-SNAPSHOT'
 
 # Create distinct JARs with different bytes for wt1 and wt2
 $wt1JarDir = Join-Path $tempRepoV3 "io\haifa\haifa-agent-sdk\$wt1Version"
@@ -371,7 +371,7 @@ $testResults['V3-WorktreeIsolation'] = 'PASS'
 Write-Host "`n--- Testing V6: Coordinate Ownership Enforcement ---"
 $tempRepoV6 = Join-Path $repoRoot 'local-tmp\test-m2-repo-v6'
 if (Test-Path $tempRepoV6) { Remove-Item -Recurse -Force $tempRepoV6 }
-$v6Version = '0.1.3-owned-target-SNAPSHOT'
+$v6Version = '0.1.4-owned-target-SNAPSHOT'
 $v6OwnerPath = 'D:\existing\worktree\owned-target'
 $v6OtherPath = 'D:\other\worktree\owned-target'
 
@@ -480,12 +480,12 @@ if ($FullPublish) {
     $resolvedLocalRepo = Get-MavenLocalRepository -RepoRoot $repoRoot
 
     # Record hashes and mtimes of ALL 44 baseline JARs before publish
-    Write-Host "Recording pre-publish state of baseline 0.1.3-SNAPSHOT JARs..."
+    Write-Host "Recording pre-publish state of baseline 0.1.4-SNAPSHOT JARs..."
     $baselineJars = @{}
     foreach ($modRel in $classification.PublicModules) {
         $pomXml = [xml](Get-Content (Join-Path $repoRoot (Join-Path $modRel 'pom.xml')))
         $artId = $pomXml.project.artifactId
-        $bJar = Join-Path $resolvedLocalRepo "io\haifa\$artId\0.1.3-SNAPSHOT\$artId-0.1.3-SNAPSHOT.jar"
+        $bJar = Join-Path $resolvedLocalRepo "io\haifa\$artId\0.1.4-SNAPSHOT\$artId-0.1.4-SNAPSHOT.jar"
         if (Test-Path $bJar) {
             $baselineJars[$artId] = @{
                 Path = $bJar
