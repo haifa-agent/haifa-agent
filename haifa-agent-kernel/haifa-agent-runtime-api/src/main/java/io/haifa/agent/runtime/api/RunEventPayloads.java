@@ -154,7 +154,8 @@ public final class RunEventPayloads {
             String reasonCode,
             String targetSummary,
             String resultRef,
-            Optional<ToolObservation> observation)
+            Optional<ToolObservation> observation,
+            String intentSummary)
             implements AgentRunEvent.Payload {
         /** Backward-compatible constructor for producers that carry no bounded observation. */
         public ToolLifecycle(
@@ -164,7 +165,19 @@ public final class RunEventPayloads {
                 String reasonCode,
                 String targetSummary,
                 String resultRef) {
-            this(toolCallId, displayName, status, reasonCode, targetSummary, resultRef, Optional.empty());
+            this(toolCallId, displayName, status, reasonCode, targetSummary, resultRef, Optional.empty(), "");
+        }
+
+        /** Backward-compatible constructor for producers that omit the optional intent summary. */
+        public ToolLifecycle(
+                String toolCallId,
+                String displayName,
+                String status,
+                String reasonCode,
+                String targetSummary,
+                String resultRef,
+                Optional<ToolObservation> observation) {
+            this(toolCallId, displayName, status, reasonCode, targetSummary, resultRef, observation, "");
         }
 
         public ToolLifecycle {
@@ -175,6 +188,7 @@ public final class RunEventPayloads {
             targetSummary = optionalText(targetSummary, "targetSummary", 512);
             resultRef = optionalText(resultRef, "resultRef", 512);
             observation = Objects.requireNonNull(observation, "observation must not be null");
+            intentSummary = optionalText(intentSummary, "intentSummary", 256);
         }
     }
 

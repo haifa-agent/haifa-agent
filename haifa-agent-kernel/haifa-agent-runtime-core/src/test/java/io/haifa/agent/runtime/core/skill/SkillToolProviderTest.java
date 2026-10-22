@@ -260,6 +260,37 @@ class SkillToolProviderTest {
     }
 
     @Test
+    void loadAndResourceSchemasDiscloseOptionalCallDescription() {
+        SkillToolProvider provider = new SkillToolProvider(new SkillActivationService() {
+            @Override
+            public SkillActivation activate(SkillActivationRequest request) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public SkillContent content(SkillActivationRequest request) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public SkillResourceRead readResource(SkillActivationRequest request, String relativePath) {
+                throw new UnsupportedOperationException();
+            }
+        });
+        assertThat(provider.contributions()).allSatisfy(contribution -> {
+            assertThat(contribution.definition().version().value()).isEqualTo("1.1.0");
+            @SuppressWarnings("unchecked")
+            Map<String, Object> properties = (Map<String, Object>)
+                    contribution.definition().inputSchema().document().get("properties");
+            @SuppressWarnings("unchecked")
+            List<String> required = (List<String>)
+                    contribution.definition().inputSchema().document().get("required");
+            assertThat(properties).containsKey("description");
+            assertThat(required).doesNotContain("description");
+        });
+    }
+
+    @Test
     void loadDefinitionSchemaDeclaresReadableResourcesAndGuidance() {
         SkillToolProvider provider = new SkillToolProvider(new SkillActivationService() {
             @Override
@@ -340,7 +371,8 @@ class SkillToolProviderTest {
                 new AgentRunId("run-1"),
                 new TenantRef("tenant-1"),
                 new PrincipalRef("principal-1", "USER"),
-                new ToolArguments(definition.inputSchema().id(), "1.0.0", arguments),
+                new ToolArguments(
+                        definition.inputSchema().id(), definition.inputSchema().version(), arguments),
                 Instant.parse("2026-08-15T00:00:00Z"),
                 Optional.of("key-1"),
                 () -> false,

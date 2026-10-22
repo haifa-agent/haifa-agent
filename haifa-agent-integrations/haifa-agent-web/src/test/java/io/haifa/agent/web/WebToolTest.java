@@ -106,11 +106,20 @@ class WebToolTest {
                         WebSearchOption.EXCLUDE_DOMAINS)));
 
         assertThat(inputProperties(aliyun))
-                .containsOnlyKeys("query", "maxResults", "freshness", "includeDomains", "excludeDomains");
+                .containsOnlyKeys(
+                        "query", "maxResults", "freshness", "includeDomains", "excludeDomains", "description");
         assertThat(inputProperties(brave))
-                .containsOnlyKeys("query", "maxResults", "language", "country", "freshness", "safeSearch");
+                .containsOnlyKeys(
+                        "query", "maxResults", "language", "country", "freshness", "safeSearch", "description");
         assertThat(inputProperties(tavily))
-                .containsOnlyKeys("query", "maxResults", "country", "freshness", "includeDomains", "excludeDomains");
+                .containsOnlyKeys(
+                        "query",
+                        "maxResults",
+                        "country",
+                        "freshness",
+                        "includeDomains",
+                        "excludeDomains",
+                        "description");
         Map<?, ?> countrySchema = (Map<?, ?>) inputProperties(tavily).get("country");
         assertThat(countrySchema.get("minLength")).isEqualTo(2);
         assertThat(countrySchema.get("maxLength")).isEqualTo(2);
@@ -610,5 +619,27 @@ class WebToolTest {
     private static Map<String, Object> inputProperties(WebToolCatalogContribution contribution) {
         return (Map<String, Object>)
                 contribution.definition().inputSchema().document().get("properties");
+    }
+
+    @Test
+    void disclosesOptionalCallDescriptionOnSearchAndFetch() {
+        WebToolCatalogContribution search = new WebToolCatalog().search(searchProvider("brave"));
+        WebToolCatalogContribution fetch = new WebToolCatalog().fetch(fetchProvider(), new DefaultWebUrlPolicy());
+
+        for (WebToolCatalogContribution contribution : List.of(search, fetch)) {
+            assertThat(contribution.definition().version().value()).isEqualTo("1.1.0");
+            Map<String, Object> properties = inputProperties(contribution);
+            assertThat(properties).containsKey("description");
+            @SuppressWarnings("unchecked")
+            var description = (Map<String, Object>) properties.get("description");
+            assertThat(description)
+                    .containsEntry("type", "string")
+                    .containsEntry("maxLength", 256)
+                    .doesNotContainKey("minLength");
+            @SuppressWarnings("unchecked")
+            var required = (List<String>)
+                    contribution.definition().inputSchema().document().get("required");
+            assertThat(required).doesNotContain("description");
+        }
     }
 }

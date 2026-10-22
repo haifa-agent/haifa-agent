@@ -110,7 +110,8 @@ public sealed interface RunEventPayload
             String reasonCode,
             String targetSummary,
             String resultRef,
-            Optional<ToolObservation> observation)
+            Optional<ToolObservation> observation,
+            String intentSummary)
             implements RunEventPayload {
         /** Backward-compatible constructor for producers that carry no bounded observation. */
         public ToolLifecycle(
@@ -120,7 +121,19 @@ public sealed interface RunEventPayload
                 String reasonCode,
                 String targetSummary,
                 String resultRef) {
-            this(toolCallId, displayName, status, reasonCode, targetSummary, resultRef, Optional.empty());
+            this(toolCallId, displayName, status, reasonCode, targetSummary, resultRef, Optional.empty(), "");
+        }
+
+        /** Backward-compatible constructor for producers that omit the optional intent summary. */
+        public ToolLifecycle(
+                String toolCallId,
+                String displayName,
+                String status,
+                String reasonCode,
+                String targetSummary,
+                String resultRef,
+                Optional<ToolObservation> observation) {
+            this(toolCallId, displayName, status, reasonCode, targetSummary, resultRef, observation, "");
         }
 
         public ToolLifecycle {
@@ -131,6 +144,7 @@ public sealed interface RunEventPayload
             targetSummary = optional(targetSummary, "targetSummary", 512);
             resultRef = optional(resultRef, "resultRef", 512);
             observation = java.util.Objects.requireNonNull(observation, "observation must not be null");
+            intentSummary = optional(intentSummary, "intentSummary", 256);
         }
     }
 

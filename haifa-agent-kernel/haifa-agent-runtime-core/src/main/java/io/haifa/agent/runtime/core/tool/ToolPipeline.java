@@ -12,6 +12,7 @@ import io.haifa.agent.core.tool.ToolCallStatus;
 import io.haifa.agent.core.tool.ToolExecutionError;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.credential.api.CredentialBroker;
+import io.haifa.agent.credential.api.SecretRedactor;
 import io.haifa.agent.policy.api.ApprovalTargetRef;
 import io.haifa.agent.policy.api.PolicyDecision;
 import io.haifa.agent.policy.api.PolicyEffect;
@@ -844,6 +845,9 @@ public final class ToolPipeline {
         data.put("status", status);
         data.put("reasonCode", reasonCode);
         data.put("targetSummary", ToolTargetSummary.from(call));
+        data.put(
+                "intentSummary",
+                ToolIntentSummary.from(call, credentials == null ? SecretRedactor.noop() : credentials.redactor()));
         data.put("resultRef", resultRef);
         boundedObservation(result).ifPresent(observation -> {
             observation.outputPreview().ifPresent(preview -> {
