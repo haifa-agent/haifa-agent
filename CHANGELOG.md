@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.4-SNAPSHOT - Unreleased
+
+- Open the 0.1.4 development line after the 0.1.3 release. Local SDK publishing uses
+  `0.1.4-SNAPSHOT` from the main `dev` checkout and isolated worktree coordinates elsewhere.
+
 ## 0.1.3 - 2026-10-22
 
 - Release distributions include Windows x64 Coding Agent and Personal Assistant packages plus the complete

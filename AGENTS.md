@@ -16,7 +16,7 @@
 ## 仓库与交付边界
 
 - 根仓功能开发必须使用 `feat-` 开头的特性分支，不得直接在 `main` 或 `dev` 上开发；默认向 `dev`
-  发起 Pull Request。`0.1.3-SNAPSHOT` 开发线默认不设 baseline 分支：每个功能从最新 `origin/dev` 拉 `feat-*`，
+  发起 Pull Request。`0.1.4-SNAPSHOT` 开发线默认不设 baseline 分支：每个功能从最新 `origin/dev` 拉 `feat-*`，
   验证通过后向 `dev` 发起 PR。例外：相互交叉的多个任务可由主控智能体从 `dev` 拉一个 `feat-*` 集成分支统一汇合，
   子分支由主控验收后合入集成分支，集成分支再向 `dev` 发起 PR 并由人工合并；该集成分支只服务指定任务，合并进
   `dev` 后即删除。当前集成分支为 `feat-012-sh-sdk-gaps`（038-01、038-02）和 `feat-w08-runtime-integration`（038-16～22）。
@@ -32,8 +32,8 @@
   私有测试配置混入主仓。
 - 建立git worktree使用父目录统一在../haifa-agent-worktrees/
 - 向本地 Maven 仓库发布 SDK 只能通过 `scripts/publish-local-sdk.ps1`，禁止直接运行 `mvn install`。
-  基线坐标 `0.1.3-SNAPSHOT` 只在 PR 合入 `dev` 后由主检出在 `dev` 分支上发布；各 `feat-*` worktree
-  发布到各自带 worktree 目录名的坐标 `0.1.3-<worktree 目录名>-SNAPSHOT` 并生成发布清单。
+  基线坐标 `0.1.4-SNAPSHOT` 只在 PR 合入 `dev` 后由主检出在 `dev` 分支上发布；各 `feat-*` worktree
+  发布到各自带 worktree 目录名的坐标 `0.1.4-<worktree 目录名>-SNAPSHOT` 并生成发布清单。
   一个下游功能同时需要多个 SDK 分支的改动时，先在上游合并到一个集成 worktree，再从该 worktree 发布。
 - Haifa Agent Super Harness（`../haifa-agent-super-harness`）是独立产品仓，只消费本地 Maven 仓库中的公开
   JAR/BOM。为其补 SDK 缺口时，以
