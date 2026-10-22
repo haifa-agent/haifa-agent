@@ -14,8 +14,10 @@ public final class MarkdownStyles {
     }
 
     public static String heading(MarkdownTokens tokens, int level, String value) {
-        return Style.newStyle().foreground(color(level >= 4 ? tokens.muted() : tokens.heading()))
-                .bold(level != 3).render(value);
+        return Style.newStyle()
+                .foreground(color(level >= 4 ? tokens.muted() : tokens.heading()))
+                .bold(level != 3)
+                .render(value);
     }
 
     public static String strong(MarkdownTokens tokens, String value) {
@@ -23,11 +25,17 @@ public final class MarkdownStyles {
     }
 
     public static String emphasis(MarkdownTokens tokens, String value) {
-        return Style.newStyle().foreground(color(tokens.emphasis())).italic(true).render(value);
+        return Style.newStyle()
+                .foreground(color(tokens.emphasis()))
+                .italic(true)
+                .render(value);
     }
 
     public static String inlineCode(MarkdownTokens tokens, String value) {
-        return Style.newStyle().foreground(color(tokens.codeForeground()))
-                .background(color(tokens.codeBackground())).inline(true).render(value);
+        return Style.newStyle()
+                .foreground(color(tokens.codeForeground()))
+                .background(color(tokens.codeBackground()))
+                .inline(true)
+                .render(value);
     }
 }

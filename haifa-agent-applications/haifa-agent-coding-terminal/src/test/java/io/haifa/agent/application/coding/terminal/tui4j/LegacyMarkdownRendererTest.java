@@ -8,14 +8,15 @@ import com.williamcallahan.tui4j.compat.lipgloss.color.ColorProfile;
 import com.williamcallahan.tui4j.compat.lipgloss.color.NoColor;
 import com.williamcallahan.tui4j.compat.x.ansi.Strip;
 import com.williamcallahan.tui4j.term.TerminalInfo;
+import io.haifa.agent.application.coding.terminal.markdown.render.MarkdownRenderer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-class IncrementalTerminalMarkdownRendererTest {
+class LegacyMarkdownRendererTest {
     private final Renderer renderer = Renderer.defaultRenderer();
     private final Tui4jTerminalTheme theme = new Tui4jTerminalTheme();
-    private final IncrementalTerminalMarkdownRenderer markdownRenderer = new IncrementalTerminalMarkdownRenderer(theme);
+    private final LegacyMarkdownRenderer markdownRenderer = new LegacyMarkdownRenderer(theme);
 
     @BeforeEach
     void setUp() {
@@ -67,14 +68,14 @@ class IncrementalTerminalMarkdownRendererTest {
         markdownRenderer.render("assistant-1", first, 80);
 
         assertThat(markdownRenderer.metrics("assistant-1"))
-                .isEqualTo(new IncrementalTerminalMarkdownRenderer.ParseMetrics(1, first.length(), first.length()));
+                .isEqualTo(new MarkdownRenderer.ParseMetrics(1, first.length(), first.length()));
 
         String delta = " value = 1;\n```\nDone with **tests";
         String complete = first + delta;
         String rendered = markdownRenderer.render("assistant-1", complete, 80);
 
         assertThat(markdownRenderer.metrics("assistant-1"))
-                .isEqualTo(new IncrementalTerminalMarkdownRenderer.ParseMetrics(1, delta.length(), complete.length()));
+                .isEqualTo(new MarkdownRenderer.ParseMetrics(1, delta.length(), complete.length()));
         assertThat(rendered).contains("int value = 1;", "Done with tests").doesNotContain("```", "**");
 
         markdownRenderer.render("assistant-1", complete, 80);
@@ -205,8 +206,8 @@ class IncrementalTerminalMarkdownRendererTest {
     @Test
     void spacesBlocksWithoutSplittingParagraphsListsOrCode() {
         String input = "# Title\nfirst\nsecond\n- one\n- two\n```text\na\n\nb\n```\nlast";
-        assertThat(markdownRenderer.render("spacing", input, 60)).isEqualTo(
-                "Title\n\nfirst\nsecond\n\n• one\n• two\n\n▎ code · text\n▎ a\n▎ \n▎ b\n\nlast");
+        assertThat(markdownRenderer.render("spacing", input, 60))
+                .isEqualTo("Title\n\nfirst\nsecond\n\n• one\n• two\n\n▎ code · text\n▎ a\n▎ \n▎ b\n\nlast");
     }
 
     @Test
@@ -218,10 +219,8 @@ class IncrementalTerminalMarkdownRendererTest {
     @Test
     void retainsThreeLevelsAndProtectsNarrowListContent() {
         String value = "  - a\n    - b\n      - c\n        - d";
-        assertThat(markdownRenderer.render("list", value, 60))
-                .isEqualTo("  • a\n    • b\n      • c\n      • d");
-        assertThat(markdownRenderer.render("list", value, 12))
-                .isEqualTo("• a\n• b\n• c\n• d");
+        assertThat(markdownRenderer.render("list", value, 60)).isEqualTo("  • a\n    • b\n      • c\n      • d");
+        assertThat(markdownRenderer.render("list", value, 12)).isEqualTo("• a\n• b\n• c\n• d");
     }
 
     @Test

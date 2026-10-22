@@ -261,10 +261,17 @@ class Tui4jTerminalThemeTest {
                 if (!dark) background = theme.markdownTokens().blockBackground().light();
                 int rgb = Integer.parseInt(background.substring(1), 16);
                 String sgr = "48;2;" + (rgb >> 16) + ";" + ((rgb >> 8) & 255) + ";" + (rgb & 255);
-                assertThat(java.util.List.of(theme.syntaxKeyword("if"), theme.syntaxPlain("name "),
-                        theme.syntaxString("s"), theme.syntaxComment("c"), theme.syntaxNumber("1"),
-                        theme.syntaxType("T"), theme.syntaxLiteral("true"), theme.syntaxPunctuation(";"),
-                        theme.codeBlock("plain"))).allMatch(value -> value.contains(sgr));
+                assertThat(java.util.List.of(
+                                theme.syntaxKeyword("if"),
+                                theme.syntaxPlain("name "),
+                                theme.syntaxString("s"),
+                                theme.syntaxComment("c"),
+                                theme.syntaxNumber("1"),
+                                theme.syntaxType("T"),
+                                theme.syntaxLiteral("true"),
+                                theme.syntaxPunctuation(";"),
+                                theme.codeBlock("plain")))
+                        .allMatch(value -> value.contains(sgr));
                 assertThat(theme.user("message")).doesNotContain(sgr);
             }
         }

@@ -263,18 +263,27 @@ final class Tui4jTerminalTheme {
     }
 
     String codeBlock(String value) {
-        return Style.newStyle().foreground(palette.userForeground())
-                .background(codeBlockBackground()).render(value);
+        return Style.newStyle()
+                .foreground(palette.userForeground())
+                .background(codeBlockBackground())
+                .render(value);
     }
 
     String markdownList(String marker, boolean ordered) {
-        return Style.newStyle().foreground(MarkdownStyles.color(ordered
-                ? markdownTokens().listNumber() : markdownTokens().listBullet())).render(marker);
+        return Style.newStyle()
+                .foreground(MarkdownStyles.color(
+                        ordered
+                                ? markdownTokens().listNumber()
+                                : markdownTokens().listBullet()))
+                .render(marker);
     }
 
     String codePanelLine(String value) {
-        return Style.newStyle().foreground(MarkdownStyles.color(markdownTokens().blockBorder()))
-                .background(codeBlockBackground()).render("▎ ") + codeBlock(value);
+        return Style.newStyle()
+                        .foreground(MarkdownStyles.color(markdownTokens().blockBorder()))
+                        .background(codeBlockBackground())
+                        .render("▎ ")
+                + codeBlock(value);
     }
 
     String quote(String value) {

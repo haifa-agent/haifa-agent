@@ -2,6 +2,8 @@ package io.haifa.agent.application.coding.terminal.tui4j;
 
 import com.williamcallahan.tui4j.ansi.TextWidth;
 import com.williamcallahan.tui4j.ansi.TextWrapper;
+import io.haifa.agent.application.coding.terminal.markdown.parse.MarkdownInput;
+import io.haifa.agent.application.coding.terminal.markdown.render.MarkdownRenderer;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -19,7 +21,7 @@ import java.util.stream.Collectors;
  * replacement or the transcript's bounded-tail rollover, where the removed prefix can change
  * Markdown block state.
  */
-final class IncrementalTerminalMarkdownRenderer {
+final class LegacyMarkdownRenderer implements MarkdownRenderer {
     private static final Pattern HEADING = Pattern.compile("^(#{1,6})\\s+(.*)$");
     private static final Pattern UNORDERED_LIST = Pattern.compile("^(\\s*)[-+*]\\s+(.*)$");
     private static final Pattern ORDERED_LIST = Pattern.compile("^(\\s*)(\\d+)[.)]\\s+(.*)$");
@@ -30,17 +32,20 @@ final class IncrementalTerminalMarkdownRenderer {
     private final TextWrapper wrapper = new TextWrapper();
     private final Map<String, DocumentState> documents = new HashMap<>();
 
-    IncrementalTerminalMarkdownRenderer(Tui4jTerminalTheme theme) {
+    LegacyMarkdownRenderer(Tui4jTerminalTheme theme) {
         this.theme = theme;
     }
 
     private int lastRenderedLines;
 
-    int lastRenderedLines() { return lastRenderedLines; }
+    int lastRenderedLines() {
+        return lastRenderedLines;
+    }
 
-    String render(String id, String markdown, int width) {
+    @Override
+    public String render(String id, String markdown, int width) {
         DocumentState document = documents.computeIfAbsent(id, ignored -> new DocumentState(theme));
-        document.update(sanitize(markdown));
+        document.update(MarkdownInput.sanitize(markdown));
         int safeWidth = Math.max(12, width);
         if (document.renderedWidth != safeWidth) {
             document.rendered.clear();
@@ -53,7 +58,10 @@ final class IncrementalTerminalMarkdownRenderer {
         List<MarkdownLine> lines = document.lines();
         for (MarkdownLine line : lines) {
             if (line.kind() == LineKind.HIDDEN) continue;
-            if (line.kind() == LineKind.BLANK) { blank = true; continue; }
+            if (line.kind() == LineKind.BLANK) {
+                blank = true;
+                continue;
+            }
             if (!result.isEmpty() && (blank || separates(previous, line.kind()))) result.add("");
             blank = false;
             String rendered = document.rendered.get(line);
@@ -72,20 +80,26 @@ final class IncrementalTerminalMarkdownRenderer {
     private static boolean separates(LineKind previous, LineKind next) {
         if (previous == null) return false;
         if ((previous == LineKind.CODE_HEADER || previous == LineKind.CODE) && next == LineKind.CODE) return false;
-        if (previous == LineKind.CODE_HEADER || previous == LineKind.HEADING || next == LineKind.HEADING
-                || previous == LineKind.HORIZONTAL_RULE || next == LineKind.HORIZONTAL_RULE) return true;
+        if (previous == LineKind.CODE_HEADER
+                || previous == LineKind.HEADING
+                || next == LineKind.HEADING
+                || previous == LineKind.HORIZONTAL_RULE
+                || next == LineKind.HORIZONTAL_RULE) return true;
         return previous != next;
     }
 
-    void retain(Set<String> ids) {
+    @Override
+    public void retain(Set<String> ids) {
         documents.keySet().retainAll(ids);
     }
 
-    void resetAll() {
+    @Override
+    public void resetAll() {
         documents.clear();
     }
 
-    ParseMetrics metrics(String id) {
+    @Override
+    public ParseMetrics metrics(String id) {
         DocumentState document = documents.get(id);
         return document == null
                 ? new ParseMetrics(0, 0, 0)
@@ -105,17 +119,22 @@ final class IncrementalTerminalMarkdownRenderer {
                 if (width - TextWidth.measureCellWidth(prefix) < 12) prefix = prefix.stripLeading();
                 String marker = prefix.stripLeading();
                 String styled = theme.markdownList(marker, !marker.startsWith("•"));
-                yield wrap(renderInline(line.content()), width,
-                        " ".repeat(prefix.length() - marker.length()) + styled);
+                yield wrap(renderInline(line.content()), width, " ".repeat(prefix.length() - marker.length()) + styled);
             }
             case HORIZONTAL_RULE -> theme.muted("─".repeat(width));
-            case CODE_HEADER -> java.util.Arrays.stream(wrap(theme.muted(
-                    line.content().isBlank() ? "code" : "code · " + line.content()), width - 2, "").split("\n", -1))
-                    .map(theme::codePanelLine).collect(Collectors.joining("\n"));
+            case CODE_HEADER ->
+                java.util.Arrays.stream(wrap(
+                                        theme.muted(line.content().isBlank() ? "code" : "code · " + line.content()),
+                                        width - 2,
+                                        "")
+                                .split("\n", -1))
+                        .map(theme::codePanelLine)
+                        .collect(Collectors.joining("\n"));
             case CODE -> {
                 String code = line.highlighted().isEmpty() ? theme.codeBlock(line.content()) : line.highlighted();
                 yield java.util.Arrays.stream(wrap(code, width - 2, "").split("\n", -1))
-                        .map(theme::codePanelLine).collect(Collectors.joining("\n"));
+                        .map(theme::codePanelLine)
+                        .collect(Collectors.joining("\n"));
             }
         };
     }
@@ -227,7 +246,14 @@ final class IncrementalTerminalMarkdownRenderer {
         if (raw.strip().matches("(?:-\\s*){3,}|(?:\\*\\s*){3,}|(?:_\\s*){3,}"))
             return new MarkdownLine(LineKind.HORIZONTAL_RULE, "", "");
         Matcher heading = HEADING.matcher(raw);
-        if (heading.matches()) return new MarkdownLine(LineKind.HEADING, heading.group(2), "", "", "", heading.group(1).length());
+        if (heading.matches())
+            return new MarkdownLine(
+                    LineKind.HEADING,
+                    heading.group(2),
+                    "",
+                    "",
+                    "",
+                    heading.group(1).length());
 
         Matcher quote = QUOTE.matcher(raw);
         if (quote.matches()) return new MarkdownLine(LineKind.QUOTE, quote.group(1), "");
@@ -250,22 +276,6 @@ final class IncrementalTerminalMarkdownRenderer {
         return "  ".repeat(level);
     }
 
-    private static String sanitize(String value) {
-        StringBuilder safe = new StringBuilder(value.length());
-        value.codePoints().forEach(codePoint -> {
-            if (codePoint == '\n') {
-                safe.appendCodePoint(codePoint);
-            } else if (codePoint == '\t') {
-                safe.append("    ");
-            } else if (!Character.isISOControl(codePoint)) {
-                safe.appendCodePoint(codePoint);
-            }
-        });
-        return safe.toString();
-    }
-
-    record ParseMetrics(int fullParseCount, int lastDeltaCharacters, long totalParsedCharacters) {}
-
     private enum LineKind {
         BLANK,
         HIDDEN,
@@ -278,10 +288,12 @@ final class IncrementalTerminalMarkdownRenderer {
         CODE
     }
 
-    private record MarkdownLine(LineKind kind, String content, String prefix, String language, String highlighted, int level) {
+    private record MarkdownLine(
+            LineKind kind, String content, String prefix, String language, String highlighted, int level) {
         MarkdownLine(LineKind kind, String content, String prefix, String language, String highlighted) {
             this(kind, content, prefix, language, highlighted, 0);
         }
+
         MarkdownLine(LineKind kind, String content, String prefix) {
             this(kind, content, prefix, "", "");
         }

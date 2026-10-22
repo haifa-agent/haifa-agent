@@ -5,6 +5,7 @@ import com.williamcallahan.tui4j.ansi.TextWrapper;
 import com.williamcallahan.tui4j.ansi.Truncate;
 import com.williamcallahan.tui4j.compat.bubbles.textarea.Textarea;
 import com.williamcallahan.tui4j.compat.bubbles.viewport.Viewport;
+import io.haifa.agent.application.coding.terminal.markdown.render.MarkdownRenderer;
 import io.haifa.agent.application.coding.terminal.state.ApprovalDetails;
 import io.haifa.agent.application.coding.terminal.state.PendingMessage;
 import io.haifa.agent.application.coding.terminal.state.TerminalDurations;
@@ -81,7 +82,7 @@ final class Tui4jTerminalView {
     private static final Set<String> UNKNOWN_STATUSES = Set.of("OUTCOME_UNKNOWN", "UNKNOWN_OUTCOME");
 
     private final Tui4jTerminalTheme theme = new Tui4jTerminalTheme();
-    private final IncrementalTerminalMarkdownRenderer markdown = new IncrementalTerminalMarkdownRenderer(theme);
+    private final MarkdownRenderer markdown = MarkdownRendererFactory.create(theme);
     private final TextWrapper textWrapper = new TextWrapper();
     private final TerminalShortcutProfile shortcuts;
     private TranscriptRegion transcriptRegion = new TranscriptRegion(0, 0, 1, 1);
