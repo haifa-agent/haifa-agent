@@ -167,6 +167,11 @@ public final class InMemoryRuntimeStore
     }
 
     @Override
+    public synchronized <T> T read(AgentRunId runId, java.util.function.Function<Optional<AgentRun>, T> projection) {
+        return projection.apply(find(runId));
+    }
+
+    @Override
     public synchronized List<AgentRun> children(AgentRunId parentRunId) {
         Objects.requireNonNull(parentRunId, "parentRunId must not be null");
         return runs.values().stream()
@@ -752,6 +757,7 @@ public final class InMemoryRuntimeStore
         return appended;
     }
 
+    /** Map lookup only; snapshot projections can call this while holding this Store's monitor. */
     @Override
     public Optional<String> output(AgentRunId runId) {
         return Optional.ofNullable(outputs.get(runId));

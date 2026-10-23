@@ -754,10 +754,10 @@ public final class DefaultAgentRuntime implements AgentRuntime {
     @Override
     public Optional<AgentRunSnapshot> find(AgentRunId runId) {
         var caller = callers.current();
-        return runs.find(Objects.requireNonNull(runId))
-                .filter(run -> caller.tenant().equals(run.tenant())
-                        && caller.principal().equals(run.principal()))
-                .map(run -> AgentRunSnapshot.from(run, state.output(run.id())));
+        return runs.read(Objects.requireNonNull(runId), found -> found.filter(
+                        run -> caller.tenant().equals(run.tenant())
+                                && caller.principal().equals(run.principal()))
+                .map(run -> AgentRunSnapshot.from(run, state.output(run.id()))));
     }
 
     @Override
@@ -802,11 +802,11 @@ public final class DefaultAgentRuntime implements AgentRuntime {
     @Override
     public Optional<io.haifa.agent.runtime.api.AgentRunViewSnapshot> view(AgentRunId runId) {
         var caller = callers.current();
-        return runs.find(Objects.requireNonNull(runId))
-                .filter(run -> caller.tenant().equals(run.tenant())
-                        && caller.principal().equals(run.principal()))
+        return runs.read(Objects.requireNonNull(runId), found -> found.filter(
+                        run -> caller.tenant().equals(run.tenant())
+                                && caller.principal().equals(run.principal()))
                 .map(run -> new io.haifa.agent.runtime.api.AgentRunViewSnapshot(
-                        run.sessionId(), AgentRunSnapshot.from(run, state.output(run.id()))));
+                        run.sessionId(), AgentRunSnapshot.from(run, state.output(run.id())))));
     }
 
     @Override
@@ -1117,9 +1117,11 @@ public final class DefaultAgentRuntime implements AgentRuntime {
     }
 
     private AgentRunSnapshot snapshot(AgentRunId runId) {
-        AgentRun run = requireRun(runId);
-        requireCaller(run);
-        return AgentRunSnapshot.from(run, state.output(runId));
+        return runs.read(runId, found -> {
+            AgentRun run = found.orElseThrow(() -> new IllegalArgumentException("unknown run: " + runId.value()));
+            requireCaller(run);
+            return AgentRunSnapshot.from(run, state.output(runId));
+        });
     }
 
     private void requireCaller(AgentRun run) {

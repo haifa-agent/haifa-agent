@@ -334,6 +334,42 @@ Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、s
   `CAPABILITY_NOT_IMPLEMENTED`，不显示装饰性选择器；
 - `/quit` 退出；活动 Run 下 EOF 显示明确的退出选择。
 
+## Assistant Markdown rendering
+
+Assistant text uses a product-local AST renderer for heading levels, emphasis, inline code, links,
+images as alt text and URLs, three visible list indentation levels, nested list/quote/code blocks,
+horizontal rules, and pipe tables. Tables wrap cells by terminal cell width; when columns cannot
+fit, each row becomes a list of `column: value` lines. Code panels have a language label, a left
+stripe and a dedicated background, including whitespace and wrapped lines. NoColor keeps the
+structural text without SGR sequences. Markdown source in Session and TranscriptItem is unchanged.
+
+Streaming reparses the mutable top-level tail. A prefix can be frozen only after its containers
+are closed and a structural blank followed by another top-level block proves the boundary.
+The final block stays mutable. Resize reuses the AST and only reflows rendered lines; replacement
+and bounded-tail rollover rebuild the document. Cache entries are removed with transcript retention
+and cleared on theme changes. Parse metrics count sanitized source characters actually parsed,
+including reparsed tail characters; `fullParseCount` counts initial document construction and
+replacement rebuilds, while `lastDeltaCharacters` counts newly received sanitized characters.
+
+An internal startup-only escape hatch selects the improved line renderer with the system property
+`-Dhaifa.terminal.markdown.renderer=legacy` or environment variable
+`HAIFA_TERMINAL_MARKDOWN_RENDERER=legacy`. The system property takes precedence. Unset values use
+the AST renderer; an unrecognized value logs one fixed warning and uses AST. No automatic fallback
+or live switching occurs. The escape hatch is not part of user YAML configuration. Legacy preserves
+the P1/P2 spacing and styles but does not support nested blocks or tables. Retire it and its switch
+after two released versions with no unresolved AST rendering regressions, retaining parser and
+renderer tests as the behavior baseline.
+
+The supported product content width is at least 12 terminal cells; smaller top-level requests use
+that minimum in both renderers. Nested containers reduce or omit decoration before leaving fewer
+than two content cells, so CJK and emoji graphemes remain intact. Oversized tokens, including runs
+of hyphens, are hard-wrapped without discarding text or ANSI styles. Table columns use a shared
+width ceiling found by binary search, preserving a two-cell minimum and stable tie-breaking;
+allocation costs O(columns * log(maximum natural column width)), rather than one scan per removed cell.
+Font shape, host contrast,
+and mouse selection/scroll behavior still require checks in the target terminal; unit tests do not
+establish those visual acceptance results.
+
 ## 构建与启动
 
 ```powershell
