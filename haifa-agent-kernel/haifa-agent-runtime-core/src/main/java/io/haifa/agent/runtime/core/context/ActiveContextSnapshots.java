@@ -93,6 +93,8 @@ public final class ActiveContextSnapshots implements MessageRedactionListener {
     private final Map<AgentSessionId, ActiveContextSnapshot> snapshots = new LinkedHashMap<>(16, 0.75f, true);
     private final Map<AgentSessionId, RebuildReason> invalidations = new LinkedHashMap<>(16, 0.75f, true);
     private final Object[] sessionLocks = createSessionLocks();
+    // Guarded by snapshots; invalidation callbacks must never wait for a reader holding a Session lock.
+    private final long[] invalidationVersions = new long[SESSION_LOCK_STRIPES];
 
     public ActiveContextSnapshots(
             RuntimeStateRepository state,
@@ -116,8 +118,21 @@ public final class ActiveContextSnapshots implements MessageRedactionListener {
 
     private Access current(AgentSessionId sessionId, boolean allowPartial) {
         Objects.requireNonNull(sessionId, "sessionId must not be null");
-        synchronized (sessionLock(sessionId)) {
-            return currentLocked(sessionId, allowPartial);
+        int stripe = sessionStripe(sessionId);
+        synchronized (sessionLocks[stripe]) {
+            while (true) {
+                long version;
+                synchronized (snapshots) {
+                    version = invalidationVersions[stripe];
+                }
+                Access access = currentLocked(sessionId, allowPartial);
+                synchronized (snapshots) {
+                    // Redaction/release may commit during repository reads. Rebuild rather than publishing stale rows.
+                    if (version != invalidationVersions[stripe]) continue;
+                    put(access.snapshot());
+                    return access;
+                }
+            }
         }
     }
 
@@ -159,7 +174,6 @@ public final class ActiveContextSnapshots implements MessageRedactionListener {
                             cached.summary().isPresent()
                                     ? cached.summary().orElseThrow().coveredThrough()
                                     : null);
-                    put(refreshed);
                     return access(refreshed, false, RebuildReason.DELTA, delta.size(), delta.size());
                 }
             }
@@ -201,7 +215,6 @@ public final class ActiveContextSnapshots implements MessageRedactionListener {
                     sessionId, loadedThrough, hasMoreHistory, Optional.empty(), latestSummaryVersion, visible, null);
             reason = RebuildReason.SUMMARY_CHANGED;
         }
-        put(rebuilt);
         return access(rebuilt, false, reason, rowsRead, 0);
     }
 
@@ -214,13 +227,12 @@ public final class ActiveContextSnapshots implements MessageRedactionListener {
     public void invalidate(AgentSessionId sessionId, RebuildReason reason) {
         Objects.requireNonNull(sessionId, "sessionId must not be null");
         Objects.requireNonNull(reason, "reason must not be null");
-        synchronized (sessionLock(sessionId)) {
-            synchronized (snapshots) {
-                snapshots.remove(sessionId);
-                invalidations.put(sessionId, reason);
-                while (invalidations.size() > MAX_INVALIDATIONS) {
-                    invalidations.remove(invalidations.keySet().iterator().next());
-                }
+        synchronized (snapshots) {
+            invalidationVersions[sessionStripe(sessionId)]++;
+            snapshots.remove(sessionId);
+            invalidations.put(sessionId, reason);
+            while (invalidations.size() > MAX_INVALIDATIONS) {
+                invalidations.remove(invalidations.keySet().iterator().next());
             }
         }
     }
@@ -465,8 +477,8 @@ public final class ActiveContextSnapshots implements MessageRedactionListener {
         }
     }
 
-    private Object sessionLock(AgentSessionId sessionId) {
-        return sessionLocks[Math.floorMod(sessionId.hashCode(), sessionLocks.length)];
+    private int sessionStripe(AgentSessionId sessionId) {
+        return Math.floorMod(sessionId.hashCode(), sessionLocks.length);
     }
 
     private static Object[] createSessionLocks() {

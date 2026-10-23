@@ -2,6 +2,16 @@
 
 ## 0.1.4-SNAPSHOT - Unreleased
 
+- Coding Terminal keeps hyphenated table cells and deeply nested CJK/emoji content within their
+  width budgets, normalizes undersized render requests, and allocates table column widths by binary search.
+
+- Runtime avoids an intermittent in-memory context-cache deadlock during concurrent Run completion,
+  preserves invalidation during context rebuilds, and projects Run state and output within one repository read.
+
+- Coding Terminal renders assistant Markdown with heading levels, dedicated emphasis/code colors,
+  block spacing, nested lists and quotes, code panels and responsive pipe tables. Streaming reuses
+  stable blocks, Resize only reflows, and an explicit internal startup switch retains the line renderer.
+
 - Open the 0.1.4 development line after the 0.1.3 release. Local SDK publishing uses
   `0.1.4-SNAPSHOT` from the main `dev` checkout and isolated worktree coordinates elsewhere.
 

@@ -76,3 +76,12 @@ Command 通过 host-guarded Execution Provider 运行。
 - [Coding Agent Module](../../haifa-agent-applications/haifa-agent-coding-agent/README.md)
 - [Coding Terminal](../../haifa-agent-applications/haifa-agent-coding-terminal/README.md)
 - [CLI](../../haifa-agent-applications/haifa-agent-cli/README.md)
+
+## Terminal Markdown
+
+Assistant replies render heading levels, emphasis, inline code, nested lists and quotes, fenced code
+panels, horizontal rules and pipe tables. Wide tables wrap cells; narrow screens show each row as
+column/value lines. Rendering follows terminal cell widths, supports the four built-in themes and
+keeps structure readable without color. Streaming and Resize preserve the original Markdown stored
+in the Session. See the [Terminal module guide](../../haifa-agent-applications/haifa-agent-coding-terminal/README.md)
+for rendering boundaries and the internal startup fallback.
