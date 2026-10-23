@@ -2,6 +2,9 @@
 
 ## 0.1.4-SNAPSHOT - Unreleased
 
+- Coding Terminal keeps hyphenated table cells and deeply nested CJK/emoji content within their
+  width budgets, normalizes undersized render requests, and allocates table column widths by binary search.
+
 - Runtime avoids an intermittent in-memory context-cache deadlock during concurrent Run completion,
   preserves invalidation during context rebuilds, and projects Run state and output within one repository read.
 

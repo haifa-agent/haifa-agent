@@ -757,6 +757,7 @@ public final class InMemoryRuntimeStore
         return appended;
     }
 
+    /** Map lookup only; snapshot projections can call this while holding this Store's monitor. */
     @Override
     public Optional<String> output(AgentRunId runId) {
         return Optional.ofNullable(outputs.get(runId));

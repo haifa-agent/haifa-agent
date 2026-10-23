@@ -360,7 +360,13 @@ the P1/P2 spacing and styles but does not support nested blocks or tables. Retir
 after two released versions with no unresolved AST rendering regressions, retaining parser and
 renderer tests as the behavior baseline.
 
-The supported product content width is at least 12 terminal cells. Font shape, host contrast,
+The supported product content width is at least 12 terminal cells; smaller top-level requests use
+that minimum in both renderers. Nested containers reduce or omit decoration before leaving fewer
+than two content cells, so CJK and emoji graphemes remain intact. Oversized tokens, including runs
+of hyphens, are hard-wrapped without discarding text or ANSI styles. Table columns use a shared
+width ceiling found by binary search, preserving a two-cell minimum and stable tie-breaking;
+allocation costs O(columns * log(maximum natural column width)), rather than one scan per removed cell.
+Font shape, host contrast,
 and mouse selection/scroll behavior still require checks in the target terminal; unit tests do not
 establish those visual acceptance results.
 

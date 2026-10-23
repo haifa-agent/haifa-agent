@@ -4,6 +4,7 @@ import java.util.Set;
 
 /** In-memory assistant Markdown rendering contract; no session or persistence state is changed. */
 public interface MarkdownRenderer {
+    /** Renders at the requested cell width, normalizing widths below the product minimum to 12 cells. */
     String render(String documentId, String markdown, int width);
 
     void retain(Set<String> documentIds);

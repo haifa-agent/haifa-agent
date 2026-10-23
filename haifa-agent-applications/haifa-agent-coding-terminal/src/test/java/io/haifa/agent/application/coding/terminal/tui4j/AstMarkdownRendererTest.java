@@ -115,6 +115,74 @@ class AstMarkdownRendererTest {
         assertThat(stacked).contains("A: one", "B: two", "C: three");
     }
 
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void tableKeepsLongTokensAndGraphemesInsideAlignedBorders(boolean color) {
+        if (color) Renderer.defaultRenderer().setColorProfile(ColorProfile.TrueColor);
+        String value = "aaa---bbb" + "-".repeat(80) + "e\u0301👩‍💻中文https://example.com/long-file-name";
+        String input = "| A | B |\n| --- | --- |\n| **" + value + "** | `ok` |";
+        for (int width : new int[] {12, 13, 20, 40}) {
+            String rendered = markdown.render("long-table", input, width);
+            assertThat(rendered.lines()).allMatch(line -> TextWidth.measureCellWidth(line) <= width);
+            String plain = Strip.strip(rendered);
+            assertThat(plain.lines().filter(line -> line.startsWith("│") || line.startsWith("├")))
+                    .allMatch(line -> TextWidth.measureCellWidth(line) == width);
+            String cell = plain.lines()
+                    .filter(line -> line.startsWith("│"))
+                    .skip(1)
+                    .map(line -> line.split("│", -1)[1].strip())
+                    .collect(java.util.stream.Collectors.joining());
+            assertThat(cell).isEqualTo(value);
+            assertThat(plain).contains("ok");
+            if (color) assertThat(rendered).contains("\u001B[");
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void nestedContainersReserveRoomForWideGraphemes(boolean color) {
+        if (color) Renderer.defaultRenderer().setColorProfile(ColorProfile.TrueColor);
+        String content = "中文👩‍💻e\u0301";
+        for (String input : new String[] {
+            "1. > > > > " + content,
+            "> > > > > > " + content,
+            "1. > > > ```text\n   > > > " + content + "\n   > > > ```",
+            "> > > > | A | B |\n> > > > | --- | --- |\n> > > > | " + content + " | ok |"
+        }) {
+            for (int width : new int[] {12, 13, 14, 19}) {
+                String rendered = markdown.render("narrow-nested", input, width);
+                assertThat(rendered.lines()).allMatch(line -> TextWidth.measureCellWidth(line) <= width);
+                assertThat(Strip.strip(rendered)).contains("中", "文", "👩‍💻", "e\u0301");
+            }
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {-1, 0, 1, 2, 3, 11, 12})
+    void bothRenderersUseTheProductMinimumWidth(int requestedWidth) {
+        String input = "中文👩‍💻 " + "content ".repeat(5);
+        for (boolean legacy : new boolean[] {false, true}) {
+            MarkdownRenderer renderer = MarkdownRendererFactory.create(theme, legacy ? "legacy" : null, null);
+            assertThat(renderer.render("minimum", input, requestedWidth))
+                    .isEqualTo(renderer.render("minimum", input, 12));
+        }
+    }
+
+    @Test
+    void hardWrappingATableTokenDoesNotCreateEmptyRows() {
+        String rendered = markdown.render("compact-table", "| A | B |\n| --- | --- |\n| aaa---bbb | ok |", 12);
+        assertThat(rendered.lines()).hasSize(5);
+        assertThat(rendered).contains("│ aaa │ ok │", "│ --- │    │", "│ bbb │    │");
+    }
+
+    @Test
+    void tableAllocatesTheBudgetWithoutExpandingShortColumns() {
+        String input = "| A | B | C |\n| --- | --- | --- |\n| abcdef | wxyz | ok |";
+        String rendered = markdown.render("allocation", input, 19);
+        assertThat(rendered).contains("├─────┼──────┼────┤");
+        assertThat(rendered.lines()).allMatch(line -> TextWidth.measureCellWidth(line) == 19);
+    }
+
     @Test
     void coloredCodeAndNestedInlineStylesStayWithinWidthAndThemeResetRepaints() {
         Renderer.defaultRenderer().setColorProfile(ColorProfile.TrueColor);

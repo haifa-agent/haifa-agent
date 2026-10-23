@@ -5,6 +5,7 @@ import static io.haifa.agent.application.coding.terminal.markdown.parse.Markdown
 import com.williamcallahan.tui4j.ansi.TextWidth;
 import com.williamcallahan.tui4j.ansi.TextWrapper;
 import com.williamcallahan.tui4j.compat.lipgloss.Style;
+import com.williamcallahan.tui4j.compat.x.ansi.HardWrap;
 import io.haifa.agent.application.coding.terminal.markdown.parse.MarkdownInput;
 import io.haifa.agent.application.coding.terminal.markdown.parse.MarkdownParser;
 import io.haifa.agent.application.coding.terminal.markdown.style.MarkdownTokens;
@@ -43,7 +44,7 @@ public final class AstMarkdownRenderer implements MarkdownRenderer {
         }
         Document document = documents.computeIfAbsent(id, ignored -> new Document());
         document.update(MarkdownInput.sanitize(markdown));
-        int safeWidth = Math.max(1, width);
+        int safeWidth = Math.max(12, width);
         if (safeWidth != document.width) {
             document.rendered.clear();
             document.width = safeWidth;
@@ -151,7 +152,7 @@ public final class AstMarkdownRenderer implements MarkdownRenderer {
             case Blank ignored -> "";
             case CodeBlock code -> code(code, width);
             case Quote quote -> {
-                if (width < 3) yield sequence(quote.blocks(), width);
+                if (width < 4) yield sequence(quote.blocks(), width);
                 String prefix = colored("│ ", style.muted());
                 yield prefixLines(sequence(quote.blocks(), width - 2), prefix, prefix);
             }
@@ -183,8 +184,8 @@ public final class AstMarkdownRenderer implements MarkdownRenderer {
             String indent = "  ".repeat(Math.min(3, item.depth()));
             if (width - TextWidth.measureCellWidth(indent + item.marker() + " ") < 12) indent = "";
             String marker = item.marker() + " ";
-            if (TextWidth.measureCellWidth(marker) >= width) marker = "• ";
-            if (TextWidth.measureCellWidth(marker) >= width) marker = "";
+            if (width - TextWidth.measureCellWidth(marker) < 2) marker = "• ";
+            if (width - TextWidth.measureCellWidth(marker) < 2) marker = "";
             String first = indent + colored(marker, list.ordered() ? style.listNumber() : style.listBullet());
             int prefixWidth = TextWidth.measureCellWidth(first);
             String continuation = " ".repeat(prefixWidth);
@@ -200,7 +201,7 @@ public final class AstMarkdownRenderer implements MarkdownRenderer {
                     output.add(list(nested, width));
                 } else {
                     if (!initial && (blank || separates(previous, child))) output.add("");
-                    String rendered = renderBlock(child, Math.max(1, width - prefixWidth));
+                    String rendered = renderBlock(child, Math.max(2, width - prefixWidth));
                     output.add(prefixLines(rendered, initial ? first : continuation, continuation));
                 }
                 previous = child;
@@ -217,8 +218,8 @@ public final class AstMarkdownRenderer implements MarkdownRenderer {
         String label = code.language().isBlank() ? "code" : "code · " + code.language();
         lines.add(colored(label, style.muted()));
         lines.addAll(highlighter.apply(code.language(), code.lines()));
-        String border = width >= 3 ? colored("▎ ", style.blockBorder()) : "";
-        int contentWidth = Math.max(1, width - TextWidth.measureCellWidth(border));
+        String border = width >= 4 ? colored("▎ ", style.blockBorder()) : "";
+        int contentWidth = Math.max(2, width - TextWidth.measureCellWidth(border));
         List<String> output = new ArrayList<>();
         for (String line : lines) {
             for (String physical : wrap(line, contentWidth).split("\n", -1)) {
@@ -258,7 +259,11 @@ public final class AstMarkdownRenderer implements MarkdownRenderer {
     }
 
     private String wrap(String text, int width) {
-        return wrapper.wrap(text, Math.max(1, width), true);
+        int contentWidth = Math.max(2, width);
+        String wrapped = wrapper.wrap(text, contentWidth, true);
+        if (wrapped.lines().noneMatch(line -> TextWidth.measureCellWidth(line) > contentWidth)) return wrapped;
+        // TextWrapper can leave runs of hyphens over budget. Force-break graphemes, then restore SGR at new lines.
+        return wrapper.wrap(HardWrap.hardWrap(text, contentWidth, true), contentWidth, true);
     }
 
     private static String prefixLines(String text, String first, String continuation) {
@@ -290,11 +295,7 @@ public final class AstMarkdownRenderer implements MarkdownRenderer {
                 widths[c] = Math.max(widths[c], TextWidth.measureCellWidth(row.get(c)));
             }
         int budget = width - columns * 3 - 1;
-        while (Arrays.stream(widths).sum() > budget) {
-            int widest = 0;
-            for (int c = 1; c < columns; c++) if (widths[c] > widths[widest]) widest = c;
-            widths[widest]--;
-        }
+        widths = fitTableWidths(widths, budget);
         List<String> output = new ArrayList<>();
         for (int r = 0; r < rows.size(); r++) {
             List<String[]> cells = new ArrayList<>();
@@ -322,5 +323,33 @@ public final class AstMarkdownRenderer implements MarkdownRenderer {
                         style.rule()));
         }
         return String.join("\n", output);
+    }
+
+    private static int[] fitTableWidths(int[] natural, int budget) {
+        if (Arrays.stream(natural).asLongStream().sum() <= budget) return natural;
+        // Find a shared ceiling in O(columns * log(maxWidth)), independent of the number of cells removed.
+        int low = 2;
+        int high = Arrays.stream(natural).max().orElse(2);
+        while (low < high) {
+            int ceiling = low + (high - low + 1) / 2;
+            long total = 0;
+            for (int width : natural) total += Math.min(width, ceiling);
+            if (total <= budget) low = ceiling;
+            else high = ceiling - 1;
+        }
+        int[] fitted = new int[natural.length];
+        int remaining = budget;
+        for (int c = 0; c < natural.length; c++) {
+            fitted[c] = Math.min(natural[c], low);
+            remaining -= fitted[c];
+        }
+        // Preserve the old tie-breaking: earlier equally wide columns lose a cell first.
+        for (int c = natural.length - 1; c >= 0 && remaining > 0; c--) {
+            if (natural[c] > low) {
+                fitted[c]++;
+                remaining--;
+            }
+        }
+        return fitted;
     }
 }
