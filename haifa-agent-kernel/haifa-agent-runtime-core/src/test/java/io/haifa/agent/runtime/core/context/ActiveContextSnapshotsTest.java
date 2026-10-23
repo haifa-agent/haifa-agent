@@ -20,13 +20,19 @@ import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
+import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
+import java.lang.reflect.Proxy;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 
 class ActiveContextSnapshotsTest {
@@ -90,6 +96,45 @@ class ActiveContextSnapshotsTest {
         assertThat(afterSummary.snapshot().summary()).contains(summary);
         assertThat(afterSummary.snapshot().activeMessages()).hasSize(2);
         assertThat(afterSummary.snapshot().selectedMessages()).hasSize(2);
+    }
+
+    @Test
+    void redactionDoesNotWaitForAnInFlightRebuildOrRepublishItsStaleMessages() throws Exception {
+        var store = new InMemoryRuntimeStore();
+        var message = append(store, "concurrent-redaction", MessageRole.USER, "question");
+        var rowsRead = new CountDownLatch(1);
+        var allowRebuild = new CountDownLatch(1);
+        var pauseFirstRead = new AtomicBoolean(true);
+        var state = (RuntimeStateRepository) Proxy.newProxyInstance(
+                RuntimeStateRepository.class.getClassLoader(),
+                new Class<?>[] {RuntimeStateRepository.class},
+                (proxy, method, arguments) -> {
+                    Object result = method.invoke(store, arguments);
+                    if (method.getName().equals("messagesAfter") && pauseFirstRead.getAndSet(false)) {
+                        rowsRead.countDown();
+                        if (!allowRebuild.await(30, TimeUnit.SECONDS)) throw new AssertionError("rebuild not released");
+                    }
+                    return result;
+                });
+        var snapshots = new ActiveContextSnapshots(
+                state, store, new CompressionPolicy(12, 32, 4), new DeterministicContextCompressor());
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var rebuilt = executor.submit(() -> snapshots.current(SESSION));
+            try {
+                assertThat(rowsRead.await(5, TimeUnit.SECONDS)).isTrue();
+                var redacted = executor.submit(() -> {
+                    var result = store.redactMessage(message.id());
+                    snapshots.onRedacted(message);
+                    return result;
+                });
+                assertThat(redacted.get(5, TimeUnit.SECONDS).status()).isEqualTo(MessageStatus.REDACTED);
+            } finally {
+                allowRebuild.countDown();
+            }
+            var access = rebuilt.get(5, TimeUnit.SECONDS);
+            assertThat(access.snapshot().activeMessages()).isEmpty();
+            assertThat(snapshots.cached(SESSION)).contains(access.snapshot());
+        }
     }
 
     @Test

@@ -15,6 +15,15 @@ public interface RunStateRepository {
     Optional<AgentRun> find(AgentRunId runId);
 
     /**
+     * Projects a Run and related state before releasing the repository read boundary.
+     * Detached repositories can use the default; repositories sharing mutable Runs must retain their read lock.
+     * The projection must only read and must not wait for Runtime execution.
+     */
+    default <T> T read(AgentRunId runId, java.util.function.Function<Optional<AgentRun>, T> projection) {
+        return projection.apply(find(runId));
+    }
+
+    /**
      * Reads only a Run owned by the supplied trusted caller. Adapters that materialize referenced
      * payloads should filter stored ownership before decoding those payloads.
      */

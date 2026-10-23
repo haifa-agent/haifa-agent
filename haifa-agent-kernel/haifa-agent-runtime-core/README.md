@@ -1,5 +1,9 @@
 # Haifa Agent Runtime Core
 
+Active Context 的失效回调只更新短时缓存锁，不等待会话构建锁，避免 Run 完成或消息撤回与 Store 读取形成反向锁等待。
+构建中发生失效时，读取会重建后再发布，防止撤回的消息重新进入缓存。InMemory Run 查询在同一 Store 读锁内投影状态与 output，
+不会把两个提交时点的值拼成一个快照。
+
 已提交模型 Assistant 消息的公开 `modelCallId` 取自同一次 `ModelInvocationResult`，由既有消息 metadata
 持久化并经消息分页窄投影公开；重开 Store 不丢失关联，旧记录缺失时保留空值，redaction 清除公开关联。
 
