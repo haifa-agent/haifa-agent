@@ -43,7 +43,7 @@ class ProjectToolCallDescriptionSchemaTest {
     }
 
     @Test
-    void usesShortDisplayTitlesWithoutShorteningModelVisibleDescriptions() {
+    void usesShortDisplayTitlesAndConciseWorkspaceDescriptions() {
         var catalog = new ProjectToolCatalog();
         var frozen = catalog.freeze(
                 catalog.names(), Set.of("file_read", "file_write", "execution_run"), true, provider(), profile());
@@ -70,12 +70,14 @@ class ProjectToolCallDescriptionSchemaTest {
                 .containsEntry("execution_run", "Run Command")
                 .containsEntry("workspace_attach", "Add Directory");
 
-        assertThat(descriptions.get("file_list")).startsWith("List workspace files within");
-        assertThat(descriptions.get("file_stat")).startsWith("Inspect workspace path within");
-        assertThat(descriptions.get("file_search")).startsWith("Search workspace files within");
-        assertThat(descriptions.get("file_diff")).startsWith("Preview file diff within");
-        assertThat(descriptions.get("file_delete")).startsWith("Delete workspace path within");
-        assertThat(descriptions.get("file_move")).startsWith("Move workspace path within");
+        assertThat(descriptions.get("file_list")).isEqualTo("List files in the workspace.");
+        assertThat(descriptions.get("file_stat")).isEqualTo("Inspect a path in the workspace.");
+        assertThat(descriptions.get("file_search")).isEqualTo("Search files in the workspace.");
+        assertThat(descriptions.get("file_diff")).isEqualTo("Preview a file diff in the workspace.");
+        assertThat(descriptions.get("file_delete"))
+                .isEqualTo("Delete a path in the workspace. Preserve unrelated user changes.");
+        assertThat(descriptions.get("file_move"))
+                .isEqualTo("Move a path in the workspace. Preserve unrelated user changes.");
     }
 
     private static SandboxProfile profile() {

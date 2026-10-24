@@ -6,7 +6,8 @@
   rows while keeping machine names in expanded metadata. Ordinary single-call failures use a one-line
   yellow "unfinished" warning, denials and cancellations are neutral, and unknown outcomes keep their
   warning details; Run failures remain red. Tool lifecycle events now carry an optional `toolName` so
-  display titles and machine identities stay separate.
+  display titles and machine identities stay separate, and shortened built-in titles use concise
+  workspace-scoped model descriptions.
 
 - Coding Terminal keeps hyphenated table cells and deeply nested CJK/emoji content within their
   width budgets, normalizes undersized render requests, and allocates table column widths by binary search.

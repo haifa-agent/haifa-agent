@@ -380,24 +380,22 @@ public final class ProjectToolCatalog {
                     + "and requires a fresh read before regenerating the patch.";
         }
         if (name.equals("file_list")) {
-            return "List workspace files within the frozen project workspace and capability boundary.";
+            return "List files in the workspace.";
         }
         if (name.equals("file_stat")) {
-            return "Inspect workspace path within the frozen project workspace and capability boundary.";
+            return "Inspect a path in the workspace.";
         }
         if (name.equals("file_search")) {
-            return "Search workspace files within the frozen project workspace and capability boundary.";
+            return "Search files in the workspace.";
         }
         if (name.equals("file_diff")) {
-            return "Preview file diff within the frozen project workspace and capability boundary.";
+            return "Preview a file diff in the workspace.";
         }
         if (name.equals("file_delete")) {
-            return "Delete workspace path within the frozen project workspace and capability boundary. "
-                    + "Preserve unrelated user changes.";
+            return "Delete a path in the workspace. Preserve unrelated user changes.";
         }
         if (name.equals("file_move")) {
-            return "Move workspace path within the frozen project workspace and capability boundary. "
-                    + "Preserve unrelated user changes.";
+            return "Move a path in the workspace. Preserve unrelated user changes.";
         }
         if (name.equals("workspace_attach")) {
             return "Request one additional existing local directory for this Coding Agent. Supply an "
