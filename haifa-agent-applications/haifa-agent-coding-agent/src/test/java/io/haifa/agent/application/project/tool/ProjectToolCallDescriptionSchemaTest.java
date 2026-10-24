@@ -18,15 +18,8 @@ class ProjectToolCallDescriptionSchemaTest {
     @Test
     void disclosesOptionalCallDescriptionOnEveryBuiltInProjectTool() {
         var catalog = new ProjectToolCatalog();
-        SandboxProfile profile = new SandboxProfile(
-                new SandboxProfileRef("cli-host-guarded", "1"),
-                "host-guarded",
-                SandboxConfigurationDigest.sha256Fields(List.of("schema-test")),
-                Set.of(),
-                Set.of(),
-                true);
         var frozen = catalog.freeze(
-                catalog.names(), Set.of("file_read", "file_write", "execution_run"), true, provider(), profile);
+                catalog.names(), Set.of("file_read", "file_write", "execution_run"), true, provider(), profile());
 
         assertThat(frozen.snapshot().bindings()).hasSize(catalog.names().size());
         assertThat(frozen.snapshot().bindings()).allSatisfy(binding -> {
@@ -47,6 +40,54 @@ class ProjectToolCallDescriptionSchemaTest {
                     .contains("user-facing explanation", "intent, not a completed outcome");
             assertThat(required).doesNotContain("description");
         });
+    }
+
+    @Test
+    void usesShortDisplayTitlesAndConciseWorkspaceDescriptions() {
+        var catalog = new ProjectToolCatalog();
+        var frozen = catalog.freeze(
+                catalog.names(), Set.of("file_read", "file_write", "execution_run"), true, provider(), profile());
+        Map<String, String> titles = frozen.snapshot().bindings().stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        binding -> binding.definition().name().value(),
+                        binding -> binding.definition().title()));
+        Map<String, String> descriptions = frozen.snapshot().bindings().stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        binding -> binding.definition().name().value(),
+                        binding -> binding.definition().description()));
+
+        assertThat(titles)
+                .containsEntry("file_read", "Read File")
+                .containsEntry("file_write", "Write File")
+                .containsEntry("file_create", "Create File")
+                .containsEntry("file_patch", "Apply Patch")
+                .containsEntry("file_delete", "Delete File")
+                .containsEntry("file_move", "Move File")
+                .containsEntry("file_list", "List Files")
+                .containsEntry("file_stat", "Inspect Path")
+                .containsEntry("file_search", "Search Files")
+                .containsEntry("file_diff", "Preview Diff")
+                .containsEntry("execution_run", "Run Command")
+                .containsEntry("workspace_attach", "Add Directory");
+
+        assertThat(descriptions.get("file_list")).isEqualTo("List files in the workspace.");
+        assertThat(descriptions.get("file_stat")).isEqualTo("Inspect a path in the workspace.");
+        assertThat(descriptions.get("file_search")).isEqualTo("Search files in the workspace.");
+        assertThat(descriptions.get("file_diff")).isEqualTo("Preview a file diff in the workspace.");
+        assertThat(descriptions.get("file_delete"))
+                .isEqualTo("Delete a path in the workspace. Preserve unrelated user changes.");
+        assertThat(descriptions.get("file_move"))
+                .isEqualTo("Move a path in the workspace. Preserve unrelated user changes.");
+    }
+
+    private static SandboxProfile profile() {
+        return new SandboxProfile(
+                new SandboxProfileRef("cli-host-guarded", "1"),
+                "host-guarded",
+                SandboxConfigurationDigest.sha256Fields(List.of("schema-test")),
+                Set.of(),
+                Set.of(),
+                true);
     }
 
     private static ToolProvider provider() {

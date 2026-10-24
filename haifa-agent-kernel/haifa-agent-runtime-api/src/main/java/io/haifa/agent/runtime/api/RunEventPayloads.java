@@ -155,7 +155,8 @@ public final class RunEventPayloads {
             String targetSummary,
             String resultRef,
             Optional<ToolObservation> observation,
-            String intentSummary)
+            String intentSummary,
+            String toolName)
             implements AgentRunEvent.Payload {
         /** Backward-compatible constructor for producers that carry no bounded observation. */
         public ToolLifecycle(
@@ -165,7 +166,7 @@ public final class RunEventPayloads {
                 String reasonCode,
                 String targetSummary,
                 String resultRef) {
-            this(toolCallId, displayName, status, reasonCode, targetSummary, resultRef, Optional.empty(), "");
+            this(toolCallId, displayName, status, reasonCode, targetSummary, resultRef, Optional.empty(), "", "");
         }
 
         /** Backward-compatible constructor for producers that omit the optional intent summary. */
@@ -177,7 +178,20 @@ public final class RunEventPayloads {
                 String targetSummary,
                 String resultRef,
                 Optional<ToolObservation> observation) {
-            this(toolCallId, displayName, status, reasonCode, targetSummary, resultRef, observation, "");
+            this(toolCallId, displayName, status, reasonCode, targetSummary, resultRef, observation, "", "");
+        }
+
+        /** Backward-compatible constructor for producers that do not yet carry a machine tool name. */
+        public ToolLifecycle(
+                String toolCallId,
+                String displayName,
+                String status,
+                String reasonCode,
+                String targetSummary,
+                String resultRef,
+                Optional<ToolObservation> observation,
+                String intentSummary) {
+            this(toolCallId, displayName, status, reasonCode, targetSummary, resultRef, observation, intentSummary, "");
         }
 
         public ToolLifecycle {
@@ -189,6 +203,7 @@ public final class RunEventPayloads {
             resultRef = optionalText(resultRef, "resultRef", 512);
             observation = Objects.requireNonNull(observation, "observation must not be null");
             intentSummary = optionalText(intentSummary, "intentSummary", 256);
+            toolName = optionalText(toolName, "toolName", 128);
         }
     }
 

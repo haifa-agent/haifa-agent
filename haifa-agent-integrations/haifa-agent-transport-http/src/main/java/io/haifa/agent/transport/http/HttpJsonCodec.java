@@ -333,6 +333,9 @@ final class HttpJsonCodec {
         } else if (payload instanceof RunEventPayload.ToolLifecycle value) {
             node.put("toolCallId", value.toolCallId());
             node.put("displayName", value.displayName());
+            if (!value.toolName().isBlank()) {
+                node.put("toolName", value.toolName());
+            }
             node.put("status", value.status());
             node.put("reasonCode", value.reasonCode());
             node.put("targetSummary", value.targetSummary());

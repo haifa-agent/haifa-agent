@@ -800,7 +800,7 @@ class Tui4jTerminalViewTest {
     }
 
     @Test
-    void keepsCollapsedToolErrorsActionableWithoutShowingTheWholeResult() {
+    void collapsesOrdinaryToolErrorsWithoutShowingTheWholeResult() {
         TerminalUiState initial = TerminalUiState.initial(100, 30);
         TerminalUiState state = new TerminalUiState(
                 initial.header(),
@@ -830,8 +830,8 @@ class Tui4jTerminalViewTest {
         String content = view.transcriptContent(state);
 
         assertThat(content)
-                .contains("✗ [workspace.read] missing.txt", "Reason: NOT_FOUND", "Result: safe-ref")
-                .doesNotContain("Hidden detail", "ctrl+o expand");
+                .contains("! [workspace.read] missing.txt")
+                .doesNotContain("Reason: NOT_FOUND", "Result: safe-ref", "Hidden detail", "ctrl+o expand");
     }
 
     @Test
@@ -1416,7 +1416,7 @@ class Tui4jTerminalViewTest {
 
         String content = view.transcriptContent(state);
 
-        assertThat(content).contains("✗ [file_patch] src/App.java");
+        assertThat(content).contains("! [file_patch] src/App.java");
         assertThat(content).contains("-old", "+new");
         // No background sequence anywhere in tool error output
         assertThat(content).doesNotContain("\u001B[4").doesNotContain("\u001B[10");

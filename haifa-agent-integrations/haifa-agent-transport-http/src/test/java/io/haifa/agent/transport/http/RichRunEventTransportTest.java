@@ -24,7 +24,7 @@ class RichRunEventTransportTest {
         List<AgentRunEvent.Payload> payloads = List.of(
                 new RunEventPayloads.ToolLifecycle(
                         "call-1",
-                        "execution_run",
+                        "Run Command",
                         "SUCCEEDED",
                         "NONE",
                         "workspace command",
@@ -32,7 +32,9 @@ class RichRunEventTransportTest {
                         Optional.of(new RunEventPayloads.ToolObservation(
                                 Optional.of(BoundedText.of("Command exited (exit 0)", new ToolDisplayBudget(128, 4))),
                                 Optional.of("EXITED"),
-                                Optional.of(0)))),
+                                Optional.of(0))),
+                        "",
+                        "execution_run"),
                 new RunEventPayloads.ResourceAvailable(
                         "checkpoint:1", "checkpoint", "Checkpoint 1", "AVAILABLE", "resume"));
 
@@ -40,7 +42,12 @@ class RichRunEventTransportTest {
                 .map(payload -> json.writeEvent(mapper.event(event(payload))))
                 .toList();
 
-        assertThat(encoded.get(0)).contains("\"toolCallId\":\"call-1\"").doesNotContain("apiKey", "reasoning");
+        assertThat(encoded.get(0))
+                .contains(
+                        "\"toolCallId\":\"call-1\"",
+                        "\"displayName\":\"Run Command\"",
+                        "\"toolName\":\"execution_run\"")
+                .doesNotContain("apiKey", "reasoning");
         assertThat(encoded.get(0))
                 .contains("\"occurredAt\":\"2026-07-27T00:00:00.123Z\"")
                 .doesNotContain("456789");
