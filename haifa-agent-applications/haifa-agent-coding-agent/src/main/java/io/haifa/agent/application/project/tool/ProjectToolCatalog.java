@@ -322,18 +322,18 @@ public final class ProjectToolCatalog {
 
     private static String title(String name) {
         return switch (name) {
-            case "file_list" -> "List workspace files";
-            case "file_stat" -> "Inspect workspace path";
-            case "file_read" -> "Read workspace file";
-            case "file_search" -> "Search workspace files";
-            case "file_create" -> "Create workspace file";
-            case "file_write" -> "Write workspace file";
-            case "file_delete" -> "Delete workspace path";
-            case "file_move" -> "Move workspace path";
-            case "file_diff" -> "Preview file diff";
-            case "file_patch" -> "Apply workspace patch";
-            case "workspace_attach" -> "Attach a user-approved directory";
-            case "execution_run" -> "Run a local shell command";
+            case "file_list" -> "List Files";
+            case "file_stat" -> "Inspect Path";
+            case "file_read" -> "Read File";
+            case "file_search" -> "Search Files";
+            case "file_create" -> "Create File";
+            case "file_write" -> "Write File";
+            case "file_delete" -> "Delete File";
+            case "file_move" -> "Move File";
+            case "file_diff" -> "Preview Diff";
+            case "file_patch" -> "Apply Patch";
+            case "workspace_attach" -> "Add Directory";
+            case "execution_run" -> "Run Command";
             default -> throw new IllegalArgumentException("unknown project tool " + name);
         };
     }
@@ -378,6 +378,26 @@ public final class ProjectToolCatalog {
                     + "All files are preflighted with optimistic checks before the "
                     + "first write. Cross-directory patches are rejected. A commit-time failure reports its committed prefix "
                     + "and requires a fresh read before regenerating the patch.";
+        }
+        if (name.equals("file_list")) {
+            return "List workspace files within the frozen project workspace and capability boundary.";
+        }
+        if (name.equals("file_stat")) {
+            return "Inspect workspace path within the frozen project workspace and capability boundary.";
+        }
+        if (name.equals("file_search")) {
+            return "Search workspace files within the frozen project workspace and capability boundary.";
+        }
+        if (name.equals("file_diff")) {
+            return "Preview file diff within the frozen project workspace and capability boundary.";
+        }
+        if (name.equals("file_delete")) {
+            return "Delete workspace path within the frozen project workspace and capability boundary. "
+                    + "Preserve unrelated user changes.";
+        }
+        if (name.equals("file_move")) {
+            return "Move workspace path within the frozen project workspace and capability boundary. "
+                    + "Preserve unrelated user changes.";
         }
         if (name.equals("workspace_attach")) {
             return "Request one additional existing local directory for this Coding Agent. Supply an "

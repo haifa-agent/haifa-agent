@@ -923,15 +923,55 @@ class Tui4jCodingTerminalModelTest {
                 2,
                 new RunEventPayloads.ToolLifecycle("tool-1", "execution_run", "STARTED", "NONE", "git status", ""))));
         fixture.model.update(new WindowSizeMessage(80, 24));
-        assertThat(fixture.model.view()).contains("WORKING (1s) · execution_run");
+        assertThat(fixture.model.view()).contains("WORKING (1s) · Run Command");
         clock.set(Duration.ofSeconds(14).toNanos());
-        assertThat(fixture.model.view()).contains("WORKING (5s) · execution_run");
+        assertThat(fixture.model.view()).contains("WORKING (5s) · Run Command");
 
         fixture.pump.offer(new TerminalUiAction.RunEventReceived(event(
                 3,
                 new RunEventPayloads.ToolLifecycle("tool-1", "execution_run", "SUCCEEDED", "NONE", "git status", ""))));
         fixture.model.update(new WindowSizeMessage(80, 24));
         assertThat(fixture.model.view()).contains("THINKING (1s)").doesNotContain("WORKING (");
+    }
+
+    @Test
+    void collapsesOrdinaryToolFailureButKeepsUnknownResultDetailsVisible() {
+        var fixture = fixture();
+        fixture.pump.offer(new TerminalUiAction.RunEventReceived(
+                event(1, new RunEventPayloads.RunLifecycle("RUNNING", 1, "NONE"))));
+        fixture.model.update(new WindowSizeMessage(120, 40));
+
+        fixture.pump.offer(new TerminalUiAction.RunEventReceived(event(
+                2,
+                new RunEventPayloads.ToolLifecycle(
+                        "tool-1",
+                        "Apply Patch",
+                        "FAILED",
+                        "PATCH_AMBIGUOUS_MATCH",
+                        "README.md",
+                        "",
+                        Optional.empty(),
+                        "",
+                        "file_patch"))));
+        fixture.model.update(new WindowSizeMessage(120, 40));
+        String failed = fixture.model.view();
+        assertThat(failed).contains("apply patch", "未完成：匹配到多处");
+        assertThat(failed).doesNotContain("Reason: PATCH_AMBIGUOUS_MATCH");
+
+        fixture.pump.offer(new TerminalUiAction.RunEventReceived(event(
+                3,
+                new RunEventPayloads.ToolLifecycle(
+                        "tool-2",
+                        "Run Command",
+                        "OUTCOME_UNKNOWN",
+                        "TOOL_OUTCOME_UNKNOWN",
+                        "rm -rf",
+                        "",
+                        Optional.empty(),
+                        "",
+                        "execution_run"))));
+        fixture.model.update(new WindowSizeMessage(120, 40));
+        assertThat(fixture.model.view()).contains("Outcome: UNKNOWN", "Target: rm -rf");
     }
 
     @Test
