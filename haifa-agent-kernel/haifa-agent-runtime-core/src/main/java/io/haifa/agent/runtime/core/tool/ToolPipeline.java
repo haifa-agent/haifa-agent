@@ -841,7 +841,8 @@ public final class ToolPipeline {
             ToolResult result) {
         var data = new java.util.LinkedHashMap<String, Object>();
         data.put("toolCallId", call.id().value());
-        data.put("displayName", call.toolName());
+        data.put("displayName", displayName(run, call));
+        data.put("toolName", call.toolName());
         data.put("status", status);
         data.put("reasonCode", reasonCode);
         data.put("targetSummary", ToolTargetSummary.from(call));
@@ -963,6 +964,18 @@ public final class ToolPipeline {
         var configuration = state.configuration(run.configurationSnapshot())
                 .orElseThrow(() -> new IllegalStateException("run configuration snapshot is unavailable"));
         return bindings.resolve(configuration.toolBindings(), request);
+    }
+
+    /** Resolves the frozen display title for one persisted call; display failures fall back to the machine name. */
+    public String displayName(AgentRun run, ToolCall call) {
+        Objects.requireNonNull(run, "run must not be null");
+        Objects.requireNonNull(call, "call must not be null");
+        try {
+            return ToolDisplayName.resolve(
+                    binding(run, request(call)).definition().title(), call.toolName());
+        } catch (RuntimeException exception) {
+            return ToolDisplayName.resolve(call.toolName(), call.toolName());
+        }
     }
 
     public ToolRequest canonicalize(AgentRun run, ToolRequest request) {

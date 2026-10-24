@@ -906,12 +906,16 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     }
 
     private ActivityKind toolKind(RunEventPayloads.ToolLifecycle tool) {
+        return toolKind(tool.toolName(), tool.displayName(), mcpToolAliases);
+    }
+
+    static ActivityKind toolKind(String toolName, String displayName, Set<String> mcpToolAliases) {
+        String machineName = toolName == null || toolName.isBlank() ? displayName : toolName;
         return Set.of(PersonalAssistantProfile.SKILL_LOAD_ALIAS, PersonalAssistantProfile.SKILL_RESOURCE_ALIAS)
-                                .contains(tool.displayName())
-                        || tool.displayName().startsWith("skill.")
+                                .contains(machineName)
+                        || machineName.startsWith("skill.")
                 ? ActivityKind.SKILL
-                : mcpToolAliases.contains(tool.displayName())
-                                || tool.displayName().startsWith("mcp.")
+                : mcpToolAliases.contains(machineName) || machineName.startsWith("mcp.")
                         ? ActivityKind.MCP
                         : ActivityKind.TOOL;
     }

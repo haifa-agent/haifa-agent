@@ -13,7 +13,8 @@ public record TranscriptItem(
         Optional<ApprovalDetails> approvalDetails,
         Optional<Long> startedAtEpochMillis,
         Optional<Long> durationMillis,
-        Optional<Integer> exitCode) {
+        Optional<Integer> exitCode,
+        Optional<String> toolName) {
     public TranscriptItem {
         id = text(id, "id", 256);
         kind = Objects.requireNonNull(kind, "kind must not be null");
@@ -24,6 +25,7 @@ public record TranscriptItem(
         startedAtEpochMillis = Objects.requireNonNull(startedAtEpochMillis, "startedAtEpochMillis must not be null");
         durationMillis = Objects.requireNonNull(durationMillis, "durationMillis must not be null");
         exitCode = Objects.requireNonNull(exitCode, "exitCode must not be null");
+        toolName = Objects.requireNonNull(toolName, "toolName must not be null");
         if (startedAtEpochMillis.isPresent() && startedAtEpochMillis.orElseThrow() < 0) {
             throw new IllegalArgumentException("startedAtEpochMillis must not be negative");
         }
@@ -33,6 +35,32 @@ public record TranscriptItem(
         if (kind != Kind.APPROVAL && approvalDetails.isPresent()) {
             throw new IllegalArgumentException("approval details require an approval transcript item");
         }
+        toolName.ifPresent(value -> text(value, "toolName", 128));
+    }
+
+    public TranscriptItem(
+            String id,
+            Kind kind,
+            String title,
+            String body,
+            String status,
+            boolean expanded,
+            Optional<ApprovalDetails> approvalDetails,
+            Optional<Long> startedAtEpochMillis,
+            Optional<Long> durationMillis,
+            Optional<Integer> exitCode) {
+        this(
+                id,
+                kind,
+                title,
+                body,
+                status,
+                expanded,
+                approvalDetails,
+                startedAtEpochMillis,
+                durationMillis,
+                exitCode,
+                Optional.empty());
     }
 
     public TranscriptItem(
@@ -55,6 +83,7 @@ public record TranscriptItem(
                 approvalDetails,
                 startedAtEpochMillis,
                 durationMillis,
+                Optional.empty(),
                 Optional.empty());
     }
 
@@ -86,7 +115,8 @@ public record TranscriptItem(
                 approvalDetails,
                 startedAtEpochMillis,
                 durationMillis,
-                exitCode);
+                exitCode,
+                toolName);
     }
 
     public TranscriptItem withStatus(String value, String valueBody) {
@@ -100,7 +130,8 @@ public record TranscriptItem(
                 approvalDetails,
                 startedAtEpochMillis,
                 durationMillis,
-                exitCode);
+                exitCode,
+                toolName);
     }
 
     public TranscriptItem toggle() {
@@ -114,7 +145,8 @@ public record TranscriptItem(
                 approvalDetails,
                 startedAtEpochMillis,
                 durationMillis,
-                exitCode);
+                exitCode,
+                toolName);
     }
 
     /**
@@ -138,7 +170,7 @@ public record TranscriptItem(
     public String toString() {
         return "TranscriptItem[id=" + id + ", kind=" + kind + ", title=" + title
                 + ", body=[REDACTED], status=" + status + ", expanded=" + expanded
-                + ", approvalDetails=[REDACTED]]";
+                + ", approvalDetails=[REDACTED], toolName=" + toolName.orElse("") + "]";
     }
 
     public enum Kind {

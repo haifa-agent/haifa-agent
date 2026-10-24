@@ -275,7 +275,7 @@ class TerminalUiReducerTest {
                 .singleElement()
                 .satisfies(item -> {
                     assertThat(item.status()).isEqualTo("REQUESTED");
-                    assertThat(item.title()).isEqualTo("execution_run · 查找包含 ToolCall 的文件");
+                    assertThat(item.title()).isEqualTo("Run Command · 查找包含 ToolCall 的文件");
                     assertThat(item.body()).contains("Target: rg -l ToolCall .");
                 });
 
@@ -312,7 +312,7 @@ class TerminalUiReducerTest {
                 .singleElement()
                 .satisfies(item -> {
                     assertThat(item.status()).isEqualTo("SUCCEEDED");
-                    assertThat(item.title()).isEqualTo("execution_run · 查找包含 ToolCall 的文件");
+                    assertThat(item.title()).isEqualTo("Run Command · 查找包含 ToolCall 的文件");
                     assertThat(item.body()).contains("Target: rg -l ToolCall .", "Result: artifact:tool-1");
                 });
     }
@@ -327,7 +327,7 @@ class TerminalUiReducerTest {
                         new RunEventPayloads.ToolLifecycle(
                                 "tool-1", "file_read", "REQUESTED", "NONE", "RuntimeCore.java", ""))));
         assertThat(state.transcript()).singleElement().satisfies(item -> assertThat(item.title())
-                .isEqualTo("file_read · RuntimeCore.java"));
+                .isEqualTo("Read File · RuntimeCore.java"));
     }
 
     @Test
@@ -436,7 +436,7 @@ class TerminalUiReducerTest {
                         Instant.parse("2026-07-27T00:00:02.500Z"))));
         assertThat(succeeded.transcript()).singleElement().satisfies(item -> {
             assertThat(item.durationMillis()).contains(1500L);
-            assertThat(item.title()).isEqualTo("execution_run · rg search");
+            assertThat(item.title()).isEqualTo("Run Command · rg search");
         });
     }
 
@@ -613,7 +613,7 @@ class TerminalUiReducerTest {
         assertThat(requested.activity()).isEqualTo(thinking.activity());
         assertThat(working.status()).isEqualTo("WORKING");
         assertThat(working.activity().revision()).isEqualTo(thinking.activity().revision() + 1);
-        assertThat(working.activity().label()).isEqualTo("execution_run");
+        assertThat(working.activity().label()).isEqualTo("Run Command");
         assertThat(resumedThinking.status()).isEqualTo("THINKING");
         assertThat(resumedThinking.activity().revision())
                 .isEqualTo(working.activity().revision() + 1);
@@ -832,9 +832,149 @@ class TerminalUiReducerTest {
                                 "tool-1", "file_stat", "SUCCEEDED", "NONE", "file_stat", "artifact:tool-1"))));
 
         assertThat(state.transcript()).singleElement().satisfies(item -> {
-            assertThat(item.title()).isEqualTo("file_stat");
+            assertThat(item.title()).isEqualTo("Inspect Path");
             assertThat(item.body()).doesNotContain("Target: file_stat");
         });
+    }
+
+    @Test
+    void usesFrozenToolTitleAndMachineNameForNewLifecycleEvents() {
+        TerminalUiState state = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1",
+                                "Read File",
+                                "SUCCEEDED",
+                                "NONE",
+                                "README.md",
+                                "",
+                                Optional.empty(),
+                                "",
+                                "file_read"))));
+
+        assertThat(state.transcript()).singleElement().satisfies(item -> {
+            assertThat(item.title()).isEqualTo("Read File · README.md");
+            assertThat(item.toolName()).contains("file_read");
+        });
+    }
+
+    @Test
+    void mapsLegacyMachineNamesToReadableToolTitles() {
+        TerminalUiState state = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1", "file_read", "SUCCEEDED", "NONE", "README.md", ""))));
+
+        assertThat(state.transcript()).singleElement().satisfies(item -> {
+            assertThat(item.title()).isEqualTo("Read File · README.md");
+            assertThat(item.toolName()).contains("file_read");
+        });
+    }
+
+    @Test
+    void appendsOrdinaryFailureReasonWithoutChangingUnknownStatus() {
+        TerminalUiState failed = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1",
+                                "Apply Patch",
+                                "FAILED",
+                                "PATCH_AMBIGUOUS_MATCH",
+                                "README.md",
+                                "",
+                                Optional.empty(),
+                                "",
+                                "file_patch"))));
+        assertThat(failed.transcript()).singleElement().satisfies(item -> {
+            assertThat(item.title()).isEqualTo("Apply Patch · README.md · 未完成：匹配到多处");
+            assertThat(item.body()).contains("PATCH_AMBIGUOUS_MATCH");
+        });
+
+        TerminalUiState unknown = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1",
+                                "Run Command",
+                                "OUTCOME_UNKNOWN",
+                                "TOOL_OUTCOME_UNKNOWN",
+                                "rm -rf",
+                                "",
+                                Optional.empty(),
+                                "",
+                                "execution_run"))));
+        assertThat(unknown.transcript()).singleElement().satisfies(item -> {
+            assertThat(item.title()).isEqualTo("Run Command · rm -rf");
+            assertThat(item.body()).contains("TOOL_OUTCOME_UNKNOWN");
+        });
+    }
+
+    @Test
+    void appendsNeutralLabelsForDeniedCancelledAndRuleBlockedTools() {
+        TerminalUiState denied = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1",
+                                "Apply Patch",
+                                "DENIED",
+                                "TOOL_APPROVAL_REJECTED",
+                                "README.md",
+                                "",
+                                Optional.empty(),
+                                "",
+                                "file_patch"))));
+        assertThat(denied.transcript()).singleElement().satisfies(item -> assertThat(item.title())
+                .endsWith("· 已拒绝"));
+
+        TerminalUiState cancelled = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1",
+                                "Apply Patch",
+                                "CANCELLED",
+                                "RUN_CANCELLED",
+                                "README.md",
+                                "",
+                                Optional.empty(),
+                                "",
+                                "file_patch"))));
+        assertThat(cancelled.transcript()).singleElement().satisfies(item -> assertThat(item.title())
+                .endsWith("· 已取消"));
+
+        TerminalUiState blocked = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1",
+                                "Apply Patch",
+                                "CANCELLED",
+                                "CAPABILITY_DENIED",
+                                "README.md",
+                                "",
+                                Optional.empty(),
+                                "",
+                                "file_patch"))));
+        assertThat(blocked.transcript()).singleElement().satisfies(item -> assertThat(item.title())
+                .endsWith("· 规则阻止"));
     }
 
     @Test

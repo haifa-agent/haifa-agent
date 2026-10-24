@@ -159,14 +159,19 @@ Error、Queued 和 Focus。TrueColor 参考色会按明暗背景自适应；NoCo
 - Assistant 正文保持 2-cell 左对齐以与 User 边线气泡形成清晰的视觉层级；输入框 Prompt Box 适配
   Surface Element 底色，侧栏垂直分割线统一使用 Border Subtle，消除界面视觉断层；
 - 高频 Markdown 子集只在 View 层转换为终端样式，`TranscriptItem`、Session 与持久化继续保留原始 Markdown；
-- Tool 根据 `requested/started/succeeded/failed/cancelled` 使用状态色。正常完成/`EXITED` 的折叠项严格占一行：
-  以 `✓` 状态符号开头，随后是工具名背景徽标、调用说明（优先模型 `intentSummary`/`description`，否则安全
-  Target Summary，再否则工具名）、辅助信息（非零退出码与耗时）和右端折叠符 `›`；说明在 `REQUESTED`
-  阶段即可展示，不提前显示成功。连续折叠项之间不插入空行，不再渲染正文预览行或 `ctrl+o expand`
-  长提示。`EXITED` 始终是成功状态，
-  非零退出码（如 `exit 1`）只作为弱化事实展示，不会变成红色故障；`exit 0` 不重复展示。
-  真实 `FAILED`/`DENIED`/`TIMEOUT`/`UNKNOWN` 仍保留错误或未知语义，并在折叠态保留最多两行安全原因。
-  折叠态耗时始终显示；按 `ctrl+o` 或点击条目可展开/收起，展开后显示既有有界详情和
+- Tool 主行使用该 Run 冻结定义的可读标题（如 `Read File`、`Apply Patch`、`Run Command`），不再把机器名
+  直接当展示名；展开后的元数据保留机器名与分类徽标，历史事件缺少机器标识时只对已知内置名做固定映射。
+  正常完成/`EXITED` 的折叠项严格占一行：以 `✓` 状态符号开头，随后是标题徽标、调用说明（优先模型
+  `intentSummary`/`description`，否则安全 Target Summary，再否则标题）、辅助信息（非零退出码与耗时）和
+  右端折叠符 `›`；说明在 `REQUESTED` 阶段即可展示，不提前显示成功。连续折叠项之间不插入空行。
+  `EXITED` 始终是成功状态，非零退出码（如 `exit 1`）只作为弱化事实展示，不会变成红色故障；`exit 0`
+  不重复展示。
+- 一次普通工具调用失败使用克制的黄色 `!` 和单行“未完成：短原因”，折叠态不再强制附带两行详情；
+  展开后仍显示真实错误码、目标、结果和安全输出。用户拒绝/规则阻止使用中性 `–` 与“已拒绝/规则阻止”，
+  用户取消使用中性 `–` 与“已取消”，都不再画成系统故障红叉。`OUTCOME_UNKNOWN` 继续使用醒目的黄色 `?`
+  和“结果未确认”提示，折叠态保留最多两行处理信息；`ATTENTION`/`RECOVERY REQUIRED` 等阻断状态仍用红色。
+  Run 自身的失败仍由红色 Run Summary 表示，不把历史普通失败全部染红。
+- 折叠态耗时始终显示；按 `ctrl+o` 或点击条目可展开/收起，展开后显示既有有界详情和
   `Duration … · N lines · X KB` 元数据尾行。点击仅在鼠标捕获开启时可用，且完成文本选择后不触发展开。
 - 运行中的执行工具通过进程内 transient publisher 增量刷新同一 Tool Call 卡片的
   `Output (streaming):` 段；每批最多 4 KiB，卡片正文最多保留 16 KiB 尾部，stderr 和 preview
@@ -228,7 +233,7 @@ Phase B 的工作流反馈只投影稳定产品 DTO 和 Runtime 事件：
   `WAITING FOR APPROVAL`（等待用户审批）。计时是当前活动阶段耗时，不是整轮 Run 总耗时：新 Run、
   工具开始、工具完成后返回模型、进入/离开审批、应用 Steer、恢复、验证和取消阶段时从 `1s` 重新开始；
   Assistant Delta、轮询、重复事件和 viewport 操作不重置。`WORKING` 只追加短 Tool
-  名称，例如 `WORKING (12s) · execution_run`；内部仅以单调递增 revision 区分阶段，不展示 RunId 或
+  标题，例如 `WORKING (12s) · Run Command`；内部仅以单调递增 revision 区分阶段，不展示 RunId 或
 - 错误按 Retryable、User action required、Interrupted、Terminal capability、Terminal failure
   五类给出稳定错误码和下一步操作；失败和 Selector 都不清空草稿；遇到 `MODEL_AUTHENTICATION_REQUIRED`
   时保持用户草稿，并弹出模型就绪恢复选择器，安全默认项为通过 `/model` 切换已就绪模型，次选为 `/connect`；
@@ -429,7 +434,7 @@ key，并在所有重启间保持不变。
 15. 分别粘贴带 bracketed-paste 标记和不带标记的多行文本，确认所有行停留在 Editor，末尾换行也不
     提交；随后单独按 Enter 才提交一次。
 16. PageUp 回翻后直接提交新消息，确认新一轮自动回到底部且不显示陈旧的 `new output below`；模型交互
-    显示 `THINKING (1s)`，工具开始后显示 `WORKING (1s) · tool-name`，工具完成并返回模型后重新显示
+    显示 `THINKING (1s)`，工具开始后显示 `WORKING (1s) · <tool title>`（如 `Run Command`），工具完成并返回模型后重新显示
     `THINKING (1s)`。进入审批显示 `WAITING FOR APPROVAL (1s)`；同一阶段在 61 秒显示为 `1m 1s`，
     Assistant Delta 和工具输出块不能重置计时。
 

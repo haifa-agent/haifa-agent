@@ -675,19 +675,21 @@ public final class TerminalUiReducer {
                 duration = Optional.of(Math.max(0, event.occurredAt().toEpochMilli() - startedAt.orElseThrow()));
             }
             boolean expanded = existing >= 0 && items.get(existing).expanded();
+            String displayName = ToolPresentation.displayName(payload);
             upsert(
                     items,
                     new TranscriptItem(
                             id,
                             TranscriptItem.Kind.TOOL,
-                            toolTitle(payload),
-                            toolBody(payload),
+                            toolTitle(payload, displayName),
+                            toolBody(payload, displayName),
                             projectedStatus,
                             expanded,
                             Optional.empty(),
                             startedAt,
                             duration,
-                            payload.observation().flatMap(RunEventPayloads.ToolObservation::exitCode)));
+                            payload.observation().flatMap(RunEventPayloads.ToolObservation::exitCode),
+                            Optional.of(ToolPresentation.machineName(payload))));
         } else if (event.payload() instanceof RunEventPayloads.ResourceAvailable payload
                 && !isInternalCheckpoint(payload)) {
             upsert(
@@ -833,7 +835,7 @@ public final class TerminalUiReducer {
         String label = "";
         if (event.payload() instanceof RunEventPayloads.ToolLifecycle lifecycle
                 && ("STARTED".equals(lifecycle.status()) || "RUNNING".equals(lifecycle.status()))) {
-            label = boundedActivityLabel(lifecycle.displayName());
+            label = boundedActivityLabel(ToolPresentation.displayName(lifecycle));
         } else if (projectedStatus.equalsIgnoreCase("WORKING")) {
             label = state.activity().label();
         }
@@ -937,10 +939,12 @@ public final class TerminalUiReducer {
         return -1;
     }
 
-    private static String toolBody(RunEventPayloads.ToolLifecycle lifecycle) {
+    private static String toolBody(RunEventPayloads.ToolLifecycle lifecycle, String displayName) {
         List<String> lines = new ArrayList<>();
         String target = boundedTarget(lifecycle.targetSummary());
-        if (!target.isBlank() && !target.equalsIgnoreCase(lifecycle.displayName())) {
+        if (!target.isBlank()
+                && !target.equalsIgnoreCase(displayName)
+                && !target.equalsIgnoreCase(ToolPresentation.machineName(lifecycle))) {
             lines.add(ToolBodyLines.TARGET_PREFIX + " " + target);
         }
         Optional<String> reasonCode = normalizedReasonCode(lifecycle.reasonCode());
@@ -1062,15 +1066,17 @@ public final class TerminalUiReducer {
         return stage + "Reason code: " + code + "\nNext: " + next;
     }
 
-    private static String toolTitle(RunEventPayloads.ToolLifecycle lifecycle) {
-        String toolName = lifecycle.displayName();
+    private static String toolTitle(RunEventPayloads.ToolLifecycle lifecycle, String displayName) {
+        String suffix = ToolPresentation.statusSuffix(lifecycle.status(), lifecycle.reasonCode());
+        String machineName = ToolPresentation.machineName(lifecycle);
         String headline = toolHeadline(lifecycle);
-        if (headline.isBlank() || headline.equalsIgnoreCase(toolName)) {
-            return toolName;
+        if (headline.isBlank() || headline.equalsIgnoreCase(displayName) || headline.equalsIgnoreCase(machineName)) {
+            return displayName + suffix;
         }
-        String prefix = toolName + " · ";
-        int available = MAX_TRANSCRIPT_TITLE_LENGTH - prefix.length();
-        if (headline.length() <= available) return prefix + headline;
+        String prefix = displayName + " · ";
+        int available = MAX_TRANSCRIPT_TITLE_LENGTH - prefix.length() - suffix.length();
+        if (available <= 1) return displayName + suffix;
+        if (headline.length() <= available) return prefix + headline + suffix;
         int end = Math.max(0, available - 1);
         if (end > 0
                 && end < headline.length()
@@ -1078,7 +1084,7 @@ public final class TerminalUiReducer {
                 && Character.isHighSurrogate(headline.charAt(end - 1))) {
             end--;
         }
-        return prefix + headline.substring(0, end) + "…";
+        return prefix + headline.substring(0, end) + "…" + suffix;
     }
 
     /**

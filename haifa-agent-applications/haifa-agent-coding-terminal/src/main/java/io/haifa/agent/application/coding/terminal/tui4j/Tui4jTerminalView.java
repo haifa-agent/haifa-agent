@@ -79,6 +79,10 @@ final class Tui4jTerminalView {
             "REJECTED",
             "SHELL COMMAND DENIED",
             "TIMEOUT");
+    private static final Set<String> NEUTRAL_STATUSES =
+            Set.of("CANCELLED", "DENIED", "REJECTED", "SHELL COMMAND DENIED");
+    private static final Set<String> TOOL_ORDINARY_FAILURE_STATUSES = Set.of("FAILED", "ERROR", "TIMEOUT");
+    private static final Set<String> TOOL_BLOCKING_STATUSES = Set.of("ATTENTION", "RECOVERY REQUIRED");
     private static final Set<String> UNKNOWN_STATUSES = Set.of("OUTCOME_UNKNOWN", "UNKNOWN_OUTCOME");
 
     private final Tui4jTerminalTheme theme = new Tui4jTerminalTheme();
@@ -642,7 +646,7 @@ final class Tui4jTerminalView {
         String header = toolHeader(item, availableWidth, collapsed);
 
         if (collapsed) {
-            if (isErrorStatus(item.status()) || isUnknownStatus(item.status())) {
+            if (isUnknownStatus(item.status()) || isToolBlockingStatus(item.status())) {
                 String details = item.body()
                         .lines()
                         .limit(2)
@@ -872,6 +876,7 @@ final class Tui4jTerminalView {
         String normalized = status.strip().toUpperCase(Locale.ROOT);
         if (UNKNOWN_STATUSES.contains(normalized)) return "?";
         if (SUCCESS_STATUSES.contains(normalized)) return "✓";
+        if (NEUTRAL_STATUSES.contains(normalized)) return "–";
         if (ERROR_STATUSES.contains(normalized)) return "✗";
         return "●";
     }
@@ -880,7 +885,9 @@ final class Tui4jTerminalView {
         String normalized = status.strip().toUpperCase(Locale.ROOT);
         if (UNKNOWN_STATUSES.contains(normalized)) return theme.warning("?");
         if (SUCCESS_STATUSES.contains(normalized)) return theme.success("✓");
-        if (ERROR_STATUSES.contains(normalized)) return theme.error("✗");
+        if (NEUTRAL_STATUSES.contains(normalized)) return theme.muted("–");
+        if (TOOL_ORDINARY_FAILURE_STATUSES.contains(normalized)) return theme.warning("!");
+        if (isToolBlockingStatus(normalized)) return theme.error("✗");
         return theme.pending("●");
     }
 
@@ -892,7 +899,9 @@ final class Tui4jTerminalView {
 
     private String metadata(TranscriptItem item) {
         List<String> parts = new ArrayList<>();
-        parts.add(theme.toolBadge(ToolCategory.fromToolName(item.title())));
+        String machineName = item.toolName().orElse("");
+        parts.add(theme.toolBadge(ToolCategory.fromToolName(machineName.isBlank() ? item.title() : machineName)));
+        if (!machineName.isBlank()) parts.add(machineName);
         item.durationMillis().ifPresent(value -> parts.add("Duration " + TerminalDurations.human(value)));
         long lines = item.body().lines().filter(line -> !line.isBlank()).count();
         if (lines > 0) parts.add(lines + (lines == 1 ? " line" : " lines"));
@@ -902,11 +911,11 @@ final class Tui4jTerminalView {
     }
 
     private boolean isCompactTool(TranscriptItem item) {
-        return item.collapsible() && !isErrorStatus(item.status()) && !isUnknownStatus(item.status());
+        return item.collapsible() && !isUnknownStatus(item.status()) && !isToolBlockingStatus(item.status());
     }
 
-    private boolean isErrorStatus(String status) {
-        return ERROR_STATUSES.contains(status.strip().toUpperCase(Locale.ROOT));
+    private boolean isToolBlockingStatus(String status) {
+        return TOOL_BLOCKING_STATUSES.contains(status.strip().toUpperCase(Locale.ROOT));
     }
 
     private boolean isUnknownStatus(String status) {
@@ -997,6 +1006,7 @@ final class Tui4jTerminalView {
             return theme.pending(content);
         }
         if (UNKNOWN_STATUSES.contains(normalized)) return theme.pending(content);
+        if (NEUTRAL_STATUSES.contains(normalized)) return theme.muted(content);
         if (ERROR_STATUSES.contains(normalized)) return theme.error(content);
         return content;
     }
