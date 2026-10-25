@@ -192,6 +192,65 @@ class SqliteConnectionFactoryTest {
         }
     }
 
+    @Test
+    void queuedWriterKeepsWaitingBeyondTheBusyTimeoutItIsNotBoundedBy() throws Exception {
+        SqliteStoreConfiguration configuration =
+                new SqliteStoreConfiguration(directory.resolve("queued.db").toAbsolutePath(), 50, 8_192);
+        SqliteConnectionFactory factory = SqliteTestSupport.closeAfterTest(new SqliteConnectionFactory(configuration));
+        CountDownLatch queuedWriterAcquired = new CountDownLatch(1);
+        AtomicInteger queuedWaitMillis = new AtomicInteger(-1);
+        factory.acquireWriter();
+        boolean released = false;
+        try (ExecutorService executor = Executors.newSingleThreadExecutor()) {
+            Future<?> queuedWriter = executor.submit(() -> {
+                queuedWaitMillis.set((int) factory.acquireWriter());
+                queuedWriterAcquired.countDown();
+                factory.releaseWriter();
+                return null;
+            });
+
+            // The holder keeps the slot far beyond twice the busy timeout, which is the window in which
+            // SQLite's cross-process busy timeout used to fail the queued writer with DATABASE_BUSY.
+            assertThat(queuedWriterAcquired.await(300, TimeUnit.MILLISECONDS))
+                    .as("the queued writer keeps waiting for the held write slot")
+                    .isFalse();
+
+            factory.releaseWriter();
+            released = true;
+
+            assertThat(queuedWriterAcquired.await(10, TimeUnit.SECONDS))
+                    .as("the queued writer takes the slot once it is released")
+                    .isTrue();
+            queuedWriter.get();
+            assertThat(queuedWaitMillis.get()).isGreaterThanOrEqualTo(300);
+        } finally {
+            if (!released) {
+                factory.releaseWriter();
+            }
+        }
+    }
+
+    @Test
+    void writerQueueFallbackBoundNamesTheThreadThatStillHoldsTheSlot() throws Exception {
+        SqliteConnectionFactory factory = SqliteTestSupport.closeAfterTest(new SqliteConnectionFactory(
+                SqliteTestSupport.configuration(directory), SecureFilePermissions::strategyForDirectory, 150));
+        String holderThreadName = Thread.currentThread().getName();
+        factory.acquireWriter();
+        try (ExecutorService executor = Executors.newSingleThreadExecutor()) {
+            Future<Long> queuedWriter = executor.submit(factory::acquireWriter);
+
+            assertThatThrownBy(() -> queuedWriter.get(10, TimeUnit.SECONDS))
+                    .hasCauseInstanceOf(SqliteStoreException.class)
+                    .satisfies(failure -> {
+                        SqliteStoreException storeFailure = (SqliteStoreException) failure.getCause();
+                        assertThat(storeFailure.failure()).isEqualTo(SqliteStoreFailure.WRITER_SLOT_TIMEOUT);
+                        assertThat(storeFailure.getMessage()).contains(holderThreadName);
+                    });
+        } finally {
+            factory.releaseWriter();
+        }
+    }
+
     private static int total(Map<Path, AtomicInteger> values) {
         return values.values().stream().mapToInt(AtomicInteger::get).sum();
     }
