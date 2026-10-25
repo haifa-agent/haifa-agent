@@ -4,7 +4,7 @@
 
 ## 产出制品
 
-在 `dist-support/output/` 目录下生成以下 3 个 Release 发布包及 SHA-256 校验清单。制品名称中的版本统一带
+在 `dist-support/output/` 目录下生成以下 4 个 Release 发布包及 SHA-256 校验清单。制品名称中的版本统一带
 `v` 前缀（例如传入 `0.1.0` 时输出 `v0.1.0`），与 Git Tag `v0.1.0` 保持一致：
 
 1. **`haifa-coding-agent-windows-x64-v<version>.zip`**
@@ -19,12 +19,18 @@
    - 内置裁剪版 Java 21 运行时及完整打包的 Web SPA 前端页面（合一单 JAR 架构）；
    - 包含前台运行自启浏览器的 `start.bat`、后台无窗口运行的 `start-background.vbs` 与停服脚本 `stop.bat`。
 
-3. **`haifa-agent-sdk-v<version>.zip`**
+3. **`haifa-personal-assistant-linux-x64-v<version>.zip`**
+   - Linux 服务器包：不内置 JRE（使用系统 JDK 21），前端由 nginx 直接提供静态文件；
+   - 含 `app.jar`、`web/`（相对基址 `/api/v1` 与 `/v1/admin`）、`conf/pa.env`、
+     `conf/haifa-personal-assistant.service`、`conf/pa.conf`（nginx 站点模板）与 `bin/` 脚本；
+   - `sh bin/check.sh` 用临时端口与临时数据目录自检启动与 `/actuator/health`。
+
+4. **`haifa-agent-sdk-v<version>.zip`**
    - `repository/` 包含纯 Java SDK、SDK Starter、Spring Boot 自动装配、公开 Integration、
      所有内部依赖与父 POM/BOM，以及源码/Javadoc，采用 Maven 文件仓库布局；
    - 附带 Maven / Gradle 引入配置说明与最小代码示例。
 
-4. **`sha256sums.txt`**
+5. **`sha256sums.txt`**
    - 所有生成的 Release 压缩包的 SHA-256 哈希校验清单。
 
 ---
@@ -100,3 +106,67 @@ dist-support/
 ├── dist-work/                     # 打包中间工作区 (已忽略)
 └── output/                        # 最终生成的 ZIP 与校验和文件 (已忽略)
 ```
+
+---
+
+## Linux 服务器包（`pa-server`）
+
+`haifa-personal-assistant-linux-x64-v<version>.zip` 面向 Linux 常驻部署，与 Windows 便携包的差异：
+
+| 项目 | Windows 便携包（`pa`） | Linux 服务器包（`pa-server`） |
+| --- | --- | --- |
+| JRE | 内置 jlink 裁剪运行时 | 不内置，使用系统 JDK 21 |
+| 前端 | 注入 JAR 的 `BOOT-INF/classes/static/`，浏览器同源直连 | 独立 `web/` 目录，基址为 `/api/v1` 与 `/v1/admin`，由 nginx 提供 |
+| 启动 | `bin/start.bat`、`bin/start-background.vbs` | `conf/haifa-personal-assistant.service`（systemd）或 `bin/start.sh` |
+| 反向代理 | 无 | `conf/pa.conf`：改写 Host/Origin 通过回环校验、SSE 关闭缓冲、上传上限 12m |
+| 数据 | 包内 `data/personal-assistant/` | `HAIFA_PERSONAL_DATA_DIR`（模板默认 `/root/app/pa/data`） |
+| 自检 | `smoke_distributions.py verify`（Windows 起 JRE 探活） | `sh bin/check.sh`（临时端口 + 临时数据目录探活，不动正式 data 与端口） |
+
+两类产物共用同一个 `personal-assistant-web/dist`，但基址不同，因此打包脚本会按目标重建并**校验**：
+Windows 包必须仍是回环绝对地址，服务器包必须是相对地址；不符则直接失败，避免发出“浏览器去连自己
+localhost”的产物。该文件也是 `templates/pa-server/` 的同步依据。
+
+```powershell
+# 仅打包 Linux 服务器包（前端会按同源相对基址重建）
+.\dist-support\scripts\build-distributions.ps1 pa-server
+
+# 复核全部产物校验和并冒烟
+python dist-support/scripts/smoke_distributions.py verify
+```
+
+```bash
+./dist-support/scripts/build-distributions.sh pa-server
+```
+
+`all` 现在按 `ca → pa → pa-server → sdk` 顺序打包，结束后磁盘上的 `dist/` 停留在服务器（相对基址）形态；
+若紧接着只跑 `pa --skip-web-build`，校验会失败并提示重新构建，这是预期行为。
+
+包内 `docker/` 另提供容器化运行材料（本机 Docker Hub 带宽极低时也可用）：
+
+- `docker/build-offline-base-image.sh`：用宿主 JDK 21 组装基础镜像 `pa-base:local`，不访问任何 registry；
+- `docker/Dockerfile`：以该基础镜像 COPY 包根目录的 `app.jar`；
+- `docker/docker-compose.yml`：只发布 `127.0.0.1:20001`，数据卷 `/root/app/pa/data` 与 HOME `/root/app/pa/home`
+  分开挂载，根文件系统只读、`cap_drop: ALL`、内存/CPU/pid 限额。
+
+容器化的两个硬约束（已在模板里固化，改动会导致启动失败）：HOME 不能落在数据目录内（host 执行边界会拒绝
+`HOST_USER_HOME_UNAVAILABLE`）；`/tmp` 必须 `exec`（sqlite-jdbc 需要 dlopen 解压出的原生库）。
+
+---
+
+## 两个包的共同结构约定
+
+Windows 便携包与 Linux 服务器包除了平台必需的部分外，保持同一套目录约定：
+
+| 约定 | Windows 便携包 | Linux 服务器包 |
+| --- | --- | --- |
+| 产物名 | `haifa-personal-assistant-windows-x64-v<version>.zip` | `haifa-personal-assistant-linux-x64-v<version>.zip` |
+| 顶层目录 | `haifa-personal-assistant-v<version>/` | `haifa-personal-assistant-v<version>/` |
+| 可执行体 | `app.jar`（内嵌前端） | `app.jar` + `web/` |
+| 运行参数 | `conf/pa.env` | `conf/pa.env`（同名同格式） |
+| 数据目录 | `<包根>/data/personal-assistant/` | `<安装目录>/data/personal-assistant/`（容器为挂载卷） |
+| 日志 | `<包根>/logs/personal-assistant.log` | `<安装目录>/logs/personal-assistant.log`（容器为 stdout） |
+| 启停 | `bin/start.bat` / `status.bat` / `stop.bat` | `bin/start.sh`（systemd 或 compose 托管） |
+| README 骨架 | 结构 / 前置 / 启动停止 / 自检 / 配置 / 数据与凭据 / 安全 / 升级 / 回滚 | 同上，另有 nginx 与容器两节 |
+
+平台固有、不追求一致的差异：JRE 是否内置、进程托管方式、是否有 nginx、前端基址（绝对回环 vs 同源相对）、
+凭据存储（凭据管理器 vs 0600 文件）。
