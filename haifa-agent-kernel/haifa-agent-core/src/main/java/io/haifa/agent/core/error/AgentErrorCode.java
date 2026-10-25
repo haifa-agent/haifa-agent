@@ -135,6 +135,11 @@ public enum AgentErrorCode {
             "Tool result could not be persisted",
             AgentErrorCategory.INTERNAL,
             Retryability.RETRYABLE),
+    STORAGE_UNAVAILABLE(
+            "STORAGE_UNAVAILABLE",
+            "Storage is unavailable",
+            AgentErrorCategory.STORAGE,
+            Retryability.RETRYABLE_WITH_BACKOFF),
     WORKSPACE_MANIFEST_UNAVAILABLE(
             "WORKSPACE_MANIFEST_UNAVAILABLE",
             "Workspace manifest is unavailable",

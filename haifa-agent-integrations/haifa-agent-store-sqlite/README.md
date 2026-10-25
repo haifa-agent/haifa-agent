@@ -180,6 +180,13 @@ UoW 始终保持 JDBC `autoCommit=true`，在同一 Connection 上显式执行�
 `BEGIN IMMEDIATE` 在事务工作执行前遇到 SQLite `BUSY/LOCKED` 时由 Store 自身做有界重试；耗尽后分类为
 `DATABASE_BUSY`。事务工作开始后的 SQL、提交不确定性或其他数据库错误不会被重试或归入该类别。
 
+进程内的写者不按 `busy_timeout` 排队。写 UoW 先取得本进程的公平写槽位、再租连接，因此排队者不会占满连接池，
+排队时间也不受跨进程 `busy_timeout` 约束。排队本身只有独立的兜底上限（`WRITER_QUEUE_TIMEOUT_MILLIS`，60 s），
+仅在持有者疑似泄漏槽位时触发，并以 `WRITER_SLOT_TIMEOUT` 失败；异常消息与 `sqlite.writer.acquired` /
+`sqlite.writer.released` 日志给出持有线程、已持有时长与排队长度。`sqlite.uow` 在失败路径同样输出，并新增
+`waitMs` 阶段，使“排队慢”与“事务内工作慢”可以区分。`DATABASE_BUSY` 只保留给跨进程 `BEGIN IMMEDIATE` 竞争
+与连接池租出超时。
+
 ## Schema 与 Migration
 
 V1 一次性创建 26 张逻辑表：
