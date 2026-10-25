@@ -637,6 +637,13 @@ CLI 不为受管文件写入建立仓库基线或 Git/Plain Change Review，也�
 Update hunk 的 `@@ <text>` 是可选导航提示：旧正文/context 只有一个精确匹配时，即使提示失效也允许应用；
 正文重复时，提示必须把候选确定性缩小到一个，否则返回 `PATCH_AMBIGUOUS_MATCH` 且不写入任何预检文件。没有旧正文
 的纯新增 hunk 必须包含唯一提示、精确 context 或 `*** End of File`，不能默认选择第一个行间位置。
+
+成功的 `file_create`、`file_write` 和 `file_patch` 结果在既有 `path`、`afterContentHash`、`appliedPaths`
+之外附带仅供展示的有界 `outputPreview`：写入工具给出本次实际写入的正文，`file_patch` 按实际应用位置重建
+`---`/`+++`、`@@ -a,b +c,d @@` 与真实采用的 `+`/`-`/context 行。预览受 16 KiB/200 行预算约束，超限时同时
+给出 `outputPreviewTruncated`、原始字节/行数和截断原因。它是归一化为 LF 的展示样本，不输出
+`\ No newline at end of file`，也不是可反向应用的字节级补丁；预检失败不产生预览，提交期部分失败只包含此前
+已经提交成功的文件。Runtime 在把它写入 Tool Observation 前会再次限额并执行既有凭据脱敏。
 `file_delete` 可删除普通文件或空目录；不支持递归删除非空目录（非空目录清理须经命令审计走 `execution_run`）。主目录与附加目录对不存在路径统一
 返回 `PATH_NOT_FOUND`，对非空目录、链接、reparse point 或特殊节点统一返回 `PATH_DENIED`。
 

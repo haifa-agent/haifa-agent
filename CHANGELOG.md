@@ -5,7 +5,15 @@
 - Coding Terminal separates tool results from optional technical details, keeps non-zero command exits neutral,
   and labels completed responses without changing Markdown rendering. New leader shortcuts copy the rendered
   final response, return to its own Run's tool activity, and expand technical facts while preserving drafts.
-  Approval actions use readable English labels; scoped permission memory and richer file previews remain deferred.
+  Approval actions use readable English labels; scoped permission memory and the remaining per-tool rich
+  previews stay deferred.
+
+- Successful `file_create`, `file_write` and `file_patch` results carry a bounded, display-only `outputPreview`:
+  the content this call actually wrote, or a Unified Diff rebuilt from the hunks it actually applied. Runtime
+  copies that copy into the tool observation after credential redaction, keeps a producer's truncation facts,
+  and falls back to the bounded summary for every tool that produces no display copy. Coding Terminal therefore
+  shows real written content and a per-call diff instead of only the success summary; scoped permission memory,
+  directory tables, read paging and the other per-tool rich previews remain unimplemented.
 
 - A slow SQLite writer no longer turns into a hard failure for every other writer: the in-process write queue
   waits under its own fallback bound instead of `busy_timeout × 2`, takes the write slot before leasing a

@@ -116,6 +116,8 @@ class LocalFileToolOperationsTest {
         assertThat(result.successful()).isTrue();
         assertThat(result.structuredData())
                 .containsEntry("complete", true)
+                .containsEntry("outputPreview", "--- source.txt\n+++ source.txt\n@@ -2,1 +2,1 @@\n-old\n+new\n")
+                .containsEntry("outputPreviewTruncated", false)
                 .doesNotContainKeys("changeReviewArtifactRef", "artifactRef", "changeReviewArtifact", "changeSetIds");
         assertThat(result.structuredData().get("afterContentHash"))
                 .isInstanceOfSatisfying(String.class, hash -> assertThat(hash).matches("sha256:[0-9a-f]{64}"));
@@ -181,6 +183,7 @@ class LocalFileToolOperationsTest {
         assertThat(result.successful()).isFalse();
         assertThat(result.structuredData())
                 .containsEntry("errorCode", "PATCH_CONFLICT")
+                .doesNotContainKey("outputPreview")
                 .containsEntry("stableFailureCode", "PATCH_AMBIGUOUS_MATCH")
                 .containsEntry("hunkIndex", 0)
                 .containsEntry("candidateCount", 2)
@@ -214,6 +217,67 @@ class LocalFileToolOperationsTest {
 
         assertThat(result.successful()).isTrue();
         assertThat(Files.readString(sourceFile)).isEqualTo("first section\nold\nsecond section\nnew\n");
+        assertThat(result.structuredData().get("outputPreview").toString())
+                .contains("@@ -4,1 +4,1 @@\n-old\n+new\n")
+                .doesNotContain("first section");
+    }
+
+    @Test
+    void previewsCreatedFileAndEveryHunkWithAppliedLineNumbers() throws Exception {
+        Path sourceFile = root.resolve("source.txt");
+        Files.writeString(sourceFile, "one\nfirst\ntwo\nthird\n", StandardCharsets.UTF_8);
+        Fixture fixture = fixture();
+
+        String hostPath = sourceFile.toAbsolutePath().normalize().toString();
+        String createdPath =
+                root.resolve("created.txt").toAbsolutePath().normalize().toString();
+        var result = fixture.operations.execute(
+                "file_patch",
+                fixture.workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                arguments(Map.of(
+                        "patch",
+                        """
+                        *** Begin Patch
+                        *** Add File: %s
+                        +alpha
+                        +beta
+                        *** Update File: %s
+                        @@ one
+                        -first
+                        +FIRST
+                        +EXTRA
+                        @@ three
+                        -third
+                        +THIRD
+                        *** End Patch
+                        """
+                                .formatted(createdPath, hostPath))));
+
+        assertThat(result.successful()).isTrue();
+        assertThat(result.structuredData())
+                .containsEntry(
+                        "outputPreview",
+                        """
+                        --- /dev/null
+                        +++ created.txt
+                        @@ -0,0 +1,2 @@
+                        +alpha
+                        +beta
+                        --- source.txt
+                        +++ source.txt
+                        @@ -2,1 +2,2 @@
+                        -first
+                        +FIRST
+                        +EXTRA
+                        @@ -4,1 +5,1 @@
+                        -third
+                        +THIRD
+                        """)
+                .containsEntry("outputPreviewTruncated", false);
+        assertThat(Files.readString(root.resolve("created.txt"))).isEqualTo("alpha\nbeta\n");
+        assertThat(Files.readString(sourceFile)).isEqualTo("one\nFIRST\nEXTRA\ntwo\nTHIRD\n");
     }
 
     @Test
@@ -293,6 +357,7 @@ class LocalFileToolOperationsTest {
         assertThat(missingWrite.successful()).isTrue();
         assertThat(missingWrite.summary()).isEqualTo("Created " + missingPath);
         assertThat(missingWrite.structuredData()).containsEntry("path", missingPath);
+        assertThat(missingWrite.structuredData()).containsEntry("outputPreview", "Written content:\nnew");
         assertThat(Files.readString(root.resolve("missing.txt"))).isEqualTo("new");
         assertThat(sensitiveRead.structuredData())
                 .containsEntry("stableFailureCode", "SENSITIVE_PATH")
@@ -324,6 +389,29 @@ class LocalFileToolOperationsTest {
         assertThat(result.structuredData().get("afterContentHash"))
                 .isInstanceOfSatisfying(String.class, hash -> assertThat(hash).matches("sha256:[0-9a-f]{64}"));
         assertThat(Files.readString(tracked)).isEqualTo("after");
+        assertThat(result.structuredData()).containsEntry("outputPreview", "Written content:\nafter");
+    }
+
+    @Test
+    void boundsWrittenContentPreviewWithoutShorteningTheWrittenFile() throws Exception {
+        Fixture fixture = fixture();
+        String content = "第一行 🙂\n".repeat(2_000);
+        var result = fixture.operations.execute(
+                "file_create",
+                fixture.workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                arguments(Map.of("path", root.resolve("large.txt").toString(), "content", content)));
+
+        assertThat(result.successful()).isTrue();
+        assertThat(Files.readString(root.resolve("large.txt"))).isEqualTo(content);
+        assertThat(result.structuredData())
+                .containsEntry("outputPreviewTruncated", true)
+                .containsEntry("outputPreviewLineCount", 2_002L)
+                .containsEntry("outputPreviewTruncationReason", "OUTPUT_BYTES");
+        assertThat((String) result.structuredData().get("outputPreview")).contains("[truncated]", "第一行 🙂");
+        assertThat(((String) result.structuredData().get("outputPreview")).getBytes(StandardCharsets.UTF_8).length)
+                .isLessThanOrEqualTo(16_384);
     }
 
     @Test

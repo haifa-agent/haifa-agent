@@ -175,6 +175,9 @@ Error、Queued 和 Focus。TrueColor 参考色会按明暗背景自适应；NoCo
   未选中过条目时回退到最近可展开项。点击仅在鼠标捕获开启时可用，且完成文本选择后不触发展开。
   新 Tool 生命周期投影将业务输出与 `Technical details` 分离：`ctrl+x t`（macOS `⌃X T`）切换当前工具的
   技术信息，包含机器名、关联 ID、原因码、Result Ref 与可得进程状态，以及 `Duration … · N lines · X KB`。
+  展开后的业务输出优先使用 Runtime 投影的有界 `outputPreview`（当前为本次实际写入的文件内容或本次调用
+  Diff），Diff 由 `TerminalDiffHighlighter` 逐行高亮并保留缩进，NoColor 退化为相同纯文本；工具结果没有该
+  事实时回退既有有界摘要，不从自然语言或事后文件反推。
   第二层展开状态在同一调用的更新中保留；旧事件或缺少结构化投影的历史条目继续显示原有详情，不猜测输出文本结构。
 - 运行中的执行工具通过进程内 transient publisher 增量刷新同一 Tool Call 卡片的
   `Output (streaming):` 段；每批最多 4 KiB，卡片正文最多保留 16 KiB 尾部，stderr 和 preview
@@ -209,8 +212,9 @@ delta，重复 frame 不重新解析；只有权威正文替换或 16 KB 有界�
 - [ ] Mermaid、数学公式与 KaTeX；
 - [ ] GFM 删除线、任务复选框及其他扩展；
 - [ ] OSC 8 可点击链接（当前显示 `label (URL)`）；
-- [ ] 文件表格、正文分页、本次调用可信 Diff 和范围授权仍需各自产品事实/激活机制；当前 ToolObservation 只承载
-  bounded summary 与进程事实，不从事后文件或自然语言生成这些内容。
+- [ ] 目录表格、读取正文分页和范围授权仍需各自产品事实/激活机制；`file_create`/`file_write`/`file_patch`
+  已展示本次调用实际写入的内容与 Diff，`file_read`、`file_list` 等工具的结构化结果仍只有有界摘要，
+  Terminal 不从 View 直接读取文件，也不从事后仓库状态或自然语言生成这些内容。
 - [ ] Tool 专用结构化预览器、跨 Tool 聚合和批量展开；首版实时输出仍保持每个稳定 Tool Call ID
   独立、有界地展示。
 
