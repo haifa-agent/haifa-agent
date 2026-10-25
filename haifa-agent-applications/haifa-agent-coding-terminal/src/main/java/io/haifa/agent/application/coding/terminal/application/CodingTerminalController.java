@@ -3,6 +3,7 @@ package io.haifa.agent.application.coding.terminal.application;
 import io.haifa.agent.application.coding.terminal.event.TerminalEventPump;
 import io.haifa.agent.application.coding.terminal.event.TerminalInput;
 import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
+import io.haifa.agent.application.coding.terminal.state.ApprovalDetails;
 import io.haifa.agent.application.coding.terminal.state.PendingMessage;
 import io.haifa.agent.application.coding.terminal.state.TerminalRecovery;
 import io.haifa.agent.application.coding.terminal.state.TerminalSelector;
@@ -86,6 +87,7 @@ public final class CodingTerminalController implements AutoCloseable {
     private final TerminalCommandRouter commands = new TerminalCommandRouter();
     private final TerminalCompletionProvider completions;
     private TerminalUiState state;
+    private String activeTranscriptItemId = "";
     private RunEventSubscription subscription;
     private RunOutputSubscription outputSubscription;
     private ToolOutputPreviewPublisher.ToolOutputPreviewSubscription previewSubscription;
@@ -1034,11 +1036,16 @@ public final class CodingTerminalController implements AutoCloseable {
             }
             return;
         }
+        if (input.kind() == TerminalInput.Kind.TOGGLE_TECHNICAL_DETAILS) {
+            if (state.selector().isPresent()) return;
+            activeTranscriptItem(true).ifPresent(value -> {
+                if (!value.expanded()) apply(new TerminalUiAction.ToggleExpanded(value.id()));
+                apply(new TerminalUiAction.ToggleTechnicalDetails(value.id()));
+            });
+            return;
+        }
         if (input.kind() == TerminalInput.Kind.TOGGLE_EXPANSION) {
-            state.transcript().stream()
-                    .filter(io.haifa.agent.application.coding.terminal.state.TranscriptItem::toggleable)
-                    .reduce((first, second) -> second)
-                    .ifPresent(value -> apply(new TerminalUiAction.ToggleExpanded(value.id())));
+            activeTranscriptItem(false).ifPresent(value -> toggleTranscriptItem(value.id()));
             return;
         }
         if (state.selector().isPresent()) {
@@ -1682,7 +1689,7 @@ public final class CodingTerminalController implements AutoCloseable {
             return;
         }
         List<String> options = interaction.allowedActions().stream()
-                .map(InteractionAction::value)
+                .map(action -> ApprovalDetails.actionLabel(action.value()))
                 .toList();
         if (options.isEmpty()) {
             apply(new TerminalUiAction.RecoverableFailure("INTERACTION_ACTIONS_EMPTY"));
@@ -2692,7 +2699,10 @@ public final class CodingTerminalController implements AutoCloseable {
                         .orElseThrow();
                 InteractionAction action = interaction.allowedActions().get(selected);
                 apply(new TerminalUiAction.SelectorClosed());
-                apply(new TerminalUiAction.StatusChanged("Approving"));
+                apply(new TerminalUiAction.StatusChanged(
+                        action.equals(InteractionAction.REJECT)
+                                ? "Rejecting"
+                                : action.equals(InteractionAction.APPROVE) ? "Approving" : "Submitting response"));
                 activeInteraction = null;
                 String idempotencyKey = UUID.randomUUID().toString();
                 submitControlEffect(
@@ -3009,7 +3019,19 @@ public final class CodingTerminalController implements AutoCloseable {
     /** Toggles one transcript item, used by pointer expansion as well as the keyboard path. */
     public void toggleTranscriptItem(String itemId) {
         if (itemId == null || itemId.isBlank()) return;
+        activeTranscriptItemId = itemId;
         apply(new TerminalUiAction.ToggleExpanded(itemId));
+    }
+
+    private Optional<io.haifa.agent.application.coding.terminal.state.TranscriptItem> activeTranscriptItem(
+            boolean technical) {
+        var candidates = state.transcript().stream()
+                .filter(item -> technical ? item.toolDetails().isPresent() : item.toggleable())
+                .toList();
+        return candidates.stream()
+                .filter(item -> item.id().equals(activeTranscriptItemId))
+                .findFirst()
+                .or(() -> candidates.stream().reduce((first, second) -> second));
     }
 
     public void cycleModel(int delta) {

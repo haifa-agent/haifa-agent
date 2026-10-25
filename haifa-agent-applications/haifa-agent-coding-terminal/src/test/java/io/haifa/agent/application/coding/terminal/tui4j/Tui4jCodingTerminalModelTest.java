@@ -955,7 +955,7 @@ class Tui4jCodingTerminalModelTest {
                         "file_patch"))));
         fixture.model.update(new WindowSizeMessage(120, 40));
         String failed = fixture.model.view();
-        assertThat(failed).contains("apply patch", "未完成：匹配到多处");
+        assertThat(failed).contains("apply patch", "Not completed: Multiple matches");
         assertThat(failed).doesNotContain("Reason: PATCH_AMBIGUOUS_MATCH");
 
         fixture.pump.offer(new TerminalUiAction.RunEventReceived(event(
@@ -972,6 +972,56 @@ class Tui4jCodingTerminalModelTest {
                         "execution_run"))));
         fixture.model.update(new WindowSizeMessage(120, 40));
         assertThat(fixture.model.view()).contains("Outcome: UNKNOWN", "Target: rm -rf");
+    }
+
+    @Test
+    void technicalShortcutFollowsTheSelectedToolAndPreservesDraft() {
+        var fixture = fixture();
+        for (int index = 1; index <= 2; index++) {
+            fixture.pump.offer(new TerminalUiAction.RunEventReceived(event(
+                    index,
+                    new RunEventPayloads.ToolLifecycle(
+                            "tool-" + index,
+                            "Read File",
+                            "SUCCEEDED",
+                            "NONE",
+                            "README.md",
+                            "result-" + index,
+                            Optional.empty(),
+                            "读取说明",
+                            "file_read"))));
+        }
+        fixture.model.update(new WindowSizeMessage(120, 40));
+        fixture.model.update(new PasteMessage("保留草稿"));
+        fixture.controller.toggleTranscriptItem("tool-tool-1");
+        fixture.model.update(key(KeyType.keyCAN));
+        fixture.model.update(runes('t'));
+
+        var selected = fixture.controller.state().transcript().getFirst();
+        assertThat(selected.toolDetails())
+                .hasValueSatisfying(details -> assertThat(details.expanded()).isTrue());
+        assertThat(fixture.controller.state().transcript().getLast().toolDetails())
+                .hasValueSatisfying(details -> assertThat(details.expanded()).isFalse());
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("保留草稿");
+    }
+
+    @Test
+    void finalResponseShortcutCopiesThroughTheBackgroundClipboardCommandWithoutChangingDraft() {
+        var clipboard = new RecordingClipboard(true);
+        var fixture = fixtureWithClipboard(clipboard);
+        fixture.pump.offer(new TerminalUiAction.RunEventReceived(
+                event(1, new RunEventPayloads.AssistantTextDelta("generation-1", "**完成**"))));
+        fixture.pump.offer(new TerminalUiAction.RunEventReceived(
+                event(2, new RunEventPayloads.RunLifecycle("COMPLETED", 1, "NONE"))));
+        fixture.model.update(new WindowSizeMessage(120, 40));
+        fixture.model.update(new PasteMessage("next instruction"));
+        fixture.model.update(key(KeyType.keyCAN));
+        var copy = fixture.model.update(runes('y')).command();
+
+        assertThat(clipboard.text).isNull();
+        fixture.model.update(copy.execute());
+        assertThat(clipboard.text).contains("完成").doesNotContain("**", "Assistant / Final response");
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("next instruction");
     }
 
     @Test

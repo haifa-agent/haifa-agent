@@ -421,6 +421,13 @@ public final class TerminalUiReducer {
                     .toList();
             return copyWithTranscript(state, items);
         }
+        if (action instanceof TerminalUiAction.ToggleTechnicalDetails toggle) {
+            return copyWithTranscript(
+                    state,
+                    state.transcript().stream()
+                            .map(value -> value.id().equals(toggle.itemId()) ? value.toggleTechnicalDetails() : value)
+                            .toList());
+        }
         if (action instanceof TerminalUiAction.TerminalResized resized) {
             int newCols = Math.max(1, resized.columns());
             int newRows = Math.max(1, resized.rows());
@@ -547,12 +554,17 @@ public final class TerminalUiReducer {
     }
 
     private static TranscriptItem appendToolPreview(TranscriptItem current, ToolOutputPreview preview) {
+        TranscriptItem updated = current.withStatus(current.status(), appendPreview(current.body(), preview));
+        return current.toolDetails()
+                .map(details -> updated.withToolDetails(details.withContent(appendPreview(details.content(), preview))))
+                .orElse(updated);
+    }
+
+    private static String appendPreview(String body, ToolOutputPreview preview) {
         final String heading = "\n" + ToolBodyLines.OUTPUT_STREAMING + "\n";
-        int headingIndex = current.body().indexOf(heading);
-        String prefix = headingIndex >= 0
-                ? current.body().substring(0, headingIndex + heading.length())
-                : current.body() + heading;
-        String previous = headingIndex >= 0 ? current.body().substring(headingIndex + heading.length()) : "";
+        int headingIndex = body.indexOf(heading);
+        String prefix = headingIndex >= 0 ? body.substring(0, headingIndex + heading.length()) : body + heading;
+        String previous = headingIndex >= 0 ? body.substring(headingIndex + heading.length()) : "";
         String channel = previewChannelMarker(previous, preview.channel());
         String outputTruncated =
                 preview.outputTruncated() ? "\n" + ToolBodyLines.EXECUTION_OUTPUT_TRUNCATED + "\n" : "";
@@ -560,7 +572,7 @@ public final class TerminalUiReducer {
         String output = previous + channel + preview.text() + outputTruncated + previewDropped;
         int maximumOutput = Math.max(0, 16_384 - prefix.length());
         if (output.length() > maximumOutput) output = output.substring(output.length() - maximumOutput);
-        return current.withStatus(current.status(), prefix + output);
+        return prefix + output;
     }
 
     private static String previewChannelMarker(String previous, ExecutionOutputChannel channel) {
@@ -655,12 +667,13 @@ public final class TerminalUiReducer {
             int index = index(items, "assistant-" + payload.generationId());
             if (index < 0) {
                 items.add(new TranscriptItem(
-                        "assistant-" + payload.generationId(),
-                        TranscriptItem.Kind.ASSISTANT,
-                        "Assistant",
-                        payload.textDelta(),
-                        "STREAMING",
-                        true));
+                                "assistant-" + payload.generationId(),
+                                TranscriptItem.Kind.ASSISTANT,
+                                "Assistant",
+                                payload.textDelta(),
+                                "STREAMING",
+                                true)
+                        .withSourceRunId(event.runId().value()));
             } else {
                 items.set(index, items.get(index).append(payload.textDelta()));
             }
@@ -679,17 +692,26 @@ public final class TerminalUiReducer {
             upsert(
                     items,
                     new TranscriptItem(
-                            id,
-                            TranscriptItem.Kind.TOOL,
-                            toolTitle(payload, displayName),
-                            toolBody(payload, displayName),
-                            projectedStatus,
-                            expanded,
-                            Optional.empty(),
-                            startedAt,
-                            duration,
-                            payload.observation().flatMap(RunEventPayloads.ToolObservation::exitCode),
-                            Optional.of(ToolPresentation.machineName(payload))));
+                                    id,
+                                    TranscriptItem.Kind.TOOL,
+                                    toolTitle(payload, displayName),
+                                    toolBody(payload, displayName),
+                                    projectedStatus,
+                                    expanded,
+                                    Optional.empty(),
+                                    startedAt,
+                                    duration,
+                                    payload.observation().flatMap(RunEventPayloads.ToolObservation::exitCode),
+                                    Optional.of(ToolPresentation.machineName(payload)),
+                                    Optional.of(new ToolDetails(
+                                            toolBody(payload, displayName, false),
+                                            toolTechnicalDetails(payload),
+                                            existing >= 0
+                                                    && items.get(existing)
+                                                            .toolDetails()
+                                                            .map(ToolDetails::expanded)
+                                                            .orElse(false))))
+                            .withSourceRunId(event.runId().value()));
         } else if (event.payload() instanceof RunEventPayloads.ResourceAvailable payload
                 && !isInternalCheckpoint(payload)) {
             upsert(
@@ -741,7 +763,10 @@ public final class TerminalUiReducer {
         }
         if (event.payload() instanceof RunEventPayloads.RunLifecycle lifecycle
                 && TERMINAL_RUN_STATUSES.contains(lifecycle.status())) {
-            items.add(runSummaryItem(lifecycle, event));
+            if ("COMPLETED".equals(lifecycle.status()))
+                markFinalResponse(items, event.runId().value());
+            items.add(runSummaryItem(lifecycle, event)
+                    .withSourceRunId(event.runId().value()));
         }
         return List.copyOf(items);
     }
@@ -768,19 +793,44 @@ public final class TerminalUiReducer {
         if (event.type() == AgentRunOutputEventType.ASSISTANT_TEXT_DELTA) {
             if (index < 0) {
                 items.add(new TranscriptItem(
-                        itemId, TranscriptItem.Kind.ASSISTANT, "Assistant", event.textDelta(), "STREAMING", true));
+                                itemId,
+                                TranscriptItem.Kind.ASSISTANT,
+                                "Assistant",
+                                event.textDelta(),
+                                "STREAMING",
+                                true)
+                        .withSourceRunId(event.runId().value()));
             } else {
                 items.set(index, items.get(index).append(event.textDelta()));
             }
         } else if (event.type() == AgentRunOutputEventType.ASSISTANT_TEXT_COMMITTED && index >= 0) {
             TranscriptItem current = items.get(index);
             items.set(index, current.withStatus("COMMITTED", current.body()));
+            if (items.stream()
+                    .anyMatch(item -> item.kind() == TranscriptItem.Kind.SUMMARY
+                            && "COMPLETED".equals(item.status())
+                            && item.sourceRunId()
+                                    .filter(event.runId().value()::equals)
+                                    .isPresent())) {
+                markFinalResponse(items, event.runId().value());
+            }
         } else if ((event.type() == AgentRunOutputEventType.RUN_OUTPUT_FAILED
                         || event.type() == AgentRunOutputEventType.RUN_OUTPUT_SUPERSEDED)
                 && index >= 0) {
             items.remove(index);
         }
         return copyWithTranscript(state, List.copyOf(items));
+    }
+
+    private static void markFinalResponse(List<TranscriptItem> items, String runId) {
+        for (int index = items.size() - 1; index >= 0; index--) {
+            TranscriptItem item = items.get(index);
+            if (item.kind() == TranscriptItem.Kind.ASSISTANT
+                    && item.sourceRunId().filter(runId::equals).isPresent()) {
+                items.set(index, item.withStatus("FINAL", item.body()));
+                return;
+            }
+        }
     }
 
     private static String status(AgentRunEvent event, String fallback) {
@@ -940,6 +990,10 @@ public final class TerminalUiReducer {
     }
 
     private static String toolBody(RunEventPayloads.ToolLifecycle lifecycle, String displayName) {
+        return toolBody(lifecycle, displayName, true);
+    }
+
+    private static String toolBody(RunEventPayloads.ToolLifecycle lifecycle, String displayName, boolean technical) {
         List<String> lines = new ArrayList<>();
         String target = boundedTarget(lifecycle.targetSummary());
         if (!target.isBlank()
@@ -953,11 +1007,11 @@ public final class TerminalUiReducer {
             if (!OUTCOME_UNKNOWN_STATUS.equalsIgnoreCase(lifecycle.status())) {
                 lines.add(ToolBodyLines.STATUS_PREFIX + " " + lifecycle.status());
             }
-            reasonCode.ifPresent(reason -> lines.add(ToolBodyLines.REASON_PREFIX + " " + reason));
+            if (technical) reasonCode.ifPresent(reason -> lines.add(ToolBodyLines.REASON_PREFIX + " " + reason));
             lines.add(ToolBodyLines.NEXT_PREFIX + " " + OUTCOME_UNKNOWN_NEXT_ACTION);
         } else {
             reasonCode.ifPresent(reason -> {
-                lines.add(ToolBodyLines.REASON_PREFIX + " " + reason);
+                if (technical) lines.add(ToolBodyLines.REASON_PREFIX + " " + reason);
                 String nextAction = nextAction(reason);
                 if (!nextAction.isBlank()) lines.add(ToolBodyLines.NEXT_PREFIX + " " + nextAction);
             });
@@ -975,7 +1029,21 @@ public final class TerminalUiReducer {
                 });
         String resultRef =
                 lifecycle.resultRef() == null ? "" : lifecycle.resultRef().strip();
-        if (!resultRef.isBlank()) lines.add(ToolBodyLines.RESULT_PREFIX + " " + resultRef);
+        if (technical && !resultRef.isBlank()) lines.add(ToolBodyLines.RESULT_PREFIX + " " + resultRef);
+        return String.join("\n", lines);
+    }
+
+    private static String toolTechnicalDetails(RunEventPayloads.ToolLifecycle lifecycle) {
+        List<String> lines = new ArrayList<>();
+        lines.add("Tool: " + ToolPresentation.machineName(lifecycle));
+        lines.add("Call ID: " + lifecycle.toolCallId());
+        normalizedReasonCode(lifecycle.reasonCode()).ifPresent(reason -> lines.add("Reason: " + reason));
+        if (lifecycle.resultRef() != null && !lifecycle.resultRef().isBlank())
+            lines.add("Result: " + lifecycle.resultRef());
+        lifecycle
+                .observation()
+                .flatMap(RunEventPayloads.ToolObservation::processState)
+                .ifPresent(process -> lines.add("Process: " + process));
         return String.join("\n", lines);
     }
 

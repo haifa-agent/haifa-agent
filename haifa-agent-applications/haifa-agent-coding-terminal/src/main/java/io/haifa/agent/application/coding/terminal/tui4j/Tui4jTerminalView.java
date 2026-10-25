@@ -150,6 +150,31 @@ final class Tui4jTerminalView {
                 .findFirst();
     }
 
+    Optional<TranscriptItem> finalResponse(TerminalUiState state) {
+        return state.transcript().stream()
+                .filter(item -> item.kind() == TranscriptItem.Kind.ASSISTANT && "FINAL".equals(item.status()))
+                .reduce((first, second) -> second);
+    }
+
+    Optional<String> copyableFinalResponse(TerminalUiState state) {
+        int width = Math.max(
+                12, (state.sidebarVisible() && state.columns() >= 100 ? state.columns() - 43 : state.columns()) - 2);
+        return finalResponse(state)
+                .map(item -> TerminalScreenCells.plainText(markdown.render(item.id(), item.body(), width)));
+    }
+
+    Optional<Integer> finalResponseActivityRow(TerminalUiState state) {
+        return finalResponse(state)
+                .flatMap(response -> response.sourceRunId().flatMap(runId -> state.transcript().stream()
+                        .filter(item -> item.kind() == TranscriptItem.Kind.TOOL
+                                && item.sourceRunId().filter(runId::equals).isPresent())
+                        .findFirst()
+                        .flatMap(item -> transcriptHits.stream()
+                                .filter(hit -> hit.itemId().equals(item.id()))
+                                .map(TranscriptHit::startRow)
+                                .findFirst())));
+    }
+
     String render(
             TerminalUiState state,
             Viewport transcript,
@@ -520,6 +545,7 @@ final class Tui4jTerminalView {
             }
         } else {
             String opStatus = sanitize(state.status().strip());
+            if (opStatus.equalsIgnoreCase("COMPLETED")) opStatus = "Ready for follow-up";
             boolean hasOpFeedback = !opStatus.isBlank()
                     && !opStatus.equalsIgnoreCase("idle")
                     && !(state.recoverableError().isPresent() && opStatus.equalsIgnoreCase("Recovery required"));
@@ -624,6 +650,13 @@ final class Tui4jTerminalView {
         if (item.kind() == TranscriptItem.Kind.ASSISTANT) {
             int bodyWidth = Math.max(12, availableWidth - 2);
             String rendered = markdown.render(item.id(), item.body(), bodyWidth);
+            if ("FINAL".equals(item.status())) {
+                title = "Assistant / Final response";
+                title += "\n"
+                        + theme.muted(clip(
+                                shortcuts.leader() + " y copy · " + shortcuts.leader() + " a tool activity",
+                                availableWidth));
+            }
             String content = rendered.isEmpty() ? title : title + "\n" + indent(rendered);
             return style(item, content);
         }
@@ -657,12 +690,27 @@ final class Tui4jTerminalView {
             return header;
         }
 
+        String visibleBody =
+                item.toolDetails().map(details -> details.content()).orElse(item.body());
         String body =
-                item.expanded() ? item.body() : item.body().lines().limit(5).collect(Collectors.joining("\n"));
+                item.expanded() ? visibleBody : visibleBody.lines().limit(5).collect(Collectors.joining("\n"));
         String content = header + "\n" + renderToolBody(item, body);
         if (item.expanded()) {
+            if (item.toolDetails().isPresent()) {
+                var details = item.toolDetails().orElseThrow();
+                content += "\n"
+                        + theme.muted("  " + (details.expanded() ? "⌄ " : "› ") + "Technical details · "
+                                + shortcuts.technicalDetails());
+                if (details.expanded())
+                    content += "\n"
+                            + theme.muted(details.technical()
+                                    .lines()
+                                    .map(line -> "  " + sanitize(line))
+                                    .collect(Collectors.joining("\n")));
+            }
             String metadata = metadata(item);
-            if (!metadata.isBlank()) {
+            if (!metadata.isBlank()
+                    && item.toolDetails().map(details -> details.expanded()).orElse(true)) {
                 content = content + "\n" + theme.muted("  " + metadata);
             }
         }
@@ -673,7 +721,10 @@ final class Tui4jTerminalView {
         String name = toolName(item.title());
         String target = toolTarget(item.title());
         String badge = theme.toolNameBadge(name);
-        String glyph = styledGlyph(item.status());
+        String glyph = item.exitCode().filter(code -> code != 0).isPresent()
+                        && SUCCESS_STATUSES.contains(item.status().toUpperCase(Locale.ROOT))
+                ? theme.muted("○")
+                : styledGlyph(item.status());
         String metadata = auxiliaryMetadata(item, collapsed);
         String chevron = theme.muted(collapsed ? "›" : "⌄");
 
@@ -726,9 +777,7 @@ final class Tui4jTerminalView {
 
     private static String auxiliaryMetadata(TranscriptItem item, boolean collapsed) {
         List<String> parts = new ArrayList<>();
-        if (collapsed) {
-            item.exitCode().filter(value -> value != 0).ifPresent(value -> parts.add("exit " + value));
-        }
+        item.exitCode().filter(value -> value != 0).ifPresent(value -> parts.add("exit " + value));
         item.durationMillis().ifPresent(value -> parts.add(TerminalDurations.human(value)));
         return String.join(" · ", parts);
     }
@@ -845,23 +894,29 @@ final class Tui4jTerminalView {
         if (visibleContentLines < contentLines.size()) {
             content.append('\n')
                     .append(theme.muted(
-                            "    …共 " + contentLines.size() + " 行 · " + shortcuts.toggleExpansion() + " 展开"));
+                            "    … " + contentLines.size() + " lines · " + shortcuts.toggleExpansion() + " expand"));
         }
         if (!details.environment().isEmpty()) {
             content.append('\n').append("  ").append(theme.muted(facts(details.environment())));
         }
         if (!details.technical().isEmpty() || details.risk().isPresent()) {
             if (expanded) {
-                content.append('\n').append(theme.muted("  技术细节"));
-                details.risk().ifPresent(risk -> content.append('\n').append(theme.muted("    风险: " + sanitize(risk))));
+                content.append('\n').append(theme.muted("  Technical details"));
+                details.risk()
+                        .ifPresent(risk -> content.append('\n').append(theme.muted("    Risk: " + sanitize(risk))));
                 details.technical().forEach(fact -> content.append('\n')
                         .append(theme.muted("    " + sanitize(fact.label() + ": " + fact.value()))));
             } else {
-                content.append('\n').append(theme.muted("  技术细节（可选） · " + shortcuts.toggleExpansion() + " 展开"));
+                content.append('\n')
+                        .append(theme.muted("  Technical details · " + shortcuts.toggleExpansion() + " expand"));
             }
         }
         if (!details.allowedActions().isEmpty()) {
-            content.append('\n').append(theme.muted("  可用操作: " + String.join(" / ", details.allowedActions())));
+            content.append('\n')
+                    .append(theme.muted("  Available actions: "
+                            + details.allowedActions().stream()
+                                    .map(ApprovalDetails::actionLabel)
+                                    .collect(Collectors.joining(" / "))));
         }
         return content.toString();
     }

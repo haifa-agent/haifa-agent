@@ -511,6 +511,31 @@ final class Tui4jCodingTerminalModel implements Model {
             if (keyChar != null && !keyChar.isEmpty()) {
                 char ch = Character.toLowerCase(keyChar.charAt(0));
                 switch (ch) {
+                    case 'y' -> {
+                        var response = view.copyableFinalResponse(state);
+                        if (response.isEmpty()) {
+                            applyCopyFeedback("No final response available");
+                            return Command.none();
+                        }
+                        clearSelection();
+                        return copySelection(response.orElseThrow());
+                    }
+                    case 'a' -> {
+                        var row = view.finalResponseActivityRow(state);
+                        if (row.isEmpty()) {
+                            applyCopyFeedback("No tool activity available for this response");
+                        } else {
+                            followTranscript = false;
+                            transcript.gotoTop();
+                            transcript.scrollDown(row.orElseThrow());
+                            newOutputPending = false;
+                        }
+                        return Command.none();
+                    }
+                    case 't' -> {
+                        accept(TerminalInput.Kind.TOGGLE_TECHNICAL_DETAILS);
+                        return Command.none();
+                    }
                     case 'b' -> {
                         pump.offer(new TerminalUiAction.SidebarToggled());
                         return Command.none();

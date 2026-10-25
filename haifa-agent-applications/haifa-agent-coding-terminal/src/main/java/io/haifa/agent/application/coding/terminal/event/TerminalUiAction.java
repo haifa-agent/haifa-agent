@@ -90,6 +90,8 @@ public sealed interface TerminalUiAction {
 
     record ToggleExpanded(String itemId) implements TerminalUiAction {}
 
+    record ToggleTechnicalDetails(String itemId) implements TerminalUiAction {}
+
     record TerminalResized(int columns, int rows) implements TerminalUiAction {}
 
     record RecoverableFailure(String code) implements TerminalUiAction {}

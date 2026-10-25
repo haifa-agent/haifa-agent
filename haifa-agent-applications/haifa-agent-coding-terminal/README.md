@@ -161,18 +161,21 @@ Error、Queued 和 Focus。TrueColor 参考色会按明暗背景自适应；NoCo
 - 高频 Markdown 子集只在 View 层转换为终端样式，`TranscriptItem`、Session 与持久化继续保留原始 Markdown；
 - Tool 主行使用该 Run 冻结定义的可读标题（如 `Read File`、`Apply Patch`、`Run Command`），不再把机器名
   直接当展示名；展开后的元数据保留机器名与分类徽标，历史事件缺少机器标识时只对已知内置名做固定映射。
-  正常完成/`EXITED` 的折叠项严格占一行：以 `✓` 状态符号开头，随后是标题徽标、调用说明（优先模型
+  正常完成/`EXITED` 的折叠项严格占一行：正常成功以 `✓` 开头，非零进程退出以中性 `○` 开头，随后是标题徽标、调用说明（优先模型
   `intentSummary`/`description`，否则安全 Target Summary，再否则标题）、辅助信息（非零退出码与耗时）和
   右端折叠符 `›`；说明在 `REQUESTED` 阶段即可展示，不提前显示成功。连续折叠项之间不插入空行。
-  `EXITED` 始终是成功状态，非零退出码（如 `exit 1`）只作为弱化事实展示，不会变成红色故障；`exit 0`
-  不重复展示。
+  `EXITED` 仍表示进程已退出，非零退出码（如 `exit 1`）在折叠和展开时都保留，不把它显示为绿色通过，
+  也不升级为 Run 失败；`exit 0` 不重复展示。不根据命令文本或模型意图推断“预期内失败”。
 - 一次普通工具调用失败使用克制的黄色 `!` 和单行“未完成：短原因”，折叠态不再强制附带两行详情；
   展开后仍显示真实错误码、目标、结果和安全输出。用户拒绝/规则阻止使用中性 `–` 与“已拒绝/规则阻止”，
   用户取消使用中性 `–` 与“已取消”，都不再画成系统故障红叉。`OUTCOME_UNKNOWN` 继续使用醒目的黄色 `?`
   和“结果未确认”提示，折叠态保留最多两行处理信息；`ATTENTION`/`RECOVERY REQUIRED` 等阻断状态仍用红色。
   Run 自身的失败仍由红色 Run Summary 表示，不把历史普通失败全部染红。
-- 折叠态耗时始终显示；按 `ctrl+o` 或点击条目可展开/收起，展开后显示既有有界详情和
-  `Duration … · N lines · X KB` 元数据尾行。点击仅在鼠标捕获开启时可用，且完成文本选择后不触发展开。
+- 折叠态耗时始终显示；按 `ctrl+o` 或点击条目可展开/收起。鼠标选中过的条目保持为当前展开目标，
+  未选中过条目时回退到最近可展开项。点击仅在鼠标捕获开启时可用，且完成文本选择后不触发展开。
+  新 Tool 生命周期投影将业务输出与 `Technical details` 分离：`ctrl+x t`（macOS `⌃X T`）切换当前工具的
+  技术信息，包含机器名、关联 ID、原因码、Result Ref 与可得进程状态，以及 `Duration … · N lines · X KB`。
+  第二层展开状态在同一调用的更新中保留；旧事件或缺少结构化投影的历史条目继续显示原有详情，不猜测输出文本结构。
 - 运行中的执行工具通过进程内 transient publisher 增量刷新同一 Tool Call 卡片的
   `Output (streaming):` 段；每批最多 4 KiB，卡片正文最多保留 16 KiB 尾部，stderr 和 preview
   丢弃会显式标记；执行侧达到输出上限时使用独立截断标记，避免与预览丢批混淆。该内容不持久化、
@@ -180,6 +183,11 @@ Error、Queued 和 Focus。TrueColor 参考色会按明暗背景自适应；NoCo
 - Run 进入终态（completed/failed/cancelled/timeout）时追加一张 Run Summary 卡片，
   标题显示终态与可得耗时（如 `Run completed · 24s`），正文显示终态、稳定错误码及耗时，
   不再从本地 Transcript 反推或累加工具与变更集计数；
+- Run `COMPLETED` 时只把具有同一 Run 关联的最近 Assistant 消息标为 `Assistant / Final response`，
+  不解析正文判断完成程度，仍调用现有 Markdown renderer 并保留原始正文。`ctrl+x y`（macOS `⌃X Y`）
+  通过既有后台 Clipboard/OSC 52 路径复制该回复的已渲染正文；`ctrl+x a`（macOS `⌃X A`）定位同一 Run 的
+  首个工具活动，无活动时提示不可用。历史消息缺少可信 Run 关联时不猜测。完成后底栏显示 `Ready for follow-up`，
+  沿用唯一输入框；Run completed 卡片仅表示生命周期终态，不证明测试通过或工作全部完成。
 - Approval 使用 Pending 语义，Error 使用 Error 语义；`delivery-*` 与
   `resource-*` Resource 项默认可折叠为一行，认证、历史等关键 Resource 项保持展开可见；
 - Editor 的当前操作提示使用弱化的 Muted 语义，Selector 仍使用 Focus 语义；普通 Editor 始终保留
@@ -201,6 +209,8 @@ delta，重复 frame 不重新解析；只有权威正文替换或 16 KB 有界�
 - [ ] Mermaid、数学公式与 KaTeX；
 - [ ] GFM 删除线、任务复选框及其他扩展；
 - [ ] OSC 8 可点击链接（当前显示 `label (URL)`）；
+- [ ] 文件表格、正文分页、本次调用可信 Diff 和范围授权仍需各自产品事实/激活机制；当前 ToolObservation 只承载
+  bounded summary 与进程事实，不从事后文件或自然语言生成这些内容。
 - [ ] Tool 专用结构化预览器、跨 Tool 聚合和批量展开；首版实时输出仍保持每个稳定 Tool Call ID
   独立、有界地展示。
 

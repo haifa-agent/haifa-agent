@@ -2,6 +2,11 @@
 
 ## 0.1.4-SNAPSHOT - Unreleased
 
+- Coding Terminal separates tool results from optional technical details, keeps non-zero command exits neutral,
+  and labels completed responses without changing Markdown rendering. New leader shortcuts copy the rendered
+  final response, return to its own Run's tool activity, and expand technical facts while preserving drafts.
+  Approval actions use readable English labels; scoped permission memory and richer file previews remain deferred.
+
 - A slow SQLite writer no longer turns into a hard failure for every other writer: the in-process write queue
   waits under its own fallback bound instead of `busy_timeout × 2`, takes the write slot before leasing a
   connection, and names the holding thread when the slot is never released. Storage failures that interrupt a Run

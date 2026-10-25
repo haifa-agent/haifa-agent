@@ -30,6 +30,7 @@ class CodingTerminalInteractionTest {
         controller.open(SESSION_ID);
 
         assertThat(controller.state().selector()).isPresent();
+        assertThat(controller.state().selector().orElseThrow().options()).containsExactly("Reject", "Allow once");
         assertThat(controller.state().editorBuffer()).isEqualTo("preserved draft");
         assertThat(controller.state().editorCursor()).isEqualTo(9);
         assertThat(controller.state().transcript()).singleElement().satisfies(item -> {

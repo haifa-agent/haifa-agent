@@ -61,12 +61,23 @@ public record ApprovalDetails(
         return new ApprovalDetails(
                 interaction.title(),
                 interaction.consequences().accepted(),
-                "内容",
+                "Content",
                 interaction.safePrompt(),
                 List.of(),
                 List.of(),
                 Optional.empty(),
                 allowedActions);
+    }
+
+    public static String actionLabel(String value) {
+        return switch (value) {
+            case "approve" -> "Allow once";
+            case "reject" -> "Reject";
+            case "confirm" -> "Confirm";
+            case "cancel" -> "Cancel";
+            case "submit" -> "Submit";
+            default -> value;
+        };
     }
 
     private static String require(String value, String field) {

@@ -18,8 +18,8 @@ final class ToolPresentation {
     static String statusSuffix(String status, String reasonCode) {
         String normalized = status == null ? "" : status.strip().toUpperCase(java.util.Locale.ROOT);
         return switch (normalized) {
-            case "FAILED", "ERROR" -> " · 未完成：" + shortReason(reasonCode);
-            case "TIMEOUT" -> " · 未完成：执行超时";
+            case "FAILED", "ERROR" -> " · Not completed: " + shortReason(reasonCode);
+            case "TIMEOUT" -> " · Timed out";
             case "DENIED", "REJECTED", "SHELL COMMAND DENIED" -> " · " + deniedLabel(reasonCode);
             case "CANCELLED" -> " · " + cancelledLabel(reasonCode);
             default -> "";
@@ -28,11 +28,11 @@ final class ToolPresentation {
 
     private static String deniedLabel(String reasonCode) {
         String reason = reasonCode == null ? "" : reasonCode.strip().toUpperCase(java.util.Locale.ROOT);
-        if (reason.contains("APPROVAL_REJECTED") || reason.equals("REJECTED")) return "已拒绝";
+        if (reason.contains("APPROVAL_REJECTED") || reason.equals("REJECTED")) return "Rejected";
         if (reason.startsWith("CODING_") || reason.contains("POLICY") || reason.contains("DENIED")) {
-            return "规则阻止";
+            return "Blocked by policy";
         }
-        return "已拒绝";
+        return "Rejected";
     }
 
     private static String cancelledLabel(String reasonCode) {
@@ -41,23 +41,23 @@ final class ToolPresentation {
                 || reason.contains("POLICY")
                 || reason.equals("CAPABILITY_DENIED")
                 || reason.contains("DENIED")) {
-            return "规则阻止";
+            return "Blocked by policy";
         }
-        return "已取消";
+        return "Cancelled";
     }
 
     private static String shortReason(String reasonCode) {
         String reason = reasonCode == null ? "" : reasonCode.strip().toUpperCase(java.util.Locale.ROOT);
         return switch (reason) {
-            case "PATCH_AMBIGUOUS_MATCH" -> "匹配到多处";
-            case "PATCH_EXPECTED_LINES_NOT_FOUND" -> "未找到预期内容";
-            case "PATCH_CONTEXT_MISMATCH" -> "上下文不匹配";
-            case "FILE_CURSOR_STALE" -> "文件已变化";
-            case "WALL_TIME_EXCEEDED", "TIMEOUT" -> "执行超时";
-            case "RUN_BUDGET_EXCEEDED" -> "预算用尽";
-            case "ABSOLUTE_WORKDIR_FORBIDDEN", "WORKDIR_INVALID", "CWD_DENIED" -> "工作目录不可用";
-            case "NETWORK_UNAVAILABLE" -> "网络不可用";
-            default -> "工具调用未完成";
+            case "PATCH_AMBIGUOUS_MATCH" -> "Multiple matches";
+            case "PATCH_EXPECTED_LINES_NOT_FOUND" -> "Expected content not found";
+            case "PATCH_CONTEXT_MISMATCH" -> "Context changed";
+            case "FILE_CURSOR_STALE" -> "File changed";
+            case "WALL_TIME_EXCEEDED", "TIMEOUT" -> "Timed out";
+            case "RUN_BUDGET_EXCEEDED" -> "Budget exhausted";
+            case "ABSOLUTE_WORKDIR_FORBIDDEN", "WORKDIR_INVALID", "CWD_DENIED" -> "Working directory unavailable";
+            case "NETWORK_UNAVAILABLE" -> "Network unavailable";
+            default -> "Tool call did not complete";
         };
     }
 
@@ -77,7 +77,9 @@ final class ToolPresentation {
             case "execution_run" -> "Run Command";
             case "workspace_attach" -> "Add Directory";
             case "web_search" -> "Search Web";
-            case "web_fetch" -> "Fetch Web";
+            case "web_fetch" -> "Fetch Web Page";
+            case "skill_load" -> "Load Skill";
+            case "skill_resource_read" -> "Read Skill Resource";
             case "task" -> "Delegate Task";
             default -> value;
         };
