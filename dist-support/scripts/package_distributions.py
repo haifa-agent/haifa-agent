@@ -4,8 +4,9 @@
 Builds and packages (release artifacts use a 'v'-prefixed version, e.g. v0.1.0):
 1. haifa-coding-agent-windows-x64-v<version>.zip
 2. haifa-personal-assistant-windows-x64-v<version>.zip
-3. haifa-agent-sdk-v<version>.zip
-4. sha256sums.txt
+3. haifa-personal-assistant-server-linux-x64-v<version>.zip
+4. haifa-agent-sdk-v<version>.zip
+5. sha256sums.txt
 """
 
 import argparse
@@ -314,6 +315,80 @@ def package_ca(repo_root: Path, work_dir: Path, output_dir: Path, version: str, 
     return output_zip
 
 
+WEB_RELATIVE_API_BASE = "/api/v1"
+WEB_RELATIVE_ADMIN_API_BASE = "/v1/admin"
+WEB_ABSOLUTE_LOOPBACK_TOKEN = "http://127.0.0.1:20001/api/v1"
+
+
+def verify_web_dist(web_dist_dir: Path, relative_api_base: bool) -> None:
+    """Fail fast when the Web dist does not match the delivery mode of the target package.
+
+    The Windows portable package is opened straight from the loopback Server, so its SPA must keep
+    the absolute loopback base. The Linux server package is served by nginx, so its SPA must use the
+    same-origin relative bases. Mixing the two yields a UI that silently calls the visitor's own
+    machine, therefore a mismatch stops packaging instead of shipping it.
+    """
+    index = web_dist_dir / "index.html"
+    if not index.is_file():
+        raise FileNotFoundError(f"Web dist is incomplete: {index}")
+    script_text = "".join(
+        script.read_text(encoding="utf-8", errors="replace")
+        for script in sorted((web_dist_dir / "assets").glob("*.js"))
+    )
+    has_loopback = WEB_ABSOLUTE_LOOPBACK_TOKEN in script_text
+    if relative_api_base and has_loopback:
+        raise ValueError(
+            "Web dist still targets the loopback API; rebuild with "
+            f"VITE_PERSONAL_ASSISTANT_API_BASE_URL={WEB_RELATIVE_API_BASE} for the server package"
+        )
+    if not relative_api_base and not has_loopback:
+        raise ValueError(
+            "Web dist does not target the loopback API; rebuild without VITE_* overrides "
+            "for the Windows portable package"
+        )
+    if relative_api_base and WEB_RELATIVE_API_BASE not in script_text:
+        raise ValueError(f"Web dist is missing the relative API base {WEB_RELATIVE_API_BASE}")
+    if relative_api_base and WEB_RELATIVE_ADMIN_API_BASE not in script_text:
+        raise ValueError(f"Web dist is missing the relative Admin API base {WEB_RELATIVE_ADMIN_API_BASE}")
+
+
+def build_web_dist(repo_root: Path, skip_web_build: bool, relative_api_base: bool) -> Path:
+    """Build (or reuse) personal-assistant-web/dist for one delivery mode and verify it."""
+    web_dir = repo_root / "haifa-agent-applications" / "haifa-agent-personal-assistant-web"
+    web_dist_dir = web_dir / "dist"
+
+    if skip_web_build and (web_dist_dir / "index.html").is_file():
+        print("[INFO] Reusing existing personal-assistant-web/dist")
+    else:
+        print("[INFO] Building Personal Assistant Web frontend (npm run build)...")
+        environment = os.environ.copy()
+        if relative_api_base:
+            environment["VITE_PERSONAL_ASSISTANT_API_BASE_URL"] = WEB_RELATIVE_API_BASE
+            environment["VITE_PERSONAL_ASSISTANT_ADMIN_API_BASE_URL"] = WEB_RELATIVE_ADMIN_API_BASE
+        else:
+            environment.pop("VITE_PERSONAL_ASSISTANT_API_BASE_URL", None)
+            environment.pop("VITE_PERSONAL_ASSISTANT_ADMIN_API_BASE_URL", None)
+        npm_cmd = "npm.cmd" if os.name == "nt" else "npm"
+        result = subprocess.run(
+            [npm_cmd, "run", "build"],
+            cwd=web_dir,
+            env=environment,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if result.returncode != 0:
+            print(f"[ERROR] Failed to build PA Web frontend:\n{result.stderr}")
+            sys.exit(result.returncode)
+        print("[INFO] PA Web frontend built successfully.")
+
+    verify_web_dist(web_dist_dir, relative_api_base)
+    mode = "same-origin relative API" if relative_api_base else "loopback absolute API"
+    print(f"[INFO] Web dist verified for {mode}")
+    return web_dist_dir
+
+
 def inject_web_dist_into_server_jar(source_jar: Path, web_dist_dir: Path, target_jar: Path) -> None:
     print(f"[INFO] Embedding Web UI into Personal Assistant Server JAR...")
     dist_files = {}
@@ -345,24 +420,7 @@ def package_pa(
     print(f"[INFO] Packaging Personal Assistant Windows Distribution (version: {version})...")
     print("=" * 70)
 
-    web_dir = repo_root / "haifa-agent-applications" / "haifa-agent-personal-assistant-web"
-    web_dist_dir = web_dir / "dist"
-
-    if not skip_web_build or not (web_dist_dir / "index.html").exists():
-        print("[INFO] Building Personal Assistant Web frontend (npm run build)...")
-        npm_cmd = "npm.cmd" if os.name == "nt" else "npm"
-        result = subprocess.run(
-            [npm_cmd, "run", "build"],
-            cwd=web_dir,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
-        if result.returncode != 0:
-            print(f"[ERROR] Failed to build PA Web frontend:\n{result.stderr}")
-            sys.exit(result.returncode)
-        print("[INFO] PA Web frontend built successfully.")
+    web_dist_dir = build_web_dist(repo_root, skip_web_build=skip_web_build, relative_api_base=False)
 
     server_target_dir = repo_root / "haifa-agent-applications" / "haifa-agent-personal-assistant-server" / "target"
     server_jar = find_jar(server_target_dir, "haifa-agent-personal-assistant-server", version)
@@ -400,6 +458,56 @@ def package_pa(
 
     zip_size_mb = output_zip.stat().st_size / (1024 * 1024)
     print(f"[SUCCESS] Personal Assistant package created: {output_zip} ({zip_size_mb:.2f} MB)")
+    return output_zip
+
+
+def package_pa_server(
+    repo_root: Path, work_dir: Path, output_dir: Path, version: str, skip_web_build: bool = False
+) -> Path:
+    """Package the headless Linux server layout: system JDK, nginx-served SPA, systemd unit."""
+    print("\n" + "=" * 70)
+    print(f"[INFO] Packaging Personal Assistant Server Linux Distribution (version: {version})...")
+    print("=" * 70)
+
+    web_dist_dir = build_web_dist(repo_root, skip_web_build=skip_web_build, relative_api_base=True)
+
+    server_target_dir = repo_root / "haifa-agent-applications" / "haifa-agent-personal-assistant-server" / "target"
+    server_jar = find_jar(server_target_dir, "haifa-agent-personal-assistant-server", version)
+    print(f"[INFO] Found Personal Assistant Server JAR: {server_jar.name}")
+
+    with zipfile.ZipFile(server_jar) as jar:
+        jar_entries = set(jar.namelist())
+    if "BOOT-INF/classes/static/index.html" in jar_entries:
+        raise ValueError(
+            "Server JAR embeds the Web SPA; the Linux package serves it from nginx and must ship the plain JAR"
+        )
+    if not any(entry.startswith("BOOT-INF/lib/") for entry in jar_entries):
+        raise ValueError("Server JAR is not a Spring Boot executable archive")
+
+    label = artifact_label(version)
+    package_name = f"haifa-personal-assistant-server-{label}"
+    stage_dir = work_dir / package_name
+    if stage_dir.exists():
+        shutil.rmtree(stage_dir)
+    stage_dir.mkdir(parents=True, exist_ok=True)
+
+    template_dir = repo_root / "dist-support" / "templates" / "pa-server"
+    for name in ("bin", "conf", "docker"):
+        shutil.copytree(template_dir / name, stage_dir / name)
+    shutil.copy2(template_dir / "README.txt", stage_dir / "README.txt")
+
+    shutil.copy2(server_jar, stage_dir / "app.jar")
+    shutil.copytree(web_dist_dir, stage_dir / "web")
+
+    output_zip = output_dir / f"haifa-personal-assistant-server-linux-x64-{label}.zip"
+    print(f"[INFO] Compressing to {output_zip.name}...")
+    with zipfile.ZipFile(output_zip, "w", zipfile.ZIP_DEFLATED) as zf:
+        for file in stage_dir.rglob("*"):
+            if file.is_file():
+                zf.write(file, file.relative_to(stage_dir.parent))
+
+    zip_size_mb = output_zip.stat().st_size / (1024 * 1024)
+    print(f"[SUCCESS] Personal Assistant Server Linux package created: {output_zip} ({zip_size_mb:.2f} MB)")
     return output_zip
 
 
@@ -481,7 +589,7 @@ def main():
         "action",
         nargs="?",
         default="all",
-        choices=["all", "ca", "pa", "sdk", "jre", "sdk-modules"],
+        choices=["all", "ca", "pa", "pa-server", "sdk", "jre", "sdk-modules"],
         help="Target package to build (default: all)",
     )
     parser.add_argument("--version", dest="version", default=None, help="Explicit release version")
@@ -530,6 +638,9 @@ def main():
 
     if args.action in ["all", "pa"]:
         package_pa(repo_root, work_dir, output_dir, version, jre_dir, skip_web_build=args.skip_web_build)
+
+    if args.action in ["all", "pa-server"]:
+        package_pa_server(repo_root, work_dir, output_dir, version, skip_web_build=args.skip_web_build)
 
     if args.action in ["all", "sdk"]:
         package_sdk(repo_root, work_dir, output_dir, version)

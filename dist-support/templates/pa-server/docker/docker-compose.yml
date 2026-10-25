@@ -1,0 +1,33 @@
+services:
+  pa:
+    build:
+      # 相对本 compose 文件所在目录（docker/），上下文指向包根（含 app.jar）
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: haifa-personal-assistant:local
+    container_name: haifa-pa
+    restart: unless-stopped
+    # 只发布到回环，公网入口始终是 nginx（conf/pa.conf 反代到 127.0.0.1:20001）
+    ports:
+      - "127.0.0.1:20001:20001"
+    volumes:
+      # 数据卷单独挂载：SQLite、图片/音频、产物、执行工作区
+      - /root/app/pa/data:/data
+      # HOME 单独挂载：宿主 home 不能落在数据目录内（会被 host 执行边界拒绝）
+      - /root/app/pa/home:/home/pa
+    read_only: true
+    tmpfs:
+      # 必须带 exec：sqlite-jdbc 会把原生库解压到 java.io.tmpdir 再 dlopen
+      - /tmp:rw,exec,mode=1777,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 512
+    mem_limit: 1200m
+    cpus: 1.5
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
