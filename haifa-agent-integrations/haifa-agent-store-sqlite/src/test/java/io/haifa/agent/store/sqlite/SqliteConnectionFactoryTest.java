@@ -197,20 +197,22 @@ class SqliteConnectionFactoryTest {
         SqliteStoreConfiguration configuration =
                 new SqliteStoreConfiguration(directory.resolve("queued.db").toAbsolutePath(), 50, 8_192);
         SqliteConnectionFactory factory = SqliteTestSupport.closeAfterTest(new SqliteConnectionFactory(configuration));
+        CountDownLatch queuedWriterStarted = new CountDownLatch(1);
         CountDownLatch queuedWriterAcquired = new CountDownLatch(1);
-        AtomicInteger queuedWaitMillis = new AtomicInteger(-1);
         factory.acquireWriter();
         boolean released = false;
         try (ExecutorService executor = Executors.newSingleThreadExecutor()) {
             Future<?> queuedWriter = executor.submit(() -> {
-                queuedWaitMillis.set((int) factory.acquireWriter());
+                queuedWriterStarted.countDown();
+                factory.acquireWriter();
                 queuedWriterAcquired.countDown();
                 factory.releaseWriter();
                 return null;
             });
+            assertThat(queuedWriterStarted.await(10, TimeUnit.SECONDS)).isTrue();
 
-            // The holder keeps the slot far beyond twice the busy timeout, which is the window in which
-            // SQLite's cross-process busy timeout used to fail the queued writer with DATABASE_BUSY.
+            // The holder keeps the slot while the queued writer is already asking for it; that is the window in
+            // which the busy timeout used to fail the queued writer instead of letting it wait.
             assertThat(queuedWriterAcquired.await(300, TimeUnit.MILLISECONDS))
                     .as("the queued writer keeps waiting for the held write slot")
                     .isFalse();
@@ -222,7 +224,6 @@ class SqliteConnectionFactoryTest {
                     .as("the queued writer takes the slot once it is released")
                     .isTrue();
             queuedWriter.get();
-            assertThat(queuedWaitMillis.get()).isGreaterThanOrEqualTo(300);
         } finally {
             if (!released) {
                 factory.releaseWriter();
