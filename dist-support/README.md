@@ -19,7 +19,7 @@
    - 内置裁剪版 Java 21 运行时及完整打包的 Web SPA 前端页面（合一单 JAR 架构）；
    - 包含前台运行自启浏览器的 `start.bat`、后台无窗口运行的 `start-background.vbs` 与停服脚本 `stop.bat`。
 
-3. **`haifa-personal-assistant-server-linux-x64-v<version>.zip`**
+3. **`haifa-personal-assistant-linux-x64-v<version>.zip`**
    - Linux 服务器包：不内置 JRE（使用系统 JDK 21），前端由 nginx 直接提供静态文件；
    - 含 `app.jar`、`web/`（相对基址 `/api/v1` 与 `/v1/admin`）、`conf/pa.env`、
      `conf/haifa-personal-assistant.service`、`conf/pa.conf`（nginx 站点模板）与 `bin/` 脚本；
@@ -111,7 +111,7 @@ dist-support/
 
 ## Linux 服务器包（`pa-server`）
 
-`haifa-personal-assistant-server-linux-x64-v<version>.zip` 面向 Linux 常驻部署，与 Windows 便携包的差异：
+`haifa-personal-assistant-linux-x64-v<version>.zip` 面向 Linux 常驻部署，与 Windows 便携包的差异：
 
 | 项目 | Windows 便携包（`pa`） | Linux 服务器包（`pa-server`） |
 | --- | --- | --- |
@@ -150,3 +150,23 @@ python dist-support/scripts/smoke_distributions.py verify
 
 容器化的两个硬约束（已在模板里固化，改动会导致启动失败）：HOME 不能落在数据目录内（host 执行边界会拒绝
 `HOST_USER_HOME_UNAVAILABLE`）；`/tmp` 必须 `exec`（sqlite-jdbc 需要 dlopen 解压出的原生库）。
+
+---
+
+## 两个包的共同结构约定
+
+Windows 便携包与 Linux 服务器包除了平台必需的部分外，保持同一套目录约定：
+
+| 约定 | Windows 便携包 | Linux 服务器包 |
+| --- | --- | --- |
+| 产物名 | `haifa-personal-assistant-windows-x64-v<version>.zip` | `haifa-personal-assistant-linux-x64-v<version>.zip` |
+| 顶层目录 | `haifa-personal-assistant-v<version>/` | `haifa-personal-assistant-v<version>/` |
+| 可执行体 | `app.jar`（内嵌前端） | `app.jar` + `web/` |
+| 运行参数 | `conf/pa.env` | `conf/pa.env`（同名同格式） |
+| 数据目录 | `<包根>/data/personal-assistant/` | `<安装目录>/data/personal-assistant/`（容器为挂载卷） |
+| 日志 | `<包根>/logs/personal-assistant.log` | `<安装目录>/logs/personal-assistant.log`（容器为 stdout） |
+| 启停 | `bin/start.bat` / `status.bat` / `stop.bat` | `bin/start.sh`（systemd 或 compose 托管） |
+| README 骨架 | 结构 / 前置 / 启动停止 / 自检 / 配置 / 数据与凭据 / 安全 / 升级 / 回滚 | 同上，另有 nginx 与容器两节 |
+
+平台固有、不追求一致的差异：JRE 是否内置、进程托管方式、是否有 nginx、前端基址（绝对回环 vs 同源相对）、
+凭据存储（凭据管理器 vs 0600 文件）。

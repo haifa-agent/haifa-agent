@@ -7,9 +7,18 @@ chcp 65001 >nul 2>&1
 rem Switch working directory to package root
 cd /d "%~dp0.."
 
+rem Load optional conf\pa.env (KEY=VALUE, lines starting with # are ignored).
+rem System environment variables win; this file only fills the gaps.
+if exist "conf\pa.env" (
+    for /f "usebackq eol=# tokens=1,* delims==" %%a in ("conf\pa.env") do (
+        if not "%%a"=="" if not defined %%a set "%%a=%%b"
+    )
+)
+
 rem Ensure logs and data directories exist
 if not exist "logs" mkdir "logs"
-if not exist "data" mkdir "data"
+if not defined HAIFA_PERSONAL_DATA_DIR set "HAIFA_PERSONAL_DATA_DIR=%CD%\data\personal-assistant"
+if not exist "%HAIFA_PERSONAL_DATA_DIR%" mkdir "%HAIFA_PERSONAL_DATA_DIR%"
 
 rem Find Java: prefer bundled JRE, fallback to system java
 set "JAVA_EXE=jre\bin\java.exe"
@@ -17,14 +26,10 @@ if not exist "%JAVA_EXE%" (
     set "JAVA_EXE=java"
 )
 
-rem Find Server JAR in lib directory
-set "JAR_FILE="
-for %%f in ("lib\haifa-agent-personal-assistant-server*.jar") do (
-    set "JAR_FILE=%%f"
-)
-
-if not defined JAR_FILE (
-    echo [Error] haifa-agent-personal-assistant-server*.jar not found in lib directory.
+rem Server JAR sits at the package root; the Linux package uses the same name
+set "JAR_FILE=app.jar"
+if not exist "%JAR_FILE%" (
+    echo [Error] app.jar not found in package root.
     exit /b 1
 )
 
@@ -40,7 +45,7 @@ if not defined HAIFA_CODEX_USER_AGENT set "HAIFA_CODEX_USER_AGENT=haifa-agent/1"
 echo ========================================================================
 echo Starting Haifa Personal Assistant Service...
 echo Web URL:    http://127.0.0.1:20001/index.html
-echo Data Dir:   %CD%\data\personal-assistant
+echo Data Dir:   %HAIFA_PERSONAL_DATA_DIR%
 echo Log File:   %CD%\logs\personal-assistant.log
 echo Note:       Run bin\stop.bat to stop the service.
 echo             Use bin\start-background.vbs for background running.

@@ -5,17 +5,24 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=root
-# 若安装目录不是 /root/app/pa，请同步修改 WorkingDirectory、EnvironmentFile、ExecStart 中的路径。
-WorkingDirectory=/root/app/pa
-EnvironmentFile=/root/app/pa/conf/pa.env
-ExecStart=/usr/bin/java -Xmx1024m -XX:MaxMetaspaceSize=256m -Dfile.encoding=UTF-8 -Dsun.stdout.encoding=UTF-8 -Dsun.stderr.encoding=UTF-8 -jar /root/app/pa/app.jar --server.address=127.0.0.1 --server.port=20001 --haifa.personal.data-directory=/root/app/pa/data --logging.file.name=/root/app/pa/logs/personal-assistant.log
-SuccessExitStatus=143
+# 不需要 root：用普通服务用户即可（root 也能运行，但不推荐）。
+# 安装到其它路径时同步修改 User/Group/WorkingDirectory/EnvironmentFile/ExecStart/ReadWritePaths。
+User=haifa-pa
+Group=haifa-pa
+WorkingDirectory=/opt/haifa-personal-assistant
+EnvironmentFile=/opt/haifa-personal-assistant/conf/pa.env
+ExecStart=/opt/haifa-personal-assistant/bin/start.sh
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=40
+SuccessExitStatus=143
+
+# 收紧权限：只允许写安装目录（数据、日志、临时目录都在其中）
 NoNewPrivileges=yes
 PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/haifa-personal-assistant
 
 [Install]
 WantedBy=multi-user.target

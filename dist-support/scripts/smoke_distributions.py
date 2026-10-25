@@ -57,7 +57,7 @@ def main() -> None:
                        cwd=directory, check=True, stdout=subprocess.DEVNULL, timeout=60,
                        creationflags=subprocess.CREATE_NO_WINDOW)
         pa = packages["personal-assistant"]
-        jar, = (pa / "lib").glob("*.jar")
+        jar = pa / "app.jar"
         for attempt in (1, 2):
             with socket.socket() as listener:
                 listener.bind(("127.0.0.1", 0))

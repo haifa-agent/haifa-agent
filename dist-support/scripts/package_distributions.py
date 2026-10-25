@@ -413,6 +413,39 @@ def inject_web_dist_into_server_jar(source_jar: Path, web_dist_dir: Path, target
     print(f"[INFO] Embedded {len(dist_files)} static web assets into server JAR.")
 
 
+PA_PACKAGE_NAME = "haifa-personal-assistant"
+
+
+def pa_package_name(version: str) -> str:
+    """Shared top-level directory name so both packages look identical inside the zip."""
+    return f"{PA_PACKAGE_NAME}-{artifact_label(version)}"
+
+
+def pa_artifact_name(platform: str, version: str) -> str:
+    """Shared artifact shape: haifa-personal-assistant-<platform>-v<version>.zip."""
+    return f"{PA_PACKAGE_NAME}-{platform}-{artifact_label(version)}.zip"
+
+
+def stage_dir_for(work_dir: Path, profile: str, package_name: str) -> Path:
+    """Per-profile staging root, so one invocation can build both packages without clobbering."""
+    stage_dir = work_dir / profile / package_name
+    if stage_dir.exists():
+        shutil.rmtree(stage_dir)
+    stage_dir.mkdir(parents=True, exist_ok=True)
+    return stage_dir
+
+
+def zip_stage(stage_dir: Path, output_zip: Path, description: str) -> Path:
+    print(f"[INFO] Compressing to {output_zip.name}...")
+    with zipfile.ZipFile(output_zip, "w", zipfile.ZIP_DEFLATED) as zf:
+        for file in stage_dir.rglob("*"):
+            if file.is_file():
+                zf.write(file, file.relative_to(stage_dir.parent))
+    zip_size_mb = output_zip.stat().st_size / (1024 * 1024)
+    print(f"[SUCCESS] {description} package created: {output_zip} ({zip_size_mb:.2f} MB)")
+    return output_zip
+
+
 def package_pa(
     repo_root: Path, work_dir: Path, output_dir: Path, version: str, jre_dir: Path, skip_web_build: bool = False
 ) -> Path:
@@ -426,39 +459,27 @@ def package_pa(
     server_jar = find_jar(server_target_dir, "haifa-agent-personal-assistant-server", version)
     print(f"[INFO] Found Personal Assistant Server JAR: {server_jar.name}")
 
-    label = artifact_label(version)
-    stage_dir = work_dir / f"haifa-personal-assistant-{label}"
-    if stage_dir.exists():
-        shutil.rmtree(stage_dir)
-    stage_dir.mkdir(parents=True, exist_ok=True)
+    stage_dir = stage_dir_for(work_dir, "windows", pa_package_name(version))
 
-    # 1. Copy templates
+    # 1. Copy templates (bin + conf, same layout the Linux package uses)
     template_dir = repo_root / "dist-support" / "templates" / "pa"
-    shutil.copytree(template_dir / "bin", stage_dir / "bin")
+    for name in ("bin", "conf"):
+        shutil.copytree(template_dir / name, stage_dir / name)
     shutil.copy2(template_dir / "README.txt", stage_dir / "README.txt")
 
-    # 2. Inject Web UI and copy lib
-    lib_dir = stage_dir / "lib"
-    lib_dir.mkdir(exist_ok=True)
-    embedded_server_jar = lib_dir / server_jar.name
-    inject_web_dist_into_server_jar(server_jar, web_dist_dir, embedded_server_jar)
+    # 2. Windows is opened straight from loopback, so the SPA is embedded into app.jar
+    inject_web_dist_into_server_jar(server_jar, web_dist_dir, stage_dir / "app.jar")
 
     # 3. Copy JRE
     print("[INFO] Bundling minimal JRE into Personal Assistant package...")
     shutil.copytree(jre_dir, stage_dir / "jre")
 
     # 4. Create ZIP
-    output_zip = output_dir / f"haifa-personal-assistant-windows-x64-{label}.zip"
-    print(f"[INFO] Compressing to {output_zip.name}...")
-    with zipfile.ZipFile(output_zip, "w", zipfile.ZIP_DEFLATED) as zf:
-        for file in stage_dir.rglob("*"):
-            if file.is_file():
-                rel_path = file.relative_to(stage_dir.parent)
-                zf.write(file, rel_path)
-
-    zip_size_mb = output_zip.stat().st_size / (1024 * 1024)
-    print(f"[SUCCESS] Personal Assistant package created: {output_zip} ({zip_size_mb:.2f} MB)")
-    return output_zip
+    return zip_stage(
+        stage_dir,
+        output_dir / pa_artifact_name("windows-x64", version),
+        "Personal Assistant Windows",
+    )
 
 
 def package_pa_server(
@@ -484,12 +505,7 @@ def package_pa_server(
     if not any(entry.startswith("BOOT-INF/lib/") for entry in jar_entries):
         raise ValueError("Server JAR is not a Spring Boot executable archive")
 
-    label = artifact_label(version)
-    package_name = f"haifa-personal-assistant-server-{label}"
-    stage_dir = work_dir / package_name
-    if stage_dir.exists():
-        shutil.rmtree(stage_dir)
-    stage_dir.mkdir(parents=True, exist_ok=True)
+    stage_dir = stage_dir_for(work_dir, "linux", pa_package_name(version))
 
     template_dir = repo_root / "dist-support" / "templates" / "pa-server"
     for name in ("bin", "conf", "docker"):
@@ -499,16 +515,11 @@ def package_pa_server(
     shutil.copy2(server_jar, stage_dir / "app.jar")
     shutil.copytree(web_dist_dir, stage_dir / "web")
 
-    output_zip = output_dir / f"haifa-personal-assistant-server-linux-x64-{label}.zip"
-    print(f"[INFO] Compressing to {output_zip.name}...")
-    with zipfile.ZipFile(output_zip, "w", zipfile.ZIP_DEFLATED) as zf:
-        for file in stage_dir.rglob("*"):
-            if file.is_file():
-                zf.write(file, file.relative_to(stage_dir.parent))
-
-    zip_size_mb = output_zip.stat().st_size / (1024 * 1024)
-    print(f"[SUCCESS] Personal Assistant Server Linux package created: {output_zip} ({zip_size_mb:.2f} MB)")
-    return output_zip
+    return zip_stage(
+        stage_dir,
+        output_dir / pa_artifact_name("linux-x64", version),
+        "Personal Assistant Linux",
+    )
 
 
 def package_sdk(repo_root: Path, work_dir: Path, output_dir: Path, version: str) -> Path:

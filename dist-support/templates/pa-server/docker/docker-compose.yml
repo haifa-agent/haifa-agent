@@ -12,9 +12,9 @@ services:
       - "127.0.0.1:20001:20001"
     volumes:
       # 数据卷单独挂载：SQLite、图片/音频、产物、执行工作区
-      - /root/app/pa/data:/data
+      - ../data:/data
       # HOME 单独挂载：宿主 home 不能落在数据目录内（会被 host 执行边界拒绝）
-      - /root/app/pa/home:/home/pa
+      - ../home:/home/pa
     read_only: true
     tmpfs:
       # 必须带 exec：sqlite-jdbc 会把原生库解压到 java.io.tmpdir 再 dlopen
