@@ -21,7 +21,10 @@ ordinary Conversation Run still blocks the change until that Run reaches a termi
 credential is missing. Credential readiness is exposed separately through `GET /api/v1/model-connections`; the adjacent
 mutation endpoints save a one-shot API Key, start/query/cancel an allowlisted Codex or Antigravity browser attempt,
 and delete a Haifa-managed
-connection. All products use the system credential store (Windows Credential Manager on Windows) and the shared Local Model Auth Store/Resolver. A Codex binding
+connection. Windows stores credentials in Credential Manager; every other host has no OS credential store and uses the
+headless `~/.haifa-agent/auth.json` file store with `0600` permissions and atomic replacement, selected by the same
+platform check. Both paths sit behind the shared Local Model Auth Store/Resolver, so `env://`, `os://`, and
+`model-auth://` references resolve identically. A Codex binding
 must use `openai-codex-responses`, the approved endpoint, and `model-auth://openai-codex/...`.
 
 ChatGPT subscription login is disabled unless local compatibility testing explicitly supplies

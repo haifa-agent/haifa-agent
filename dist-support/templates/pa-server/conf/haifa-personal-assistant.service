@@ -1,0 +1,21 @@
+[Unit]
+Description=Haifa Personal Assistant (loopback 20001, fronted by nginx)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+# 若安装目录不是 /root/app/pa，请同步修改 WorkingDirectory、EnvironmentFile、ExecStart 中的路径。
+WorkingDirectory=/root/app/pa
+EnvironmentFile=/root/app/pa/conf/pa.env
+ExecStart=/usr/bin/java -Xmx1024m -XX:MaxMetaspaceSize=256m -Dfile.encoding=UTF-8 -Dsun.stdout.encoding=UTF-8 -Dsun.stderr.encoding=UTF-8 -jar /root/app/pa/app.jar --server.address=127.0.0.1 --server.port=20001 --haifa.personal.data-directory=/root/app/pa/data --logging.file.name=/root/app/pa/logs/personal-assistant.log
+SuccessExitStatus=143
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=40
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
