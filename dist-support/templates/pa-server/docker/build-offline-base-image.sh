@@ -10,7 +10,7 @@ set -eu
 RS=/tmp/pa-rootfs
 rm -rf "$RS"
 mkdir -p "$RS"/usr/bin "$RS"/usr/lib "$RS"/etc "$RS"/tmp "$RS"/var/tmp \
-         "$RS"/data/home "$RS"/data/logs "$RS"/home/pa "$RS"/app "$RS"/root "$RS"/proc "$RS"/sys "$RS"/dev
+         "$RS"/data/home "$RS"/data/logs "$RS"/home/haifa-pa "$RS"/app "$RS"/root "$RS"/proc "$RS"/sys "$RS"/dev
 
 echo '[1/6] 复制基础库与 JDK'
 cp -a /usr/lib/x86_64-linux-gnu "$RS"/usr/lib/
@@ -44,11 +44,11 @@ ln -sf ../lib/x86_64-linux-gnu/ld-linux-x86-64.so.2 "$RS"/usr/lib64/ld-linux-x86
 ln -sf usr/lib64 "$RS"/lib64
 
 echo '[4/6] 创建运行用户与目录'
-printf 'pa:x:10001:10001::/home/pa:/bin/bash\n' >> "$RS"/etc/passwd
-printf 'pa:x:10001:\n' >> "$RS"/etc/group
+printf 'haifa-pa:x:10001:10001::/home/haifa-pa:/bin/bash\n' >> "$RS"/etc/passwd
+printf 'haifa-pa:x:10001:\n' >> "$RS"/etc/group
 chmod 1777 "$RS"/tmp "$RS"/var/tmp
 chown 10001:10001 "$RS"/data "$RS"/data/home "$RS"/data/logs
-chown 10001:10001 "$RS"/home/pa
+chown 10001:10001 "$RS"/home/haifa-pa
 
 echo '[5/6] 生成 rootfs 并导入镜像（约 900MB，需要数分钟）'
 tar --numeric-owner -C "$RS" -cf - . | docker import \
