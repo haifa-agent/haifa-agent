@@ -117,5 +117,25 @@ class WebDistGuardTest(unittest.TestCase):
                 self.dist(root / "absolute", MODULE.WEB_ABSOLUTE_LOOPBACK_TOKEN), relative_api_base=False)
 
 
+class PersonalAssistantPackageShapeTest(unittest.TestCase):
+    def test_both_packages_share_directory_name_and_artifact_shape(self):
+        package = MODULE.pa_package_name("0.1.4")
+        self.assertEqual(package, "haifa-personal-assistant-v0.1.4")
+
+        windows = MODULE.pa_artifact_name("windows-x64", "0.1.4")
+        linux = MODULE.pa_artifact_name("linux-x64", "0.1.4")
+        self.assertEqual(windows, "haifa-personal-assistant-windows-x64-v0.1.4.zip")
+        self.assertEqual(linux, "haifa-personal-assistant-linux-x64-v0.1.4.zip")
+
+        # The extracted top-level directory must be derivable from the artifact name alone,
+        # which is what the release smoke test relies on.
+        for artifact in (windows, linux):
+            stem = artifact[: -len(".zip")]
+            self.assertEqual(
+                stem.replace("-windows-x64", "").replace("-linux-x64", ""),
+                package,
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

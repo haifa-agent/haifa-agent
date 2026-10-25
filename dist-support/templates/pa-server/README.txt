@@ -1,115 +1,133 @@
 ========================================================================
-Haifa Personal Assistant Server - Linux x64 服务器包
+Haifa Personal Assistant - Linux x64 服务器包
 ========================================================================
 
-本包面向 Linux 服务器常驻部署：不内置 JRE（使用系统 JDK 21），
-前端由 nginx 直接提供静态文件，后端只监听 127.0.0.1:20001 并反代对外。
+本包面向 Linux 常驻部署：不内置 JRE（使用系统 JDK 21），前端由 nginx 直接提供，
+后端只监听 127.0.0.1:20001 并反代对外。与 Windows 便携包共用同一套目录约定。
 
-包内结构：
+【1. 包内结构】
 
-  app.jar                             后端可执行 JAR（不含前端静态资源）
-  web/                                前端 SPA 产物，API 基址为相对路径 /api/v1 与 /v1/admin
-  conf/pa.env                         运行环境变量（数据目录、可信宿主开关、Codex 标识）
-  conf/haifa-personal-assistant.service  systemd 单元（默认按 /root/app/pa 编写）
-  conf/pa.conf                        nginx 站点模板（按域名/证书修改）
-  bin/start.sh                        前台启动（无 systemd 时手工运行）
-  bin/publish-web.sh                  web/ -> /var/www/pa（nginx 可读目录）
-  bin/check.sh                        自检：临时端口 + 临时数据目录启动并探活
+  app.jar                  后端可执行 JAR（不含前端静态资源）
+  web/                     前端 SPA 产物（API 基址为相对路径 /api/v1 与 /v1/admin）
+  conf/pa.env              运行环境变量（与 Windows 包同名同格式）
+  conf/haifa-personal-assistant.service  systemd 单元（普通用户运行）
+  conf/pa.conf             nginx 站点模板（按域名/证书调整）
+  bin/start.sh             前台启动（systemd 也调用它）
+  bin/check.sh             自检：临时端口 + 临时数据目录启动并探活
+  bin/publish-web.sh       可选：把 web/ 复制到其它目录（默认不复制）
+  docker/                  可选：离线基础镜像、Dockerfile、compose
+  README.txt               本文件
 
-【1. 前置条件】
+运行期生成（首次启动后出现）：
+
+  data/personal-assistant/ 数据目录（SQLite、images/、audio/、artifacts/、tmp/）
+  logs/personal-assistant.log 运行日志
+
+【2. 前置条件】
 
 - Linux x86_64，JDK 21（`java -version` 需为 21）；
-- nginx，且已有可用证书（本模板使用 /etc/letsencrypt 布局，可自行替换）。
+- nginx（由你自行安装；本包只提供站点模板）；
+- 不需要 root：普通用户即可安装与运行。
 
-【2. 安装】
+【3. 安装】
 
-假设安装到 /root/app/pa（其他目录需同步修改 conf/ 内路径）：
+3.1 用一个普通服务用户安装（推荐，不需要 root 运行服务）
 
-  mkdir -p /root/app/pa
-  # 解包（注意保留目录结构）
-  unzip haifa-personal-assistant-server-linux-x64-v<version>.zip -d /tmp/pa-unpack
-  # 若服务器未安装 unzip：python3 -m zipfile -e <zip> /tmp/pa-unpack
-  cp -R /tmp/pa-unpack/haifa-personal-assistant-server-v<version>/. /root/app/pa/
+  sudo useradd --system --create-home --home-dir /opt/haifa-personal-assistant \
+      --shell /usr/sbin/nologin haifa-pa
+  sudo install -d -o haifa-pa -g haifa-pa /opt/haifa-personal-assistant
+  sudo -u haifa-pa python3 -m zipfile -e haifa-personal-assistant-linux-x64-v<version>.zip /tmp/pa-unpack
+  sudo -u haifa-pa cp -R /tmp/pa-unpack/haifa-personal-assistant-v<version>/. /opt/haifa-personal-assistant/
+  sudo -u haifa-pa mkdir -p /opt/haifa-personal-assistant/data/personal-assistant /opt/haifa-personal-assistant/logs
 
-  mkdir -p /root/app/pa/data /root/app/pa/logs
-  sh /root/app/pa/bin/publish-web.sh            # 发布前端到 /var/www/pa
+  若服务器未安装 unzip：用上面 `python3 -m zipfile -e` 的方式解包。
 
-  install -m 0644 /root/app/pa/conf/haifa-personal-assistant.service \
+3.2 以当前用户直接运行（临时/内测，不想建系统用户）
+
+  解包到任意可写目录即可，bin/start.sh 只用安装目录内的路径：
+    python3 -m zipfile -e <zip> ./pa && ./pa/haifa-personal-assistant-v<version>/bin/start.sh
+
+3.3 注册 systemd（可选）
+
+  sudo install -m 0644 /opt/haifa-personal-assistant/conf/haifa-personal-assistant.service \
       /etc/systemd/system/haifa-personal-assistant.service
-  systemctl daemon-reload
-  systemctl enable --now haifa-personal-assistant
+  # 若安装路径或服务用户不是 haifa-pa，先改 User/Group/WorkingDirectory/EnvironmentFile/ExecStart
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now haifa-personal-assistant
+
+【4. 启动与停止】
+
+  systemd：  sudo systemctl start|stop|status haifa-personal-assistant
+  手工前台： bin/start.sh                 （Ctrl+C 结束）
+  容器：     docker compose -f docker/docker-compose.yml up -d|down
+
+【5. 自检】
+
+  sh bin/check.sh                 # 临时端口 20999 + 临时数据目录，不影响正式实例
   curl -fsS http://127.0.0.1:20001/actuator/health
 
-  # nginx：按实际域名/证书改好 conf/pa.conf 后
-  cp /etc/nginx/conf.d/pa.conf /etc/nginx/conf.d/pa.conf.bak-$(date +%Y%m%d-%H%M%S)
-  install -m 0644 /root/app/pa/conf/pa.conf /etc/nginx/conf.d/pa.conf
-  nginx -t && systemctl reload nginx
+【6. 配置项（conf/pa.env）】
 
-【3. 启动前自检】
+与 Windows 包同名同格式（KEY=VALUE，# 开头为注释），系统环境变量优先：
 
-  sh /root/app/pa/bin/check.sh            # 用 20999 端口跑一次并探活，不影响正式实例
+  HAIFA_PERSONAL_DATA_DIR                      必须为绝对路径，默认值以 /opt/haifa-personal-assistant 为例
+  HAIFA_PERSONAL_EXECUTION_TRUSTED_HOST_ENABLED 必须为 true，否则服务拒绝启动（fail closed）
+  HAIFA_CODEX_ORIGINATOR / HAIFA_CODEX_USER_AGENT  openai-codex 绑定所需的客户端标识
 
-【4. 数据与凭据】
+安装到其它路径时，同步修改 conf/pa.env 与 conf/haifa-personal-assistant.service。
 
-- 数据目录：/root/app/pa/data（SQLite personal-assistant.sqlite、images/、audio/、artifacts/）；
-- 日志：/root/app/pa/logs/personal-assistant.log 与 journalctl -u haifa-personal-assistant；
-- 模型凭据：Linux 没有系统凭据库，服务把凭据写到 ~/.haifa-agent/auth.json
-  （权限 0600、文件锁、原子替换）。在 Web 界面“模型 / 模型连接”里保存的 API Key 就落在该文件；
-  若不想落盘，可把 provider 的 credential-reference 换成 env://<变量名>，由环境变量提供。
+【7. 数据与凭据】
 
-【5. 安全须知（重要）】
+1. 数据目录：<安装目录>/data/personal-assistant/
+   - SQLite 数据库：personal-assistant.sqlite
+   - 多模态图片：images/        音频：audio/        研报与产物：artifacts/
+   - 运行临时目录：tmp/（java.io.tmpdir，sqlite-jdbc 在此解压原生库）
+2. 日志：<安装目录>/logs/personal-assistant.log 与 journalctl -u haifa-personal-assistant
+3. 模型凭据：Linux 没有系统凭据库，服务把凭据写到 $HOME/.haifa-agent/auth.json
+   （0600、文件锁、原子替换）。容器运行时 HOME 单独挂载为 <安装目录>/home。
+   若不想落盘，可把 provider 的 credential-reference 换成 env://<变量名>。
 
-- 后端没有内建认证，信任边界是“回环 + 可信宿主”：
-  HTTPS 站点一旦对外开放，任何能访问该域名的人都能消耗模型额度；
-- conf/pa.env 里 HAIFA_PERSONAL_EXECUTION_TRUSTED_HOST_ENABLED=true 表示模型可在
-  本机执行宿主 shell（bash/sh）。真要在公网暴露，至少启用 conf/pa.conf 末尾的
-  basic auth（htpasswd），或只允许内网/VPN 访问；
-- 需要更强隔离时，把服务放进容器运行：只挂载 data 目录、以非 root 用户运行、
-  `--network host` 改为 `-p 127.0.0.1:20001:20001`、限制出站网络，
-  这样“宿主 shell”只能在容器内生效，不会直接作用于宿主机。
+【8. nginx（平台差异：Windows 包没有这一层）】
 
-【6. 升级】
+  conf/pa.conf 是完整站点模板，按域名/证书调整后启用：
 
-  systemctl stop haifa-personal-assistant
-  cp 新的 app.jar -> /root/app/pa/app.jar
-  cp -R 新的 web/. -> /root/app/pa/web/
-  sh /root/app/pa/bin/publish-web.sh
-  systemctl start haifa-personal-assistant
-  # data/ 与 ~/.haifa-agent/auth.json 不需要替换
+    sudo install -m 0644 conf/pa.conf /etc/nginx/conf.d/pa.conf
+    sudo nginx -t && sudo systemctl reload nginx
 
-【7. 回滚】
+  关键点：后端只接受回环 Host/Origin，模板里已把 Host 改写为 127.0.0.1:20001 并清空 Origin；
+  SSE 端点单独关闭缓冲；静态目录默认指向 <安装目录>/web（不需要复制到 /var/www）。
 
-  cp /etc/nginx/conf.d/pa.conf.bak-<timestamp> /etc/nginx/conf.d/pa.conf
-  systemctl reload nginx
-  systemctl disable --now haifa-personal-assistant
+【9. 安全须知】
 
-【8. 容器化运行（可选，推荐用于隔离宿主命令执行）】
+- 后端没有内建认证，信任边界是「回环 + 可信宿主」：HTTPS 站点一旦对外开放，
+  任何能访问该域名的人都能消耗模型额度；
+- conf/pa.env 里 HAIFA_PERSONAL_EXECUTION_TRUSTED_HOST_ENABLED=true 表示模型可在本机
+  执行宿主 shell（bash/sh）。对公网暴露时至少启用 conf/pa.conf 末尾的 basic auth，
+  或只允许内网/VPN 访问；
+- 服务用户只需读写安装目录，不要用 root 运行。
 
-包内 docker/ 提供离线镜像与 compose 定义：
+【10. 容器化（可选）】
 
-  docker/build-offline-base-image.sh   用宿主 JDK 21 组装基础镜像 pa-base:local（不访问 registry）
-  docker/Dockerfile                    以 pa-base:local 为基础，COPY 包根目录的 app.jar
-  docker/docker-compose.yml            只发布 127.0.0.1:20001、数据卷与 HOME 单独挂载、只读根文件系统
-
-步骤如下（在包根目录执行）：
-
-  sh docker/build-offline-base-image.sh           # 生成 pa-base:local（约 1.3GB）
-  mkdir -p /root/app/pa/data /root/app/pa/home
-  chown -R 10001:10001 /root/app/pa/data /root/app/pa/home
+  sh docker/build-offline-base-image.sh      # 用宿主 JDK 组装 pa-base:local（不访问 registry）
   docker compose -f docker/docker-compose.yml up -d --build
   curl -fsS http://127.0.0.1:20001/actuator/health
 
-容器化的已知约束（都是踩过的坑，勿改）：
+数据卷相对 compose 文件放在 <安装目录>/data 与 <安装目录>/home，不依赖 /root。
+容器化的四个硬约束（已固化，改动会导致启动失败）：JDK 必须绝对路径、基础镜像需带
+/etc/java-21-openjdk、HOME 不能落在数据目录内、模型 shell 需要 /tmp 可写可执行。
 
-- HOME 不能放在数据目录内：host 执行边界会拒绝（HOST_USER_HOME_UNAVAILABLE），故单独挂 /home/pa；
-- /tmp 必须 exec：sqlite-jdbc 会把原生库解压到 java.io.tmpdir 再 dlopen；
-- 启动必须用 JDK 绝对路径：/usr/bin/java 是符号链接，JVM 会解析出错误的 java.home，
-  报 "Error loading java.security file"；
-- 基础镜像必须带 /etc/java-21-openjdk：Debian 系把 conf/security/java.security 指到那里；
-- 宿主双栈但 IPv6 出网不通时，容器内也要 IPv4 优先（镜像已写入 /etc/gai.conf 与 -Djava.net.preferIPv4Stack）。
+【11. 升级】
 
-容器内执行命令使用的是容器自己的 bash（uid 10001），数据卷之外的宿主文件系统不可见，
-但容器以内网身份可访问外网与宿主可达的内网服务——认证与出站策略仍需自行把关。
+  systemctl stop haifa-personal-assistant          # 或 docker compose -f docker/docker-compose.yml down
+  用新版 app.jar 覆盖 <安装目录>/app.jar
+  用新版 web/ 覆盖 <安装目录>/web/
+  systemctl start haifa-personal-assistant         # 容器：up -d --build
+  data/ 与 $HOME/.haifa-agent/auth.json 不需要替换
+
+【12. 回滚】
+
+  保留上一版整个安装目录：停服后把旧目录改回原路径再启动；
+  容器回滚用上一版镜像 tag（docker compose -f docker/docker-compose.yml up -d）。
 
 ========================================================================
 项目主页: https://github.com/haifa-agent/haifa-agent
