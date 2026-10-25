@@ -85,5 +85,57 @@ class ReleaseDistributionsTest(unittest.TestCase):
                 self.assertEqual(list((root / "output").glob("*.zip")), [])
 
 
+class WebDistGuardTest(unittest.TestCase):
+    def dist(self, root, api_token):
+        dist = root / "dist"
+        (dist / "assets").mkdir(parents=True)
+        (dist / "index.html").write_text("<html></html>", encoding="utf-8")
+        (dist / "assets" / "App-test.js").write_text(
+            f"var base={api_token};var admin={MODULE.WEB_RELATIVE_ADMIN_API_BASE}",
+            encoding="utf-8",
+        )
+        return dist
+
+    def test_server_package_refuses_loopback_dist(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            dist = self.dist(Path(temporary), MODULE.WEB_ABSOLUTE_LOOPBACK_TOKEN)
+            with self.assertRaisesRegex(ValueError, "still targets the loopback API"):
+                MODULE.verify_web_dist(dist, relative_api_base=True)
+
+    def test_portable_package_refuses_relative_dist(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            dist = self.dist(Path(temporary), MODULE.WEB_RELATIVE_API_BASE)
+            with self.assertRaisesRegex(ValueError, "does not target the loopback API"):
+                MODULE.verify_web_dist(dist, relative_api_base=False)
+
+    def test_each_delivery_mode_accepts_its_own_dist(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            MODULE.verify_web_dist(
+                self.dist(root / "relative", MODULE.WEB_RELATIVE_API_BASE), relative_api_base=True)
+            MODULE.verify_web_dist(
+                self.dist(root / "absolute", MODULE.WEB_ABSOLUTE_LOOPBACK_TOKEN), relative_api_base=False)
+
+
+class PersonalAssistantPackageShapeTest(unittest.TestCase):
+    def test_both_packages_share_directory_name_and_artifact_shape(self):
+        package = MODULE.pa_package_name("0.1.4")
+        self.assertEqual(package, "haifa-personal-assistant-v0.1.4")
+
+        windows = MODULE.pa_artifact_name("windows-x64", "0.1.4")
+        linux = MODULE.pa_artifact_name("linux-x64", "0.1.4")
+        self.assertEqual(windows, "haifa-personal-assistant-windows-x64-v0.1.4.zip")
+        self.assertEqual(linux, "haifa-personal-assistant-linux-x64-v0.1.4.zip")
+
+        # The extracted top-level directory must be derivable from the artifact name alone,
+        # which is what the release smoke test relies on.
+        for artifact in (windows, linux):
+            stem = artifact[: -len(".zip")]
+            self.assertEqual(
+                stem.replace("-windows-x64", "").replace("-linux-x64", ""),
+                package,
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -3,6 +3,8 @@ package io.haifa.agent.personalassistant.server.configuration.sdk;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.haifa.agent.auth.localmodel.FileLocalModelAuthStore;
+import io.haifa.agent.auth.localmodel.WindowsLocalModelAuthStore;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.personalassistant.application.policy.PersonalAssistantPolicyRules;
@@ -73,5 +75,19 @@ class PersonalAssistantConfigurationTest {
         assertThat((InetSocketAddress) selected.address())
                 .extracting(InetSocketAddress::getHostString, InetSocketAddress::getPort)
                 .containsExactly("127.0.0.1", 2081);
+    }
+
+    @Test
+    void selectsThePlatformModelAuthStore() {
+        var mapper = new ObjectMapper();
+
+        assertThat(PersonalAssistantConfiguration.modelAuthStore("Windows 11", mapper))
+                .isInstanceOf(WindowsLocalModelAuthStore.class);
+        assertThat(PersonalAssistantConfiguration.modelAuthStore("Linux", mapper))
+                .isInstanceOfSatisfying(FileLocalModelAuthStore.class, store -> {
+                    assertThat(store.file().getFileName().toString()).isEqualTo("auth.json");
+                    assertThat(store.file().getParent().getFileName().toString())
+                            .isEqualTo(".haifa-agent");
+                });
     }
 }
