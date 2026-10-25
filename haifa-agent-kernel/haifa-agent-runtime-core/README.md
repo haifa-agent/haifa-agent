@@ -332,7 +332,10 @@ Runtime 配置快照还可冻结 provider-neutral `modelRequestOptions`。该结
 
 Model、Tool、预算和完成门禁在拥有语义的边界映射到稳定 `AgentErrorCode`。分类后的
 `AgentError` 在 Step、Attempt、Run、Runtime Event 和 Trace 复用同一个 `diagnosticId`；
-`RUNTIME_EXECUTION_FAILED` 只处理无法更精确分类的软件故障。可选 `FailureDiagnosticSink`
+`RUNTIME_EXECUTION_FAILED` 只处理无法更精确分类的软件故障。持久化失败通过 `storage.StorageException`（及其
+子类，例如 Store 适配器的异常）表达，并按 `STORAGE_UNAVAILABLE`（类别 `STORAGE`）分类；中断 `model.call`
+步骤的存储失败不会因此被报告为 `MODEL_CALL_FAILED`，适配器内部失败码仍只进入日志与技术详情，不进入公共 payload。
+可选 `FailureDiagnosticSink`
 接收所有终止 Attempt 的原始 Throwable 与已分类安全上下文，由实现负责有界脱敏存储；Trace 或诊断 Sink 失败属于观测投影失败，不会改变已经确定的
 Run/Attempt 事实。具有副作用且结果不确定的 Tool 仍映射为 `TOOL_OUTCOME_UNKNOWN` 并禁止盲目重放。
 - Runtime 只调用 Core `AgentRun` 的受控行为，不复制生命周期合法性表。
