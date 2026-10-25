@@ -2,6 +2,12 @@
 
 ## 0.1.4-SNAPSHOT - Unreleased
 
+- A slow SQLite writer no longer turns into a hard failure for every other writer: the in-process write queue
+  waits under its own fallback bound instead of `busy_timeout × 2`, takes the write slot before leasing a
+  connection, and names the holding thread when the slot is never released. Storage failures that interrupt a Run
+  now surface as the new `STORAGE_UNAVAILABLE` error code (category `STORAGE`) instead of `MODEL_CALL_FAILED`, and
+  `sqlite.uow` logs the queue wait as `waitMs` and is emitted on the failure path too.
+
 - Coding Terminal shows frozen tool titles such as `Read File`, `Apply Patch` and `Run Command` in tool
   rows while keeping machine names in expanded metadata. Ordinary single-call failures use a one-line
   yellow "unfinished" warning, denials and cancellations are neutral, and unknown outcomes keep their

@@ -9,6 +9,7 @@ import io.haifa.agent.context.compression.CompressionPolicy;
 import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.error.AgentError;
+import io.haifa.agent.core.error.AgentErrorCategory;
 import io.haifa.agent.core.error.AgentErrorCode;
 import io.haifa.agent.core.message.AgentMessageId;
 import io.haifa.agent.core.message.MessageRole;
@@ -95,8 +96,12 @@ import io.haifa.agent.runtime.core.retry.RetryPolicy;
 import io.haifa.agent.runtime.core.retry.RuntimeBackoffPolicy;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.storage.OptimisticLockException;
+import io.haifa.agent.runtime.core.storage.RuntimeEvent;
+import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
+import io.haifa.agent.runtime.core.storage.RuntimeEventSlice;
 import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
+import io.haifa.agent.runtime.core.storage.StorageException;
 import io.haifa.agent.runtime.core.tool.InMemoryToolExecutionJournal;
 import io.haifa.agent.runtime.core.tool.ToolJournalState;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
@@ -3187,6 +3192,99 @@ class RuntimeCoreTest {
 
     private static Fixture fixture(AgentChatModel model) {
         return fixture(model, builder -> builder);
+    }
+
+    @Test
+    void reportsAStoreFailureDuringTheModelStepAsStorageUnavailable() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        RuntimePersistencePorts inMemory = RuntimePersistencePorts.inMemory(store);
+        RuntimePersistencePorts failingPersistence = new RuntimePersistencePorts(
+                inMemory.sessions(),
+                inMemory.runs(),
+                inMemory.attempts(),
+                inMemory.checkpoints(),
+                inMemory.state(),
+                new ModelCallEventFailure(inMemory.events()),
+                inMemory.outbox(),
+                inMemory.idempotency(),
+                inMemory.unitOfWork(),
+                inMemory.toolJournal(),
+                inMemory.interactions(),
+                inMemory.runInputs(),
+                inMemory.conversationSummaries(),
+                inMemory.toolResultAssets(),
+                inMemory.messageRedactions());
+        ManualExecutionScheduler scheduler = new ManualExecutionScheduler();
+        AtomicInteger sequence = new AtomicInteger();
+        AtomicInteger providerCalls = new AtomicInteger();
+        AgentChatModel chatModel = request -> {
+            providerCalls.incrementAndGet();
+            return response(finalDecision("never reached"));
+        };
+        DefaultAgentRuntime runtime = new RuntimeCoreBuilder()
+                .registerChatModel("openai-compatible", "1.0.0", chatModel)
+                .scheduler(scheduler)
+                .persistence(failingPersistence)
+                .identifierGenerator(() -> "storage-failure-" + sequence.incrementAndGet())
+                .timeProvider(() -> Instant.parse("2026-07-21T00:00:00Z"))
+                .build();
+
+        var accepted = runtime.start(request("storage-failure"));
+        scheduler.runAll();
+
+        var failedRun = runtime.find(accepted.runId()).orElseThrow();
+        assertThat(failedRun.status()).isEqualTo(AgentRunStatus.FAILED);
+        assertThat(failedRun.error().orElseThrow().code()).isEqualTo(AgentErrorCode.STORAGE_UNAVAILABLE);
+        assertThat(failedRun.error().orElseThrow().category()).isEqualTo(AgentErrorCategory.STORAGE);
+        assertThat(providerCalls)
+                .as("the provider is never contacted when the model step cannot persist its start")
+                .hasValue(0);
+        assertThat(store.eventsFor(accepted.runId()))
+                .extracting(RuntimeEvent::type)
+                .doesNotContain("model.call.started");
+    }
+
+    /** Fails the durable write a model step performs before the provider is called. */
+    private static final class ModelCallEventFailure implements RuntimeEventAppender {
+        private final RuntimeEventAppender delegate;
+
+        private ModelCallEventFailure(RuntimeEventAppender delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public RuntimeEvent append(AgentRunId runId, String type, Map<String, Object> data, Instant occurredAt) {
+            if ("model.call.started".equals(type)) {
+                throw new StorageException("SQLite writer slot is unavailable");
+            }
+            return delegate.append(runId, type, data, occurredAt);
+        }
+
+        @Override
+        public List<RuntimeEvent> eventsFor(AgentRunId runId) {
+            return delegate.eventsFor(runId);
+        }
+
+        @Override
+        public RuntimeEventSlice eventsAfter(
+                AgentRunId runId, long exclusiveSequence, OptionalLong observedHead, int limit) {
+            return delegate.eventsAfter(runId, exclusiveSequence, observedHead, limit);
+        }
+
+        @Override
+        public OptionalLong earliestSequence(AgentRunId runId) {
+            return delegate.earliestSequence(runId);
+        }
+
+        @Override
+        public OptionalLong headSequence(AgentRunId runId) {
+            return delegate.headSequence(runId);
+        }
+
+        @Override
+        public long deleteBefore(AgentRunId runId, long retainFromSequence, Instant deletedAt) {
+            return delegate.deleteBefore(runId, retainFromSequence, deletedAt);
+        }
     }
 
     private static ResolvedModelSnapshot constrainedContextModel() {

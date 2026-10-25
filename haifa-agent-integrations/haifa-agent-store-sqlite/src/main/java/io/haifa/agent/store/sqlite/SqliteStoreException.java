@@ -1,8 +1,10 @@
 package io.haifa.agent.store.sqlite;
 
+import io.haifa.agent.runtime.core.storage.StorageException;
 import java.util.Objects;
 
-public final class SqliteStoreException extends RuntimeException {
+/** Store failure; Runtime Core classifies it as {@code STORAGE_UNAVAILABLE} rather than a model or tool failure. */
+public final class SqliteStoreException extends StorageException {
     private final SqliteStoreFailure failure;
 
     public SqliteStoreException(SqliteStoreFailure failure, String message) {

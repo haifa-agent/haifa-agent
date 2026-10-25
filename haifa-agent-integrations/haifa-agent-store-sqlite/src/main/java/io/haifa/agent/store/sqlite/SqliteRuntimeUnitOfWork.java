@@ -17,8 +17,10 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
     private static final Logger LOGGER = LoggerFactory.getLogger(SqliteRuntimeUnitOfWork.class);
     private static final AtomicLong UNIT_OF_WORK_IDS = new AtomicLong();
     private static final long SLOW_OPERATION_MILLIS = 50;
-    /** Cross-process retry budget; shared with the in-process writer queue so the tolerated window stays identical. */
-    private static final int MAX_BEGIN_ATTEMPTS = SqliteConnectionFactory.WRITER_SLOT_ATTEMPTS;
+    private static final String COMMITTED = "committed";
+    private static final String FAILED = "failed";
+    /** Attempts to begin a write transaction while another process holds the database write lock. */
+    private static final int MAX_BEGIN_ATTEMPTS = 2;
 
     private final SqliteConnectionFactory connections;
     private final SqliteMyBatisSessionFactory myBatis;
@@ -101,66 +103,97 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
         long unitOfWorkId = UNIT_OF_WORK_IDS.incrementAndGet();
         T result;
         java.util.List<Runnable> committedListeners;
-        try (Connection connection = connections.openConnection();
-                SqlSession session = myBatis.openSession(connection)) {
-            long setupMillis = elapsedMillis(started);
-            Context context = new Context(unitOfWorkId, connection, session, mode == TransactionMode.READ_ONLY);
-            active.set(context);
-            boolean transactionStarted = false;
-            boolean writerHeld = false;
-            try {
-                if (mode == TransactionMode.WRITE) {
-                    connections.acquireWriter();
-                    writerHeld = true;
-                }
-                long phaseStarted = System.nanoTime();
-                begin(connection, mode);
-                long beginMillis = elapsedMillis(phaseStarted);
-                transactionStarted = true;
-                phaseStarted = System.nanoTime();
-                result = work.get();
-                long workMillis = elapsedMillis(phaseStarted);
-                if (context.rollbackOnly) {
-                    throw new SqliteStoreException(
-                            SqliteStoreFailure.TRANSACTION_FAILED,
-                            "SQLite unit of work was marked rollback-only by a nested failure");
-                }
-                phaseStarted = System.nanoTime();
-                session.flushStatements();
-                long flushMillis = elapsedMillis(phaseStarted);
-                phaseStarted = System.nanoTime();
-                executeControl(connection, "COMMIT");
-                long commitMillis = elapsedMillis(phaseStarted);
-                transactionStarted = false;
-                committedListeners = java.util.List.copyOf(context.afterCommit);
-                logUnitOfWork(
-                        unitOfWorkId,
-                        mode,
-                        setupMillis,
-                        beginMillis,
-                        workMillis,
-                        flushMillis,
-                        commitMillis,
-                        committedListeners.size(),
-                        elapsedMillis(started));
-            } catch (RuntimeException | Error | SQLException exception) {
-                if (transactionStarted) {
-                    rollback(connection, exception);
-                }
-                if (exception instanceof SqliteStoreException storeException) {
-                    throw storeException;
-                }
-                throw new SqliteStoreException(
-                        SqliteStoreFailure.TRANSACTION_FAILED, "SQLite unit of work failed", exception);
-            } finally {
-                if (writerHeld) {
-                    connections.releaseWriter();
-                }
-                active.remove();
+        boolean writerHeld = false;
+        long writerWaitMillis = 0;
+        try {
+            if (mode == TransactionMode.WRITE) {
+                // Queue for the write slot before leasing a connection: a queued writer must not occupy one of the
+                // pooled connections that the current holder, or a nested caller, still needs.
+                writerWaitMillis = connections.acquireWriter();
+                writerHeld = true;
             }
-        } catch (SQLException exception) {
-            throw new SqliteStoreException(
-                    SqliteStoreFailure.TRANSACTION_FAILED, "Unable to close SQLite unit of work", exception);
+            try (Connection connection = connections.openConnection();
+                    SqlSession session = myBatis.openSession(connection)) {
+                long setupMillis = elapsedMillis(started);
+                Context context = new Context(unitOfWorkId, connection, session, mode == TransactionMode.READ_ONLY);
+                active.set(context);
+                boolean transactionStarted = false;
+                long beginMillis = 0;
+                long workMillis = 0;
+                long flushMillis = 0;
+                long commitMillis = 0;
+                try {
+                    long phaseStarted = System.nanoTime();
+                    begin(connection, mode);
+                    beginMillis = elapsedMillis(phaseStarted);
+                    transactionStarted = true;
+                    phaseStarted = System.nanoTime();
+                    result = work.get();
+                    workMillis = elapsedMillis(phaseStarted);
+                    if (context.rollbackOnly) {
+                        throw new SqliteStoreException(
+                                SqliteStoreFailure.TRANSACTION_FAILED,
+                                "SQLite unit of work was marked rollback-only by a nested failure");
+                    }
+                    phaseStarted = System.nanoTime();
+                    session.flushStatements();
+                    flushMillis = elapsedMillis(phaseStarted);
+                    phaseStarted = System.nanoTime();
+                    executeControl(connection, "COMMIT");
+                    commitMillis = elapsedMillis(phaseStarted);
+                    transactionStarted = false;
+                    committedListeners = java.util.List.copyOf(context.afterCommit);
+                    logUnitOfWork(
+                            unitOfWorkId,
+                            new UnitOfWorkTiming(
+                                    mode,
+                                    writerWaitMillis,
+                                    setupMillis,
+                                    beginMillis,
+                                    workMillis,
+                                    flushMillis,
+                                    commitMillis,
+                                    elapsedMillis(started)),
+                            COMMITTED,
+                            "",
+                            committedListeners.size());
+                } catch (RuntimeException | Error | SQLException exception) {
+                    if (transactionStarted) {
+                        rollback(connection, exception);
+                    }
+                    RuntimeException failure = exception instanceof SqliteStoreException storeException
+                            ? storeException
+                            : new SqliteStoreException(
+                                    SqliteStoreFailure.TRANSACTION_FAILED, "SQLite unit of work failed", exception);
+                    // The failure path is logged too: a unit of work that never committed used to leave no trace,
+                    // which made a slow or failed holder of the write slot impossible to identify.
+                    logUnitOfWork(
+                            unitOfWorkId,
+                            new UnitOfWorkTiming(
+                                    mode,
+                                    writerWaitMillis,
+                                    setupMillis,
+                                    beginMillis,
+                                    workMillis,
+                                    flushMillis,
+                                    commitMillis,
+                                    elapsedMillis(started)),
+                            FAILED,
+                            failureCode(failure),
+                            context.afterCommit.size());
+                    throw failure;
+                } finally {
+                    active.remove();
+                }
+            } catch (SQLException exception) {
+                throw new SqliteStoreException(
+                        SqliteStoreFailure.TRANSACTION_FAILED, "Unable to close SQLite unit of work", exception);
+            }
+        } finally {
+            // Released after the connection is closed, so the next writer never shares this unit of work's lease.
+            if (writerHeld) {
+                connections.releaseWriter();
+            }
         }
         committedListeners.forEach(Runnable::run);
         return result;
@@ -170,42 +203,61 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
         return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
     }
 
+    private static String failureCode(RuntimeException failure) {
+        return failure instanceof SqliteStoreException storeException
+                ? storeException.failure().name()
+                : SqliteStoreFailure.TRANSACTION_FAILED.name();
+    }
+
     private static void logUnitOfWork(
-            long unitOfWorkId,
+            long unitOfWorkId, UnitOfWorkTiming timing, String outcome, String failure, int listenerCount) {
+        boolean worthReporting = FAILED.equals(outcome) || timing.totalMillis() >= SLOW_OPERATION_MILLIS;
+        if (worthReporting) {
+            LOGGER.info(
+                    "event=sqlite.uow uowId={} transactionMode={} outcome={} waitMs={} setupMs={} beginMs={} workMs={} flushMs={} commitMs={} afterCommitListeners={} totalMs={} failure={}",
+                    unitOfWorkId,
+                    timing.mode(),
+                    outcome,
+                    timing.writerWaitMillis(),
+                    timing.setupMillis(),
+                    timing.beginMillis(),
+                    timing.workMillis(),
+                    timing.flushMillis(),
+                    timing.commitMillis(),
+                    listenerCount,
+                    timing.totalMillis(),
+                    failure);
+        } else {
+            LOGGER.debug(
+                    "event=sqlite.uow uowId={} transactionMode={} outcome={} waitMs={} setupMs={} beginMs={} workMs={} flushMs={} commitMs={} afterCommitListeners={} totalMs={} failure={}",
+                    unitOfWorkId,
+                    timing.mode(),
+                    outcome,
+                    timing.writerWaitMillis(),
+                    timing.setupMillis(),
+                    timing.beginMillis(),
+                    timing.workMillis(),
+                    timing.flushMillis(),
+                    timing.commitMillis(),
+                    listenerCount,
+                    timing.totalMillis(),
+                    failure);
+        }
+    }
+
+    /**
+     * Phase breakdown of one unit of work. {@code waitMillis} is the time spent queued for the run's write slot,
+     * which no other phase covers: it happens before the transaction begins and after the connection is leased.
+     */
+    private record UnitOfWorkTiming(
             TransactionMode mode,
+            long writerWaitMillis,
             long setupMillis,
             long beginMillis,
             long workMillis,
             long flushMillis,
             long commitMillis,
-            int listenerCount,
-            long totalMillis) {
-        if (totalMillis >= SLOW_OPERATION_MILLIS) {
-            LOGGER.info(
-                    "event=sqlite.uow uowId={} transactionMode={} setupMs={} beginMs={} workMs={} flushMs={} commitMs={} afterCommitListeners={} totalMs={}",
-                    unitOfWorkId,
-                    mode,
-                    setupMillis,
-                    beginMillis,
-                    workMillis,
-                    flushMillis,
-                    commitMillis,
-                    listenerCount,
-                    totalMillis);
-        } else {
-            LOGGER.debug(
-                    "event=sqlite.uow uowId={} transactionMode={} setupMs={} beginMs={} workMs={} flushMs={} commitMs={} afterCommitListeners={} totalMs={}",
-                    unitOfWorkId,
-                    mode,
-                    setupMillis,
-                    beginMillis,
-                    workMillis,
-                    flushMillis,
-                    commitMillis,
-                    listenerCount,
-                    totalMillis);
-        }
-    }
+            long totalMillis) {}
 
     private Context requireContext() {
         Context context = active.get();

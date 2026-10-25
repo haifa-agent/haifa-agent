@@ -10,6 +10,9 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -264,6 +267,71 @@ class SqliteRuntimeUnitOfWorkTest {
             holder.join();
             assertThat(holderFailure.get()).isNull();
             assertThat(workCalls).hasValue(1);
+        }
+    }
+
+    @Test
+    void queuedWriteUnitsOfWorkSurviveAHolderBeyondTheBusyTimeoutWindow() throws Exception {
+        Path database = directory.resolve("slow-holder.db");
+        try (SqliteStoreFoundation foundation = SqliteStoreFoundation.initialize(
+                new SqliteStoreConfiguration(database, 100, 4 * 1024 * 1024), java.time.Clock.systemUTC())) {
+            SqliteRuntimeUnitOfWork unitOfWork = foundation.unitOfWork();
+            unitOfWork.execute(() -> {
+                execute(unitOfWork.currentConnection(), "CREATE TABLE slow_holder(value INTEGER NOT NULL)");
+                return null;
+            });
+
+            CountDownLatch holderRunning = new CountDownLatch(1);
+            AtomicReference<Throwable> failure = new AtomicReference<>();
+            Thread holder = Thread.ofVirtual().start(() -> {
+                try {
+                    unitOfWork.execute(() -> {
+                        execute(unitOfWork.currentConnection(), "INSERT INTO slow_holder(value) VALUES (0)");
+                        holderRunning.countDown();
+                        try {
+                            // Six times the busy timeout: the previous implementation failed every queued writer
+                            // once the slot had been held for twice the busy timeout.
+                            Thread.sleep(600);
+                        } catch (InterruptedException interrupted) {
+                            Thread.currentThread().interrupt();
+                        }
+                        return null;
+                    });
+                } catch (Throwable exception) {
+                    failure.compareAndSet(null, exception);
+                    holderRunning.countDown();
+                }
+            });
+            assertThat(holderRunning.await(5, TimeUnit.SECONDS)).isTrue();
+
+            List<Thread> queuedWriters = new ArrayList<>();
+            for (int value = 1; value <= 3; value++) {
+                int row = value;
+                queuedWriters.add(Thread.ofVirtual().start(() -> {
+                    try {
+                        unitOfWork.execute(() -> {
+                            execute(
+                                    unitOfWork.currentConnection(),
+                                    "INSERT INTO slow_holder(value) VALUES (" + row + ")");
+                            return null;
+                        });
+                    } catch (Throwable exception) {
+                        failure.compareAndSet(null, exception);
+                    }
+                }));
+            }
+            for (Thread queuedWriter : queuedWriters) {
+                queuedWriter.join(Duration.ofSeconds(20));
+                assertThat(queuedWriter.isAlive()).isFalse();
+            }
+            holder.join(Duration.ofSeconds(20));
+            assertThat(holder.isAlive()).isFalse();
+            assertThat(failure.get()).isNull();
+
+            try (Connection connection = foundation.connections().openConnection()) {
+                assertThat(queryLong(connection, "SELECT COUNT(*) FROM slow_holder"))
+                        .isEqualTo(4);
+            }
         }
     }
 

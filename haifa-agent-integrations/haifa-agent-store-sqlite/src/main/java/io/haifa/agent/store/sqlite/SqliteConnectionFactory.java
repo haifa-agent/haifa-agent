@@ -18,6 +18,7 @@ import java.util.Objects;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 import org.apache.ibatis.datasource.pooled.PooledDataSource;
@@ -49,30 +50,49 @@ public final class SqliteConnectionFactory implements AutoCloseable {
     private final Semaphore leases = new Semaphore(MAXIMUM_POOLED_CONNECTIONS, true);
     private final AtomicLong physicalConnectionsOpened = new AtomicLong();
     /**
-     * In-process writers queue for the window that the direct {@code BEGIN IMMEDIATE} attempts used to provide, so
-     * contention that previously succeeded by retrying never becomes {@code DATABASE_BUSY} just because it now waits
-     * in the local queue instead. The same count still bounds the cross-process retry in
-     * {@link SqliteRuntimeUnitOfWork}.
+     * Fallback bound for waiting in the in-process writer queue. SQLite's {@code busy_timeout} bounds cross-process
+     * lock contention, so it does not bound this queue: the queue is fair, and a settled position guarantees progress.
+     * This bound therefore only ends the wait of a caller whose holder leaked the writer slot, and it is deliberately
+     * far above any unit of work that a healthy process runs.
      */
-    static final int WRITER_SLOT_ATTEMPTS = 2;
+    static final long WRITER_QUEUE_TIMEOUT_MILLIS = 60_000;
+    /** A writer-slot wait or hold this long is logged, so the thread that stalled writing can be identified. */
+    static final long WRITER_SLOT_DIAGNOSTIC_MILLIS = 5_000;
     // SQLite admits one writer. Writers of this process queue here and are woken as soon as the
     // previous one finishes, instead of retrying BEGIN IMMEDIATE through SQLite's busy handler,
     // whose back-off sleeps add tens of milliseconds per contended write.
     private final ReentrantLock writer = new ReentrantLock(true);
+    private final long writerQueueTimeoutMillis;
+    private final AtomicInteger writerQueueDepth = new AtomicInteger();
+    // Diagnostics only: written and cleared by the thread that holds the writer slot.
+    private volatile String writerHolderThread;
+    private volatile long writerHeldSinceNanos;
     private volatile PooledDataSource pool;
     private SecureFilePermissions.PermissionStrategy permissionStrategy;
     private volatile boolean initialized;
     private volatile boolean closed;
 
     public SqliteConnectionFactory(SqliteStoreConfiguration configuration) {
-        this(configuration, SecureFilePermissions::strategyForDirectory);
+        this(configuration, SecureFilePermissions::strategyForDirectory, WRITER_QUEUE_TIMEOUT_MILLIS);
     }
 
     SqliteConnectionFactory(
             SqliteStoreConfiguration configuration, PermissionStrategyDetector permissionStrategyDetector) {
+        this(configuration, permissionStrategyDetector, WRITER_QUEUE_TIMEOUT_MILLIS);
+    }
+
+    SqliteConnectionFactory(
+            SqliteStoreConfiguration configuration,
+            PermissionStrategyDetector permissionStrategyDetector,
+            long writerQueueTimeoutMillis) {
         this.configuration = Objects.requireNonNull(configuration, "configuration must not be null");
         this.permissionStrategyDetector =
                 Objects.requireNonNull(permissionStrategyDetector, "permissionStrategyDetector must not be null");
+        if (writerQueueTimeoutMillis < 1) {
+            throw new SqliteStoreException(
+                    SqliteStoreFailure.INVALID_CONFIGURATION, "writerQueueTimeoutMillis must be positive");
+        }
+        this.writerQueueTimeoutMillis = writerQueueTimeoutMillis;
     }
 
     public synchronized void initialize() {
@@ -141,13 +161,35 @@ public final class SqliteConnectionFactory implements AutoCloseable {
     }
 
     /**
-     * Waits, at most for the retry window of the direct {@code BEGIN IMMEDIATE} attempts, until no other unit of
-     * work of this process holds the write transaction. Interruption does not abort the wait (a cancelled run must
-     * still persist its state); the interrupt is restored for the caller.
+     * Waits until no other unit of work of this process holds the write transaction.
+     *
+     * <p>The wait is not bounded by {@code busy_timeout}: that setting describes cross-process lock contention, while
+     * the fair queue of this factory guarantees that a queued writer eventually writes. Only a holder that appears to
+     * have leaked the slot ends the wait, and the failure names that holder. Interruption does not abort the wait (a
+     * cancelled run must still persist its state); the interrupt is restored for the caller.
+     *
+     * @return how long this caller waited for the write slot
      */
-    void acquireWriter() {
-        long deadline = System.nanoTime()
-                + TimeUnit.MILLISECONDS.toNanos((long) configuration.busyTimeoutMillis() * WRITER_SLOT_ATTEMPTS);
+    long acquireWriter() {
+        long started = System.nanoTime();
+        int queueDepth = writerQueueDepth.incrementAndGet();
+        try {
+            awaitWriterSlot(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(writerQueueTimeoutMillis), queueDepth);
+        } finally {
+            writerQueueDepth.decrementAndGet();
+        }
+        long waitMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+        writerHolderThread = Thread.currentThread().getName();
+        writerHeldSinceNanos = System.nanoTime();
+        if (waitMillis >= WRITER_SLOT_DIAGNOSTIC_MILLIS) {
+            LOGGER.warn("event=sqlite.writer.acquired waitMs={} queuedWriters={}", waitMillis, queueDepth);
+        } else {
+            LOGGER.debug("event=sqlite.writer.acquired waitMs={} queuedWriters={}", waitMillis, queueDepth);
+        }
+        return waitMillis;
+    }
+
+    private void awaitWriterSlot(long deadline, int queueDepth) {
         boolean interrupted = Thread.interrupted();
         try {
             while (true) {
@@ -166,11 +208,37 @@ public final class SqliteConnectionFactory implements AutoCloseable {
             }
         }
         throw new SqliteStoreException(
-                SqliteStoreFailure.DATABASE_BUSY, "SQLite writer is busy before the unit of work began");
+                SqliteStoreFailure.WRITER_SLOT_TIMEOUT,
+                "SQLite writer slot was not released within " + writerQueueTimeoutMillis + " ms (holderThread="
+                        + writerHolderThread + ", holderHeldMs=" + writerHeldMillis()
+                        + ", queuedWriters=" + queueDepth + ")");
     }
 
     void releaseWriter() {
+        String holderThread = writerHolderThread;
+        long heldMillis = writerHeldMillis();
+        writerHolderThread = null;
+        writerHeldSinceNanos = 0;
+        // Releases the next queued writer before the diagnostic is written, so logging never delays it.
         writer.unlock();
+        if (heldMillis >= WRITER_SLOT_DIAGNOSTIC_MILLIS) {
+            LOGGER.warn(
+                    "event=sqlite.writer.released holderThread={} heldMs={} queuedWriters={}",
+                    holderThread,
+                    heldMillis,
+                    writerQueueDepth.get());
+        } else {
+            LOGGER.debug(
+                    "event=sqlite.writer.released holderThread={} heldMs={} queuedWriters={}",
+                    holderThread,
+                    heldMillis,
+                    writerQueueDepth.get());
+        }
+    }
+
+    private long writerHeldMillis() {
+        long since = writerHeldSinceNanos;
+        return since == 0 ? 0 : TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - since);
     }
 
     /** Number of physical connections opened so far; a reused connection is not counted again. */
