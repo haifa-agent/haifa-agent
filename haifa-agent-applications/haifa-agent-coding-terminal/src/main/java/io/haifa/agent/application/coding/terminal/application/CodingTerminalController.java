@@ -1045,7 +1045,7 @@ public final class CodingTerminalController implements AutoCloseable {
             return;
         }
         if (input.kind() == TerminalInput.Kind.TOGGLE_EXPANSION) {
-            activeTranscriptItem(false).ifPresent(value -> toggleTranscriptItem(value.id()));
+            activeTranscriptItem(false).ifPresent(value -> apply(new TerminalUiAction.ToggleExpanded(value.id())));
             return;
         }
         if (state.selector().isPresent()) {
@@ -3016,7 +3016,7 @@ public final class CodingTerminalController implements AutoCloseable {
         return List.copyOf(grouped.values());
     }
 
-    /** Toggles one transcript item, used by pointer expansion as well as the keyboard path. */
+    /** Explicitly selects and toggles a transcript item from pointer expansion. */
     public void toggleTranscriptItem(String itemId) {
         if (itemId == null || itemId.isBlank()) return;
         activeTranscriptItemId = itemId;

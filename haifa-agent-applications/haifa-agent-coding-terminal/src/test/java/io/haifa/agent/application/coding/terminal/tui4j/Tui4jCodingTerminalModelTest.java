@@ -975,6 +975,32 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
+    void keyboardFallbackKeepsFollowingNewToolsWithoutCreatingAnExplicitSelection() {
+        var fixture = fixture();
+        fixture.model.update(new PasteMessage("preserved draft"));
+        for (int index = 1; index <= 3; index++) {
+            fixture.pump.offer(new TerminalUiAction.RunEventReceived(event(
+                    index,
+                    new RunEventPayloads.ToolLifecycle(
+                            "tool-" + index, "Read File", "SUCCEEDED", "NONE", "README.md", "result-" + index))));
+            fixture.model.update(new WindowSizeMessage(120, 40));
+            if (index == 2) {
+                fixture.model.update(key(KeyType.keyCAN));
+                fixture.model.update(runes('t'));
+            } else {
+                fixture.model.update(key(KeyType.keySI));
+            }
+            assertThat(fixture.controller.state().transcript().getLast())
+                    .satisfies(item -> assertThat(item.expanded()).isTrue());
+        }
+        assertThat(fixture.controller.state().transcript())
+                .allSatisfy(item -> assertThat(item.expanded()).isTrue());
+        assertThat(fixture.controller.state().transcript().get(1).toolDetails())
+                .hasValueSatisfying(details -> assertThat(details.expanded()).isTrue());
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("preserved draft");
+    }
+
+    @Test
     void technicalShortcutFollowsTheSelectedToolAndPreservesDraft() {
         var fixture = fixture();
         for (int index = 1; index <= 2; index++) {
@@ -1002,6 +1028,10 @@ class Tui4jCodingTerminalModelTest {
                 .hasValueSatisfying(details -> assertThat(details.expanded()).isTrue());
         assertThat(fixture.controller.state().transcript().getLast().toolDetails())
                 .hasValueSatisfying(details -> assertThat(details.expanded()).isFalse());
+        fixture.model.update(key(KeyType.keySI));
+        assertThat(fixture.controller.state().transcript().getFirst().expanded())
+                .isFalse();
+        assertThat(fixture.controller.state().transcript().getLast().expanded()).isFalse();
         assertThat(fixture.controller.state().editorBuffer()).isEqualTo("保留草稿");
     }
 
