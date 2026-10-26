@@ -149,6 +149,9 @@ Tool、MCP、Execution、Memory 等能力不会被默认全部打开，而是根
 export PATH="$HOME/.haifa-agent/coding:$PATH"
 ```
 
+无桌面密钥环的 Linux / WSL2 环境可显式启用文件认证存储：`export HAIFA_CODING_AUTH_STORE=file`。
+此时模型登录凭据保存在当前用户的 `~/.haifa-agent/auth.json`，文件权限为 `0600`；不会自动从桌面密钥库降级。
+
 进入任意项目：
 
 ```bash
