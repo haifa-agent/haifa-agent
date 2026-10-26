@@ -109,6 +109,10 @@ final class Tui4jTerminalView {
         return theme;
     }
 
+    static int editorColumns(TerminalUiState state) {
+        return Math.max(1, state.columns() - (state.sidebarVisible() && state.columns() >= 100 ? 43 : 1));
+    }
+
     TranscriptRegion transcriptRegion() {
         return transcriptRegion;
     }
@@ -298,7 +302,8 @@ final class Tui4jTerminalView {
                 secureInput,
                 isUpdate,
                 secureInputHint,
-                mouseReporting);
+                mouseReporting,
+                editorColumns(state));
         int viewportRows = Math.max(1, state.rows() - visualRows(after));
         int transcriptWidth = showSidebar ? Math.max(12, mainWidth - 1) : Math.max(12, mainWidth);
         transcript.setWidth(transcriptWidth);
@@ -316,13 +321,16 @@ final class Tui4jTerminalView {
         List<String> lines = new ArrayList<>(state.rows());
         if (!showSidebar) {
             lines.add(transcript.view());
+            lines.addAll(after);
         } else {
             int leftWidth = Math.max(1, mainWidth - 1);
             int rightWidth = Math.max(1, sidebarWidth - 1);
-            List<String> sidebarLines = renderSidebar(state, viewportRows, rightWidth);
-            String[] leftRows = transcript.view().split("\n", -1);
+            List<String> mainAfter = after.subList(0, after.size() - 1);
+            int panelRows = viewportRows + visualRows(mainAfter);
+            List<String> sidebarLines = renderSidebar(state, panelRows, rightWidth);
+            String[] leftRows = (transcript.view() + "\n" + String.join("\n", mainAfter)).split("\n", -1);
             StringBuilder combined = new StringBuilder();
-            for (int row = 0; row < viewportRows; row++) {
+            for (int row = 0; row < panelRows; row++) {
                 String left = row < leftRows.length ? leftRows[row] : "";
                 String right = row < sidebarLines.size() ? sidebarLines.get(row) : "";
                 int leftLen = TextWidth.measureCellWidth(left);
@@ -347,8 +355,8 @@ final class Tui4jTerminalView {
                 combined.append(leftPadded).append(theme.borderSubtle("│")).append(rightPadded);
             }
             lines.add(combined.toString());
+            lines.add(after.getLast());
         }
-        lines.addAll(after);
         return lines.stream().map(value -> clip(value, state.columns())).collect(Collectors.joining("\n"));
     }
 
@@ -475,7 +483,8 @@ final class Tui4jTerminalView {
             boolean secureInput,
             boolean isUpdate,
             String secureInputHint,
-            boolean mouseReporting) {
+            boolean mouseReporting,
+            int editorColumns) {
         List<String> lines = new ArrayList<>();
         if (!state.pending().isEmpty()) {
             lines.add(theme.queued("Pending · " + state.pending().size()));
@@ -491,14 +500,15 @@ final class Tui4jTerminalView {
             java.util.function.Function<String, String> recoveryStyle =
                     recovery.category() == TerminalRecovery.Category.TERMINAL_CAPABILITY ? theme::queued : theme::error;
             lines.add(recoveryStyle.apply(recovery.displayTitle()));
-            if (!compact) lines.add(recoveryStyle.apply("  " + recovery.action()));
+            if (!compact)
+                lines.add(recoveryStyle.apply(textWrapper.wrap("  " + recovery.action(), editorColumns, true)));
         });
         if (state.selector().isPresent()) {
             lines.addAll(selector(state.selector().get(), compact ? 1 : 4));
         } else {
-            lines.add(theme.editor(editor.view(), Math.max(1, state.columns() - 1), 3));
+            lines.add(theme.editor(editor.view(), editorColumns, 3));
             if (!compact) {
-                lines.add(promptMetaStrip(state, secureInput, isUpdate, secureInputHint));
+                lines.add(promptMetaStrip(state, secureInput, isUpdate, secureInputHint, editorColumns));
             }
         }
         lines.add(renderBottomStatusLine(state, newOutputPending, activityElapsed, mouseReporting));
@@ -506,7 +516,7 @@ final class Tui4jTerminalView {
     }
 
     private String promptMetaStrip(
-            TerminalUiState state, boolean secureInput, boolean isUpdate, String secureInputHint) {
+            TerminalUiState state, boolean secureInput, boolean isUpdate, String secureInputHint, int editorColumns) {
         if (secureInput) {
             return theme.muted(editorHint(state, secureInput, isUpdate, secureInputHint));
         }
@@ -519,7 +529,7 @@ final class Tui4jTerminalView {
                 state.footer().provider().isBlank() ? "" : " (" + state.footer().provider() + ")";
         String leftMeta = "  " + mode + model + provider;
         String hint = editorHint(state, false, false, null);
-        int available = Math.max(1, state.columns() - 1);
+        int available = editorColumns;
         int leftWidth = TextWidth.measureCellWidth(leftMeta);
         int hintWidth = TextWidth.measureCellWidth(hint);
         if (leftWidth + hintWidth + 4 <= available) {

@@ -1456,6 +1456,49 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
+    void reflowsTheDraftWithinTheMainColumnWhenTheSidebarOrWindowChanges() {
+        var fixture = fixture();
+        String draft = "中🙂ab".repeat(18);
+        fixture.model.update(new WindowSizeMessage(120, 30));
+        fixture.model.update(new PasteMessage(draft));
+
+        for (int columns : List.of(120, 99, 100, 160)) {
+            fixture.model.update(new WindowSizeMessage(columns, 30));
+            for (int toggle = 0; toggle < 2; toggle++) {
+                var state = fixture.controller.state();
+                boolean sidebar = state.sidebarVisible() && columns >= 100;
+                List<String> lines = TerminalScreenCells.plainText(fixture.model.view())
+                        .lines()
+                        .toList();
+                int inputStart = java.util.stream.IntStream.range(0, lines.size())
+                        .filter(row -> lines.get(row).startsWith("┃"))
+                        .findFirst()
+                        .orElseThrow();
+                StringBuilder visibleDraft = new StringBuilder();
+                for (String line : lines.subList(inputStart, lines.size() - 2)) {
+                    String input = line;
+                    if (sidebar) {
+                        int divider = line.lastIndexOf('│');
+                        assertThat(divider).isGreaterThanOrEqualTo(0);
+                        input = line.substring(0, divider);
+                        assertThat(com.williamcallahan.tui4j.ansi.TextWidth.measureCellWidth(input))
+                                .isEqualTo(columns - 43);
+                        assertThat(line.substring(divider + 1)).doesNotContain("中", "🙂", "ab");
+                    }
+                    visibleDraft.append(input.replace("┃", "").replace(" ", ""));
+                }
+                assertThat(visibleDraft.toString()).contains(draft);
+                assertThat(state.editorBuffer()).isEqualTo(draft);
+                assertThat(state.editorCursor()).isEqualTo(draft.length());
+                fixture.model.update(key(KeyType.keyCAN));
+                fixture.model.update(runes('b'));
+            }
+        }
+        fixture.model.update(runes('Z'));
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo(draft + "Z");
+    }
+
+    @Test
     void togglesSidebarUsingLeaderKeyCombination() {
         var fixture = fixture();
         boolean initialVisible = fixture.controller.state().sidebarVisible();

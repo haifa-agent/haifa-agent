@@ -2,6 +2,9 @@
 
 ## 0.1.4-SNAPSHOT - Unreleased
 
+- Coding Terminal extends the sidebar divider through the composer and selectors. Input wraps within the
+  main column when the sidebar is visible, and reflows on sidebar toggles and terminal resize without losing drafts.
+
 - Coding Terminal separates tool results from optional technical details, keeps non-zero command exits neutral,
   and labels completed responses without changing Markdown rendering. New leader shortcuts copy the rendered
   final response, return to its own Run's tool activity, and expand technical facts while preserving drafts.

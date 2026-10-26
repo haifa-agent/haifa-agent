@@ -505,7 +505,9 @@ class Tui4jTerminalViewTest {
                         "[steer] Check the diff",
                         "[follow_up] Run tests",
                         "Retryable · ACTIVE_RUN_MISMATCH",
-                        "The session changed while submitting; retry the message.",
+                        "The session changed while submitting;",
+                        "retry",
+                        "message.",
                         "Type a message",
                         "frozen-model",
                         "queue: 2")
@@ -1272,6 +1274,31 @@ class Tui4jTerminalViewTest {
                 Optional.empty(),
                 Optional.of(1_000L),
                 Optional.of(durationMillis));
+    }
+
+    @Test
+    void continuesTheSidebarDividerThroughTheComposerAndSelector() {
+        for (int rows : List.of(18, 30)) {
+            var initial = TerminalUiState.initial(120, rows);
+            var selecting = new TerminalUiReducer()
+                    .reduce(
+                            initial,
+                            new TerminalUiAction.SelectorOpened(
+                                    new TerminalSelector("commands", "Commands", List.of("First", "Second"), 0)));
+            for (var state : List.of(initial, selecting)) {
+                String rendered = Strip.strip(view.render(state, transcript(state), editor(77), true, false));
+                List<String> lines = rendered.lines().toList();
+                assertThat(lines).hasSize(rows);
+                assertThat(lines.subList(0, rows - 1)).allSatisfy(line -> {
+                    int divider = line.lastIndexOf('│');
+                    assertThat(divider).isGreaterThanOrEqualTo(0);
+                    assertThat(TextWidth.measureCellWidth(line.substring(0, divider)))
+                            .isEqualTo(77);
+                    assertThat(TextWidth.measureCellWidth(line)).isLessThanOrEqualTo(119);
+                });
+                assertThat(view.transcriptRegion().height()).isLessThan(rows - 3);
+            }
+        }
     }
 
     @Test
