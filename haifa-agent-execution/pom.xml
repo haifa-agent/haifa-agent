@@ -17,5 +17,6 @@
         <module>haifa-agent-execution-core</module>
         <module>haifa-agent-execution-host</module>
         <module>haifa-agent-sandbox-host</module>
+        <module>haifa-agent-sandbox-docker</module>
     </modules>
 </project>

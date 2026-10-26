@@ -55,6 +55,10 @@
         </dependency>
         <dependency>
             <groupId>io.haifa</groupId>
+            <artifactId>haifa-agent-sandbox-docker</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.haifa</groupId>
             <artifactId>haifa-agent-project-core</artifactId>
         </dependency>
         <dependency>
