@@ -24,6 +24,7 @@ import io.haifa.agent.auth.localmodel.ExternalLoginAttemptId;
 import io.haifa.agent.auth.localmodel.ExternalLoginCoordinator;
 import io.haifa.agent.auth.localmodel.ExternalLoginMethod;
 import io.haifa.agent.auth.localmodel.ExternalLoginRegistry;
+import io.haifa.agent.auth.localmodel.FileLocalModelAuthStore;
 import io.haifa.agent.auth.localmodel.LocalModelAuthReference;
 import io.haifa.agent.auth.localmodel.LocalModelAuthStore;
 import io.haifa.agent.auth.localmodel.LocalModelAuthenticationService;
@@ -265,7 +266,7 @@ final class LocalCodingAgent implements AutoCloseable {
                 .build();
         var json = new ObjectMapper();
         Clock authClock = Clock.systemUTC();
-        var authStore = WindowsLocalModelAuthStore.defaultStore(json);
+        var authStore = authenticationStore(json, System.getProperty("os.name", ""), environmentResolver);
         var codexRegistration = CodexLocalCompatibilityRegistrationFactory.create(environmentResolver);
         var antigravityRegistration = AntigravityLocalCompatibilityRegistrationFactory.create(environmentResolver);
         var antigravityProjects = new AntigravityProjectRegistry();
@@ -359,6 +360,19 @@ final class LocalCodingAgent implements AutoCloseable {
                 authStore,
                 authentication,
                 model -> connectionState(authenticationService, model));
+    }
+
+    static LocalModelAuthStore authenticationStore(
+            ObjectMapper json, String osName, Function<String, String> environment) {
+        String configured = environment.apply("HAIFA_CODING_AUTH_STORE");
+        if (configured == null || configured.isBlank() || "windows".equalsIgnoreCase(configured.trim())) {
+            return WindowsLocalModelAuthStore.defaultStore(json);
+        }
+        if ("file".equalsIgnoreCase(configured.trim()) && "Linux".equalsIgnoreCase(osName)) {
+            return FileLocalModelAuthStore.defaultStore(json);
+        }
+        throw new IllegalArgumentException(
+                "HAIFA_CODING_AUTH_STORE=file is supported only on explicitly configured headless Linux hosts");
     }
 
     static boolean allowInsecureLoopback(CliConfiguration configuration, String optIn) {
