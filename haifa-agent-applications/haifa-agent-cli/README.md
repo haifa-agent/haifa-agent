@@ -74,6 +74,10 @@ hint. API keys use a masked, short-lived
 character buffer and are saved to the current OS user's secure system credential store (Windows Credential Manager);
 credentials never belong in plaintext files or YAML.
 
+无桌面密钥环的 headless Linux / WSL2 主机可显式设置 `HAIFA_CODING_AUTH_STORE=file`，
+复用 `FileLocalModelAuthStore` 将凭据保存到 `~/.haifa-agent/auth.json`（目录 `0700`、文件 `0600`，原子写入与锁）。
+默认仍使用 Windows Credential Manager；文件模式不在 Windows / macOS 上启用，也不作为桌面密钥库故障的自动回退。
+
 The dedicated `openai-codex-responses` binding uses ChatGPT subscription authentication, not an OpenAI Platform API
 key and not a conversion of subscription quota into an API key. Browser callback and headless device-code login are
 implemented with bounded attempts, token rotation, and `model-auth://openai-codex/default`. Haifa does not compile a
