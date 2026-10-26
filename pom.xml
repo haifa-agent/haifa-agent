@@ -51,7 +51,7 @@
         <tui4j.version>0.3.3</tui4j.version>
         <jna.version>5.18.1</jna.version>
         <commons-io.version>2.21.0</commons-io.version>
-        <commons-lang3.version>3.19.0</commons-lang3.version>
+        <commons-lang3.version>3.20.0</commons-lang3.version>
         <commons-codec.version>1.19.0</commons-codec.version>
         <commons-compress.version>1.28.0</commons-compress.version>
 
