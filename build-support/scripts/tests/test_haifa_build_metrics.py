@@ -137,6 +137,20 @@ class HaifaBuildMetricsTest(unittest.TestCase):
             self.assertEqual(0, totals["forkReportFiles"])
             self.assertEqual(0, totals["tests"])
 
+    def test_maven_child_drops_the_running_agents_runtime_configuration(self):
+        environment, cleared = MODULE.child_environment(
+            {
+                "HAIFA_CONFIG": "live.yaml",
+                "HAIFA_DATA_ROOT": "C:/live/data",
+                "haifa_sqlite_database_path": "C:/live/data/runtime.db",
+                "HAIFA_GO_EXECUTABLE": "C:/tools/go.exe",
+                "PATH": "C:/bin",
+            }
+        )
+
+        self.assertEqual({"HAIFA_GO_EXECUTABLE": "C:/tools/go.exe", "PATH": "C:/bin"}, environment)
+        self.assertEqual(["HAIFA_CONFIG", "HAIFA_DATA_ROOT", "HAIFA_SQLITE_DATABASE_PATH"], cleared)
+
 
 if __name__ == "__main__":
     unittest.main()
