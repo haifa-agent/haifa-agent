@@ -14,6 +14,17 @@ Session 调和在发现活动 Run 的执行者已丢失（不再被当前进程�
 `STARTING / WAITING_USER / EXCHANGING / STORING` 登录阶段；具体 OAuth Attempt、Provider HTTP 和凭据存储
 仍留在最高层装配与共享 Local Model Auth Integration 中。
 
+## Session approval
+
+Terminal users can choose **Allow for this session** for ordinary built-in tool approvals. The local product
+client remembers that choice for the current Coding Session in this app instance, after the exact initial
+approval has reached Runtime `APPLIED`. Subsequent ordinary approvals are submitted through the same revision-aware
+Runtime API; no policy, workspace boundary or explicit denial is overridden. `/approval reset` returns the Session
+to asking each time. A new Session or app/client instance does not inherit consent.
+
+Workspace attachment, permission elevation, input/credential interactions, unknown tools and incomplete target
+projections remain explicit. Consent is not persisted and is not a project-wide permission rule.
+
 ## Shared model profile readiness
 
 Coding model preferences remain product-owned and this phase does not add `/thinking` or change the Session Store.

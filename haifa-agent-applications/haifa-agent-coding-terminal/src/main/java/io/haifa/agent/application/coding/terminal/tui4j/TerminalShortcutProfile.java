@@ -57,6 +57,10 @@ record TerminalShortcutProfile(
         return key.type() == KeyType.keySI;
     }
 
+    String technicalDetails() {
+        return style == Style.MAC_SPECIAL ? "⌃X T" : "ctrl+x t";
+    }
+
     boolean matchesFollowUp(KeyPressMessage key) {
         return key.alt() && key.type() == KeyType.keyCR;
     }

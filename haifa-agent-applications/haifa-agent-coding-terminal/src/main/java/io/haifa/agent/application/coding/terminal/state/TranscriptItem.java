@@ -14,7 +14,9 @@ public record TranscriptItem(
         Optional<Long> startedAtEpochMillis,
         Optional<Long> durationMillis,
         Optional<Integer> exitCode,
-        Optional<String> toolName) {
+        Optional<String> toolName,
+        Optional<ToolDetails> toolDetails,
+        Optional<String> sourceRunId) {
     public TranscriptItem {
         id = text(id, "id", 256);
         kind = Objects.requireNonNull(kind, "kind must not be null");
@@ -26,6 +28,8 @@ public record TranscriptItem(
         durationMillis = Objects.requireNonNull(durationMillis, "durationMillis must not be null");
         exitCode = Objects.requireNonNull(exitCode, "exitCode must not be null");
         toolName = Objects.requireNonNull(toolName, "toolName must not be null");
+        toolDetails = Objects.requireNonNull(toolDetails, "toolDetails must not be null");
+        sourceRunId = Objects.requireNonNull(sourceRunId, "sourceRunId must not be null");
         if (startedAtEpochMillis.isPresent() && startedAtEpochMillis.orElseThrow() < 0) {
             throw new IllegalArgumentException("startedAtEpochMillis must not be negative");
         }
@@ -36,6 +40,63 @@ public record TranscriptItem(
             throw new IllegalArgumentException("approval details require an approval transcript item");
         }
         toolName.ifPresent(value -> text(value, "toolName", 128));
+        sourceRunId.ifPresent(value -> text(value, "sourceRunId", 256));
+    }
+
+    public TranscriptItem(
+            String id,
+            Kind kind,
+            String title,
+            String body,
+            String status,
+            boolean expanded,
+            Optional<ApprovalDetails> approvalDetails,
+            Optional<Long> startedAtEpochMillis,
+            Optional<Long> durationMillis,
+            Optional<Integer> exitCode,
+            Optional<String> toolName,
+            Optional<ToolDetails> toolDetails) {
+        this(
+                id,
+                kind,
+                title,
+                body,
+                status,
+                expanded,
+                approvalDetails,
+                startedAtEpochMillis,
+                durationMillis,
+                exitCode,
+                toolName,
+                toolDetails,
+                Optional.empty());
+    }
+
+    public TranscriptItem(
+            String id,
+            Kind kind,
+            String title,
+            String body,
+            String status,
+            boolean expanded,
+            Optional<ApprovalDetails> approvalDetails,
+            Optional<Long> startedAtEpochMillis,
+            Optional<Long> durationMillis,
+            Optional<Integer> exitCode,
+            Optional<String> toolName) {
+        this(
+                id,
+                kind,
+                title,
+                body,
+                status,
+                expanded,
+                approvalDetails,
+                startedAtEpochMillis,
+                durationMillis,
+                exitCode,
+                toolName,
+                Optional.empty());
     }
 
     public TranscriptItem(
@@ -116,7 +177,9 @@ public record TranscriptItem(
                 startedAtEpochMillis,
                 durationMillis,
                 exitCode,
-                toolName);
+                toolName,
+                toolDetails,
+                sourceRunId);
     }
 
     public TranscriptItem withStatus(String value, String valueBody) {
@@ -131,7 +194,9 @@ public record TranscriptItem(
                 startedAtEpochMillis,
                 durationMillis,
                 exitCode,
-                toolName);
+                toolName,
+                toolDetails,
+                sourceRunId);
     }
 
     public TranscriptItem toggle() {
@@ -146,7 +211,47 @@ public record TranscriptItem(
                 startedAtEpochMillis,
                 durationMillis,
                 exitCode,
-                toolName);
+                toolName,
+                toolDetails,
+                sourceRunId);
+    }
+
+    public TranscriptItem withToolDetails(ToolDetails value) {
+        return new TranscriptItem(
+                id,
+                kind,
+                title,
+                body,
+                status,
+                expanded,
+                approvalDetails,
+                startedAtEpochMillis,
+                durationMillis,
+                exitCode,
+                toolName,
+                Optional.of(value),
+                sourceRunId);
+    }
+
+    public TranscriptItem withSourceRunId(String runId) {
+        return new TranscriptItem(
+                id,
+                kind,
+                title,
+                body,
+                status,
+                expanded,
+                approvalDetails,
+                startedAtEpochMillis,
+                durationMillis,
+                exitCode,
+                toolName,
+                toolDetails,
+                Optional.of(runId));
+    }
+
+    public TranscriptItem toggleTechnicalDetails() {
+        return toolDetails.map(value -> withToolDetails(value.toggle())).orElse(this);
     }
 
     /**

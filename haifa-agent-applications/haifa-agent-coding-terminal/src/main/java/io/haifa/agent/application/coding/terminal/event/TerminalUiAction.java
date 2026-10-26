@@ -68,7 +68,11 @@ public sealed interface TerminalUiAction {
 
     record ToolOutputPreviewReceived(ToolOutputPreview preview) implements TerminalUiAction {}
 
-    record InteractionPresented(InteractionView interaction) implements TerminalUiAction {}
+    record InteractionPresented(InteractionView interaction, boolean allowForSession) implements TerminalUiAction {
+        public InteractionPresented(InteractionView interaction) {
+            this(interaction, false);
+        }
+    }
 
     record InteractionReceiptReceived(InteractionResponseReceipt receipt) implements TerminalUiAction {}
 
@@ -89,6 +93,8 @@ public sealed interface TerminalUiAction {
     record SelectorClosed() implements TerminalUiAction {}
 
     record ToggleExpanded(String itemId) implements TerminalUiAction {}
+
+    record ToggleTechnicalDetails(String itemId) implements TerminalUiAction {}
 
     record TerminalResized(int columns, int rows) implements TerminalUiAction {}
 

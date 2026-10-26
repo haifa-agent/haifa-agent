@@ -47,6 +47,48 @@ class LocalCodingProductAssemblyTest {
     Path root;
 
     @Test
+    void sessionConsentApprovesTheNextOrdinaryToolThroughTheRealRuntime() throws Exception {
+        Path workspace = Files.createDirectory(root.resolve("session-approval"));
+        Path file = workspace.resolve("output.txt");
+        var configuration = CliConfigurationBuilder.from(memoryConfiguration())
+                .approval(ApprovalMode.ASK)
+                .build();
+        var calls = new AtomicInteger();
+        io.haifa.agent.model.api.AgentChatModel model = request -> switch (calls.incrementAndGet()) {
+            case 1 -> toolResponse("write-first", "file_write", Map.of("path", file.toString(), "content", "before\n"));
+            case 2 ->
+                toolResponse(
+                        "patch-next",
+                        "file_patch",
+                        Map.of(
+                                "patch",
+                                "*** Begin Patch\n*** Update File: " + file
+                                        + "\n@@\n-before\n+after\n*** End Patch\n"));
+            default -> response("done");
+        };
+        try (var agent = agent(workspace, configuration, model)) {
+            var client = client(agent);
+            var session = client.create(agent.projectId(), "Update the file", "session-approval");
+            var run = session.activeRun().orElseThrow().runId();
+            awaitCondition(() -> client.pendingInteraction(run).isPresent(), "first approval");
+            var first = client.pendingInteraction(run).orElseThrow();
+            assertThat(client.prepareApproval(first)).hasValueSatisfying(prompt -> assertThat(prompt.allowForSession())
+                    .isTrue());
+            client.allowForSession(first, "allow-session");
+            awaitCondition(
+                    () -> client.pendingInteraction(run)
+                            .filter(pending -> !pending.requestId().equals(first.requestId()))
+                            .isPresent(),
+                    "next approval");
+            var next = client.pendingInteraction(run).orElseThrow();
+            assertThat(client.prepareApproval(next)).isEmpty();
+            awaitTerminal(agent, run);
+            assertThat(Files.readString(file)).isEqualTo("after\n");
+            assertThat(calls).hasValue(3);
+        }
+    }
+
+    @Test
     void freezesSiliconFlowDialectAndNativeStreamingForProductAssembly() {
         URI endpoint = URI.create("https://api.siliconflow.cn/v1");
         var model = new CliConfiguration.Model(
@@ -535,14 +577,18 @@ class LocalCodingProductAssemblyTest {
     }
 
     private static AgentChatResponse readWorkspace(String id, Path workspace) {
+        return toolResponse(
+                id,
+                "file_list",
+                Map.of("path", workspace.toAbsolutePath().normalize().toString()));
+    }
+
+    private static AgentChatResponse toolResponse(String id, String name, Map<String, Object> arguments) {
         return new AgentChatResponse(
                 id,
                 "stub-model",
                 "",
-                List.of(new ModelToolCall(
-                        new ProviderToolCallCorrelationId(id + "-call"),
-                        "file_list",
-                        Map.of("path", workspace.toAbsolutePath().normalize().toString()))),
+                List.of(new ModelToolCall(new ProviderToolCallCorrelationId(id + "-call"), name, arguments)),
                 ModelFinishReason.TOOL_CALLS,
                 ModelUsage.unpriced(1, 1),
                 "stub",

@@ -17,6 +17,12 @@ public record ApprovalDetails(
         Optional<String> risk,
         List<String> allowedActions) {
 
+    /** The product-owned option appended after the Runtime's own actions for one ordinary Tool approval. */
+    public static final String SESSION_APPROVAL_ACTION = "allow_session";
+
+    /** Its single display label, read by the selector as well as by the action mapping. */
+    public static final String SESSION_APPROVAL_LABEL = "Allow for this session";
+
     /** One bounded label/value display fact. */
     public record Fact(String label, String value) {
         public Fact {
@@ -37,10 +43,16 @@ public record ApprovalDetails(
     }
 
     public static ApprovalDetails from(InteractionView interaction) {
+        return from(interaction, false);
+    }
+
+    public static ApprovalDetails from(InteractionView interaction, boolean allowForSession) {
         Objects.requireNonNull(interaction, "interaction must not be null");
-        List<String> allowedActions = interaction.allowedActions().stream()
+        List<String> allowedActions = new java.util.ArrayList<>(interaction.allowedActions().stream()
                 .map(InteractionAction::value)
-                .toList();
+                .toList());
+        if (allowForSession) allowedActions.add(SESSION_APPROVAL_ACTION);
+        Fact sessionScope = new Fact("Session option", "All ordinary tools · until app exit or /approval reset");
         var presentation = interaction.approvalPresentation();
         if (presentation.isPresent()) {
             var value = presentation.orElseThrow();
@@ -49,8 +61,11 @@ public record ApprovalDetails(
                     value.purpose(),
                     value.contentType(),
                     value.content(),
-                    value.environment().stream()
-                            .map(fact -> new Fact(fact.label(), fact.value()))
+                    java.util.stream.Stream.concat(
+                                    value.environment().stream().map(fact -> new Fact(fact.label(), fact.value())),
+                                    allowForSession
+                                            ? java.util.stream.Stream.of(sessionScope)
+                                            : java.util.stream.Stream.empty())
                             .toList(),
                     value.technical().stream()
                             .map(fact -> new Fact(fact.label(), fact.value()))
@@ -61,12 +76,24 @@ public record ApprovalDetails(
         return new ApprovalDetails(
                 interaction.title(),
                 interaction.consequences().accepted(),
-                "内容",
+                "Content",
                 interaction.safePrompt(),
-                List.of(),
+                allowForSession ? List.of(sessionScope) : List.of(),
                 List.of(),
                 Optional.empty(),
                 allowedActions);
+    }
+
+    public static String actionLabel(String value) {
+        return switch (value) {
+            case "approve" -> "Allow once";
+            case SESSION_APPROVAL_ACTION -> SESSION_APPROVAL_LABEL;
+            case "reject" -> "Reject";
+            case "confirm" -> "Confirm";
+            case "cancel" -> "Cancel";
+            case "submit" -> "Submit";
+            default -> value;
+        };
     }
 
     private static String require(String value, String field) {

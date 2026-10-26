@@ -19,6 +19,7 @@ import io.haifa.agent.application.coding.terminal.state.TerminalSelector;
 import io.haifa.agent.application.coding.terminal.state.TerminalSelectorDetail;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiReducer;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
+import io.haifa.agent.application.coding.terminal.state.ToolDetails;
 import io.haifa.agent.application.coding.terminal.state.TranscriptItem;
 import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
@@ -37,6 +38,44 @@ import org.junit.jupiter.api.Test;
 
 class Tui4jTerminalViewTest {
     private final Tui4jTerminalView view = new Tui4jTerminalView();
+
+    @Test
+    void revealsTechnicalFactsSeparatelyFromTheToolResult() {
+        var tool = item("tool-1", TranscriptItem.Kind.TOOL, "Read File · 阅读说明", "legacy body", "SUCCEEDED", true)
+                .withToolDetails(new ToolDetails(
+                        "Target: README.md\nOutput:\nReason: this is file content",
+                        "Tool: file_read\nResult: internal-ref",
+                        false));
+        String primary = view.transcriptContent(withTranscript(defaultState(), List.of(tool)));
+        String technical =
+                view.transcriptContent(withTranscript(defaultState(), List.of(tool.toggleTechnicalDetails())));
+
+        assertThat(primary)
+                .contains("阅读说明", "Reason: this is file content", "Technical details", "ctrl+x t")
+                .doesNotContain("internal-ref", "legacy body", "file_read");
+        assertThat(technical).contains("Result: internal-ref");
+    }
+
+    @Test
+    void finalResponseCopiesRenderedBodyAndLinksOnlyItsOwnRunActivity() {
+        var oldTool = item("old-tool", TranscriptItem.Kind.TOOL, "Read File", "old output", "SUCCEEDED", false)
+                .withSourceRunId("old-run");
+        var tool = item("current-tool", TranscriptItem.Kind.TOOL, "Run Command", "output", "SUCCEEDED", false)
+                .withSourceRunId("current-run");
+        var response = item("response", TranscriptItem.Kind.ASSISTANT, "Assistant", "**完成**与 `code`", "FINAL", true)
+                .withSourceRunId("current-run");
+        var state = withTranscript(defaultState(), List.of(oldTool, tool, response));
+        String rendered = view.transcriptContent(state);
+
+        assertThat(rendered).contains("Assistant / Final response", "ctrl+x y copy", "ctrl+x a tool activity");
+        assertThat(view.copyableFinalResponse(state))
+                .hasValueSatisfying(
+                        text -> assertThat(text).contains("完成", "code").doesNotContain("Assistant", "\u001B", "**"));
+        assertThat(view.finalResponseActivityRow(state))
+                .hasValueSatisfying(
+                        row -> assertThat(view.toggleableItemAt(row)).contains("current-tool"));
+        assertThat(response.body()).isEqualTo("**完成**与 `code`");
+    }
 
     @BeforeAll
     static void configureHeadlessTerminalInfo() {
@@ -466,7 +505,9 @@ class Tui4jTerminalViewTest {
                         "[steer] Check the diff",
                         "[follow_up] Run tests",
                         "Retryable · ACTIVE_RUN_MISMATCH",
-                        "The session changed while submitting; retry the message.",
+                        "The session changed while submitting;",
+                        "retry",
+                        "message.",
                         "Type a message",
                         "frozen-model",
                         "queue: 2")
@@ -794,8 +835,8 @@ class Tui4jTerminalViewTest {
         assertThat(nonZeroContent.lines().filter(line -> !line.isBlank()).count())
                 .isEqualTo(1);
         assertThat(nonZeroContent)
-                .contains("✓", "[execution_run]", "exit 1", "850 ms", "›")
-                .doesNotContain("✗", "Command exited (exit 1)", "ctrl+o expand");
+                .contains("○", "[execution_run]", "exit 1", "850 ms", "›")
+                .doesNotContain("✓", "✗", "Command exited (exit 1)", "ctrl+o expand");
         assertThat(zeroContent).contains("✓", "[execution_run]", "20 ms", "›").doesNotContain("exit 0");
     }
 
@@ -1134,10 +1175,10 @@ class Tui4jTerminalViewTest {
                         "PowerShell",
                         "Start-Sleep -Seconds 4",
                         "执行位置：本机环境",
-                        "技术细节（可选）")
+                        "Technical details")
                 .doesNotContain("digest-123");
 
-        assertThat(view.transcriptContent(expanded)).contains("技术细节", "调用摘要: digest-123");
+        assertThat(view.transcriptContent(expanded)).contains("Technical details", "调用摘要: digest-123");
     }
 
     @Test
@@ -1157,7 +1198,7 @@ class Tui4jTerminalViewTest {
         TerminalUiState initial = TerminalUiState.initial(120, 40);
 
         String collapsed = view.transcriptContent(withApproval(initial, details, false));
-        assertThat(collapsed).contains("line-1", "line-5", "共 8 行").doesNotContain("line-6");
+        assertThat(collapsed).contains("line-1", "line-5", "8 lines").doesNotContain("line-6");
 
         String expanded = view.transcriptContent(withApproval(initial, details, true));
         assertThat(expanded).contains("line-6", "line-8");
@@ -1233,6 +1274,31 @@ class Tui4jTerminalViewTest {
                 Optional.empty(),
                 Optional.of(1_000L),
                 Optional.of(durationMillis));
+    }
+
+    @Test
+    void continuesTheSidebarDividerThroughTheComposerAndSelector() {
+        for (int rows : List.of(18, 30)) {
+            var initial = TerminalUiState.initial(120, rows);
+            var selecting = new TerminalUiReducer()
+                    .reduce(
+                            initial,
+                            new TerminalUiAction.SelectorOpened(
+                                    new TerminalSelector("commands", "Commands", List.of("First", "Second"), 0)));
+            for (var state : List.of(initial, selecting)) {
+                String rendered = Strip.strip(view.render(state, transcript(state), editor(77), true, false));
+                List<String> lines = rendered.lines().toList();
+                assertThat(lines).hasSize(rows);
+                assertThat(lines.subList(0, rows - 1)).allSatisfy(line -> {
+                    int divider = line.lastIndexOf('│');
+                    assertThat(divider).isGreaterThanOrEqualTo(0);
+                    assertThat(TextWidth.measureCellWidth(line.substring(0, divider)))
+                            .isEqualTo(77);
+                    assertThat(TextWidth.measureCellWidth(line)).isLessThanOrEqualTo(119);
+                });
+                assertThat(view.transcriptRegion().height()).isLessThan(rows - 3);
+            }
+        }
     }
 
     @Test

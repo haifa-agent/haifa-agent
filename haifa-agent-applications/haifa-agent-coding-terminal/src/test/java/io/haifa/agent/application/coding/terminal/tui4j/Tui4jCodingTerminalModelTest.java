@@ -955,7 +955,7 @@ class Tui4jCodingTerminalModelTest {
                         "file_patch"))));
         fixture.model.update(new WindowSizeMessage(120, 40));
         String failed = fixture.model.view();
-        assertThat(failed).contains("apply patch", "未完成：匹配到多处");
+        assertThat(failed).contains("apply patch", "Not completed: Multiple matches");
         assertThat(failed).doesNotContain("Reason: PATCH_AMBIGUOUS_MATCH");
 
         fixture.pump.offer(new TerminalUiAction.RunEventReceived(event(
@@ -972,6 +972,86 @@ class Tui4jCodingTerminalModelTest {
                         "execution_run"))));
         fixture.model.update(new WindowSizeMessage(120, 40));
         assertThat(fixture.model.view()).contains("Outcome: UNKNOWN", "Target: rm -rf");
+    }
+
+    @Test
+    void keyboardFallbackKeepsFollowingNewToolsWithoutCreatingAnExplicitSelection() {
+        var fixture = fixture();
+        fixture.model.update(new PasteMessage("preserved draft"));
+        for (int index = 1; index <= 3; index++) {
+            fixture.pump.offer(new TerminalUiAction.RunEventReceived(event(
+                    index,
+                    new RunEventPayloads.ToolLifecycle(
+                            "tool-" + index, "Read File", "SUCCEEDED", "NONE", "README.md", "result-" + index))));
+            fixture.model.update(new WindowSizeMessage(120, 40));
+            if (index == 2) {
+                fixture.model.update(key(KeyType.keyCAN));
+                fixture.model.update(runes('t'));
+            } else {
+                fixture.model.update(key(KeyType.keySI));
+            }
+            assertThat(fixture.controller.state().transcript().getLast())
+                    .satisfies(item -> assertThat(item.expanded()).isTrue());
+        }
+        assertThat(fixture.controller.state().transcript())
+                .allSatisfy(item -> assertThat(item.expanded()).isTrue());
+        assertThat(fixture.controller.state().transcript().get(1).toolDetails())
+                .hasValueSatisfying(details -> assertThat(details.expanded()).isTrue());
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("preserved draft");
+    }
+
+    @Test
+    void technicalShortcutFollowsTheSelectedToolAndPreservesDraft() {
+        var fixture = fixture();
+        for (int index = 1; index <= 2; index++) {
+            fixture.pump.offer(new TerminalUiAction.RunEventReceived(event(
+                    index,
+                    new RunEventPayloads.ToolLifecycle(
+                            "tool-" + index,
+                            "Read File",
+                            "SUCCEEDED",
+                            "NONE",
+                            "README.md",
+                            "result-" + index,
+                            Optional.empty(),
+                            "读取说明",
+                            "file_read"))));
+        }
+        fixture.model.update(new WindowSizeMessage(120, 40));
+        fixture.model.update(new PasteMessage("保留草稿"));
+        fixture.controller.toggleTranscriptItem("tool-tool-1");
+        fixture.model.update(key(KeyType.keyCAN));
+        fixture.model.update(runes('t'));
+
+        var selected = fixture.controller.state().transcript().getFirst();
+        assertThat(selected.toolDetails())
+                .hasValueSatisfying(details -> assertThat(details.expanded()).isTrue());
+        assertThat(fixture.controller.state().transcript().getLast().toolDetails())
+                .hasValueSatisfying(details -> assertThat(details.expanded()).isFalse());
+        fixture.model.update(key(KeyType.keySI));
+        assertThat(fixture.controller.state().transcript().getFirst().expanded())
+                .isFalse();
+        assertThat(fixture.controller.state().transcript().getLast().expanded()).isFalse();
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("保留草稿");
+    }
+
+    @Test
+    void finalResponseShortcutCopiesThroughTheBackgroundClipboardCommandWithoutChangingDraft() {
+        var clipboard = new RecordingClipboard(true);
+        var fixture = fixtureWithClipboard(clipboard);
+        fixture.pump.offer(new TerminalUiAction.RunEventReceived(
+                event(1, new RunEventPayloads.AssistantTextDelta("generation-1", "**完成**"))));
+        fixture.pump.offer(new TerminalUiAction.RunEventReceived(
+                event(2, new RunEventPayloads.RunLifecycle("COMPLETED", 1, "NONE"))));
+        fixture.model.update(new WindowSizeMessage(120, 40));
+        fixture.model.update(new PasteMessage("next instruction"));
+        fixture.model.update(key(KeyType.keyCAN));
+        var copy = fixture.model.update(runes('y')).command();
+
+        assertThat(clipboard.text).isNull();
+        fixture.model.update(copy.execute());
+        assertThat(clipboard.text).contains("完成").doesNotContain("**", "Assistant / Final response");
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("next instruction");
     }
 
     @Test
@@ -1373,6 +1453,49 @@ class Tui4jCodingTerminalModelTest {
 
         assertThat(fixture.controller.state().selector()).isPresent();
         assertThat(fixture.controller.state().selector().get().title()).isEqualTo("Commands");
+    }
+
+    @Test
+    void reflowsTheDraftWithinTheMainColumnWhenTheSidebarOrWindowChanges() {
+        var fixture = fixture();
+        String draft = "中🙂ab".repeat(18);
+        fixture.model.update(new WindowSizeMessage(120, 30));
+        fixture.model.update(new PasteMessage(draft));
+
+        for (int columns : List.of(120, 99, 100, 160)) {
+            fixture.model.update(new WindowSizeMessage(columns, 30));
+            for (int toggle = 0; toggle < 2; toggle++) {
+                var state = fixture.controller.state();
+                boolean sidebar = state.sidebarVisible() && columns >= 100;
+                List<String> lines = TerminalScreenCells.plainText(fixture.model.view())
+                        .lines()
+                        .toList();
+                int inputStart = java.util.stream.IntStream.range(0, lines.size())
+                        .filter(row -> lines.get(row).startsWith("┃"))
+                        .findFirst()
+                        .orElseThrow();
+                StringBuilder visibleDraft = new StringBuilder();
+                for (String line : lines.subList(inputStart, lines.size() - 2)) {
+                    String input = line;
+                    if (sidebar) {
+                        int divider = line.lastIndexOf('│');
+                        assertThat(divider).isGreaterThanOrEqualTo(0);
+                        input = line.substring(0, divider);
+                        assertThat(com.williamcallahan.tui4j.ansi.TextWidth.measureCellWidth(input))
+                                .isEqualTo(columns - 43);
+                        assertThat(line.substring(divider + 1)).doesNotContain("中", "🙂", "ab");
+                    }
+                    visibleDraft.append(input.replace("┃", "").replace(" ", ""));
+                }
+                assertThat(visibleDraft.toString()).contains(draft);
+                assertThat(state.editorBuffer()).isEqualTo(draft);
+                assertThat(state.editorCursor()).isEqualTo(draft.length());
+                fixture.model.update(key(KeyType.keyCAN));
+                fixture.model.update(runes('b'));
+            }
+        }
+        fixture.model.update(runes('Z'));
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo(draft + "Z");
     }
 
     @Test

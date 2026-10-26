@@ -47,6 +47,61 @@ class TerminalUiReducerTest {
     private final TerminalUiReducer reducer = new TerminalUiReducer();
 
     @Test
+    void projectsTechnicalFactsWithoutParsingMetadataLookingOutputAndPreservesExpansion() {
+        String output = "用户内容\nReason: user text\nResult: user text";
+        var observation = new RunEventPayloads.ToolObservation(
+                Optional.of(BoundedText.of(output, new ToolDisplayBudget(1024, 20))),
+                Optional.empty(),
+                Optional.empty());
+        var lifecycle = new RunEventPayloads.ToolLifecycle(
+                "call-1",
+                "Read File",
+                "SUCCEEDED",
+                "NONE",
+                "README.md",
+                "actual-result-ref",
+                Optional.of(observation),
+                "读取说明",
+                "file_read");
+        TerminalUiState state = reducer.reduce(
+                TerminalUiState.initial(120, 40), new TerminalUiAction.RunEventReceived(event(1, "tool-1", lifecycle)));
+        state = reducer.reduce(state, new TerminalUiAction.ToggleTechnicalDetails("tool-call-1"));
+        state = reducer.reduce(state, new TerminalUiAction.RunEventReceived(event(2, "tool-2", lifecycle)));
+
+        assertThat(state.transcript()).singleElement().satisfies(item -> {
+            assertThat(item.toolDetails()).hasValueSatisfying(details -> {
+                assertThat(details.content()).contains(output).doesNotContain("actual-result-ref");
+                assertThat(details.technical())
+                        .contains("file_read", "actual-result-ref")
+                        .doesNotContain("user text");
+                assertThat(details.expanded()).isTrue();
+            });
+            assertThat(item.sourceRunId()).contains("run-1");
+        });
+    }
+
+    @Test
+    void marksFinalResponseFromCompletionFactsWithoutChangingMarkdownOrLosingLateCommit() {
+        String markdown = "# 完成\n\n**结果**与 `code` 保持原文";
+        TerminalUiState state = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunOutputReceived(
+                        output(1, "final-generation", AgentRunOutputEventType.ASSISTANT_TEXT_DELTA, markdown)));
+        state = reducer.reduce(
+                state,
+                new TerminalUiAction.RunEventReceived(
+                        event(1, "completed", new RunEventPayloads.RunLifecycle("COMPLETED", 1, "NONE"))));
+        state = reducer.reduce(
+                state,
+                new TerminalUiAction.RunOutputReceived(
+                        output(2, "final-generation", AgentRunOutputEventType.ASSISTANT_TEXT_COMMITTED, "")));
+
+        assertThat(state.transcript().getFirst().status()).isEqualTo("FINAL");
+        assertThat(state.transcript().getFirst().body()).isEqualTo(markdown);
+        assertThat(state.transcript().getLast().kind()).isEqualTo(TranscriptItem.Kind.SUMMARY);
+    }
+
+    @Test
     void deviceLoginWaitingPanelShowsTheCodeAndCopyActions() {
         TerminalUiState state = reducer.reduce(
                 TerminalUiState.initial(80, 24),
@@ -895,7 +950,7 @@ class TerminalUiReducerTest {
                                 "",
                                 "file_patch"))));
         assertThat(failed.transcript()).singleElement().satisfies(item -> {
-            assertThat(item.title()).isEqualTo("Apply Patch · README.md · 未完成：匹配到多处");
+            assertThat(item.title()).isEqualTo("Apply Patch · README.md · Not completed: Multiple matches");
             assertThat(item.body()).contains("PATCH_AMBIGUOUS_MATCH");
         });
 
@@ -938,7 +993,7 @@ class TerminalUiReducerTest {
                                 "",
                                 "file_patch"))));
         assertThat(denied.transcript()).singleElement().satisfies(item -> assertThat(item.title())
-                .endsWith("· 已拒绝"));
+                .endsWith("· Rejected"));
 
         TerminalUiState cancelled = reducer.reduce(
                 TerminalUiState.initial(120, 40),
@@ -956,7 +1011,7 @@ class TerminalUiReducerTest {
                                 "",
                                 "file_patch"))));
         assertThat(cancelled.transcript()).singleElement().satisfies(item -> assertThat(item.title())
-                .endsWith("· 已取消"));
+                .endsWith("· Cancelled"));
 
         TerminalUiState blocked = reducer.reduce(
                 TerminalUiState.initial(120, 40),
@@ -974,7 +1029,7 @@ class TerminalUiReducerTest {
                                 "",
                                 "file_patch"))));
         assertThat(blocked.transcript()).singleElement().satisfies(item -> assertThat(item.title())
-                .endsWith("· 规则阻止"));
+                .endsWith("· Blocked by policy"));
     }
 
     @Test
