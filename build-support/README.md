@@ -31,6 +31,11 @@ Reactor 版本由根 `pom.xml` 的 `revision` 属性单点定义，全部模块 
 本地开发使用 `scripts/invoke-haifa-maven.ps1` 或 `scripts/invoke-haifa-maven.sh`。入口不会改变 Maven
 生命周期或吞掉退出码，只补充资源感知的默认线程数和一份脱敏 JSON 指标：
 
+从运行中的 Coding Agent 终端启动构建时，入口会在 Maven 子进程中丢弃该产品导出的运行时变量
+（`HAIFA_CONFIG`、`HAIFA_DATA_ROOT`、`HAIFA_LOG_DIR`、`HAIFA_SQLITE_DATABASE_PATH`、
+`HAIFA_TRANSCRIPT_ROOT`），否则 CLI 配置测试会读到线上产品的路径与持久化模式而不是自身夹具；其余
+`HAIFA_*` 变量（如 `HAIFA_PYTHON_EXECUTABLE`、`HAIFA_GO_EXECUTABLE`、`HAIFA_NODE_PTY_MODULE`）原样传递。
+
 | 层级 | 默认线程 | 用途 | 是否 clean |
 | --- | ---: | --- | --- |
 | L0 | 1 | 静态预检、格式或编译边界 | 否 |
