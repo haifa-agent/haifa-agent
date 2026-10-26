@@ -29,6 +29,11 @@ import java.util.Set;
 
 /** Builds the project product's model-visible tools through the platform Tool catalog. */
 public final class ProjectToolCatalog {
+    /** The Tool that widens the trusted workspace, so its approval stays per call. */
+    public static final String WORKSPACE_ATTACH = "workspace_attach";
+    /** The host-process Tool whose permission requests stay per call. */
+    public static final String EXECUTION_RUN = "execution_run";
+
     private final Duration maximumExecutionTimeout;
     private static final Map<String, String> REQUIRED_CAPABILITY = Map.ofEntries(
             Map.entry("file_list", "file_read"),
@@ -41,10 +46,13 @@ public final class ProjectToolCatalog {
             Map.entry("file_move", "file_write"),
             Map.entry("file_diff", "file_read"),
             Map.entry("file_patch", "file_write"),
-            Map.entry("workspace_attach", "file_read"),
-            Map.entry("execution_run", "execution_run"));
+            Map.entry(WORKSPACE_ATTACH, "file_read"),
+            Map.entry(EXECUTION_RUN, "execution_run"));
     private static final Set<String> WRITES =
             Set.of("file_create", "file_write", "file_delete", "file_move", "file_patch");
+
+    /** Every built-in project Tool name, so enablement and session consent never keep a second copy. */
+    public static final Set<String> BUILT_IN_TOOL_NAMES = Set.copyOf(REQUIRED_CAPABILITY.keySet());
 
     public ProjectToolCatalog() {
         this(Duration.ofMinutes(30));
@@ -248,7 +256,7 @@ public final class ProjectToolCatalog {
     }
 
     public Set<String> names() {
-        return REQUIRED_CAPABILITY.keySet();
+        return BUILT_IN_TOOL_NAMES;
     }
 
     private ToolDefinition definition(

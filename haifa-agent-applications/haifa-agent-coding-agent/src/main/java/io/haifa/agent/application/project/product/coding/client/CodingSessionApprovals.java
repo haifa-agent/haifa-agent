@@ -1,5 +1,6 @@
 package io.haifa.agent.application.project.product.coding.client;
 
+import io.haifa.agent.application.project.tool.ProjectToolCatalog;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.tool.ToolCallStatus;
@@ -12,6 +13,7 @@ import io.haifa.agent.runtime.api.InteractionResponseSubmission;
 import io.haifa.agent.runtime.api.InteractionState;
 import io.haifa.agent.runtime.api.InteractionView;
 import io.haifa.agent.runtime.api.RuntimeContractException;
+import java.util.LinkedHashSet;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -19,27 +21,25 @@ import java.util.function.Function;
 
 /** Process-local consent owned by one project client; Runtime still validates every exact approval. */
 final class CodingSessionApprovals {
-    private static final Set<String> ORDINARY_TOOLS = Set.of(
-            "file_list",
-            "file_stat",
-            "file_read",
-            "file_search",
-            "file_create",
-            "file_write",
-            "file_delete",
-            "file_move",
-            "file_diff",
-            "file_patch",
-            "execution_run",
-            "web_search",
-            "web_fetch",
-            "skill_load",
-            "skill_resource_read");
+    /**
+     * Session consent follows the product's built-in Tool catalog instead of a second hand-written list, so a Tool
+     * the project registers later is covered without editing this class. Attaching another workspace widens the
+     * trusted root and keeps a per-call approval; Web and Skill Tools are registered by their own contributions.
+     */
+    private static final Set<String> ORDINARY_TOOLS = ordinaryToolNames();
+
     private final AgentRuntime runtime;
     private final ConcurrentHashMap<AgentSessionId, Consent> consents = new ConcurrentHashMap<>();
 
     CodingSessionApprovals(AgentRuntime runtime) {
         this.runtime = runtime;
+    }
+
+    static Set<String> ordinaryToolNames() {
+        Set<String> names = new LinkedHashSet<>(ProjectToolCatalog.BUILT_IN_TOOL_NAMES);
+        names.remove(ProjectToolCatalog.WORKSPACE_ATTACH);
+        names.addAll(Set.of("web_search", "web_fetch", "skill_load", "skill_resource_read"));
+        return Set.copyOf(names);
     }
 
     Optional<CodingApprovalPrompt> prepare(
@@ -115,7 +115,7 @@ final class CodingSessionApprovals {
                         && call.status() == ToolCallStatus.WAITING_APPROVAL
                         && !call.arguments().truncated())
                 .filter(call -> ORDINARY_TOOLS.contains(call.toolName()))
-                .anyMatch(call -> !call.toolName().equals("execution_run")
+                .anyMatch(call -> !call.toolName().equals(ProjectToolCatalog.EXECUTION_RUN)
                         || !"PERMISSION_REQUEST"
                                 .equals(call.arguments().values().get("operationFamily")));
     }

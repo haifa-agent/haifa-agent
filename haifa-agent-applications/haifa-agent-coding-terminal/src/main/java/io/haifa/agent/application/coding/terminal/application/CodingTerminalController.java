@@ -1721,7 +1721,7 @@ public final class CodingTerminalController implements AutoCloseable {
         List<String> options = new ArrayList<>(interaction.allowedActions().stream()
                 .map(action -> ApprovalDetails.actionLabel(action.value()))
                 .toList());
-        if (prompt.allowForSession()) options.add("Allow for this session");
+        if (prompt.allowForSession()) options.add(ApprovalDetails.SESSION_APPROVAL_LABEL);
         if (options.isEmpty()) {
             apply(new TerminalUiAction.RecoverableFailure("INTERACTION_ACTIONS_EMPTY"));
             return;

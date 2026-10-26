@@ -3,6 +3,7 @@ package io.haifa.agent.application.project.product.coding.client;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.haifa.agent.application.project.tool.ProjectToolCatalog;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.tool.ToolCallId;
@@ -68,6 +69,25 @@ class CodingSessionApprovalsTest {
                     .isInstanceOf(IllegalArgumentException.class);
         }
         assertThat(f.submissions).hasSize(submissions);
+    }
+
+    @Test
+    void sessionConsentFollowsTheBuiltInToolCatalog() {
+        assertThat(CodingSessionApprovals.ordinaryToolNames())
+                .containsAll(ProjectToolCatalog.BUILT_IN_TOOL_NAMES.stream()
+                        .filter(name -> !name.equals(ProjectToolCatalog.WORKSPACE_ATTACH))
+                        .toList())
+                .doesNotContain(ProjectToolCatalog.WORKSPACE_ATTACH)
+                .contains("web_search", "web_fetch", "skill_load", "skill_resource_read");
+
+        var f = new Fixture();
+        f.states.put(f.pending.requestId(), InteractionState.APPLIED);
+        f.approvals.approve(f.pending, submission(f.pending));
+        for (String name : List.of("file_diff", "file_search", "file_patch")) {
+            f.next("session-1", "run-" + name, name, Map.of());
+            assertThat(f.approvals.prepare(f.pending.runId(), CodingSessionApprovalsTest::submission))
+                    .isEmpty();
+        }
     }
 
     @Test

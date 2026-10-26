@@ -17,6 +17,12 @@ public record ApprovalDetails(
         Optional<String> risk,
         List<String> allowedActions) {
 
+    /** The product-owned option appended after the Runtime's own actions for one ordinary Tool approval. */
+    public static final String SESSION_APPROVAL_ACTION = "allow_session";
+
+    /** Its single display label, read by the selector as well as by the action mapping. */
+    public static final String SESSION_APPROVAL_LABEL = "Allow for this session";
+
     /** One bounded label/value display fact. */
     public record Fact(String label, String value) {
         public Fact {
@@ -45,7 +51,7 @@ public record ApprovalDetails(
         List<String> allowedActions = new java.util.ArrayList<>(interaction.allowedActions().stream()
                 .map(InteractionAction::value)
                 .toList());
-        if (allowForSession) allowedActions.add("allow_session");
+        if (allowForSession) allowedActions.add(SESSION_APPROVAL_ACTION);
         Fact sessionScope = new Fact("Session option", "All ordinary tools · until app exit or /approval reset");
         var presentation = interaction.approvalPresentation();
         if (presentation.isPresent()) {
@@ -81,7 +87,7 @@ public record ApprovalDetails(
     public static String actionLabel(String value) {
         return switch (value) {
             case "approve" -> "Allow once";
-            case "allow_session" -> "Allow for this session";
+            case SESSION_APPROVAL_ACTION -> SESSION_APPROVAL_LABEL;
             case "reject" -> "Reject";
             case "confirm" -> "Confirm";
             case "cancel" -> "Cancel";
