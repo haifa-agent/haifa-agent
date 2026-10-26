@@ -767,6 +767,9 @@ class LocalFileToolOperationsMultiRootTest {
                 .containsEntry("failedPath", second)
                 .containsEntry("errorCode", "PATH_DENIED")
                 .containsEntry("reconciliationRequired", true);
+        assertThat((String) result.structuredData().get("outputPreview"))
+                .contains("--- /dev/null", "+++ first.txt", "+first")
+                .doesNotContain("second.txt");
         assertThat(Files.readString(configDir.resolve("first.txt"))).isEqualTo("first\n");
     }
 

@@ -19,6 +19,7 @@ class TerminalCompletionProviderTest {
                         "/compact",
                         "/session",
                         "/trust",
+                        "/approval",
                         "/reload",
                         "/rename",
                         "/export",

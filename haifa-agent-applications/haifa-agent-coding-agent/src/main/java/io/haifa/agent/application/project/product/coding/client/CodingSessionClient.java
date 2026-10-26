@@ -88,6 +88,19 @@ public interface CodingSessionClient {
 
     InteractionResponseReceipt respond(InteractionView interaction, InteractionAction action, String idempotencyKey);
 
+    /** Background preparation may apply an existing session consent to an ordinary pending approval. */
+    default Optional<CodingApprovalPrompt> prepareApproval(InteractionView interaction) {
+        return Optional.of(new CodingApprovalPrompt(interaction, false));
+    }
+
+    default InteractionResponseReceipt allowForSession(InteractionView interaction, String idempotencyKey) {
+        throw new UnsupportedOperationException("Session approval is unavailable");
+    }
+
+    default void resetSessionApproval(AgentSessionId sessionId) {
+        throw new UnsupportedOperationException("Session approval is unavailable");
+    }
+
     void cancel(AgentSessionId sessionId, String idempotencyKey);
 
     default CodingSessionSummary rename(AgentSessionId sessionId, String displayName, long expectedRevision) {

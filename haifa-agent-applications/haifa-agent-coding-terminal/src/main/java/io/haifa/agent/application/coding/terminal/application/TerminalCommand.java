@@ -17,6 +17,7 @@ public enum TerminalCommand {
     MODEL,
     SETTINGS,
     TRUST,
+    APPROVAL,
     SESSION,
     COMMANDS,
     THEME,

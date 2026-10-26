@@ -12,6 +12,7 @@ public record TerminalInput(Kind kind, String text, int cursor) {
         CANCEL_OR_CLOSE,
         RESTORE,
         TOGGLE_EXPANSION,
+        TOGGLE_TECHNICAL_DETAILS,
         SELECT_PREVIOUS,
         SELECT_NEXT,
         NAVIGATE_BACK,

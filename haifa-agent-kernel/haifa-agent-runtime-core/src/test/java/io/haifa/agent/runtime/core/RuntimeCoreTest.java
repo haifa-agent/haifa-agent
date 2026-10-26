@@ -1852,6 +1852,97 @@ class RuntimeCoreTest {
     }
 
     @Test
+    void duplicatePublicApprovalSubmissionReportsApplicationWithoutExecutingAgain() {
+        var calls = new AtomicInteger();
+        Fixture fixture = fixture(
+                model(
+                        new ToolCallDecision(List.of(toolRequest(
+                                "session-consent",
+                                "write",
+                                "1.0.0",
+                                new ToolArguments("write.input", "1.0", Map.of())))),
+                        finalDecision("done")),
+                builder -> TestToolPlatform.install(
+                        builder,
+                        "write",
+                        "1.0.0",
+                        "write.input",
+                        true,
+                        TestToolPlatform.approvalRequired(),
+                        invocation -> {
+                            calls.incrementAndGet();
+                            return new ToolResult(true, "written", Map.of(), List.of(), List.of(), false);
+                        }));
+        var accepted = fixture.runtime.start(request("session-consent"));
+        fixture.scheduler.runAll();
+        var pending = fixture.runtime.pendingInteraction(accepted.runId()).orElseThrow();
+        var submission = new io.haifa.agent.runtime.api.InteractionResponseSubmission(
+                new InteractionResponseId("session-consent-response"),
+                pending.requestId(),
+                accepted.runId(),
+                pending.revision(),
+                io.haifa.agent.runtime.api.InteractionAction.APPROVE,
+                List.of(),
+                "session-consent-key",
+                Instant.parse("2026-07-21T00:00:00Z"));
+        fixture.runtime.respond(submission);
+        fixture.scheduler.runAll();
+
+        var duplicate = fixture.runtime.respond(submission);
+        assertThat(duplicate.status()).isEqualTo(io.haifa.agent.runtime.api.InteractionResponseReceiptStatus.DUPLICATE);
+        assertThat(duplicate.interactionState()).isEqualTo(io.haifa.agent.runtime.api.InteractionState.APPLIED);
+        assertThat(calls).hasValue(1);
+    }
+
+    @Test
+    void projectsExplicitToolOutputPreviewWithRedactionAndProducerTruncationFacts() {
+        ToolRequest request =
+                toolRequest("written-preview", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of()));
+        Fixture fixture = fixture(
+                model(new ToolCallDecision(List.of(request)), finalDecision("done")),
+                builder -> TestToolPlatform.install(
+                        builder,
+                        "write",
+                        "1.0.0",
+                        "write.input",
+                        true,
+                        invocation -> new ToolResult(
+                                true,
+                                "Wrote file",
+                                Map.of(
+                                        "outputPreview",
+                                        "Written content:\n  token=example-value\n ... [truncated] ... ",
+                                        "outputPreviewTruncated",
+                                        true,
+                                        "outputPreviewByteCount",
+                                        50_000L,
+                                        "outputPreviewLineCount",
+                                        2_000L,
+                                        "outputPreviewTruncationReason",
+                                        "OUTPUT_LINES"),
+                                List.of(),
+                                List.of(),
+                                false)));
+
+        var accepted = fixture.runtime.start(request("written-preview"));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .filteredOn(event -> event.type().equals("tool.succeeded"))
+                .singleElement()
+                .satisfies(event -> {
+                    assertThat(event.data())
+                            .containsEntry("outputPreviewTruncated", true)
+                            .containsEntry("outputPreviewByteCount", 50_000L)
+                            .containsEntry("outputPreviewLineCount", 2_000L)
+                            .containsEntry("outputPreviewTruncationReason", "OUTPUT_LINES");
+                    assertThat((String) event.data().get("outputPreview"))
+                            .contains("Written content:", "token=[REDACTED]")
+                            .doesNotContain("example-value", "Wrote file");
+                });
+    }
+
+    @Test
     void boundsLongSuccessfulToolOutputPreviewWhileKeepingOriginalSizeFacts() {
         ToolRequest request =
                 toolRequest("long-output", "cat", "1.0.0", new ToolArguments("cat.input", "1.0", Map.of()));

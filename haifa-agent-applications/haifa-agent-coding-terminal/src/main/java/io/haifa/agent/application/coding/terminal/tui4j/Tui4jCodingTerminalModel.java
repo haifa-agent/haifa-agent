@@ -134,7 +134,7 @@ final class Tui4jCodingTerminalModel implements Model {
         this.view.setTheme(this.currentThemeName);
         this.editorCursor = state.editorCursor();
         this.transcript = Viewport.create(state.columns(), 2);
-        editor.setWidth(state.columns());
+        editor.setWidth(Tui4jTerminalView.editorColumns(state));
         editor.setHeight(3);
         editor.setMaxHeight(3);
         editor.setShowLineNumbers(false);
@@ -511,6 +511,31 @@ final class Tui4jCodingTerminalModel implements Model {
             if (keyChar != null && !keyChar.isEmpty()) {
                 char ch = Character.toLowerCase(keyChar.charAt(0));
                 switch (ch) {
+                    case 'y' -> {
+                        var response = view.copyableFinalResponse(state);
+                        if (response.isEmpty()) {
+                            applyCopyFeedback("No final response available");
+                            return Command.none();
+                        }
+                        clearSelection();
+                        return copySelection(response.orElseThrow());
+                    }
+                    case 'a' -> {
+                        var row = view.finalResponseActivityRow(state);
+                        if (row.isEmpty()) {
+                            applyCopyFeedback("No tool activity available for this response");
+                        } else {
+                            followTranscript = false;
+                            transcript.gotoTop();
+                            transcript.scrollDown(row.orElseThrow());
+                            newOutputPending = false;
+                        }
+                        return Command.none();
+                    }
+                    case 't' -> {
+                        accept(TerminalInput.Kind.TOGGLE_TECHNICAL_DETAILS);
+                        return Command.none();
+                    }
                     case 'b' -> {
                         pump.offer(new TerminalUiAction.SidebarToggled());
                         return Command.none();
@@ -1219,6 +1244,7 @@ final class Tui4jCodingTerminalModel implements Model {
 
     private void syncComponents() {
         TerminalUiState state = controller.state();
+        editor.setWidth(Tui4jTerminalView.editorColumns(state));
         boolean secureInput = controller.secureInputRequested();
         if (secureInput) {
             boolean masked = controller.secureInputIsMasked();
@@ -1250,7 +1276,6 @@ final class Tui4jCodingTerminalModel implements Model {
                 synchronizeEditor(state.editorBuffer(), state.editorCursor());
             }
         }
-        editor.setWidth(state.columns());
         if (state.selector().isPresent()) {
             editor.blur();
         } else {
