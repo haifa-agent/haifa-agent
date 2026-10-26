@@ -295,7 +295,7 @@ public final class TerminalUiReducer {
         }
         if (action instanceof TerminalUiAction.InteractionPresented presented) {
             var interaction = presented.interaction();
-            var details = ApprovalDetails.from(interaction);
+            var details = ApprovalDetails.from(interaction, presented.allowForSession());
             List<TranscriptItem> items = new ArrayList<>(state.transcript());
             String id = "interaction-" + interaction.requestId().value();
             int existing = index(items, id);

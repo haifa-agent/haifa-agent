@@ -20,6 +20,7 @@ import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.application.project.product.coding.CodingShellPlan;
 import io.haifa.agent.application.project.product.coding.CodingShellResult;
 import io.haifa.agent.application.project.product.coding.CodingWorkspaceView;
+import io.haifa.agent.application.project.product.coding.client.CodingApprovalPrompt;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationClient;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationMethodView;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationProviderView;
@@ -772,7 +773,8 @@ public final class CodingTerminalController implements AutoCloseable {
         interactionHydrationInFlight = request;
         submitControlEffect(
                 () -> {
-                    Optional<InteractionView> interaction = client.pendingInteraction(request.runId());
+                    Optional<CodingApprovalPrompt> interaction =
+                            client.pendingInteraction(request.runId()).flatMap(client::prepareApproval);
                     return () -> completeInteractionHydration(request, interaction);
                 },
                 code -> {
@@ -782,13 +784,13 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void completeInteractionHydration(
-            InteractionHydrationRequest request, Optional<InteractionView> interaction) {
+            InteractionHydrationRequest request, Optional<CodingApprovalPrompt> interaction) {
         if (!request.equals(interactionHydrationInFlight)) return;
         interactionHydrationInFlight = null;
         if (state.currentRunId().filter(request.runId()::equals).isEmpty() || !interactionStillPending(request)) return;
         interaction
-                .filter(value -> value.requestId().value().equals(request.requestId()))
-                .filter(value -> value.state() == io.haifa.agent.runtime.api.InteractionState.PENDING)
+                .filter(value -> value.interaction().requestId().value().equals(request.requestId()))
+                .filter(value -> value.interaction().state() == io.haifa.agent.runtime.api.InteractionState.PENDING)
                 .ifPresent(this::openInteractionSelector);
     }
 
@@ -1352,6 +1354,7 @@ public final class CodingTerminalController implements AutoCloseable {
             case SETTINGS ->
                 apply(new TerminalUiAction.RecoverableFailure(TerminalCommandRouter.CAPABILITY_NOT_IMPLEMENTED));
             case TRUST -> workspaceTrust(argument);
+            case APPROVAL -> resetSessionApproval(argument);
             case SESSION -> {
                 List<String> options = new ArrayList<>();
                 state.session()
@@ -1511,6 +1514,21 @@ public final class CodingTerminalController implements AutoCloseable {
         return true;
     }
 
+    private void resetSessionApproval(String argument) {
+        if (!argument.equals("reset") || state.session().isEmpty()) {
+            apply(new TerminalUiAction.StatusChanged("Use /approval reset in a Coding Session to ask each time again"));
+            return;
+        }
+        AgentSessionId sessionId = state.session().orElseThrow().summary().sessionId();
+        apply(new TerminalUiAction.StatusChanged("Resetting session approval"));
+        submitControlEffect(
+                () -> {
+                    client.resetSessionApproval(sessionId);
+                    return () -> apply(new TerminalUiAction.StatusChanged("Session approval reset · ask each time"));
+                },
+                code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+    }
+
     private void workspaceTrust(String argument) {
         if (argument.isBlank()) {
             apply(new TerminalUiAction.StatusChanged("Loading workspace trust"));
@@ -1570,9 +1588,19 @@ public final class CodingTerminalController implements AutoCloseable {
                 .map(value -> new PendingMessage(
                         value.followUpId(), PendingMessage.Kind.FOLLOW_UP, value.summary(), value.revision()))
                 .toList();
+        Optional<CodingApprovalPrompt> approval = view.pendingInteraction().flatMap(client::prepareApproval);
         if (view.activeRun().isEmpty()) {
             return new LoadedSession(
-                    view, resources, history, pending, List.of(), null, null, null, RunOutputCursor.BEFORE_FIRST);
+                    view,
+                    resources,
+                    history,
+                    pending,
+                    List.of(),
+                    null,
+                    null,
+                    null,
+                    RunOutputCursor.BEFORE_FIRST,
+                    approval);
         }
         AgentRunId runId = view.activeRun().orElseThrow().runId();
         RunEventCursor cursor = previousCursor
@@ -1611,7 +1639,8 @@ public final class CodingTerminalController implements AutoCloseable {
                 nextSubscription,
                 nextOutputSubscription,
                 runId,
-                nextOutputCursor);
+                nextOutputCursor,
+                approval);
     }
 
     private void applyLoadedSession(LoadedSession loaded) {
@@ -1634,7 +1663,7 @@ public final class CodingTerminalController implements AutoCloseable {
         for (AgentRunEvent event : loaded.events()) {
             apply(new TerminalUiAction.RunEventReceived(event));
         }
-        loaded.view().pendingInteraction().ifPresent(this::openInteractionSelector);
+        loaded.approval().ifPresent(this::openInteractionSelector);
         replacePreviewSubscription(
                 loaded.view().activeRun().map(value -> value.runId()).orElse(null));
         closeSubscriptionsInBackground(previousSubscription, previousOutputSubscription);
@@ -1681,16 +1710,18 @@ public final class CodingTerminalController implements AutoCloseable {
                 restoreOptions.size() - 1)));
     }
 
-    private void openInteractionSelector(InteractionView interaction) {
+    private void openInteractionSelector(CodingApprovalPrompt prompt) {
+        InteractionView interaction = prompt.interaction();
         activeInteraction = interaction;
-        apply(new TerminalUiAction.InteractionPresented(interaction));
+        apply(new TerminalUiAction.InteractionPresented(interaction, prompt.allowForSession()));
         if (state.selector().isPresent()
                 && state.selector().orElseThrow().kind().startsWith("interaction:")) {
             return;
         }
-        List<String> options = interaction.allowedActions().stream()
+        List<String> options = new ArrayList<>(interaction.allowedActions().stream()
                 .map(action -> ApprovalDetails.actionLabel(action.value()))
-                .toList();
+                .toList());
+        if (prompt.allowForSession()) options.add("Allow for this session");
         if (options.isEmpty()) {
             apply(new TerminalUiAction.RecoverableFailure("INTERACTION_ACTIONS_EMPTY"));
             return;
@@ -2697,7 +2728,10 @@ public final class CodingTerminalController implements AutoCloseable {
                         .filter(value -> selector.kind()
                                 .equals("interaction:" + value.requestId().value()))
                         .orElseThrow();
-                InteractionAction action = interaction.allowedActions().get(selected);
+                boolean forSession = selected == interaction.allowedActions().size();
+                InteractionAction action = forSession
+                        ? InteractionAction.APPROVE
+                        : interaction.allowedActions().get(selected);
                 apply(new TerminalUiAction.SelectorClosed());
                 apply(new TerminalUiAction.StatusChanged(
                         action.equals(InteractionAction.REJECT)
@@ -2707,10 +2741,18 @@ public final class CodingTerminalController implements AutoCloseable {
                 String idempotencyKey = UUID.randomUUID().toString();
                 submitControlEffect(
                         () -> {
-                            var receipt = client.respond(interaction, action, idempotencyKey);
+                            var receipt = forSession
+                                    ? client.allowForSession(interaction, idempotencyKey)
+                                    : client.respond(interaction, action, idempotencyKey);
                             return () -> {
                                 if (receipt != null) {
                                     apply(new TerminalUiAction.InteractionReceiptReceived(receipt));
+                                    if (forSession)
+                                        apply(new TerminalUiAction.StatusChanged(
+                                                receipt.interactionState()
+                                                                == io.haifa.agent.runtime.api.InteractionState.APPLIED
+                                                        ? "Session approval enabled"
+                                                        : "Session approval requested"));
                                 }
                             };
                         },
@@ -3360,7 +3402,8 @@ public final class CodingTerminalController implements AutoCloseable {
             RunEventSubscription subscription,
             RunOutputSubscription outputSubscription,
             AgentRunId outputRunId,
-            RunOutputCursor outputCursor) {
+            RunOutputCursor outputCursor,
+            Optional<CodingApprovalPrompt> approval) {
         public LoadedSession {
             view = Objects.requireNonNull(view, "view must not be null");
             resources = List.copyOf(resources);
@@ -3368,6 +3411,7 @@ public final class CodingTerminalController implements AutoCloseable {
             pending = List.copyOf(pending);
             events = List.copyOf(events);
             outputCursor = Objects.requireNonNull(outputCursor, "outputCursor must not be null");
+            approval = Objects.requireNonNull(approval, "approval must not be null");
         }
     }
 

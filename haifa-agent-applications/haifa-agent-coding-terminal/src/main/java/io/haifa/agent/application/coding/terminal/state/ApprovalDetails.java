@@ -37,10 +37,16 @@ public record ApprovalDetails(
     }
 
     public static ApprovalDetails from(InteractionView interaction) {
+        return from(interaction, false);
+    }
+
+    public static ApprovalDetails from(InteractionView interaction, boolean allowForSession) {
         Objects.requireNonNull(interaction, "interaction must not be null");
-        List<String> allowedActions = interaction.allowedActions().stream()
+        List<String> allowedActions = new java.util.ArrayList<>(interaction.allowedActions().stream()
                 .map(InteractionAction::value)
-                .toList();
+                .toList());
+        if (allowForSession) allowedActions.add("allow_session");
+        Fact sessionScope = new Fact("Session option", "All ordinary tools · until app exit or /approval reset");
         var presentation = interaction.approvalPresentation();
         if (presentation.isPresent()) {
             var value = presentation.orElseThrow();
@@ -49,8 +55,11 @@ public record ApprovalDetails(
                     value.purpose(),
                     value.contentType(),
                     value.content(),
-                    value.environment().stream()
-                            .map(fact -> new Fact(fact.label(), fact.value()))
+                    java.util.stream.Stream.concat(
+                                    value.environment().stream().map(fact -> new Fact(fact.label(), fact.value())),
+                                    allowForSession
+                                            ? java.util.stream.Stream.of(sessionScope)
+                                            : java.util.stream.Stream.empty())
                             .toList(),
                     value.technical().stream()
                             .map(fact -> new Fact(fact.label(), fact.value()))
@@ -63,7 +72,7 @@ public record ApprovalDetails(
                 interaction.consequences().accepted(),
                 "Content",
                 interaction.safePrompt(),
-                List.of(),
+                allowForSession ? List.of(sessionScope) : List.of(),
                 List.of(),
                 Optional.empty(),
                 allowedActions);
@@ -72,6 +81,7 @@ public record ApprovalDetails(
     public static String actionLabel(String value) {
         return switch (value) {
             case "approve" -> "Allow once";
+            case "allow_session" -> "Allow for this session";
             case "reject" -> "Reject";
             case "confirm" -> "Confirm";
             case "cancel" -> "Cancel";

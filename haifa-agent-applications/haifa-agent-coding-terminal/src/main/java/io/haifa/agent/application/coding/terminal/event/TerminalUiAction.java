@@ -68,7 +68,11 @@ public sealed interface TerminalUiAction {
 
     record ToolOutputPreviewReceived(ToolOutputPreview preview) implements TerminalUiAction {}
 
-    record InteractionPresented(InteractionView interaction) implements TerminalUiAction {}
+    record InteractionPresented(InteractionView interaction, boolean allowForSession) implements TerminalUiAction {
+        public InteractionPresented(InteractionView interaction) {
+            this(interaction, false);
+        }
+    }
 
     record InteractionReceiptReceived(InteractionResponseReceipt receipt) implements TerminalUiAction {}
 

@@ -31,6 +31,7 @@ public final class TerminalCommandRouter {
             case "/model" -> TerminalCommand.MODEL;
             case "/settings" -> TerminalCommand.SETTINGS;
             case "/trust" -> TerminalCommand.TRUST;
+            case "/approval" -> TerminalCommand.APPROVAL;
             case "/session" -> TerminalCommand.SESSION;
             case "/command", "/commands", "/help" -> TerminalCommand.COMMANDS;
             case "/theme" -> TerminalCommand.THEME;

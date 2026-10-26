@@ -2,20 +2,24 @@
 
 ## 0.1.4-SNAPSHOT - Unreleased
 
+- Coding Terminal offers `Allow for this session` for ordinary built-in tool approvals. Consent activates only
+  after the initial approval is applied, remains local to the Coding Session and app instance, and can be cleared
+  with `/approval reset`; workspace trust, credential interactions and hard denials retain their existing checks.
+
 - Coding Terminal extends the sidebar divider through the composer and selectors. Input wraps within the
   main column when the sidebar is visible, and reflows on sidebar toggles and terminal resize without losing drafts.
 
 - Coding Terminal separates tool results from optional technical details, keeps non-zero command exits neutral,
   and labels completed responses without changing Markdown rendering. New leader shortcuts copy the rendered
   final response, return to its own Run's tool activity, and expand technical facts while preserving drafts.
-  Approval actions use readable English labels; scoped permission memory and the remaining per-tool rich
+  Approval actions use readable English labels; persistent project permission rules and the remaining per-tool rich
   previews stay deferred.
 
 - Successful `file_create`, `file_write` and `file_patch` results carry a bounded, display-only `outputPreview`:
   the content this call actually wrote, or a Unified Diff rebuilt from the hunks it actually applied. Runtime
   copies that copy into the tool observation after credential redaction, keeps a producer's truncation facts,
   and falls back to the bounded summary for every tool that produces no display copy. Coding Terminal therefore
-  shows real written content and a per-call diff instead of only the success summary; scoped permission memory,
+  shows real written content and a per-call diff instead of only the success summary; persistent project permission rules,
   directory tables, read paging and the other per-tool rich previews remain unimplemented.
 
 - A slow SQLite writer no longer turns into a hard failure for every other writer: the in-process write queue

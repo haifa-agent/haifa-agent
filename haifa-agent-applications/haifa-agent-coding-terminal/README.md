@@ -122,6 +122,7 @@ Windows ConPTY Gate B。
    - 布局自适应与用户显式折叠偏好：首次启动或窗口 Resize 时，终端根据当前列宽（>=100 列）自动计算侧栏展示；一旦用户使用 `<leader>b` 显式折叠或展开侧栏，终端锁定用户的显式偏好（`sidebarExplicitlyToggled`），后续窗口缩放事件不会强行覆盖用户的偏好选择。
 
 2. **焦点与弹层优先级契约 (Focus & Modal Priority Contract)**：
+   - 普通内建工具审批增加 `Allow for this session`：当前 Coding Session 内后续普通工具审批自动通过，退出应用后清除；`/approval reset` 恢复逐次审批。首次批准仅在 Runtime 实际应用后生效，Pending 不激活；工作区授权、权限提升、凭据/输入交互、未知工具和硬性拒绝保持原流程。
    - 任何选择器弹层（审批 Approval、Shell 确认、命令面板 Command Palette、模型选择、Session 摘要等）处于激活状态时，输入焦点完全移至弹层（Editor blur），编辑器失焦并禁用一切普通文本输入；
    - 弹层处于激活状态时，所有按键均按弹层事件处理（上下移动选中项、Enter 确认当前项、Esc/Ctrl+C 取消关闭）；
    - 弹层打开期间，所有全局 Leader 快捷操作（如 `<leader>m`、`<leader>s` 等）均被严格忽略（`Kind.EXECUTE_COMMAND` 语义完全与弹层的 `Kind.SUBMIT` 隔离），严禁借用编辑器的 SUBMIT 事件意外确认审批或执行未预期的全局命令；
@@ -211,7 +212,7 @@ delta，重复 frame 不重新解析；只有权威正文替换或 16 KB 有界�
 - [ ] Mermaid、数学公式与 KaTeX；
 - [ ] GFM 删除线、任务复选框及其他扩展；
 - [ ] OSC 8 可点击链接（当前显示 `label (URL)`）；
-- [ ] 目录表格、读取正文分页和范围授权仍需各自产品事实/激活机制；`file_create`/`file_write`/`file_patch`
+- [ ] 目录表格、读取正文分页和项目持久化范围授权仍需各自产品事实/激活机制；`file_create`/`file_write`/`file_patch`
   已展示本次调用实际写入的内容与 Diff，`file_read`、`file_list` 等工具的结构化结果仍只有有界摘要，
   Terminal 不从 View 直接读取文件，也不从事后仓库状态或自然语言生成这些内容。
 - [ ] Tool 专用结构化预览器、跨 Tool 聚合和批量展开；首版实时输出仍保持每个稳定 Tool Call ID

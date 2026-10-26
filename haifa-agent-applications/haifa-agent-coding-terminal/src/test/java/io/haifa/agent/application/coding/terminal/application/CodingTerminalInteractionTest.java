@@ -21,6 +21,103 @@ import org.junit.jupiter.api.Test;
 
 class CodingTerminalInteractionTest {
     @Test
+    void resettingSessionApprovalRunsInTheBackgroundAndKeepsTheComposerUsable() throws Exception {
+        var started = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var effects = new ArrayDeque<Runnable>();
+        FakeClient client = new FakeClient(view(Optional.empty())) {
+            @Override
+            public void resetSessionApproval(io.haifa.agent.core.session.AgentSessionId sessionId) {
+                assertThat(sessionId).isEqualTo(SESSION_ID);
+                started.countDown();
+                try {
+                    release.await();
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(interrupted);
+                }
+            }
+        };
+        var pump = new TerminalEventPump(32);
+        var controller = new CodingTerminalController(
+                PROJECT_ID, client, pump, new TerminalUiReducer(), TerminalUiState.initial(120, 40), effects::add);
+        controller.open(SESSION_ID);
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "/approval reset"));
+        var worker = new Thread(effects.remove());
+        worker.start();
+        try {
+            assertThat(started.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(controller.state().status()).isEqualTo("Resetting session approval");
+            controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, "next task", 9));
+            pump.offer(new TerminalUiAction.TerminalResized(90, 25));
+            controller.drainEvents();
+            controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
+            assertThat(controller.state().columns()).isEqualTo(90);
+            assertThat(controller.state().editorBuffer()).isEqualTo("next task");
+        } finally {
+            release.countDown();
+            worker.join(5_000);
+        }
+        controller.drainEvents();
+        assertThat(controller.state().status()).isEqualTo("Session approval reset · ask each time");
+    }
+
+    @Test
+    void sessionApprovalUsesTheProductOptionAndKeepsTheUiResponsiveUntilItReturns() throws Exception {
+        var started = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var effects = new ArrayDeque<Runnable>();
+        FakeClient client = new FakeClient(view(Optional.of(approval()))) {
+            @Override
+            public Optional<io.haifa.agent.application.project.product.coding.client.CodingApprovalPrompt>
+                    prepareApproval(InteractionView interaction) {
+                return Optional.of(new io.haifa.agent.application.project.product.coding.client.CodingApprovalPrompt(
+                        interaction, true));
+            }
+
+            @Override
+            public io.haifa.agent.runtime.api.InteractionResponseReceipt allowForSession(
+                    InteractionView interaction, String key) {
+                started.countDown();
+                try {
+                    release.await();
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(interrupted);
+                }
+                return respond(interaction, InteractionAction.APPROVE, key);
+            }
+        };
+        var pump = new TerminalEventPump(32);
+        var controller = new CodingTerminalController(
+                PROJECT_ID, client, pump, new TerminalUiReducer(), TerminalUiState.initial(120, 40), effects::add);
+        controller.open(SESSION_ID);
+        assertThat(controller.state().selector().orElseThrow().options())
+                .containsExactly("Reject", "Allow once", "Allow for this session");
+        controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, "保留草稿", 4));
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+        var worker = new Thread(effects.remove());
+        worker.start();
+        try {
+            assertThat(started.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(controller.state().selector()).isEmpty();
+            assertThat(controller.state().status()).isEqualTo("Approving");
+            pump.offer(new TerminalUiAction.TerminalResized(90, 25));
+            controller.drainEvents();
+            controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
+            assertThat(controller.state().columns()).isEqualTo(90);
+            assertThat(controller.state().editorBuffer()).isEqualTo("保留草稿");
+        } finally {
+            release.countDown();
+            worker.join(5_000);
+        }
+        controller.drainEvents();
+        assertThat(client.respondedActions).containsExactly(InteractionAction.APPROVE);
+    }
+
+    @Test
     void pendingInteractionUsesTheSameSelectorInputOwnerAndRuntimeClient() {
         InteractionView interaction = approval();
         FakeClient client = new FakeClient(view(Optional.of(interaction)));

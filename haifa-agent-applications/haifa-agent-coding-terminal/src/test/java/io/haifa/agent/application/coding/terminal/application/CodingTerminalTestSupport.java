@@ -345,7 +345,7 @@ public final class CodingTerminalTestSupport {
                 payload);
     }
 
-    static final class FakeClient implements CodingSessionClient {
+    static class FakeClient implements CodingSessionClient {
         CodingSessionView view;
         CodingSessionView reconciledView;
         List<CodingSessionSummary> summaries = List.of();
