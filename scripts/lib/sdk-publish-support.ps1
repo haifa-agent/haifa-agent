@@ -199,6 +199,7 @@ function Get-ReactorModuleClassification {
         'haifa-agent-execution\haifa-agent-execution-host',
         'haifa-agent-execution\haifa-agent-sandbox-api',
         'haifa-agent-execution\haifa-agent-sandbox-host',
+        'haifa-agent-execution\haifa-agent-sandbox-docker',
         'haifa-agent-capabilities\haifa-agent-credential-api',
         'haifa-agent-capabilities\haifa-agent-credential-core',
         'haifa-agent-capabilities\haifa-agent-memory-api',
