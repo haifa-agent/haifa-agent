@@ -751,7 +751,10 @@ public final class DecisionExecutor {
             AgentLoopContext loopContext) {
         String requestId = ids.nextValue();
         var createdAt = time.now().truncatedTo(java.time.temporal.ChronoUnit.MILLIS);
+        call.beginValidation();
+        call.beginPolicyCheck();
         call.waitForApproval();
+        step.start(createdAt);
         step.waitForExternalInput();
         state.appendStep(step);
         state.appendToolCall(call);
@@ -816,10 +819,25 @@ public final class DecisionExecutor {
                         List.of(),
                         List.of(),
                         false);
-                call.complete(result, time.now());
+                var resolvedAt = time.now();
+                call.approve();
+                call.start(resolvedAt);
+                step.resume();
+                if (answers.declined()) {
+                    call.fail(
+                            new io.haifa.agent.core.tool.ToolExecutionError(new AgentError(
+                                    AgentErrorCode.TOOL_REQUEST_REJECTED,
+                                    Map.of("reason", "CLARIFICATION_DISMISSED"),
+                                    ids.nextValue(),
+                                    resolvedAt)),
+                            result,
+                            resolvedAt);
+                } else {
+                    call.complete(result, resolvedAt);
+                }
                 state.appendToolCall(call);
                 step.complete(
-                        new AgentStepResult(result.summary(), result.structuredData(), result.artifacts()), time.now());
+                        new AgentStepResult(result.summary(), result.structuredData(), result.artifacts()), resolvedAt);
                 state.appendStep(step);
                 appendToolResult(run, call, result.summary());
                 interactions.markResolutionApplied(request.id());

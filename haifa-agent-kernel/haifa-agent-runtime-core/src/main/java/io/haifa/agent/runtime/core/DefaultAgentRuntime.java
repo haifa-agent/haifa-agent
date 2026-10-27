@@ -357,7 +357,6 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                 if (returnsToAgent) {
                     resume(new ResumeAgentRunRequest(
                             "interaction-cancelled:" + response.idempotencyKey(), run.id(), List.of()));
-                    interactions.markResolutionApplied(response.requestId());
                 } else {
                     if (!run.status().isTerminal()) {
                         transitions.cancelled(
@@ -365,12 +364,16 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                                 new RunTerminationReason(
                                         "INTERACTION_REJECTED", "Interaction was rejected by the operator"));
                     }
-                    interactions.markResolutionApplied(response.requestId());
+                    if (!consumedByLoop(response.requestId())) {
+                        interactions.markResolutionApplied(response.requestId());
+                    }
                 }
             } else {
                 resume(new ResumeAgentRunRequest(
                         "interaction-response:" + response.idempotencyKey(), run.id(), List.of()));
-                interactions.markResolutionApplied(response.requestId());
+                if (!consumedByLoop(response.requestId())) {
+                    interactions.markResolutionApplied(response.requestId());
+                }
             }
         }
         InteractionRecord current = interactions.record(response.requestId()).orElseThrow();
@@ -390,6 +393,24 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                 snapshot.version());
     }
 
+    private boolean consumedByLoop(io.haifa.agent.runtime.api.InteractionRequestId requestId) {
+        return interactions
+                .find(requestId)
+                .map(request -> request.target() instanceof io.haifa.agent.runtime.core.interaction.ToolApprovalTarget
+                        || request.target() instanceof io.haifa.agent.runtime.core.interaction.ClarificationTarget)
+                .orElse(false);
+    }
+
+    private static void validateClarificationAnswer(
+            io.haifa.agent.runtime.core.interaction.InteractionRequest request,
+            InteractionResponseType responseType,
+            List<io.haifa.agent.core.content.ContentPart> inputs) {
+        if (request.clarificationPresentation().isEmpty() || responseType != InteractionResponseType.CLARIFY) {
+            return;
+        }
+        io.haifa.agent.runtime.core.interaction.ClarificationAnswers.parse(inputs, request);
+    }
+
     private ResponseOutcome recordResponse(InteractionResponse response) {
         AgentRun run = requireRun(response.runId());
         requireCaller(run);
@@ -400,6 +421,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         if (!request.tenant().equals(caller.tenant())) {
             throw new SecurityException("response tenant does not match interaction");
         }
+        validateClarificationAnswer(request, response.type(), response.inputs());
         io.haifa.agent.policy.api.ApprovalVerification approvalResult = verifyApproval(request, caller);
         var resolution = interactions.respond(response, caller, time.now());
         boolean toolApproval =
@@ -423,6 +445,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                     io.haifa.agent.runtime.api.RuntimeApiErrorCode.INTERACTION_NOT_FOUND,
                     "The interaction does not exist or is not visible");
         }
+        validateClarificationAnswer(request, legacyType(response.action()), response.inputs());
         var approvalResult = verifyApprovalForContract(request, caller);
         var resolution = interactions.respond(response, caller, time.now());
         InteractionResponse legacy = new InteractionResponse(
