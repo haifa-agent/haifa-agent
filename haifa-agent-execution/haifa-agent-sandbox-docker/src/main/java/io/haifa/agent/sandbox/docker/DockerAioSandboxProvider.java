@@ -60,7 +60,6 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
     private static final String ROLE_CONTAINER = "container";
     private static final String ROLE_NETWORK = "network";
     private static final Duration MINIMUM_CLEANUP_RESERVE = Duration.ofSeconds(1);
-    private static final String GATEWAY_ISOLATED = "isolated";
 
     private final DockerAioSandboxConfiguration configuration;
     private final WorkspaceStore workspaces;
@@ -558,18 +557,12 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
             networkName = networkName();
             Map<String, String> labels = labels(ROLE_NETWORK);
             Map<String, String> options = Map.of(
-                    DockerAioSandboxConfiguration.GATEWAY_MODE_IPV4, GATEWAY_ISOLATED,
-                    DockerAioSandboxConfiguration.GATEWAY_MODE_IPV6, GATEWAY_ISOLATED,
                     DockerAioSandboxConfiguration.ENABLE_ICC, "false");
             engine().createNetwork(networkName, labels, options);
             DockerEngine.NetworkInspection inspected = engine().inspectNetwork(networkName);
             if (inspected == null
                     || !DockerAioSandboxConfiguration.NETWORK_DRIVER.equals(inspected.driver())
                     || !inspected.internal()
-                    || !GATEWAY_ISOLATED.equals(
-                            inspected.options().get(DockerAioSandboxConfiguration.GATEWAY_MODE_IPV4))
-                    || !GATEWAY_ISOLATED.equals(
-                            inspected.options().get(DockerAioSandboxConfiguration.GATEWAY_MODE_IPV6))
                     || !"false".equals(inspected.options().get(DockerAioSandboxConfiguration.ENABLE_ICC))
                     || !labels.equals(inspected.labels())) {
                 throw failure(
@@ -1084,8 +1077,6 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
                 "haifa-" + token(configuration.installationId()) + "-ws-" + token(workspaceId.value()) + "-net";
         Map<String, String> networkLabels = warmLabels(ROLE_NETWORK, workspaceId);
         Map<String, String> options = Map.of(
-                DockerAioSandboxConfiguration.GATEWAY_MODE_IPV4, GATEWAY_ISOLATED,
-                DockerAioSandboxConfiguration.GATEWAY_MODE_IPV6, GATEWAY_ISOLATED,
                 DockerAioSandboxConfiguration.ENABLE_ICC, "false");
 
         String containerName = "haifa-" + token(configuration.installationId()) + "-ws-" + token(workspaceId.value());
@@ -1121,10 +1112,6 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
             if (networkInspected == null
                     || !DockerAioSandboxConfiguration.NETWORK_DRIVER.equals(networkInspected.driver())
                     || !networkInspected.internal()
-                    || !GATEWAY_ISOLATED.equals(
-                            networkInspected.options().get(DockerAioSandboxConfiguration.GATEWAY_MODE_IPV4))
-                    || !GATEWAY_ISOLATED.equals(
-                            networkInspected.options().get(DockerAioSandboxConfiguration.GATEWAY_MODE_IPV6))
                     || !"false".equals(networkInspected.options().get(DockerAioSandboxConfiguration.ENABLE_ICC))
                     || !networkLabels.equals(networkInspected.labels())) {
                 throw failure(
