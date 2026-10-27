@@ -33,6 +33,7 @@ final class HttpAioClient implements AioClient {
 
     HttpAioClient(Duration connectTimeout) {
         this.client = HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(connectTimeout)
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
@@ -171,8 +172,8 @@ final class HttpAioClient implements AioClient {
                     errorBody = new String(response.body(), StandardCharsets.UTF_8);
                 } catch (Exception ignored) {
                 }
-                System.err.println("AIO_HTTP_ERROR uri=" + uri + " status=" + response.statusCode() + " body=" + errorBody);
-                throw new AioProtocolException("AIO_HTTP_" + response.statusCode(), "AIO request was rejected: " + errorBody);
+                throw new AioProtocolException(
+                        "AIO_HTTP_" + response.statusCode(), "AIO request was rejected: " + errorBody);
             }
             return mapper.readTree(response.body());
         } catch (AioProtocolException exception) {

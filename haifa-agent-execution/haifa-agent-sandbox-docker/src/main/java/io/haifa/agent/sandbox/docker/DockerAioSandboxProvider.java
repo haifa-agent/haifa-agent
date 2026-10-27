@@ -556,8 +556,7 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
         private void createNetwork() {
             networkName = networkName();
             Map<String, String> labels = labels(ROLE_NETWORK);
-            Map<String, String> options = Map.of(
-                    DockerAioSandboxConfiguration.ENABLE_ICC, "false");
+            Map<String, String> options = Map.of(DockerAioSandboxConfiguration.ENABLE_ICC, "false");
             engine().createNetwork(networkName, labels, options);
             DockerEngine.NetworkInspection inspected = engine().inspectNetwork(networkName);
             if (inspected == null
@@ -1078,8 +1077,7 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
         String networkName =
                 "haifa-" + token(configuration.installationId()) + "-ws-" + token(workspaceId.value()) + "-net";
         Map<String, String> networkLabels = warmLabels(ROLE_NETWORK, workspaceId);
-        Map<String, String> options = Map.of(
-                DockerAioSandboxConfiguration.ENABLE_ICC, "false");
+        Map<String, String> options = Map.of(DockerAioSandboxConfiguration.ENABLE_ICC, "false");
 
         String containerName = "haifa-" + token(configuration.installationId()) + "-ws-" + token(workspaceId.value());
         Map<String, String> containerLabels = warmLabels(ROLE_CONTAINER, workspaceId);
@@ -1134,8 +1132,7 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
             verifyWarmContainer(inspected, hostWorkspaceRoot, networkName, containerLabels);
 
             URI managementUri;
-            if (inspected.containerIp() != null
-                    && !inspected.containerIp().isBlank()) {
+            if (inspected.containerIp() != null && !inspected.containerIp().isBlank()) {
                 managementUri = URI.create("http://" + inspected.containerIp() + ":" + configuration.aioPort());
             } else if (inspected.managementPort() > 0) {
                 managementUri = URI.create("http://127.0.0.1:" + inspected.managementPort());
@@ -1438,15 +1435,16 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
 
                 return resultFromExecWarm(exec, execution, started, cancelled.get(), observer);
             } catch (AioClient.AioProtocolException | DockerEngine.DockerEngineException exception) {
-                System.err.println("WARM_SESSION_EXEC_FAILURE: " + exception.getMessage());
-                exception.printStackTrace(System.err);
                 if (cancelled.get()) {
                     return cancelledResult(started);
                 }
                 if (exception instanceof AioClient.AioProtocolException aioEx && "AIO_TIMED_OUT".equals(aioEx.code())) {
                     return timedOutResult(started, "TIMEOUT");
                 }
-                throw failure("CONTAINER_SANDBOX_FAILED", "container sandbox operation failed: " + exception.getMessage(), exception);
+                throw failure(
+                        "CONTAINER_SANDBOX_FAILED",
+                        "container sandbox operation failed: " + exception.getMessage(),
+                        exception);
             } finally {
                 executingThread = null;
                 if (activeContainer != null) {
