@@ -1725,6 +1725,7 @@ public final class CodingTerminalController implements AutoCloseable {
             if (clarificationDraft == null
                     || !clarificationDraft.interaction().requestId().equals(interaction.requestId())) {
                 clarificationDraft = new ClarificationDraft(interaction, clarification.orElseThrow());
+                apply(new TerminalUiAction.StatusChanged("Space selects an option · Enter confirms the answer"));
             }
             if (state.selector().isPresent()
                     && state.selector().orElseThrow().kind().startsWith("clarification:")) {
@@ -1768,7 +1769,8 @@ public final class CodingTerminalController implements AutoCloseable {
                 Math.min(Math.max(initialSelection, 0), labels.size() - 1))));
     }
 
-    private void chooseClarificationOption(int selected) {
+    /** Space only marks an option: it never advances a question and never submits an answer. */
+    private void toggleClarificationOption(int selected) {
         ClarificationDraft draft = clarificationDraft;
         if (draft == null) {
             apply(new TerminalUiAction.RecoverableFailure("CLARIFICATION_NOT_PENDING"));
@@ -1778,20 +1780,53 @@ public final class CodingTerminalController implements AutoCloseable {
         int options = question.options().size();
         if (selected < options) {
             draft.choose(question.options().get(selected).optionId());
-            if (!question.multiple()) draft.advance();
-            continueClarification(question.multiple() ? selected : 0);
-            return;
-        } else if (question.allowCustom() && selected == options) {
-            apply(new TerminalUiAction.SelectorClosed());
-            apply(new TerminalUiAction.StatusChanged("Type your answer and press Enter"));
-            return;
-        } else if (question.multiple() && selected == options + (question.allowCustom() ? 1 : 0)) {
-            draft.confirm();
-        } else {
-            dismissClarification();
+            openClarificationSelector(selected);
             return;
         }
-        continueClarification();
+        if (question.allowCustom() && selected == options) {
+            beginClarificationText();
+        }
+    }
+
+    /** Enter confirms the current question; an unanswerable multi-choice entry keeps the selector open. */
+    private void confirmClarificationOption(int selected) {
+        ClarificationDraft draft = clarificationDraft;
+        if (draft == null) {
+            apply(new TerminalUiAction.RecoverableFailure("CLARIFICATION_NOT_PENDING"));
+            return;
+        }
+        ClarificationDetails.Question question = draft.current();
+        int options = question.options().size();
+        if (selected < options) {
+            if (question.multiple()) {
+                if (!draft.currentAnswered()) {
+                    apply(new TerminalUiAction.StatusChanged("Select at least one option with Space first"));
+                    openClarificationSelector(selected);
+                    return;
+                }
+                draft.confirm();
+            } else {
+                draft.choose(question.options().get(selected).optionId());
+                draft.advance();
+            }
+            continueClarification(0);
+            return;
+        }
+        if (question.allowCustom() && selected == options) {
+            beginClarificationText();
+            return;
+        }
+        if (question.multiple() && selected == options + (question.allowCustom() ? 1 : 0)) {
+            draft.confirm();
+            continueClarification();
+            return;
+        }
+        dismissClarification();
+    }
+
+    private void beginClarificationText() {
+        apply(new TerminalUiAction.SelectorClosed());
+        apply(new TerminalUiAction.StatusChanged("Type your answer and press Enter"));
     }
 
     private void answerClarificationWithText(String text) {
@@ -1923,6 +1958,10 @@ public final class CodingTerminalController implements AutoCloseable {
         void answerWithText(String text) {
             custom.set(index, text.trim());
             advance();
+        }
+
+        boolean currentAnswered() {
+            return !selected.get(index).isEmpty() || !custom.get(index).isBlank();
         }
 
         boolean complete() {
@@ -2707,7 +2746,7 @@ public final class CodingTerminalController implements AutoCloseable {
             if (!toggled.kind().startsWith("clarification:")) {
                 return;
             }
-            chooseClarificationOption(toggled.selected());
+            toggleClarificationOption(toggled.selected());
             return;
         }
         if (input.kind() != TerminalInput.Kind.SUBMIT) {
@@ -2933,7 +2972,7 @@ public final class CodingTerminalController implements AutoCloseable {
             }
             default -> {
                 if (selector.kind().startsWith("clarification:")) {
-                    chooseClarificationOption(selected);
+                    confirmClarificationOption(selected);
                     return;
                 }
                 if (!selector.kind().startsWith("interaction:")) {
