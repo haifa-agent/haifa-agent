@@ -405,6 +405,7 @@ public final class ToolPipeline {
         } catch (AgentExecutionFailureException classified) {
             throw classified;
         } catch (RuntimeException exception) {
+            LOGGER.error("TOOL_PIPELINE_RUNTIME_EXCEPTION tool={}", definition.name().value(), exception);
             if (exception instanceof io.haifa.agent.tool.api.ToolInvocationException invocationFailure) {
                 if (invocationFailure.dispatchState() == io.haifa.agent.tool.api.ToolDispatchState.DISPATCHED
                         || invocationFailure.dispatchState()
