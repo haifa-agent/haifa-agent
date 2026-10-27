@@ -40,6 +40,7 @@
         <assertj.version>3.27.3</assertj.version>
         <archunit.version>1.4.1</archunit.version>
         <jackson.version>2.20.1</jackson.version>
+        <docker-java.version>3.7.1</docker-java.version>
         <slf4j.version>2.0.17</slf4j.version>
         <reactor.version>2024.0.18</reactor.version>
         <mockito.version>5.18.0</mockito.version>
@@ -48,7 +49,11 @@
         <sqlite.jdbc.version>3.53.1.0</sqlite.jdbc.version>
         <tui4j.jline-backend.version>3.30.0</tui4j.jline-backend.version>
         <tui4j.version>0.3.3</tui4j.version>
-        <jna.version>5.17.0</jna.version>
+        <jna.version>5.18.1</jna.version>
+        <commons-io.version>2.21.0</commons-io.version>
+        <commons-lang3.version>3.20.0</commons-lang3.version>
+        <commons-codec.version>1.19.0</commons-codec.version>
+        <commons-compress.version>1.28.0</commons-compress.version>
 
         <maven.compiler.plugin.version>3.14.0</maven.compiler.plugin.version>
         <maven.surefire.plugin.version>3.5.3</maven.surefire.plugin.version>
@@ -143,6 +148,11 @@
             <dependency>
                 <groupId>io.haifa</groupId>
                 <artifactId>haifa-agent-sandbox-host</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-sandbox-docker</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
@@ -383,6 +393,36 @@
                 <version>${jackson.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>commons-io</groupId>
+                <artifactId>commons-io</artifactId>
+                <version>${commons-io.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>commons-codec</groupId>
+                <artifactId>commons-codec</artifactId>
+                <version>${commons-codec.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.commons</groupId>
+                <artifactId>commons-compress</artifactId>
+                <version>${commons-compress.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.commons</groupId>
+                <artifactId>commons-lang3</artifactId>
+                <version>${commons-lang3.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.github.docker-java</groupId>
+                <artifactId>docker-java-core</artifactId>
+                <version>${docker-java.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.github.docker-java</groupId>
+                <artifactId>docker-java-transport-httpclient5</artifactId>
+                <version>${docker-java.version}</version>
             </dependency>
             <dependency>
                 <groupId>org.slf4j</groupId>
