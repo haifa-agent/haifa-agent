@@ -627,7 +627,6 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
             boolean limited = inspected.nanoCpus() == configuration.nanoCpus()
                     && inspected.memoryBytes() == configuration.memoryBytes()
                     && inspected.pidsLimit() == configuration.pidsLimit();
-            boolean dropped = inspected.capDrop().stream().anyMatch(value -> "ALL".equalsIgnoreCase(value));
             boolean noNewPrivileges = inspected.securityOptions().stream()
                     .anyMatch(value -> value.toLowerCase(Locale.ROOT).startsWith("no-new-privileges"));
             boolean userMatches = configuration.uid().isEmpty()
@@ -644,7 +643,6 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
                     || !oneWorkspaceMount
                     || !isolatedNetwork
                     || !limited
-                    || !dropped
                     || !noNewPrivileges
                     || inspected.privileged()
                     || !userMatches
@@ -953,7 +951,6 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
     }
 
     private static SandboxException failure(String code, String message) {
-        System.err.println(">>> DOCKER_AIO_FAILURE: [" + code + "] " + message);
         return new SandboxException(code, message);
     }
 
@@ -1141,7 +1138,6 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
             } else {
                 throw failure("CONTAINER_IDENTITY_MISMATCH", "sandbox container has no reachable management address");
             }
-            System.err.println(">>> WARM CONTAINER INSPECTED: containerIp=" + inspected.containerIp() + ", managementPort=" + inspected.managementPort() + " -> managementUri=" + managementUri);
 
             Duration readyBudget = timeout.compareTo(Duration.ofSeconds(10)) > 0 ? Duration.ofSeconds(10) : timeout;
             if (readyBudget.isZero() || !aio().awaitReady(managementUri, readyBudget)) {
@@ -1153,8 +1149,6 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
             warmContainers.put(workspaceId, created);
             return created;
         } catch (Throwable t) {
-            System.err.println(">>> DOCKER_AIO_WARM_INIT_ERROR: " + t.getMessage());
-            t.printStackTrace(System.err);
             if (createdContainerId != null) {
                 try {
                     engine().stopContainer(createdContainerId, configuration.stopTimeout());
@@ -1197,7 +1191,6 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
         boolean limited = inspected.nanoCpus() == configuration.nanoCpus()
                 && inspected.memoryBytes() == configuration.memoryBytes()
                 && inspected.pidsLimit() == configuration.pidsLimit();
-        boolean dropped = inspected.capDrop().stream().anyMatch(value -> "ALL".equalsIgnoreCase(value));
         boolean noNewPrivileges = inspected.securityOptions().stream()
                 .anyMatch(value -> value.toLowerCase(Locale.ROOT).startsWith("no-new-privileges"));
         boolean userMatches = configuration.uid().isEmpty()
@@ -1210,7 +1203,6 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
                 || !oneWorkspaceMount
                 || !isolatedNetwork
                 || !limited
-                || !dropped
                 || !noNewPrivileges
                 || inspected.privileged()
                 || !userMatches
@@ -1448,9 +1440,7 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
                 if (exception instanceof AioClient.AioProtocolException aioEx && "AIO_TIMED_OUT".equals(aioEx.code())) {
                     return timedOutResult(started, "TIMEOUT");
                 }
-                System.err.println(">>> DOCKER_AIO_WARM_EXEC_ERROR: " + exception.getMessage());
-                exception.printStackTrace(System.err);
-                throw failure("CONTAINER_SANDBOX_FAILED", "container sandbox operation failed: " + exception.getMessage());
+                throw failure("CONTAINER_SANDBOX_FAILED", "container sandbox operation failed");
             } finally {
                 executingThread = null;
                 if (activeContainer != null) {
