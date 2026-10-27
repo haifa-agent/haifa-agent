@@ -953,6 +953,7 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
     }
 
     private static SandboxException failure(String code, String message) {
+        System.err.println(">>> DOCKER_AIO_FAILURE: [" + code + "] " + message);
         return new SandboxException(code, message);
     }
 
@@ -1151,6 +1152,8 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
             warmContainers.put(workspaceId, created);
             return created;
         } catch (Throwable t) {
+            System.err.println(">>> DOCKER_AIO_WARM_INIT_ERROR: " + t.getMessage());
+            t.printStackTrace(System.err);
             if (createdContainerId != null) {
                 try {
                     engine().stopContainer(createdContainerId, configuration.stopTimeout());
@@ -1444,7 +1447,9 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
                 if (exception instanceof AioClient.AioProtocolException aioEx && "AIO_TIMED_OUT".equals(aioEx.code())) {
                     return timedOutResult(started, "TIMEOUT");
                 }
-                throw failure("CONTAINER_SANDBOX_FAILED", "container sandbox operation failed");
+                System.err.println(">>> DOCKER_AIO_WARM_EXEC_ERROR: " + exception.getMessage());
+                exception.printStackTrace(System.err);
+                throw failure("CONTAINER_SANDBOX_FAILED", "container sandbox operation failed: " + exception.getMessage());
             } finally {
                 executingThread = null;
                 if (activeContainer != null) {
