@@ -1661,11 +1661,16 @@ class SqliteRuntimeRecoveryTest {
             assertThat(providerCalls).hasValue(0);
 
             instance.runtime()
-                    .respond(new InteractionResponse(
+                    .respond(new io.haifa.agent.runtime.api.InteractionResponseSubmission(
                             new InteractionResponseId("clarification-answer-response"),
                             interaction.id(),
                             runId,
-                            InteractionResponseType.CLARIFY,
+                            instance.ports()
+                                    .interactions()
+                                    .record(interaction.id())
+                                    .orElseThrow()
+                                    .revision(),
+                            io.haifa.agent.runtime.api.InteractionAction.SUBMIT,
                             List.of(new io.haifa.agent.core.content.TextPart(
                                     "selected=opt-0-0\ncustom=", "clarification-answer.v1")),
                             "clarification-answer-key",
@@ -1706,11 +1711,16 @@ class SqliteRuntimeRecoveryTest {
                     instance.ports().interactions().pending(runId).orElseThrow();
 
             instance.runtime()
-                    .respond(new InteractionResponse(
+                    .respond(new io.haifa.agent.runtime.api.InteractionResponseSubmission(
                             new InteractionResponseId("clarification-dismiss-response"),
                             interaction.id(),
                             runId,
-                            InteractionResponseType.REJECT,
+                            instance.ports()
+                                    .interactions()
+                                    .record(interaction.id())
+                                    .orElseThrow()
+                                    .revision(),
+                            io.haifa.agent.runtime.api.InteractionAction.CANCEL,
                             List.of(),
                             "clarification-dismiss-key",
                             TIME.now()));
