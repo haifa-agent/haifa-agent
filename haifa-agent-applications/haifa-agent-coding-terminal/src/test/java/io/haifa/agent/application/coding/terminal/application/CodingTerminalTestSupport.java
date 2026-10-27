@@ -397,6 +397,7 @@ public final class CodingTerminalTestSupport {
         final List<AgentSessionId> opened = new ArrayList<>();
         final List<String> restored = new ArrayList<>();
         final List<InteractionAction> respondedActions = new ArrayList<>();
+        final List<List<io.haifa.agent.core.content.ContentPart>> respondedInputs = new ArrayList<>();
         final List<AgentSessionId> cancelledSessions = new ArrayList<>();
         final List<String> revokedWorkspaces = new ArrayList<>();
         CodingShellPlan.State shellState = CodingShellPlan.State.READY;
@@ -519,6 +520,16 @@ public final class CodingTerminalTestSupport {
         public Optional<InteractionView> pendingInteraction(AgentRunId runId) {
             pendingInteractionCalls++;
             return reconciledView.pendingInteraction();
+        }
+
+        @Override
+        public InteractionResponseReceipt respond(
+                InteractionView interaction,
+                InteractionAction action,
+                List<io.haifa.agent.core.content.ContentPart> inputs,
+                String idempotencyKey) {
+            respondedInputs.add(inputs);
+            return respond(interaction, action, idempotencyKey);
         }
 
         @Override

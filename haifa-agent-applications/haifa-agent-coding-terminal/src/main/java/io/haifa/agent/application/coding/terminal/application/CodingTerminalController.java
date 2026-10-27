@@ -151,6 +151,7 @@ public final class CodingTerminalController implements AutoCloseable {
     private boolean reconcileInFlight;
     private InteractionHydrationRequest interactionHydrationInFlight;
     private ClarificationDraft clarificationDraft;
+    private boolean awaitingClarificationText;
     private InteractionView activeInteraction;
     private long activeCompletionRequestId;
     private static final long CANCEL_ARMED_TIMEOUT_MILLIS = 5_000L;
@@ -917,6 +918,13 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void acceptGuarded(TerminalInput input) {
+        if (awaitingClarificationText
+                && (input.kind() == TerminalInput.Kind.SUBMIT || input.kind() == TerminalInput.Kind.FOLLOW_UP)
+                && !input.text().isBlank()) {
+            apply(new TerminalUiAction.EditorChanged("", 0));
+            answerClarificationWithText(input.text());
+            return;
+        }
         drainEvents();
         if (input.kind() == TerminalInput.Kind.TICK) {
             updateAuthenticationCountdown();
@@ -1751,6 +1759,11 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void openClarificationSelector(int initialSelection) {
+        if (awaitingClarificationText) {
+            apply(new TerminalUiAction.SelectorClosed());
+            return;
+        }
+
         ClarificationDraft draft = clarificationDraft;
         ClarificationDetails.Question question = draft.current();
         List<String> labels = new ArrayList<>();
@@ -1825,11 +1838,13 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void beginClarificationText() {
+        awaitingClarificationText = true;
         apply(new TerminalUiAction.SelectorClosed());
         apply(new TerminalUiAction.StatusChanged("Type your answer and press Enter"));
     }
 
     private void answerClarificationWithText(String text) {
+        awaitingClarificationText = false;
         clarificationDraft.answerWithText(text);
         continueClarification();
     }
@@ -1849,6 +1864,7 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void dismissClarification() {
+        awaitingClarificationText = false;
         ClarificationDraft draft = clarificationDraft;
         clarificationDraft = null;
         activeInteraction = null;
@@ -1866,6 +1882,7 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void submitClarification() {
+        awaitingClarificationText = false;
         ClarificationDraft draft = clarificationDraft;
         clarificationDraft = null;
         activeInteraction = null;

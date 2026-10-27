@@ -135,6 +135,28 @@ class CodingTerminalInteractionTest {
     }
 
     @Test
+    void submitsFreeTextAsTheClarificationAnswerInsteadOfASteer() {
+        FakeClient client = new FakeClient(view(Optional.of(clarification(false))));
+        client.reconciledView = view(Optional.empty());
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+        assertThat(controller.state().selector()).isEmpty();
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "first line\nsecond line"));
+
+        assertThat(client.steeredMessages).isEmpty();
+        assertThat(client.respondedInputs).hasSize(1);
+        String answer = ((io.haifa.agent.core.content.TextPart)
+                        client.respondedInputs.get(0).get(0))
+                .text();
+        assertThat(answer).isEqualTo("selected=\ncustom=first line second line");
+    }
+
+    @Test
     void togglesASingleChoiceClarificationOptionOnAndOff() {
         FakeClient client = new FakeClient(view(Optional.of(clarification(false))));
         client.reconciledView = view(Optional.empty());
