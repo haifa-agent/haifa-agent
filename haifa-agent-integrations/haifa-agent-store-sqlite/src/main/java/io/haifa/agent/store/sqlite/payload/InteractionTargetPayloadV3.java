@@ -42,8 +42,16 @@ public record InteractionTargetPayloadV3(
                 .orElse(null);
         if (target instanceof GenericInteractionTarget generic) {
             return new InteractionTargetPayloadV3(
-                    "generic", generic.type(), null, null, null, null, null, null,
-                    encodedApproval, encodedClarification);
+                    "generic",
+                    generic.type(),
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    encodedApproval,
+                    encodedClarification);
         }
         if (target instanceof ToolApprovalTarget tool) {
             return new InteractionTargetPayloadV3(
@@ -102,8 +110,7 @@ public record InteractionTargetPayloadV3(
         return clarification == null ? List.of() : clarification.contractsDomain();
     }
 
-    public record ClarificationPayload(
-            String title, List<QuestionPayload> questions, List<ContractPayload> contracts) {
+    public record ClarificationPayload(String title, List<QuestionPayload> questions, List<ContractPayload> contracts) {
 
         static ClarificationPayload from(
                 ClarificationPresentation presentation, List<InteractionInputContract> contracts) {
@@ -154,7 +161,8 @@ public record InteractionTargetPayloadV3(
         }
 
         static OptionPayload from(ClarificationPresentation.Option option) {
-            return new OptionPayload(option.optionId(), option.label(), option.description().orElse(null));
+            return new OptionPayload(
+                    option.optionId(), option.label(), option.description().orElse(null));
         }
 
         InteractionOption toDomain() {
@@ -167,7 +175,10 @@ public record InteractionTargetPayloadV3(
     }
 
     public record ContractPayload(
-            String type, int maximumCharacters, int minimumSelections, int maximumSelections,
+            String type,
+            int maximumCharacters,
+            int minimumSelections,
+            int maximumSelections,
             List<OptionPayload> options) {
 
         static ContractPayload from(InteractionInputContract contract) {

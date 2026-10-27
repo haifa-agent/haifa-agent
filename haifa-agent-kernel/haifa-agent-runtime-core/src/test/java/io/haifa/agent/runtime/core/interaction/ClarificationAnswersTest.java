@@ -40,15 +40,15 @@ class ClarificationAnswersTest {
         ClarificationAnswers answers =
                 ClarificationAnswers.parse(List.of(part("opt-0-1,opt-0-0", "in-memory is fine")), request);
 
-        assertThat(answers.answers())
-                .containsExactly(List.of("Postgres", "SQLite", "in-memory is fine"));
+        assertThat(answers.answers()).containsExactly(List.of("Postgres", "SQLite", "in-memory is fine"));
     }
 
     @Test
     void dismissalNeverFabricatesAnswers() {
         InteractionRequest request = request(spec(false, true));
 
-        ClarificationAnswers answers = ClarificationAnswers.declined(request.inputContracts().size());
+        ClarificationAnswers answers =
+                ClarificationAnswers.declined(request.inputContracts().size());
 
         assertThat(answers.declined()).isTrue();
         assertThat(answers.answers()).containsExactly(List.of());
@@ -84,8 +84,7 @@ class ClarificationAnswersTest {
     }
 
     private static TextPart part(String selectedIds, String customText) {
-        return new TextPart(
-                "selected=" + selectedIds + "\ncustom=" + customText, ClarificationAnswers.PART_FORMAT);
+        return new TextPart("selected=" + selectedIds + "\ncustom=" + customText, ClarificationAnswers.PART_FORMAT);
     }
 
     private static ClarificationSpec spec(boolean multiple, boolean custom) {

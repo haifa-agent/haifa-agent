@@ -6,8 +6,8 @@ import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.runtime.api.ApprovalPresentation;
 import io.haifa.agent.runtime.api.ClarificationPresentation;
-import io.haifa.agent.runtime.api.InteractionInputContract;
 import io.haifa.agent.runtime.api.InteractionAction;
+import io.haifa.agent.runtime.api.InteractionInputContract;
 import io.haifa.agent.runtime.api.InteractionRequestId;
 import io.haifa.agent.runtime.api.InteractionResponse;
 import io.haifa.agent.runtime.api.InteractionResponseId;
@@ -18,6 +18,7 @@ import io.haifa.agent.runtime.api.RuntimeApiErrorCode;
 import io.haifa.agent.runtime.api.RuntimeContractException;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext;
 import io.haifa.agent.runtime.core.idempotency.CanonicalRequestDigest;
+import io.haifa.agent.runtime.core.interaction.ClarificationTarget;
 import io.haifa.agent.runtime.core.interaction.InteractionExpirationOutcome;
 import io.haifa.agent.runtime.core.interaction.InteractionPort;
 import io.haifa.agent.runtime.core.interaction.InteractionRecord;
@@ -27,7 +28,6 @@ import io.haifa.agent.runtime.core.interaction.InteractionSemantics;
 import io.haifa.agent.runtime.core.interaction.InteractionSubmissionResolution;
 import io.haifa.agent.runtime.core.interaction.InteractionTarget;
 import io.haifa.agent.runtime.core.interaction.ResolvedInteraction;
-import io.haifa.agent.runtime.core.interaction.ClarificationTarget;
 import io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
 import io.haifa.agent.store.sqlite.codec.EncodedPayload;
 import io.haifa.agent.store.sqlite.codec.VersionedPayloadCodecRegistry;
@@ -36,8 +36,8 @@ import io.haifa.agent.store.sqlite.mybatis.InteractionResponseRow;
 import io.haifa.agent.store.sqlite.mybatis.RuntimeStoreMapper;
 import io.haifa.agent.store.sqlite.payload.ContentPartsPayload;
 import io.haifa.agent.store.sqlite.payload.InteractionTargetPayload;
-import io.haifa.agent.store.sqlite.payload.InteractionTargetPayloadV3;
 import io.haifa.agent.store.sqlite.payload.InteractionTargetPayloadV2;
+import io.haifa.agent.store.sqlite.payload.InteractionTargetPayloadV3;
 import io.haifa.agent.store.sqlite.payload.SqliteRuntimePayloadTypes;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
@@ -88,8 +88,7 @@ public final class SqliteInteractionPort implements InteractionPort {
                         InteractionTargetPayloadV2.from(request.target(), request.presentation()));
             } else {
                 target = codecs.encode(
-                        SqliteRuntimePayloadTypes.INTERACTION_TARGET,
-                        InteractionTargetPayload.from(request.target()));
+                        SqliteRuntimePayloadTypes.INTERACTION_TARGET, InteractionTargetPayload.from(request.target()));
             }
             String targetKind = request.target() instanceof ToolApprovalTarget
                     ? "tool-approval"
