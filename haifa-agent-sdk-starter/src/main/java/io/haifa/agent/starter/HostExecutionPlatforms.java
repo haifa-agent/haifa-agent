@@ -49,6 +49,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -142,9 +143,35 @@ public final class HostExecutionPlatforms {
      * @return the resolved host execution contribution; never {@code null}
      */
     public static HostExecutionPlatform hostGuarded(HostExecutionSpec spec, TenantRef tenant, PrincipalRef principal) {
+        return hostGuarded(spec, tenant, principal, Map.of());
+    }
+
+    /**
+     * Assembles host execution with explicit trusted, non-sensitive deployment environment facts.
+     *
+     * <p>The map is frozen at assembly and never becomes a model argument or changes the JVM/global
+     * environment. Use it for CLI config/data directories or PATH, never tokens or secrets. Names,
+     * values and counts are bounded by the host resolver; HOME, system, temporary directory and
+     * interpreter boundaries cannot be overridden. A nonempty override binds the resolved
+     * environment digest into the existing profile, configuration and Tool binding identities, so
+     * a frozen invocation cannot be restored into a different environment. Values are not exposed
+     * in diagnostics or Approval prompts. An empty map is equivalent to the three-argument entry.
+     *
+     * @param spec trusted host execution declaration
+     * @param tenant trusted tenant
+     * @param principal trusted principal
+     * @param trustedEnvironmentOverrides trusted non-sensitive deployment facts, never model input
+     * @return the owned host execution contribution
+     */
+    public static HostExecutionPlatform hostGuarded(
+            HostExecutionSpec spec,
+            TenantRef tenant,
+            PrincipalRef principal,
+            Map<String, String> trustedEnvironmentOverrides) {
         Objects.requireNonNull(spec, "spec must not be null");
         Objects.requireNonNull(tenant, "tenant must not be null");
         Objects.requireNonNull(principal, "principal must not be null");
+        Objects.requireNonNull(trustedEnvironmentOverrides, "trusted environment overrides must not be null");
         Path workspaceRoot = spec.workspaceRoot();
         String workspaceIdentity = workspaceIdentity(workspaceRoot);
         Path scratchRoot = scratchRoot(spec.dataRoot());
@@ -163,7 +190,7 @@ public final class HostExecutionPlatforms {
         HostShell shell = hostShell();
         var host = new HostGuardedSandboxProvider(workspaces, locations, identifiers, time, shell, scratchRoot);
         ScriptRuntimeResolver runtimes = HostScriptRuntimeResolver.currentHost(Optional.empty(), Optional.empty());
-        ResolvedHostEnvironment hostEnvironment = HostExecutionEnvironmentResolver.resolveHostUser(
+        ResolvedHostEnvironment baseline = HostExecutionEnvironmentResolver.resolveHostUser(
                 System.getenv(),
                 System.getProperty("os.name", ""),
                 Path.of(System.getProperty("user.home", ".")),
@@ -171,8 +198,26 @@ public final class HostExecutionPlatforms {
                 workspaceRoot,
                 scratchRoot,
                 Set.of());
+        ResolvedHostEnvironment hostEnvironment = HostExecutionEnvironmentResolver.withTrustedOverrides(
+                baseline, trustedEnvironmentOverrides, System.getProperty("os.name", ""));
         Map<String, String> environment = hostEnvironment.environment();
-        SandboxProfile profile = sandboxProfile(host, runtimes, hostEnvironment.allowedEnvironmentNames());
+        String environmentIdentity = "";
+        if (!trustedEnvironmentOverrides.isEmpty()) {
+            List<String> fields = new ArrayList<>();
+            fields.add(PROFILE_POLICY_VERSION);
+            environment.entrySet().stream().sorted(Map.Entry.comparingByKey()).forEach(entry -> {
+                fields.add(entry.getKey());
+                fields.add(entry.getValue());
+            });
+            environmentIdentity =
+                    ":" + SandboxConfigurationDigest.sha256Fields(fields).value();
+        }
+        SandboxProfile profile = sandboxProfile(
+                host,
+                runtimes,
+                hostEnvironment.allowedEnvironmentNames(),
+                SANDBOX_PROFILE_ID,
+                PROFILE_POLICY_VERSION + environmentIdentity);
         preflight(host, profile);
         ToolOutputPreviewPublisher previewPublisher = new TransientToolOutputPreviewPublisher();
         ExecutionToolConfiguration configuration = new ExecutionToolConfiguration(
@@ -219,7 +264,7 @@ public final class HostExecutionPlatforms {
                 new ToolRegistration(
                         ExecutionToolDefinitionFactory.ALIAS,
                         definition,
-                        BINDING_REFERENCE_PREFIX + workspaceIdentity,
+                        BINDING_REFERENCE_PREFIX + workspaceIdentity + environmentIdentity,
                         provider),
                 previewPublisher,
                 spec.defaultTimeout(),
@@ -491,11 +536,6 @@ public final class HostExecutionPlatforms {
 
     static String bounded(String value, int maximumLength) {
         return value.length() <= maximumLength ? value : value.substring(0, maximumLength) + "...[truncated]";
-    }
-
-    private static SandboxProfile sandboxProfile(
-            HostGuardedSandboxProvider host, ScriptRuntimeResolver runtimes, Set<String> environmentNames) {
-        return sandboxProfile(host, runtimes, environmentNames, SANDBOX_PROFILE_ID, PROFILE_POLICY_VERSION);
     }
 
     static SandboxProfile sandboxProfile(
