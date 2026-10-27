@@ -219,6 +219,8 @@ public interface RuntimeStoreMapper {
 
     InteractionRequestRow unappliedToolResolution(@Param("runId") String runId);
 
+    InteractionRequestRow unappliedClarificationResolution(@Param("runId") String runId);
+
     int markInteractionApplied(@Param("requestId") String requestId, @Param("appliedAt") java.time.Instant appliedAt);
 
     int insertRunInput(@Param("row") RunInputRow row);

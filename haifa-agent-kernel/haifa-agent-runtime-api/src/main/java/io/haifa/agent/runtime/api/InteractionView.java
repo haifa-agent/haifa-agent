@@ -24,7 +24,46 @@ public record InteractionView(
         Instant createdAt,
         Optional<Instant> expiresAt,
         InteractionConsequenceView consequences,
-        Optional<ApprovalPresentation> approvalPresentation) {
+        Optional<ApprovalPresentation> approvalPresentation,
+        Optional<ClarificationPresentation> clarificationPresentation) {
+
+    public InteractionView(
+            InteractionRequestId requestId,
+            AgentRunId runId,
+            AgentSessionId sessionId,
+            long revision,
+            InteractionKind kind,
+            InteractionState state,
+            String title,
+            String safePrompt,
+            List<InteractionAction> allowedActions,
+            InteractionInputContract inputContract,
+            InteractionTargetView target,
+            InteractionRequesterView requester,
+            Instant createdAt,
+            Optional<Instant> expiresAt,
+            InteractionConsequenceView consequences,
+            Optional<ApprovalPresentation> approvalPresentation) {
+        this(
+                requestId,
+                runId,
+                sessionId,
+                revision,
+                kind,
+                state,
+                title,
+                safePrompt,
+                allowedActions,
+                inputContract,
+                target,
+                requester,
+                createdAt,
+                expiresAt,
+                consequences,
+                approvalPresentation,
+                Optional.empty());
+    }
+
     public InteractionView(
             InteractionRequestId requestId,
             AgentRunId runId,
@@ -57,6 +96,7 @@ public record InteractionView(
                 createdAt,
                 expiresAt,
                 consequences,
+                Optional.empty(),
                 Optional.empty());
     }
 
@@ -92,6 +132,7 @@ public record InteractionView(
                 createdAt,
                 Optional.of(Objects.requireNonNull(expiresAt, "expiresAt must not be null")),
                 consequences,
+                Optional.empty(),
                 Optional.empty());
     }
 
@@ -115,6 +156,8 @@ public record InteractionView(
         expiresAt = Objects.requireNonNull(expiresAt, "expiresAt must not be null");
         consequences = Objects.requireNonNull(consequences, "consequences must not be null");
         approvalPresentation = Objects.requireNonNull(approvalPresentation, "approvalPresentation must not be null");
+        clarificationPresentation =
+                Objects.requireNonNull(clarificationPresentation, "clarificationPresentation must not be null");
         if (expiresAt.isPresent() && !expiresAt.orElseThrow().isAfter(createdAt)) {
             throw new IllegalArgumentException("expiresAt must be after createdAt");
         }

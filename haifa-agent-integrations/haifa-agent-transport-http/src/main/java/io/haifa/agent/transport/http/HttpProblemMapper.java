@@ -70,7 +70,7 @@ final class HttpProblemMapper {
             case CURSOR_EXPIRED -> 410;
             case PAYLOAD_TOO_LARGE -> 413;
             case RATE_LIMITED -> 429;
-            case CONTRACT_VERSION_UNSUPPORTED -> 400;
+            case CONTRACT_VERSION_UNSUPPORTED, INTERACTION_INPUT_INVALID -> 400;
             case RUN_VERSION_CONFLICT, INTERACTION_REVISION_CONFLICT -> 412;
             case RUN_STATE_CONFLICT,
                     IDEMPOTENCY_CONFLICT,

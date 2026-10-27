@@ -1218,6 +1218,22 @@
         ORDER BY request.created_at ASC, request.request_id ASC LIMIT 1
     </select>
 
+    <select id="unappliedClarificationResolution" resultMap="interactionRequestRow">
+        SELECT request.request_id, request.run_id, request.tenant_id, request.principal_id,
+               request.principal_type, request.type, request.prompt, request.approval,
+               request.target_type, request.target_schema_version, request.target_payload,
+               request.target_hash, request.created_at, request.expires_at,
+               request.revision, request.kind, request.state, request.expiration_outcome,
+               request.state_reason_code, request.state_changed_at
+        FROM interaction_request request
+        JOIN interaction_response response ON response.request_id = request.request_id
+        JOIN interaction_application application ON application.request_id = request.request_id
+        WHERE request.run_id = #{runId} AND request.target_type = 'clarification'
+          AND application.resolution_applied = 0
+          AND request.state = 'RESPONDED'
+        ORDER BY request.created_at ASC, request.request_id ASC LIMIT 1
+    </select>
+
     <update id="markInteractionApplied">
         UPDATE interaction_application SET resolution_applied = 1, applied_at = #{appliedAt}
         WHERE request_id = #{requestId} AND resolution_applied = 0
