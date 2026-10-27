@@ -245,6 +245,35 @@ final class DockerJavaEngine implements DockerEngine {
     }
 
     @Override
+    public List<String> listContainersByLabel(String key, String value) {
+        try {
+            var containers = client.listContainersCmd()
+                    .withShowAll(true)
+                    .withLabelFilter(Map.of(key, value))
+                    .exec();
+            if (containers == null) return List.of();
+            return containers.stream()
+                    .map(com.github.dockerjava.api.model.Container::getId)
+                    .toList();
+        } catch (RuntimeException exception) {
+            throw failure("DOCKER_CONTAINER_LIST_FAILED", "sandbox container list failed", exception);
+        }
+    }
+
+    @Override
+    public List<String> listNetworksByLabel(String key, String value) {
+        try {
+            var networks = client.listNetworksCmd()
+                    .withFilter("label", List.of(key + "=" + value))
+                    .exec();
+            if (networks == null) return List.of();
+            return networks.stream().map(Network::getId).toList();
+        } catch (RuntimeException exception) {
+            throw failure("DOCKER_NETWORK_LIST_FAILED", "sandbox network list failed", exception);
+        }
+    }
+
+    @Override
     public void close() {
         try {
             client.close();

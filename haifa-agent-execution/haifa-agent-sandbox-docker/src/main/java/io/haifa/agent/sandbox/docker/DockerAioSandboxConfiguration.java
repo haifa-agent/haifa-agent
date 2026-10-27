@@ -33,11 +33,15 @@ public record DockerAioSandboxConfiguration(
         Duration engineTimeout,
         Duration stopTimeout,
         int aioPort,
-        int maxConcurrentSessions) {
+        int maxConcurrentSessions,
+        DockerAioLifecycleMode lifecycleMode,
+        Duration idleTimeout) {
 
     public static final String PROVIDER_ID = "docker-aio";
     public static final int DEFAULT_AIO_PORT = 8080;
     public static final int DEFAULT_MAX_CONCURRENT_SESSIONS = 8;
+    public static final DockerAioLifecycleMode DEFAULT_LIFECYCLE_MODE = DockerAioLifecycleMode.WARM_SESSION;
+    public static final Duration DEFAULT_IDLE_TIMEOUT = Duration.ofMinutes(15);
     public static final String NETWORK_DRIVER = "bridge";
     public static final String GATEWAY_MODE_IPV4 = "com.docker.network.bridge.gateway_mode_ipv4";
     public static final String GATEWAY_MODE_IPV6 = "com.docker.network.bridge.gateway_mode_ipv6";
@@ -93,6 +97,42 @@ public record DockerAioSandboxConfiguration(
         if (maxConcurrentSessions < 1 || maxConcurrentSessions > 1024) {
             throw new IllegalArgumentException("maxConcurrentSessions is out of range");
         }
+        lifecycleMode = Objects.requireNonNull(lifecycleMode, "lifecycleMode must not be null");
+        idleTimeout = requireTimeout(idleTimeout, "idleTimeout", Duration.ofHours(24));
+    }
+
+    public DockerAioSandboxConfiguration(
+            String installationId,
+            Path dockerSocket,
+            String image,
+            String containerWorkspaceRoot,
+            Map<String, String> runtimes,
+            OptionalInt uid,
+            OptionalInt gid,
+            long nanoCpus,
+            long memoryBytes,
+            long pidsLimit,
+            Duration engineTimeout,
+            Duration stopTimeout,
+            int aioPort,
+            int maxConcurrentSessions) {
+        this(
+                installationId,
+                dockerSocket,
+                image,
+                containerWorkspaceRoot,
+                runtimes,
+                uid,
+                gid,
+                nanoCpus,
+                memoryBytes,
+                pidsLimit,
+                engineTimeout,
+                stopTimeout,
+                aioPort,
+                maxConcurrentSessions,
+                DEFAULT_LIFECYCLE_MODE,
+                DEFAULT_IDLE_TIMEOUT);
     }
 
     public DockerAioSandboxConfiguration(
@@ -145,6 +185,8 @@ public record DockerAioSandboxConfiguration(
         fields.add("stopTimeout:" + stopTimeout.toMillis());
         fields.add("aioPort:" + aioPort);
         fields.add("maxConcurrentSessions:" + maxConcurrentSessions);
+        fields.add("lifecycleMode:" + lifecycleMode.name());
+        fields.add("idleTimeout:" + idleTimeout.toMillis());
         fields.add("network:" + NETWORK_DRIVER + ":internal:icc=false:gateway=isolated");
         return SandboxConfigurationDigest.sha256Fields(fields);
     }
