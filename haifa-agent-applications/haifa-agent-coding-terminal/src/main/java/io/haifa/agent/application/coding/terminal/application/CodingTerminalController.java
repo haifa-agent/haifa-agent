@@ -1784,7 +1784,7 @@ public final class CodingTerminalController implements AutoCloseable {
             apply(new TerminalUiAction.StatusChanged("Type your answer and press Enter"));
             return;
         } else if (question.multiple() && selected == options + (question.allowCustom() ? 1 : 0)) {
-            draft.advance();
+            draft.confirm();
         } else {
             dismissClarification();
             return;
@@ -1800,7 +1800,7 @@ public final class CodingTerminalController implements AutoCloseable {
     private void continueClarification() {
         ClarificationDraft draft = clarificationDraft;
         if (draft == null) return;
-        if (draft.complete()) {
+        if (draft.ready()) {
             submitClarification();
             return;
         }
@@ -1850,6 +1850,7 @@ public final class CodingTerminalController implements AutoCloseable {
         private final List<List<String>> selected = new ArrayList<>();
         private final List<String> custom = new ArrayList<>();
         private int index;
+        private boolean confirmed;
 
         ClarificationDraft(InteractionView interaction, ClarificationDetails details) {
             this.interaction = interaction;
@@ -1895,7 +1896,22 @@ public final class CodingTerminalController implements AutoCloseable {
         }
 
         void advance() {
-            if (!last()) index++;
+            if (!last()) {
+                index++;
+                confirmed = false;
+            }
+        }
+
+        void confirm() {
+            if (!last()) {
+                advance();
+                return;
+            }
+            confirmed = true;
+        }
+
+        boolean ready() {
+            return complete() && (confirmed || !current().multiple());
         }
 
         void answerWithText(String text) {

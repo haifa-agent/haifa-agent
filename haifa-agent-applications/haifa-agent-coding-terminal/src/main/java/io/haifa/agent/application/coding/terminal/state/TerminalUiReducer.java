@@ -645,10 +645,19 @@ public final class TerminalUiReducer {
 
     private static Optional<TerminalSelector> selectorAfterSessionLoad(
             Optional<TerminalSelector> current, CodingSessionView view) {
-        if (current.isEmpty() || !current.orElseThrow().kind().startsWith("interaction:")) {
+        if (current.isEmpty()) {
             return current;
         }
-        String expected = "interaction:"
+        String kind = current.orElseThrow().kind();
+        String prefix;
+        if (kind.startsWith("interaction:")) {
+            prefix = "interaction:";
+        } else if (kind.startsWith("clarification:")) {
+            prefix = "clarification:";
+        } else {
+            return current;
+        }
+        String expected = prefix
                 + view.pendingInteraction()
                         .map(interaction -> interaction.requestId().value())
                         .orElse("");
