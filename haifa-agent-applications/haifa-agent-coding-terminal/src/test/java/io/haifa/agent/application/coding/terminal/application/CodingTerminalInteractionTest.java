@@ -157,6 +157,28 @@ class CodingTerminalInteractionTest {
     }
 
     @Test
+    void submitsFreeTextAsAFollowUpInsteadOfASteer() {
+        FakeClient client = new FakeClient(view(Optional.of(clarification(false))));
+        client.reconciledView = view(Optional.empty());
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+        assertThat(controller.state().selector()).isEmpty();
+
+        controller.accept(input(TerminalInput.Kind.FOLLOW_UP, "sqlite"));
+
+        assertThat(client.steeredMessages).isEmpty();
+        assertThat(client.respondedInputs).hasSize(1);
+        assertThat(((io.haifa.agent.core.content.TextPart)
+                                client.respondedInputs.get(0).get(0))
+                        .text())
+                .isEqualTo("selected=\ncustom=sqlite");
+    }
+
+    @Test
     void togglesASingleChoiceClarificationOptionOnAndOff() {
         FakeClient client = new FakeClient(view(Optional.of(clarification(false))));
         client.reconciledView = view(Optional.empty());

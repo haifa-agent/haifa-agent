@@ -918,11 +918,23 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void acceptGuarded(TerminalInput input) {
-        if (awaitingClarificationText
-                && (input.kind() == TerminalInput.Kind.SUBMIT || input.kind() == TerminalInput.Kind.FOLLOW_UP)
-                && !input.text().isBlank()) {
+        if (clarificationDraft != null
+                && state.selector().isEmpty()
+                && (input.kind() == TerminalInput.Kind.SUBMIT || input.kind() == TerminalInput.Kind.FOLLOW_UP)) {
+            // While a clarification is pending, composed text belongs to the answer and never to the steer queue.
+            if (input.text().isBlank()) {
+                apply(new TerminalUiAction.StatusChanged("Type your answer and press Enter"));
+                return;
+            }
+            awaitingClarificationText = false;
+            apply(new TerminalUiAction.SelectorClosed());
             apply(new TerminalUiAction.EditorChanged("", 0));
-            answerClarificationWithText(input.text());
+            if (clarificationDraft.current().allowCustom()) {
+                answerClarificationWithText(input.text());
+            } else {
+                openClarificationSelector(0);
+                apply(new TerminalUiAction.StatusChanged("Choose an option with Space, then press Enter"));
+            }
             return;
         }
         drainEvents();
