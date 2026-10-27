@@ -26,6 +26,11 @@ HTTP 401/403 不会把 SDK request snapshot 或凭据带入对外异常：未配
 
 `DISPATCHED` 只在 HTTP request customizer 完成凭据注入并即将发送，或 stdio frame 即将写入 managed session 时记录。初始化失败允许按 server policy 做有界抖动重连；已 dispatch、结果未知的 Tool call 不自动重放。
 
+MCP 初始化在请求虚拟线程上执行，但不在任何 Java 监视器（`synchronized`）内阻塞：`McpConnectionManager` 按
+server/tenant/principal/credential binding 做单飞初始化，同一 binding 的并发请求共享一次握手，不同 binding 可
+并行连接；facade 与 stdio/OAuth 生命周期使用 `ReentrantLock`，阻塞等待时虚拟线程可以卸载。因此慢 MCP server
+不会 pin 载体、拖住 Jetty selector/acceptor，也不会让无关的 HTTP 或 Store 请求一起超时。
+
 ## 配置与装配
 
 `McpServerDefinition.create(...)` 生成内容寻址的不可变 server binding。HTTP 使用 `StreamableHttpDefinition`，stdio 使用只包含逻辑 executable、固定 argv、逻辑 cwd 和 env allowlist 的 `StdioDefinition`。应用层按 server 注册 `McpToolProvider`，再用 `McpToolCatalogContribution` 把已审查候选加入现有 `ToolCatalogBuilder`。
