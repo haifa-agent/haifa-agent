@@ -4,8 +4,11 @@ import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.runtime.api.ApprovalPresentation;
+import io.haifa.agent.runtime.api.ClarificationPresentation;
+import io.haifa.agent.runtime.api.InteractionInputContract;
 import io.haifa.agent.runtime.api.InteractionRequestId;
 import java.time.Instant;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -21,7 +24,39 @@ public record InteractionRequest(
         Instant createdAt,
         Optional<Instant> expiresAt,
         InteractionExpirationOutcome expirationOutcome,
-        Optional<ApprovalPresentation> presentation) {
+        Optional<ApprovalPresentation> presentation,
+        List<InteractionInputContract> inputContracts,
+        Optional<ClarificationPresentation> clarificationPresentation) {
+
+    public InteractionRequest(
+            InteractionRequestId id,
+            AgentRunId runId,
+            TenantRef tenant,
+            PrincipalRef requester,
+            String type,
+            String prompt,
+            boolean approval,
+            InteractionTarget target,
+            Instant createdAt,
+            Optional<Instant> expiresAt,
+            InteractionExpirationOutcome expirationOutcome,
+            Optional<ApprovalPresentation> presentation) {
+        this(
+                id,
+                runId,
+                tenant,
+                requester,
+                type,
+                prompt,
+                approval,
+                target,
+                createdAt,
+                expiresAt,
+                expirationOutcome,
+                presentation,
+                List.of(),
+                Optional.empty());
+    }
 
     public InteractionRequest(
             InteractionRequestId id,
@@ -187,11 +222,28 @@ public record InteractionRequest(
         expiresAt = Objects.requireNonNull(expiresAt, "expiresAt must not be null");
         expirationOutcome = Objects.requireNonNull(expirationOutcome, "expirationOutcome must not be null");
         presentation = Objects.requireNonNull(presentation, "presentation must not be null");
+        inputContracts = List.copyOf(Objects.requireNonNull(inputContracts, "inputContracts must not be null"));
+        clarificationPresentation =
+                Objects.requireNonNull(clarificationPresentation, "clarificationPresentation must not be null");
         if (expiresAt.isPresent() && !expiresAt.orElseThrow().isAfter(createdAt)) {
             throw new IllegalArgumentException("expiresAt must be after createdAt");
         }
         if (approval && expirationOutcome == InteractionExpirationOutcome.RETURN_TO_AGENT) {
             throw new IllegalArgumentException("approval interaction must not return to the agent on expiration");
+        }
+        if (clarificationPresentation.isPresent() == inputContracts.isEmpty()) {
+            throw new IllegalArgumentException("clarification input requires both contracts and a presentation");
+        }
+        if (clarificationPresentation.isPresent() && approval) {
+            throw new IllegalArgumentException("clarification presentation must not be attached to an approval");
+        }
+        if (clarificationPresentation.isPresent()) {
+            List<io.haifa.agent.runtime.api.ClarificationPresentation.Question> questions =
+                    clarificationPresentation.orElseThrow().questions();
+            if (inputContracts.size() != questions.size()) {
+                throw new IllegalArgumentException("one input contract is required per clarification question");
+            }
+            clarificationPresentation.orElseThrow().requireMatchingContracts(inputContracts);
         }
     }
 

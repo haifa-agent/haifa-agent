@@ -348,13 +348,25 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                         "tool-approval-response:" + response.idempotencyKey(), run.id(), List.of()));
             } else if (response.action().equals(InteractionAction.REJECT)
                     || response.action().equals(InteractionAction.CANCEL)) {
-                if (!run.status().isTerminal()) {
-                    transitions.cancelled(
-                            run,
-                            new RunTerminationReason(
-                                    "INTERACTION_REJECTED", "Interaction was rejected by the operator"));
+                boolean returnsToAgent = interactions
+                        .find(response.requestId())
+                        .filter(request -> !request.approval())
+                        .filter(request -> request.expirationOutcome()
+                                == io.haifa.agent.runtime.core.interaction.InteractionExpirationOutcome.RETURN_TO_AGENT)
+                        .isPresent();
+                if (returnsToAgent) {
+                    resume(new ResumeAgentRunRequest(
+                            "interaction-cancelled:" + response.idempotencyKey(), run.id(), List.of()));
+                    interactions.markResolutionApplied(response.requestId());
+                } else {
+                    if (!run.status().isTerminal()) {
+                        transitions.cancelled(
+                                run,
+                                new RunTerminationReason(
+                                        "INTERACTION_REJECTED", "Interaction was rejected by the operator"));
+                    }
+                    interactions.markResolutionApplied(response.requestId());
                 }
-                interactions.markResolutionApplied(response.requestId());
             } else {
                 resume(new ResumeAgentRunRequest(
                         "interaction-response:" + response.idempotencyKey(), run.id(), List.of()));

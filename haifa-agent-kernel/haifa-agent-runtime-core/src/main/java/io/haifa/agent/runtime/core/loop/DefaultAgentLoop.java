@@ -187,6 +187,7 @@ public final class DefaultAgentLoop implements AgentLoop {
     @Override
     public AgentLoopResult run(AgentRun run, AgentRunExecutionAttempt attempt, RuntimeTraceContext traceContext) {
         decisionExecutor.applyPendingToolApproval(run);
+        decisionExecutor.applyPendingClarificationResolution(run);
         reconciler.reconcileRecoveryFacts(run, attempt);
         var restored = checkpoints.restore(run, attempt.resumedFromCheckpointId());
         AgentLoopContext progress = restored.map(value ->

@@ -41,6 +41,14 @@ public final class InteractionSemantics {
         return List.of();
     }
 
+    /** Request-scoped contract: clarification declares its own, every other kind keeps the kind default. */
+    public static InteractionInputContract inputContract(InteractionRequest request) {
+        if (request.clarificationPresentation().isEmpty()) return inputContract(kind(request));
+        if (request.inputContracts().size() == 1)
+            return request.inputContracts().get(0);
+        return InteractionInputContract.NONE;
+    }
+
     public static InteractionInputContract inputContract(InteractionKind kind) {
         if (kind.equals(InteractionKind.APPROVAL) || !kind.known()) return InteractionInputContract.NONE;
         if (kind.equals(InteractionKind.CONFIRMATION)) return InteractionInputContract.NONE;

@@ -43,6 +43,9 @@ import io.haifa.agent.runtime.core.delegation.DelegationTool;
 import io.haifa.agent.runtime.core.execution.AgentExecutionFailureException;
 import io.haifa.agent.runtime.core.guard.ModelContinuationLimits;
 import io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException;
+import io.haifa.agent.runtime.core.interaction.ClarificationAnswers;
+import io.haifa.agent.runtime.core.interaction.ClarificationSpec;
+import io.haifa.agent.runtime.core.interaction.ClarificationTarget;
 import io.haifa.agent.runtime.core.interaction.InteractionPort;
 import io.haifa.agent.runtime.core.interaction.InteractionRequest;
 import io.haifa.agent.runtime.core.interaction.ToolApprovalPromptFormatter;
@@ -523,6 +526,18 @@ public final class DecisionExecutor {
             ToolRequest request = preparedTool.request();
             ToolCall call = preparedTool.call();
             AgentStep step = preparedTool.step();
+            if (ClarificationSpec.isClarificationTool(call.toolName())) {
+                ClarificationSpec spec;
+                try {
+                    spec = ClarificationSpec.from(call.id(), request.arguments().values());
+                } catch (IllegalArgumentException invalid) {
+                    rejectToolRequest(
+                            run, call, step, invalid, "Clarification request rejected. " + invalid.getMessage());
+                    continue;
+                }
+                createClarification(run, attempt, call, step, spec, loopContext);
+                return AgentLoopDirective.WAIT;
+            }
             step.start(time.now());
             state.appendStep(step);
             ToolPipelineOutcome outcome;
@@ -724,6 +739,92 @@ public final class DecisionExecutor {
                             "semantics",
                             "CAPABILITY_CONFIRMATION"),
                     createdAt);
+        });
+    }
+
+    private void createClarification(
+            AgentRun run,
+            AgentRunExecutionAttempt attempt,
+            ToolCall call,
+            AgentStep step,
+            ClarificationSpec spec,
+            AgentLoopContext loopContext) {
+        String requestId = ids.nextValue();
+        var createdAt = time.now().truncatedTo(java.time.temporal.ChronoUnit.MILLIS);
+        call.waitForApproval();
+        step.waitForExternalInput();
+        state.appendStep(step);
+        state.appendToolCall(call);
+        commitWaiting(attempt, () -> {
+            interactions.create(new InteractionRequest(
+                    new io.haifa.agent.runtime.api.InteractionRequestId(requestId),
+                    run.id(),
+                    run.tenant(),
+                    run.principal(),
+                    ClarificationSpec.INTERACTION_TYPE,
+                    spec.prompt(),
+                    false,
+                    spec.target(),
+                    createdAt,
+                    Optional.empty(),
+                    io.haifa.agent.runtime.core.interaction.InteractionExpirationOutcome.RETURN_TO_AGENT,
+                    Optional.empty(),
+                    spec.contracts(),
+                    Optional.of(spec.presentation())));
+            checkpoints.capture(
+                    run,
+                    loopContext.iteration(),
+                    loopContext.forcedContextRebuildAttempts(),
+                    CheckpointType.INTERACTION);
+            transitions.waiting(run, new InteractionRequestRef(requestId, ClarificationSpec.INTERACTION_TYPE), false);
+            appendSecurityEvent(
+                    run,
+                    "interaction.requested",
+                    Map.of(
+                            "requestId",
+                            requestId,
+                            "kind",
+                            "clarification",
+                            "questions",
+                            spec.contracts().size()),
+                    createdAt);
+        });
+    }
+
+    /** Applies one answered or dismissed clarification before the run resumes. */
+    public void applyPendingClarificationResolution(AgentRun run) {
+        unitOfWork.execute(() -> {
+            interactions.unappliedClarificationResolution(run.id()).ifPresent(resolution -> {
+                InteractionRequest request = resolution.request();
+                var toolCallId = ((ClarificationTarget) request.target()).toolCallId();
+                ToolCall call = state.toolCalls(run.id()).stream()
+                        .filter(candidate -> candidate.id().equals(toolCallId))
+                        .findFirst()
+                        .orElseThrow(() -> new IllegalStateException("clarification tool call is unavailable"));
+                AgentStep step = state.steps(run.id()).stream()
+                        .filter(candidate -> candidate.id().equals(call.stepId()))
+                        .findFirst()
+                        .orElseThrow(() -> new IllegalStateException("clarification step is unavailable"));
+                ClarificationAnswers answers = resolution.response().type()
+                                == io.haifa.agent.runtime.api.InteractionResponseType.CLARIFY
+                        ? ClarificationAnswers.parse(resolution.response().inputs(), request)
+                        : ClarificationAnswers.declined(request.inputContracts().size());
+                io.haifa.agent.core.tool.ToolResult result = new io.haifa.agent.core.tool.ToolResult(
+                        !answers.declined(),
+                        answers.modelText(request),
+                        answers.structuredData(),
+                        List.of(),
+                        List.of(),
+                        false);
+                call.complete(result, time.now());
+                state.appendToolCall(call);
+                step.complete(
+                        new AgentStepResult(result.summary(), result.structuredData(), result.artifacts()), time.now());
+                state.appendStep(step);
+                appendToolResult(run, call, result.summary());
+                interactions.markResolutionApplied(request.id());
+            });
+            return null;
         });
     }
 
