@@ -30,6 +30,14 @@ interface DockerEngine extends AutoCloseable {
 
     void removeContainer(String id);
 
+    default List<String> listContainersByLabel(String key, String value) {
+        return List.of();
+    }
+
+    default List<String> listNetworksByLabel(String key, String value) {
+        return List.of();
+    }
+
     @Override
     default void close() {}
 

@@ -28,6 +28,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
@@ -38,6 +39,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Linux Docker + AIO sandbox provider supporting ephemeral and warm session lifecycle models.
@@ -68,6 +70,9 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
     private final Semaphore admission;
     private final ConcurrentMap<io.haifa.agent.project.workspace.WorkspaceId, WarmContainerInstance> warmContainers =
             new ConcurrentHashMap<>();
+    private final ConcurrentMap<io.haifa.agent.project.workspace.WorkspaceId, ReentrantLock> workspaceLocks =
+            new ConcurrentHashMap<>();
+    private final AtomicBoolean orphansSwept = new AtomicBoolean();
     private final ScheduledExecutorService reaperExecutor;
     private volatile DockerEngine engine;
     private volatile AioClient aio;
@@ -169,16 +174,66 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
         }
         SandboxSessionId sessionId = new SandboxSessionId(identifiers.nextValue());
         if (configuration.lifecycleMode() == DockerAioLifecycleMode.WARM_SESSION) {
+            ensureOrphansSwept();
             return new WarmSession(sessionId, profile, workspaceId, hostWorkspaceRoot);
         }
         return new Session(sessionId, profile, workspaceId, hostWorkspaceRoot);
     }
 
+    private ReentrantLock workspaceLock(io.haifa.agent.project.workspace.WorkspaceId workspaceId) {
+        return workspaceLocks.computeIfAbsent(workspaceId, k -> new ReentrantLock(true));
+    }
+
+    void sweepOrphans() {
+        if (configuration.lifecycleMode() != DockerAioLifecycleMode.WARM_SESSION) {
+            return;
+        }
+        try {
+            List<String> containers =
+                    engine().listContainersByLabel(LABEL_INSTALLATION, configuration.installationId());
+            for (String cid : containers) {
+                try {
+                    engine().stopContainer(cid, configuration.stopTimeout());
+                } catch (RuntimeException ignored) {
+                }
+                try {
+                    engine().removeContainer(cid);
+                } catch (RuntimeException ignored) {
+                }
+            }
+            List<String> networks = engine().listNetworksByLabel(LABEL_INSTALLATION, configuration.installationId());
+            for (String nid : networks) {
+                try {
+                    engine().removeNetwork(nid);
+                } catch (RuntimeException ignored) {
+                }
+            }
+        } catch (RuntimeException ignored) {
+        }
+    }
+
+    private void ensureOrphansSwept() {
+        if (configuration.lifecycleMode() == DockerAioLifecycleMode.WARM_SESSION
+                && orphansSwept.compareAndSet(false, true)) {
+            sweepOrphans();
+        }
+    }
+
     public boolean evict(io.haifa.agent.project.workspace.WorkspaceId workspaceId) {
-        WarmContainerInstance instance = warmContainers.remove(workspaceId);
+        WarmContainerInstance instance = warmContainers.get(workspaceId);
         if (instance != null) {
-            destroyWarmContainer(instance);
-            return true;
+            if (instance.inUse.compareAndSet(false, true)) {
+                if (warmContainers.remove(workspaceId, instance)) {
+                    destroyWarmContainer(instance);
+                    return true;
+                } else {
+                    instance.inUse.set(false);
+                }
+            } else {
+                warmContainers.remove(workspaceId, instance);
+                destroyWarmContainer(instance);
+                return true;
+            }
         }
         return false;
     }
@@ -980,10 +1035,13 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
         Duration timeout = configuration.idleTimeout();
         for (var entry : warmContainers.entrySet()) {
             WarmContainerInstance instance = entry.getValue();
-            if (!instance.inUse.get()
-                    && Duration.between(instance.lastActiveAt, now).compareTo(timeout) > 0) {
-                if (warmContainers.remove(entry.getKey(), instance)) {
-                    destroyWarmContainer(instance);
+            if (Duration.between(instance.lastActiveAt, now).compareTo(timeout) > 0) {
+                if (instance.inUse.compareAndSet(false, true)) {
+                    if (warmContainers.remove(entry.getKey(), instance)) {
+                        destroyWarmContainer(instance);
+                    } else {
+                        instance.inUse.set(false);
+                    }
                 }
             }
         }
@@ -1029,34 +1087,8 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
                 DockerAioSandboxConfiguration.GATEWAY_MODE_IPV4, GATEWAY_ISOLATED,
                 DockerAioSandboxConfiguration.GATEWAY_MODE_IPV6, GATEWAY_ISOLATED,
                 DockerAioSandboxConfiguration.ENABLE_ICC, "false");
-        if (engine().inspectNetwork(networkName) != null) {
-            try {
-                engine().removeNetwork(networkName);
-            } catch (RuntimeException ignored) {
-            }
-        }
-        engine().createNetwork(networkName, networkLabels, options);
-        DockerEngine.NetworkInspection networkInspected = engine().inspectNetwork(networkName);
-        if (networkInspected == null
-                || !DockerAioSandboxConfiguration.NETWORK_DRIVER.equals(networkInspected.driver())
-                || !networkInspected.internal()
-                || !GATEWAY_ISOLATED.equals(
-                        networkInspected.options().get(DockerAioSandboxConfiguration.GATEWAY_MODE_IPV4))
-                || !GATEWAY_ISOLATED.equals(
-                        networkInspected.options().get(DockerAioSandboxConfiguration.GATEWAY_MODE_IPV6))
-                || !"false".equals(networkInspected.options().get(DockerAioSandboxConfiguration.ENABLE_ICC))
-                || !networkLabels.equals(networkInspected.labels())) {
-            throw failure(
-                    "ISOLATED_NETWORK_UNAVAILABLE", "Docker did not provide the required isolated sandbox network");
-        }
 
         String containerName = "haifa-" + token(configuration.installationId()) + "-ws-" + token(workspaceId.value());
-        if (engine().inspectContainer(containerName) != null) {
-            try {
-                engine().removeContainer(containerName);
-            } catch (RuntimeException ignored) {
-            }
-        }
         Map<String, String> containerLabels = warmLabels(ROLE_CONTAINER, workspaceId);
         DockerEngine.ContainerSpec spec = new DockerEngine.ContainerSpec(
                 containerName,
@@ -1072,42 +1104,87 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
                 configuration.aioPort(),
                 configuration.uid(),
                 configuration.gid());
-        String containerId = engine().createContainer(spec);
-        engine().startContainer(containerId);
 
-        DockerEngine.ContainerInspection inspected = engine().inspectContainer(containerId);
-        verifyWarmContainer(inspected, hostWorkspaceRoot, networkName, containerLabels);
+        String createdNetwork = null;
+        String createdContainerId = null;
+        try {
+            if (engine().inspectNetwork(networkName) != null) {
+                try {
+                    engine().removeNetwork(networkName);
+                } catch (RuntimeException ignored) {
+                }
+            }
+            engine().createNetwork(networkName, networkLabels, options);
+            createdNetwork = networkName;
 
-        URI managementUri;
-        if (inspected.managementPort() > 0) {
-            managementUri = URI.create("http://127.0.0.1:" + inspected.managementPort());
-        } else if (inspected.containerIp() != null && !inspected.containerIp().isBlank()) {
-            managementUri = URI.create("http://" + inspected.containerIp() + ":" + configuration.aioPort());
-        } else {
-            throw failure("CONTAINER_IDENTITY_MISMATCH", "sandbox container has no reachable management address");
+            DockerEngine.NetworkInspection networkInspected = engine().inspectNetwork(networkName);
+            if (networkInspected == null
+                    || !DockerAioSandboxConfiguration.NETWORK_DRIVER.equals(networkInspected.driver())
+                    || !networkInspected.internal()
+                    || !GATEWAY_ISOLATED.equals(
+                            networkInspected.options().get(DockerAioSandboxConfiguration.GATEWAY_MODE_IPV4))
+                    || !GATEWAY_ISOLATED.equals(
+                            networkInspected.options().get(DockerAioSandboxConfiguration.GATEWAY_MODE_IPV6))
+                    || !"false".equals(networkInspected.options().get(DockerAioSandboxConfiguration.ENABLE_ICC))
+                    || !networkLabels.equals(networkInspected.labels())) {
+                throw failure(
+                        "ISOLATED_NETWORK_UNAVAILABLE", "Docker did not provide the required isolated sandbox network");
+            }
+
+            if (engine().inspectContainer(containerName) != null) {
+                try {
+                    engine().removeContainer(containerName);
+                } catch (RuntimeException ignored) {
+                }
+            }
+            String containerId = engine().createContainer(spec);
+            createdContainerId = containerId;
+            engine().startContainer(containerId);
+
+            DockerEngine.ContainerInspection inspected = engine().inspectContainer(containerId);
+            verifyWarmContainer(inspected, hostWorkspaceRoot, networkName, containerLabels);
+
+            URI managementUri;
+            if (inspected.managementPort() > 0) {
+                managementUri = URI.create("http://127.0.0.1:" + inspected.managementPort());
+            } else if (inspected.containerIp() != null
+                    && !inspected.containerIp().isBlank()) {
+                managementUri = URI.create("http://" + inspected.containerIp() + ":" + configuration.aioPort());
+            } else {
+                throw failure("CONTAINER_IDENTITY_MISMATCH", "sandbox container has no reachable management address");
+            }
+
+            Duration readyBudget = timeout.compareTo(Duration.ofSeconds(10)) > 0 ? Duration.ofSeconds(10) : timeout;
+            if (readyBudget.isZero() || !aio().awaitReady(managementUri, readyBudget)) {
+                throw failure("TIMEOUT", "warm container aio probe timed out during initial startup");
+            }
+
+            WarmContainerInstance created = new WarmContainerInstance(
+                    workspaceId, networkName, containerName, containerId, managementUri, hostWorkspaceRoot, time.now());
+            warmContainers.put(workspaceId, created);
+            return created;
+        } catch (Throwable t) {
+            if (createdContainerId != null) {
+                try {
+                    engine().stopContainer(createdContainerId, configuration.stopTimeout());
+                } catch (RuntimeException ignored) {
+                }
+                try {
+                    engine().removeContainer(createdContainerId);
+                } catch (RuntimeException ignored) {
+                }
+            }
+            if (createdNetwork != null) {
+                try {
+                    engine().removeNetwork(createdNetwork);
+                } catch (RuntimeException ignored) {
+                }
+            }
+            if (t instanceof RuntimeException re) {
+                throw re;
+            }
+            throw new RuntimeException(t);
         }
-
-        Duration readyBudget = timeout.compareTo(Duration.ofSeconds(10)) > 0 ? Duration.ofSeconds(10) : timeout;
-        if (!aio().awaitReady(managementUri, readyBudget)) {
-            try {
-                engine().stopContainer(containerId, configuration.stopTimeout());
-            } catch (RuntimeException ignored) {
-            }
-            try {
-                engine().removeContainer(containerId);
-            } catch (RuntimeException ignored) {
-            }
-            try {
-                engine().removeNetwork(networkName);
-            } catch (RuntimeException ignored) {
-            }
-            throw failure("TIMEOUT", "warm container aio probe timed out during initial startup");
-        }
-
-        WarmContainerInstance created = new WarmContainerInstance(
-                workspaceId, networkName, containerName, containerId, managementUri, hostWorkspaceRoot, time.now());
-        warmContainers.put(workspaceId, created);
-        return created;
     }
 
     private void verifyWarmContainer(
@@ -1162,13 +1239,17 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
     }
 
     private SandboxProcessResult resultFromExecWarm(
-            AioClient.ExecResult exec, SandboxExecution execution, Instant started, ExecutionOutputObserver observer) {
+            AioClient.ExecResult exec,
+            SandboxExecution execution,
+            Instant started,
+            boolean isCancelled,
+            ExecutionOutputObserver observer) {
         SandboxProcessStatus status =
                 switch (exec.status()) {
                     case "completed" ->
                         exec.exitCode() == null ? SandboxProcessStatus.UNKNOWN : SandboxProcessStatus.EXITED;
                     case "timed_out" -> SandboxProcessStatus.TIMED_OUT;
-                    case "killed" -> SandboxProcessStatus.CANCELLED;
+                    case "killed" -> isCancelled ? SandboxProcessStatus.CANCELLED : SandboxProcessStatus.UNKNOWN;
                     case "running", "pending" -> SandboxProcessStatus.TIMED_OUT;
                     default -> SandboxProcessStatus.UNKNOWN;
                 };
@@ -1190,6 +1271,7 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
                         "completed".equals(exec.status()) ? "AIO_EXIT_CODE_UNKNOWN" : "EXECUTION_OUTCOME_UNKNOWN";
                     default -> "EXECUTION_OUTCOME_UNKNOWN";
                 };
+        boolean processTreeTerminated = (status == SandboxProcessStatus.EXITED);
         SandboxProcessResult result = result(
                 status,
                 exitCode,
@@ -1199,7 +1281,7 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
                 time.now(),
                 stdoutTruncated,
                 stderrTruncated,
-                true,
+                processTreeTerminated,
                 failureCode);
         notifyObserver(observer, result, stdoutTruncated, stderrTruncated);
         return result;
@@ -1212,7 +1294,6 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
         final String containerId;
         final URI managementUri;
         final Path hostWorkspaceRoot;
-        final Instant createdAt;
         volatile Instant lastActiveAt;
         final AtomicBoolean inUse = new AtomicBoolean(false);
         final AtomicBoolean closed = new AtomicBoolean(false);
@@ -1231,7 +1312,6 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
             this.containerId = containerId;
             this.managementUri = managementUri;
             this.hostWorkspaceRoot = hostWorkspaceRoot;
-            this.createdAt = now;
             this.lastActiveAt = now;
         }
 
@@ -1247,6 +1327,8 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
         private final Path hostWorkspaceRoot;
         private final AtomicBoolean cancelled = new AtomicBoolean();
         private final AtomicBoolean closed = new AtomicBoolean();
+        private volatile Thread executingThread;
+        private volatile WarmContainerInstance activeContainer;
         private volatile String aioSessionId;
         private volatile URI currentManagementUri;
 
@@ -1278,80 +1360,80 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
             if (closed.get()) throw failure("SESSION_CLOSED", "sandbox session is closed");
             Instant started = time.now();
             if (cancelled.get()) {
-                return result(
-                        SandboxProcessStatus.CANCELLED,
-                        null,
-                        new byte[0],
-                        new byte[0],
-                        started,
-                        started,
-                        false,
-                        false,
-                        true,
-                        "CANCELLED");
+                return cancelledResult(started);
             }
             validateExecution(execution, profile, workspaceId);
 
-            boolean acquired = false;
-            try {
-                acquired = admission.tryAcquire(
-                        Math.max(1, execution.limits().timeout().toNanos()), TimeUnit.NANOSECONDS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return result(
-                        SandboxProcessStatus.CANCELLED,
-                        null,
-                        new byte[0],
-                        new byte[0],
-                        started,
-                        time.now(),
-                        false,
-                        false,
-                        true,
-                        "CANCELLED");
-            }
-            if (!acquired) {
-                return result(
-                        SandboxProcessStatus.TIMED_OUT,
-                        null,
-                        new byte[0],
-                        new byte[0],
-                        started,
-                        time.now(),
-                        false,
-                        false,
-                        true,
-                        "ADMISSION_OVERLOAD");
+            long deadlineNanos =
+                    System.nanoTime() + execution.limits().timeout().toNanos();
+            Duration reserve = reserve(execution.limits().timeout());
+            long businessDeadline = deadlineNanos - reserve.toNanos();
+
+            Duration acquireBudget = remaining(businessDeadline);
+            if (acquireBudget.isZero()) {
+                return timedOutResult(started, "TIMEOUT");
             }
 
-            WarmContainerInstance container = null;
+            boolean acquiredAdmission = false;
             try {
-                container = getOrCreateWarmContainer(
-                        workspaceId, hostWorkspaceRoot, execution.limits().timeout());
-                if (!container.inUse.compareAndSet(false, true)) {
-                    throw failure("CONTAINER_BUSY", "warm sandbox container is busy executing another command");
+                acquiredAdmission = admission.tryAcquire(acquireBudget.toNanos(), TimeUnit.NANOSECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return cancelledResult(started);
+            }
+            if (!acquiredAdmission) {
+                return timedOutResult(started, "ADMISSION_OVERLOAD");
+            }
+
+            ReentrantLock wsLock = workspaceLock(workspaceId);
+            boolean acquiredWsLock = false;
+            try {
+                Duration lockBudget = remaining(businessDeadline);
+                if (lockBudget.isZero()) {
+                    return timedOutResult(started, "TIMEOUT");
                 }
-                currentManagementUri = container.managementUri;
+                try {
+                    acquiredWsLock = wsLock.tryLock(lockBudget.toNanos(), TimeUnit.NANOSECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return cancelledResult(started);
+                }
+                if (!acquiredWsLock) {
+                    return timedOutResult(started, "TIMEOUT");
+                }
+
                 if (cancelled.get()) {
-                    return result(
-                            SandboxProcessStatus.CANCELLED,
-                            null,
-                            new byte[0],
-                            new byte[0],
-                            started,
-                            time.now(),
-                            false,
-                            false,
-                            true,
-                            "CANCELLED");
+                    return cancelledResult(started);
+                }
+
+                Duration prepBudget = remaining(businessDeadline);
+                if (prepBudget.isZero()) {
+                    return timedOutResult(started, "TIMEOUT");
+                }
+
+                ensureOrphansSwept();
+
+                WarmContainerInstance container = getOrCreateWarmContainer(workspaceId, hostWorkspaceRoot, prepBudget);
+                container.inUse.set(true);
+                activeContainer = container;
+                currentManagementUri = container.managementUri;
+                executingThread = Thread.currentThread();
+
+                if (cancelled.get()) {
+                    return cancelledResult(started);
+                }
+
+                Duration execBudget = remaining(businessDeadline);
+                if (execBudget.isZero()) {
+                    return timedOutResult(started, "TIMEOUT");
                 }
 
                 AioClient.ExecRequest request = new AioClient.ExecRequest(
                         renderCommand(execution),
                         containerWorkingDirectory(execution),
                         environment(execution, profile),
-                        execution.limits().timeout(),
-                        execution.limits().timeout(),
+                        execBudget,
+                        execBudget,
                         Math.max(
                                 execution.limits().maxStdoutBytes(),
                                 execution.limits().maxStderrBytes()));
@@ -1359,30 +1441,64 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
                 AioClient.ExecResult exec = aio().exec(container.managementUri, request);
                 aioSessionId = exec.sessionId();
                 container.lastActiveAt = time.now();
-                return resultFromExecWarm(exec, execution, started, observer);
+
+                if (exec.sessionId() != null) {
+                    try {
+                        aio().closeSession(container.managementUri, exec.sessionId(), configuration.stopTimeout());
+                    } catch (RuntimeException ignored) {
+                    }
+                }
+
+                return resultFromExecWarm(exec, execution, started, cancelled.get(), observer);
             } catch (AioClient.AioProtocolException | DockerEngine.DockerEngineException exception) {
                 if (cancelled.get()) {
-                    return result(
-                            SandboxProcessStatus.CANCELLED,
-                            null,
-                            new byte[0],
-                            new byte[0],
-                            started,
-                            time.now(),
-                            false,
-                            false,
-                            true,
-                            "CANCELLED");
+                    return cancelledResult(started);
+                }
+                if (exception instanceof AioClient.AioProtocolException aioEx && "AIO_TIMED_OUT".equals(aioEx.code())) {
+                    return timedOutResult(started, "TIMEOUT");
                 }
                 throw failure("CONTAINER_SANDBOX_FAILED", "container sandbox operation failed");
             } finally {
-                if (container != null) {
-                    container.inUse.set(false);
+                executingThread = null;
+                if (activeContainer != null) {
+                    activeContainer.inUse.set(false);
+                    activeContainer = null;
                 }
-                if (acquired) {
+                if (acquiredWsLock) {
+                    wsLock.unlock();
+                }
+                if (acquiredAdmission) {
                     admission.release();
                 }
             }
+        }
+
+        private SandboxProcessResult cancelledResult(Instant started) {
+            return result(
+                    SandboxProcessStatus.CANCELLED,
+                    null,
+                    new byte[0],
+                    new byte[0],
+                    started,
+                    time.now(),
+                    false,
+                    false,
+                    true,
+                    "CANCELLED");
+        }
+
+        private SandboxProcessResult timedOutResult(Instant started, String failureCode) {
+            return result(
+                    SandboxProcessStatus.TIMED_OUT,
+                    null,
+                    new byte[0],
+                    new byte[0],
+                    started,
+                    time.now(),
+                    false,
+                    false,
+                    false,
+                    failureCode);
         }
 
         @Override
@@ -1393,10 +1509,20 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
         @Override
         public boolean cancel() {
             cancelled.set(true);
-            if (aioSessionId != null && currentManagementUri != null) {
+            Thread t = executingThread;
+            if (t != null) {
+                t.interrupt();
+            }
+            WarmContainerInstance container = activeContainer;
+            if (container != null) {
+                warmContainers.remove(workspaceId, container);
+                destroyWarmContainer(container);
+            }
+            String sid = aioSessionId;
+            URI uri = currentManagementUri;
+            if (sid != null && uri != null) {
                 try {
-                    aio().kill(currentManagementUri, aioSessionId, configuration.stopTimeout());
-                    return true;
+                    aio().kill(uri, sid, configuration.stopTimeout());
                 } catch (RuntimeException ignored) {
                 }
             }
