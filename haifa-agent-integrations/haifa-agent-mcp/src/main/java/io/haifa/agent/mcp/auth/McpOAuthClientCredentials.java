@@ -14,6 +14,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
 
 /**
@@ -41,7 +42,7 @@ public final class McpOAuthClientCredentials implements Supplier<String> {
     private final HttpClient httpClient;
     private final Clock clock;
     private final ObjectMapper json;
-    private final Object lock = new Object();
+    private final ReentrantLock lock = new ReentrantLock();
 
     private volatile String currentAccessToken;
     private volatile long expiresAtEpochMillis;
@@ -92,13 +93,16 @@ public final class McpOAuthClientCredentials implements Supplier<String> {
         if (cached != null && now < (expiresAtEpochMillis - effectiveSkewMillis)) {
             return cached;
         }
-        synchronized (lock) {
+        lock.lock();
+        try {
             now = clock.millis();
             cached = currentAccessToken;
             if (cached != null && now < (expiresAtEpochMillis - effectiveSkewMillis)) {
                 return cached;
             }
             return fetchToken(now);
+        } finally {
+            lock.unlock();
         }
     }
 

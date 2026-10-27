@@ -25,6 +25,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantLock;
 
 final class ModernStdioMcpTransport implements ModernMcpTransport {
     private static final TypeReference<Map<String, Object>> OBJECT_MAP = new TypeReference<>() {};
@@ -35,6 +36,7 @@ final class ModernStdioMcpTransport implements ModernMcpTransport {
     private final StdioDefinition definition;
     private final ObjectMapper mapper;
     private final AtomicLong requestIds = new AtomicLong();
+    private final ReentrantLock lifecycle = new ReentrantLock();
     private final ByteArrayOutputStream pendingFrame = new ByteArrayOutputStream();
     private final ArrayDeque<Map<String, Object>> messages = new ArrayDeque<>();
     private ManagedProcessSession session;
@@ -59,37 +61,42 @@ final class ModernStdioMcpTransport implements ModernMcpTransport {
     }
 
     @Override
-    public synchronized Map<String, Object> request(
+    public Map<String, Object> request(
             String method,
             Map<String, Object> parameters,
             Map<String, String> envelopeHeaders,
             Map<String, String> credentials,
             ToolInvocationObserver observer) {
-        ensureOpen(credentials);
-        long id = requestIds.incrementAndGet();
-        Map<String, Object> params = new LinkedHashMap<>(parameters);
-        params.put(
-                "_meta",
-                Map.of(
-                        "io.modelcontextprotocol/protocolVersion", McpProtocolProfile.VERSION_2026_07_28,
-                        "io.modelcontextprotocol/clientInfo", Map.of("name", "haifa-agent", "version", "0.1.0"),
-                        "io.modelcontextprotocol/clientCapabilities", Map.of()));
+        lifecycle.lock();
         try {
-            byte[] frame = (mapper.writeValueAsString(
-                                    Map.of("jsonrpc", "2.0", "id", id, "method", method, "params", params))
-                            + "\n")
-                    .getBytes(StandardCharsets.UTF_8);
-            if (frame.length - 1 > definition.maxFrameBytes()) {
-                throw new ToolInvocationException(
-                        "MCP_STDIO_FRAME_TOO_LARGE",
-                        ToolDispatchState.NOT_DISPATCHED,
-                        "MCP stdio outbound frame exceeds its budget");
+            ensureOpen(credentials);
+            long id = requestIds.incrementAndGet();
+            Map<String, Object> params = new LinkedHashMap<>(parameters);
+            params.put(
+                    "_meta",
+                    Map.of(
+                            "io.modelcontextprotocol/protocolVersion", McpProtocolProfile.VERSION_2026_07_28,
+                            "io.modelcontextprotocol/clientInfo", Map.of("name", "haifa-agent", "version", "0.1.0"),
+                            "io.modelcontextprotocol/clientCapabilities", Map.of()));
+            try {
+                byte[] frame = (mapper.writeValueAsString(
+                                        Map.of("jsonrpc", "2.0", "id", id, "method", method, "params", params))
+                                + "\n")
+                        .getBytes(StandardCharsets.UTF_8);
+                if (frame.length - 1 > definition.maxFrameBytes()) {
+                    throw new ToolInvocationException(
+                            "MCP_STDIO_FRAME_TOO_LARGE",
+                            ToolDispatchState.NOT_DISPATCHED,
+                            "MCP stdio outbound frame exceeds its budget");
+                }
+                observer.dispatched();
+                session.write(new ProcessInputChunk(frame));
+                return await(id);
+            } catch (IOException exception) {
+                throw new IllegalStateException("failed to encode MCP stdio request", exception);
             }
-            observer.dispatched();
-            session.write(new ProcessInputChunk(frame));
-            return await(id);
-        } catch (IOException exception) {
-            throw new IllegalStateException("failed to encode MCP stdio request", exception);
+        } finally {
+            lifecycle.unlock();
         }
     }
 
@@ -220,15 +227,20 @@ final class ModernStdioMcpTransport implements ModernMcpTransport {
     }
 
     @Override
-    public synchronized void close() {
-        if (closed) return;
-        closed = true;
+    public void close() {
+        lifecycle.lock();
         try {
-            if (session != null) session.close();
+            if (closed) return;
+            closed = true;
+            try {
+                if (session != null) session.close();
+            } finally {
+                if (launch != null) launch.close();
+                session = null;
+                launch = null;
+            }
         } finally {
-            if (launch != null) launch.close();
-            session = null;
-            launch = null;
+            lifecycle.unlock();
         }
     }
 }

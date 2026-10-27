@@ -10,13 +10,16 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ThreadLocalRandom;
 
 public final class McpConnectionManager implements AutoCloseable {
     private final Map<McpServerId, McpServerDefinition> servers;
     private final McpClientFactory factory;
     private final ConcurrentHashMap<PoolKey, McpConnection> connections = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<PoolKey, CompletableFuture<McpConnection>> pending = new ConcurrentHashMap<>();
 
     public McpConnectionManager(Collection<McpServerDefinition> servers, McpClientFactory factory) {
         var definitions = new java.util.LinkedHashMap<McpServerId, McpServerDefinition>();
@@ -31,35 +34,83 @@ public final class McpConnectionManager implements AutoCloseable {
     public McpConnection acquire(
             McpServerId serverId, TenantRef tenant, PrincipalRef principal, Map<String, String> credentials) {
         McpServerDefinition server = definition(serverId);
-        PoolKey key = new PoolKey(
+        PoolKey key = poolKey(server, tenant, principal, credentials);
+        McpConnection existing = connections.get(key);
+        if (ready(existing)) return existing;
+
+        CompletableFuture<McpConnection> initialization = new CompletableFuture<>();
+        CompletableFuture<McpConnection> shared = pending.putIfAbsent(key, initialization);
+        if (shared != null) return await(shared);
+
+        try {
+            existing = connections.get(key);
+            if (ready(existing)) {
+                initialization.complete(existing);
+                return existing;
+            }
+            McpConnection connection = connect(server, tenant, principal, credentials, existing);
+            connections.put(key, connection);
+            initialization.complete(connection);
+            return connection;
+        } catch (RuntimeException | Error failure) {
+            initialization.completeExceptionally(failure);
+            throw failure;
+        } finally {
+            pending.remove(key, initialization);
+        }
+    }
+
+    private McpConnection connect(
+            McpServerDefinition server,
+            TenantRef tenant,
+            PrincipalRef principal,
+            Map<String, String> credentials,
+            McpConnection stale) {
+        // Initialization runs without any manager monitor: a blocking handshake must not pin the caller's
+        // virtual thread, and bindings that differ may connect in parallel.
+        if (stale != null) stale.client().close();
+        int attempts = server.connectionPolicy().maxReconnectAttempts() + 1;
+        RuntimeException lastFailure = null;
+        for (int attempt = 0; attempt < attempts; attempt++) {
+            McpClientFacade client = factory.create(server, new McpConnectionIdentity(tenant, principal));
+            try {
+                return new McpConnection(client, client.initialize(credentials));
+            } catch (RuntimeException exception) {
+                client.close();
+                lastFailure = exception;
+                if (!reconnectable(exception) || attempt + 1 == attempts) throw exception;
+                jitter(attempt);
+            }
+        }
+        throw Objects.requireNonNull(lastFailure, "lastFailure");
+    }
+
+    private static McpConnection await(CompletableFuture<McpConnection> initialization) {
+        try {
+            return initialization.get();
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("MCP connection initialization interrupted", exception);
+        } catch (ExecutionException exception) {
+            Throwable failure = exception.getCause();
+            if (failure instanceof RuntimeException runtime) throw runtime;
+            if (failure instanceof Error error) throw error;
+            throw new IllegalStateException("MCP connection initialization failed", failure);
+        }
+    }
+
+    private static PoolKey poolKey(
+            McpServerDefinition server, TenantRef tenant, PrincipalRef principal, Map<String, String> credentials) {
+        return new PoolKey(
                 server.bindingReference(),
                 tenant.tenantId(),
                 principal.principalType(),
                 principal.principalId(),
                 credentials.keySet().stream().sorted().toList());
-        McpConnection existing = connections.get(key);
-        if (existing != null && existing.client().state() == McpConnectionState.READY) return existing;
-        synchronized (connections) {
-            existing = connections.get(key);
-            if (existing != null && existing.client().state() == McpConnectionState.READY) return existing;
-            if (existing != null) existing.client().close();
-            int attempts = server.connectionPolicy().maxReconnectAttempts() + 1;
-            RuntimeException lastFailure = null;
-            for (int attempt = 0; attempt < attempts; attempt++) {
-                McpClientFacade client = factory.create(server, new McpConnectionIdentity(tenant, principal));
-                try {
-                    McpConnection connection = new McpConnection(client, client.initialize(credentials));
-                    connections.put(key, connection);
-                    return connection;
-                } catch (RuntimeException exception) {
-                    client.close();
-                    lastFailure = exception;
-                    if (!reconnectable(exception) || attempt + 1 == attempts) throw exception;
-                    jitter(attempt);
-                }
-            }
-            throw Objects.requireNonNull(lastFailure, "lastFailure");
-        }
+    }
+
+    private static boolean ready(McpConnection connection) {
+        return connection != null && connection.client().state() == McpConnectionState.READY;
     }
 
     public McpServerDefinition definition(McpServerId serverId) {

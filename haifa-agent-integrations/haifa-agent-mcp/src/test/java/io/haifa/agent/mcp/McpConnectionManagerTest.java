@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.mcp.client.McpClientFacade;
+import io.haifa.agent.mcp.client.McpConnection;
 import io.haifa.agent.mcp.client.McpConnectionManager;
 import io.haifa.agent.mcp.client.McpConnectionState;
 import io.haifa.agent.mcp.client.McpServerSnapshot;
@@ -14,9 +15,16 @@ import io.haifa.agent.tool.api.ToolDispatchState;
 import io.haifa.agent.tool.api.ToolInvocationException;
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
@@ -67,6 +75,93 @@ class McpConnectionManagerTest {
         assertThat(connection.client().state()).isEqualTo(McpConnectionState.READY);
         assertThat(created).hasValue(2);
         manager.close();
+    }
+
+    @Test
+    void concurrentAcquiresForOneBindingShareASingleInitialization() throws Exception {
+        var server = McpTestFixtures.httpServer(URI.create("http://127.0.0.1:8091/mcp"), Set.of());
+        AtomicInteger created = new AtomicInteger();
+        CountDownLatch initializationStarted = new CountDownLatch(1);
+        CountDownLatch releaseInitialization = new CountDownLatch(1);
+        var manager = new McpConnectionManager(List.of(server), (definition, identity) -> {
+            created.incrementAndGet();
+            return new FakeClient(definition.serverId().value(), definition.bindingReference()) {
+                @Override
+                public McpServerSnapshot initialize(Map<String, String> credentials) {
+                    initializationStarted.countDown();
+                    await(releaseInitialization);
+                    return super.initialize(credentials);
+                }
+            };
+        });
+
+        try (ExecutorService executor = Executors.newFixedThreadPool(4)) {
+            try {
+                List<Future<McpConnection>> acquires = new ArrayList<>();
+                for (int index = 0; index < 4; index++) {
+                    acquires.add(executor.submit(() -> manager.acquire(
+                            server.serverId(), McpTestFixtures.TENANT, McpTestFixtures.PRINCIPAL, Map.of())));
+                }
+                assertThat(initializationStarted.await(10, TimeUnit.SECONDS)).isTrue();
+                releaseInitialization.countDown();
+
+                Set<McpConnection> connections = new HashSet<>();
+                for (Future<McpConnection> acquire : acquires) {
+                    connections.add(acquire.get(10, TimeUnit.SECONDS));
+                }
+                assertThat(connections).hasSize(1);
+                assertThat(created).hasValue(1);
+            } finally {
+                releaseInitialization.countDown();
+            }
+        }
+        manager.close();
+    }
+
+    @Test
+    void acquiresForDifferentBindingsDoNotSerializeBehindABlockingHandshake() throws Exception {
+        var server = McpTestFixtures.httpServer(URI.create("http://127.0.0.1:8091/mcp"), Set.of());
+        CountDownLatch firstInitializationStarted = new CountDownLatch(1);
+        CountDownLatch releaseFirstInitialization = new CountDownLatch(1);
+        var manager = new McpConnectionManager(
+                List.of(server),
+                (definition, identity) -> new FakeClient(definition.serverId().value(), definition.bindingReference()) {
+                    @Override
+                    public McpServerSnapshot initialize(Map<String, String> credentials) {
+                        if ("alice".equals(identity.principal().principalId())) {
+                            firstInitializationStarted.countDown();
+                            await(releaseFirstInitialization);
+                        }
+                        return super.initialize(credentials);
+                    }
+                });
+
+        try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+            Future<McpConnection> first = executor.submit(() ->
+                    manager.acquire(server.serverId(), McpTestFixtures.TENANT, McpTestFixtures.PRINCIPAL, Map.of()));
+            try {
+                assertThat(firstInitializationStarted.await(10, TimeUnit.SECONDS))
+                        .isTrue();
+                Future<McpConnection> other = executor.submit(() -> manager.acquire(
+                        server.serverId(), McpTestFixtures.TENANT, new PrincipalRef("bob", "user"), Map.of()));
+
+                assertThat(other.get(10, TimeUnit.SECONDS).client().state()).isEqualTo(McpConnectionState.READY);
+                assertThat(first.isDone()).isFalse();
+            } finally {
+                releaseFirstInitialization.countDown();
+            }
+            assertThat(first.get(10, TimeUnit.SECONDS).client().state()).isEqualTo(McpConnectionState.READY);
+        }
+        manager.close();
+    }
+
+    private static void await(CountDownLatch latch) {
+        try {
+            if (!latch.await(10, TimeUnit.SECONDS)) throw new IllegalStateException("timed out");
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("interrupted", exception);
+        }
     }
 
     private static class FakeClient implements McpClientFacade {
