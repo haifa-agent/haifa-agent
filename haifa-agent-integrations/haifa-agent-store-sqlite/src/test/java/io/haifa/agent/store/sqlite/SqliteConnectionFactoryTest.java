@@ -272,16 +272,66 @@ class SqliteConnectionFactoryTest {
         SqliteConnectionFactory factory = SqliteTestSupport.closeAfterTest(
                 new SqliteConnectionFactory(SqliteTestSupport.configuration(directory)));
 
-        assertThat(factory.writerTimeoutDescription(60_001, 3))
-                .contains("waitedMs=60001", "holderThread=none", "writerLocked=false", "queuedWriters=3");
+        assertThat(factory.writerTimeoutDescription(60_001, 3, null))
+                .contains(
+                        "waitedMs=60001",
+                        "holderThread=none",
+                        "holderHeldMs=unknown",
+                        "ownership=none",
+                        "writerLocked=false",
+                        "queuedWriters=3");
 
         factory.acquireWriter();
         try {
-            assertThat(factory.writerTimeoutDescription(60_001, 3))
+            assertThat(factory.writerTimeoutDescription(60_001, 3, Thread.currentThread()))
                     .contains(
-                            "holderThread=" + Thread.currentThread().getName(), "writerLocked=true", "queuedWriters=3");
+                            "holderThread=" + Thread.currentThread().getName(),
+                            "ownership=consistent",
+                            "writerLocked=true",
+                            "queuedWriters=3");
         } finally {
             factory.releaseWriter();
+        }
+    }
+
+    @Test
+    void writerTimeoutDescriptionMarksAChangedOwnerDuringHandoff() throws Exception {
+        SqliteConnectionFactory factory = SqliteTestSupport.closeAfterTest(
+                new SqliteConnectionFactory(SqliteTestSupport.configuration(directory)));
+        factory.acquireWriter();
+        factory.releaseWriter();
+        Thread previousOwner = Thread.currentThread();
+        CountDownLatch acquired = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        try (ExecutorService executor = Executors.newSingleThreadExecutor()) {
+            Future<?> holder = executor.submit(() -> {
+                factory.acquireWriter();
+                acquired.countDown();
+                await(release);
+                factory.releaseWriter();
+                return null;
+            });
+            try {
+                assertThat(acquired.await(10, TimeUnit.SECONDS)).isTrue();
+                assertThat(factory.writerTimeoutDescription(60_001, 3, previousOwner))
+                        .contains(
+                                "holderThread=" + previousOwner.getName(),
+                                "holderHeldMs=unknown",
+                                "ownership=changed",
+                                "writerLocked=true");
+            } finally {
+                release.countDown();
+            }
+            holder.get(10, TimeUnit.SECONDS);
+        }
+    }
+
+    private static void await(CountDownLatch latch) {
+        try {
+            if (!latch.await(10, TimeUnit.SECONDS)) throw new IllegalStateException("timed out");
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("interrupted", exception);
         }
     }
 

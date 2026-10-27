@@ -186,7 +186,9 @@ UoW 始终保持 JDBC `autoCommit=true`，在同一 Connection 上显式执行�
 外层 UoW，不重复取锁。`sqlite.writer.acquired` / `sqlite.writer.released` 日志给出持有线程、已持有时长与排队
 长度；兜底触发时还会输出 `sqlite.writer.timeout`，其中 `waitedMs` 是实际等待时长，`writerLocked=false` 且
 `holderThread=none` 表示没有写者持有槽位、等待者自身被延迟（例如虚拟线程载体饥饿），而不是槽位泄漏；持有者
-存在时会同时输出锁的实际 owner、状态与有界栈帧，即使诊断记录在获取与释放之间丢失也可定位。`sqlite.uow` 在
+存在时会同时输出锁的实际 owner、状态与有界栈帧，即使诊断记录在获取与释放之间丢失也可定位。owner 在超时报告
+开始时只采样一次，`ownership=consistent|changed|unknown|none` 标记 owner 与 holder 记录是否一致；发生锁交接
+时不会把新 holder 的持有时长归到旧 owner 上。`sqlite.uow` 在
 失败路径同样输出，并新增 `waitMs` 阶段，使“排队慢”与“事务内工作慢”可以区分。`DATABASE_BUSY` 只保留给跨进程
 `BEGIN IMMEDIATE` 竞争与连接池租出超时。
 

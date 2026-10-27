@@ -214,8 +214,10 @@ public final class SqliteConnectionFactory implements AutoCloseable {
             }
         }
         long waitedMillis = elapsedMillis(started);
-        String description = writerTimeoutDescription(waitedMillis, queueDepth);
+        // Sample the owner once: state, stack and the description must describe the same writer even if the
+        // slot is handed off while the timeout is being reported.
         Thread owner = writer.owner();
+        String description = writerTimeoutDescription(waitedMillis, queueDepth, owner);
         // A starved waiter can observe a free slot: no holder held it for the whole deadline. The owner and the
         // lock state make that distinguishable from a leaked slot, and the owner stack replaces the missing
         // holder record without waiting for a later thread dump.
@@ -229,18 +231,25 @@ public final class SqliteConnectionFactory implements AutoCloseable {
                 "SQLite writer slot was not released within " + writerQueueTimeoutMillis + " ms (" + description + ")");
     }
 
-    String writerTimeoutDescription(long waitedMillis, int queueDepth) {
-        Thread owner = writer.owner();
+    String writerTimeoutDescription(long waitedMillis, int queueDepth, Thread owner) {
         WriterHolder holder = writerHolder.get();
-        String holderThread = owner != null
-                ? owner.getName()
-                : holder != null ? holder.thread().getName() : "none";
-        String holderHeldMillis = holder == null
-                ? "unknown"
-                : Long.toString(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - holder.heldSinceNanos()));
+        boolean holderMatches = owner != null && holder != null && holder.thread() == owner;
+        String holderThread = owner != null ? owner.getName() : "none";
+        String holderHeldMillis = holderMatches
+                ? Long.toString(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - holder.heldSinceNanos()))
+                : "unknown";
+        String ownership;
+        if (owner == null) {
+            ownership = holder == null ? "none" : "changed";
+        } else if (holder == null) {
+            ownership = "unknown";
+        } else {
+            ownership = holderMatches ? "consistent" : "changed";
+        }
         return "waitedMs=" + waitedMillis
                 + ", holderThread=" + holderThread
                 + ", holderHeldMs=" + holderHeldMillis
+                + ", ownership=" + ownership
                 + ", writerLocked=" + writer.isLocked()
                 + ", queuedWriters=" + queueDepth;
     }
