@@ -485,7 +485,8 @@ authoritative Assistant text comes from the persisted Session messages.
 ## Clarification input
 
 `ask_clarification` surfaces in the terminal as a `Clarification · <title>` transcript card whose body lists every
-question with its options. Space only marks an option (`[ ]` ↔ `[✓]`, U+2713) and never submits; Enter confirms the current
+question with its options. Space only marks an option (multi-choice `[ ]` ↔ `[✓]`, single choice `( )` ↔ `(✓)`, both U+2713)
+and never submits; Enter confirms the current
 question, which submits the marked options and moves on to the next one. "Type your own answer" hands the composer to
 the free-text lane while the card stays pending. The answer is submitted as one part per question
 with format `clarification-answer.v1`, so the Runtime validates it like any other interaction input. "Cancel"

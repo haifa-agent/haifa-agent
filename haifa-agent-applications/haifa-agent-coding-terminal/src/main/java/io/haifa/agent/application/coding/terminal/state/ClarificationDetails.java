@@ -28,7 +28,21 @@ public record ClarificationDetails(String title, List<Question> questions) {
     public static final String MARKER_SELECTED = "[\u2713]";
 
     public static final String MARKER_UNSELECTED = "[ ]";
+
+    /** A single-choice question marks its answer with parentheses, so the shape states the question type. */
+    public static final String MARKER_SINGLE_SELECTED = "(\u2713)";
+
+    public static final String MARKER_SINGLE_UNSELECTED = "( )";
+
     public static final String CANCEL_LABEL = "Cancel";
+
+    /** The marker for one option row; both brackets keep the three columns the selector list depends on. */
+    public static String marker(boolean multiple, boolean selected) {
+        if (multiple) {
+            return selected ? MARKER_SELECTED : MARKER_UNSELECTED;
+        }
+        return selected ? MARKER_SINGLE_SELECTED : MARKER_SINGLE_UNSELECTED;
+    }
 
     public ClarificationDetails {
         Objects.requireNonNull(title, "title must not be null");
@@ -64,6 +78,8 @@ public record ClarificationDetails(String title, List<Question> questions) {
             }
             if (multiple) {
                 text.append("\n(choose one or more)");
+            } else {
+                text.append("\n(choose one)");
             }
             return text.toString();
         }
