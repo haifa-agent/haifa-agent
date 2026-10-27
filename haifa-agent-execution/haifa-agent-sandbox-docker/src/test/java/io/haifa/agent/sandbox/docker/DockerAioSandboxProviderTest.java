@@ -66,7 +66,10 @@ class DockerAioSandboxProviderTest {
                 128,
                 Duration.ofSeconds(5),
                 Duration.ofSeconds(2),
-                8080);
+                8080,
+                8,
+                DockerAioLifecycleMode.EPHEMERAL,
+                Duration.ofMinutes(15));
         var workspaces = new InMemoryWorkspaceStore();
         var locations = new HostWorkspaceLocationStore();
         workspaceId = new WorkspaceId("workspace-1");
