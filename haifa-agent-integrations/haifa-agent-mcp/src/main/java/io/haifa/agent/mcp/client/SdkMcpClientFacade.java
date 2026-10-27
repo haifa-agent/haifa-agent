@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
 
 final class SdkMcpClientFacade implements McpClientFacade {
     private final McpServerDefinition server;
@@ -29,6 +30,7 @@ final class SdkMcpClientFacade implements McpClientFacade {
     private final McpTelemetry telemetry;
     private final TrackingMcpClientTransport transportFailures;
     private final AtomicReference<McpConnectionState> state = new AtomicReference<>(McpConnectionState.DISCONNECTED);
+    private final ReentrantLock lifecycle = new ReentrantLock();
 
     SdkMcpClientFacade(
             McpServerDefinition server,
@@ -47,40 +49,46 @@ final class SdkMcpClientFacade implements McpClientFacade {
     }
 
     @Override
-    public synchronized McpServerSnapshot initialize(Map<String, String> leases) {
-        if (state.get() == McpConnectionState.READY) return snapshot(client.getCurrentInitializationResult());
-        if (!state.compareAndSet(McpConnectionState.DISCONNECTED, McpConnectionState.CONNECTING)) {
-            throw new IllegalStateException("MCP connection cannot initialize from " + state.get());
-        }
-        telemetry.stateChanged(server.serverId(), McpConnectionState.CONNECTING);
-        transition(McpConnectionState.INITIALIZING);
+    public McpServerSnapshot initialize(Map<String, String> leases) {
+        // A monitor would pin a virtual thread for the whole blocking handshake; a lock parks it instead.
+        lifecycle.lock();
         try {
-            transportFailures.clearFailure();
-            McpSchema.InitializeResult result = credentials.withCredentials(leases, client::initialize);
-            if (!server.protocol().targetVersion().equals(result.protocolVersion())) {
-                if (McpProtocolProfile.isFutureVersion(result.protocolVersion())) {
+            if (state.get() == McpConnectionState.READY) return snapshot(client.getCurrentInitializationResult());
+            if (!state.compareAndSet(McpConnectionState.DISCONNECTED, McpConnectionState.CONNECTING)) {
+                throw new IllegalStateException("MCP connection cannot initialize from " + state.get());
+            }
+            telemetry.stateChanged(server.serverId(), McpConnectionState.CONNECTING);
+            transition(McpConnectionState.INITIALIZING);
+            try {
+                transportFailures.clearFailure();
+                McpSchema.InitializeResult result = credentials.withCredentials(leases, client::initialize);
+                if (!server.protocol().targetVersion().equals(result.protocolVersion())) {
+                    if (McpProtocolProfile.isFutureVersion(result.protocolVersion())) {
+                        throw new ToolInvocationException(
+                                "MCP_PROTOCOL_VERSION_PENDING_ADAPTATION",
+                                ToolDispatchState.ACKNOWLEDGED,
+                                McpProtocolProfile.adaptationNotice(result.protocolVersion()));
+                    }
                     throw new ToolInvocationException(
-                            "MCP_PROTOCOL_VERSION_PENDING_ADAPTATION",
+                            "MCP_PROTOCOL_VERSION_MISMATCH",
                             ToolDispatchState.ACKNOWLEDGED,
-                            McpProtocolProfile.adaptationNotice(result.protocolVersion()));
+                            "MCP server negotiated an unsupported protocol version");
                 }
-                throw new ToolInvocationException(
-                        "MCP_PROTOCOL_VERSION_MISMATCH",
-                        ToolDispatchState.ACKNOWLEDGED,
-                        "MCP server negotiated an unsupported protocol version");
+                if (result.capabilities().tools() == null) {
+                    throw new ToolInvocationException(
+                            "MCP_TOOLS_CAPABILITY_MISSING",
+                            ToolDispatchState.ACKNOWLEDGED,
+                            "MCP server does not declare tools capability");
+                }
+                transition(McpConnectionState.READY);
+                return snapshot(result);
+            } catch (RuntimeException exception) {
+                transition(McpConnectionState.FAILED);
+                close();
+                throw mapOperationalFailure("MCP_INITIALIZE_FAILED", exception);
             }
-            if (result.capabilities().tools() == null) {
-                throw new ToolInvocationException(
-                        "MCP_TOOLS_CAPABILITY_MISSING",
-                        ToolDispatchState.ACKNOWLEDGED,
-                        "MCP server does not declare tools capability");
-            }
-            transition(McpConnectionState.READY);
-            return snapshot(result);
-        } catch (RuntimeException exception) {
-            transition(McpConnectionState.FAILED);
-            close();
-            throw mapOperationalFailure("MCP_INITIALIZE_FAILED", exception);
+        } finally {
+            lifecycle.unlock();
         }
     }
 
@@ -122,14 +130,19 @@ final class SdkMcpClientFacade implements McpClientFacade {
     }
 
     @Override
-    public synchronized void close() {
-        McpConnectionState current = state.get();
-        if (current == McpConnectionState.DISCONNECTED || current == McpConnectionState.CLOSING) return;
-        transition(McpConnectionState.CLOSING);
+    public void close() {
+        lifecycle.lock();
         try {
-            client.closeGracefully();
+            McpConnectionState current = state.get();
+            if (current == McpConnectionState.DISCONNECTED || current == McpConnectionState.CLOSING) return;
+            transition(McpConnectionState.CLOSING);
+            try {
+                client.closeGracefully();
+            } finally {
+                transition(McpConnectionState.DISCONNECTED);
+            }
         } finally {
-            transition(McpConnectionState.DISCONNECTED);
+            lifecycle.unlock();
         }
     }
 
