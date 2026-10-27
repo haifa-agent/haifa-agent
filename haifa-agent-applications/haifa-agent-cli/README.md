@@ -508,7 +508,7 @@ models:
           contextWindow: 131072
           maxOutputTokens: 8192
 tools:
-  enabled: [file_list, file_stat, file_read, file_create, file_write, file_patch, file_delete, file_move, workspace_attach, execution_run]
+  enabled: [ask_clarification, file_list, file_stat, file_read, file_create, file_write, file_patch, file_delete, file_move, workspace_attach, execution_run]
 skills:
   allowed: [task-planning, result-verification, my-test-skill]
   localDirectories:
