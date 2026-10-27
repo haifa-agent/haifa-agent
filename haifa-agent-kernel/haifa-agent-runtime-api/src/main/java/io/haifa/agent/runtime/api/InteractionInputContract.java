@@ -82,8 +82,7 @@ public record InteractionInputContract(
     }
 
     /** Single choice with an optional free-text answer; {@code 0} forbids the free-text answer. */
-    public static InteractionInputContract singleChoice(
-            List<InteractionOption> options, int maximumCustomCharacters) {
+    public static InteractionInputContract singleChoice(List<InteractionOption> options, int maximumCustomCharacters) {
         return new InteractionInputContract(
                 InteractionInputType.SINGLE_CHOICE,
                 maximumCustomCharacters,
