@@ -60,8 +60,11 @@ final class HttpAioClient implements AioClient {
                             || root.get("success").booleanValue()) {
                         return true;
                     }
+                } else {
+                    System.err.println(">>> AWAIT_READY PROBE NON-200: " + response.statusCode() + " body=" + new String(response.body()));
                 }
-            } catch (TimeoutException | ExecutionException | IOException | AioProtocolException ignored) {
+            } catch (TimeoutException | ExecutionException | IOException | AioProtocolException probeEx) {
+                System.err.println(">>> AWAIT_READY PROBE EXCEPTION [" + baseUri + "]: " + probeEx.getClass().getSimpleName() + " cause=" + probeEx.getCause());
                 // Probe again only until the fixed deadline; no command has been dispatched.
             } catch (InterruptedException exception) {
                 Thread.currentThread().interrupt();

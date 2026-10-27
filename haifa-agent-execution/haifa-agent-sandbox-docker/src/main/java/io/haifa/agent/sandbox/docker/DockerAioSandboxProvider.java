@@ -1141,6 +1141,7 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
             } else {
                 throw failure("CONTAINER_IDENTITY_MISMATCH", "sandbox container has no reachable management address");
             }
+            System.err.println(">>> WARM CONTAINER INSPECTED: containerIp=" + inspected.containerIp() + ", managementPort=" + inspected.managementPort() + " -> managementUri=" + managementUri);
 
             Duration readyBudget = timeout.compareTo(Duration.ofSeconds(10)) > 0 ? Duration.ofSeconds(10) : timeout;
             if (readyBudget.isZero() || !aio().awaitReady(managementUri, readyBudget)) {
