@@ -83,6 +83,26 @@ class ClarificationAnswersTest {
                 .hasMessageContaining("does not accept a free-text answer");
     }
 
+    @Test
+    void summarisesAnswersWithoutTheWirePayload() {
+        InteractionRequest request = request(spec(true, true));
+
+        ClarificationAnswers answers =
+                ClarificationAnswers.parse(List.of(part("opt-0-1", "in-memory is fine")), request);
+
+        assertThat(answers.userSummary(request))
+                .isEqualTo("Which storage?: SQLite, in-memory is fine")
+                .doesNotContain("selected=")
+                .doesNotContain("custom=");
+    }
+
+    @Test
+    void summarisesADismissalWithoutFabricatingAnswers() {
+        InteractionRequest request = request(spec(false, true));
+
+        assertThat(ClarificationAnswers.declined(1).userSummary(request)).isEqualTo("Dismissed the questions");
+    }
+
     private static TextPart part(String selectedIds, String customText) {
         return new TextPart("selected=" + selectedIds + "\ncustom=" + customText, ClarificationAnswers.PART_FORMAT);
     }

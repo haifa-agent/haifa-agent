@@ -257,6 +257,38 @@ public final class CodingTerminalTestSupport {
                 new InteractionConsequenceView("Run tool", "Reject tool", "Expire request"));
     }
 
+    static InteractionView clarification(boolean multiple) {
+        return new InteractionView(
+                new InteractionRequestId("interaction-clarification"),
+                new AgentRunId("run-1"),
+                SESSION_ID,
+                0,
+                InteractionKind.CLARIFICATION,
+                InteractionState.PENDING,
+                "Clarification",
+                "Which storage?",
+                List.of(InteractionAction.SUBMIT, InteractionAction.CANCEL),
+                InteractionInputContract.NONE,
+                new InteractionTargetView("tool", "ask_clarification", Optional.empty(), Optional.empty(), "workspace"),
+                new InteractionRequesterView("user", "local user"),
+                Instant.EPOCH,
+                Optional.of(Instant.EPOCH.plusSeconds(60)),
+                new InteractionConsequenceView("Answer questions", "Dismiss questions", "Expire request"),
+                Optional.empty(),
+                Optional.of(new io.haifa.agent.runtime.api.ClarificationPresentation(
+                        "Storage",
+                        List.of(new io.haifa.agent.runtime.api.ClarificationPresentation.Question(
+                                "Storage",
+                                "Which storage?",
+                                multiple,
+                                true,
+                                List.of(
+                                        new io.haifa.agent.runtime.api.ClarificationPresentation.Option(
+                                                "opt-0-0", "Postgres", Optional.empty()),
+                                        new io.haifa.agent.runtime.api.ClarificationPresentation.Option(
+                                                "opt-0-1", "SQLite", Optional.empty())))))));
+    }
+
     public static CodingSessionView view(Optional<InteractionView> interaction) {
         return view(interaction, 0, "session");
     }

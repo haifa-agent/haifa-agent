@@ -118,6 +118,40 @@ class CodingTerminalInteractionTest {
     }
 
     @Test
+    void togglesAMultiChoiceClarificationOptionOnAndOff() {
+        FakeClient client = new FakeClient(view(Optional.of(clarification(true))));
+        client.reconciledView = view(Optional.empty());
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+
+        assertThat(controller.state().selector().orElseThrow().options())
+                .containsExactly("[ ] Postgres", "[ ] SQLite", "Type your own answer", "Send answer", "Cancel");
+
+        controller.accept(input(TerminalInput.Kind.TOGGLE_SELECTION, ""));
+        assertThat(controller.state().selector().orElseThrow().options().get(0)).isEqualTo("[\u2713] Postgres");
+
+        controller.accept(input(TerminalInput.Kind.TOGGLE_SELECTION, ""));
+        assertThat(controller.state().selector().orElseThrow().options().get(0)).isEqualTo("[ ] Postgres");
+    }
+
+    @Test
+    void togglesASingleChoiceClarificationOptionOnAndOff() {
+        FakeClient client = new FakeClient(view(Optional.of(clarification(false))));
+        client.reconciledView = view(Optional.empty());
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+
+        assertThat(controller.state().selector().orElseThrow().options())
+                .containsExactly("( ) Postgres", "( ) SQLite", "Type your own answer", "Cancel");
+
+        controller.accept(input(TerminalInput.Kind.TOGGLE_SELECTION, ""));
+        assertThat(controller.state().selector().orElseThrow().options().get(0)).isEqualTo("(\u2713) Postgres");
+
+        controller.accept(input(TerminalInput.Kind.TOGGLE_SELECTION, ""));
+        assertThat(controller.state().selector().orElseThrow().options().get(0)).isEqualTo("( ) Postgres");
+    }
+
+    @Test
     void pendingInteractionUsesTheSameSelectorInputOwnerAndRuntimeClient() {
         InteractionView interaction = approval();
         FakeClient client = new FakeClient(view(Optional.of(interaction)));

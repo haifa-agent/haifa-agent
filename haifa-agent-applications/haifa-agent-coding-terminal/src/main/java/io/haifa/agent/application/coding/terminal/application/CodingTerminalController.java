@@ -1779,7 +1779,7 @@ public final class CodingTerminalController implements AutoCloseable {
         ClarificationDetails.Question question = draft.current();
         int options = question.options().size();
         if (selected < options) {
-            draft.choose(question.options().get(selected).optionId());
+            draft.toggle(question.options().get(selected).optionId());
             openClarificationSelector(selected);
             return;
         }
@@ -1806,7 +1806,7 @@ public final class CodingTerminalController implements AutoCloseable {
                 }
                 draft.confirm();
             } else {
-                draft.choose(question.options().get(selected).optionId());
+                draft.select(question.options().get(selected).optionId());
                 draft.advance();
             }
             continueClarification(0);
@@ -1927,14 +1927,21 @@ public final class CodingTerminalController implements AutoCloseable {
                     current().multiple(), selected.get(index).contains(optionId));
         }
 
-        void choose(String optionId) {
+        void toggle(String optionId) {
             List<String> current = selected.get(index);
-            if (!current().multiple()) {
-                current.clear();
-                current.add(optionId);
+            if (current.remove(optionId)) {
                 return;
             }
-            if (!current.remove(optionId)) current.add(optionId);
+            if (!current().multiple()) {
+                current.clear();
+            }
+            current.add(optionId);
+        }
+
+        void select(String optionId) {
+            List<String> current = selected.get(index);
+            current.clear();
+            current.add(optionId);
         }
 
         void advance() {
