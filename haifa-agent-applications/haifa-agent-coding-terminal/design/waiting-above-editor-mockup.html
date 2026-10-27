@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Coding Terminal · Waiting above editor (design mockup)</title>
+  <style>
+    :root {
+      --bg: #0f1218;
+      --panel: #151a22;
+      --panel-2: #1b222d;
+      --line: #2a3342;
+      --ink: #e7ecf5;
+      --muted: #8b95a8;
+      --user: #9db4ff;
+      --pending: #d7b56d;
+      --queued: #c9b27a;
+      --accent: #7aa2ff;
+      --success: #7dcea0;
+      --danger: #e28b8b;
+      --editor: #10151d;
+      --focus: #3d4f73;
+      font-family: "Cascadia Mono", "JetBrains Mono", "SF Mono", Consolas, "Microsoft YaHei Mono", monospace;
+      color: var(--ink);
+      background: #090b10;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(900px 420px at 15% -10%, #1a2438 0%, transparent 55%),
+        radial-gradient(700px 360px at 90% 0%, #182033 0%, transparent 45%),
+        #090b10;
+    }
+    .page {
+      width: min(1080px, calc(100% - 28px));
+      margin: 24px auto 40px;
+      display: grid;
+      gap: 16px;
+    }
+    .doc h1 {
+      margin: 0 0 6px;
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -.02em;
+    }
+    .doc .eyebrow {
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .doc p {
+      margin: 0;
+      max-width: 820px;
+      color: #a7b0c2;
+      font-size: 13px;
+      line-height: 1.55;
+      font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    }
+    .compare {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    }
+    .compare article {
+      padding: 12px 13px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgb(21 26 34 / 85%);
+    }
+    .compare b { display: block; margin-bottom: 4px; font-size: 13px; }
+    .compare span { color: #9aa4b7; font-size: 12px; line-height: 1.5; }
+    .compare .bad b { color: #e28b8b; }
+    .compare .good b { color: #7dcea0; }
+
+    .tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .tabs button, .action {
+      height: 30px;
+      padding: 0 11px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #151a22;
+      color: #c7d0e0;
+      font: inherit;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .tabs button[aria-pressed="true"],
+    .action.primary {
+      color: #0b1020;
+      border-color: #7aa2ff;
+      background: #7aa2ff;
+      font-weight: 700;
+    }
+    .action.ghost { background: transparent; color: #9aa4b7; }
+    .action.danger {
+      color: #e28b8b;
+      border-color: #5a3434;
+      background: #241818;
+    }
+    .action:disabled { opacity: .55; cursor: not-allowed; }
+
+    .term {
+      border: 1px solid #2c3648;
+      border-radius: 14px;
+      background: var(--bg);
+      box-shadow: 0 18px 50px rgb(0 0 0 / 35%);
+      overflow: hidden;
+    }
+    .titlebar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--line);
+      background: #121722;
+      color: #c5cddd;
+      font-size: 12px;
+    }
+    .titlebar .left { display: flex; gap: 10px; align-items: center; }
+    .dots { display: flex; gap: 6px; }
+    .dots i { width: 9px; height: 9px; border-radius: 50%; background: #3a4456; display: block; }
+    .dots i:nth-child(1) { background: #ff5f57; }
+    .dots i:nth-child(2) { background: #febc2e; }
+    .dots i:nth-child(3) { background: #28c840; }
+
+    .screen {
+      display: grid;
+      grid-template-rows: auto minmax(220px, 1fr) auto;
+      min-height: 560px;
+    }
+    .header {
+      padding: 10px 14px 8px;
+      border-bottom: 1px solid #222a38;
+      color: #c9d2e4;
+      font-size: 12px;
+    }
+    .header strong { color: var(--accent); }
+    .header .meta { color: var(--muted); }
+
+    .transcript {
+      padding: 12px 14px;
+      overflow: auto;
+      display: grid;
+      gap: 8px;
+      align-content: start;
+      font-size: 12.5px;
+      line-height: 1.45;
+    }
+    .user {
+      color: var(--user);
+      border-left: 2px solid #6f8dff;
+      padding-left: 10px;
+      background: #171d29;
+    }
+    .user .role { color: #9db4ff; font-weight: 700; }
+    .assistant { padding-left: 2px; color: #d8deea; }
+    .tool {
+      color: var(--success);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .tool.running { color: var(--pending); }
+    .muted { color: var(--muted); }
+
+    .lower {
+      display: grid;
+      gap: 6px;
+      padding: 8px 12px 10px;
+      border-top: 1px solid #222a38;
+      background: linear-gradient(180deg, #121722, #10151c);
+    }
+
+    /* ===== Design target: Waiting region above editor ===== */
+    .waiting {
+      display: grid;
+      gap: 6px;
+      padding: 8px 10px;
+      border: 1px solid #3d3540;
+      border-radius: 8px;
+      background: #1a1712;
+    }
+    .waiting[data-state="editing"] {
+      border-color: #4a4568;
+      background: #171822;
+    }
+    .waiting[data-state="sending"] {
+      border-color: #3a4660;
+      background: #151b28;
+    }
+    .waiting-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      color: var(--queued);
+      font-size: 12px;
+    }
+    .waiting-top .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 700;
+    }
+    .spinner {
+      width: 10px;
+      height: 10px;
+      border: 1.5px solid #6a5f3d;
+      border-top-color: var(--queued);
+      border-radius: 50%;
+      animation: spin .75s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .waiting-top .hint { color: #9a9074; font-weight: 400; }
+
+    .waiting-text {
+      margin: 0;
+      padding: 7px 8px;
+      border: 1px solid #3a3428;
+      border-radius: 6px;
+      background: #12100c;
+      color: #f0e6c8;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 12.5px;
+      line-height: 1.45;
+    }
+    .waiting-edit {
+      width: 100%;
+      min-height: 64px;
+      padding: 7px 8px;
+      border: 1px solid var(--focus);
+      border-radius: 6px;
+      background: #0f131b;
+      color: var(--ink);
+      font: inherit;
+      font-size: 12.5px;
+      line-height: 1.45;
+      resize: vertical;
+      outline: none;
+    }
+
+    .waiting-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+    }
+    .waiting-actions .spacer { flex: 1; }
+    .kbd {
+      display: inline-block;
+      margin-left: 4px;
+      padding: 0 5px;
+      border: 1px solid #4b5568;
+      border-radius: 4px;
+      background: #0f141d;
+      color: #aeb7c8;
+      font-size: 10px;
+    }
+
+    .empty-note {
+      display: none;
+      color: var(--muted);
+      font-size: 12px;
+      padding: 4px 2px;
+    }
+    .empty-note.show { display: block; }
+
+    .editor {
+      border: 1px solid #2d3748;
+      border-radius: 8px;
+      background: var(--editor);
+      padding: 8px 10px;
+      min-height: 68px;
+    }
+    .editor textarea {
+      width: 100%;
+      min-height: 48px;
+      border: 0;
+      outline: 0;
+      resize: none;
+      background: transparent;
+      color: var(--ink);
+      font: inherit;
+      font-size: 12.5px;
+      line-height: 1.45;
+    }
+    .meta-strip {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      color: var(--muted);
+      font-size: 11.5px;
+      padding: 0 2px;
+    }
+    .statusline {
+      color: var(--pending);
+      font-size: 12px;
+      padding: 0 2px 2px;
+    }
+    .statusline .muted { color: var(--muted); }
+
+    .notes {
+      display: grid;
+      grid-template-columns: 1.15fr .85fr;
+      gap: 10px;
+      font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    }
+    .panel {
+      padding: 13px 14px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgb(21 26 34 / 88%);
+    }
+    .panel h3 { margin: 0 0 8px; font-size: 13px; }
+    .panel ul, .panel ol {
+      margin: 0;
+      padding-left: 18px;
+      color: #a7b0c2;
+      font-size: 12px;
+      line-height: 1.65;
+    }
+    .panel code {
+      padding: 1px 5px;
+      border-radius: 4px;
+      background: #1d2430;
+      color: #d7deea;
+      font-family: inherit;
+      font-size: 11px;
+    }
+
+    @media (max-width: 860px) {
+      .compare, .notes { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="doc">
+      <div class="eyebrow">Haifa Coding Agent Terminal · HTML Design Mockup</div>
+      <h1>Active Run 发消息：先 Waiting，不直接 Steer</h1>
+      <p>
+        目标模块：<code>haifa-agent-coding-terminal</code>。
+        现状 Active Enter 直接提交 Steer（Accepted → 等模型接受）。
+        设计改为：消息先出现在输入框上方 Waiting 区；可选
+        <b>Send Now</b> / <b>Edit</b> / <b>Cancel</b>。
+      </p>
+    </header>
+
+    <section class="compare" aria-label="现状 vs 设计">
+      <article class="bad">
+        <b>现状</b>
+        <span>Idle Enter → 新 Turn；Active Enter → 立即 Steer；Alt+Enter → Follow-up Queue。Pending 区只在 Steer Accepted 后出现 <code>[steer] …</code>。</span>
+      </article>
+      <article class="good">
+        <b>设计</b>
+        <span>Active Enter → 先进入输入框上方 Waiting（本地暂存，尚未 Steer）。Send Now 才 Steer；默认也可在 Run 结束后作为 follow-up 发出。</span>
+      </article>
+    </section>
+
+    <div class="tabs" role="tablist" aria-label="预览状态">
+      <button type="button" data-demo="waiting" aria-pressed="true">Waiting</button>
+      <button type="button" data-demo="editing" aria-pressed="false">Editing</button>
+      <button type="button" data-demo="sending" aria-pressed="false">Send Now → Steer</button>
+      <button type="button" data-demo="empty" aria-pressed="false">Cancel 后</button>
+    </div>
+
+    <div class="term" aria-label="Coding Terminal 设计稿">
+      <div class="titlebar">
+        <div class="left">
+          <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span>haifa-coding · /workspace/haifa-agent</span>
+        </div>
+        <span>GPT-5.6 Sol · dark</span>
+      </div>
+
+      <div class="screen">
+        <div class="header">
+          <strong>Haifa Coding Agent</strong>
+          <span class="meta"> · feat-waiting-queue · sandbox: workspace</span>
+        </div>
+
+        <div class="transcript">
+          <div class="user">
+            <div class="role">❯ You</div>
+            Fix the failing tests in haifa-agent-runtime-core
+          </div>
+          <div class="tool">✓ Read File · RuntimeCoreTest.java · 182ms ›</div>
+          <div class="tool">✓ Apply Patch · RuntimeCore.java · 2 files ›</div>
+          <div class="tool running">● Run Command · ./mvnw -pl :haifa-agent-runtime-core -am test</div>
+          <div class="assistant muted">正在跑测试，等待结果后继续……</div>
+        </div>
+
+        <div class="lower">
+          <!-- Design target sits ABOVE the editor, same lower region as today's Pending -->
+          <section class="waiting" id="waiting" data-state="waiting" aria-label="Waiting message">
+            <div class="waiting-top">
+              <div class="status">
+                <span class="spinner" aria-hidden="true"></span>
+                <span id="status-text">Waiting</span>
+              </div>
+              <div class="hint" id="hint-text">hold until run finishes · follow-up</div>
+            </div>
+
+            <p class="waiting-text" id="waiting-text">先别改 assertion，只修 checkpoint recovery 路径。</p>
+            <textarea class="waiting-edit" id="waiting-edit" hidden>先别改 assertion，只修 checkpoint recovery 路径。</textarea>
+
+            <div class="waiting-actions" id="waiting-actions"></div>
+          </section>
+
+          <div class="empty-note" id="empty-note">
+            Waiting 已取消。Run 仍在进行；Editor 中 Enter 会再次进入 Waiting。
+          </div>
+
+          <div class="editor">
+            <textarea id="editor" rows="3" placeholder="Type a message…"></textarea>
+          </div>
+          <div class="meta-strip">
+            <span>Normal · GPT-5.6 Sol (openai)</span>
+            <span id="editor-hint">enter waiting · alt+enter follow-up · esc interrupt</span>
+          </div>
+          <div class="statusline">
+            ⠋ WORKING (12s) · Run Command
+            <span class="muted"> · esc interrupt</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <section class="notes">
+      <article class="panel">
+        <h3>布局（对齐现有 lowerRegions）</h3>
+        <ul>
+          <li>位置：现有 Pending 区块所在位置——<b>Editor / Prompt Box 正上方</b>，不进入 Transcript。</li>
+          <li>Waiting 卡展示完整文本（可折行），不只一行 summary；过长时最多 3 行 + 省略，Edit 可看全文。</li>
+          <li>动作行：<code>Send Now</code> 主操作；<code>Edit</code> 次级；<code>Cancel</code> 右对齐弱化。</li>
+          <li>底层 statusline 仍显示 <code>⠋ WORKING … · esc interrupt</code>，不被 Waiting 占用。</li>
+          <li>Meta 条右侧提示从 <code>enter steer</code> 改为 <code>enter waiting</code>（设计提案）。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <h3>状态与键位提案</h3>
+        <ol>
+          <li><code>Active + Enter</code> → 清空 Editor，创建 Waiting（本地，未调用 Steer API）</li>
+          <li>Waiting + <code>Send Now</code> / <code>ctrl+enter</code> → Steer；卡变为 Sending，等模型接受</li>
+          <li>Waiting + <code>Edit</code> / <code>e</code> → 就地编辑；Save 回 Waiting，不自动发送</li>
+          <li>Waiting + <code>Cancel</code> / <code>Esc</code>（无 cancel-armed 时）→ 丢弃 Waiting</li>
+          <li>Run 自然结束且仍有 Waiting → 作为下一条 Turn / Follow-up 发出（无需 Send Now）</li>
+          <li>保留 <code>alt+enter</code> 直接写持久 Follow-up Queue（可与 Waiting 并存，后续实现再定）</li>
+        </ol>
+      </article>
+    </section>
+  </div>
+
+  <script>
+    const DEFAULT = "先别改 assertion，只修 checkpoint recovery 路径。";
+    const waiting = document.getElementById("waiting");
+    const waitingText = document.getElementById("waiting-text");
+    const waitingEdit = document.getElementById("waiting-edit");
+    const statusText = document.getElementById("status-text");
+    const hintText = document.getElementById("hint-text");
+    const actions = document.getElementById("waiting-actions");
+    const emptyNote = document.getElementById("empty-note");
+    const editor = document.getElementById("editor");
+    const editorHint = document.getElementById("editor-hint");
+    const tabs = document.querySelectorAll(".tabs [data-demo]");
+
+    let draft = DEFAULT;
+
+    function setTab(name) {
+      tabs.forEach((btn) => btn.setAttribute("aria-pressed", String(btn.dataset.demo === name)));
+    }
+
+    function showWaiting(visible) {
+      waiting.style.display = visible ? "grid" : "none";
+      emptyNote.classList.toggle("show", !visible);
+    }
+
+    function renderActions(html) {
+      actions.innerHTML = html;
+    }
+
+    function renderWaiting() {
+      setTab("waiting");
+      showWaiting(true);
+      waiting.dataset.state = "waiting";
+      statusText.textContent = "Waiting";
+      hintText.textContent = "hold until run finishes · follow-up";
+      waitingText.hidden = false;
+      waitingEdit.hidden = true;
+      waitingText.textContent = draft;
+      editorHint.textContent = "enter waiting · alt+enter follow-up · esc interrupt";
+      renderActions(`
+        <button type="button" class="action primary" id="btn-send-now">Send Now<span class="kbd">ctrl+enter</span></button>
+        <button type="button" class="action" id="btn-edit">Edit<span class="kbd">e</span></button>
+        <span class="spacer"></span>
+        <button type="button" class="action ghost" id="btn-cancel">Cancel<span class="kbd">esc</span></button>
+      `);
+      document.getElementById("btn-send-now").onclick = renderSending;
+      document.getElementById("btn-edit").onclick = renderEditing;
+      document.getElementById("btn-cancel").onclick = renderEmpty;
+    }
+
+    function renderEditing() {
+      setTab("editing");
+      showWaiting(true);
+      waiting.dataset.state = "editing";
+      statusText.textContent = "Editing";
+      hintText.textContent = "save keeps Waiting · does not steer";
+      waitingText.hidden = true;
+      waitingEdit.hidden = false;
+      waitingEdit.value = draft;
+      editorHint.textContent = "enter save · esc discard edit";
+      renderActions(`
+        <button type="button" class="action primary" id="btn-save">Save<span class="kbd">enter</span></button>
+        <button type="button" class="action" id="btn-discard">Discard</button>
+        <span class="spacer"></span>
+        <button type="button" class="action ghost" id="btn-cancel">Cancel<span class="kbd">esc</span></button>
+      `);
+      document.getElementById("btn-save").onclick = () => {
+        draft = waitingEdit.value.trim() || draft;
+        renderWaiting();
+      };
+      document.getElementById("btn-discard").onclick = renderWaiting;
+      document.getElementById("btn-cancel").onclick = renderEmpty;
+      waitingEdit.focus();
+    }
+
+    function renderSending() {
+      setTab("sending");
+      showWaiting(true);
+      waiting.dataset.state = "sending";
+      statusText.textContent = "Sending · Steer";
+      hintText.textContent = "submitted · waiting for model accept";
+      waitingText.hidden = false;
+      waitingEdit.hidden = true;
+      waitingText.textContent = draft;
+      editorHint.textContent = "steer pending · esc interrupt run";
+      renderActions(`
+        <button type="button" class="action primary" disabled>Waiting for model…</button>
+        <span class="spacer"></span>
+        <button type="button" class="action danger" id="btn-cancel-steer">Cancel Steer</button>
+      `);
+      document.getElementById("btn-cancel-steer").onclick = renderWaiting;
+    }
+
+    function renderEmpty() {
+      setTab("empty");
+      showWaiting(false);
+      draft = DEFAULT;
+      editorHint.textContent = "enter waiting · alt+enter follow-up · esc interrupt";
+    }
+
+    tabs.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const demo = btn.dataset.demo;
+        if (demo === "waiting") renderWaiting();
+        if (demo === "editing") renderEditing();
+        if (demo === "sending") renderSending();
+        if (demo === "empty") renderEmpty();
+      });
+    });
+
+    editor.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) {
+        event.preventDefault();
+        const value = editor.value.trim();
+        if (!value) return;
+        draft = value;
+        editor.value = "";
+        renderWaiting();
+      }
+    });
+
+    renderWaiting();
+  </script>
+</body>
+</html>
