@@ -276,6 +276,19 @@ class DockerAioSandboxProviderTest extends AbstractDockerAioProviderTest {
     }
 
     @Test
+    void prefersContainerIpOverManagementPortForInternalNetworkRouting() {
+        engine.managementPort = 32768;
+        engine.containerIp = "172.18.0.5";
+        aio.result = new AioClient.ExecResult(
+                "session-1", "cmd-1", "completed", 0, "ok".getBytes(StandardCharsets.UTF_8), new byte[0], false, false);
+        try (SandboxSession session = provider.open(profile, workspaceId)) {
+            var result = session.execute(execution(ExecutionCommand.shell("echo hello")));
+            assertThat(result.status()).isEqualTo(SandboxProcessStatus.EXITED);
+            assertThat(result.exitCode()).isEqualTo(0);
+        }
+    }
+
+    @Test
     void executionTimesOutEarlyWhenSetupExceedsBudget() {
         engine.ensureImageDelay = true;
         try (SandboxSession session = provider.open(profile, workspaceId)) {

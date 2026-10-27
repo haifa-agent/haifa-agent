@@ -371,11 +371,11 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
 
                     DockerEngine.ContainerInspection inspected = engine().inspectContainer(containerId);
                     verifyContainer(inspected);
-                    if (inspected.managementPort() > 0) {
-                        managementUri = URI.create("http://127.0.0.1:" + inspected.managementPort());
-                    } else if (inspected.containerIp() != null
+                    if (inspected.containerIp() != null
                             && !inspected.containerIp().isBlank()) {
                         managementUri = URI.create("http://" + inspected.containerIp() + ":" + configuration.aioPort());
+                    } else if (inspected.managementPort() > 0) {
+                        managementUri = URI.create("http://127.0.0.1:" + inspected.managementPort());
                     } else {
                         throw failure(
                                 "CONTAINER_IDENTITY_MISMATCH", "sandbox container has no reachable management address");
@@ -1145,11 +1145,11 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
             verifyWarmContainer(inspected, hostWorkspaceRoot, networkName, containerLabels);
 
             URI managementUri;
-            if (inspected.managementPort() > 0) {
-                managementUri = URI.create("http://127.0.0.1:" + inspected.managementPort());
-            } else if (inspected.containerIp() != null
+            if (inspected.containerIp() != null
                     && !inspected.containerIp().isBlank()) {
                 managementUri = URI.create("http://" + inspected.containerIp() + ":" + configuration.aioPort());
+            } else if (inspected.managementPort() > 0) {
+                managementUri = URI.create("http://127.0.0.1:" + inspected.managementPort());
             } else {
                 throw failure("CONTAINER_IDENTITY_MISMATCH", "sandbox container has no reachable management address");
             }
