@@ -179,8 +179,8 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
         private final AtomicBoolean cancelled = new AtomicBoolean();
         private final AtomicBoolean closed = new AtomicBoolean();
         private final AtomicBoolean executed = new AtomicBoolean();
+        private final AtomicBoolean creationInFlight = new AtomicBoolean();
         private final Object teardownLock = new Object();
-        private volatile boolean creating;
         private volatile String networkName;
         private volatile String containerName;
         private volatile String containerId;
@@ -238,68 +238,92 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
             Duration reserve = reserve(execution.limits().timeout());
             long businessDeadline = deadlineNanos - reserve.toNanos();
             try {
-                engine().ensureImage(configuration.image());
-                createNetwork();
-                if (cancelled.get()) {
-                    Teardown cancelledTeardown = teardown();
-                    return result(
-                            SandboxProcessStatus.CANCELLED,
-                            null,
-                            new byte[0],
-                            new byte[0],
-                            started,
-                            time.now(),
-                            false,
-                            false,
-                            cancelledTeardown.confirmed(),
-                            "CANCELLED");
-                }
-                createContainer();
-                if (cancelled.get()) {
-                    Teardown cancelledTeardown = teardown();
-                    return result(
-                            SandboxProcessStatus.CANCELLED,
-                            null,
-                            new byte[0],
-                            new byte[0],
-                            started,
-                            time.now(),
-                            false,
-                            false,
-                            cancelledTeardown.confirmed(),
-                            "CANCELLED");
-                }
-                engine().startContainer(containerId);
-                DockerEngine.ContainerInspection inspected = engine().inspectContainer(containerId);
-                verifyContainer(inspected);
-                managementUri = URI.create("http://127.0.0.1:" + inspected.managementPort());
-                if (!aio().awaitReady(managementUri, remaining(businessDeadline))) {
-                    Teardown timedOut = teardown();
-                    return result(
-                            SandboxProcessStatus.TIMED_OUT,
-                            null,
-                            new byte[0],
-                            new byte[0],
-                            started,
-                            time.now(),
-                            false,
-                            false,
-                            timedOut.confirmed(),
-                            "TIMEOUT");
-                }
-                if (cancelled.get()) {
-                    Teardown cancelledTeardown = teardown();
-                    return result(
-                            SandboxProcessStatus.CANCELLED,
-                            null,
-                            new byte[0],
-                            new byte[0],
-                            started,
-                            time.now(),
-                            false,
-                            false,
-                            cancelledTeardown.confirmed(),
-                            "CANCELLED");
+                creationInFlight.set(true);
+                try {
+                    engine().ensureImage(configuration.image());
+                    if (cancelled.get()) {
+                        creationInFlight.set(false);
+                        Teardown cancelledTeardown = teardown();
+                        return result(
+                                SandboxProcessStatus.CANCELLED,
+                                null,
+                                new byte[0],
+                                new byte[0],
+                                started,
+                                time.now(),
+                                false,
+                                false,
+                                cancelledTeardown.confirmed(),
+                                "CANCELLED");
+                    }
+                    createNetwork();
+                    if (cancelled.get()) {
+                        creationInFlight.set(false);
+                        Teardown cancelledTeardown = teardown();
+                        return result(
+                                SandboxProcessStatus.CANCELLED,
+                                null,
+                                new byte[0],
+                                new byte[0],
+                                started,
+                                time.now(),
+                                false,
+                                false,
+                                cancelledTeardown.confirmed(),
+                                "CANCELLED");
+                    }
+                    createContainer();
+                    if (cancelled.get()) {
+                        creationInFlight.set(false);
+                        Teardown cancelledTeardown = teardown();
+                        return result(
+                                SandboxProcessStatus.CANCELLED,
+                                null,
+                                new byte[0],
+                                new byte[0],
+                                started,
+                                time.now(),
+                                false,
+                                false,
+                                cancelledTeardown.confirmed(),
+                                "CANCELLED");
+                    }
+                    engine().startContainer(containerId);
+                    DockerEngine.ContainerInspection inspected = engine().inspectContainer(containerId);
+                    verifyContainer(inspected);
+                    managementUri = URI.create("http://127.0.0.1:" + inspected.managementPort());
+                    if (!aio().awaitReady(managementUri, remaining(businessDeadline))) {
+                        creationInFlight.set(false);
+                        Teardown timedOut = teardown();
+                        return result(
+                                SandboxProcessStatus.TIMED_OUT,
+                                null,
+                                new byte[0],
+                                new byte[0],
+                                started,
+                                time.now(),
+                                false,
+                                false,
+                                timedOut.confirmed(),
+                                "TIMEOUT");
+                    }
+                    if (cancelled.get()) {
+                        creationInFlight.set(false);
+                        Teardown cancelledTeardown = teardown();
+                        return result(
+                                SandboxProcessStatus.CANCELLED,
+                                null,
+                                new byte[0],
+                                new byte[0],
+                                started,
+                                time.now(),
+                                false,
+                                false,
+                                cancelledTeardown.confirmed(),
+                                "CANCELLED");
+                    }
+                } finally {
+                    creationInFlight.set(false);
                 }
                 Duration commandBudget = remaining(businessDeadline);
                 AioClient.ExecRequest request = new AioClient.ExecRequest(
@@ -366,7 +390,7 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
         @Override
         public boolean cancel() {
             cancelled.set(true);
-            if (creating) {
+            if (creationInFlight.get()) {
                 return true;
             }
             if (containerId == null && containerName == null && networkName == null) {
@@ -465,12 +489,7 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
                     DockerAioSandboxConfiguration.GATEWAY_MODE_IPV4, GATEWAY_ISOLATED,
                     DockerAioSandboxConfiguration.GATEWAY_MODE_IPV6, GATEWAY_ISOLATED,
                     DockerAioSandboxConfiguration.ENABLE_ICC, "false");
-            creating = true;
-            try {
-                engine().createNetwork(networkName, labels, options);
-            } finally {
-                creating = false;
-            }
+            engine().createNetwork(networkName, labels, options);
             DockerEngine.NetworkInspection inspected = engine().inspectNetwork(networkName);
             if (inspected == null
                     || !DockerAioSandboxConfiguration.NETWORK_DRIVER.equals(inspected.driver())
@@ -502,28 +521,23 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
                     configuration.aioPort(),
                     configuration.uid(),
                     configuration.gid());
-            creating = true;
             try {
-                try {
-                    containerId = engine().createContainer(spec);
-                } catch (DockerEngine.DockerEngineException exception) {
-                    DockerEngine.ContainerInspection existing = engine().inspectContainer(containerName);
-                    if (existing != null) {
-                        if (hasExpectedLabels(existing.labels(), ROLE_CONTAINER)) {
-                            containerId = existing.id();
-                            teardown();
-                        } else {
-                            throw failure(
-                                    "CONTAINER_COLLISION",
-                                    "foreign container exists with same name but non-matching labels");
-                        }
+                containerId = engine().createContainer(spec);
+            } catch (DockerEngine.DockerEngineException exception) {
+                DockerEngine.ContainerInspection existing = engine().inspectContainer(containerName);
+                if (existing != null) {
+                    if (hasExpectedLabels(existing.labels(), ROLE_CONTAINER)) {
+                        containerId = existing.id();
+                        teardown();
+                    } else {
+                        throw failure(
+                                "CONTAINER_COLLISION",
+                                "foreign container exists with same name but non-matching labels");
                     }
-                    throw failure(
-                            "CONTAINER_CREATE_UNCONFIRMED",
-                            "sandbox container creation result is unknown and was not executed");
                 }
-            } finally {
-                creating = false;
+                throw failure(
+                        "CONTAINER_CREATE_UNCONFIRMED",
+                        "sandbox container creation result is unknown and was not executed");
             }
         }
 
@@ -633,7 +647,7 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
         private Teardown teardown() {
             synchronized (teardownLock) {
                 Teardown existing = teardown;
-                if (existing != null && existing.confirmed()) return existing;
+                if (existing != null && existing.confirmed() && !creationInFlight.get()) return existing;
                 if (aioSessionId != null && managementUri != null) {
                     aio().kill(managementUri, aioSessionId, configuration.stopTimeout());
                     aio().closeSession(managementUri, aioSessionId, configuration.stopTimeout());
@@ -657,51 +671,65 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
                     }
                 } else if (containerName != null) {
                     DockerEngine.ContainerInspection inspected = null;
+                    boolean inspectSucceeded = false;
                     try {
                         inspected = engine().inspectContainer(containerName);
-                    } catch (RuntimeException ignored) {
-                    }
-                    if (inspected != null && !hasExpectedLabels(inspected.labels(), ROLE_CONTAINER)) {
-                        // Refuse to remove a foreign container with matching name but non-matching labels
+                        inspectSucceeded = true;
+                    } catch (RuntimeException exception) {
                         containerGone = false;
-                    } else if (inspected != null) {
-                        try {
-                            engine().stopContainer(inspected.id(), configuration.stopTimeout());
-                        } catch (RuntimeException ignored) {
-                        }
-                        try {
-                            engine().removeContainer(inspected.id());
-                        } catch (RuntimeException exception) {
+                    }
+                    if (inspectSucceeded) {
+                        if (inspected != null && !hasExpectedLabels(inspected.labels(), ROLE_CONTAINER)) {
+                            // Refuse to remove a foreign container with matching name but non-matching labels
                             containerGone = false;
-                        }
-                        try {
-                            containerGone = containerGone && engine().inspectContainer(containerName) == null;
-                        } catch (RuntimeException exception) {
-                            containerGone = false;
+                        } else if (inspected != null) {
+                            try {
+                                engine().stopContainer(inspected.id(), configuration.stopTimeout());
+                            } catch (RuntimeException ignored) {
+                            }
+                            try {
+                                engine().removeContainer(inspected.id());
+                            } catch (RuntimeException exception) {
+                                containerGone = false;
+                            }
+                            try {
+                                containerGone = containerGone && engine().inspectContainer(containerName) == null;
+                            } catch (RuntimeException exception) {
+                                containerGone = false;
+                            }
                         }
                     }
                 }
                 boolean networkGone = true;
                 if (networkName != null) {
                     DockerEngine.NetworkInspection inspected = null;
+                    boolean inspectSucceeded = false;
                     try {
                         inspected = engine().inspectNetwork(networkName);
-                    } catch (RuntimeException ignored) {
-                    }
-                    if (inspected != null && !hasExpectedLabels(inspected.labels(), ROLE_NETWORK)) {
-                        // Refuse to touch foreign network
+                        inspectSucceeded = true;
+                    } catch (RuntimeException exception) {
                         networkGone = false;
-                    } else if (inspected != null) {
-                        try {
-                            engine().removeNetwork(networkName);
-                            networkGone = engine().inspectNetwork(networkName) == null;
-                        } catch (RuntimeException exception) {
+                    }
+                    if (inspectSucceeded) {
+                        if (inspected != null && !hasExpectedLabels(inspected.labels(), ROLE_NETWORK)) {
+                            // Refuse to touch foreign network
                             networkGone = false;
+                        } else if (inspected != null) {
+                            try {
+                                engine().removeNetwork(networkName);
+                            } catch (RuntimeException exception) {
+                                networkGone = false;
+                            }
+                            try {
+                                networkGone = networkGone && engine().inspectNetwork(networkName) == null;
+                            } catch (RuntimeException exception) {
+                                networkGone = false;
+                            }
                         }
                     }
                 }
                 Teardown completed = new Teardown(containerGone && networkGone, containerGone, networkGone);
-                if (completed.confirmed()) teardown = completed;
+                if (completed.confirmed() && !creationInFlight.get()) teardown = completed;
                 return completed;
             }
         }

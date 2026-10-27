@@ -2,16 +2,26 @@ package io.haifa.agent.sandbox.docker;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Flow;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.regex.Pattern;
 
 /** Narrow HTTP client for the fixed AIO v1.11.0 subset. */
@@ -40,21 +50,18 @@ final class HttpAioClient implements AioClient {
                         .timeout(requestTimeout)
                         .GET()
                         .build();
-                HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
+                CompletableFuture<HttpResponse<byte[]>> future = client.sendAsync(request, boundedBodyHandler());
+                HttpResponse<byte[]> response =
+                        future.get(Math.max(1, requestTimeout.toMillis()), TimeUnit.MILLISECONDS);
                 if (response.statusCode() == 200) {
-                    try (InputStream stream = response.body()) {
-                        byte[] bytes = stream.readNBytes(MAX_RESPONSE_BYTES + 1);
-                        if (bytes.length <= MAX_RESPONSE_BYTES) {
-                            JsonNode root = mapper.readTree(bytes);
-                            if (!root.has("success")
-                                    || !root.get("success").isBoolean()
-                                    || root.get("success").booleanValue()) {
-                                return true;
-                            }
-                        }
+                    JsonNode root = mapper.readTree(response.body());
+                    if (!root.has("success")
+                            || !root.get("success").isBoolean()
+                            || root.get("success").booleanValue()) {
+                        return true;
                     }
                 }
-            } catch (IOException ignored) {
+            } catch (TimeoutException | ExecutionException | IOException | AioProtocolException ignored) {
                 // Probe again only until the fixed deadline; no command has been dispatched.
             } catch (InterruptedException exception) {
                 Thread.currentThread().interrupt();
@@ -139,6 +146,7 @@ final class HttpAioClient implements AioClient {
     }
 
     private JsonNode post(URI uri, Map<String, Object> body, Duration timeout) {
+        CompletableFuture<HttpResponse<byte[]>> responseFuture = null;
         try {
             byte[] payload = mapper.writeValueAsBytes(body);
             HttpRequest request = HttpRequest.newBuilder(uri)
@@ -146,25 +154,109 @@ final class HttpAioClient implements AioClient {
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofByteArray(payload))
                     .build();
-            HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
+            responseFuture = client.sendAsync(request, boundedBodyHandler());
+            HttpResponse<byte[]> response = responseFuture.get(Math.max(1, timeout.toMillis()), TimeUnit.MILLISECONDS);
             if (response.statusCode() != 200) {
                 throw new AioProtocolException("AIO_HTTP_" + response.statusCode(), "AIO request was rejected");
             }
-            try (InputStream stream = response.body()) {
-                byte[] bytes = stream.readNBytes(MAX_RESPONSE_BYTES + 1);
-                if (bytes.length > MAX_RESPONSE_BYTES) {
-                    throw new AioProtocolException(
-                            "AIO_RESPONSE_TOO_LARGE", "AIO response exceeded maximum size limit");
-                }
-                return mapper.readTree(bytes);
-            }
+            return mapper.readTree(response.body());
         } catch (AioProtocolException exception) {
             throw exception;
+        } catch (TimeoutException exception) {
+            if (responseFuture != null) responseFuture.cancel(true);
+            throw new AioProtocolException("AIO_TIMED_OUT", "AIO request timed out", exception);
+        } catch (ExecutionException exception) {
+            Throwable cause = exception.getCause() != null ? exception.getCause() : exception;
+            if (cause instanceof AioProtocolException aioException) {
+                throw aioException;
+            }
+            if (cause instanceof HttpTimeoutException timeoutException) {
+                throw new AioProtocolException("AIO_TIMED_OUT", "AIO request timed out", timeoutException);
+            }
+            if (cause instanceof IOException ioException) {
+                throw new AioProtocolException("AIO_TRANSPORT_ERROR", "AIO request failed", ioException);
+            }
+            throw new AioProtocolException("AIO_TRANSPORT_ERROR", "AIO request failed", cause);
         } catch (IOException exception) {
+            Throwable cause = exception.getCause();
+            if (cause instanceof AioProtocolException aioException) {
+                throw aioException;
+            }
+            if (cause instanceof HttpTimeoutException timeoutException) {
+                throw new AioProtocolException("AIO_TIMED_OUT", "AIO request timed out", timeoutException);
+            }
             throw new AioProtocolException("AIO_TRANSPORT_ERROR", "AIO request failed", exception);
         } catch (InterruptedException exception) {
+            if (responseFuture != null) responseFuture.cancel(true);
             Thread.currentThread().interrupt();
             throw new AioProtocolException("AIO_INTERRUPTED", "AIO request was interrupted", exception);
+        }
+    }
+
+    private static HttpResponse.BodyHandler<byte[]> boundedBodyHandler() {
+        return responseInfo -> {
+            if (responseInfo.statusCode() != 200) {
+                return HttpResponse.BodySubscribers.mapping(
+                        HttpResponse.BodySubscribers.discarding(), ignored -> new byte[0]);
+            }
+            return new BoundedByteArraySubscriber(MAX_RESPONSE_BYTES);
+        };
+    }
+
+    private static final class BoundedByteArraySubscriber implements HttpResponse.BodySubscriber<byte[]> {
+        private final int maxBytes;
+        private final CompletableFuture<byte[]> future = new CompletableFuture<>();
+        private final ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        private Flow.Subscription subscription;
+        private int count = 0;
+
+        BoundedByteArraySubscriber(int maxBytes) {
+            this.maxBytes = maxBytes;
+        }
+
+        @Override
+        public CompletionStage<byte[]> getBody() {
+            return future;
+        }
+
+        @Override
+        public void onSubscribe(Flow.Subscription subscription) {
+            this.subscription = Objects.requireNonNull(subscription);
+            subscription.request(Long.MAX_VALUE);
+        }
+
+        @Override
+        public synchronized void onNext(List<ByteBuffer> item) {
+            if (future.isDone()) {
+                return;
+            }
+            for (ByteBuffer buf : item) {
+                int remaining = buf.remaining();
+                if (remaining > 0) {
+                    if ((long) count + remaining > maxBytes) {
+                        subscription.cancel();
+                        future.completeExceptionally(new AioProtocolException(
+                                "AIO_RESPONSE_TOO_LARGE", "AIO response exceeded maximum size limit"));
+                        return;
+                    }
+                    count += remaining;
+                    byte[] bytes = new byte[remaining];
+                    buf.get(bytes);
+                    buffer.write(bytes, 0, remaining);
+                }
+            }
+        }
+
+        @Override
+        public void onError(Throwable throwable) {
+            future.completeExceptionally(throwable);
+        }
+
+        @Override
+        public synchronized void onComplete() {
+            if (!future.isDone()) {
+                future.complete(buffer.toByteArray());
+            }
         }
     }
 

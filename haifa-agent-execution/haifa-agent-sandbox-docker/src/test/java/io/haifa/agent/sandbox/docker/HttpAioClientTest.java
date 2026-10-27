@@ -106,6 +106,63 @@ class HttpAioClientTest {
         assertThat(execCalls).hasValue(0);
     }
 
+    @Test
+    void slowBodyDeliveryTimesOut() {
+        server.removeContext("/v1/bash/exec");
+        server.createContext("/v1/bash/exec", exchange -> {
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, 1024);
+            try {
+                Thread.sleep(4000);
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+            }
+        });
+        HttpAioClient client = new HttpAioClient(Duration.ofMillis(500));
+        assertThatThrownBy(() -> client.exec(
+                        baseUri,
+                        new AioClient.ExecRequest(
+                                "true", "/workspace", Map.of(), Duration.ofMillis(500), Duration.ofMillis(500), 1024)))
+                .isInstanceOf(AioClient.AioProtocolException.class)
+                .satisfies(exception -> {
+                    AioClient.AioProtocolException aioException = (AioClient.AioProtocolException) exception;
+                    assertThat(aioException.code()).isIn("AIO_TIMED_OUT", "AIO_TRANSPORT_ERROR");
+                });
+    }
+
+    @Test
+    void responseExceedingByteBudgetIsRejected() {
+        server.removeContext("/v1/bash/exec");
+        server.createContext("/v1/bash/exec", exchange -> {
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            int largeSize = 16 * 1024 * 1024 + 1024;
+            exchange.sendResponseHeaders(200, largeSize);
+            byte[] chunk = new byte[64 * 1024];
+            java.util.Arrays.fill(chunk, (byte) 'a');
+            try (var output = exchange.getResponseBody()) {
+                int written = 0;
+                while (written < largeSize) {
+                    int toWrite = Math.min(chunk.length, largeSize - written);
+                    output.write(chunk, 0, toWrite);
+                    output.flush();
+                    written += toWrite;
+                }
+            } catch (IOException ignored) {
+                // Client cancelling subscription and closing stream is expected
+            }
+        });
+        HttpAioClient client = new HttpAioClient(Duration.ofSeconds(2));
+        assertThatThrownBy(() -> client.exec(
+                        baseUri,
+                        new AioClient.ExecRequest(
+                                "true", "/workspace", Map.of(), Duration.ofSeconds(5), Duration.ofSeconds(5), 1024)))
+                .isInstanceOf(AioClient.AioProtocolException.class)
+                .satisfies(exception -> {
+                    AioClient.AioProtocolException aioException = (AioClient.AioProtocolException) exception;
+                    assertThat(aioException.code()).isEqualTo("AIO_RESPONSE_TOO_LARGE");
+                });
+    }
+
     private static void respond(com.sun.net.httpserver.HttpExchange exchange, int status, String body)
             throws IOException {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);

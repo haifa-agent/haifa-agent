@@ -278,6 +278,52 @@ class DockerAioSandboxProviderTest {
         }
     }
 
+    @Test
+    void inspectFailureDuringNetworkTeardownLeavesTeardownUnconfirmed() {
+        engine.failInspectNetworkDuringTeardown = true;
+        aio.result = new AioClient.ExecResult("aio", "cmd", "completed", 0, new byte[0], new byte[0], false, false);
+        try (SandboxSession session = provider.open(profile, workspaceId)) {
+            var result = session.execute(execution(ExecutionCommand.shell("true")));
+            assertThat(result.status()).isEqualTo(SandboxProcessStatus.UNKNOWN);
+            assertThat(result.processTreeTerminated()).isFalse();
+            assertThat(result.failureCode()).isEqualTo("CONTAINER_TEARDOWN_UNCONFIRMED");
+        }
+    }
+
+    @Test
+    void inspectFailureDuringContainerTeardownLeavesTeardownUnconfirmed() {
+        engine.failInspectContainerDuringTeardown = true;
+        aio.result = new AioClient.ExecResult("aio", "cmd", "completed", 0, new byte[0], new byte[0], false, false);
+        try (SandboxSession session = provider.open(profile, workspaceId)) {
+            var result = session.execute(execution(ExecutionCommand.shell("true")));
+            assertThat(result.status()).isEqualTo(SandboxProcessStatus.UNKNOWN);
+            assertThat(result.processTreeTerminated()).isFalse();
+            assertThat(result.failureCode()).isEqualTo("CONTAINER_TEARDOWN_UNCONFIRMED");
+        }
+    }
+
+    @Test
+    void teardownDuringCreationInFlightDoesNotCacheConfirmedTeardown() throws Exception {
+        engine.createEntered = new CountDownLatch(1);
+        engine.releaseCreate = new CountDownLatch(1);
+        try (SandboxSession session = provider.open(profile, workspaceId)) {
+            Thread execution =
+                    Thread.ofVirtual().start(() -> session.execute(execution(ExecutionCommand.shell("true"))));
+            assertThat(engine.createEntered.await(5, TimeUnit.SECONDS)).isTrue();
+            // Trigger teardown while creation is in flight
+            session.close();
+            // Resume container creation
+            engine.releaseCreate.countDown();
+            execution.join(5_000);
+            assertThat(execution.isAlive()).isFalse();
+            // Container must still be cleaned up after creation finishes
+            assertThat(engine.calls).contains("container-remove");
+            assertThat(engine.inspection).isNull();
+        } finally {
+            engine.releaseCreate.countDown();
+        }
+    }
+
     private SandboxExecution execution(ExecutionCommand command) {
         return new SandboxExecution(
                 command,
@@ -297,6 +343,8 @@ class DockerAioSandboxProviderTest {
         private boolean keepContainerAfterRemove;
         private boolean lostCreateResponse;
         private boolean driftLabels;
+        private boolean failInspectNetworkDuringTeardown;
+        private boolean failInspectContainerDuringTeardown;
         private CountDownLatch createEntered;
         private CountDownLatch releaseCreate;
 
@@ -317,6 +365,9 @@ class DockerAioSandboxProviderTest {
         @Override
         public NetworkInspection inspectNetwork(String name) {
             calls.add("network-inspect");
+            if (failInspectNetworkDuringTeardown && calls.contains("container-remove")) {
+                throw new RuntimeException("Docker daemon network inspect failed during teardown");
+            }
             if (networkName == null || !networkName.equals(name)) return null;
             return new NetworkInspection(name, "bridge", true, networkOptions, networkLabels);
         }
@@ -355,6 +406,9 @@ class DockerAioSandboxProviderTest {
         @Override
         public ContainerInspection inspectContainer(String idOrName) {
             calls.add("container-inspect");
+            if (failInspectContainerDuringTeardown && calls.contains("container-remove")) {
+                throw new RuntimeException("Docker daemon container inspect failed during teardown");
+            }
             if (inspection == null) return null;
             return inspection;
         }
