@@ -245,8 +245,41 @@ class SqliteConnectionFactoryTest {
                     .satisfies(failure -> {
                         SqliteStoreException storeFailure = (SqliteStoreException) failure.getCause();
                         assertThat(storeFailure.failure()).isEqualTo(SqliteStoreFailure.WRITER_SLOT_TIMEOUT);
-                        assertThat(storeFailure.getMessage()).contains(holderThreadName);
+                        assertThat(storeFailure.getMessage())
+                                .contains(holderThreadName, "waitedMs=", "writerLocked=true");
                     });
+        } finally {
+            factory.releaseWriter();
+        }
+    }
+
+    @Test
+    void nestedWriterSlotAcquisitionIsRejectedInsteadOfOverwritingTheHolder() {
+        SqliteConnectionFactory factory = SqliteTestSupport.closeAfterTest(
+                new SqliteConnectionFactory(SqliteTestSupport.configuration(directory)));
+        factory.acquireWriter();
+        try {
+            assertThatThrownBy(factory::acquireWriter)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("nested");
+        } finally {
+            factory.releaseWriter();
+        }
+    }
+
+    @Test
+    void writerTimeoutDescriptionDistinguishesAnUnheldSlotFromALeakedOne() {
+        SqliteConnectionFactory factory = SqliteTestSupport.closeAfterTest(
+                new SqliteConnectionFactory(SqliteTestSupport.configuration(directory)));
+
+        assertThat(factory.writerTimeoutDescription(60_001, 3))
+                .contains("waitedMs=60001", "holderThread=none", "writerLocked=false", "queuedWriters=3");
+
+        factory.acquireWriter();
+        try {
+            assertThat(factory.writerTimeoutDescription(60_001, 3))
+                    .contains(
+                            "holderThread=" + Thread.currentThread().getName(), "writerLocked=true", "queuedWriters=3");
         } finally {
             factory.releaseWriter();
         }

@@ -26,7 +26,14 @@
   waits under its own fallback bound instead of `busy_timeout × 2`, takes the write slot before leasing a
   connection, and names the holding thread when the slot is never released. Storage failures that interrupt a Run
   now surface as the new `STORAGE_UNAVAILABLE` error code (category `STORAGE`) instead of `MODEL_CALL_FAILED`, and
-  `sqlite.uow` logs the queue wait as `waitMs` and is emitted on the failure path too.
+  `sqlite.uow` logs the queue wait as `waitMs` and is emitted on the failure path too. The fallback now logs
+  `sqlite.writer.timeout` with the actual wait, the lock owner/state/stack and an explicit no-holder marker, so a
+  starved waiter is distinguishable from a leaked writer slot.
+
+- MCP connection initialization no longer blocks inside `synchronized` monitors or a global connection-manager
+  lock. Concurrent acquires for one server/tenant/principal/credential binding share a single handshake, different
+  bindings connect in parallel, and the facade/stdio/OAuth lifecycle uses virtual-thread-friendly locks, so a slow
+  MCP server cannot pin carriers or stall unrelated HTTP and Store requests.
 
 - Coding Terminal shows frozen tool titles such as `Read File`, `Apply Patch` and `Run Command` in tool
   rows while keeping machine names in expanded metadata. Ordinary single-call failures use a one-line
