@@ -78,6 +78,18 @@ public final class InMemoryInteractionPort implements InteractionPort {
     }
 
     @Override
+    public synchronized java.util.Optional<ResolvedInteraction> unappliedClarificationResolution(AgentRunId runId) {
+        return records.values().stream()
+                .filter(record -> record.request().runId().equals(runId))
+                .filter(record -> record.request().target() instanceof ClarificationTarget)
+                .filter(record -> record.state() == InteractionState.RESPONDED)
+                .sorted(Comparator.comparing(record -> record.request().createdAt()))
+                .map(record -> new ResolvedInteraction(
+                        record.request(), resolved.get(record.request().id())))
+                .findFirst();
+    }
+
+    @Override
     public synchronized List<InteractionRecord> toolApprovalRecords(AgentRunId runId, ToolCallId toolCallId) {
         return records.values().stream()
                 .filter(record -> record.request().runId().equals(runId))

@@ -28,6 +28,11 @@ public interface InteractionPort {
     Optional<ResolvedInteraction> unappliedToolResolution(AgentRunId runId);
 
     /** Reads existing approval lifecycle records for one persisted Tool Call; it creates no new authority. */
+    /** Reads already-responded clarification interactions that still need to be applied, oldest first. */
+    default Optional<ResolvedInteraction> unappliedClarificationResolution(AgentRunId runId) {
+        return Optional.empty();
+    }
+
     List<InteractionRecord> toolApprovalRecords(AgentRunId runId, ToolCallId toolCallId);
 
     void markResolutionApplied(InteractionRequestId requestId);

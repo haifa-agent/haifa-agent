@@ -81,6 +81,36 @@ public record InteractionInputContract(
                 InteractionInputType.CONTENT_PARTS, 0, 0, 0, maximumParts, maximumBytes, List.of(), Optional.empty());
     }
 
+    /** Single choice with an optional free-text answer; {@code 0} forbids the free-text answer. */
+    public static InteractionInputContract singleChoice(List<InteractionOption> options, int maximumCustomCharacters) {
+        return new InteractionInputContract(
+                InteractionInputType.SINGLE_CHOICE,
+                maximumCustomCharacters,
+                1,
+                1,
+                0,
+                0,
+                List.copyOf(Objects.requireNonNull(options, "options must not be null")),
+                Optional.empty());
+    }
+
+    /** Multi choice with an optional free-text answer; {@code 0} forbids the free-text answer. */
+    public static InteractionInputContract multiChoice(
+            List<InteractionOption> options,
+            int minimumSelections,
+            int maximumSelections,
+            int maximumCustomCharacters) {
+        return new InteractionInputContract(
+                InteractionInputType.MULTI_CHOICE,
+                maximumCustomCharacters,
+                minimumSelections,
+                maximumSelections,
+                0,
+                0,
+                List.copyOf(Objects.requireNonNull(options, "options must not be null")),
+                Optional.empty());
+    }
+
     private static void requireNoInput(
             int maximumCharacters,
             int maximumSelections,
