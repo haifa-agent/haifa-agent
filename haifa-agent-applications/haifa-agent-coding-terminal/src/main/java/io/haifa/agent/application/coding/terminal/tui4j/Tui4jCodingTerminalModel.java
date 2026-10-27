@@ -952,12 +952,22 @@ final class Tui4jCodingTerminalModel implements Model {
             accept(TerminalInput.Kind.NAVIGATE_BACK);
         } else if (key.type() == KeyType.keyCR) {
             accept(TerminalInput.Kind.SUBMIT);
+        } else if (key.type() == KeyType.KeySpace && clarificationSelectorOpen()) {
+            accept(TerminalInput.Kind.TOGGLE_SELECTION);
         } else if (key.type() == KeyType.keyESC) {
             accept(TerminalInput.Kind.CANCEL_OR_CLOSE);
         } else if (key.type() == KeyType.keyETX) {
             accept(TerminalInput.Kind.INTERRUPT);
         }
         return Command.none();
+    }
+
+    private boolean clarificationSelectorOpen() {
+        return controller
+                .state()
+                .selector()
+                .map(selector -> selector.kind().startsWith("clarification:"))
+                .orElse(false);
     }
 
     private Command copyAuthorizationLink() {

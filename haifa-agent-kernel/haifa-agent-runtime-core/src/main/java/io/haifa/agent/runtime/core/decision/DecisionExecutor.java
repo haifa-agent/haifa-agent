@@ -87,6 +87,8 @@ public final class DecisionExecutor {
     private static final String COMPLETION_PHASE = "COMPLETION";
 
     /** Completion reason when accepted steer input must reach the model before the Run may finish. */
+    private static final int MAX_CLARIFICATIONS_PER_RUN = 3;
+
     private static final String PENDING_RUN_INPUT = "PENDING_RUN_INPUT";
 
     private final ToolPipeline tools;
@@ -527,6 +529,21 @@ public final class DecisionExecutor {
             ToolCall call = preparedTool.call();
             AgentStep step = preparedTool.step();
             if (ClarificationSpec.isClarificationTool(call.toolName())) {
+                long previousClarifications = state.toolCalls(run.id()).stream()
+                        .filter(candidate -> ClarificationSpec.isClarificationTool(candidate.toolName()))
+                        .filter(candidate -> !candidate.id().equals(call.id()))
+                        .count();
+                if (previousClarifications >= MAX_CLARIFICATIONS_PER_RUN) {
+                    rejectToolRequest(
+                            run,
+                            call,
+                            step,
+                            new IllegalArgumentException("clarification limit reached"),
+                            "Clarification limit reached ("
+                                    + MAX_CLARIFICATIONS_PER_RUN
+                                    + " per run). Continue with the available information, or stop and explain what you still need.");
+                    continue;
+                }
                 ClarificationSpec spec;
                 try {
                     spec = ClarificationSpec.from(call.id(), request.arguments().values());

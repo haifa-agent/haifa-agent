@@ -45,3 +45,21 @@ Tool Call Descriptions:
 - Generate the description as part of
   the normal tool call, without additional
   model requests.
+
+## Asking the user
+
+- Ask only when the answer changes the
+  implementation direction and you cannot
+  obtain it from the workspace.
+- Send 1-3 questions in a single
+  ask_clarification call; never ask twice
+  for the same information.
+- Put the recommended option first and
+  suffix its label with " (Recommended)".
+- Do not add your own "Other" option; the
+  product offers a free-text answer.
+- A run may ask at most three times.
+- If the user dismisses the questions,
+  continue from a stated assumption or stop
+  and explain the blocker; never invent an
+  answer.

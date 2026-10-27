@@ -295,7 +295,10 @@ public final class TerminalUiReducer {
         }
         if (action instanceof TerminalUiAction.InteractionPresented presented) {
             var interaction = presented.interaction();
-            var details = ApprovalDetails.from(interaction, presented.allowForSession());
+            Optional<ClarificationDetails> clarification = ClarificationDetails.from(interaction);
+            ApprovalDetails details = clarification
+                    .map(ClarificationDetails::toApprovalDetails)
+                    .orElseGet(() -> ApprovalDetails.from(interaction, presented.allowForSession()));
             List<TranscriptItem> items = new ArrayList<>(state.transcript());
             String id = "interaction-" + interaction.requestId().value();
             int existing = index(items, id);
@@ -304,8 +307,10 @@ public final class TerminalUiReducer {
                     items,
                     new TranscriptItem(
                             id,
-                            TranscriptItem.Kind.APPROVAL,
-                            "Approval · " + details.title(),
+                            clarification.isPresent()
+                                    ? TranscriptItem.Kind.CLARIFICATION
+                                    : TranscriptItem.Kind.APPROVAL,
+                            (clarification.isPresent() ? "Clarification · " : "Approval · ") + details.title(),
                             details.content(),
                             interaction.state().name(),
                             expanded,
@@ -640,10 +645,19 @@ public final class TerminalUiReducer {
 
     private static Optional<TerminalSelector> selectorAfterSessionLoad(
             Optional<TerminalSelector> current, CodingSessionView view) {
-        if (current.isEmpty() || !current.orElseThrow().kind().startsWith("interaction:")) {
+        if (current.isEmpty()) {
             return current;
         }
-        String expected = "interaction:"
+        String kind = current.orElseThrow().kind();
+        String prefix;
+        if (kind.startsWith("interaction:")) {
+            prefix = "interaction:";
+        } else if (kind.startsWith("clarification:")) {
+            prefix = "clarification:";
+        } else {
+            return current;
+        }
+        String expected = prefix
                 + view.pendingInteraction()
                         .map(interaction -> interaction.requestId().value())
                         .orElse("");

@@ -337,6 +337,19 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
     }
 
     @Override
+    public InteractionResponseReceipt respond(
+            InteractionView interaction,
+            InteractionAction action,
+            java.util.List<io.haifa.agent.core.content.ContentPart> inputs,
+            String idempotencyKey) {
+        InteractionView pending = requirePending(interaction);
+        if (!pending.allowedActions().contains(action)) {
+            throw unavailable("Interaction action is unavailable");
+        }
+        return runtime.respond(response(pending, action, inputs, idempotencyKey));
+    }
+
+    @Override
     public java.util.Optional<CodingApprovalPrompt> prepareApproval(InteractionView interaction) {
         requireRunScoped(interaction.runId());
         return sessionApprovals.prepare(
@@ -367,6 +380,22 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
                         && value.sessionId().equals(interaction.sessionId())
                         && value.revision() == interaction.revision())
                 .orElseThrow(() -> unavailable("Interaction is unavailable"));
+    }
+
+    private InteractionResponseSubmission response(
+            InteractionView pending,
+            InteractionAction action,
+            java.util.List<io.haifa.agent.core.content.ContentPart> inputs,
+            String idempotencyKey) {
+        return new InteractionResponseSubmission(
+                new InteractionResponseId(identifiers.nextValue()),
+                pending.requestId(),
+                pending.runId(),
+                pending.revision(),
+                action,
+                inputs,
+                idempotencyKey,
+                time.now());
     }
 
     private InteractionResponseSubmission response(

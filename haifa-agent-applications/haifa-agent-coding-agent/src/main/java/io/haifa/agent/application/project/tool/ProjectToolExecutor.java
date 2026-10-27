@@ -41,6 +41,10 @@ public final class ProjectToolExecutor implements ToolProvider {
             throw new SecurityException("run workspace access does not authorize the frozen tool capability");
         }
         String toolName = request.binding().definition().name().value();
+        if (toolName.equals("ask_clarification")) {
+            // The runtime owns this interaction; a dispatched provider call means the interception is missing.
+            throw new IllegalStateException("ask_clarification must be intercepted by the runtime");
+        }
         ToolResult result;
         if (toolName.equals("execution_run")) {
             if (executionOperations == null) {

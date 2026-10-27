@@ -303,9 +303,10 @@ class ProjectApplicationTest {
                 executionProfile("host-guarded", "two"));
 
         assertThat(frozen.snapshot().bindings())
-                .hasSize(12)
+                .hasSize(13)
                 .extracting(binding -> binding.alias().value())
                 .containsExactly(
+                        "ask_clarification",
                         "execution_run",
                         "file_create",
                         "file_delete",
