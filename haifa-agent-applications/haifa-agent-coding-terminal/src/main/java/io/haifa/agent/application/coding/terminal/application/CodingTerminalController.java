@@ -4,6 +4,7 @@ import io.haifa.agent.application.coding.terminal.event.TerminalEventPump;
 import io.haifa.agent.application.coding.terminal.event.TerminalInput;
 import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
 import io.haifa.agent.application.coding.terminal.state.ApprovalDetails;
+import io.haifa.agent.application.coding.terminal.state.ClarificationDetails;
 import io.haifa.agent.application.coding.terminal.state.PendingMessage;
 import io.haifa.agent.application.coding.terminal.state.TerminalRecovery;
 import io.haifa.agent.application.coding.terminal.state.TerminalSelector;
@@ -149,6 +150,7 @@ public final class CodingTerminalController implements AutoCloseable {
     private boolean acknowledgementInFlight;
     private boolean reconcileInFlight;
     private InteractionHydrationRequest interactionHydrationInFlight;
+    private ClarificationDraft clarificationDraft;
     private InteractionView activeInteraction;
     private long activeCompletionRequestId;
     private static final long CANCEL_ARMED_TIMEOUT_MILLIS = 5_000L;
@@ -1089,6 +1091,10 @@ public final class CodingTerminalController implements AutoCloseable {
         if (text.isBlank()) {
             return;
         }
+        if (clarificationDraft != null) {
+            answerClarificationWithText(text);
+            return;
+        }
         if (text.startsWith("!")) {
             shell(text);
             return;
@@ -1714,6 +1720,19 @@ public final class CodingTerminalController implements AutoCloseable {
         InteractionView interaction = prompt.interaction();
         activeInteraction = interaction;
         apply(new TerminalUiAction.InteractionPresented(interaction, prompt.allowForSession()));
+        Optional<ClarificationDetails> clarification = ClarificationDetails.from(interaction);
+        if (clarification.isPresent()) {
+            if (clarificationDraft == null
+                    || !clarificationDraft.interaction().requestId().equals(interaction.requestId())) {
+                clarificationDraft = new ClarificationDraft(interaction, clarification.orElseThrow());
+            }
+            if (state.selector().isPresent()
+                    && state.selector().orElseThrow().kind().startsWith("clarification:")) {
+                return;
+            }
+            openClarificationSelector();
+            return;
+        }
         if (state.selector().isPresent()
                 && state.selector().orElseThrow().kind().startsWith("interaction:")) {
             return;
@@ -1728,6 +1747,169 @@ public final class CodingTerminalController implements AutoCloseable {
         }
         apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
                 "interaction:" + interaction.requestId().value(), "Approval · " + interaction.title(), options, 0)));
+    }
+
+    private void openClarificationSelector() {
+        ClarificationDraft draft = clarificationDraft;
+        ClarificationDetails.Question question = draft.current();
+        List<String> labels = new ArrayList<>();
+        for (ClarificationDetails.Option option : question.options()) {
+            labels.add(draft.marker(option.optionId()) + " " + option.label());
+        }
+        if (question.allowCustom()) labels.add(ClarificationDetails.CUSTOM_ENTRY_LABEL);
+        if (question.multiple()) {
+            labels.add(draft.last() ? ClarificationDetails.SUBMIT_LABEL : ClarificationDetails.DONE_LABEL);
+        }
+        labels.add(ClarificationDetails.CANCEL_LABEL);
+        apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
+                "clarification:" + draft.interaction().requestId().value(),
+                "Clarification · " + question.header(),
+                labels,
+                0)));
+    }
+
+    private void chooseClarificationOption(int selected) {
+        ClarificationDraft draft = clarificationDraft;
+        if (draft == null) {
+            apply(new TerminalUiAction.RecoverableFailure("CLARIFICATION_NOT_PENDING"));
+            return;
+        }
+        ClarificationDetails.Question question = draft.current();
+        int options = question.options().size();
+        if (selected < options) {
+            draft.choose(question.options().get(selected).optionId());
+            if (!question.multiple()) draft.advance();
+        } else if (question.allowCustom() && selected == options) {
+            apply(new TerminalUiAction.SelectorClosed());
+            apply(new TerminalUiAction.StatusChanged("Type your answer and press Enter"));
+            return;
+        } else if (question.multiple() && selected == options + (question.allowCustom() ? 1 : 0)) {
+            draft.advance();
+        } else {
+            dismissClarification();
+            return;
+        }
+        continueClarification();
+    }
+
+    private void answerClarificationWithText(String text) {
+        clarificationDraft.answerWithText(text);
+        continueClarification();
+    }
+
+    private void continueClarification() {
+        ClarificationDraft draft = clarificationDraft;
+        if (draft == null) return;
+        if (draft.complete()) {
+            submitClarification();
+            return;
+        }
+        openClarificationSelector();
+    }
+
+    private void dismissClarification() {
+        ClarificationDraft draft = clarificationDraft;
+        clarificationDraft = null;
+        activeInteraction = null;
+        apply(new TerminalUiAction.SelectorClosed());
+        apply(new TerminalUiAction.StatusChanged("Dismissing questions"));
+        String idempotencyKey = UUID.randomUUID().toString();
+        submitControlEffect(
+                () -> {
+                    var receipt = client.respond(draft.interaction(), InteractionAction.CANCEL, idempotencyKey);
+                    return () -> {
+                        if (receipt != null) apply(new TerminalUiAction.InteractionReceiptReceived(receipt));
+                    };
+                },
+                this::handleInteractionResponseFailure);
+    }
+
+    private void submitClarification() {
+        ClarificationDraft draft = clarificationDraft;
+        clarificationDraft = null;
+        activeInteraction = null;
+        apply(new TerminalUiAction.SelectorClosed());
+        apply(new TerminalUiAction.StatusChanged("Submitting answer"));
+        java.util.List<io.haifa.agent.core.content.ContentPart> parts =
+                ClarificationDetails.answerParts(draft.selections(), draft.customAnswers());
+        String idempotencyKey = UUID.randomUUID().toString();
+        submitControlEffect(
+                () -> {
+                    var receipt = client.respond(draft.interaction(), InteractionAction.SUBMIT, parts, idempotencyKey);
+                    return () -> {
+                        if (receipt != null) apply(new TerminalUiAction.InteractionReceiptReceived(receipt));
+                    };
+                },
+                this::handleInteractionResponseFailure);
+    }
+
+    /** The answer draft of one pending clarification; question order and the free-text lane stay separate. */
+    private static final class ClarificationDraft {
+        private final InteractionView interaction;
+        private final ClarificationDetails details;
+        private final List<List<String>> selected = new ArrayList<>();
+        private final List<String> custom = new ArrayList<>();
+        private int index;
+
+        ClarificationDraft(InteractionView interaction, ClarificationDetails details) {
+            this.interaction = interaction;
+            this.details = details;
+            for (int position = 0; position < details.questions().size(); position++) {
+                selected.add(new ArrayList<>());
+                custom.add("");
+            }
+        }
+
+        InteractionView interaction() {
+            return interaction;
+        }
+
+        List<List<String>> selections() {
+            return selected;
+        }
+
+        List<String> customAnswers() {
+            return custom;
+        }
+
+        ClarificationDetails.Question current() {
+            return details.questions().get(index);
+        }
+
+        boolean last() {
+            return index == details.questions().size() - 1;
+        }
+
+        String marker(String optionId) {
+            return selected.get(index).contains(optionId) ? "[x]" : "[ ]";
+        }
+
+        void choose(String optionId) {
+            List<String> current = selected.get(index);
+            if (!current().multiple()) {
+                current.clear();
+                current.add(optionId);
+                return;
+            }
+            if (!current.remove(optionId)) current.add(optionId);
+        }
+
+        void advance() {
+            if (!last()) index++;
+        }
+
+        void answerWithText(String text) {
+            custom.set(index, text.trim());
+            advance();
+        }
+
+        boolean complete() {
+            if (!last()) return false;
+            for (int position = 0; position < selected.size(); position++) {
+                if (selected.get(position).isEmpty() && custom.get(position).isBlank()) return false;
+            }
+            return true;
+        }
     }
 
     private boolean rejectConcurrentLogin() {
@@ -2720,6 +2902,10 @@ public final class CodingTerminalController implements AutoCloseable {
                 if (selected == 0) apply(new TerminalUiAction.ExitRequested());
             }
             default -> {
+                if (selector.kind().startsWith("clarification:")) {
+                    chooseClarificationOption(selected);
+                    return;
+                }
                 if (!selector.kind().startsWith("interaction:")) {
                     apply(new TerminalUiAction.RecoverableFailure("SELECTOR_KIND_UNSUPPORTED"));
                     return;
