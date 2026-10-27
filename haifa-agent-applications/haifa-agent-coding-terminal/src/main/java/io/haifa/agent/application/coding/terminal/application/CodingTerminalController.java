@@ -1730,7 +1730,7 @@ public final class CodingTerminalController implements AutoCloseable {
                     && state.selector().orElseThrow().kind().startsWith("clarification:")) {
                 return;
             }
-            openClarificationSelector();
+            openClarificationSelector(0);
             return;
         }
         if (state.selector().isPresent()
@@ -1749,7 +1749,7 @@ public final class CodingTerminalController implements AutoCloseable {
                 "interaction:" + interaction.requestId().value(), "Approval · " + interaction.title(), options, 0)));
     }
 
-    private void openClarificationSelector() {
+    private void openClarificationSelector(int initialSelection) {
         ClarificationDraft draft = clarificationDraft;
         ClarificationDetails.Question question = draft.current();
         List<String> labels = new ArrayList<>();
@@ -1765,7 +1765,7 @@ public final class CodingTerminalController implements AutoCloseable {
                 "clarification:" + draft.interaction().requestId().value(),
                 "Clarification · " + question.header(),
                 labels,
-                0)));
+                Math.min(Math.max(initialSelection, 0), labels.size() - 1))));
     }
 
     private void chooseClarificationOption(int selected) {
@@ -1779,6 +1779,8 @@ public final class CodingTerminalController implements AutoCloseable {
         if (selected < options) {
             draft.choose(question.options().get(selected).optionId());
             if (!question.multiple()) draft.advance();
+            continueClarification(question.multiple() ? selected : 0);
+            return;
         } else if (question.allowCustom() && selected == options) {
             apply(new TerminalUiAction.SelectorClosed());
             apply(new TerminalUiAction.StatusChanged("Type your answer and press Enter"));
@@ -1798,13 +1800,17 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void continueClarification() {
+        continueClarification(0);
+    }
+
+    private void continueClarification(int nextSelection) {
         ClarificationDraft draft = clarificationDraft;
         if (draft == null) return;
         if (draft.ready()) {
             submitClarification();
             return;
         }
-        openClarificationSelector();
+        openClarificationSelector(nextSelection);
     }
 
     private void dismissClarification() {
@@ -2694,6 +2700,14 @@ public final class CodingTerminalController implements AutoCloseable {
             apply(new TerminalUiAction.SelectorClosed());
             completionContext = null;
             restorePreservedDraft();
+            return;
+        }
+        if (input.kind() == TerminalInput.Kind.TOGGLE_SELECTION) {
+            TerminalSelector toggled = state.selector().orElseThrow();
+            if (!toggled.kind().startsWith("clarification:")) {
+                return;
+            }
+            chooseClarificationOption(toggled.selected());
             return;
         }
         if (input.kind() != TerminalInput.Kind.SUBMIT) {
