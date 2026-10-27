@@ -30,6 +30,8 @@ import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -57,6 +59,7 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
     private final HostWorkspaceLocationStore locations;
     private final IdentifierGenerator identifiers;
     private final TimeProvider time;
+    private final Semaphore admission;
     private volatile DockerEngine engine;
     private volatile AioClient aio;
 
@@ -82,6 +85,7 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
         this.locations = Objects.requireNonNull(locations, "locations must not be null");
         this.identifiers = Objects.requireNonNull(identifiers, "identifiers must not be null");
         this.time = Objects.requireNonNull(time, "time must not be null");
+        this.admission = new Semaphore(configuration.maxConcurrentSessions(), true);
         this.engine = engine;
         this.aio = aio;
     }
@@ -237,95 +241,64 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
                     System.nanoTime() + execution.limits().timeout().toNanos();
             Duration reserve = reserve(execution.limits().timeout());
             long businessDeadline = deadlineNanos - reserve.toNanos();
+            Duration acquireBudget = remaining(businessDeadline);
+            if (acquireBudget.isZero()) {
+                return timedOutResult(started, "TIMEOUT");
+            }
+            boolean acquired = false;
+            try {
+                acquired = admission.tryAcquire(Math.max(1, acquireBudget.toNanos()), TimeUnit.NANOSECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return cancelledResult(started);
+            }
+            if (!acquired) {
+                return timedOutResult(started, "ADMISSION_OVERLOAD");
+            }
             try {
                 creationInFlight.set(true);
                 try {
+                    if (cancelled.get()) return cancelledResult(started);
+                    if (remaining(businessDeadline).isZero()) return timedOutResult(started, "TIMEOUT");
                     engine().ensureImage(configuration.image());
-                    if (cancelled.get()) {
-                        creationInFlight.set(false);
-                        Teardown cancelledTeardown = teardown();
-                        return result(
-                                SandboxProcessStatus.CANCELLED,
-                                null,
-                                new byte[0],
-                                new byte[0],
-                                started,
-                                time.now(),
-                                false,
-                                false,
-                                cancelledTeardown.confirmed(),
-                                "CANCELLED");
-                    }
+
+                    if (cancelled.get()) return cancelledResult(started);
+                    if (remaining(businessDeadline).isZero()) return timedOutResult(started, "TIMEOUT");
                     createNetwork();
-                    if (cancelled.get()) {
-                        creationInFlight.set(false);
-                        Teardown cancelledTeardown = teardown();
-                        return result(
-                                SandboxProcessStatus.CANCELLED,
-                                null,
-                                new byte[0],
-                                new byte[0],
-                                started,
-                                time.now(),
-                                false,
-                                false,
-                                cancelledTeardown.confirmed(),
-                                "CANCELLED");
-                    }
+
+                    if (cancelled.get()) return cancelledResult(started);
+                    if (remaining(businessDeadline).isZero()) return timedOutResult(started, "TIMEOUT");
                     createContainer();
-                    if (cancelled.get()) {
-                        creationInFlight.set(false);
-                        Teardown cancelledTeardown = teardown();
-                        return result(
-                                SandboxProcessStatus.CANCELLED,
-                                null,
-                                new byte[0],
-                                new byte[0],
-                                started,
-                                time.now(),
-                                false,
-                                false,
-                                cancelledTeardown.confirmed(),
-                                "CANCELLED");
-                    }
+
+                    if (cancelled.get()) return cancelledResult(started);
+                    if (remaining(businessDeadline).isZero()) return timedOutResult(started, "TIMEOUT");
                     engine().startContainer(containerId);
+
                     DockerEngine.ContainerInspection inspected = engine().inspectContainer(containerId);
                     verifyContainer(inspected);
-                    managementUri = URI.create("http://127.0.0.1:" + inspected.managementPort());
-                    if (!aio().awaitReady(managementUri, remaining(businessDeadline))) {
-                        creationInFlight.set(false);
-                        Teardown timedOut = teardown();
-                        return result(
-                                SandboxProcessStatus.TIMED_OUT,
-                                null,
-                                new byte[0],
-                                new byte[0],
-                                started,
-                                time.now(),
-                                false,
-                                false,
-                                timedOut.confirmed(),
-                                "TIMEOUT");
+                    if (inspected.managementPort() > 0) {
+                        managementUri = URI.create("http://127.0.0.1:" + inspected.managementPort());
+                    } else if (inspected.containerIp() != null
+                            && !inspected.containerIp().isBlank()) {
+                        managementUri = URI.create("http://" + inspected.containerIp() + ":" + configuration.aioPort());
+                    } else {
+                        throw failure(
+                                "CONTAINER_IDENTITY_MISMATCH", "sandbox container has no reachable management address");
                     }
-                    if (cancelled.get()) {
-                        creationInFlight.set(false);
-                        Teardown cancelledTeardown = teardown();
-                        return result(
-                                SandboxProcessStatus.CANCELLED,
-                                null,
-                                new byte[0],
-                                new byte[0],
-                                started,
-                                time.now(),
-                                false,
-                                false,
-                                cancelledTeardown.confirmed(),
-                                "CANCELLED");
+
+                    if (cancelled.get()) return cancelledResult(started);
+                    Duration readyBudget = remaining(businessDeadline);
+                    if (readyBudget.isZero() || !aio().awaitReady(managementUri, readyBudget)) {
+                        return timedOutResult(started, "TIMEOUT");
                     }
+                    if (cancelled.get()) return cancelledResult(started);
                 } finally {
                     creationInFlight.set(false);
                 }
                 Duration commandBudget = remaining(businessDeadline);
+                if (commandBudget.isZero()) {
+                    return timedOutResult(started, "TIMEOUT");
+                }
                 AioClient.ExecRequest request = new AioClient.ExecRequest(
                         renderCommand(execution),
                         containerWorkingDirectory(execution),
@@ -342,14 +315,53 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
                 Teardown completedTeardown = teardown();
                 return resultFromExec(exec, execution, started, completedTeardown, observer);
             } catch (SandboxException exception) {
-                teardownQuietly();
+                Teardown postTeardown = teardownQuietly();
+                if (dispatched && cancelled.get() && postTeardown.confirmed()) {
+                    return result(
+                            SandboxProcessStatus.CANCELLED,
+                            null,
+                            new byte[0],
+                            new byte[0],
+                            started,
+                            time.now(),
+                            false,
+                            false,
+                            true,
+                            "CANCELLED");
+                }
                 throw exception;
             } catch (DockerEngine.DockerEngineException exception) {
-                teardownQuietly();
+                Teardown postTeardown = teardownQuietly();
+                if (dispatched && cancelled.get() && postTeardown.confirmed()) {
+                    return result(
+                            SandboxProcessStatus.CANCELLED,
+                            null,
+                            new byte[0],
+                            new byte[0],
+                            started,
+                            time.now(),
+                            false,
+                            false,
+                            true,
+                            "CANCELLED");
+                }
                 throw failure(exception.code(), "container sandbox operation failed");
             } catch (AioClient.AioProtocolException exception) {
                 Teardown postTeardown = teardownQuietly();
                 if (dispatched) {
+                    if (cancelled.get() && postTeardown.confirmed()) {
+                        return result(
+                                SandboxProcessStatus.CANCELLED,
+                                null,
+                                new byte[0],
+                                new byte[0],
+                                started,
+                                time.now(),
+                                false,
+                                false,
+                                true,
+                                "CANCELLED");
+                    }
                     return result(
                             SandboxProcessStatus.UNKNOWN,
                             null,
@@ -366,6 +378,19 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
             } catch (RuntimeException exception) {
                 Teardown postTeardown = teardownQuietly();
                 if (dispatched) {
+                    if (cancelled.get() && postTeardown.confirmed()) {
+                        return result(
+                                SandboxProcessStatus.CANCELLED,
+                                null,
+                                new byte[0],
+                                new byte[0],
+                                started,
+                                time.now(),
+                                false,
+                                false,
+                                true,
+                                "CANCELLED");
+                    }
                     return result(
                             SandboxProcessStatus.UNKNOWN,
                             null,
@@ -379,6 +404,10 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
                             "EXECUTION_OUTCOME_UNKNOWN");
                 }
                 throw failure("CONTAINER_SANDBOX_FAILED", "container sandbox operation failed");
+            } finally {
+                if (acquired) {
+                    admission.release();
+                }
             }
         }
 
@@ -571,6 +600,9 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
                             .equals(inspected.user());
             Map<String, String> expectedLabels = labels(ROLE_CONTAINER);
             boolean labelsPresent = inspected.labels().entrySet().containsAll(expectedLabels.entrySet());
+            boolean validManagementChannel = inspected.managementPort() > 0
+                    || (inspected.containerIp() != null
+                            && !inspected.containerIp().isBlank());
             if (!configuration.image().equals(inspected.image())
                     || !labelsPresent
                     || !oneWorkspaceMount
@@ -580,9 +612,41 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
                     || !noNewPrivileges
                     || inspected.privileged()
                     || !userMatches
-                    || inspected.managementPort() < 1) {
+                    || !validManagementChannel) {
                 throw failure("CONTAINER_IDENTITY_MISMATCH", "sandbox container identity or isolation drifted");
             }
+        }
+
+        private SandboxProcessResult cancelledResult(Instant started) {
+            creationInFlight.set(false);
+            Teardown cancelledTeardown = teardown();
+            return result(
+                    SandboxProcessStatus.CANCELLED,
+                    null,
+                    new byte[0],
+                    new byte[0],
+                    started,
+                    time.now(),
+                    false,
+                    false,
+                    cancelledTeardown.confirmed(),
+                    "CANCELLED");
+        }
+
+        private SandboxProcessResult timedOutResult(Instant started, String failureCode) {
+            creationInFlight.set(false);
+            Teardown timedOut = teardown();
+            return result(
+                    SandboxProcessStatus.TIMED_OUT,
+                    null,
+                    new byte[0],
+                    new byte[0],
+                    started,
+                    time.now(),
+                    false,
+                    false,
+                    timedOut.confirmed(),
+                    failureCode);
         }
 
         private SandboxProcessResult resultFromExec(
@@ -649,8 +713,14 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
                 Teardown existing = teardown;
                 if (existing != null && existing.confirmed() && !creationInFlight.get()) return existing;
                 if (aioSessionId != null && managementUri != null) {
-                    aio().kill(managementUri, aioSessionId, configuration.stopTimeout());
-                    aio().closeSession(managementUri, aioSessionId, configuration.stopTimeout());
+                    try {
+                        aio().kill(managementUri, aioSessionId, configuration.stopTimeout());
+                    } catch (RuntimeException ignored) {
+                    }
+                    try {
+                        aio().closeSession(managementUri, aioSessionId, configuration.stopTimeout());
+                    } catch (RuntimeException ignored) {
+                    }
                 }
                 boolean containerGone = true;
                 if (containerId != null) {
@@ -802,6 +872,9 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
 
     private static Duration reserve(Duration timeout) {
         Duration quarter = timeout.dividedBy(4);
+        if (timeout.compareTo(Duration.ofSeconds(2)) < 0) {
+            return quarter;
+        }
         Duration reserve = quarter.compareTo(MINIMUM_CLEANUP_RESERVE) < 0 ? MINIMUM_CLEANUP_RESERVE : quarter;
         if (reserve.compareTo(Duration.ofSeconds(15)) > 0) reserve = Duration.ofSeconds(15);
         return reserve;
@@ -809,8 +882,8 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
 
     private static Duration remaining(long deadlineNanos) {
         long remaining = deadlineNanos - System.nanoTime();
-        if (remaining < Duration.ofMillis(1).toNanos()) {
-            throw new SandboxException("DEADLINE_EXCEEDED", "sandbox execution deadline expired");
+        if (remaining <= 0) {
+            return Duration.ZERO;
         }
         return Duration.ofNanos(remaining);
     }

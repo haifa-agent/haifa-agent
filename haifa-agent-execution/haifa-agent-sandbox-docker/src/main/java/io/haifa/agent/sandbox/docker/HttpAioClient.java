@@ -132,16 +132,25 @@ final class HttpAioClient implements AioClient {
     @Override
     public void closeSession(URI baseUri, String sessionId, Duration timeout) {
         if (!validSession(sessionId)) return;
+        CompletableFuture<HttpResponse<Void>> future = null;
         try {
             HttpRequest request = HttpRequest.newBuilder(baseUri.resolve("/v1/bash/sessions/" + sessionId + "/close"))
                     .timeout(timeout)
                     .POST(HttpRequest.BodyPublishers.noBody())
                     .build();
-            client.send(request, HttpResponse.BodyHandlers.discarding());
-        } catch (IOException ignored) {
-            // The container removal is the authoritative cleanup.
+            future = client.sendAsync(request, HttpResponse.BodyHandlers.discarding());
+            future.get(Math.max(1, timeout.toMillis()), TimeUnit.MILLISECONDS);
+        } catch (TimeoutException exception) {
+            if (future != null) {
+                future.cancel(true);
+            }
         } catch (InterruptedException exception) {
+            if (future != null) {
+                future.cancel(true);
+            }
             Thread.currentThread().interrupt();
+        } catch (ExecutionException | RuntimeException ignored) {
+            // The container removal is the authoritative cleanup.
         }
     }
 

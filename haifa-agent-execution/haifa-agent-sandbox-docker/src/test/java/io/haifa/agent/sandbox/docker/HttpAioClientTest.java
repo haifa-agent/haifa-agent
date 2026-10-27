@@ -12,6 +12,8 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
@@ -161,6 +163,31 @@ class HttpAioClientTest {
                     AioClient.AioProtocolException aioException = (AioClient.AioProtocolException) exception;
                     assertThat(aioException.code()).isEqualTo("AIO_RESPONSE_TOO_LARGE");
                 });
+    }
+
+    @Test
+    void closeSessionDoesNotBlockWhenResponseStalls() throws Exception {
+        CountDownLatch headersSent = new CountDownLatch(1);
+        CountDownLatch releaseBody = new CountDownLatch(1);
+        server.createContext("/v1/bash/sessions/s-stall/close", exchange -> {
+            try {
+                exchange.sendResponseHeaders(200, 0);
+                exchange.getResponseBody().flush();
+            } catch (IOException ignored) {
+            }
+            headersSent.countDown();
+            try {
+                releaseBody.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException ignored) {
+            }
+            exchange.close();
+        });
+        HttpAioClient client = new HttpAioClient(Duration.ofMillis(100));
+        Thread thread = Thread.ofVirtual().start(() -> client.closeSession(baseUri, "s-stall", Duration.ofMillis(100)));
+        assertThat(headersSent.await(2, TimeUnit.SECONDS)).isTrue();
+        thread.join(500);
+        assertThat(thread.isAlive()).isFalse();
+        releaseBody.countDown();
     }
 
     private static void respond(com.sun.net.httpserver.HttpExchange exchange, int status, String body)

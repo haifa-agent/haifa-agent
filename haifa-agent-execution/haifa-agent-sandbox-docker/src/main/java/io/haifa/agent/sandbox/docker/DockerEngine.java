@@ -87,5 +87,6 @@ interface DockerEngine extends AutoCloseable {
             List<String> securityOptions,
             boolean privileged,
             String user,
-            int managementPort) {}
+            int managementPort,
+            String containerIp) {}
 }

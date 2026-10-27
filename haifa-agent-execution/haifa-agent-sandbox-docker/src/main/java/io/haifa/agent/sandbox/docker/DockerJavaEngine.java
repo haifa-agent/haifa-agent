@@ -24,6 +24,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 
 /** Production Docker Engine transport over one explicit Unix socket. */
 final class DockerJavaEngine implements DockerEngine {
@@ -170,6 +171,24 @@ final class DockerJavaEngine implements DockerEngine {
                             mount.getSource(), mount.getDestination().getPath(), Boolean.FALSE.equals(mount.getRW())));
                 }
             }
+            String containerIp = null;
+            if (networkSettings != null) {
+                if (networkSettings.getNetworks() != null) {
+                    for (var net : networkSettings.getNetworks().values()) {
+                        if (net != null
+                                && net.getIpAddress() != null
+                                && !net.getIpAddress().isBlank()) {
+                            containerIp = net.getIpAddress();
+                            break;
+                        }
+                    }
+                }
+                if (containerIp == null
+                        && networkSettings.getIpAddress() != null
+                        && !networkSettings.getIpAddress().isBlank()) {
+                    containerIp = networkSettings.getIpAddress();
+                }
+            }
             return new ContainerInspection(
                     inspected.getId(),
                     stripSlash(inspected.getName()),
@@ -189,7 +208,8 @@ final class DockerJavaEngine implements DockerEngine {
                     host == null || host.getSecurityOpts() == null ? List.of() : List.copyOf(host.getSecurityOpts()),
                     host != null && Boolean.TRUE.equals(host.getPrivileged()),
                     inspected.getConfig() == null ? null : inspected.getConfig().getUser(),
-                    managementPort(networkSettings == null ? null : networkSettings.getPorts()));
+                    managementPort(networkSettings == null ? null : networkSettings.getPorts()),
+                    containerIp);
         } catch (NotFoundException exception) {
             return null;
         } catch (RuntimeException exception) {
@@ -237,7 +257,9 @@ final class DockerJavaEngine implements DockerEngine {
         var bindings = ports.getBindings().get(ExposedPort.tcp(DockerAioSandboxConfiguration.DEFAULT_AIO_PORT));
         if (bindings == null) {
             var any = ports.getBindings().values().stream()
+                    .filter(Objects::nonNull)
                     .flatMap(Arrays::stream)
+                    .filter(Objects::nonNull)
                     .findFirst();
             if (any.isEmpty() || any.get().getHostPortSpec() == null) return 0;
             try {
@@ -247,7 +269,7 @@ final class DockerJavaEngine implements DockerEngine {
             }
         }
         for (var binding : bindings) {
-            if (binding.getHostPortSpec() != null) {
+            if (binding != null && binding.getHostPortSpec() != null) {
                 try {
                     return Integer.parseInt(binding.getHostPortSpec());
                 } catch (NumberFormatException ignored) {

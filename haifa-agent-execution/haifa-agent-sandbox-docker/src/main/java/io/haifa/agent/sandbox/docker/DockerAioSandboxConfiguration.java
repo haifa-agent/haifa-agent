@@ -32,10 +32,12 @@ public record DockerAioSandboxConfiguration(
         long pidsLimit,
         Duration engineTimeout,
         Duration stopTimeout,
-        int aioPort) {
+        int aioPort,
+        int maxConcurrentSessions) {
 
     public static final String PROVIDER_ID = "docker-aio";
     public static final int DEFAULT_AIO_PORT = 8080;
+    public static final int DEFAULT_MAX_CONCURRENT_SESSIONS = 8;
     public static final String NETWORK_DRIVER = "bridge";
     public static final String GATEWAY_MODE_IPV4 = "com.docker.network.bridge.gateway_mode_ipv4";
     public static final String GATEWAY_MODE_IPV6 = "com.docker.network.bridge.gateway_mode_ipv6";
@@ -88,6 +90,40 @@ public record DockerAioSandboxConfiguration(
         if (aioPort < 1 || aioPort > 65_535) {
             throw new IllegalArgumentException("aioPort is out of range");
         }
+        if (maxConcurrentSessions < 1 || maxConcurrentSessions > 1024) {
+            throw new IllegalArgumentException("maxConcurrentSessions is out of range");
+        }
+    }
+
+    public DockerAioSandboxConfiguration(
+            String installationId,
+            Path dockerSocket,
+            String image,
+            String containerWorkspaceRoot,
+            Map<String, String> runtimes,
+            OptionalInt uid,
+            OptionalInt gid,
+            long nanoCpus,
+            long memoryBytes,
+            long pidsLimit,
+            Duration engineTimeout,
+            Duration stopTimeout,
+            int aioPort) {
+        this(
+                installationId,
+                dockerSocket,
+                image,
+                containerWorkspaceRoot,
+                runtimes,
+                uid,
+                gid,
+                nanoCpus,
+                memoryBytes,
+                pidsLimit,
+                engineTimeout,
+                stopTimeout,
+                aioPort,
+                DEFAULT_MAX_CONCURRENT_SESSIONS);
     }
 
     public SandboxConfigurationDigest configurationDigest() {
@@ -108,6 +144,7 @@ public record DockerAioSandboxConfiguration(
         fields.add("engineTimeout:" + engineTimeout.toMillis());
         fields.add("stopTimeout:" + stopTimeout.toMillis());
         fields.add("aioPort:" + aioPort);
+        fields.add("maxConcurrentSessions:" + maxConcurrentSessions);
         fields.add("network:" + NETWORK_DRIVER + ":internal:icc=false:gateway=isolated");
         return SandboxConfigurationDigest.sha256Fields(fields);
     }

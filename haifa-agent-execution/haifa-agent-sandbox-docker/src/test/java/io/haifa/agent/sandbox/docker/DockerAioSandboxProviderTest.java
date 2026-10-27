@@ -30,6 +30,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.OptionalInt;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
@@ -324,6 +325,111 @@ class DockerAioSandboxProviderTest {
         }
     }
 
+    @Test
+    void connectsDirectlyToContainerIpWhenPortMappingIsZero() {
+        engine.managementPort = 0;
+        engine.containerIp = "172.18.0.5";
+        aio.result = new AioClient.ExecResult(
+                "session-1", "cmd-1", "completed", 0, "ok".getBytes(StandardCharsets.UTF_8), new byte[0], false, false);
+        try (SandboxSession session = provider.open(profile, workspaceId)) {
+            var result = session.execute(execution(ExecutionCommand.shell("echo hello")));
+            assertThat(result.status()).isEqualTo(SandboxProcessStatus.EXITED);
+            assertThat(result.exitCode()).isEqualTo(0);
+            assertThat(engine.calls).contains("container-start", "container-remove");
+        }
+    }
+
+    @Test
+    void executionTimesOutEarlyWhenSetupExceedsBudget() {
+        engine.ensureImageDelay = true;
+        try (SandboxSession session = provider.open(profile, workspaceId)) {
+            var result = session.execute(new SandboxExecution(
+                    ExecutionCommand.shell("echo fast"),
+                    WorkspacePath.root(workspaceId),
+                    Map.of(),
+                    new ExecutionLimits(Duration.ofMillis(100), 1024, 1024)));
+            assertThat(result.status()).isEqualTo(SandboxProcessStatus.TIMED_OUT);
+            assertThat(result.failureCode()).isEqualTo("TIMEOUT");
+            assertThat(engine.calls).containsExactly("image");
+            assertThat(engine.calls).doesNotContain("network-create", "container-create", "container-start");
+        }
+    }
+
+    @Test
+    void cancelledInFlightExecutionBecomesCancelledStatus() throws Exception {
+        aio.execEntered = new CountDownLatch(1);
+        aio.releaseExec = new CountDownLatch(1);
+        aio.execException =
+                new AioClient.AioProtocolException("AIO_TRANSPORT_ERROR", "socket closed during cancellation");
+        try (SandboxSession session = provider.open(profile, workspaceId)) {
+            var future =
+                    CompletableFuture.supplyAsync(() -> session.execute(execution(ExecutionCommand.shell("sleep 10"))));
+            assertThat(aio.execEntered.await(2, TimeUnit.SECONDS)).isTrue();
+            boolean cancelled = session.cancel();
+            assertThat(cancelled).isTrue();
+            aio.releaseExec.countDown();
+            var result = future.get(2, TimeUnit.SECONDS);
+            assertThat(result.status()).isEqualTo(SandboxProcessStatus.CANCELLED);
+            assertThat(result.failureCode()).isEqualTo("CANCELLED");
+        }
+    }
+
+    @Test
+    void concurrentExecutionsAreBoundedByMaxConcurrentSessions() throws Exception {
+        var limitedConfig = new DockerAioSandboxConfiguration(
+                configuration.installationId(),
+                configuration.dockerSocket(),
+                configuration.image(),
+                configuration.containerWorkspaceRoot(),
+                configuration.runtimes(),
+                configuration.uid(),
+                configuration.gid(),
+                configuration.nanoCpus(),
+                configuration.memoryBytes(),
+                configuration.pidsLimit(),
+                configuration.engineTimeout(),
+                configuration.stopTimeout(),
+                configuration.aioPort(),
+                1);
+        var workspaces = new InMemoryWorkspaceStore();
+        var locations = new HostWorkspaceLocationStore();
+        locations.register(workspaceId, workspaceRoot);
+        workspaces.create(Workspace.provision(
+                        workspaceId, new ProjectId("project-1"), WorkspaceRevision.initial("revision-1"), NOW)
+                .activate(NOW));
+        var limitedProvider = new DockerAioSandboxProvider(
+                limitedConfig, workspaces, locations, () -> "session-limited", () -> NOW, engine, aio);
+        var limitedProfile = new SandboxProfile(
+                new SandboxProfileRef("docker-aio-execution", "1"),
+                DockerAioSandboxProvider.PROVIDER_ID,
+                limitedConfig.configurationDigest(),
+                java.util.Set.of("/bin/bash"),
+                java.util.Set.of(),
+                true);
+        aio.execEntered = new CountDownLatch(1);
+        aio.releaseExec = new CountDownLatch(1);
+        aio.result = new AioClient.ExecResult(
+                "session-1", "cmd-1", "completed", 0, "ok".getBytes(StandardCharsets.UTF_8), new byte[0], false, false);
+
+        try (var session1 = limitedProvider.open(limitedProfile, workspaceId);
+                var session2 = limitedProvider.open(limitedProfile, workspaceId)) {
+            var future1 =
+                    CompletableFuture.supplyAsync(() -> session1.execute(execution(ExecutionCommand.shell("cmd-1"))));
+            assertThat(aio.execEntered.await(2, TimeUnit.SECONDS)).isTrue();
+            var result2 = session2.execute(new SandboxExecution(
+                    ExecutionCommand.shell("cmd-2"),
+                    WorkspacePath.root(workspaceId),
+                    Map.of(),
+                    new ExecutionLimits(Duration.ofMillis(50), 1024, 1024)));
+            assertThat(result2.status()).isEqualTo(SandboxProcessStatus.TIMED_OUT);
+            assertThat(result2.failureCode()).isEqualTo("ADMISSION_OVERLOAD");
+
+            aio.releaseExec.countDown();
+            var result1 = future1.get(2, TimeUnit.SECONDS);
+            assertThat(result1.status()).isEqualTo(SandboxProcessStatus.EXITED);
+        }
+    }
+
     private SandboxExecution execution(ExecutionCommand command) {
         return new SandboxExecution(
                 command,
@@ -340,6 +446,9 @@ class DockerAioSandboxProviderTest {
         private String containerId = "container-1";
         private ContainerSpec spec;
         private ContainerInspection inspection;
+        private boolean ensureImageDelay;
+        private int managementPort = 32768;
+        private String containerIp = "172.18.0.2";
         private boolean keepContainerAfterRemove;
         private boolean lostCreateResponse;
         private boolean driftLabels;
@@ -351,6 +460,12 @@ class DockerAioSandboxProviderTest {
         @Override
         public void ensureImage(String image) {
             calls.add("image");
+            if (ensureImageDelay) {
+                try {
+                    Thread.sleep(150);
+                } catch (InterruptedException ignored) {
+                }
+            }
         }
 
         @Override
@@ -443,7 +558,8 @@ class DockerAioSandboxProviderTest {
                     List.of("no-new-privileges"),
                     false,
                     "",
-                    32768);
+                    managementPort,
+                    containerIp);
         }
     }
 
@@ -454,6 +570,9 @@ class DockerAioSandboxProviderTest {
         private boolean ready = true;
         private CountDownLatch readyEntered;
         private CountDownLatch releaseReady;
+        private CountDownLatch execEntered;
+        private CountDownLatch releaseExec;
+        private RuntimeException execException;
 
         @Override
         public boolean awaitReady(URI baseUri, Duration timeout) {
@@ -472,6 +591,17 @@ class DockerAioSandboxProviderTest {
         public ExecResult exec(URI baseUri, ExecRequest request) {
             execCount++;
             lastRequest = request;
+            if (execEntered != null) {
+                execEntered.countDown();
+                try {
+                    releaseExec.await(5, TimeUnit.SECONDS);
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            if (execException != null) {
+                throw execException;
+            }
             return result;
         }
 
