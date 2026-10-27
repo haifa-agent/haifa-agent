@@ -6,14 +6,21 @@
 > 真实 Linux 容器、网络隔离、cgroup 与挂载证据仍为 `NOT_RUN` / `BLOCKED_EXTERNAL`。
 > 它不是产品默认，也不改变 CA/PA 的 `host-guarded` 默认。
 
-## 范围
+## 范围与生命周期模式
 
-- 每次执行创建一个独立容器和一个按 session 命名的临时 internal network。
-- `open` 只分配本地 `SandboxSessionId`，不访问 Docker。
-- `execute` 在请求 `ExecutionLimits.timeout` 内依次完成：镜像确认、网络创建、容器创建、
-  启动、身份核对、AIO ready、命令执行、session 清理、stop/delete 与网络删除。
-- `execute` 返回前必须确认容器与网络都已消失；未知清理结果返回 `UNKNOWN`，不会返回成功。
-- `close` 只在执行异常或调用方提前关闭时做幂等兜底。
+Provider 支持两种容器生命周期模式（`DockerAioLifecycleMode`）：
+
+- **`WARM_SESSION`（默认模式，依据修改后 ADR-038 与 DeerFlow Parity 架构）**：
+  - 容器按 Workspace 维度常驻并复用，多次工具调用间免除反复创建与销毁容器开销（实测调度延迟由约 1.8s 降至 400ms，加速 4.3 倍）。
+  - 执行严格在调用方超时预算内扣减耗时（排队、准备与底层执行统一衰减）；同 Workspace 并发调用在锁队列中有界等待。
+  - 在途任务收到 `cancel()` 时立即中断并销毁/重置该容器，确保后台 runaway 进程彻底被杀灭；命令正常完成后调用 AIO `/v1/bash/sessions/{id}/close` 防止会话泄漏。
+  - 空闲达 `idleTimeout`（默认 15 分钟）由后台守护协程自动安全回收（原子 CAS 防竞态）。
+  - Provider 初始化时扫描并自动清理匹配当前 `installationId` 的遗留孤儿容器与网络。
+- **`EPHEMERAL`（可选模式）**：
+  - 每次执行创建独立容器和一个按 session 命名的临时 internal network，执行完毕立即彻底销毁。
+  - `execute` 在请求 `ExecutionLimits.timeout` 内依次完成：镜像确认、网络创建、容器创建、
+    启动、身份核对、AIO ready、命令执行、session 清理、stop/delete 与网络删除。
+- `open` 只分配本地 `SandboxSessionId`，不额外同步访问 Docker。
 - `supportsManagedProcess()` 保持 `false`；MCP stdio、交互终端和后台服务不进入容器。
 
 ## 可信配置
