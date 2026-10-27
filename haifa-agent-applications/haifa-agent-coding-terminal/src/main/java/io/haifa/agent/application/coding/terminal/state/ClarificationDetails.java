@@ -24,6 +24,10 @@ public record ClarificationDetails(String title, List<Question> questions) {
     public static final String CUSTOM_ENTRY_LABEL = "Type your own answer";
     public static final String DONE_LABEL = "Done with this question";
     public static final String SUBMIT_LABEL = "Send answer";
+    /** U+2713 CHECK MARK: a narrow, non-emoji glyph, so marked rows keep their column alignment. */
+    public static final String MARKER_SELECTED = "[\u2713]";
+
+    public static final String MARKER_UNSELECTED = "[ ]";
     public static final String CANCEL_LABEL = "Cancel";
 
     public ClarificationDetails {

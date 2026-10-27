@@ -1923,7 +1923,9 @@ public final class CodingTerminalController implements AutoCloseable {
         }
 
         String marker(String optionId) {
-            return selected.get(index).contains(optionId) ? "[x]" : "[ ]";
+            return selected.get(index).contains(optionId)
+                    ? ClarificationDetails.MARKER_SELECTED
+                    : ClarificationDetails.MARKER_UNSELECTED;
         }
 
         void choose(String optionId) {
