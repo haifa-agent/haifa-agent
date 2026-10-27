@@ -36,7 +36,7 @@ public record TranscriptItem(
         if (durationMillis.isPresent() && durationMillis.orElseThrow() < 0) {
             throw new IllegalArgumentException("durationMillis must not be negative");
         }
-        if (kind != Kind.APPROVAL && approvalDetails.isPresent()) {
+        if (kind != Kind.APPROVAL && kind != Kind.CLARIFICATION && approvalDetails.isPresent()) {
             throw new IllegalArgumentException("approval details require an approval transcript item");
         }
         toolName.ifPresent(value -> text(value, "toolName", 128));
@@ -259,7 +259,7 @@ public record TranscriptItem(
      * and history resource items stay visible because their bodies carry information the user must see.
      */
     public boolean collapsible() {
-        return !expanded && kind != Kind.APPROVAL && toggleable();
+        return !expanded && kind != Kind.APPROVAL && kind != Kind.CLARIFICATION && toggleable();
     }
 
     /** Whether ctrl+o expansion toggling applies to the item, independent of its current expanded state. */
@@ -284,6 +284,7 @@ public record TranscriptItem(
         TOOL,
         EXECUTION,
         APPROVAL,
+        CLARIFICATION,
         RESOURCE,
         SUMMARY,
         ERROR

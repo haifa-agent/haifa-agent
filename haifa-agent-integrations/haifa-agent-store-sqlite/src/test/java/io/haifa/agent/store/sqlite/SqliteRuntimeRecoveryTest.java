@@ -1625,6 +1625,194 @@ class SqliteRuntimeRecoveryTest {
                 NOW);
     }
 
+    @Test
+    void asksClarificationAndResumesFromThePersistedAnswer() {
+        AtomicInteger providerCalls = new AtomicInteger();
+        try (SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance instance = clarificationRuntime(
+                    foundation,
+                    model(clarificationResponse(), finalResponse("answered")),
+                    "clarification-answer",
+                    new TestIds("clarification-answer"),
+                    providerCalls);
+            AgentRunId runId =
+                    instance.runtime().start(request("clarification-answer")).runId();
+            instance.scheduler().runAll();
+
+            assertThat(instance.runtime().find(runId).orElseThrow().status())
+                    .isEqualTo(AgentRunStatus.WAITING_INTERACTION);
+            InteractionRequest interaction =
+                    instance.ports().interactions().pending(runId).orElseThrow();
+            assertThat(interaction.type()).isEqualTo("clarification");
+            assertThat(interaction.target())
+                    .isInstanceOf(io.haifa.agent.runtime.core.interaction.ClarificationTarget.class);
+            assertThat(interaction.inputContracts()).hasSize(1);
+            assertThat(interaction
+                            .clarificationPresentation()
+                            .orElseThrow()
+                            .questions()
+                            .getFirst()
+                            .header())
+                    .isEqualTo("Storage");
+            assertThat(instance.runtime().toolCalls(runId)).singleElement().satisfies(view -> {
+                assertThat(view.toolName()).isEqualTo("ask_clarification");
+                assertThat(view.status()).isEqualTo(io.haifa.agent.core.tool.ToolCallStatus.WAITING_APPROVAL);
+            });
+            assertThat(providerCalls).hasValue(0);
+
+            instance.runtime()
+                    .respond(new io.haifa.agent.runtime.api.InteractionResponseSubmission(
+                            new InteractionResponseId("clarification-answer-response"),
+                            interaction.id(),
+                            runId,
+                            instance.ports()
+                                    .interactions()
+                                    .record(interaction.id())
+                                    .orElseThrow()
+                                    .revision(),
+                            io.haifa.agent.runtime.api.InteractionAction.SUBMIT,
+                            List.of(new io.haifa.agent.core.content.TextPart(
+                                    "selected=opt-0-0\ncustom=", "clarification-answer.v1")),
+                            "clarification-answer-key",
+                            TIME.now()));
+            instance.scheduler().runAll();
+
+            assertThat(instance.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(instance.runtime().toolCalls(runId)).singleElement().satisfies(view -> {
+                assertThat(view.status()).isEqualTo(io.haifa.agent.core.tool.ToolCallStatus.COMPLETED);
+                assertThat(view.result()).hasValueSatisfying(result -> assertThat(
+                                result.summary().text())
+                        .isEqualTo("User has answered your questions: \"Which storage?\"=\"Postgres\"."
+                                + " You can now continue with the user's answers in mind."));
+            });
+            assertThat(instance.ports()
+                            .interactions()
+                            .record(interaction.id())
+                            .orElseThrow()
+                            .state())
+                    .isEqualTo(io.haifa.agent.runtime.api.InteractionState.APPLIED);
+        }
+    }
+
+    @Test
+    void dismissedClarificationResumesTheRunInsteadOfCancellingIt() {
+        AtomicInteger providerCalls = new AtomicInteger();
+        try (SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance instance = clarificationRuntime(
+                    foundation,
+                    model(clarificationResponse(), finalResponse("continuing without the answer")),
+                    "clarification-dismiss",
+                    new TestIds("clarification-dismiss"),
+                    providerCalls);
+            AgentRunId runId =
+                    instance.runtime().start(request("clarification-dismiss")).runId();
+            instance.scheduler().runAll();
+            InteractionRequest interaction =
+                    instance.ports().interactions().pending(runId).orElseThrow();
+
+            instance.runtime()
+                    .respond(new io.haifa.agent.runtime.api.InteractionResponseSubmission(
+                            new InteractionResponseId("clarification-dismiss-response"),
+                            interaction.id(),
+                            runId,
+                            instance.ports()
+                                    .interactions()
+                                    .record(interaction.id())
+                                    .orElseThrow()
+                                    .revision(),
+                            io.haifa.agent.runtime.api.InteractionAction.CANCEL,
+                            List.of(),
+                            "clarification-dismiss-key",
+                            TIME.now()));
+            instance.scheduler().runAll();
+
+            assertThat(instance.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(instance.runtime().toolCalls(runId)).singleElement().satisfies(view -> {
+                assertThat(view.status()).isEqualTo(io.haifa.agent.core.tool.ToolCallStatus.FAILED);
+                assertThat(view.result()).hasValueSatisfying(result -> assertThat(
+                                result.summary().text())
+                        .startsWith("User dismissed the questions without answering: \"Which storage?\"."));
+            });
+            assertThat(providerCalls).hasValue(0);
+        }
+    }
+
+    private RuntimeInstance clarificationRuntime(
+            SqliteStoreFoundation foundation,
+            AgentChatModel model,
+            String workerId,
+            IdentifierGenerator ids,
+            AtomicInteger providerCalls) {
+        return runtime(foundation, model, workerId, ids, builder -> installClarificationTool(builder, providerCalls));
+    }
+
+    private static RuntimeCoreBuilder installClarificationTool(
+            RuntimeCoreBuilder builder, AtomicInteger providerCalls) {
+        ToolProviderId providerId = new ToolProviderId("sqlite-clarification-test");
+        Map<String, Object> objectSchema =
+                Map.of("$schema", ToolSchema.DRAFT_2020_12, "type", "object", "additionalProperties", true);
+        ToolDefinition definition = new ToolDefinition(
+                new ToolName("ask_clarification"),
+                new SemanticVersion("1.0.0"),
+                providerId,
+                "ask_clarification",
+                "Clarification runtime test tool",
+                new ToolSchema("clarification.input", "1.0", objectSchema),
+                new ToolSchema("clarification.output", "1.0", objectSchema),
+                ToolExecutionMode.IN_PROCESS,
+                true,
+                Duration.ofSeconds(10),
+                "test",
+                ToolIdempotency.IDEMPOTENT,
+                ToolRisk.LOW,
+                Set.of(),
+                ToolResourceRequirements.none(),
+                List.of(),
+                ToolApprovalRequirement.NEVER,
+                "test",
+                false,
+                Set.of("test"));
+        ToolProvider provider = new ToolProvider() {
+            @Override
+            public ToolProviderId id() {
+                return providerId;
+            }
+
+            @Override
+            public ToolResult invoke(ToolInvocationRequest request) {
+                providerCalls.incrementAndGet();
+                return new ToolResult(true, "provider", Map.of(), List.of(), List.of(), false);
+            }
+        };
+        var catalog = new ToolCatalogBuilder()
+                .register(new ToolAlias("ask_clarification"), definition, "sqlite-clarification-test", provider)
+                .freeze();
+        return builder.publicToolPolicy((run, binding, request) -> allow())
+                .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator());
+    }
+
+    private static AgentChatResponse clarificationResponse() {
+        Map<String, Object> question = Map.of(
+                "header",
+                "Storage",
+                "question",
+                "Which storage?",
+                "options",
+                List.of(Map.of("label", "Postgres"), Map.of("label", "SQLite")));
+        return new AgentChatResponse(
+                "response-clarification",
+                "test-model",
+                "",
+                List.of(new ModelToolCall(
+                        new ProviderToolCallCorrelationId("provider-clarification"),
+                        "ask_clarification",
+                        Map.of("questions", List.of(question)))),
+                ModelFinishReason.TOOL_CALLS,
+                ModelUsage.unpriced(1, 1),
+                "",
+                Map.of());
+    }
+
     private static AgentChatModel model(AgentChatResponse... responses) {
         Queue<AgentChatResponse> queue = new ArrayDeque<>(List.of(responses));
         return ignored -> queue.remove();

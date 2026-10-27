@@ -333,7 +333,9 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         }
         AgentRunSnapshot resumed = resume(
                 new ResumeAgentRunRequest("interaction-response:" + response.idempotencyKey(), run.id(), List.of()));
-        interactions.markResolutionApplied(response.requestId());
+        if (!consumedByLoop(response.requestId())) {
+            interactions.markResolutionApplied(response.requestId());
+        }
         return resumed;
     }
 

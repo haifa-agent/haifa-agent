@@ -653,7 +653,7 @@ final class Tui4jTerminalView {
                     case USER -> "You";
                     case ASSISTANT -> item.title();
                     case TOOL, EXECUTION, SUMMARY -> glyph(item.status()) + " " + item.title() + durationSuffix(item);
-                    case APPROVAL -> item.title() + " [" + status + "]";
+                    case APPROVAL, CLARIFICATION -> item.title() + " [" + status + "]";
                     case RESOURCE -> "Resource · " + item.title() + " [" + status + "]";
                     case ERROR -> "Error · " + item.title() + " [" + status + "]";
                 });
@@ -670,7 +670,7 @@ final class Tui4jTerminalView {
             String content = rendered.isEmpty() ? title : title + "\n" + indent(rendered);
             return style(item, content);
         }
-        if (item.kind() == TranscriptItem.Kind.APPROVAL
+        if ((item.kind() == TranscriptItem.Kind.APPROVAL || item.kind() == TranscriptItem.Kind.CLARIFICATION)
                 && item.approvalDetails().isPresent()) {
             return style(item, approval(title, item.approvalDetails().orElseThrow(), item.expanded()));
         }

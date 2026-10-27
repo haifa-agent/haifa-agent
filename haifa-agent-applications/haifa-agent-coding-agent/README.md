@@ -298,3 +298,10 @@ CA 不再提供 Worktree 专用 Tool 或 Sandbox Provider。系统 Git 是 Workt
 Runtime 的泛型 `CompletionPolicy` SPI 仍可供其他产品返回结构化完成阻塞与证据；Runtime 不再提供单独的 `RequiredArtifactChecker` 配置入口，Coding Agent 不再内置 Artifact completion checker。
 
 Coding base prompt 1.8.5 将任务进展和方法选择交给主模型，并要求在带 `description` 参数的工具调用中直接生成面向用户的简短意图说明；Runtime 不再按普通失败簇次数裁决任务终止。权限、unknown、资源上限与产品 Completion 门禁保持独立。
+
+## ask_clarification
+
+项目工具目录发布 `ask_clarification`，所需能力为 `file_read`、无副作用。Runtime 在 Provider 分发前拦截该调用，
+转成最多三个问题的澄清交互，因此产品从不把它当作普通工具执行；`ProjectToolExecutor` 对真的被分发的调用直接报错，
+让这一拦截可被验证。`CodingSessionClient.respond(interaction, action, inputs, key)` 承载提交的答案，无法传输输入的
+实现会对非空载荷报错而不是静默丢弃。

@@ -88,6 +88,21 @@ public interface CodingSessionClient {
 
     InteractionResponseReceipt respond(InteractionView interaction, InteractionAction action, String idempotencyKey);
 
+    /**
+     * Submits structured interaction input. Implementations that cannot carry input keep the three-argument
+     * form and reject a non-empty payload instead of silently dropping it.
+     */
+    default InteractionResponseReceipt respond(
+            InteractionView interaction,
+            InteractionAction action,
+            java.util.List<io.haifa.agent.core.content.ContentPart> inputs,
+            String idempotencyKey) {
+        if (!inputs.isEmpty()) {
+            throw new UnsupportedOperationException("Interaction input is unavailable");
+        }
+        return respond(interaction, action, idempotencyKey);
+    }
+
     /** Background preparation may apply an existing session consent to an ordinary pending approval. */
     default Optional<CodingApprovalPrompt> prepareApproval(InteractionView interaction) {
         return Optional.of(new CodingApprovalPrompt(interaction, false));
