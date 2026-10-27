@@ -521,11 +521,13 @@ Haifa Agent 当前重点面向：
 - Distributed Worker / Control Plane
 - Graph / Workflow Runtime
 - Enterprise IAM / Approval Workflow
-- Built-in Container / gVisor / microVM Sandbox
+- 产品默认的 Container / gVisor / microVM Sandbox
 - MCP Server Hosting
 - 通用公网 Multi-tenant Agent Server
 
-当前 `host-guarded` Execution 提供的是受控 Host Process Execution，而不是 OS Kernel-level Isolation。
+当前产品默认的 `host-guarded` Execution 提供的是受控 Host Process Execution，而不是
+OS Kernel-level Isolation。SDK 另提供显式装配的 Linux `docker-aio` Provider 候选；其真实
+Linux 运行与隔离证据仍为 `NOT_RUN`，不属于产品默认路径。
 
 如果需要执行完全不可信代码，应把 Haifa Agent 放入外部 VM / Container 等安全边界。
 

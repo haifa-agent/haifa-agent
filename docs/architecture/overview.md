@@ -34,7 +34,9 @@ Execution API / Core 负责协调 Command / Process Execution。
 
 Host Adapter 拥有物理 Process / Filesystem Interaction。
 
-Sandbox SPI 有意保持窄小；当前本地 Provider 基于 Host Process，并不宣称强 OS Isolation。
+Sandbox SPI 有意保持窄小；默认本地 Provider 基于 Host Process，并不宣称强 OS Isolation。
+显式装配的 `docker-aio` Provider 复用同一 Session/Broker 契约，在 Linux Docker 中执行一次性容器；
+其真实运行与隔离证据仍为 `NOT_RUN`，不是产品默认。
 
 ### Integrations
 

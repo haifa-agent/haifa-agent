@@ -206,6 +206,30 @@ execution.applyTo(builder); // 注册 execution_run、managed resource 与宿主
 
 验证：`./mvnw -pl :haifa-agent-sdk-starter -am test`。
 
+### Linux 容器执行（Explicit Docker AIO execution）
+
+`ContainerExecutionPlatforms.dockerAio(...)` 是宿主执行门面的显式容器版本，仍只注册同一个
+`execution_run` Tool、同一个 Broker/Policy/Approval 路径：
+
+```java
+var execution = ContainerExecutionPlatforms.dockerAio(
+        new ContainerExecutionPlatforms.ContainerExecutionSpec(
+                workspaceRoot, Duration.ofSeconds(30), Duration.ofMinutes(5), 1_048_576, 2_000),
+        dockerAioConfiguration,
+        caller.tenant(), caller.principal());
+execution.applyTo(builder);
+```
+
+- **可信配置**：镜像 digest、Unix socket、容器 workspace、UID/GID、资源与期限来自
+  `DockerAioSandboxConfiguration`；模型不能选择镜像、mount、网络、socket 或宿主目录。
+- **生命周期**：`open` 只分配本地 session；`execute` 在请求 deadline 内完成 create/ready/exec/
+  stop/delete/network delete；`close` 只做幂等兜底。容器/网络身份按安装+session labels 精确回收。
+- **失败关闭**：Docker/镜像/权限/网络组合不可用即失败，不回退 `host-guarded`；HTTP 200 不被当作命令成功。
+- **能力边界**：`supportsManagedProcess=false`，MCP stdio 与交互终端不迁入容器；当前不做流式 stdout/stderr。
+- **未验证**：真实 Linux 容器、isolated network、cgroup、挂载/链接与取消回收均 `NOT_RUN`；
+  该入口不是产品默认，也不改变 CA/PA 默认配置。
+- Skill 容器装配尚未提供；`SkillScriptPlatforms.trusted(...)` 仍只接受宿主 runtime 预检。
+
 ### 冻结技能脚本执行（Trusted Skill script entry files）
 
 `SkillScriptPlatforms.trusted(...)` 把"产品声明的固定业务 Tool + 冻结 Skill 包脚本"装配进任意
