@@ -2,6 +2,12 @@
 
 ## 0.1.4-SNAPSHOT - Unreleased
 
+- `docker-aio` sandbox provider supports warm session lifecycle mode (`DockerAioLifecycleMode.WARM_SESSION`, default per revised ADR-038):
+  containers are retained and reused per workspace with idle timeout eviction, eliminating repeated cold-start
+  container creation and teardown overhead across multi-turn tool commands (~4.3x speedup). Includes strict
+  timeout budget deadline deduction, in-flight cancellation container reset, concurrency queuing within deadline,
+  cold-start cleanup rollback, startup orphan sweep, and ephemeral fallback mode (`EPHEMERAL`).
+
 - Coding Terminal offers `Allow for this session` for ordinary built-in tool approvals. Consent activates only
   after the initial approval is applied, remains local to the Coding Session and app instance, and can be cleared
   with `/approval reset`; workspace trust, credential interactions and hard denials retain their existing checks.

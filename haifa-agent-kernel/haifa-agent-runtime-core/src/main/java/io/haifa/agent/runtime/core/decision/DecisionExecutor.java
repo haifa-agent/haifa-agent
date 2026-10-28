@@ -528,9 +528,11 @@ public final class DecisionExecutor {
             ToolRequest request = preparedTool.request();
             ToolCall call = preparedTool.call();
             AgentStep step = preparedTool.step();
-            if (ClarificationSpec.isClarificationTool(call.toolName())) {
+            if (ClarificationSpec.isClarificationRequest(
+                    call.toolName(), request.arguments().values())) {
                 long previousClarifications = state.toolCalls(run.id()).stream()
-                        .filter(candidate -> ClarificationSpec.isClarificationTool(candidate.toolName()))
+                        .filter(candidate -> ClarificationSpec.isClarificationRequest(
+                                candidate.toolName(), candidate.arguments().values()))
                         .filter(candidate -> !candidate.id().equals(call.id()))
                         .count();
                 if (previousClarifications >= MAX_CLARIFICATIONS_PER_RUN) {

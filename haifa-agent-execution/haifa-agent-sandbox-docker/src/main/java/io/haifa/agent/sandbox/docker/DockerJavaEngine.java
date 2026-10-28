@@ -114,7 +114,6 @@ final class DockerJavaEngine implements DockerEngine {
                     .withNetworkMode(spec.networkName())
                     .withBinds(new Bind(
                             spec.hostWorkspaceRoot(), new Volume(spec.containerWorkspaceRoot()), AccessMode.rw))
-                    .withCapDrop(Capability.ALL)
                     .withSecurityOpts(List.of("no-new-privileges"))
                     .withPrivileged(false)
                     .withNanoCPUs(spec.nanoCpus())
@@ -241,6 +240,35 @@ final class DockerJavaEngine implements DockerEngine {
             // Exact identity is already absent.
         } catch (RuntimeException exception) {
             throw failure("DOCKER_CONTAINER_DELETE_FAILED", "sandbox container could not be removed", exception);
+        }
+    }
+
+    @Override
+    public List<String> listContainersByLabel(String key, String value) {
+        try {
+            var containers = client.listContainersCmd()
+                    .withShowAll(true)
+                    .withLabelFilter(Map.of(key, value))
+                    .exec();
+            if (containers == null) return List.of();
+            return containers.stream()
+                    .map(com.github.dockerjava.api.model.Container::getId)
+                    .toList();
+        } catch (RuntimeException exception) {
+            throw failure("DOCKER_CONTAINER_LIST_FAILED", "sandbox container list failed", exception);
+        }
+    }
+
+    @Override
+    public List<String> listNetworksByLabel(String key, String value) {
+        try {
+            var networks = client.listNetworksCmd()
+                    .withFilter("label", List.of(key + "=" + value))
+                    .exec();
+            if (networks == null) return List.of();
+            return networks.stream().map(Network::getId).toList();
+        } catch (RuntimeException exception) {
+            throw failure("DOCKER_NETWORK_LIST_FAILED", "sandbox network list failed", exception);
         }
     }
 
