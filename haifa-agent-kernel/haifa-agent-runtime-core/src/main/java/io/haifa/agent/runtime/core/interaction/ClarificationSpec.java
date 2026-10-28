@@ -44,6 +44,10 @@ public record ClarificationSpec(
         return TOOL_NAME.equals(toolName);
     }
 
+    public static boolean isClarificationRequest(String toolName, Map<String, Object> arguments) {
+        return TOOL_NAME.equals(toolName) && arguments != null && arguments.containsKey("questions");
+    }
+
     /**
      * Parses and validates one tool argument map.
      *
