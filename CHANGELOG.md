@@ -2,6 +2,11 @@
 
 ## 0.1.4-SNAPSHOT - Unreleased
 
+- SQLite store verifies the database files before a write unit of work queues for the writer slot, so the slot
+  covers database work only; the queue fallback is now configured by
+  `SqliteStoreConfiguration.writerQueueTimeoutMillis` (default 60 s) and an expired wait is retried once, because
+  it happens before any statement runs.
+
 - SQLite store serves pure queries (session messages, runs, attempts, idempotency, interaction, checkpoint,
   memory, summary and event reads) in a deferred `query_only` scope instead of the process-wide writer slot,
   so listing, paging and UI polling no longer serialize behind a turn's writes.
