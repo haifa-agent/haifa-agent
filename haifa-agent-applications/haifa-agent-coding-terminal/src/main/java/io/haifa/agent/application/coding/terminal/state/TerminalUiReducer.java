@@ -622,7 +622,8 @@ public final class TerminalUiReducer {
                         .filter(value -> value.kind() == PendingMessage.Kind.FOLLOW_UP)
                         .toList()
                 : projectPending(state.pending(), event);
-        Optional<WaitingMessage> waiting = projectWaiting(state.waiting(), pending);
+        // SENDING is resolved only by the submission result: a pending Steer may belong to an earlier input.
+        Optional<WaitingMessage> waiting = state.waiting();
         var seen = new HashSet<>(state.seenEventIds());
         seen.add(event.eventId());
         TerminalFooter footer = footer(state.footer(), event);
@@ -656,21 +657,6 @@ public final class TerminalUiReducer {
                 state.themeName(),
                 runSettled ? false : state.cancelArmed(),
                 waiting);
-    }
-
-    private static Optional<WaitingMessage> projectWaiting(
-            Optional<WaitingMessage> waiting, List<PendingMessage> pending) {
-        if (waiting.isEmpty()) {
-            return waiting;
-        }
-        WaitingMessage message = waiting.orElseThrow();
-        if (message.phase() == WaitingMessage.Phase.SENDING) {
-            boolean steerAccepted = pending.stream().anyMatch(value -> value.kind() == PendingMessage.Kind.STEER);
-            // A settled Run does not prove the in-flight submission was accepted, so keep its recovery state.
-            return steerAccepted ? Optional.empty() : waiting;
-        }
-        // EDITING is only resolved by the user's save or discard, which also expands pasted content.
-        return waiting;
     }
 
     private static Optional<TerminalSelector> selectorAfterSessionLoad(
