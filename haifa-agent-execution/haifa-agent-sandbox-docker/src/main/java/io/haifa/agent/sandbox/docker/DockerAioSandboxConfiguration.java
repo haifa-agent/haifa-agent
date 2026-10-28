@@ -168,7 +168,7 @@ public record DockerAioSandboxConfiguration(
 
     public SandboxConfigurationDigest configurationDigest() {
         List<String> fields = new ArrayList<>();
-        fields.add("docker-aio/v1");
+        fields.add("docker-aio/v2");
         fields.add(installationId);
         fields.add(dockerSocket.toString());
         fields.add(image);
@@ -187,7 +187,8 @@ public record DockerAioSandboxConfiguration(
         fields.add("maxConcurrentSessions:" + maxConcurrentSessions);
         fields.add("lifecycleMode:" + lifecycleMode.name());
         fields.add("idleTimeout:" + idleTimeout.toMillis());
-        fields.add("network:" + NETWORK_DRIVER + ":internal:icc=false:gateway=isolated");
+        fields.add("network:" + NETWORK_DRIVER + ":internal:icc=false");
+        fields.add("capabilities:unprivileged:no-new-privileges");
         return SandboxConfigurationDigest.sha256Fields(fields);
     }
 
