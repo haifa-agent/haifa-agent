@@ -16,4 +16,11 @@ public record ResolvedHostEnvironment(
             throw new IllegalArgumentException("diagnosticCode must not be blank");
         }
     }
+
+    /** Environment values are intentionally absent from ordinary diagnostics. */
+    @Override
+    public String toString() {
+        return "ResolvedHostEnvironment[variableCount=" + environment.size() + ", diagnosticCode=" + diagnosticCode
+                + "]";
+    }
 }
