@@ -32,6 +32,8 @@ final class Tui4jTerminalView {
     private static final int MIN_ROWS = 16;
     /** Visible paste-summary tokens inserted by {@code Tui4jCodingTerminalModel#pasteContent}. */
     private static final Pattern PASTE_PLACEHOLDER = Pattern.compile("\\[Pasted #\\d+ ~\\d+ lines\\]");
+    /** Selector kind prefix of a clarification wizard, whose rows carry answer markers instead of plain labels. */
+    private static final String CLARIFICATION_SELECTOR_PREFIX = "clarification:";
 
     private static final Set<String> SUCCESS_STATUSES = Set.of(
             "ACCEPTED",
@@ -491,6 +493,8 @@ final class Tui4jTerminalView {
             boolean mouseReporting,
             int editorColumns) {
         List<String> lines = new ArrayList<>();
+        // An open selector owns the keyboard, so no region above it may advertise its own Enter contract.
+        boolean modal = state.selector().isPresent();
         if (!state.pending().isEmpty()) {
             lines.add(theme.queued("Pending · " + state.pending().size()));
             int pendingLimit = compact ? 1 : state.recoverableError().isPresent() ? 2 : 3;
@@ -500,7 +504,7 @@ final class Tui4jTerminalView {
                     .map(theme::queued)
                     .forEach(lines::add);
         }
-        state.waiting().ifPresent(waiting -> lines.addAll(waitingRegion(waiting, compact, editorColumns)));
+        state.waiting().ifPresent(waiting -> lines.addAll(waitingRegion(waiting, compact, editorColumns, modal)));
         state.recoverableError().ifPresent(value -> {
             TerminalRecovery recovery = TerminalRecovery.fromCode(value);
             java.util.function.Function<String, String> recoveryStyle =
@@ -509,8 +513,11 @@ final class Tui4jTerminalView {
             if (!compact)
                 lines.add(recoveryStyle.apply(textWrapper.wrap("  " + recovery.action(), editorColumns, true)));
         });
-        if (state.selector().isPresent()) {
-            lines.addAll(selector(state.selector().get(), compact ? 1 : 4));
+        if (modal) {
+            // One spacer row separates the modal card from the background regions it covers. It is a single space,
+            // not an empty string, because the row budget counts the lines of every region.
+            lines.add(" ");
+            lines.addAll(selector(state.selector().get(), compact ? 1 : 4, editorColumns));
         } else {
             lines.add(theme.editor(stylePastePlaceholders(editor.view()), editorColumns, 3));
             if (!compact) {
@@ -542,7 +549,8 @@ final class Tui4jTerminalView {
     private List<String> waitingRegion(
             io.haifa.agent.application.coding.terminal.state.WaitingMessage waiting,
             boolean compact,
-            int editorColumns) {
+            int editorColumns,
+            boolean modal) {
         List<String> lines = new ArrayList<>();
         String status;
         String hint;
@@ -577,7 +585,7 @@ final class Tui4jTerminalView {
             }
             lines.add(theme.queued(prefix + line));
         }
-        if (!compact) {
+        if (!compact && !modal) {
             lines.add(theme.muted(actions));
         }
         return lines;
@@ -610,13 +618,18 @@ final class Tui4jTerminalView {
     private String renderBottomStatusLine(
             TerminalUiState state, boolean newOutputPending, Duration activityElapsed, boolean mouseReporting) {
         String alert = newOutputPending ? theme.queued("new output below") : "";
+        // A modal selector owns Esc as "close", so the run interrupt affordance stays out of the bottom line.
+        boolean modal = state.selector().isPresent();
         String left;
         if (state.currentRunId().isPresent()) {
             String act = timedActivityStatus(
                     state.status(), activityElapsed, state.activity().label());
-            String interruptHint = state.cancelArmed()
-                    ? theme.warning(" · " + shortcuts.interrupt() + " again to interrupt")
-                    : theme.muted(" · " + shortcuts.interrupt() + " interrupt");
+            String interruptHint = "";
+            if (!modal) {
+                interruptHint = state.cancelArmed()
+                        ? theme.warning(" · " + shortcuts.interrupt() + " again to interrupt")
+                        : theme.muted(" · " + shortcuts.interrupt() + " interrupt");
+            }
             left = theme.pending("⠋ " + act) + interruptHint;
             if (!alert.isEmpty()) {
                 left = left + " · " + alert;
@@ -1065,7 +1078,7 @@ final class Tui4jTerminalView {
         return "  [" + message.kind().name().toLowerCase(Locale.ROOT) + "] " + sanitize(message.summary());
     }
 
-    private List<String> selector(TerminalSelector selector, int maximumVisibleOptions) {
+    private List<String> selector(TerminalSelector selector, int maximumVisibleOptions, int width) {
         List<String> lines = new ArrayList<>();
         lines.add(theme.focus("┌─ " + sanitize(selector.title())));
         if (selector.options().isEmpty()) {
@@ -1078,6 +1091,7 @@ final class Tui4jTerminalView {
                         selector.options().size() - maximumVisibleOptions));
         int end = Math.min(selector.options().size(), start + maximumVisibleOptions);
         String category = "";
+        boolean answersAQuestion = selector.kind().startsWith(CLARIFICATION_SELECTOR_PREFIX);
         for (int index = start; index < end; index++) {
             boolean selected = index == selector.selected();
             TerminalSelectorDetail detail = selector.detail(index).orElse(null);
@@ -1092,10 +1106,14 @@ final class Tui4jTerminalView {
             if (detail != null && !detail.badge().isBlank()) {
                 option.append(" [").append(sanitize(detail.badge())).append(']');
             }
-            if (detail != null && !detail.description().isBlank()) {
-                option.append("  · ").append(sanitize(detail.description()));
+            String row = option.toString();
+            if (selected && answersAQuestion) {
+                row = enterAffordance(row, width);
             }
-            lines.add("│ " + (selected ? theme.selected(option.toString()) : theme.unselected(option.toString())));
+            lines.add("│ " + (selected ? theme.selected(row) : theme.unselected(row)));
+            if (detail != null && !detail.description().isBlank()) {
+                lines.add(theme.muted("│      " + selectorDescription(detail.description(), width)));
+            }
         }
         if (selector.options().size() > maximumVisibleOptions) {
             lines.add(theme.muted(
@@ -1106,11 +1124,34 @@ final class Tui4jTerminalView {
             hint = "└─ c copy link · o reopen browser · Enter select · Esc cancel sign-in";
         } else if ("auth-device".equals(selector.kind())) {
             hint = "└─ c copy device code · l copy link · o open page · Enter select · Esc cancel sign-in";
+        } else if (answersAQuestion) {
+            hint = "└─ enter select · space mark · escape close (editor preserved)";
         } else {
             hint = "└─ enter select · escape close (editor preserved)";
         }
         lines.add(theme.muted(hint));
         return lines;
+    }
+
+    /**
+     * Marks the focused answer row with the key that answers it, so an unmarked single-choice row cannot read as
+     * "press Space first". The badge is right aligned, so a long label never pushes it out of the frame.
+     */
+    private static String enterAffordance(String row, int width) {
+        String badge = " [enter]";
+        int badgeWidth = TextWidth.measureCellWidth(badge);
+        int available = Math.max(badgeWidth + 8, width - 2);
+        int rowWidth = TextWidth.measureCellWidth(row);
+        if (rowWidth + badgeWidth > available) {
+            row = Truncate.truncate(row, Math.max(8, available - badgeWidth), "…");
+            rowWidth = TextWidth.measureCellWidth(row);
+        }
+        return row + " ".repeat(Math.max(0, available - rowWidth - badgeWidth)) + badge;
+    }
+
+    /** An option's rationale stays on one physical row, so the modal never grows past the rows it covers. */
+    private static String selectorDescription(String description, int width) {
+        return Truncate.truncate(sanitize(description), Math.max(8, width - 7), "…");
     }
 
     private String timedActivityStatus(String status, Duration elapsed, String activityLabel) {

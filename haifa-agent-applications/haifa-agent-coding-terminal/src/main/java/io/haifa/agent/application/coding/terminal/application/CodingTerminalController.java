@@ -8,6 +8,7 @@ import io.haifa.agent.application.coding.terminal.state.ClarificationDetails;
 import io.haifa.agent.application.coding.terminal.state.PendingMessage;
 import io.haifa.agent.application.coding.terminal.state.TerminalRecovery;
 import io.haifa.agent.application.coding.terminal.state.TerminalSelector;
+import io.haifa.agent.application.coding.terminal.state.TerminalSelectorDetail;
 import io.haifa.agent.application.coding.terminal.state.TerminalThemes;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiReducer;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
@@ -1941,7 +1942,7 @@ public final class CodingTerminalController implements AutoCloseable {
             if (clarificationDraft == null
                     || !clarificationDraft.interaction().requestId().equals(interaction.requestId())) {
                 clarificationDraft = new ClarificationDraft(interaction, clarification.orElseThrow());
-                apply(new TerminalUiAction.StatusChanged("Space selects an option · Enter confirms the answer"));
+                apply(new TerminalUiAction.StatusChanged("Awaiting your clarification answer"));
             }
             if (state.selector().isPresent()
                     && state.selector().orElseThrow().kind().startsWith("clarification:")) {
@@ -1975,19 +1976,29 @@ public final class CodingTerminalController implements AutoCloseable {
         ClarificationDraft draft = clarificationDraft;
         ClarificationDetails.Question question = draft.current();
         List<String> labels = new ArrayList<>();
+        List<TerminalSelectorDetail> details = new ArrayList<>();
         for (ClarificationDetails.Option option : question.options()) {
             labels.add(draft.marker(option.optionId()) + " " + option.label());
+            details.add(TerminalSelectorDetail.plain(option.description().orElse("")));
         }
-        if (question.allowCustom()) labels.add(ClarificationDetails.CUSTOM_ENTRY_LABEL);
+        if (question.allowCustom()) {
+            labels.add(ClarificationDetails.CUSTOM_ENTRY_LABEL);
+            details.add(TerminalSelectorDetail.plain(ClarificationDetails.CUSTOM_ENTRY_DESCRIPTION));
+        }
         if (question.multiple()) {
-            labels.add(draft.last() ? ClarificationDetails.SUBMIT_LABEL : ClarificationDetails.DONE_LABEL);
+            boolean last = draft.last();
+            labels.add(last ? ClarificationDetails.SUBMIT_LABEL : ClarificationDetails.DONE_LABEL);
+            details.add(TerminalSelectorDetail.plain(
+                    last ? ClarificationDetails.SUBMIT_DESCRIPTION : ClarificationDetails.DONE_DESCRIPTION));
         }
         labels.add(ClarificationDetails.CANCEL_LABEL);
+        details.add(TerminalSelectorDetail.plain(ClarificationDetails.CANCEL_DESCRIPTION));
         apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
                 "clarification:" + draft.interaction().requestId().value(),
-                "Clarification · " + question.header(),
+                draft.title(),
                 labels,
-                Math.min(Math.max(initialSelection, 0), labels.size() - 1))));
+                Math.min(Math.max(initialSelection, 0), labels.size() - 1),
+                details)));
     }
 
     /** Space only marks an option: it never advances a question and never submits an answer. */
@@ -2141,6 +2152,11 @@ public final class CodingTerminalController implements AutoCloseable {
 
         ClarificationDetails.Question current() {
             return details.questions().get(index);
+        }
+
+        /** The modal title of the current question, including its step within the wizard. */
+        String title() {
+            return details.selectorTitle(index);
         }
 
         boolean last() {

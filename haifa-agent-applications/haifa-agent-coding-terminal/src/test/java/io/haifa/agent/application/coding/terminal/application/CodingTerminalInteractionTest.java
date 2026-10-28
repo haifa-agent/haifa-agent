@@ -6,8 +6,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.haifa.agent.application.coding.terminal.event.TerminalEventPump;
 import io.haifa.agent.application.coding.terminal.event.TerminalInput;
 import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
+import io.haifa.agent.application.coding.terminal.state.ClarificationDetails;
+import io.haifa.agent.application.coding.terminal.state.TerminalSelectorDetail;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiReducer;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
+import io.haifa.agent.application.coding.terminal.state.TranscriptItem;
 import io.haifa.agent.application.project.product.ProjectProductException;
 import io.haifa.agent.application.project.product.coding.CodingModelOption;
 import io.haifa.agent.application.project.product.coding.CodingWorkspaceView;
@@ -193,6 +196,35 @@ class CodingTerminalInteractionTest {
 
         controller.accept(input(TerminalInput.Kind.TOGGLE_SELECTION, ""));
         assertThat(controller.state().selector().orElseThrow().options().get(0)).isEqualTo("( ) Postgres");
+    }
+
+    @Test
+    void walksAMultiQuestionClarificationWithItsStepAndOptionRationales() {
+        FakeClient client = new FakeClient(view(Optional.of(multiQuestionClarification())));
+        client.reconciledView = view(Optional.empty());
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+
+        var first = controller.state().selector().orElseThrow();
+        assertThat(first.title()).isEqualTo("Clarification · Step 1 of 2 · Storage");
+        assertThat(first.options()).containsExactly("( ) Postgres", "( ) SQLite", "Type your own answer", "Cancel");
+        assertThat(first.details())
+                .extracting(TerminalSelectorDetail::description)
+                .containsExactly(
+                        "Runs as a server",
+                        "",
+                        ClarificationDetails.CUSTOM_ENTRY_DESCRIPTION,
+                        ClarificationDetails.CANCEL_DESCRIPTION);
+        assertThat(controller.state().transcript()).singleElement().satisfies(item -> {
+            assertThat(item.kind()).isEqualTo(TranscriptItem.Kind.CLARIFICATION);
+            assertThat(item.body()).isEqualTo("Storage: Which storage?\nLocation: Where should it live?");
+        });
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+
+        assertThat(controller.state().selector().orElseThrow().title())
+                .isEqualTo("Clarification · Step 2 of 2 · Location");
+        assertThat(controller.state().status()).isEqualTo("Awaiting your clarification answer");
     }
 
     @Test

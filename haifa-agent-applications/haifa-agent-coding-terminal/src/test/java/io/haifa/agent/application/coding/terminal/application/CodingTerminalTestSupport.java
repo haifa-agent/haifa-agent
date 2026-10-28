@@ -32,6 +32,7 @@ import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.AgentRunEventListener;
 import io.haifa.agent.runtime.api.AgentRunSnapshot;
+import io.haifa.agent.runtime.api.ClarificationPresentation;
 import io.haifa.agent.runtime.api.InteractionAction;
 import io.haifa.agent.runtime.api.InteractionConsequenceView;
 import io.haifa.agent.runtime.api.InteractionInputContract;
@@ -258,6 +259,47 @@ public final class CodingTerminalTestSupport {
     }
 
     static InteractionView clarification(boolean multiple) {
+        return clarification(new ClarificationPresentation(
+                "Storage",
+                List.of(new ClarificationPresentation.Question(
+                        "Storage",
+                        "Which storage?",
+                        multiple,
+                        true,
+                        List.of(
+                                new ClarificationPresentation.Option("opt-0-0", "Postgres", Optional.empty()),
+                                new ClarificationPresentation.Option("opt-0-1", "SQLite", Optional.empty()))))));
+    }
+
+    /** Two questions with option rationales, the shape a wizard must walk through. */
+    static InteractionView multiQuestionClarification() {
+        return clarification(new ClarificationPresentation(
+                "Delivery plan",
+                List.of(
+                        new ClarificationPresentation.Question(
+                                "Storage",
+                                "Which storage?",
+                                false,
+                                true,
+                                List.of(
+                                        new ClarificationPresentation.Option(
+                                                "opt-0-0", "Postgres", Optional.of("Runs as a server")),
+                                        new ClarificationPresentation.Option("opt-0-1", "SQLite", Optional.empty()))),
+                        new ClarificationPresentation.Question(
+                                "Location",
+                                "Where should it live?",
+                                false,
+                                true,
+                                List.of(
+                                        new ClarificationPresentation.Option(
+                                                "opt-1-0",
+                                                "In the repository",
+                                                Optional.of("Follows the repository layout")),
+                                        new ClarificationPresentation.Option(
+                                                "opt-1-1", "In the temp folder", Optional.empty()))))));
+    }
+
+    static InteractionView clarification(ClarificationPresentation presentation) {
         return new InteractionView(
                 new InteractionRequestId("interaction-clarification"),
                 new AgentRunId("run-1"),
@@ -275,18 +317,7 @@ public final class CodingTerminalTestSupport {
                 Optional.of(Instant.EPOCH.plusSeconds(60)),
                 new InteractionConsequenceView("Answer questions", "Dismiss questions", "Expire request"),
                 Optional.empty(),
-                Optional.of(new io.haifa.agent.runtime.api.ClarificationPresentation(
-                        "Storage",
-                        List.of(new io.haifa.agent.runtime.api.ClarificationPresentation.Question(
-                                "Storage",
-                                "Which storage?",
-                                multiple,
-                                true,
-                                List.of(
-                                        new io.haifa.agent.runtime.api.ClarificationPresentation.Option(
-                                                "opt-0-0", "Postgres", Optional.empty()),
-                                        new io.haifa.agent.runtime.api.ClarificationPresentation.Option(
-                                                "opt-0-1", "SQLite", Optional.empty())))))));
+                Optional.of(presentation));
     }
 
     public static CodingSessionView view(Optional<InteractionView> interaction) {

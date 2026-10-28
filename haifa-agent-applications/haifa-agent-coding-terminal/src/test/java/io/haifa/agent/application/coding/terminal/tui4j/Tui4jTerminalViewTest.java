@@ -223,6 +223,81 @@ class Tui4jTerminalViewTest {
     }
 
     @Test
+    void rendersClarificationRationaleAndEnterAffordanceInsideTheModal() {
+        TerminalUiState state = withSelector(
+                TerminalUiState.initial(80, 30),
+                new TerminalSelector(
+                        "clarification:interaction-1",
+                        "Clarification · Step 1 of 2 · Storage",
+                        List.of("( ) Postgres", "( ) SQLite", "Type your own answer", "Cancel"),
+                        0,
+                        List.of(
+                                TerminalSelectorDetail.plain("Runs as a server"),
+                                TerminalSelectorDetail.plain("Embedded file database"),
+                                TerminalSelectorDetail.plain("Answer this question with your own text"),
+                                TerminalSelectorDetail.plain("Leave the questions unanswered"))));
+
+        String rendered = Strip.strip(view.render(state, transcript(state), editor(80), true, false));
+
+        assertThat(rendered)
+                .containsSubsequence("Step 1 of 2 · Storage", "( ) Postgres", "Runs as a server")
+                .contains("[enter]", "enter select · space mark");
+    }
+
+    @Test
+    void keepsComposerActionsAndTheInterruptHintOutOfAFrameThatShowsAModalSelector() {
+        TerminalUiState base = TerminalUiState.initial(80, 30);
+        TerminalUiState state = new TerminalUiState(
+                base.header(),
+                base.loadedResources(),
+                base.transcript(),
+                base.pending(),
+                "Awaiting your clarification answer",
+                base.editorBuffer(),
+                base.editorCursor(),
+                Optional.of(new TerminalSelector(
+                        "clarification:interaction-1",
+                        "Clarification · Step 1 of 1 · Storage",
+                        List.of("( ) Postgres", "Cancel"),
+                        0)),
+                base.footer(),
+                base.columns(),
+                base.rows(),
+                base.session(),
+                Optional.of(new AgentRunId("run-1")),
+                base.appliedCursor(),
+                base.seenEventIds(),
+                base.recoverableError(),
+                new TerminalActivity(1, "Answer questions"),
+                false,
+                base.sidebarVisible(),
+                base.sidebarExplicitlyToggled(),
+                base.themeName(),
+                false,
+                Optional.of(new io.haifa.agent.application.coding.terminal.state.WaitingMessage(
+                        "wait-1",
+                        "please handle the review",
+                        io.haifa.agent.application.coding.terminal.state.WaitingMessage.Phase.WAITING)));
+
+        String rendered =
+                Strip.strip(view.render(state, transcript(state), editor(120), true, false, Duration.ofSeconds(19)));
+        List<String> lines = rendered.lines().toList();
+        int selectorRow = IntStream.range(0, lines.size())
+                .filter(row -> lines.get(row).startsWith("┌─"))
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(rendered)
+                .contains(
+                        "AWAITING YOUR CLARIFICATION ANSWER (19s)",
+                        "hold until run finishes",
+                        "please handle the review")
+                .contains("enter select · space mark")
+                .doesNotContain("Send Now enter", "esc interrupt", "again to interrupt");
+        assertThat(lines.get(selectorRow - 1)).isBlank();
+    }
+
+    @Test
     void rendersConnectionCenterCategoriesBadgesAndDescriptions() {
         TerminalUiState initial = TerminalUiState.initial(88, 30);
         TerminalUiState state = withSelector(
