@@ -18,11 +18,10 @@ class CodingTerminalWaitingTest {
 
         assertThat(client.steeredMessages).isEmpty();
         assertThat(client.submittedMessages).isEmpty();
-        assertThat(controller.state().waiting())
-                .hasValueSatisfying(waiting -> {
-                    assertThat(waiting.phase()).isEqualTo(WaitingMessage.Phase.WAITING);
-                    assertThat(waiting.text()).contains("checkpoint recovery");
-                });
+        assertThat(controller.state().waiting()).hasValueSatisfying(waiting -> {
+            assertThat(waiting.phase()).isEqualTo(WaitingMessage.Phase.WAITING);
+            assertThat(waiting.text()).contains("checkpoint recovery");
+        });
         assertThat(controller.state().editorBuffer()).isEmpty();
         assertThat(controller.state().currentRunId()).isPresent();
         assertThat(controller.state().cancelArmed()).isFalse();
@@ -73,11 +72,10 @@ class CodingTerminalWaitingTest {
         controller.accept(input(TerminalInput.Kind.SUBMIT, "edited waiting text"));
 
         assertThat(client.steeredMessages).isEmpty();
-        assertThat(controller.state().waiting())
-                .hasValueSatisfying(waiting -> {
-                    assertThat(waiting.phase()).isEqualTo(WaitingMessage.Phase.WAITING);
-                    assertThat(waiting.text()).isEqualTo("edited waiting text");
-                });
+        assertThat(controller.state().waiting()).hasValueSatisfying(waiting -> {
+            assertThat(waiting.phase()).isEqualTo(WaitingMessage.Phase.WAITING);
+            assertThat(waiting.text()).isEqualTo("edited waiting text");
+        });
         assertThat(controller.state().editorBuffer()).isEmpty();
     }
 

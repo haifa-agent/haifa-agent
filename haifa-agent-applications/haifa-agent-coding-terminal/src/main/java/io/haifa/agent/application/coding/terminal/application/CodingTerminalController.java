@@ -379,8 +379,9 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private Optional<PreparedMessageSubmission> prepareSendWaitingNow() {
-        Optional<WaitingMessage> waiting = state.waiting().filter(value -> value.phase() == WaitingMessage.Phase.WAITING
-                || value.phase() == WaitingMessage.Phase.EDITING);
+        Optional<WaitingMessage> waiting = state.waiting()
+                .filter(value ->
+                        value.phase() == WaitingMessage.Phase.WAITING || value.phase() == WaitingMessage.Phase.EDITING);
         if (waiting.isEmpty() || state.currentRunId().isEmpty()) {
             return Optional.empty();
         }
@@ -435,8 +436,8 @@ public final class CodingTerminalController implements AutoCloseable {
         if (result.failureCode().isPresent()) {
             String code = result.failureCode().orElseThrow();
             apply(new TerminalUiAction.UserMessageRejected(result.submission().idempotencyKey()));
-            Optional<WaitingMessage> sending = state.waiting()
-                    .filter(value -> value.phase() == WaitingMessage.Phase.SENDING);
+            Optional<WaitingMessage> sending =
+                    state.waiting().filter(value -> value.phase() == WaitingMessage.Phase.SENDING);
             if (sending.isPresent()) {
                 WaitingMessage restored = sending.orElseThrow();
                 apply(new TerminalUiAction.WaitingChanged(Optional.of(
@@ -1161,8 +1162,8 @@ public final class CodingTerminalController implements AutoCloseable {
             answerClarificationWithText(text);
             return;
         }
-        Optional<WaitingMessage> editing = state.waiting()
-                .filter(value -> value.phase() == WaitingMessage.Phase.EDITING);
+        Optional<WaitingMessage> editing =
+                state.waiting().filter(value -> value.phase() == WaitingMessage.Phase.EDITING);
         if (editing.isPresent() && !followUp) {
             saveWaitingEdit(text);
             return;
@@ -1205,12 +1206,15 @@ public final class CodingTerminalController implements AutoCloseable {
         if (normalized.isEmpty()) {
             return;
         }
-        if (state.waiting().filter(value -> value.phase() == WaitingMessage.Phase.SENDING).isPresent()) {
+        if (state.waiting()
+                .filter(value -> value.phase() == WaitingMessage.Phase.SENDING)
+                .isPresent()) {
             apply(new TerminalUiAction.RecoverableFailure("WAITING_SEND_IN_PROGRESS"));
             apply(new TerminalUiAction.EditorChanged(text, text.length()));
             return;
         }
-        String id = state.waiting().map(WaitingMessage::id).orElseGet(() -> UUID.randomUUID().toString());
+        String id = state.waiting().map(WaitingMessage::id).orElseGet(() -> UUID.randomUUID()
+                .toString());
         apply(new TerminalUiAction.WaitingChanged(
                 Optional.of(new WaitingMessage(id, normalized, WaitingMessage.Phase.WAITING))));
         apply(new TerminalUiAction.EditorChanged("", 0));
@@ -1228,20 +1232,20 @@ public final class CodingTerminalController implements AutoCloseable {
                     return () -> completeMessageSubmission(result);
                 },
                 code -> {
-                    Optional<WaitingMessage> sending = state.waiting()
-                            .filter(value -> value.phase() == WaitingMessage.Phase.SENDING);
+                    Optional<WaitingMessage> sending =
+                            state.waiting().filter(value -> value.phase() == WaitingMessage.Phase.SENDING);
                     if (sending.isPresent()) {
                         WaitingMessage restored = sending.orElseThrow();
-                        apply(new TerminalUiAction.WaitingChanged(Optional.of(new WaitingMessage(
-                                restored.id(), submission.text(), WaitingMessage.Phase.WAITING))));
+                        apply(new TerminalUiAction.WaitingChanged(Optional.of(
+                                new WaitingMessage(restored.id(), submission.text(), WaitingMessage.Phase.WAITING))));
                     }
                     apply(new TerminalUiAction.RecoverableFailure(code));
                 });
     }
 
     private void beginEditWaiting() {
-        Optional<WaitingMessage> waiting = state.waiting()
-                .filter(value -> value.phase() == WaitingMessage.Phase.WAITING);
+        Optional<WaitingMessage> waiting =
+                state.waiting().filter(value -> value.phase() == WaitingMessage.Phase.WAITING);
         if (waiting.isEmpty()) {
             return;
         }
@@ -1251,8 +1255,8 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void saveWaitingEdit(String text) {
-        Optional<WaitingMessage> waiting = state.waiting()
-                .filter(value -> value.phase() == WaitingMessage.Phase.EDITING);
+        Optional<WaitingMessage> waiting =
+                state.waiting().filter(value -> value.phase() == WaitingMessage.Phase.EDITING);
         if (waiting.isEmpty()) {
             return;
         }
@@ -1272,8 +1276,8 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void discardWaitingEdit() {
-        Optional<WaitingMessage> waiting = state.waiting()
-                .filter(value -> value.phase() == WaitingMessage.Phase.EDITING);
+        Optional<WaitingMessage> waiting =
+                state.waiting().filter(value -> value.phase() == WaitingMessage.Phase.EDITING);
         if (waiting.isEmpty()) {
             return;
         }
@@ -3745,8 +3749,8 @@ public final class CodingTerminalController implements AutoCloseable {
 
     private void autoSubmitWaitingAfterRun() {
         Optional<WaitingMessage> waiting = state.waiting()
-                .filter(value -> value.phase() == WaitingMessage.Phase.WAITING
-                        || value.phase() == WaitingMessage.Phase.EDITING);
+                .filter(value ->
+                        value.phase() == WaitingMessage.Phase.WAITING || value.phase() == WaitingMessage.Phase.EDITING);
         if (waiting.isEmpty() || state.selector().isPresent() || clarificationDraft != null) {
             return;
         }
