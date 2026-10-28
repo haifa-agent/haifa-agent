@@ -50,7 +50,7 @@ public final class SqliteToolResultAssetStore implements ToolResultAssetStore {
         if (!MIME_TYPE.equals(reference.mimeType())) {
             throw new IllegalArgumentException("asset reference has incompatible media type");
         }
-        return execute(() -> Optional.ofNullable(
+        return read(() -> Optional.ofNullable(
                         unitOfWork.mapper(RuntimeStoreMapper.class).findToolResultAsset(reference.assetId()))
                 .map(this::decode));
     }
@@ -92,6 +92,16 @@ public final class SqliteToolResultAssetStore implements ToolResultAssetStore {
     private <T> T execute(Supplier<T> work) {
         try {
             return unitOfWork.execute(work);
+        } catch (SqliteStoreException exception) {
+            if (exception.getCause() instanceof RuntimeException runtimeException) throw runtimeException;
+            throw exception;
+        }
+    }
+
+    /** Queries read committed state without reserving the process-wide write slot. */
+    private <T> T read(Supplier<T> work) {
+        try {
+            return unitOfWork.executeReadOnly(work);
         } catch (SqliteStoreException exception) {
             if (exception.getCause() instanceof RuntimeException runtimeException) throw runtimeException;
             throw exception;

@@ -913,7 +913,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
             if (!runId.equals(after.runId()) || limit < 1 || limit > 500)
                 throw new io.haifa.agent.runtime.api.RuntimeContractException(
                         io.haifa.agent.runtime.api.RuntimeApiErrorCode.CURSOR_INVALID, "Invalid message page request");
-            return unitOfWork.execute(() -> io.haifa.agent.runtime.core.message.RunMessageProjector.page(
+            return unitOfWork.executeReadOnly(() -> io.haifa.agent.runtime.core.message.RunMessageProjector.page(
                     state, runId, after.exclusiveSequence(), limit));
         } catch (io.haifa.agent.runtime.api.RuntimeContractException refusal) {
             throw refusal;

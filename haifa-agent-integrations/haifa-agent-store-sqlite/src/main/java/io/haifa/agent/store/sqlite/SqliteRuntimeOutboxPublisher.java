@@ -67,7 +67,7 @@ public final class SqliteRuntimeOutboxPublisher implements RuntimeOutboxPublishe
 
     @Override
     public List<OutboxMessage> pending() {
-        return execute(() -> unitOfWork.mapper(RuntimeStoreMapper.class).pendingOutbox().stream()
+        return read(() -> unitOfWork.mapper(RuntimeStoreMapper.class).pendingOutbox().stream()
                 .map(this::fromRow)
                 .toList());
     }
@@ -116,6 +116,16 @@ public final class SqliteRuntimeOutboxPublisher implements RuntimeOutboxPublishe
     private <T> T execute(Supplier<T> work) {
         try {
             return unitOfWork.execute(work);
+        } catch (SqliteStoreException exception) {
+            if (exception.getCause() instanceof RuntimeException runtimeException) throw runtimeException;
+            throw exception;
+        }
+    }
+
+    /** Queries read committed state without reserving the process-wide write slot. */
+    private <T> T read(Supplier<T> work) {
+        try {
+            return unitOfWork.executeReadOnly(work);
         } catch (SqliteStoreException exception) {
             if (exception.getCause() instanceof RuntimeException runtimeException) throw runtimeException;
             throw exception;

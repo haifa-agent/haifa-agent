@@ -172,8 +172,10 @@ namespace/statement 唯一性、`${}` 禁止和启动期解析校验：
 5. 创建 `SqliteRuntimeUnitOfWork` 与显式 Payload Codec 注册入口。
 
 UoW 始终保持 JDBC `autoCommit=true`，在同一 Connection 上显式执行事务控制。写 UoW 使用
-`BEGIN IMMEDIATE`，Event Journal 的纯查询使用 deferred、query-only 事务，不占用 SQLite 的单写者
-槽位。外层 UoW 独占 Connection 和 SqlSession；同线程只读调用可加入现有写事务并观察其状态，写调用
+`BEGIN IMMEDIATE`；纯查询（Event Journal、Session 消息、Run、Attempt、Idempotency 与 Interaction 等仓储的
+`find`/`list`/`head`/`count`）使用 deferred、query-only 事务，不占用 SQLite 的单写者槽位。仓储的私有
+`read(...)` 包装声明这一作用域，`RuntimeUnitOfWork.executeReadOnly` 是同一语义的 Runtime 端口，写方法仍走
+`execute`。外层 UoW 独占 Connection 和 SqlSession；同线程只读调用可加入现有写事务并观察其状态，写调用
 不得嵌套进入只读事务。任何嵌套失败都会把外层标记为 rollback-only。MyBatis 使用 `MANAGED` 且
 `closeConnection=false`，不会提交、回滚或关闭 UoW Connection。
 
