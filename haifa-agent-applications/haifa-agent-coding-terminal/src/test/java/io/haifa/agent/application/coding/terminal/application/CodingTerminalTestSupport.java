@@ -257,6 +257,38 @@ public final class CodingTerminalTestSupport {
                 new InteractionConsequenceView("Run tool", "Reject tool", "Expire request"));
     }
 
+    static InteractionView clarification(boolean multiple) {
+        return new InteractionView(
+                new InteractionRequestId("interaction-clarification"),
+                new AgentRunId("run-1"),
+                SESSION_ID,
+                0,
+                InteractionKind.CLARIFICATION,
+                InteractionState.PENDING,
+                "Clarification",
+                "Which storage?",
+                List.of(InteractionAction.SUBMIT, InteractionAction.CANCEL),
+                InteractionInputContract.NONE,
+                new InteractionTargetView("tool", "ask_clarification", Optional.empty(), Optional.empty(), "workspace"),
+                new InteractionRequesterView("user", "local user"),
+                Instant.EPOCH,
+                Optional.of(Instant.EPOCH.plusSeconds(60)),
+                new InteractionConsequenceView("Answer questions", "Dismiss questions", "Expire request"),
+                Optional.empty(),
+                Optional.of(new io.haifa.agent.runtime.api.ClarificationPresentation(
+                        "Storage",
+                        List.of(new io.haifa.agent.runtime.api.ClarificationPresentation.Question(
+                                "Storage",
+                                "Which storage?",
+                                multiple,
+                                true,
+                                List.of(
+                                        new io.haifa.agent.runtime.api.ClarificationPresentation.Option(
+                                                "opt-0-0", "Postgres", Optional.empty()),
+                                        new io.haifa.agent.runtime.api.ClarificationPresentation.Option(
+                                                "opt-0-1", "SQLite", Optional.empty())))))));
+    }
+
     public static CodingSessionView view(Optional<InteractionView> interaction) {
         return view(interaction, 0, "session");
     }
@@ -365,6 +397,7 @@ public final class CodingTerminalTestSupport {
         final List<AgentSessionId> opened = new ArrayList<>();
         final List<String> restored = new ArrayList<>();
         final List<InteractionAction> respondedActions = new ArrayList<>();
+        final List<List<io.haifa.agent.core.content.ContentPart>> respondedInputs = new ArrayList<>();
         final List<AgentSessionId> cancelledSessions = new ArrayList<>();
         final List<String> revokedWorkspaces = new ArrayList<>();
         CodingShellPlan.State shellState = CodingShellPlan.State.READY;
@@ -487,6 +520,16 @@ public final class CodingTerminalTestSupport {
         public Optional<InteractionView> pendingInteraction(AgentRunId runId) {
             pendingInteractionCalls++;
             return reconciledView.pendingInteraction();
+        }
+
+        @Override
+        public InteractionResponseReceipt respond(
+                InteractionView interaction,
+                InteractionAction action,
+                List<io.haifa.agent.core.content.ContentPart> inputs,
+                String idempotencyKey) {
+            respondedInputs.add(inputs);
+            return respond(interaction, action, idempotencyKey);
         }
 
         @Override

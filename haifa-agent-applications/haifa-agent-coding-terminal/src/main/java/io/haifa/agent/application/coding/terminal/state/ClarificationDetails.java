@@ -144,8 +144,14 @@ public record ClarificationDetails(String title, List<Question> questions) {
         for (int index = 0; index < selected.size(); index++) {
             String free = index < custom.size() && custom.get(index) != null ? custom.get(index) : "";
             parts.add(new TextPart(
-                    "selected=" + String.join(",", selected.get(index)) + "\ncustom=" + free.trim(), ANSWER_FORMAT));
+                    "selected=" + String.join(",", selected.get(index)) + "\ncustom=" + singleLine(free),
+                    ANSWER_FORMAT));
         }
         return List.copyOf(parts);
+    }
+
+    /** The answer format carries one custom line, so a pasted line break becomes a space. */
+    private static String singleLine(String value) {
+        return value.replace("\r\n", " ").replace('\n', ' ').replace('\r', ' ').trim();
     }
 }

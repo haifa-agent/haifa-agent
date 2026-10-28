@@ -151,6 +151,7 @@ public final class CodingTerminalController implements AutoCloseable {
     private boolean reconcileInFlight;
     private InteractionHydrationRequest interactionHydrationInFlight;
     private ClarificationDraft clarificationDraft;
+    private boolean awaitingClarificationText;
     private InteractionView activeInteraction;
     private long activeCompletionRequestId;
     private static final long CANCEL_ARMED_TIMEOUT_MILLIS = 5_000L;
@@ -917,6 +918,25 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void acceptGuarded(TerminalInput input) {
+        if (clarificationDraft != null
+                && state.selector().isEmpty()
+                && (input.kind() == TerminalInput.Kind.SUBMIT || input.kind() == TerminalInput.Kind.FOLLOW_UP)) {
+            // While a clarification is pending, composed text belongs to the answer and never to the steer queue.
+            if (input.text().isBlank()) {
+                apply(new TerminalUiAction.StatusChanged("Type your answer and press Enter"));
+                return;
+            }
+            awaitingClarificationText = false;
+            apply(new TerminalUiAction.SelectorClosed());
+            apply(new TerminalUiAction.EditorChanged("", 0));
+            if (clarificationDraft.current().allowCustom()) {
+                answerClarificationWithText(input.text());
+            } else {
+                openClarificationSelector(0);
+                apply(new TerminalUiAction.StatusChanged("Choose an option with Space, then press Enter"));
+            }
+            return;
+        }
         drainEvents();
         if (input.kind() == TerminalInput.Kind.TICK) {
             updateAuthenticationCountdown();
@@ -1751,6 +1771,11 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void openClarificationSelector(int initialSelection) {
+        if (awaitingClarificationText) {
+            apply(new TerminalUiAction.SelectorClosed());
+            return;
+        }
+
         ClarificationDraft draft = clarificationDraft;
         ClarificationDetails.Question question = draft.current();
         List<String> labels = new ArrayList<>();
@@ -1779,7 +1804,7 @@ public final class CodingTerminalController implements AutoCloseable {
         ClarificationDetails.Question question = draft.current();
         int options = question.options().size();
         if (selected < options) {
-            draft.choose(question.options().get(selected).optionId());
+            draft.toggle(question.options().get(selected).optionId());
             openClarificationSelector(selected);
             return;
         }
@@ -1806,7 +1831,7 @@ public final class CodingTerminalController implements AutoCloseable {
                 }
                 draft.confirm();
             } else {
-                draft.choose(question.options().get(selected).optionId());
+                draft.select(question.options().get(selected).optionId());
                 draft.advance();
             }
             continueClarification(0);
@@ -1825,11 +1850,13 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void beginClarificationText() {
+        awaitingClarificationText = true;
         apply(new TerminalUiAction.SelectorClosed());
         apply(new TerminalUiAction.StatusChanged("Type your answer and press Enter"));
     }
 
     private void answerClarificationWithText(String text) {
+        awaitingClarificationText = false;
         clarificationDraft.answerWithText(text);
         continueClarification();
     }
@@ -1849,6 +1876,7 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void dismissClarification() {
+        awaitingClarificationText = false;
         ClarificationDraft draft = clarificationDraft;
         clarificationDraft = null;
         activeInteraction = null;
@@ -1866,6 +1894,7 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void submitClarification() {
+        awaitingClarificationText = false;
         ClarificationDraft draft = clarificationDraft;
         clarificationDraft = null;
         activeInteraction = null;
@@ -1927,14 +1956,21 @@ public final class CodingTerminalController implements AutoCloseable {
                     current().multiple(), selected.get(index).contains(optionId));
         }
 
-        void choose(String optionId) {
+        void toggle(String optionId) {
             List<String> current = selected.get(index);
-            if (!current().multiple()) {
-                current.clear();
-                current.add(optionId);
+            if (current.remove(optionId)) {
                 return;
             }
-            if (!current.remove(optionId)) current.add(optionId);
+            if (!current().multiple()) {
+                current.clear();
+            }
+            current.add(optionId);
+        }
+
+        void select(String optionId) {
+            List<String> current = selected.get(index);
+            current.clear();
+            current.add(optionId);
         }
 
         void advance() {

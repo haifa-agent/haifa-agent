@@ -84,6 +84,26 @@ class ClarificationAnswersTest {
     }
 
     @Test
+    void summarisesAnswersWithoutTheWirePayload() {
+        InteractionRequest request = request(spec(true, true));
+
+        ClarificationAnswers answers =
+                ClarificationAnswers.parse(List.of(part("opt-0-1", "in-memory is fine")), request);
+
+        assertThat(answers.userSummary(request))
+                .isEqualTo("Which storage?: SQLite, in-memory is fine")
+                .doesNotContain("selected=")
+                .doesNotContain("custom=");
+    }
+
+    @Test
+    void summarisesADismissalWithoutFabricatingAnswers() {
+        InteractionRequest request = request(spec(false, true));
+
+        assertThat(ClarificationAnswers.declined(1).userSummary(request)).isEqualTo("Dismissed the questions");
+    }
+
+    @Test
     void matchesClarificationRequestOnlyWhenQuestionsArgumentIsPresent() {
         assertThat(ClarificationSpec.isClarificationTool("ask_clarification")).isTrue();
         assertThat(ClarificationSpec.isClarificationTool("other_tool")).isFalse();
