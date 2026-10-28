@@ -495,6 +495,7 @@ final class Tui4jTerminalView {
                     .map(theme::queued)
                     .forEach(lines::add);
         }
+        state.waiting().ifPresent(waiting -> lines.addAll(waitingRegion(waiting, compact, editorColumns)));
         state.recoverableError().ifPresent(value -> {
             TerminalRecovery recovery = TerminalRecovery.fromCode(value);
             java.util.function.Function<String, String> recoveryStyle =
@@ -512,6 +513,50 @@ final class Tui4jTerminalView {
             }
         }
         lines.add(renderBottomStatusLine(state, newOutputPending, activityElapsed, mouseReporting));
+        return lines;
+    }
+
+    private List<String> waitingRegion(
+            io.haifa.agent.application.coding.terminal.state.WaitingMessage waiting,
+            boolean compact,
+            int editorColumns) {
+        List<String> lines = new ArrayList<>();
+        String status;
+        String hint;
+        String actions;
+        switch (waiting.phase()) {
+            case EDITING -> {
+                status = "Editing";
+                hint = "save keeps Waiting · does not steer";
+                actions = "  [Save enter]  [Discard esc]";
+            }
+            case SENDING -> {
+                status = "Sending · Steer";
+                hint = "submitted · waiting for model accept";
+                actions = "  Waiting for model…";
+            }
+            default -> {
+                status = "Waiting";
+                hint = "hold until run finishes · follow-up";
+                actions = "  [Send Now enter]  [Edit " + shortcuts.editWaiting() + "]  [Cancel esc]";
+            }
+        }
+        lines.add(theme.pending("⠋ " + status + "  ") + theme.muted(hint));
+        String body = sanitize(waiting.text());
+        int maxLines = compact ? 1 : 3;
+        String wrapped = textWrapper.wrap(body, Math.max(16, editorColumns - 2), true);
+        String[] bodyLines = wrapped.split("\n", -1);
+        for (int index = 0; index < Math.min(maxLines, bodyLines.length); index++) {
+            String prefix = index == maxLines - 1 && bodyLines.length > maxLines ? "… " : "  ";
+            String line = bodyLines[index];
+            if (index == maxLines - 1 && bodyLines.length > maxLines) {
+                line = line.length() > 1 ? line.substring(0, Math.max(1, line.length() - 1)) : line;
+            }
+            lines.add(theme.queued(prefix + line));
+        }
+        if (!compact) {
+            lines.add(theme.muted(actions));
+        }
         return lines;
     }
 
@@ -1077,7 +1122,19 @@ final class Tui4jTerminalView {
     }
 
     private String submitHint(TerminalUiState state) {
-        return state.currentRunId().isPresent() ? "enter steer" : "enter send";
+        if (state.waiting()
+                .filter(value ->
+                        value.phase() == io.haifa.agent.application.coding.terminal.state.WaitingMessage.Phase.EDITING)
+                .isPresent()) {
+            return "enter save";
+        }
+        if (state.waiting()
+                .filter(value ->
+                        value.phase() == io.haifa.agent.application.coding.terminal.state.WaitingMessage.Phase.WAITING)
+                .isPresent()) {
+            return state.editorBuffer().isBlank() ? "enter send now" : "enter replace waiting";
+        }
+        return state.currentRunId().isPresent() ? "enter waiting" : "enter send";
     }
 
     private String editorHint(TerminalUiState state, boolean secureInput, boolean isUpdate, String secureInputHint) {
@@ -1088,8 +1145,32 @@ final class Tui4jTerminalView {
             return isUpdate ? "Enter update · Esc cancel" : "Enter submit · Esc cancel";
         }
         if (state.selector().isPresent()) return "enter select · escape close";
+        if (state.waiting()
+                .filter(value ->
+                        value.phase() == io.haifa.agent.application.coding.terminal.state.WaitingMessage.Phase.EDITING)
+                .isPresent()) {
+            return "enter save · esc discard edit";
+        }
+        if (state.waiting()
+                .filter(value ->
+                        value.phase() == io.haifa.agent.application.coding.terminal.state.WaitingMessage.Phase.SENDING)
+                .isPresent()) {
+            return "steer pending · " + shortcuts.interrupt() + " interrupt";
+        }
+        if (state.waiting()
+                .filter(value ->
+                        value.phase() == io.haifa.agent.application.coding.terminal.state.WaitingMessage.Phase.WAITING)
+                .isPresent()) {
+            return "enter send now · "
+                    + shortcuts.editWaiting()
+                    + " edit · esc cancel · "
+                    + shortcuts.followUp()
+                    + " follow-up · "
+                    + shortcuts.interrupt()
+                    + " interrupt";
+        }
         if (state.currentRunId().isPresent()) {
-            return "enter steer · "
+            return "enter waiting · "
                     + shortcuts.followUp()
                     + " follow-up · "
                     + shortcuts.newline()

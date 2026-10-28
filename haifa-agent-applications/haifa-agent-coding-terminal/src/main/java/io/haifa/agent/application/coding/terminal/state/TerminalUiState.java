@@ -30,7 +30,8 @@ public record TerminalUiState(
         boolean sidebarVisible,
         boolean sidebarExplicitlyToggled,
         String themeName,
-        boolean cancelArmed) {
+        boolean cancelArmed,
+        Optional<WaitingMessage> waiting) {
     public TerminalUiState {
         header = Objects.requireNonNull(header, "header must not be null");
         loadedResources = List.copyOf(loadedResources);
@@ -53,6 +54,7 @@ public record TerminalUiState(
         themeName = (themeName == null || themeName.isBlank())
                 ? "dark"
                 : themeName.strip().toLowerCase(java.util.Locale.ROOT);
+        waiting = Objects.requireNonNullElse(waiting, Optional.empty());
     }
 
     public TerminalUiState withThemeName(String newThemeName) {
@@ -78,7 +80,8 @@ public record TerminalUiState(
                 sidebarVisible,
                 sidebarExplicitlyToggled,
                 newThemeName,
-                cancelArmed);
+                cancelArmed,
+                waiting);
     }
 
     public TerminalUiState withCancelArmed(boolean newCancelArmed) {
@@ -104,7 +107,35 @@ public record TerminalUiState(
                 sidebarVisible,
                 sidebarExplicitlyToggled,
                 themeName,
-                newCancelArmed);
+                newCancelArmed,
+                waiting);
+    }
+
+    public TerminalUiState withWaiting(Optional<WaitingMessage> newWaiting) {
+        return new TerminalUiState(
+                header,
+                loadedResources,
+                transcript,
+                pending,
+                status,
+                editorBuffer,
+                editorCursor,
+                selector,
+                footer,
+                columns,
+                rows,
+                session,
+                currentRunId,
+                appliedCursor,
+                seenEventIds,
+                recoverableError,
+                activity,
+                exitRequested,
+                sidebarVisible,
+                sidebarExplicitlyToggled,
+                themeName,
+                cancelArmed,
+                newWaiting);
     }
 
     public TerminalUiState withStatus(String newStatus) {
@@ -130,7 +161,57 @@ public record TerminalUiState(
                 sidebarVisible,
                 sidebarExplicitlyToggled,
                 themeName,
-                cancelArmed);
+                cancelArmed,
+                waiting);
+    }
+
+    public TerminalUiState(
+            String header,
+            List<String> loadedResources,
+            List<TranscriptItem> transcript,
+            List<PendingMessage> pending,
+            String status,
+            String editorBuffer,
+            int editorCursor,
+            Optional<TerminalSelector> selector,
+            TerminalFooter footer,
+            int columns,
+            int rows,
+            Optional<CodingSessionView> session,
+            Optional<AgentRunId> currentRunId,
+            Optional<RunEventCursor> appliedCursor,
+            Set<String> seenEventIds,
+            Optional<String> recoverableError,
+            TerminalActivity activity,
+            boolean exitRequested,
+            boolean sidebarVisible,
+            boolean sidebarExplicitlyToggled,
+            String themeName,
+            boolean cancelArmed) {
+        this(
+                header,
+                loadedResources,
+                transcript,
+                pending,
+                status,
+                editorBuffer,
+                editorCursor,
+                selector,
+                footer,
+                columns,
+                rows,
+                session,
+                currentRunId,
+                appliedCursor,
+                seenEventIds,
+                recoverableError,
+                activity,
+                exitRequested,
+                sidebarVisible,
+                sidebarExplicitlyToggled,
+                themeName,
+                cancelArmed,
+                Optional.empty());
     }
 
     public TerminalUiState(
@@ -389,6 +470,7 @@ public record TerminalUiState(
                 columns >= 100,
                 false,
                 "dark",
-                false);
+                false,
+                Optional.empty());
     }
 }
