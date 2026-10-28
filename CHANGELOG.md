@@ -2,6 +2,11 @@
 
 ## 0.1.4-SNAPSHOT - Unreleased
 
+- Docker AIO warm sessions no longer retain a workspace container after a cancellation: `cancel()` captures the
+  container before it interrupts the execution thread, and a container that finishes creating after the
+  cancellation request is destroyed instead of entering the warm pool. This removes the intermittent macOS
+  `DockerAioWarmSandboxProviderTest.cancellingInFlightWarmExecutionAbortsImmediatelyAndDestroysContainer` failure.
+
 - SQLite store serves pure queries (session messages, runs, attempts, idempotency, interaction, checkpoint,
   memory, summary and event reads) in a deferred `query_only` scope instead of the process-wide writer slot,
   so listing, paging and UI polling no longer serialize behind a turn's writes.

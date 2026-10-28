@@ -1404,6 +1404,9 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
                 executingThread = Thread.currentThread();
 
                 if (cancelled.get()) {
+                    // Cancellation can arrive while the container is being created, before it is published above:
+                    // release it here, so cancelled work retains no warm container.
+                    releaseContainer(container);
                     return cancelledResult(started);
                 }
 
@@ -1496,15 +1499,14 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
         @Override
         public boolean cancel() {
             cancelled.set(true);
+            // Capture the container before interrupting the execution thread: that thread clears the field on its way
+            // out, and a cancellation that read the field afterwards would leave the container in the warm pool.
+            WarmContainerInstance container = activeContainer;
             Thread t = executingThread;
             if (t != null) {
                 t.interrupt();
             }
-            WarmContainerInstance container = activeContainer;
-            if (container != null) {
-                warmContainers.remove(workspaceId, container);
-                destroyWarmContainer(container);
-            }
+            releaseContainer(container);
             String sid = aioSessionId;
             URI uri = currentManagementUri;
             if (sid != null && uri != null) {
@@ -1514,6 +1516,18 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
                 }
             }
             return true;
+        }
+
+        /**
+         * Removes {@code container} from the warm pool and destroys it.
+         *
+         * <p>Destruction is idempotent, so a container that cancellation and the execution path both release is torn
+         * down once.
+         */
+        private void releaseContainer(WarmContainerInstance container) {
+            if (container == null) return;
+            warmContainers.remove(workspaceId, container);
+            destroyWarmContainer(container);
         }
 
         @Override

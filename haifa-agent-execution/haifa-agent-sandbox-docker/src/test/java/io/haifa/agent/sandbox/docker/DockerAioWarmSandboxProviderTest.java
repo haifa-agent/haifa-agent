@@ -203,6 +203,31 @@ class DockerAioWarmSandboxProviderTest extends AbstractDockerAioProviderTest {
     }
 
     @Test
+    void cancellingWhileTheContainerIsBeingCreatedRetainsNoWarmContainer() throws Exception {
+        aio.readyEntered = new CountDownLatch(1);
+        aio.releaseReady = new CountDownLatch(1);
+
+        try (SandboxSession session = provider.open(profile, workspaceId)) {
+            AtomicReference<SandboxProcessResult> resultRef = new AtomicReference<>();
+            Thread execThread =
+                    new Thread(() -> resultRef.set(session.execute(execution(ExecutionCommand.shell("sleep 100")))));
+            execThread.start();
+
+            assertThat(aio.readyEntered.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(session.cancel()).isTrue();
+            aio.releaseReady.countDown();
+            execThread.join(5000);
+
+            assertThat(execThread.isAlive()).isFalse();
+            assertThat(resultRef.get()).isNotNull();
+            assertThat(resultRef.get().status()).isEqualTo(SandboxProcessStatus.CANCELLED);
+            assertThat(provider.warmContainerCount()).isZero();
+            assertThat(engine.containerRemoveCount).isEqualTo(1);
+            assertThat(engine.networkRemoveCount).isEqualTo(1);
+        }
+    }
+
+    @Test
     void concurrentCommandsInSameWorkspaceQueueWithinDeadline() throws Exception {
         aio.execStartedLatch = new CountDownLatch(1);
         aio.execBlockLatch = new CountDownLatch(1);
