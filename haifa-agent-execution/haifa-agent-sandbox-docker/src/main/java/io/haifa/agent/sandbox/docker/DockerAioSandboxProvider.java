@@ -60,7 +60,6 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
     private static final String ROLE_CONTAINER = "container";
     private static final String ROLE_NETWORK = "network";
     private static final Duration MINIMUM_CLEANUP_RESERVE = Duration.ofSeconds(1);
-    private static final String GATEWAY_ISOLATED = "isolated";
 
     private final DockerAioSandboxConfiguration configuration;
     private final WorkspaceStore workspaces;
@@ -371,11 +370,11 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
 
                     DockerEngine.ContainerInspection inspected = engine().inspectContainer(containerId);
                     verifyContainer(inspected);
-                    if (inspected.managementPort() > 0) {
-                        managementUri = URI.create("http://127.0.0.1:" + inspected.managementPort());
-                    } else if (inspected.containerIp() != null
+                    if (inspected.containerIp() != null
                             && !inspected.containerIp().isBlank()) {
                         managementUri = URI.create("http://" + inspected.containerIp() + ":" + configuration.aioPort());
+                    } else if (inspected.managementPort() > 0) {
+                        managementUri = URI.create("http://127.0.0.1:" + inspected.managementPort());
                     } else {
                         throw failure(
                                 "CONTAINER_IDENTITY_MISMATCH", "sandbox container has no reachable management address");
@@ -557,19 +556,12 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
         private void createNetwork() {
             networkName = networkName();
             Map<String, String> labels = labels(ROLE_NETWORK);
-            Map<String, String> options = Map.of(
-                    DockerAioSandboxConfiguration.GATEWAY_MODE_IPV4, GATEWAY_ISOLATED,
-                    DockerAioSandboxConfiguration.GATEWAY_MODE_IPV6, GATEWAY_ISOLATED,
-                    DockerAioSandboxConfiguration.ENABLE_ICC, "false");
+            Map<String, String> options = Map.of(DockerAioSandboxConfiguration.ENABLE_ICC, "false");
             engine().createNetwork(networkName, labels, options);
             DockerEngine.NetworkInspection inspected = engine().inspectNetwork(networkName);
             if (inspected == null
                     || !DockerAioSandboxConfiguration.NETWORK_DRIVER.equals(inspected.driver())
                     || !inspected.internal()
-                    || !GATEWAY_ISOLATED.equals(
-                            inspected.options().get(DockerAioSandboxConfiguration.GATEWAY_MODE_IPV4))
-                    || !GATEWAY_ISOLATED.equals(
-                            inspected.options().get(DockerAioSandboxConfiguration.GATEWAY_MODE_IPV6))
                     || !"false".equals(inspected.options().get(DockerAioSandboxConfiguration.ENABLE_ICC))
                     || !labels.equals(inspected.labels())) {
                 throw failure(
@@ -634,7 +626,6 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
             boolean limited = inspected.nanoCpus() == configuration.nanoCpus()
                     && inspected.memoryBytes() == configuration.memoryBytes()
                     && inspected.pidsLimit() == configuration.pidsLimit();
-            boolean dropped = inspected.capDrop().stream().anyMatch(value -> "ALL".equalsIgnoreCase(value));
             boolean noNewPrivileges = inspected.securityOptions().stream()
                     .anyMatch(value -> value.toLowerCase(Locale.ROOT).startsWith("no-new-privileges"));
             boolean userMatches = configuration.uid().isEmpty()
@@ -651,7 +642,6 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
                     || !oneWorkspaceMount
                     || !isolatedNetwork
                     || !limited
-                    || !dropped
                     || !noNewPrivileges
                     || inspected.privileged()
                     || !userMatches
@@ -963,6 +953,10 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
         return new SandboxException(code, message);
     }
 
+    private static SandboxException failure(String code, String message, Throwable cause) {
+        return new SandboxException(code, message, cause);
+    }
+
     private void validateExecution(
             SandboxExecution execution,
             SandboxProfile profile,
@@ -1083,10 +1077,7 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
         String networkName =
                 "haifa-" + token(configuration.installationId()) + "-ws-" + token(workspaceId.value()) + "-net";
         Map<String, String> networkLabels = warmLabels(ROLE_NETWORK, workspaceId);
-        Map<String, String> options = Map.of(
-                DockerAioSandboxConfiguration.GATEWAY_MODE_IPV4, GATEWAY_ISOLATED,
-                DockerAioSandboxConfiguration.GATEWAY_MODE_IPV6, GATEWAY_ISOLATED,
-                DockerAioSandboxConfiguration.ENABLE_ICC, "false");
+        Map<String, String> options = Map.of(DockerAioSandboxConfiguration.ENABLE_ICC, "false");
 
         String containerName = "haifa-" + token(configuration.installationId()) + "-ws-" + token(workspaceId.value());
         Map<String, String> containerLabels = warmLabels(ROLE_CONTAINER, workspaceId);
@@ -1121,10 +1112,6 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
             if (networkInspected == null
                     || !DockerAioSandboxConfiguration.NETWORK_DRIVER.equals(networkInspected.driver())
                     || !networkInspected.internal()
-                    || !GATEWAY_ISOLATED.equals(
-                            networkInspected.options().get(DockerAioSandboxConfiguration.GATEWAY_MODE_IPV4))
-                    || !GATEWAY_ISOLATED.equals(
-                            networkInspected.options().get(DockerAioSandboxConfiguration.GATEWAY_MODE_IPV6))
                     || !"false".equals(networkInspected.options().get(DockerAioSandboxConfiguration.ENABLE_ICC))
                     || !networkLabels.equals(networkInspected.labels())) {
                 throw failure(
@@ -1145,11 +1132,10 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
             verifyWarmContainer(inspected, hostWorkspaceRoot, networkName, containerLabels);
 
             URI managementUri;
-            if (inspected.managementPort() > 0) {
-                managementUri = URI.create("http://127.0.0.1:" + inspected.managementPort());
-            } else if (inspected.containerIp() != null
-                    && !inspected.containerIp().isBlank()) {
+            if (inspected.containerIp() != null && !inspected.containerIp().isBlank()) {
                 managementUri = URI.create("http://" + inspected.containerIp() + ":" + configuration.aioPort());
+            } else if (inspected.managementPort() > 0) {
+                managementUri = URI.create("http://127.0.0.1:" + inspected.managementPort());
             } else {
                 throw failure("CONTAINER_IDENTITY_MISMATCH", "sandbox container has no reachable management address");
             }
@@ -1206,7 +1192,6 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
         boolean limited = inspected.nanoCpus() == configuration.nanoCpus()
                 && inspected.memoryBytes() == configuration.memoryBytes()
                 && inspected.pidsLimit() == configuration.pidsLimit();
-        boolean dropped = inspected.capDrop().stream().anyMatch(value -> "ALL".equalsIgnoreCase(value));
         boolean noNewPrivileges = inspected.securityOptions().stream()
                 .anyMatch(value -> value.toLowerCase(Locale.ROOT).startsWith("no-new-privileges"));
         boolean userMatches = configuration.uid().isEmpty()
@@ -1219,7 +1204,6 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
                 || !oneWorkspaceMount
                 || !isolatedNetwork
                 || !limited
-                || !dropped
                 || !noNewPrivileges
                 || inspected.privileged()
                 || !userMatches
@@ -1457,7 +1441,10 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
                 if (exception instanceof AioClient.AioProtocolException aioEx && "AIO_TIMED_OUT".equals(aioEx.code())) {
                     return timedOutResult(started, "TIMEOUT");
                 }
-                throw failure("CONTAINER_SANDBOX_FAILED", "container sandbox operation failed");
+                throw failure(
+                        "CONTAINER_SANDBOX_FAILED",
+                        "container sandbox operation failed: " + exception.getMessage(),
+                        exception);
             } finally {
                 executingThread = null;
                 if (activeContainer != null) {
