@@ -1777,6 +1777,32 @@ class Tui4jTerminalViewTest {
         return transcript;
     }
 
+    @Test
+    void stylesPasteSummaryPlaceholdersAsWarningChipsInTheEditor() {
+        Renderer renderer = Renderer.defaultRenderer();
+        renderer.setColorProfile(ColorProfile.TrueColor);
+        renderer.setHasDarkBackground(true);
+        try {
+            TerminalUiState state = TerminalUiState.initial(80, 24);
+            Textarea withPaste = editor(80);
+            withPaste.setValue("[Pasted #1 ~6 lines]");
+            Textarea plain = editor(80);
+            plain.setValue("plain draft without paste token");
+
+            String pasted = view.render(state, transcript(state), withPaste, true, false);
+            String without = view.render(state, transcript(state), plain, true, false);
+
+            assertThat(Strip.strip(pasted)).contains("[Pasted #1 ~6 lines]");
+            // Chip styling adds ANSI sequences around the token beyond the shared editor background.
+            int pasteAnsiExtra = pasted.length() - Strip.strip(pasted).length();
+            int plainAnsiExtra = without.length() - Strip.strip(without).length();
+            assertThat(pasteAnsiExtra).isGreaterThan(plainAnsiExtra);
+        } finally {
+            renderer.setColorProfile(ColorProfile.Ascii);
+            renderer.setHasDarkBackground(false);
+        }
+    }
+
     private Textarea editor(int columns) {
         Textarea editor = new Textarea();
         editor.setWidth(columns);
