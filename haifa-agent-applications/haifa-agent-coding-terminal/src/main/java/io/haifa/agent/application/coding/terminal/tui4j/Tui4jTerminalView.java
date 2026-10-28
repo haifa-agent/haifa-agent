@@ -22,12 +22,17 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /** Composes the reviewed Prototype's single-column regions using tui4j components. */
 final class Tui4jTerminalView {
     private static final int MIN_COLUMNS = 60;
     private static final int MIN_ROWS = 16;
+    /** Visible paste-summary tokens inserted by {@code Tui4jCodingTerminalModel#pasteContent}. */
+    private static final Pattern PASTE_PLACEHOLDER = Pattern.compile("\\[Pasted #\\d+ ~\\d+ lines\\]");
+
     private static final Set<String> SUCCESS_STATUSES = Set.of(
             "ACCEPTED",
             "APPLIED",
@@ -507,13 +512,31 @@ final class Tui4jTerminalView {
         if (state.selector().isPresent()) {
             lines.addAll(selector(state.selector().get(), compact ? 1 : 4));
         } else {
-            lines.add(theme.editor(editor.view(), editorColumns, 3));
+            lines.add(theme.editor(stylePastePlaceholders(editor.view()), editorColumns, 3));
             if (!compact) {
                 lines.add(promptMetaStrip(state, secureInput, isUpdate, secureInputHint, editorColumns));
             }
         }
         lines.add(renderBottomStatusLine(state, newOutputPending, activityElapsed, mouseReporting));
         return lines;
+    }
+
+    /**
+     * Highlight OpenCode-style paste summary chips inside the textarea view. The buffer keeps the
+     * plain token text for editing/atomic delete; only the rendered frame gets the warning chip.
+     */
+    private String stylePastePlaceholders(String editorView) {
+        Matcher matcher = PASTE_PLACEHOLDER.matcher(editorView);
+        if (!matcher.find()) {
+            return editorView;
+        }
+        StringBuilder styled = new StringBuilder(editorView.length() + 32);
+        matcher.reset();
+        while (matcher.find()) {
+            matcher.appendReplacement(styled, Matcher.quoteReplacement(theme.pasteChip(matcher.group())));
+        }
+        matcher.appendTail(styled);
+        return styled.toString();
     }
 
     private List<String> waitingRegion(

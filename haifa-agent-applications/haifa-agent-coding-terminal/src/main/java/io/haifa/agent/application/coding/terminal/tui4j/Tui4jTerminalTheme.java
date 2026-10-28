@@ -226,6 +226,18 @@ final class Tui4jTerminalTheme {
                 .render(value);
     }
 
+    /**
+     * OpenCode-style paste placeholder chip: warning/amber background with contrasting foreground
+     * so {@code [Pasted #N ~M lines]} reads as a single unit in the editor.
+     */
+    String pasteChip(String value) {
+        return Style.newStyle()
+                .foreground(palette.editorBackground())
+                .background(palette.pendingForeground())
+                .bold(true)
+                .render(value);
+    }
+
     String selected(String value) {
         return Style.newStyle()
                 .foreground(palette.selectionForeground())

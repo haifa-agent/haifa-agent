@@ -8,6 +8,7 @@ import com.williamcallahan.tui4j.compat.bubbletea.Message;
 import com.williamcallahan.tui4j.compat.bubbletea.Model;
 import com.williamcallahan.tui4j.compat.bubbletea.PasteMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.QuitMessage;
+import com.williamcallahan.tui4j.compat.bubbletea.ReadClipboardMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.UpdateResult;
 import com.williamcallahan.tui4j.compat.bubbletea.WindowSizeMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.input.MouseAction;
@@ -39,7 +40,9 @@ import java.util.function.LongSupplier;
 final class Tui4jCodingTerminalModel implements Model {
     private static final Duration EVENT_POLL_INTERVAL = Duration.ofMillis(50);
     private static final Duration UNBRACKETED_PASTE_GUARD_INTERVAL = Duration.ofMillis(100);
-    private static final int PASTE_SUMMARY_MIN_LINES = 2;
+    /** Matches OpenCode defaults: summarize pastes of 3+ lines or more than 150 characters. */
+    private static final int PASTE_SUMMARY_MIN_LINES = 3;
+
     private static final int PASTE_SUMMARY_MAX_CHARACTERS = 150;
     static final int WINDOW_SIZE_POLL_TICKS = 10;
     private static final int MAX_SECRET_CHARACTERS = 65_536;
@@ -195,8 +198,14 @@ final class Tui4jCodingTerminalModel implements Model {
             }
             controller.drainEvents();
             syncComponents();
+        } else if (message instanceof ClipboardPasteResultMessage pasted) {
+            command = applyClipboardPaste(pasted.content());
+        } else if (message instanceof ReadClipboardMessage) {
+            // tui4j Textarea maps ctrl+v to Command.paste() → ReadClipboardMessage, but the
+            // library never materializes clipboard text. Read via TerminalClipboard instead.
+            command = pasteFromClipboard();
         } else if (controller.secureInputRequested() && message instanceof KeyPressMessage key) {
-            command = secretKey(key);
+            command = isPasteShortcut(key) ? pasteFromClipboard() : secretKey(key);
         } else if (controller.secureInputRequested() && message instanceof PasteMessage paste) {
             appendSecret(paste.content());
             syncComponents();
@@ -586,6 +595,10 @@ final class Tui4jCodingTerminalModel implements Model {
         if (shortcuts.matchesRestoreQueuedMessage(key)) {
             accept(TerminalInput.Kind.RESTORE);
             return Command.none();
+        }
+        if (isPasteShortcut(key)) {
+            // Intercept before Textarea's ctrl+v binding returns a dead ReadClipboardMessage.
+            return pasteFromClipboard();
         }
         if (key.type() == KeyType.keyESC) {
             accept(TerminalInput.Kind.CANCEL_OR_CLOSE);
@@ -1150,6 +1163,28 @@ final class Tui4jCodingTerminalModel implements Model {
         syncComponents();
     }
 
+    private Command pasteFromClipboard() {
+        return () -> new ClipboardPasteResultMessage(clipboard.read().orElse(""));
+    }
+
+    private Command applyClipboardPaste(String content) {
+        if (content == null || content.isEmpty()) {
+            return Command.none();
+        }
+        if (controller.secureInputRequested()) {
+            appendSecret(content);
+            syncComponents();
+            return Command.none();
+        }
+        resolvePendingEnterAsNewline();
+        pasteContent(content);
+        return Command.none();
+    }
+
+    private static boolean isPasteShortcut(KeyPressMessage key) {
+        return key.type() == KeyType.keySYN;
+    }
+
     private void pasteContent(String content) {
         String normalized = sanitizeEditorInput(content);
         String trimmed = normalized.strip();
@@ -1157,6 +1192,8 @@ final class Tui4jCodingTerminalModel implements Model {
         int lines = (int) trimmed.chars().filter(character -> character == '\n').count() + 1;
         if (!trimmed.isEmpty()
                 && (lines >= PASTE_SUMMARY_MIN_LINES || trimmed.length() > PASTE_SUMMARY_MAX_CHARACTERS)) {
+            // Keep a sequence id so multiple pastes with the same line count stay distinct map keys
+            // (OpenCode uses extmark ids; the visible label still mirrors "[Pasted ~N lines]").
             String token = "[Pasted #" + (++pasteSequence) + " ~" + lines + " lines]";
             pastedContent.put(token, normalized);
             edit(new PasteMessage(token));
@@ -1422,6 +1459,8 @@ final class Tui4jCodingTerminalModel implements Model {
     record SelectionAutoScrollMessage(long sequence) implements Message {}
 
     record ClipboardCopyResultMessage(boolean success, int characters, String text) implements Message {}
+
+    record ClipboardPasteResultMessage(String content) implements Message {}
 
     private record DeferredEnter(long sequence, TerminalInput.Kind kind) {}
 
