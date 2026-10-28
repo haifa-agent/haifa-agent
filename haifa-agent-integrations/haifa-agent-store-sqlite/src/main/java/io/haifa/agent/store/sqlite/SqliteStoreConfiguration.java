@@ -5,9 +5,21 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.Objects;
 
-public record SqliteStoreConfiguration(Path databasePath, int busyTimeoutMillis, int maximumPayloadBytes) {
+public record SqliteStoreConfiguration(
+        Path databasePath, int busyTimeoutMillis, int maximumPayloadBytes, int writerQueueTimeoutMillis) {
     public static final int DEFAULT_BUSY_TIMEOUT_MILLIS = 5_000;
     public static final int DEFAULT_MAXIMUM_PAYLOAD_BYTES = 1_048_576;
+    /**
+     * Default fallback bound for waiting in the in-process writer queue. SQLite's {@code busy_timeout} bounds
+     * cross-process lock contention, so it does not bound this queue: the queue is fair, and a settled position
+     * guarantees progress. The bound only ends the wait of a caller whose holder leaked the writer slot, so it is
+     * deliberately far above any unit of work that a healthy process runs.
+     */
+    public static final int DEFAULT_WRITER_QUEUE_TIMEOUT_MILLIS = 60_000;
+
+    public SqliteStoreConfiguration(Path databasePath, int busyTimeoutMillis, int maximumPayloadBytes) {
+        this(databasePath, busyTimeoutMillis, maximumPayloadBytes, DEFAULT_WRITER_QUEUE_TIMEOUT_MILLIS);
+    }
 
     public SqliteStoreConfiguration {
         databasePath = Objects.requireNonNull(databasePath, "databasePath must not be null");
@@ -33,10 +45,17 @@ public record SqliteStoreConfiguration(Path databasePath, int busyTimeoutMillis,
         if (maximumPayloadBytes < 1) {
             throw invalid("maximumPayloadBytes must be positive");
         }
+        if (writerQueueTimeoutMillis < 1) {
+            throw invalid("writerQueueTimeoutMillis must be positive");
+        }
     }
 
     public static SqliteStoreConfiguration defaults(Path databasePath) {
-        return new SqliteStoreConfiguration(databasePath, DEFAULT_BUSY_TIMEOUT_MILLIS, DEFAULT_MAXIMUM_PAYLOAD_BYTES);
+        return new SqliteStoreConfiguration(
+                databasePath,
+                DEFAULT_BUSY_TIMEOUT_MILLIS,
+                DEFAULT_MAXIMUM_PAYLOAD_BYTES,
+                DEFAULT_WRITER_QUEUE_TIMEOUT_MILLIS);
     }
 
     private static SqliteStoreException invalid(String message) {
