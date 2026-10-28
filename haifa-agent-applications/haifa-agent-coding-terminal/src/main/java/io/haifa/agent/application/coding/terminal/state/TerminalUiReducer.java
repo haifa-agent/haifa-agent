@@ -57,7 +57,7 @@ public final class TerminalUiReducer {
                     modelFooterSummary(view),
                     view.summary().activeRunStatus().map(Enum::name).orElse("IDLE"),
                     "");
-            return copy(
+            TerminalUiState loadedState = copy(
                     state,
                     List.copyOf(loaded.resources()),
                     transcript,
@@ -75,36 +75,39 @@ public final class TerminalUiReducer {
                     seen,
                     Optional.empty(),
                     state.exitRequested());
+            // Waiting is session-local; never carry a draft into another session.
+            return sameSession ? loadedState : loadedState.withWaiting(Optional.empty());
         }
         if (action instanceof TerminalUiAction.SessionCleared cleared) {
             return copy(
-                    state,
-                    List.of("Loaded resources: none"),
-                    List.of(),
-                    List.of(),
-                    cleared.status(),
-                    "",
-                    0,
-                    Optional.empty(),
-                    new TerminalFooter(
-                            state.footer().project(),
-                            state.footer().gitBranch(),
-                            state.footer().worktree(),
-                            state.footer().worktreeBranch(),
+                            state,
+                            List.of("Loaded resources: none"),
+                            List.of(),
+                            List.of(),
+                            cleared.status(),
                             "",
-                            "context: —",
-                            "",
-                            "",
-                            "IDLE",
-                            ""),
-                    state.columns(),
-                    state.rows(),
-                    Optional.empty(),
-                    Optional.empty(),
-                    Optional.empty(),
-                    java.util.Set.of(),
-                    Optional.empty(),
-                    state.exitRequested());
+                            0,
+                            Optional.empty(),
+                            new TerminalFooter(
+                                    state.footer().project(),
+                                    state.footer().gitBranch(),
+                                    state.footer().worktree(),
+                                    state.footer().worktreeBranch(),
+                                    "",
+                                    "context: —",
+                                    "",
+                                    "",
+                                    "IDLE",
+                                    ""),
+                            state.columns(),
+                            state.rows(),
+                            Optional.empty(),
+                            Optional.empty(),
+                            Optional.empty(),
+                            java.util.Set.of(),
+                            Optional.empty(),
+                            state.exitRequested())
+                    .withWaiting(Optional.empty());
         }
         if (action instanceof TerminalUiAction.HistoryLoaded loaded) {
             if (state.session()
@@ -352,14 +355,16 @@ public final class TerminalUiReducer {
             var items = new ArrayList<>(state.transcript());
             items.add(new TranscriptItem(
                     committed.id(), TranscriptItem.Kind.USER, "You", committed.text(), "SENT", true));
+            // Preserve the editor: callers clear it explicitly when the committed text came from
+            // the buffer. Auto-submitting a separate Waiting draft must not wipe an unrelated draft.
             return copy(
                     state,
                     state.loadedResources(),
                     items,
                     state.pending(),
                     state.status(),
-                    "",
-                    0,
+                    state.editorBuffer(),
+                    state.editorCursor(),
                     state.selector(),
                     state.footer(),
                     state.columns(),
@@ -523,7 +528,10 @@ public final class TerminalUiReducer {
                     state.activity(),
                     state.exitRequested(),
                     !state.sidebarVisible(),
-                    true);
+                    true,
+                    state.themeName(),
+                    state.cancelArmed(),
+                    state.waiting());
         }
         if (action instanceof TerminalUiAction.ThemeChanged theme) {
             return state.withThemeName(theme.themeName());
@@ -556,7 +564,8 @@ public final class TerminalUiReducer {
                     state.sidebarVisible(),
                     state.sidebarExplicitlyToggled(),
                     state.themeName(),
-                    armed.armed());
+                    armed.armed(),
+                    state.waiting());
         }
         throw new IllegalArgumentException("Unsupported Terminal UI action");
     }
@@ -659,9 +668,7 @@ public final class TerminalUiReducer {
             boolean steerAccepted = pending.stream().anyMatch(value -> value.kind() == PendingMessage.Kind.STEER);
             return steerAccepted || runSettled ? Optional.empty() : waiting;
         }
-        if (runSettled && message.phase() == WaitingMessage.Phase.EDITING) {
-            return Optional.of(message.discardEdit());
-        }
+        // Keep EDITING until the controller captures editorBuffer on auto-submit.
         return waiting;
     }
 

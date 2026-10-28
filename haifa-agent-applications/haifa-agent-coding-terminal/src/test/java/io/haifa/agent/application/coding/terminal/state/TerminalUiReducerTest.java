@@ -1466,6 +1466,20 @@ class TerminalUiReducerTest {
     }
 
     @Test
+    void sidebarToggledPreservesWaitingDraft() {
+        TerminalUiState withWaiting = TerminalUiState.initial(120, 40)
+                .withWaiting(Optional.of(new WaitingMessage("w1", "keep me", WaitingMessage.Phase.WAITING)));
+
+        TerminalUiState toggled = reducer.reduce(withWaiting, new TerminalUiAction.SidebarToggled());
+
+        assertThat(toggled.sidebarVisible()).isFalse();
+        assertThat(toggled.waiting()).hasValueSatisfying(waiting -> {
+            assertThat(waiting.id()).isEqualTo("w1");
+            assertThat(waiting.text()).isEqualTo("keep me");
+        });
+    }
+
+    @Test
     void resizingNarrowStartupToWideExpandsSidebarAutomaticallyIfNotExplicitlyToggled() {
         TerminalUiState narrow = TerminalUiState.initial(80, 24);
         assertThat(narrow.sidebarVisible()).isFalse();

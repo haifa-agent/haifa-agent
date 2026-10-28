@@ -30,8 +30,11 @@ import java.util.List;
  *   ./mvnw -pl :haifa-agent-coding-terminal -DskipTests exec:java \
  *     -Dexec.classpathScope=test \
  *     -Dexec.mainClass=io.haifa.agent.application.coding.terminal.tui4j.WaitingPreviewLauncher \
- *     -Dexec.args=/tmp/waiting-preview.txt
+ *     -Dexec.args=target/waiting-preview.txt
  * </pre>
+ *
+ * <p>Output stays under {@code target/} (or an explicit path under {@code target/} /
+ * {@code @TempDir}) so acceptance dumps do not land in the working directory.
  */
 public final class WaitingPreviewLauncher {
     private WaitingPreviewLauncher() {}
@@ -79,7 +82,8 @@ public final class WaitingPreviewLauncher {
 
         String rendered = Strip.strip(
                 view.render(state, transcript, editor, true, false, Duration.ofSeconds(12), 0, false, false));
-        Path output = Path.of(args.length > 0 ? args[0] : "waiting-preview.txt");
+        Path output = resolvePreviewOutput(args);
+        Files.createDirectories(output.getParent());
         Files.writeString(output, rendered + System.lineSeparator(), StandardCharsets.UTF_8);
         System.out.println(rendered);
         System.out.println();
@@ -90,6 +94,16 @@ public final class WaitingPreviewLauncher {
                 + client.cancelledSessions.size()
                 + " waiting="
                 + controller.state().waiting().isPresent());
+    }
+
+    private static Path resolvePreviewOutput(String[] args) {
+        Path output = Path.of(args.length > 0 ? args[0] : "target/waiting-preview.txt");
+        Path normalized = output.toAbsolutePath().normalize();
+        Path targetRoot = Path.of("target").toAbsolutePath().normalize();
+        if (!normalized.startsWith(targetRoot)) {
+            throw new IllegalArgumentException("preview output must stay under target/: " + output);
+        }
+        return output;
     }
 
     private static TerminalUiState withDemoTranscript(TerminalUiState state) {
