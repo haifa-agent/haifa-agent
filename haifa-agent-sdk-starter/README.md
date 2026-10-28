@@ -204,6 +204,25 @@ execution.applyTo(builder); // 注册 execution_run、managed resource 与宿主
 - 本入口不安装 execution 专用 schema 校验器：自持 Tool platform 的产品应把 `registration()`
   注册到自己的 platform，并按 Personal Assistant 的方式用 `ExecutionToolSchemaValidator` 包裹校验器。
 
+可信宿主需要给 CLI 指定配置目录、数据目录或 PATH 时，使用四参数重载：
+
+```java
+var execution = HostExecutionPlatforms.hostGuarded(
+        spec, caller.tenant(), caller.principal(),
+        Map.of("MY_CLI_CONFIG_DIR", cliConfigRoot.toString(),
+               "MY_CLI_DATA_DIR", cliDataRoot.toString()));
+```
+
+覆盖 Map 必须来自可信产品配置，只允许非敏感部署事实，不接受模型参数，也不是 Token/Secret 注入入口。
+装配时冻结快照，后续修改原 Map 不影响子进程，不修改 JVM 属性或全局环境。三参数入口和空 Map 保持原行为，
+不会额外继承产品环境变量；非空覆盖的有效环境名称和值摘要进入既有 Sandbox profile、configuration 和 Tool binding
+身份，环境改变后旧冻结绑定不能复用。环境值不会出现在平台诊断或审批文案中。
+
+名称须符合 `[A-Za-z_][A-Za-z0-9_]{0,127}`；覆盖及合并后环境最多 256 项，值非空白、无 NUL 且不超过
+32,768 字符。Windows 名称统一为大写并拒绝大小写别名冲突。`PATH` 可以由可信宿主覆盖并绑定身份；
+HOME、用户/系统/临时目录、XDG、Shell、解释器环境、认证 socket 和固定非交互控制变量禁止覆盖，疑似凭据或
+代理变量同样拒绝。此 Map 只选择进程环境，不形成 OS 用户隔离，网络仍为普通宿主网络。
+
 验证：`./mvnw -pl :haifa-agent-sdk-starter -am test`。
 
 ### Linux 容器执行（Explicit Docker AIO execution）

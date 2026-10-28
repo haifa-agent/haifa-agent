@@ -51,3 +51,8 @@ Host Guarded 还显式继承可信宿主的 `SSH_AUTH_SOCK`，使系统 `git`/`g
 模型不能提供或覆盖环境变量。Resolver 固定注入 `GIT_TERMINAL_PROMPT=0`、`GCM_INTERACTIVE=Never`、
 `GH_PROMPT_DISABLED=1`、`GIT_PAGER=cat` 和 `GH_PAGER=cat`，避免无人值守 Run 进入登录或 pager 交互。
 Token 类环境仍被过滤，系统 CLI 自行访问原生配置和安全存储，Java 不读取或复制凭据。
+
+`withTrustedOverrides(resolved, overrides, operatingSystem)` 为已解析环境冻结非敏感宿主部署覆盖，复用同一名称、
+值和数量校验。除可信 PATH 外，用户 HOME、系统/临时目录、XDG、解释器与非交互控制边界不可覆盖；Windows
+名称统一大写并拒绝大小写别名。返回值的 `toString()` 仅显示数量和诊断码，环境值不进入普通诊断。
+调用方仍须把有效环境摘要纳入自己的冻结配置身份；SDK 的 `HostExecutionPlatforms` 四参数入口已完成此绑定。
