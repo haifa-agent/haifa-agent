@@ -1123,9 +1123,6 @@ public final class DefaultAgentRuntime implements AgentRuntime {
 
     private void appendInteractionResponseMessage(
             AgentRun run, InteractionResponse response, MessageVisibility visibility) {
-        List<ContentPart> contents = response.inputs().isEmpty()
-                ? List.of(new TextPart("Interaction response: " + response.type(), "plain"))
-                : response.inputs();
         state.appendSessionMessage(new SessionMessageDraft(
                 new AgentMessageId(ids.nextValue()),
                 run.sessionId(),
@@ -1134,12 +1131,28 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                 MessageRole.USER,
                 MessageStatus.COMPLETED,
                 visibility,
-                contents,
+                interactionResponseContents(response),
                 Map.of(
                         "interactionRequestId", response.requestId().value(),
                         "interactionResponseId", response.responseId().value(),
                         "interactionResponseType", response.type().name()),
                 time.now()));
+    }
+
+    /** The transcript shows what the user answered, never the internal clarification answer payload. */
+    private List<ContentPart> interactionResponseContents(InteractionResponse response) {
+        if (response.inputs().isEmpty()) {
+            return List.of(new TextPart("Interaction response: " + response.type(), "plain"));
+        }
+        return interactions
+                .find(response.requestId())
+                .filter(request -> request.clarificationPresentation().isPresent())
+                .filter(request -> response.type() == InteractionResponseType.CLARIFY)
+                .map(request -> List.<ContentPart>of(new TextPart(
+                        io.haifa.agent.runtime.core.interaction.ClarificationAnswers.parse(response.inputs(), request)
+                                .userSummary(request),
+                        "plain")))
+                .orElse(response.inputs());
     }
 
     private AgentRun requireRun(AgentRunId runId) {
