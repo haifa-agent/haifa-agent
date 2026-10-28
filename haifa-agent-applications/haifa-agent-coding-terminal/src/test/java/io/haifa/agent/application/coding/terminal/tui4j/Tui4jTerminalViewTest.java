@@ -1760,7 +1760,7 @@ class Tui4jTerminalViewTest {
                         "hold until run finishes",
                         "checkpoint recovery",
                         "Send Now enter",
-                        "Edit e",
+                        "Edit alt+e",
                         "Cancel esc",
                         "WORKING (12s)")
                 .doesNotContain("enter steer");

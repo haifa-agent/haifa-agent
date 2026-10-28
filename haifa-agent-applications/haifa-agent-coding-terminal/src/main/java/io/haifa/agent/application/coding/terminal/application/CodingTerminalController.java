@@ -348,33 +348,18 @@ public final class CodingTerminalController implements AutoCloseable {
         Objects.requireNonNull(input, "input must not be null");
         Objects.requireNonNull(routingText, "routingText must not be null");
         drainEvents();
-        if ((input.kind() != TerminalInput.Kind.SUBMIT
-                        && input.kind() != TerminalInput.Kind.FOLLOW_UP
-                        && input.kind() != TerminalInput.Kind.SEND_WAITING_NOW)
+        if ((input.kind() != TerminalInput.Kind.SUBMIT && input.kind() != TerminalInput.Kind.FOLLOW_UP)
                 || renamingSession
                 || state.selector().isPresent()
                 || routingText.startsWith("!")
-                || (input.kind() != TerminalInput.Kind.SEND_WAITING_NOW
-                        && (input.text().isBlank() || commands.route(routingText) != TerminalCommand.MESSAGE))) {
+                || input.text().isBlank()
+                || commands.route(routingText) != TerminalCommand.MESSAGE) {
             return Optional.empty();
         }
-        if (input.kind() == TerminalInput.Kind.SEND_WAITING_NOW) {
-            return prepareSendWaitingNow();
-        }
         if (input.kind() == TerminalInput.Kind.SUBMIT
-                && state.currentRunId().isPresent()
                 && !awaitingNewSessionMessage
-                && state.waiting()
-                        .filter(value -> value.phase() == WaitingMessage.Phase.EDITING)
-                        .isEmpty()) {
-            // Active Enter queues a local Waiting draft; accept() performs the state change.
-            return Optional.empty();
-        }
-        if (input.kind() == TerminalInput.Kind.SUBMIT
-                && state.waiting()
-                        .filter(value -> value.phase() == WaitingMessage.Phase.EDITING)
-                        .isPresent()) {
-            // Saving an edit stays local.
+                && (hasQueuedWaiting() || isEditingWaiting())) {
+            // Queueing, replacing and saving a Waiting draft are local state changes; accept() performs them.
             return Optional.empty();
         }
         return Optional.of(beginMessageSubmission(input.text(), input.kind() == TerminalInput.Kind.FOLLOW_UP));
@@ -1073,16 +1058,8 @@ public final class CodingTerminalController implements AutoCloseable {
             cycleModel(-1);
             return;
         }
-        if (input.kind() == TerminalInput.Kind.SEND_WAITING_NOW) {
-            sendWaitingNow();
-            return;
-        }
         if (input.kind() == TerminalInput.Kind.EDIT_WAITING) {
             beginEditWaiting();
-            return;
-        }
-        if (input.kind() == TerminalInput.Kind.CANCEL_WAITING) {
-            cancelWaiting();
             return;
         }
         if (input.kind() == TerminalInput.Kind.CANCEL_OR_CLOSE) {
@@ -1225,7 +1202,8 @@ public final class CodingTerminalController implements AutoCloseable {
             command(command, routingText);
             return;
         }
-        if (!followUp && state.currentRunId().isPresent() && !awaitingNewSessionMessage) {
+        // A queued draft owns Enter in every Run state: replacing it must not start an extra Turn.
+        if (!followUp && !awaitingNewSessionMessage && (state.currentRunId().isPresent() || hasQueuedWaiting())) {
             queueWaiting(text);
             return;
         }
@@ -1255,6 +1233,18 @@ public final class CodingTerminalController implements AutoCloseable {
         apply(new TerminalUiAction.WaitingChanged(
                 Optional.of(new WaitingMessage(id, normalized, WaitingMessage.Phase.WAITING))));
         apply(new TerminalUiAction.EditorChanged("", 0));
+    }
+
+    private boolean hasQueuedWaiting() {
+        return state.waiting()
+                .filter(value -> value.phase() == WaitingMessage.Phase.WAITING)
+                .isPresent();
+    }
+
+    private boolean isEditingWaiting() {
+        return state.waiting()
+                .filter(value -> value.phase() == WaitingMessage.Phase.EDITING)
+                .isPresent();
     }
 
     private void sendWaitingNow() {

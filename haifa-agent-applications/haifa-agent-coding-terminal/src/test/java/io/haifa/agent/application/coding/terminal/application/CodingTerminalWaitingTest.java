@@ -278,6 +278,85 @@ class CodingTerminalWaitingTest {
         assertThat(client.steeredMessages).containsExactly("blocked send-now");
     }
 
+    @Test
+    void idleEnterWithTextReplacesWaitingDraftInsteadOfStartingAnotherTurn() {
+        FakeClient client = new FakeClient(activeView());
+        var controller = new CodingTerminalController(
+                PROJECT_ID,
+                client,
+                new TerminalEventPump(32),
+                new TerminalUiReducer(),
+                TerminalUiState.initial(120, 40)
+                        .withWaiting(
+                                Optional.of(new WaitingMessage("w1", "stranded draft", WaitingMessage.Phase.WAITING))),
+                Runnable::run);
+        String replacement = "replacement draft";
+        controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, replacement, replacement.length()));
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, replacement));
+
+        assertThat(client.submitAttempts).isZero();
+        assertThat(client.submittedMessages).isEmpty();
+        assertThat(controller.state().waiting()).hasValueSatisfying(waiting -> {
+            assertThat(waiting.phase()).isEqualTo(WaitingMessage.Phase.WAITING);
+            assertThat(waiting.text()).isEqualTo(replacement);
+        });
+        assertThat(controller.state().editorBuffer()).isEmpty();
+    }
+
+    @Test
+    void autoSubmitAfterRunStaysResponsiveWhileClientIsBlocked() throws Exception {
+        var started = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var effects = new java.util.concurrent.ConcurrentLinkedQueue<Runnable>();
+        FakeClient client = new FakeClient(activeView()) {
+            @Override
+            public void submit(AgentSessionId sessionId, String message, String idempotencyKey) {
+                started.countDown();
+                try {
+                    release.await();
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(interrupted);
+                }
+                super.submit(sessionId, message, idempotencyKey);
+            }
+        };
+        var pump = new TerminalEventPump(32);
+        var controller = new CodingTerminalController(
+                PROJECT_ID, client, pump, new TerminalUiReducer(), TerminalUiState.initial(120, 40), effects::add);
+        controller.open(SESSION_ID);
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "flush after blocked run"));
+
+        pump.offer(new TerminalUiAction.RunEventReceived(
+                event(1, new RunEventPayloads.RunLifecycle("COMPLETED", 2, "NONE"))));
+        controller.drainEvents();
+        assertThat(effects).isNotEmpty();
+        assertThat(controller.state().status()).isEqualTo("Submitting");
+
+        var worker = new Thread(() -> {
+            Runnable next;
+            while ((next = effects.poll()) != null) {
+                next.run();
+            }
+        });
+        worker.start();
+        try {
+            assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+            pump.offer(new TerminalUiAction.TerminalResized(90, 25));
+            pump.offer(new TerminalUiAction.RunEventReceived(
+                    event(2, new RunEventPayloads.AssistantTextDelta("generation-1", "still rendering"))));
+            controller.drainEvents();
+            assertThat(controller.state().columns()).isEqualTo(90);
+            assertThat(controller.state().seenEventIds()).contains("event-2");
+        } finally {
+            release.countDown();
+            worker.join(5_000);
+        }
+        controller.drainEvents();
+        assertThat(client.submittedMessages).containsExactly("flush after blocked run");
+    }
+
     private static CodingSessionView idleOtherSession() {
         return new CodingSessionView(
                 new CodingSessionSummary(

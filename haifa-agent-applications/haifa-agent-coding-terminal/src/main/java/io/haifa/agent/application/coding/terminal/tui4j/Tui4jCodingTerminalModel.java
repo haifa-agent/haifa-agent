@@ -701,15 +701,12 @@ final class Tui4jCodingTerminalModel implements Model {
             replaceEditor(TerminalTextCursor.delete(buffer, cursor), cursor);
             return Command.none();
         }
-        if (key.type() == KeyType.KeyRunes
+        if (shortcuts.matchesEditWaiting(key)
                 && state.editorBuffer().isBlank()
                 && state.waiting()
                         .filter(value -> value.phase()
                                 == io.haifa.agent.application.coding.terminal.state.WaitingMessage.Phase.WAITING)
-                        .isPresent()
-                && key.runes() != null
-                && key.runes().length == 1
-                && (key.runes()[0] == 'e' || key.runes()[0] == 'E')) {
+                        .isPresent()) {
             accept(TerminalInput.Kind.EDIT_WAITING);
             return Command.none();
         }
