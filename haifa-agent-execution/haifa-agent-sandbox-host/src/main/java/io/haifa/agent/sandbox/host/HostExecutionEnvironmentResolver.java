@@ -50,6 +50,54 @@ public final class HostExecutionEnvironmentResolver {
 
     private HostExecutionEnvironmentResolver() {}
 
+    /**
+     * Freezes explicit, trusted non-sensitive deployment overrides over an already resolved host
+     * environment. This is not a credential channel or a model input. Host user, system, temporary
+     * directory and interpreter boundaries remain owned by {@link #resolveHostUser}.
+     *
+     * <p>PATH may be overridden by the trusted host. Windows names are canonicalized to uppercase;
+     * ambiguous case aliases are rejected. Rejections never include names or values.
+     */
+    public static ResolvedHostEnvironment withTrustedOverrides(
+            ResolvedHostEnvironment baseline, Map<String, String> overrides, String operatingSystem) {
+        Objects.requireNonNull(baseline, "baseline must not be null");
+        Objects.requireNonNull(overrides, "trusted environment overrides must not be null");
+        boolean windows = Os.parse(operatingSystem).windows();
+        validateBudget(overrides);
+        Map<String, String> frozen = new LinkedHashMap<>();
+        for (var entry : overrides.entrySet()) {
+            String name = entry.getKey();
+            String value = entry.getValue();
+            if (!allowed(name) || !validValue(value) || protectedOverride(name)) {
+                throw new IllegalArgumentException("HOST_USER_ENVIRONMENT_INVALID: trusted override is invalid");
+            }
+            String canonical = windows ? name.toUpperCase(Locale.ROOT) : name;
+            if (frozen.putIfAbsent(canonical, value) != null) {
+                throw new IllegalArgumentException("HOST_USER_ENVIRONMENT_INVALID: duplicate trusted override");
+            }
+        }
+        Map<String, String> merged = new LinkedHashMap<>(baseline.environment());
+        frozen.forEach((name, value) -> putCanonical(merged, name, value, windows));
+        validateBudget(merged);
+        return new ResolvedHostEnvironment(merged, merged.keySet(), baseline.diagnosticCode());
+    }
+
+    private static boolean protectedOverride(String name) {
+        String upper = name.toUpperCase(Locale.ROOT);
+        return !upper.equals("PATH")
+                && (WINDOWS_BASELINE.contains(upper)
+                        || POSIX_BASELINE.contains(upper)
+                        || LINUX_XDG.contains(upper)
+                        || Set.of(
+                                        "SSH_AUTH_SOCK",
+                                        "GIT_TERMINAL_PROMPT",
+                                        "GCM_INTERACTIVE",
+                                        "GH_PROMPT_DISABLED",
+                                        "GIT_PAGER",
+                                        "GH_PAGER")
+                                .contains(upper));
+    }
+
     public static ResolvedHostEnvironment resolveHostUser(
             Map<String, String> hostEnvironment,
             String operatingSystem,

@@ -31,6 +31,8 @@ import io.haifa.agent.tool.api.ToolResourceRequirements;
 import io.haifa.agent.tool.api.ToolRisk;
 import io.haifa.agent.tool.api.ToolSchema;
 import io.haifa.agent.tool.api.ToolSideEffect;
+import io.haifa.agent.tool.core.DefaultToolCatalog;
+import io.haifa.agent.tool.core.DefaultToolInvoker;
 import io.haifa.agent.tool.core.JsonSchema202012Validator;
 import io.haifa.agent.tool.core.ToolCatalogBuilder;
 import java.io.IOException;
@@ -39,6 +41,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -105,37 +108,120 @@ class HostExecutionPlatformsTest {
 
         try (var platform = HostExecutionPlatforms.hostGuarded(
                 spec(workspace, Duration.ofSeconds(120), MAXIMUM_TIMEOUT), TENANT, PRINCIPAL)) {
-            var registration = platform.registration();
-            ToolDefinition definition = registration.definition();
-            var catalog = new ToolCatalogBuilder();
-            catalog.register(
-                    registration.alias(), definition, registration.providerBindingReference(), registration.provider());
-            FrozenToolBinding binding =
-                    catalog.freeze().snapshot().bindings().iterator().next();
-
-            var result = registration
+            var result = platform.registration()
                     .provider()
-                    .invoke(new ToolInvocationRequest(
-                            binding,
-                            new ToolCallId("host-execution-call-1"),
-                            new AgentRunId("host-execution-run-1"),
-                            TENANT,
-                            PRINCIPAL,
-                            new ToolArguments(
-                                    definition.inputSchema().id(),
-                                    definition.inputSchema().version(),
-                                    Map.of(
-                                            "mode", "COMMAND",
-                                            "content", "echo haifa host execution",
-                                            "purpose", "verify the assembled host execution path")),
-                            Instant.now().plus(Duration.ofMinutes(2)),
-                            Optional.of("host-execution-invocation-1"),
-                            () -> false,
-                            Map.of()));
-
+                    .invoke(invocation(
+                            catalog(platform).snapshot().bindings().getFirst(), "echo 'haifa host execution'"));
             assertThat(result.successful()).isTrue();
-            assertThat(result.summary()).isNotBlank();
+            assertThat(result.summary()).contains("haifa host execution");
         }
+    }
+
+    /** Child processes are required to prove the frozen map reaches the real host boundary. */
+    @Test
+    void freezesAndIsolatesTrustedEnvironmentsAndRejectsOldBindings() throws Exception {
+        Path workspace = Files.createDirectories(temporary.resolve("workspace"));
+        var declaration = spec(workspace, Duration.ofSeconds(120), MAXIMUM_TIMEOUT);
+        var overrides = new LinkedHashMap<>(Map.of("HAIFA_TEST_CLI_CONFIG_DIR", "config-a"));
+        try (var a = HostExecutionPlatforms.hostGuarded(declaration, TENANT, PRINCIPAL, overrides);
+                var b = HostExecutionPlatforms.hostGuarded(
+                        declaration, TENANT, PRINCIPAL, Map.of("HAIFA_TEST_CLI_CONFIG_DIR", "config-b"));
+                var same = HostExecutionPlatforms.hostGuarded(
+                        declaration, TENANT, PRINCIPAL, Map.of("HAIFA_TEST_CLI_CONFIG_DIR", "config-a"))) {
+            overrides.put("HAIFA_TEST_CLI_CONFIG_DIR", "caller-mutated");
+            var catalogA = catalog(a);
+            var catalogB = catalog(b);
+            var bindingA = catalogA.snapshot().bindings().getFirst();
+            var bindingB = catalogB.snapshot().bindings().getFirst();
+            assertThat(bindingA).isEqualTo(catalog(same).snapshot().bindings().getFirst());
+            assertThat(bindingA.providerBindingReference()).isNotEqualTo(bindingB.providerBindingReference());
+            assertThat(((ExecutionToolProvider) a.registration().provider()).configurationIdentity())
+                    .isNotEqualTo(((ExecutionToolProvider) b.registration().provider()).configurationIdentity());
+            var invokerB = new DefaultToolInvoker(catalogB);
+            assertThatThrownBy(() -> invokerB.invoke(invocation(bindingA, "echo must-not-run")))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("frozen catalog");
+            String command = System.getProperty("os.name").toLowerCase().contains("win")
+                    ? "Write-Output $env:HAIFA_TEST_CLI_CONFIG_DIR"
+                    : "printf '%s' \"$HAIFA_TEST_CLI_CONFIG_DIR\"";
+            var resultA = new DefaultToolInvoker(catalogA).invoke(invocation(bindingA, command));
+            var resultB = invokerB.invoke(invocation(bindingB, command));
+            assertThat(resultA.successful()).isTrue();
+            assertThat(resultA.summary()).contains("config-a").doesNotContain("config-b", "caller-mutated");
+            assertThat(resultB.successful()).isTrue();
+            assertThat(resultB.summary()).contains("config-b").doesNotContain("config-a");
+            assertThat(a.securitySummary()
+                            + a.registration().definition()
+                            + a.registration().providerBindingReference())
+                    .doesNotContain("config-a");
+            assertThat(a.approvalPromptFormatter()
+                            .format(bindingA, call(Map.of("mode", "COMMAND", "content", "echo ok")), false)
+                            .prompt())
+                    .doesNotContain("config-a");
+        }
+        try (var old = HostExecutionPlatforms.hostGuarded(declaration, TENANT, PRINCIPAL);
+                var empty = HostExecutionPlatforms.hostGuarded(declaration, TENANT, PRINCIPAL, Map.of())) {
+            assertThat(catalog(old).snapshot()).isEqualTo(catalog(empty).snapshot());
+            String command = System.getProperty("os.name").toLowerCase().contains("win")
+                    ? "if (Test-Path Env:HAIFA_TEST_CLI_CONFIG_DIR) { Write-Output $env:HAIFA_TEST_CLI_CONFIG_DIR } else { Write-Output 'unset' }"
+                    : "printf '%s' \"${HAIFA_TEST_CLI_CONFIG_DIR-unset}\"";
+            var result = new DefaultToolInvoker(catalog(old))
+                    .invoke(invocation(catalog(old).snapshot().bindings().getFirst(), command));
+            assertThat(result.successful()).isTrue();
+            assertThat(result.summary()).contains("unset").doesNotContain("config-a", "config-b");
+        }
+    }
+
+    @Test
+    void bindsTrustedPathAndEnvironmentNamesIntoTheConfiguration() throws Exception {
+        Path workspace = Files.createDirectories(temporary.resolve("workspace"));
+        var declaration = spec(workspace, Duration.ofSeconds(120), MAXIMUM_TIMEOUT);
+        try (var first = HostExecutionPlatforms.hostGuarded(declaration, TENANT, PRINCIPAL, Map.of("PATH", "cli-a"));
+                var changed =
+                        HostExecutionPlatforms.hostGuarded(declaration, TENANT, PRINCIPAL, Map.of("PATH", "cli-b"));
+                var renamed = HostExecutionPlatforms.hostGuarded(
+                        declaration, TENANT, PRINCIPAL, Map.of("CLI_PATH", "cli-a"))) {
+            var binding = catalog(first).snapshot().bindings().getFirst();
+            assertThat(binding)
+                    .isNotEqualTo(catalog(changed).snapshot().bindings().getFirst());
+            assertThat(binding)
+                    .isNotEqualTo(catalog(renamed).snapshot().bindings().getFirst());
+            if (System.getProperty("os.name").toLowerCase().contains("win")) {
+                try (var alias =
+                        HostExecutionPlatforms.hostGuarded(declaration, TENANT, PRINCIPAL, Map.of("Path", "cli-a"))) {
+                    assertThat(binding)
+                            .isEqualTo(catalog(alias).snapshot().bindings().getFirst());
+                }
+            }
+        }
+    }
+
+    private static DefaultToolCatalog catalog(HostExecutionPlatforms.HostExecutionPlatform platform) {
+        var registration = platform.registration();
+        return new ToolCatalogBuilder()
+                .register(
+                        registration.alias(),
+                        registration.definition(),
+                        registration.providerBindingReference(),
+                        registration.provider())
+                .freeze();
+    }
+
+    private static ToolInvocationRequest invocation(FrozenToolBinding binding, String command) {
+        return new ToolInvocationRequest(
+                binding,
+                new ToolCallId("host-execution-call-1"),
+                new AgentRunId("host-execution-run-1"),
+                TENANT,
+                PRINCIPAL,
+                new ToolArguments(
+                        binding.definition().inputSchema().id(),
+                        binding.definition().inputSchema().version(),
+                        Map.of("mode", "COMMAND", "content", command, "purpose", "verify host environment")),
+                Instant.now().plus(Duration.ofMinutes(2)),
+                Optional.of("host-execution-invocation-1"),
+                () -> false,
+                Map.of());
     }
 
     /** The declared maximum is the model-visible bound of the registered execution Tool schema. */
