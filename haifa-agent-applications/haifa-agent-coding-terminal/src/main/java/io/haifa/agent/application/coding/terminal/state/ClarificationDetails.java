@@ -22,8 +22,16 @@ public record ClarificationDetails(String title, List<Question> questions) {
     public static final String ANSWER_FORMAT = "clarification-answer.v1";
 
     public static final String CUSTOM_ENTRY_LABEL = "Type your own answer";
+    /** Option rationales the selector renders under its own rows, so every row explains what Enter will do. */
+    public static final String CUSTOM_ENTRY_DESCRIPTION =
+            "Answer this question with your own text instead of one of the options";
+
     public static final String DONE_LABEL = "Done with this question";
+    public static final String DONE_DESCRIPTION = "Mark the answers and open the next question";
+
     public static final String SUBMIT_LABEL = "Send answer";
+    public static final String SUBMIT_DESCRIPTION = "Send every marked answer and resume the run";
+
     /** U+2713 CHECK MARK: a narrow, non-emoji glyph, so marked rows keep their column alignment. */
     public static final String MARKER_SELECTED = "[\u2713]";
 
@@ -35,6 +43,7 @@ public record ClarificationDetails(String title, List<Question> questions) {
     public static final String MARKER_SINGLE_UNSELECTED = "( )";
 
     public static final String CANCEL_LABEL = "Cancel";
+    public static final String CANCEL_DESCRIPTION = "Leave the questions unanswered and resume the run";
 
     /** The marker for one option row; both brackets keep the three columns the selector list depends on. */
     public static String marker(boolean multiple, boolean selected) {
@@ -66,23 +75,6 @@ public record ClarificationDetails(String title, List<Question> questions) {
             return optionIds.stream().allMatch(id -> options.stream()
                     .anyMatch(option -> option.optionId().equals(id)));
         }
-
-        String content() {
-            StringBuilder text = new StringBuilder(prompt);
-            for (Option option : options) {
-                text.append("\n- ").append(option.label());
-                option.description().ifPresent(value -> text.append(" — ").append(value));
-            }
-            if (allowCustom) {
-                text.append("\n- ").append(CUSTOM_ENTRY_LABEL);
-            }
-            if (multiple) {
-                text.append("\n(choose one or more)");
-            } else {
-                text.append("\n(choose one)");
-            }
-            return text.toString();
-        }
     }
 
     /** One option of a question. */
@@ -113,14 +105,34 @@ public record ClarificationDetails(String title, List<Question> questions) {
                 question.header(), question.question(), question.multiple(), question.allowCustom(), options);
     }
 
-    /** The interaction card projection; the card body lists every question with its options. */
+    /**
+     * The selector title of one question.
+     *
+     * <p>A multi-question clarification is a wizard, so the modal states which step it is on and which question it
+     * asks; the transcript card only carries the overall title.
+     */
+    public String selectorTitle(int index) {
+        if (index < 0 || index >= questions.size()) {
+            throw new IllegalArgumentException("question index is out of range");
+        }
+        return "Clarification · Step " + (index + 1) + " of " + questions.size() + " · "
+                + questions.get(index).header();
+    }
+
+    /**
+     * The interaction card projection: one line per question and no repeated option list.
+     *
+     * <p>The selector is the only surface that lists options together with their rationale, so the transcript card
+     * never duplicates them. The card therefore stays short enough to read without a fold while the answer draft is
+     * open right below it.
+     */
     public ApprovalDetails toApprovalDetails() {
         StringBuilder content = new StringBuilder();
         for (Question question : questions) {
             if (content.length() > 0) {
-                content.append("\n\n");
+                content.append('\n');
             }
-            content.append(question.header()).append(": ").append(question.content());
+            content.append(question.header()).append(": ").append(singleLine(question.prompt()));
         }
         return new ApprovalDetails(
                 title,

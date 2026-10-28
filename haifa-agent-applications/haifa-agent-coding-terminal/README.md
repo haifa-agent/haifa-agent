@@ -491,10 +491,16 @@ authoritative Assistant text comes from the persisted Session messages.
 
 ## Clarification input
 
-`ask_clarification` surfaces in the terminal as a `Clarification · <title>` transcript card whose body lists every
-question with its options. Space only marks an option (multi-choice `[ ]` ↔ `[✓]`, single choice `( )` ↔ `(✓)`, both U+2713)
-and never submits; Enter confirms the current
-question, which submits the marked options and moves on to the next one. "Type your own answer" hands the composer to
-the free-text lane while the card stays pending. The answer is submitted as one part per question
-with format `clarification-answer.v1`, so the Runtime validates it like any other interaction input. "Cancel"
-answers with the `cancel` action, which resumes the run without an answer instead of cancelling it.
+`ask_clarification` surfaces in the terminal as a compact `Clarification · <title>` transcript card with one line per
+question. The option list and its rationale live in the selector, so the card never repeats them and never needs a
+fold. While that selector is open it is the only region that advertises keys: the composer's `[Send Now]`/`[Cancel]`
+strip and the run interrupt hint stay hidden, and one blank row separates the modal from the regions it covers. A
+multi-question clarification is a wizard, so the selector title always states `Step X of Y` with the question header,
+every option shows its own rationale on the line below it, and the focused row right-aligns an `[enter]` marker so an
+unmarked single-choice row cannot read as "press Space first".
+
+Space only marks an option (multi-choice `[ ]` ↔ `[✓]`, single choice `( )` ↔ `(✓)`, both U+2713) and never submits;
+Enter selects the focused option, confirms the current question, and moves on to the next one. "Type your own answer"
+hands the composer to the free-text lane while the card stays pending. The answer is submitted as one part per question
+with format `clarification-answer.v1`, so the Runtime validates it like any other interaction input. "Cancel" answers
+with the `cancel` action, which resumes the run without an answer instead of cancelling it.
