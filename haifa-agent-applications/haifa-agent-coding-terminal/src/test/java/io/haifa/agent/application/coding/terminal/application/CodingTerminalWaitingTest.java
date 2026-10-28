@@ -357,6 +357,48 @@ class CodingTerminalWaitingTest {
         assertThat(client.submittedMessages).containsExactly("flush after blocked run");
     }
 
+    @Test
+    void failedAutoSubmitRestoresTheWaitingDraftAndKeepsTheEditorDraft() {
+        FakeClient client = new FakeClient(activeView());
+        client.submitFailure = new io.haifa.agent.application.project.product.ProjectProductException(
+                "MESSAGE_REJECTED", "Message rejected");
+        var pump = new TerminalEventPump(32);
+        var controller = new CodingTerminalController(
+                PROJECT_ID, client, pump, new TerminalUiReducer(), TerminalUiState.initial(120, 40), Runnable::run);
+        controller.open(SESSION_ID);
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "draft that must survive"));
+        String unrelated = "next unrelated draft";
+        controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, unrelated, unrelated.length()));
+
+        pump.offer(new TerminalUiAction.RunEventReceived(
+                event(1, new RunEventPayloads.RunLifecycle("COMPLETED", 2, "NONE"))));
+        controller.drainEvents();
+
+        assertThat(client.submittedMessages).isEmpty();
+        assertThat(controller.state().waiting()).hasValueSatisfying(waiting -> {
+            assertThat(waiting.phase()).isEqualTo(WaitingMessage.Phase.WAITING);
+            assertThat(waiting.text()).isEqualTo("draft that must survive");
+        });
+        assertThat(controller.state().editorBuffer()).isEqualTo(unrelated);
+        assertThat(controller.state().recoverableError()).contains("MESSAGE_REJECTED");
+    }
+
+    @Test
+    void escapeCancelsWaitingWithoutDeletingAnUnrelatedEditorDraft() {
+        FakeClient client = new FakeClient(activeView());
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "queued draft"));
+        controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, "typed later", "typed later".length()));
+
+        controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
+
+        assertThat(controller.state().waiting()).isEmpty();
+        assertThat(controller.state().editorBuffer()).isEqualTo("typed later");
+        assertThat(controller.state().cancelArmed()).isFalse();
+        assertThat(client.cancelledSessions).isEmpty();
+    }
+
     private static CodingSessionView idleOtherSession() {
         return new CodingSessionView(
                 new CodingSessionSummary(

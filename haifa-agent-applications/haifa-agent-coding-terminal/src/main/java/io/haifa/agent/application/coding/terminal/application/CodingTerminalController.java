@@ -358,7 +358,7 @@ public final class CodingTerminalController implements AutoCloseable {
         }
         if (input.kind() == TerminalInput.Kind.SUBMIT
                 && !awaitingNewSessionMessage
-                && (hasQueuedWaiting() || isEditingWaiting())) {
+                && (state.currentRunId().isPresent() || hasQueuedWaiting() || isEditingWaiting())) {
             // Queueing, replacing and saving a Waiting draft are local state changes; accept() performs them.
             return Optional.empty();
         }
@@ -1296,10 +1296,8 @@ public final class CodingTerminalController implements AutoCloseable {
         if (state.waiting().isEmpty()) {
             return;
         }
+        // Only the draft goes away; an unrelated editor draft must survive.
         apply(new TerminalUiAction.WaitingChanged(Optional.empty()));
-        if (!state.editorBuffer().isEmpty()) {
-            apply(new TerminalUiAction.EditorChanged("", 0));
-        }
     }
 
     private void discardWaitingEdit() {
@@ -3820,12 +3818,22 @@ public final class CodingTerminalController implements AutoCloseable {
                 : message.text();
         boolean clearEditor = message.phase() == WaitingMessage.Phase.EDITING
                 || state.editorBuffer().isBlank();
-        apply(new TerminalUiAction.WaitingChanged(Optional.empty()));
+        // Keep the draft as SENDING so a rejected submission restores it through completeMessageSubmission().
+        apply(new TerminalUiAction.WaitingChanged(
+                Optional.of(new WaitingMessage(message.id(), text, WaitingMessage.Phase.SENDING, text))));
         PreparedMessageSubmission submission = beginMessageSubmission(text, false, clearEditor);
         submitEffect(
                 () -> {
                     MessageSubmissionResult result = executeMessageSubmission(submission);
-                    return () -> completeMessageSubmission(result);
+                    return () -> {
+                        completeMessageSubmission(result);
+                        if (state.waiting()
+                                .filter(value -> value.phase() == WaitingMessage.Phase.SENDING)
+                                .isPresent()) {
+                            // Delivered: a rejection already restored the draft to WAITING.
+                            apply(new TerminalUiAction.WaitingChanged(Optional.empty()));
+                        }
+                    };
                 },
                 code -> {
                     apply(new TerminalUiAction.WaitingChanged(
