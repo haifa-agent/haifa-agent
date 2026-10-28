@@ -10,6 +10,7 @@ import com.williamcallahan.tui4j.compat.bubbletea.KeyPressMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.Message;
 import com.williamcallahan.tui4j.compat.bubbletea.PasteMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.QuitMessage;
+import com.williamcallahan.tui4j.compat.bubbletea.ReadClipboardMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.WindowSizeMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.input.MouseAction;
 import com.williamcallahan.tui4j.compat.bubbletea.input.MouseButton;
@@ -554,16 +555,39 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
-    void summarizesTwoLineBracketedPasteAndDeletesItInOneStroke() {
+    void keepsTwoLineBracketedPasteVerbatimBelowOpenCodeThreshold() {
         var fixture = fixture();
 
         fixture.model.update(new PasteMessage("one\ntwo"));
 
-        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~2 lines]");
+        // OpenCode summarizes at 3+ lines; two-line pastes stay editable inline.
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("one\ntwo");
+    }
 
-        fixture.model.update(key(KeyType.keyBS));
+    @Test
+    void summarizesCtrlVClipboardPasteLikeBracketedPaste() {
+        var clipboard = new RecordingClipboard(true);
+        clipboard.pasteText = "alpha\nbeta\ngamma\ndelta";
+        var fixture = fixtureWithClipboard(clipboard);
 
-        assertThat(fixture.controller.state().editorBuffer()).isEmpty();
+        var pending = fixture.model.update(key(KeyType.keySYN));
+        assertThat(Command.isNone(pending.command())).isFalse();
+        fixture.model.update(pending.command().execute());
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~4 lines]");
+    }
+
+    @Test
+    void summarizesReadClipboardMessageFromTextareaPasteBinding() {
+        var clipboard = new RecordingClipboard(true);
+        clipboard.pasteText = "one\ntwo\nthree";
+        var fixture = fixtureWithClipboard(clipboard);
+
+        var pending = fixture.model.update(new ReadClipboardMessage());
+        assertThat(Command.isNone(pending.command())).isFalse();
+        fixture.model.update(pending.command().execute());
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~3 lines]");
     }
 
     @Test
@@ -1995,6 +2019,7 @@ class Tui4jCodingTerminalModelTest {
     private static final class RecordingClipboard implements TerminalClipboard {
         private final boolean succeed;
         private String text;
+        private String pasteText;
 
         RecordingClipboard(boolean succeed) {
             this.succeed = succeed;
@@ -2004,6 +2029,11 @@ class Tui4jCodingTerminalModelTest {
         public boolean copy(String value) {
             this.text = value;
             return succeed;
+        }
+
+        @Override
+        public java.util.Optional<String> read() {
+            return java.util.Optional.ofNullable(pasteText).filter(value -> !value.isEmpty());
         }
     }
 
