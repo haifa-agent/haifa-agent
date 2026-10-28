@@ -83,6 +83,25 @@ class ClarificationAnswersTest {
                 .hasMessageContaining("does not accept a free-text answer");
     }
 
+    @Test
+    void matchesClarificationRequestOnlyWhenQuestionsArgumentIsPresent() {
+        assertThat(ClarificationSpec.isClarificationTool("ask_clarification")).isTrue();
+        assertThat(ClarificationSpec.isClarificationTool("other_tool")).isFalse();
+
+        assertThat(ClarificationSpec.isClarificationRequest("ask_clarification", Map.of("questions", List.of())))
+                .isTrue();
+        // Legacy or alternative custom tools (e.g. DeerFlow singular "question") are not intercepted
+        assertThat(ClarificationSpec.isClarificationRequest(
+                        "ask_clarification", Map.of("question", "Which environment?")))
+                .isFalse();
+        assertThat(ClarificationSpec.isClarificationRequest("other_tool", Map.of("questions", List.of())))
+                .isFalse();
+        assertThat(ClarificationSpec.isClarificationRequest("ask_clarification", null))
+                .isFalse();
+        assertThat(ClarificationSpec.isClarificationRequest("ask_clarification", Map.of()))
+                .isFalse();
+    }
+
     private static TextPart part(String selectedIds, String customText) {
         return new TextPart("selected=" + selectedIds + "\ncustom=" + customText, ClarificationAnswers.PART_FORMAT);
     }
