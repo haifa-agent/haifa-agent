@@ -684,13 +684,7 @@ final class Tui4jCodingTerminalModel implements Model {
             int cursor = state.editorCursor();
             String token = pastedTokenBefore(buffer, cursor);
             if (token != null) {
-                int start = buffer.indexOf(token);
-                int end = start + token.length();
-                if (end < buffer.length() && buffer.charAt(end) == ' ') {
-                    end++;
-                }
-                pastedContent.remove(token);
-                replaceEditor(buffer.substring(0, start) + buffer.substring(end), start);
+                replaceEditor(withoutPasteToken(buffer, token), buffer.indexOf(token));
                 return Command.none();
             }
             int previous = TerminalTextCursor.previous(buffer, cursor);
@@ -702,13 +696,7 @@ final class Tui4jCodingTerminalModel implements Model {
             int cursor = state.editorCursor();
             String token = pastedTokenAfter(buffer, cursor);
             if (token != null) {
-                int start = buffer.indexOf(token);
-                int end = start + token.length();
-                if (end < buffer.length() && buffer.charAt(end) == ' ') {
-                    end++;
-                }
-                pastedContent.remove(token);
-                replaceEditor(buffer.substring(0, start) + buffer.substring(end), start);
+                replaceEditor(withoutPasteToken(buffer, token), buffer.indexOf(token));
                 return Command.none();
             }
             replaceEditor(TerminalTextCursor.delete(buffer, cursor), cursor);
@@ -1027,19 +1015,20 @@ final class Tui4jCodingTerminalModel implements Model {
         String before = editor.value();
         int beforeCursor = editorCursor;
         UpdateResult<Textarea> result = editor.update(message);
-        String after = editor.value();
-        int afterCursor = cursorAfter(message, before, beforeCursor, after);
+        String typed = editor.value();
+        String after = sanitizeEditorInput(typed);
+        if (!after.equals(typed)) {
+            // A host may deliver a keystroke it cannot decode as a raw control rune. The textarea is the render source,
+            // so the draft is corrected here instead of only on the paste boundary; an unsanitized rune would reach
+            // EDITOR_CHANGED and paint as an unmapped glyph inside the composer.
+            synchronizeEditor(after, Math.min(beforeCursor, after.length()));
+        }
+        int afterCursor = cursorAfter(before, beforeCursor, after);
         if (lostPastedToken(before, after)) {
             if (message instanceof KeyPressMessage key && isBackspaceKey(key)) {
                 for (String token : List.copyOf(pastedContent.keySet())) {
                     if (before.contains(token) && !after.contains(token)) {
-                        int start = before.indexOf(token);
-                        int end = start + token.length();
-                        if (end < before.length() && before.charAt(end) == ' ') {
-                            end++;
-                        }
-                        pastedContent.remove(token);
-                        replaceEditor(before.substring(0, start) + before.substring(end), start);
+                        replaceEditor(withoutPasteToken(before, token), before.indexOf(token));
                         return Command.none();
                     }
                 }
@@ -1235,6 +1224,11 @@ final class Tui4jCodingTerminalModel implements Model {
                         && preserved.map(p -> !p.contains(token)).orElse(true));
     }
 
+    /**
+     * Recognizes every encoding hosts use for Backspace: the dedicated key types, the key name, and a rune burst that
+     * carries delete runes. A host may decode one keystroke into several runes or pad it with other control runes, and
+     * an unrecognized burst would reach the textarea as text and paint as an unmapped glyph inside the composer.
+     */
     private static boolean isBackspaceKey(KeyPressMessage key) {
         if (key.type() == KeyType.keyBS || key.type() == KeyType.keyDEL) {
             return true;
@@ -1242,11 +1236,33 @@ final class Tui4jCodingTerminalModel implements Model {
         if ("backspace".equalsIgnoreCase(key.key())) {
             return true;
         }
-        if (key.type() == KeyType.KeyRunes) {
-            char[] runes = key.runes();
-            return runes != null && runes.length == 1 && (runes[0] == '\b' || runes[0] == 0x7f);
+        if (key.type() != KeyType.KeyRunes) {
+            return false;
         }
-        return false;
+        char[] runes = key.runes();
+        if (runes == null || runes.length == 0) {
+            return false;
+        }
+        boolean deletes = false;
+        for (char rune : runes) {
+            if (rune == '\b' || rune == 0x7f) {
+                deletes = true;
+            } else if (!Character.isISOControl(rune)) {
+                return false;
+            }
+        }
+        return deletes;
+    }
+
+    /** Drops one summarized paste token, and the space separating it from the text, from the draft. */
+    private String withoutPasteToken(String buffer, String token) {
+        pastedContent.remove(token);
+        int start = buffer.indexOf(token);
+        int end = start + token.length();
+        if (end < buffer.length() && buffer.charAt(end) == ' ') {
+            end++;
+        }
+        return buffer.substring(0, start) + buffer.substring(end);
     }
 
     private String pastedTokenBefore(String buffer, int cursor) {
@@ -1387,17 +1403,9 @@ final class Tui4jCodingTerminalModel implements Model {
         editorCursor = checkedCursor;
     }
 
-    private int cursorAfter(Message message, String before, int beforeCursor, String after) {
-        if (message instanceof PasteMessage) {
-            return TerminalTextCursor.clamp(after, beforeCursor + (after.length() - before.length()));
-        }
-        if (!(message instanceof KeyPressMessage key)) {
-            return TerminalTextCursor.clamp(after, beforeCursor);
-        }
-        return switch (key.type()) {
-            case KeyRunes -> TerminalTextCursor.clamp(after, beforeCursor + (after.length() - before.length()));
-            default -> TerminalTextCursor.clamp(after, beforeCursor + (after.length() - before.length()));
-        };
+    /** The cursor after {@code editor.update} replaced {@code before} with {@code after}. */
+    private static int cursorAfter(String before, int beforeCursor, String after) {
+        return TerminalTextCursor.clamp(after, beforeCursor + (after.length() - before.length()));
     }
 
     private Command nextTick() {

@@ -546,6 +546,41 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
+    void deletesThePasteSummaryWhenBackspaceArrivesAsARepeatedDeleteRune() {
+        var fixture = fixture();
+        fixture.model.update(new PasteMessage("alpha\nbeta\ngamma"));
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~3 lines]");
+
+        // mintty and ConPTY can deliver Backspace as a rune burst instead of the dedicated keyBS type.
+        fixture.model.update(new KeyPressMessage(new Key(KeyType.KeyRunes, new char[] {0x7f, 0x7f})));
+
+        assertThat(fixture.controller.state().editorBuffer()).isEmpty();
+    }
+
+    @Test
+    void deletesThePasteSummaryWhenBackspaceArrivesWithPaddingControlRunes() {
+        var fixture = fixture();
+        fixture.model.update(new PasteMessage("alpha\nbeta\ngamma"));
+
+        fixture.model.update(new KeyPressMessage(new Key(KeyType.KeyRunes, new char[] {'\b', 0x01})));
+
+        assertThat(fixture.controller.state().editorBuffer()).isEmpty();
+        assertThat(fixture.controller.state().editorCursor()).isZero();
+    }
+
+    @Test
+    void neverKeepsAnUndecodableControlRuneInTheDraft() {
+        var fixture = fixture();
+        fixture.model.update(new PasteMessage("draft"));
+
+        fixture.model.update(new KeyPressMessage(new Key(KeyType.KeyRunes, new char[] {'a', 0x1f, 'b'})));
+
+        assertThat(fixture.controller.state().editorBuffer())
+                .startsWith("draft")
+                .doesNotContain("\u001f");
+    }
+
+    @Test
     void keepsShortBracketedPasteVerbatim() {
         var fixture = fixture();
 
