@@ -33,6 +33,7 @@ final class HttpAioClient implements AioClient {
 
     HttpAioClient(Duration connectTimeout) {
         this.client = HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(connectTimeout)
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
@@ -166,7 +167,13 @@ final class HttpAioClient implements AioClient {
             responseFuture = client.sendAsync(request, boundedBodyHandler());
             HttpResponse<byte[]> response = responseFuture.get(Math.max(1, timeout.toMillis()), TimeUnit.MILLISECONDS);
             if (response.statusCode() != 200) {
-                throw new AioProtocolException("AIO_HTTP_" + response.statusCode(), "AIO request was rejected");
+                String errorBody = "";
+                try {
+                    errorBody = new String(response.body(), StandardCharsets.UTF_8);
+                } catch (Exception ignored) {
+                }
+                throw new AioProtocolException(
+                        "AIO_HTTP_" + response.statusCode(), "AIO request was rejected: " + errorBody);
             }
             return mapper.readTree(response.body());
         } catch (AioProtocolException exception) {
@@ -203,13 +210,7 @@ final class HttpAioClient implements AioClient {
     }
 
     private static HttpResponse.BodyHandler<byte[]> boundedBodyHandler() {
-        return responseInfo -> {
-            if (responseInfo.statusCode() != 200) {
-                return HttpResponse.BodySubscribers.mapping(
-                        HttpResponse.BodySubscribers.discarding(), ignored -> new byte[0]);
-            }
-            return new BoundedByteArraySubscriber(MAX_RESPONSE_BYTES);
-        };
+        return responseInfo -> new BoundedByteArraySubscriber(MAX_RESPONSE_BYTES);
     }
 
     private static final class BoundedByteArraySubscriber implements HttpResponse.BodySubscriber<byte[]> {

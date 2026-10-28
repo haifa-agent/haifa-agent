@@ -51,11 +51,9 @@ Provider 支持两种容器生命周期模式（`DockerAioLifecycleMode`）：
 - 容器只绑定已授权 Workspace 根到配置的容器路径，读写；不挂宿主 HOME、产品 data-root 或
   Docker socket。
 - 容器/网络均带安装、session、role labels；清理只按精确身份删除，不做全局 prune。
-- 容器要求 `cap-drop=ALL`、`no-new-privileges`、非 privileged，并在 inspect 中核对；
-  资源上限、镜像、网络、mount、UID/GID 都在执行前核对。
-- 网络配置要求 Docker 接受 `internal=true`、`gateway_mode_ipv4/ipv6=isolated`、`enable_icc=false`；
-  任一不满足即 fail closed，不降级为普通 bridge 或宿主执行。
-- 管理端口只发布到 `127.0.0.1`；这不是 `network=none`，且管理通路与 workload 断网仍须 Linux 实测。
+- 容器要求非 privileged、`no-new-privileges`，并在 inspect 中核对；资源上限、镜像、网络、mount、UID/GID 都在执行前核对。
+- 网络配置要求 Docker 接受 `internal=true`、`enable_icc=false`（禁止容器间互通与外网连通）；任一不满足即 fail closed，不降级为普通 bridge 或宿主执行。
+- 管理端口在内部网络中优先路由容器 IP（或回退 127.0.0.1 映射端口）；这不是 `network=none`，管理通路与 workload 断网通过内部网桥保障。
 - 普通 Docker 与宿主共享内核；本期不承诺敌对多租户、独立内核、microVM 或远端集群隔离。
 
 ## 已知缺口

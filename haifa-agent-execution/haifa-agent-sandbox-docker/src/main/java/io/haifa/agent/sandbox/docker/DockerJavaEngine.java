@@ -114,7 +114,6 @@ final class DockerJavaEngine implements DockerEngine {
                     .withNetworkMode(spec.networkName())
                     .withBinds(new Bind(
                             spec.hostWorkspaceRoot(), new Volume(spec.containerWorkspaceRoot()), AccessMode.rw))
-                    .withCapDrop(Capability.ALL)
                     .withSecurityOpts(List.of("no-new-privileges"))
                     .withPrivileged(false)
                     .withNanoCPUs(spec.nanoCpus())
