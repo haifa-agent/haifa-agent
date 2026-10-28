@@ -1089,9 +1089,10 @@ final class Tui4jCodingTerminalModel implements Model {
         resetHistoryNavigation();
         TerminalInput input =
                 new TerminalInput(kind, expanded, TerminalTextCursor.clamp(expanded, state.editorCursor()));
-        var prepared = controller.prepareMessageSubmission(input, state.editorBuffer());
+        String routingText = state.editorBuffer();
+        var prepared = controller.prepareMessageSubmission(input, routingText);
         if (prepared.isEmpty()) {
-            controller.accept(input);
+            controller.accept(input, routingText);
             syncComponents();
             pruneStalePastes(controller.state().editorBuffer());
             return Command.none();
