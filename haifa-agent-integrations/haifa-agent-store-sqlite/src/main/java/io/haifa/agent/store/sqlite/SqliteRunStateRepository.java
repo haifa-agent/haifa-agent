@@ -74,7 +74,7 @@ public final class SqliteRunStateRepository implements RunStateRepository {
     @Override
     public java.util.List<AgentRun> children(AgentRunId parentRunId) {
         Objects.requireNonNull(parentRunId, "parentRunId must not be null");
-        return execute(() -> unitOfWork.mapper(RuntimeStoreMapper.class).findChildRuns(parentRunId.value()).stream()
+        return read(() -> unitOfWork.mapper(RuntimeStoreMapper.class).findChildRuns(parentRunId.value()).stream()
                 .map(this::fromRow)
                 .toList());
     }
@@ -82,7 +82,7 @@ public final class SqliteRunStateRepository implements RunStateRepository {
     @Override
     public Optional<AgentRun> find(AgentRunId runId) {
         Objects.requireNonNull(runId, "runId must not be null");
-        return execute(() -> Optional.ofNullable(
+        return read(() -> Optional.ofNullable(
                         unitOfWork.mapper(RuntimeStoreMapper.class).findRun(runId.value()))
                 .map(this::fromRow));
     }
@@ -92,7 +92,7 @@ public final class SqliteRunStateRepository implements RunStateRepository {
         Objects.requireNonNull(runId, "runId must not be null");
         Objects.requireNonNull(tenant, "tenant must not be null");
         Objects.requireNonNull(principal, "principal must not be null");
-        return execute(() -> Optional.ofNullable(
+        return read(() -> Optional.ofNullable(
                         unitOfWork.mapper(RuntimeStoreMapper.class).findRun(runId.value()))
                 .filter(row -> tenant.tenantId().equals(row.tenantId())
                         && principal.principalId().equals(row.principalId())
@@ -272,7 +272,7 @@ public final class SqliteRunStateRepository implements RunStateRepository {
     }
 
     private String configurationHash(String reference) {
-        return execute(() -> {
+        return read(() -> {
             String hash = unitOfWork.mapper(RuntimeStoreMapper.class).configurationHash(reference);
             if (hash == null) throw new IllegalStateException("run configuration snapshot is missing");
             return hash;
@@ -313,6 +313,16 @@ public final class SqliteRunStateRepository implements RunStateRepository {
     private <T> T execute(Supplier<T> work) {
         try {
             return unitOfWork.execute(work);
+        } catch (SqliteStoreException exception) {
+            if (exception.getCause() instanceof RuntimeException runtimeException) throw runtimeException;
+            throw exception;
+        }
+    }
+
+    /** Queries read committed state without reserving the process-wide write slot. */
+    private <T> T read(Supplier<T> work) {
+        try {
+            return unitOfWork.executeReadOnly(work);
         } catch (SqliteStoreException exception) {
             if (exception.getCause() instanceof RuntimeException runtimeException) throw runtimeException;
             throw exception;

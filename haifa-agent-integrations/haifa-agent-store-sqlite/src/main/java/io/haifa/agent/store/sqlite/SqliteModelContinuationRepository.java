@@ -106,14 +106,14 @@ public final class SqliteModelContinuationRepository implements ModelContinuatio
 
     @Override
     public Optional<ModelContinuationRecord> continuationForMessage(AgentMessageId messageId) {
-        return execute(() -> Optional.ofNullable(
+        return read(() -> Optional.ofNullable(
                         unitOfWork.mapper(RuntimeStoreMapper.class).continuationForMessage(messageId.value()))
                 .map(this::fromRow));
     }
 
     @Override
     public List<ModelContinuationRecord> modelContinuations(AgentRunId runId) {
-        return execute(() -> unitOfWork.mapper(RuntimeStoreMapper.class).modelContinuations(runId.value()).stream()
+        return read(() -> unitOfWork.mapper(RuntimeStoreMapper.class).modelContinuations(runId.value()).stream()
                 .map(this::fromRow)
                 .toList());
     }
@@ -127,7 +127,7 @@ public final class SqliteModelContinuationRepository implements ModelContinuatio
                 .distinct()
                 .toList();
         if (messageIds.isEmpty()) return List.of();
-        return execute(() -> {
+        return read(() -> {
             RuntimeStoreMapper mapper = unitOfWork.mapper(RuntimeStoreMapper.class);
             List<ModelContinuationRecord> records = new ArrayList<>();
             for (int start = 0; start < messageIds.size(); start += SQLITE_IN_BATCH_SIZE) {
@@ -246,6 +246,16 @@ public final class SqliteModelContinuationRepository implements ModelContinuatio
     private <T> T execute(Supplier<T> work) {
         try {
             return unitOfWork.execute(work);
+        } catch (SqliteStoreException exception) {
+            if (exception.getCause() instanceof RuntimeException runtimeException) throw runtimeException;
+            throw exception;
+        }
+    }
+
+    /** Queries read committed state without reserving the process-wide write slot. */
+    private <T> T read(Supplier<T> work) {
+        try {
+            return unitOfWork.executeReadOnly(work);
         } catch (SqliteStoreException exception) {
             if (exception.getCause() instanceof RuntimeException runtimeException) throw runtimeException;
             throw exception;

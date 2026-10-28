@@ -104,7 +104,7 @@ public final class SqliteCheckpointRepository implements CheckpointRepository {
 
     @Override
     public Optional<Checkpoint> latest(AgentRunId runId) {
-        return execute(() -> Optional.ofNullable(
+        return read(() -> Optional.ofNullable(
                         unitOfWork.mapper(RuntimeStoreMapper.class).latestCheckpoint(runId.value()))
                 .map(this::fromRow));
     }
@@ -112,7 +112,7 @@ public final class SqliteCheckpointRepository implements CheckpointRepository {
     @Override
     public Optional<RuntimeCheckpointState> state(String checkpointId) {
         Objects.requireNonNull(checkpointId, "checkpointId must not be null");
-        return execute(() -> {
+        return read(() -> {
             RuntimeStoreMapper mapper = unitOfWork.mapper(RuntimeStoreMapper.class);
             CheckpointRow metadata = mapper.findCheckpoint(checkpointId);
             if (metadata == null) return Optional.empty();
@@ -141,7 +141,7 @@ public final class SqliteCheckpointRepository implements CheckpointRepository {
 
     @Override
     public List<Checkpoint> checkpointsFor(AgentRunId runId) {
-        return execute(() -> unitOfWork.mapper(RuntimeStoreMapper.class).checkpointsForRun(runId.value()).stream()
+        return read(() -> unitOfWork.mapper(RuntimeStoreMapper.class).checkpointsForRun(runId.value()).stream()
                 .map(this::fromRow)
                 .toList());
     }
@@ -182,6 +182,16 @@ public final class SqliteCheckpointRepository implements CheckpointRepository {
     private <T> T execute(Supplier<T> work) {
         try {
             return unitOfWork.execute(work);
+        } catch (SqliteStoreException exception) {
+            if (exception.getCause() instanceof RuntimeException runtimeException) throw runtimeException;
+            throw exception;
+        }
+    }
+
+    /** Queries read committed state without reserving the process-wide write slot. */
+    private <T> T read(Supplier<T> work) {
+        try {
+            return unitOfWork.executeReadOnly(work);
         } catch (SqliteStoreException exception) {
             if (exception.getCause() instanceof RuntimeException runtimeException) throw runtimeException;
             throw exception;

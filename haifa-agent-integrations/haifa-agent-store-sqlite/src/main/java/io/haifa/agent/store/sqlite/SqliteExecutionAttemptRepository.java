@@ -59,21 +59,21 @@ public final class SqliteExecutionAttemptRepository implements ExecutionAttemptR
 
     @Override
     public Optional<AgentRunExecutionAttempt> find(ExecutionAttemptId id) {
-        return execute(() -> Optional.ofNullable(
+        return read(() -> Optional.ofNullable(
                         unitOfWork.mapper(RuntimeStoreMapper.class).findAttempt(id.value()))
                 .map(this::fromRow));
     }
 
     @Override
     public Optional<AgentRunExecutionAttempt> activeFor(AgentRunId runId) {
-        return execute(() -> Optional.ofNullable(
+        return read(() -> Optional.ofNullable(
                         unitOfWork.mapper(RuntimeStoreMapper.class).activeAttempt(runId.value()))
                 .map(this::fromRow));
     }
 
     @Override
     public List<AgentRunExecutionAttempt> attemptsFor(AgentRunId runId) {
-        return execute(() -> unitOfWork.mapper(RuntimeStoreMapper.class).attemptsForRun(runId.value()).stream()
+        return read(() -> unitOfWork.mapper(RuntimeStoreMapper.class).attemptsForRun(runId.value()).stream()
                 .map(this::fromRow)
                 .toList());
     }
@@ -133,6 +133,16 @@ public final class SqliteExecutionAttemptRepository implements ExecutionAttemptR
     private <T> T execute(Supplier<T> work) {
         try {
             return unitOfWork.execute(work);
+        } catch (SqliteStoreException exception) {
+            if (exception.getCause() instanceof RuntimeException runtimeException) throw runtimeException;
+            throw exception;
+        }
+    }
+
+    /** Queries read committed state without reserving the process-wide write slot. */
+    private <T> T read(Supplier<T> work) {
+        try {
+            return unitOfWork.executeReadOnly(work);
         } catch (SqliteStoreException exception) {
             if (exception.getCause() instanceof RuntimeException runtimeException) throw runtimeException;
             throw exception;
