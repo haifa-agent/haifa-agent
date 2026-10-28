@@ -383,6 +383,9 @@ Run/Attempt 事实。具有副作用且结果不确定的 Tool 仍映射为 `TOO
 - Application 通过 `RuntimeCoreBuilder.persistence(...)` 与 `workerId(...)` 注入完整适配器装配。
   Runtime 不重放 Unit of Work；具体持久化适配器只能在用户事务工作开始前、尚未取得数据库写锁时做有限重试，
   对未知提交结果或已经变更的内存聚合必须 fail closed。
+- `RuntimeUnitOfWork.executeReadOnly` 声明纯查询作用域：单写者的存储适配器必须让读请求不与写者排队，
+  该作用域只观察已提交状态、在其内写必须失败，内存组合默认退化为 `execute`。消息分页等 Runtime 只读 API
+  使用该作用域，因此 UI 轮询不再占用写槽位。
 - `OutboxMessage` 保存与对应 `RuntimeEvent` 相同的 Run 内 `sequence` 和稳定 `schemaVersion`。本地
   `ExecutionOwnershipPort` 以当前进程实例 ID 精确匹配 Attempt `workerId`，进程重启后的旧 Attempt
   不再被误判为仍由本地持有。

@@ -49,7 +49,7 @@ public final class SqliteConversationStore implements ConversationStore {
     @Override
     public Optional<ConversationRecord> find(AgentSessionId sessionId) {
         Objects.requireNonNull(sessionId, "sessionId must not be null");
-        return execute(() -> Optional.ofNullable(
+        return read(() -> Optional.ofNullable(
                         unitOfWork.mapper(SdkConversationMapper.class).findConversation(sessionId.value()))
                 .map(SqliteConversationStore::fromRow));
     }
@@ -59,7 +59,7 @@ public final class SqliteConversationStore implements ConversationStore {
         Objects.requireNonNull(tenant, "tenant must not be null");
         Objects.requireNonNull(principal, "principal must not be null");
         Objects.requireNonNull(query, "query must not be null");
-        return execute(() -> unitOfWork
+        return read(() -> unitOfWork
                 .mapper(SdkConversationMapper.class)
                 .listConversations(
                         tenant.tenantId(),
@@ -145,6 +145,18 @@ public final class SqliteConversationStore implements ConversationStore {
     private <T> T execute(java.util.function.Supplier<T> work) {
         try {
             return unitOfWork.execute(work);
+        } catch (SqliteStoreException exception) {
+            if (exception.getCause() instanceof IllegalStateException conflict) {
+                throw conflict;
+            }
+            throw exception;
+        }
+    }
+
+    /** Queries read committed state without reserving the process-wide write slot. */
+    private <T> T read(java.util.function.Supplier<T> work) {
+        try {
+            return unitOfWork.executeReadOnly(work);
         } catch (SqliteStoreException exception) {
             if (exception.getCause() instanceof IllegalStateException conflict) {
                 throw conflict;

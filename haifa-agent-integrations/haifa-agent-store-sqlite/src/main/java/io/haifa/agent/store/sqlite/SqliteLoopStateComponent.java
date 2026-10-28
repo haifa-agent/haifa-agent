@@ -87,13 +87,13 @@ final class SqliteLoopStateComponent {
     }
 
     List<AgentStep> steps(AgentRunId runId) {
-        return execute(() -> unitOfWork.mapper(RuntimeStoreMapper.class).stepsForRun(runId.value()).stream()
+        return read(() -> unitOfWork.mapper(RuntimeStoreMapper.class).stepsForRun(runId.value()).stream()
                 .map(this::fromRow)
                 .toList());
     }
 
     List<ToolCall> toolCalls(AgentRunId runId) {
-        return execute(() -> unitOfWork.mapper(RuntimeStoreMapper.class).toolCallsForRun(runId.value()).stream()
+        return read(() -> unitOfWork.mapper(RuntimeStoreMapper.class).toolCallsForRun(runId.value()).stream()
                 .map(this::fromRow)
                 .toList());
     }
@@ -101,7 +101,7 @@ final class SqliteLoopStateComponent {
     List<ToolCall> toolCallsByIds(Set<ToolCallId> toolCallIds) {
         if (toolCallIds.isEmpty()) return List.of();
         List<String> ids = toolCallIds.stream().map(ToolCallId::value).sorted().toList();
-        return execute(() -> {
+        return read(() -> {
             RuntimeStoreMapper mapper = unitOfWork.mapper(RuntimeStoreMapper.class);
             List<ToolCall> calls = new ArrayList<>();
             for (int start = 0; start < ids.size(); start += SQLITE_IN_BATCH_SIZE) {
@@ -115,7 +115,7 @@ final class SqliteLoopStateComponent {
     }
 
     Optional<AgentPlan> plan(AgentRunId runId) {
-        return execute(() -> Optional.ofNullable(
+        return read(() -> Optional.ofNullable(
                         unitOfWork.mapper(RuntimeStoreMapper.class).findPlan(runId.value()))
                 .map(this::fromRow));
     }
@@ -148,7 +148,7 @@ final class SqliteLoopStateComponent {
     }
 
     Optional<String> output(AgentRunId runId) {
-        return execute(() -> Optional.ofNullable(
+        return read(() -> Optional.ofNullable(
                         unitOfWork.mapper(RuntimeStoreMapper.class).findOutput(runId.value()))
                 .map(row -> codecs.decode(
                                 SqliteRuntimePayloadTypes.STRING,
@@ -198,7 +198,7 @@ final class SqliteLoopStateComponent {
     }
 
     Optional<RuntimeConfigurationSnapshot> configuration(String reference, String contentHash) {
-        return execute(() -> Optional.ofNullable(
+        return read(() -> Optional.ofNullable(
                         unitOfWork.mapper(RuntimeStoreMapper.class).findConfiguration(reference))
                 .filter(row -> row.contentHash().equals(contentHash))
                 .map(this::configuration));
@@ -418,6 +418,16 @@ final class SqliteLoopStateComponent {
     private <T> T execute(Supplier<T> work) {
         try {
             return unitOfWork.execute(work);
+        } catch (SqliteStoreException exception) {
+            if (exception.getCause() instanceof RuntimeException runtimeException) throw runtimeException;
+            throw exception;
+        }
+    }
+
+    /** Queries read committed state without reserving the process-wide write slot. */
+    private <T> T read(Supplier<T> work) {
+        try {
+            return unitOfWork.executeReadOnly(work);
         } catch (SqliteStoreException exception) {
             if (exception.getCause() instanceof RuntimeException runtimeException) throw runtimeException;
             throw exception;

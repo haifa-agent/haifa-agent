@@ -121,14 +121,14 @@ public final class SqliteInteractionPort implements InteractionPort {
 
     @Override
     public Optional<InteractionRequest> pending(AgentRunId runId) {
-        return execute(() -> Optional.ofNullable(
+        return read(() -> Optional.ofNullable(
                         unitOfWork.mapper(RuntimeStoreMapper.class).pendingInteraction(runId.value()))
                 .map(this::fromRequestRow));
     }
 
     @Override
     public Optional<InteractionRequest> find(InteractionRequestId requestId) {
-        return execute(() -> Optional.ofNullable(
+        return read(() -> Optional.ofNullable(
                         unitOfWork.mapper(RuntimeStoreMapper.class).findInteractionRequest(requestId.value()))
                 .map(this::fromRequestRow));
     }
@@ -144,14 +144,14 @@ public final class SqliteInteractionPort implements InteractionPort {
     @Override
     public Optional<InteractionRecord> pendingRecord(AgentRunId runId) {
         Objects.requireNonNull(runId, "runId must not be null");
-        return execute(() -> Optional.ofNullable(
+        return read(() -> Optional.ofNullable(
                         unitOfWork.mapper(RuntimeStoreMapper.class).pendingInteraction(runId.value()))
                 .map(this::fromRecordRow));
     }
 
     @Override
     public Optional<ResolvedInteraction> unappliedToolResolution(AgentRunId runId) {
-        return execute(() -> {
+        return read(() -> {
             RuntimeStoreMapper mapper = unitOfWork.mapper(RuntimeStoreMapper.class);
             InteractionRequestRow request = mapper.unappliedToolResolution(runId.value());
             if (request == null) return Optional.empty();
@@ -164,7 +164,7 @@ public final class SqliteInteractionPort implements InteractionPort {
     @Override
     public Optional<ResolvedInteraction> unappliedClarificationResolution(AgentRunId runId) {
         Objects.requireNonNull(runId, "runId must not be null");
-        return execute(() -> {
+        return read(() -> {
             RuntimeStoreMapper mapper = unitOfWork.mapper(RuntimeStoreMapper.class);
             InteractionRequestRow request = mapper.unappliedClarificationResolution(runId.value());
             if (request == null) return Optional.empty();
@@ -178,12 +178,11 @@ public final class SqliteInteractionPort implements InteractionPort {
     public List<InteractionRecord> toolApprovalRecords(AgentRunId runId, ToolCallId toolCallId) {
         Objects.requireNonNull(runId, "runId must not be null");
         Objects.requireNonNull(toolCallId, "toolCallId must not be null");
-        return execute(
-                () -> unitOfWork.mapper(RuntimeStoreMapper.class).toolApprovalInteractions(runId.value()).stream()
-                        .map(this::fromRecordRow)
-                        .filter(record -> record.request().target() instanceof ToolApprovalTarget target
-                                && target.toolCallId().equals(toolCallId))
-                        .toList());
+        return read(() -> unitOfWork.mapper(RuntimeStoreMapper.class).toolApprovalInteractions(runId.value()).stream()
+                .map(this::fromRecordRow)
+                .filter(record -> record.request().target() instanceof ToolApprovalTarget target
+                        && target.toolCallId().equals(toolCallId))
+                .toList());
     }
 
     @Override
@@ -350,10 +349,9 @@ public final class SqliteInteractionPort implements InteractionPort {
         Objects.requireNonNull(runId, "runId must not be null");
         Objects.requireNonNull(at, "at must not be null");
         if (limit < 1 || limit > 1_000) throw new IllegalArgumentException("limit must be in 1..1000");
-        return execute(
-                () -> unitOfWork.mapper(RuntimeStoreMapper.class).dueInteractions(runId.value(), at, limit).stream()
-                        .map(this::fromRecordRow)
-                        .toList());
+        return read(() -> unitOfWork.mapper(RuntimeStoreMapper.class).dueInteractions(runId.value(), at, limit).stream()
+                .map(this::fromRecordRow)
+                .toList());
     }
 
     @Override
@@ -436,7 +434,7 @@ public final class SqliteInteractionPort implements InteractionPort {
     }
 
     private InteractionRecord requireRecord(InteractionRequestId requestId) {
-        return execute(() -> requireRecord(unitOfWork.mapper(RuntimeStoreMapper.class), requestId));
+        return read(() -> requireRecord(unitOfWork.mapper(RuntimeStoreMapper.class), requestId));
     }
 
     private InteractionRecord requireRecord(RuntimeStoreMapper mapper, InteractionRequestId requestId) {
@@ -658,6 +656,16 @@ public final class SqliteInteractionPort implements InteractionPort {
     private <T> T execute(Supplier<T> work) {
         try {
             return unitOfWork.execute(work);
+        } catch (SqliteStoreException exception) {
+            if (exception.getCause() instanceof RuntimeException runtimeException) throw runtimeException;
+            throw exception;
+        }
+    }
+
+    /** Queries read committed state without reserving the process-wide write slot. */
+    private <T> T read(Supplier<T> work) {
+        try {
+            return unitOfWork.executeReadOnly(work);
         } catch (SqliteStoreException exception) {
             if (exception.getCause() instanceof RuntimeException runtimeException) throw runtimeException;
             throw exception;

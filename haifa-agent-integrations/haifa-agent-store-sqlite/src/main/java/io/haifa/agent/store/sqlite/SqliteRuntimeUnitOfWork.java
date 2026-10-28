@@ -47,12 +47,14 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
     }
 
     /**
-     * Executes an adapter-internal read without reserving SQLite's single writer slot.
+     * Executes a read without reserving SQLite's single writer slot.
      *
-     * <p>A read nested inside an existing write joins that transaction so it can observe the
-     * caller's uncommitted state. Outermost reads use a deferred, query-only transaction.
+     * <p>A read nested inside an existing write joins that transaction so it can observe the caller's uncommitted
+     * state. Outermost reads use a deferred, query-only transaction, so they use WAL's read concurrency instead of
+     * queueing behind the process-wide writer.
      */
-    <T> T executeReadOnly(Supplier<T> work) {
+    @Override
+    public <T> T executeReadOnly(Supplier<T> work) {
         Objects.requireNonNull(work, "work must not be null");
         Context existing = active.get();
         if (existing != null) {

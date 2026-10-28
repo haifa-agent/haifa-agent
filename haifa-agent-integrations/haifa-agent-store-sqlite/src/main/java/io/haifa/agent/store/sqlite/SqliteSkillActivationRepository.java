@@ -72,14 +72,14 @@ public final class SqliteSkillActivationRepository implements SkillActivationRep
 
     @Override
     public Optional<SkillActivation> skillActivation(AgentRunId runId, SkillAlias alias) {
-        return execute(() -> Optional.ofNullable(
+        return read(() -> Optional.ofNullable(
                         unitOfWork.mapper(RuntimeStoreMapper.class).findSkillActivation(runId.value(), alias.value()))
                 .map(this::decode));
     }
 
     @Override
     public List<SkillActivation> skillActivations(AgentRunId runId) {
-        return execute(() -> unitOfWork.mapper(RuntimeStoreMapper.class).skillActivations(runId.value()).stream()
+        return read(() -> unitOfWork.mapper(RuntimeStoreMapper.class).skillActivations(runId.value()).stream()
                 .map(this::decode)
                 .toList());
     }
@@ -124,6 +124,16 @@ public final class SqliteSkillActivationRepository implements SkillActivationRep
     private <T> T execute(Supplier<T> work) {
         try {
             return unitOfWork.execute(work);
+        } catch (SqliteStoreException exception) {
+            if (exception.getCause() instanceof RuntimeException runtimeException) throw runtimeException;
+            throw exception;
+        }
+    }
+
+    /** Queries read committed state without reserving the process-wide write slot. */
+    private <T> T read(Supplier<T> work) {
+        try {
+            return unitOfWork.executeReadOnly(work);
         } catch (SqliteStoreException exception) {
             if (exception.getCause() instanceof RuntimeException runtimeException) throw runtimeException;
             throw exception;
