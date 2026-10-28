@@ -39,7 +39,8 @@ interface TerminalClipboard {
                 if (GraphicsEnvironment.isHeadless()) {
                     return Optional.empty();
                 }
-                var transferable = Toolkit.getDefaultToolkit().getSystemClipboard().getContents(null);
+                var transferable =
+                        Toolkit.getDefaultToolkit().getSystemClipboard().getContents(null);
                 if (transferable == null || !transferable.isDataFlavorSupported(DataFlavor.stringFlavor)) {
                     return Optional.empty();
                 }

@@ -32,6 +32,7 @@ final class Tui4jTerminalView {
     private static final int MIN_ROWS = 16;
     /** Visible paste-summary tokens inserted by {@code Tui4jCodingTerminalModel#pasteContent}. */
     private static final Pattern PASTE_PLACEHOLDER = Pattern.compile("\\[Pasted #\\d+ ~\\d+ lines\\]");
+
     private static final Set<String> SUCCESS_STATUSES = Set.of(
             "ACCEPTED",
             "APPLIED",
