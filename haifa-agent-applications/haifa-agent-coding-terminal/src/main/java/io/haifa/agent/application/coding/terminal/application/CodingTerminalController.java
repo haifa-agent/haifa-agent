@@ -461,6 +461,12 @@ public final class CodingTerminalController implements AutoCloseable {
         } catch (ProjectProductException exception) {
             apply(new TerminalUiAction.RecoverableFailure(exception.code()));
         }
+        if (state.waiting()
+                .filter(value -> value.phase() == WaitingMessage.Phase.SENDING)
+                .isPresent()) {
+            // Delivered: an in-flight draft must not outlive a successful submission.
+            apply(new TerminalUiAction.WaitingChanged(Optional.empty()));
+        }
     }
 
     /** Loads an explicitly selected session; interactive session changes use background effects. */
@@ -1290,6 +1296,10 @@ public final class CodingTerminalController implements AutoCloseable {
         WaitingMessage saved = waiting.orElseThrow().saveEdit(text);
         apply(new TerminalUiAction.WaitingChanged(Optional.of(saved)));
         apply(new TerminalUiAction.EditorChanged("", 0));
+        if (state.currentRunId().isEmpty()) {
+            // The Run already ended while editing: saving is the user's send request.
+            trySubmitWaitingWhenIdle();
+        }
     }
 
     private void cancelWaiting() {
@@ -3806,18 +3816,16 @@ public final class CodingTerminalController implements AutoCloseable {
         if (state.currentRunId().isPresent()) {
             return;
         }
-        Optional<WaitingMessage> waiting = state.waiting()
-                .filter(value ->
-                        value.phase() == WaitingMessage.Phase.WAITING || value.phase() == WaitingMessage.Phase.EDITING);
+        // Only resolved drafts auto-submit: an EDITING draft still owns the editor, and the model expands its
+        // pasted content only when the user saves, so submitting editorBuffer() here would send placeholders.
+        Optional<WaitingMessage> waiting =
+                state.waiting().filter(value -> value.phase() == WaitingMessage.Phase.WAITING);
         if (waiting.isEmpty() || state.selector().isPresent() || clarificationDraft != null) {
             return;
         }
         WaitingMessage message = waiting.orElseThrow();
-        String text = message.phase() == WaitingMessage.Phase.EDITING
-                ? message.saveEdit(state.editorBuffer()).text()
-                : message.text();
-        boolean clearEditor = message.phase() == WaitingMessage.Phase.EDITING
-                || state.editorBuffer().isBlank();
+        String text = message.text();
+        boolean clearEditor = state.editorBuffer().isBlank();
         // Keep the draft as SENDING so a rejected submission restores it through completeMessageSubmission().
         apply(new TerminalUiAction.WaitingChanged(
                 Optional.of(new WaitingMessage(message.id(), text, WaitingMessage.Phase.SENDING, text))));
@@ -3825,15 +3833,7 @@ public final class CodingTerminalController implements AutoCloseable {
         submitEffect(
                 () -> {
                     MessageSubmissionResult result = executeMessageSubmission(submission);
-                    return () -> {
-                        completeMessageSubmission(result);
-                        if (state.waiting()
-                                .filter(value -> value.phase() == WaitingMessage.Phase.SENDING)
-                                .isPresent()) {
-                            // Delivered: a rejection already restored the draft to WAITING.
-                            apply(new TerminalUiAction.WaitingChanged(Optional.empty()));
-                        }
-                    };
+                    return () -> completeMessageSubmission(result);
                 },
                 code -> {
                     apply(new TerminalUiAction.WaitingChanged(
