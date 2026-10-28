@@ -9,6 +9,7 @@ public record TerminalInput(Kind kind, String text, int cursor) {
         COMPLETION_REQUESTED,
         SUBMIT,
         FOLLOW_UP,
+        EDIT_WAITING,
         CANCEL_OR_CLOSE,
         RESTORE,
         TOGGLE_EXPANSION,
