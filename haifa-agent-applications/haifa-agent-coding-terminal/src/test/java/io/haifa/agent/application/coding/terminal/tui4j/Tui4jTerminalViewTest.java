@@ -1719,6 +1719,59 @@ class Tui4jTerminalViewTest {
         assertThat(rendered).contains("again to interrupt");
     }
 
+    @Test
+    void rendersWaitingRegionAboveEditorWithSendNowEditCancelActions() {
+        TerminalUiState initial = TerminalUiState.initial(100, 30);
+        TerminalUiState state = new TerminalUiState(
+                        initial.header(),
+                        initial.loadedResources(),
+                        List.of(item(
+                                "u1",
+                                TranscriptItem.Kind.USER,
+                                "You",
+                                "Fix failing tests",
+                                "SENT",
+                                true)),
+                        List.of(),
+                        "WORKING",
+                        "",
+                        0,
+                        Optional.empty(),
+                        initial.footer(),
+                        initial.columns(),
+                        initial.rows(),
+                        initial.session(),
+                        Optional.of(new AgentRunId("run-1")),
+                        initial.appliedCursor(),
+                        initial.seenEventIds(),
+                        Optional.empty(),
+                        new TerminalActivity(1, "Run Command"),
+                        false,
+                        initial.sidebarVisible(),
+                        initial.sidebarExplicitlyToggled(),
+                        initial.themeName(),
+                        false,
+                        Optional.of(new io.haifa.agent.application.coding.terminal.state.WaitingMessage(
+                                "wait-1",
+                                "先别改 assertion，只修 checkpoint recovery 路径。",
+                                io.haifa.agent.application.coding.terminal.state.WaitingMessage.Phase.WAITING)))
+                .withStatus("WORKING");
+
+        String rendered = Strip.strip(view.render(
+                state, transcript(state), editor(120), true, false, Duration.ofSeconds(12)));
+
+        assertThat(rendered)
+                .contains(
+                        "Waiting",
+                        "hold until run finishes",
+                        "checkpoint recovery",
+                        "Send Now enter",
+                        "Edit e",
+                        "Cancel esc",
+                        "WORKING (12s)")
+                .doesNotContain("enter steer");
+    }
+
     private TranscriptItem item(
             String id, TranscriptItem.Kind kind, String title, String body, String status, boolean expanded) {
         return new TranscriptItem(id, kind, title, body, status, expanded);

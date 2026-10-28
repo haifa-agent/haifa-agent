@@ -11,6 +11,7 @@ import io.haifa.agent.application.coding.terminal.state.TerminalSelector;
 import io.haifa.agent.application.coding.terminal.state.TerminalThemes;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiReducer;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
+import io.haifa.agent.application.coding.terminal.state.WaitingMessage;
 import io.haifa.agent.application.project.product.ProjectProductException;
 import io.haifa.agent.application.project.product.coding.CodingModelOption;
 import io.haifa.agent.application.project.product.coding.CodingModelState;
@@ -347,15 +348,51 @@ public final class CodingTerminalController implements AutoCloseable {
         Objects.requireNonNull(input, "input must not be null");
         Objects.requireNonNull(routingText, "routingText must not be null");
         drainEvents();
-        if ((input.kind() != TerminalInput.Kind.SUBMIT && input.kind() != TerminalInput.Kind.FOLLOW_UP)
+        if ((input.kind() != TerminalInput.Kind.SUBMIT
+                        && input.kind() != TerminalInput.Kind.FOLLOW_UP
+                        && input.kind() != TerminalInput.Kind.SEND_WAITING_NOW)
                 || renamingSession
                 || state.selector().isPresent()
-                || input.text().isBlank()
                 || routingText.startsWith("!")
-                || commands.route(routingText) != TerminalCommand.MESSAGE) {
+                || (input.kind() != TerminalInput.Kind.SEND_WAITING_NOW
+                        && (input.text().isBlank() || commands.route(routingText) != TerminalCommand.MESSAGE))) {
+            return Optional.empty();
+        }
+        if (input.kind() == TerminalInput.Kind.SEND_WAITING_NOW) {
+            return prepareSendWaitingNow();
+        }
+        if (input.kind() == TerminalInput.Kind.SUBMIT
+                && state.currentRunId().isPresent()
+                && state.waiting()
+                        .filter(value -> value.phase() == WaitingMessage.Phase.EDITING)
+                        .isEmpty()) {
+            // Active Enter queues a local Waiting draft; accept() performs the state change.
+            return Optional.empty();
+        }
+        if (input.kind() == TerminalInput.Kind.SUBMIT
+                && state.waiting()
+                        .filter(value -> value.phase() == WaitingMessage.Phase.EDITING)
+                        .isPresent()) {
+            // Saving an edit stays local.
             return Optional.empty();
         }
         return Optional.of(beginMessageSubmission(input.text(), input.kind() == TerminalInput.Kind.FOLLOW_UP));
+    }
+
+    private Optional<PreparedMessageSubmission> prepareSendWaitingNow() {
+        Optional<WaitingMessage> waiting = state.waiting().filter(value -> value.phase() == WaitingMessage.Phase.WAITING
+                || value.phase() == WaitingMessage.Phase.EDITING);
+        if (waiting.isEmpty() || state.currentRunId().isEmpty()) {
+            return Optional.empty();
+        }
+        WaitingMessage message = waiting.orElseThrow();
+        String text = message.phase() == WaitingMessage.Phase.EDITING
+                ? message.saveEdit(state.editorBuffer()).text()
+                : message.text();
+        apply(new TerminalUiAction.WaitingChanged(
+                Optional.of(new WaitingMessage(message.id(), text, WaitingMessage.Phase.SENDING, text))));
+        apply(new TerminalUiAction.EditorChanged("", 0));
+        return Optional.of(beginMessageSubmission(text, false));
     }
 
     /** Performs only client IO and does not mutate Controller state. */
@@ -399,7 +436,13 @@ public final class CodingTerminalController implements AutoCloseable {
         if (result.failureCode().isPresent()) {
             String code = result.failureCode().orElseThrow();
             apply(new TerminalUiAction.UserMessageRejected(result.submission().idempotencyKey()));
-            if (state.editorBuffer().isBlank()) {
+            Optional<WaitingMessage> sending = state.waiting()
+                    .filter(value -> value.phase() == WaitingMessage.Phase.SENDING);
+            if (sending.isPresent()) {
+                WaitingMessage restored = sending.orElseThrow();
+                apply(new TerminalUiAction.WaitingChanged(Optional.of(
+                        new WaitingMessage(restored.id(), result.submission().text(), WaitingMessage.Phase.WAITING))));
+            } else if (state.editorBuffer().isBlank()) {
                 apply(new TerminalUiAction.EditorChanged(
                         result.submission().text(), result.submission().text().length()));
             }
@@ -1016,6 +1059,18 @@ public final class CodingTerminalController implements AutoCloseable {
             cycleModel(-1);
             return;
         }
+        if (input.kind() == TerminalInput.Kind.SEND_WAITING_NOW) {
+            sendWaitingNow();
+            return;
+        }
+        if (input.kind() == TerminalInput.Kind.EDIT_WAITING) {
+            beginEditWaiting();
+            return;
+        }
+        if (input.kind() == TerminalInput.Kind.CANCEL_WAITING) {
+            cancelWaiting();
+            return;
+        }
         if (input.kind() == TerminalInput.Kind.CANCEL_OR_CLOSE) {
             if (state.selector()
                     .filter(selector -> "auth-wait".equals(selector.kind()) || "auth-device".equals(selector.kind()))
@@ -1032,6 +1087,17 @@ public final class CodingTerminalController implements AutoCloseable {
             }
             if (authenticationInProgress) {
                 cancelAuthentication();
+                return;
+            }
+            // Waiting region owns Esc: cancel/discard the local draft first, never arm Run interrupt.
+            if (state.waiting()
+                    .filter(value -> value.phase() == WaitingMessage.Phase.EDITING)
+                    .isPresent()) {
+                discardWaitingEdit();
+                return;
+            }
+            if (state.waiting().isPresent()) {
+                cancelWaiting();
                 return;
             }
             if (hasActiveRun()) {
@@ -1108,11 +1174,27 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void submitText(String text, boolean followUp) {
-        if (text.isBlank()) {
+        if (clarificationDraft != null) {
+            if (text.isBlank()) {
+                return;
+            }
+            answerClarificationWithText(text);
             return;
         }
-        if (clarificationDraft != null) {
-            answerClarificationWithText(text);
+        Optional<WaitingMessage> editing = state.waiting()
+                .filter(value -> value.phase() == WaitingMessage.Phase.EDITING);
+        if (editing.isPresent() && !followUp) {
+            saveWaitingEdit(text);
+            return;
+        }
+        if (text.isBlank()) {
+            if (!followUp
+                    && state.currentRunId().isPresent()
+                    && state.waiting()
+                            .filter(value -> value.phase() == WaitingMessage.Phase.WAITING)
+                            .isPresent()) {
+                sendWaitingNow();
+            }
             return;
         }
         if (text.startsWith("!")) {
@@ -1125,6 +1207,10 @@ public final class CodingTerminalController implements AutoCloseable {
             command(command, text);
             return;
         }
+        if (!followUp && state.currentRunId().isPresent()) {
+            queueWaiting(text);
+            return;
+        }
         PreparedMessageSubmission submission = beginMessageSubmission(text, followUp);
         submitEffect(
                 () -> {
@@ -1132,6 +1218,88 @@ public final class CodingTerminalController implements AutoCloseable {
                     return () -> completeMessageSubmission(result);
                 },
                 code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+    }
+
+    private void queueWaiting(String text) {
+        String normalized = text.strip();
+        if (normalized.isEmpty()) {
+            return;
+        }
+        if (state.waiting().filter(value -> value.phase() == WaitingMessage.Phase.SENDING).isPresent()) {
+            apply(new TerminalUiAction.RecoverableFailure("WAITING_SEND_IN_PROGRESS"));
+            apply(new TerminalUiAction.EditorChanged(text, text.length()));
+            return;
+        }
+        String id = state.waiting().map(WaitingMessage::id).orElseGet(() -> UUID.randomUUID().toString());
+        apply(new TerminalUiAction.WaitingChanged(
+                Optional.of(new WaitingMessage(id, normalized, WaitingMessage.Phase.WAITING))));
+        apply(new TerminalUiAction.EditorChanged("", 0));
+    }
+
+    private void sendWaitingNow() {
+        Optional<PreparedMessageSubmission> prepared = prepareSendWaitingNow();
+        if (prepared.isEmpty()) {
+            return;
+        }
+        PreparedMessageSubmission submission = prepared.orElseThrow();
+        submitEffect(
+                () -> {
+                    MessageSubmissionResult result = executeMessageSubmission(submission);
+                    return () -> completeMessageSubmission(result);
+                },
+                code -> {
+                    Optional<WaitingMessage> sending = state.waiting()
+                            .filter(value -> value.phase() == WaitingMessage.Phase.SENDING);
+                    if (sending.isPresent()) {
+                        WaitingMessage restored = sending.orElseThrow();
+                        apply(new TerminalUiAction.WaitingChanged(Optional.of(new WaitingMessage(
+                                restored.id(), submission.text(), WaitingMessage.Phase.WAITING))));
+                    }
+                    apply(new TerminalUiAction.RecoverableFailure(code));
+                });
+    }
+
+    private void beginEditWaiting() {
+        Optional<WaitingMessage> waiting = state.waiting()
+                .filter(value -> value.phase() == WaitingMessage.Phase.WAITING);
+        if (waiting.isEmpty()) {
+            return;
+        }
+        WaitingMessage message = waiting.orElseThrow().beginEdit();
+        apply(new TerminalUiAction.WaitingChanged(Optional.of(message)));
+        apply(new TerminalUiAction.EditorChanged(message.text(), message.text().length()));
+    }
+
+    private void saveWaitingEdit(String text) {
+        Optional<WaitingMessage> waiting = state.waiting()
+                .filter(value -> value.phase() == WaitingMessage.Phase.EDITING);
+        if (waiting.isEmpty()) {
+            return;
+        }
+        WaitingMessage saved = waiting.orElseThrow().saveEdit(text);
+        apply(new TerminalUiAction.WaitingChanged(Optional.of(saved)));
+        apply(new TerminalUiAction.EditorChanged("", 0));
+    }
+
+    private void cancelWaiting() {
+        if (state.waiting().isEmpty()) {
+            return;
+        }
+        apply(new TerminalUiAction.WaitingChanged(Optional.empty()));
+        if (!state.editorBuffer().isEmpty()) {
+            apply(new TerminalUiAction.EditorChanged("", 0));
+        }
+    }
+
+    private void discardWaitingEdit() {
+        Optional<WaitingMessage> waiting = state.waiting()
+                .filter(value -> value.phase() == WaitingMessage.Phase.EDITING);
+        if (waiting.isEmpty()) {
+            return;
+        }
+        WaitingMessage discarded = waiting.orElseThrow().discardEdit();
+        apply(new TerminalUiAction.WaitingChanged(Optional.of(discarded)));
+        apply(new TerminalUiAction.EditorChanged("", 0));
     }
 
     private PreparedMessageSubmission beginMessageSubmission(String text, boolean followUp) {
@@ -3586,6 +3754,7 @@ public final class CodingTerminalController implements AutoCloseable {
             }
             outputCursor = new RunOutputCursor(received.event().sequence());
         }
+        boolean hadActiveRun = state.currentRunId().isPresent();
         state = reducer.reduce(state, action);
         if (action instanceof TerminalUiAction.AuthenticationCompleted) {
             scheduleReconcile();
@@ -3605,6 +3774,34 @@ public final class CodingTerminalController implements AutoCloseable {
                 && state.session().isPresent()) {
             pendingAcknowledgement = received.event().cursor();
         }
+        if (hadActiveRun && state.currentRunId().isEmpty()) {
+            autoSubmitWaitingAfterRun();
+        }
+    }
+
+    private void autoSubmitWaitingAfterRun() {
+        Optional<WaitingMessage> waiting = state.waiting()
+                .filter(value -> value.phase() == WaitingMessage.Phase.WAITING
+                        || value.phase() == WaitingMessage.Phase.EDITING);
+        if (waiting.isEmpty() || state.selector().isPresent() || clarificationDraft != null) {
+            return;
+        }
+        WaitingMessage message = waiting.orElseThrow();
+        String text = message.phase() == WaitingMessage.Phase.EDITING
+                ? message.saveEdit(state.editorBuffer()).text()
+                : message.text();
+        apply(new TerminalUiAction.WaitingChanged(Optional.empty()));
+        PreparedMessageSubmission submission = beginMessageSubmission(text, false);
+        submitEffect(
+                () -> {
+                    MessageSubmissionResult result = executeMessageSubmission(submission);
+                    return () -> completeMessageSubmission(result);
+                },
+                code -> {
+                    apply(new TerminalUiAction.WaitingChanged(
+                            Optional.of(new WaitingMessage(message.id(), text, WaitingMessage.Phase.WAITING))));
+                    apply(new TerminalUiAction.RecoverableFailure(code));
+                });
     }
 
     private void schedulePendingCursorAcknowledgement() {
