@@ -60,7 +60,8 @@ public final class CodingTerminalTestSupport {
 
     private CodingTerminalTestSupport() {}
 
-    static CodingTerminalController controller(CodingSessionClient client, CodingAuthenticationClient authentication) {
+    public static CodingTerminalController controller(
+            CodingSessionClient client, CodingAuthenticationClient authentication) {
         return new CodingTerminalController(
                 PROJECT_ID,
                 client,
@@ -71,7 +72,7 @@ public final class CodingTerminalTestSupport {
                 Runnable::run);
     }
 
-    static CodingTerminalController controller(CodingSessionClient client) {
+    public static CodingTerminalController controller(CodingSessionClient client) {
         return new CodingTerminalController(
                 PROJECT_ID,
                 client,
@@ -287,7 +288,7 @@ public final class CodingTerminalTestSupport {
                         modelOption, revision, true));
     }
 
-    static CodingSessionView activeView() {
+    public static CodingSessionView activeView() {
         AgentRunId runId = new AgentRunId("run-1");
         return new CodingSessionView(
                 new CodingSessionSummary(
@@ -345,7 +346,7 @@ public final class CodingTerminalTestSupport {
                 payload);
     }
 
-    static class FakeClient implements CodingSessionClient {
+    public static class FakeClient implements CodingSessionClient {
         CodingSessionView view;
         CodingSessionView reconciledView;
         List<CodingSessionSummary> summaries = List.of();
@@ -360,12 +361,12 @@ public final class CodingTerminalTestSupport {
         int submitAttempts;
         int listCalls;
         int listLimit;
-        final List<String> submittedMessages = new ArrayList<>();
-        final List<String> steeredMessages = new ArrayList<>();
+        public final List<String> submittedMessages = new ArrayList<>();
+        public final List<String> steeredMessages = new ArrayList<>();
         final List<AgentSessionId> opened = new ArrayList<>();
         final List<String> restored = new ArrayList<>();
         final List<InteractionAction> respondedActions = new ArrayList<>();
-        final List<AgentSessionId> cancelledSessions = new ArrayList<>();
+        public final List<AgentSessionId> cancelledSessions = new ArrayList<>();
         final List<String> revokedWorkspaces = new ArrayList<>();
         CodingShellPlan.State shellState = CodingShellPlan.State.READY;
         boolean shellApproved;
@@ -383,7 +384,7 @@ public final class CodingTerminalTestSupport {
         RunEventCursor acknowledgedCursor;
         String selectedModelId;
 
-        FakeClient(CodingSessionView view) {
+        public FakeClient(CodingSessionView view) {
             this.view = view;
             this.reconciledView = view;
         }

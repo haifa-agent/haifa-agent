@@ -408,6 +408,9 @@ public final class TerminalUiReducer {
                     .forEach(merged::add);
             return copyWithPending(state, List.copyOf(merged));
         }
+        if (action instanceof TerminalUiAction.WaitingChanged waiting) {
+            return state.withWaiting(waiting.waiting());
+        }
         if (action instanceof TerminalUiAction.StatusChanged status) {
             return copyWithStatus(state, status.status());
         }
@@ -610,6 +613,7 @@ public final class TerminalUiReducer {
                         .filter(value -> value.kind() == PendingMessage.Kind.FOLLOW_UP)
                         .toList()
                 : projectPending(state.pending(), event);
+        Optional<WaitingMessage> waiting = projectWaiting(state.waiting(), pending, runSettled);
         var seen = new HashSet<>(state.seenEventIds());
         seen.add(event.eventId());
         TerminalFooter footer = footer(state.footer(), event);
@@ -619,8 +623,8 @@ public final class TerminalUiReducer {
                 : Optional.empty();
         String projectedStatus = status(event, state.status());
         TerminalActivity projectedActivity = activity(state, event, projectedStatus);
-        return copy(
-                state,
+        return new TerminalUiState(
+                state.header(),
                 state.loadedResources(),
                 transcript,
                 pending,
@@ -640,7 +644,25 @@ public final class TerminalUiReducer {
                 state.exitRequested(),
                 state.sidebarVisible(),
                 state.sidebarExplicitlyToggled(),
-                runSettled ? false : state.cancelArmed());
+                state.themeName(),
+                runSettled ? false : state.cancelArmed(),
+                waiting);
+    }
+
+    private static Optional<WaitingMessage> projectWaiting(
+            Optional<WaitingMessage> waiting, List<PendingMessage> pending, boolean runSettled) {
+        if (waiting.isEmpty()) {
+            return waiting;
+        }
+        WaitingMessage message = waiting.orElseThrow();
+        if (message.phase() == WaitingMessage.Phase.SENDING) {
+            boolean steerAccepted = pending.stream().anyMatch(value -> value.kind() == PendingMessage.Kind.STEER);
+            return steerAccepted || runSettled ? Optional.empty() : waiting;
+        }
+        if (runSettled && message.phase() == WaitingMessage.Phase.EDITING) {
+            return Optional.of(message.discardEdit());
+        }
+        return waiting;
     }
 
     private static Optional<TerminalSelector> selectorAfterSessionLoad(
@@ -1508,6 +1530,7 @@ public final class TerminalUiReducer {
                 sidebarVisible,
                 sidebarExplicitlyToggled,
                 state.themeName(),
-                cancelArmed);
+                cancelArmed,
+                state.waiting());
     }
 }

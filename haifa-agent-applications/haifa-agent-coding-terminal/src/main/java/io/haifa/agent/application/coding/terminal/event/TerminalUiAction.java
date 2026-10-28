@@ -2,6 +2,7 @@ package io.haifa.agent.application.coding.terminal.event;
 
 import io.haifa.agent.application.coding.terminal.state.PendingMessage;
 import io.haifa.agent.application.coding.terminal.state.TerminalSelector;
+import io.haifa.agent.application.coding.terminal.state.WaitingMessage;
 import io.haifa.agent.application.project.product.coding.CodingSessionHistoryPage;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationProgressView;
@@ -83,6 +84,8 @@ public sealed interface TerminalUiAction {
     record EditorChanged(String buffer, int cursor) implements TerminalUiAction {}
 
     record PendingChanged(List<PendingMessage> messages) implements TerminalUiAction {}
+
+    record WaitingChanged(java.util.Optional<WaitingMessage> waiting) implements TerminalUiAction {}
 
     record StatusChanged(String status) implements TerminalUiAction {}
 
