@@ -398,7 +398,7 @@ public final class CodingTerminalTestSupport {
         final List<String> restored = new ArrayList<>();
         final List<InteractionAction> respondedActions = new ArrayList<>();
         final List<List<io.haifa.agent.core.content.ContentPart>> respondedInputs = new ArrayList<>();
-        final List<AgentSessionId> cancelledSessions = new ArrayList<>();
+        public final List<AgentSessionId> cancelledSessions = new ArrayList<>();
         final List<String> revokedWorkspaces = new ArrayList<>();
         CodingShellPlan.State shellState = CodingShellPlan.State.READY;
         boolean shellApproved;

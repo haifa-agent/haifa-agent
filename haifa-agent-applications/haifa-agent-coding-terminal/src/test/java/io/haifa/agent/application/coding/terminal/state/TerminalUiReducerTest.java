@@ -1215,6 +1215,25 @@ class TerminalUiReducerTest {
     }
 
     @Test
+    void sendingDraftSurvivesAnUnrelatedAcceptedSteer() {
+        TerminalUiState sending = TerminalUiState.initial(120, 40)
+                .withWaiting(Optional.of(new WaitingMessage("w1", "queued draft", WaitingMessage.Phase.SENDING)));
+
+        TerminalUiState next = reducer.reduce(
+                sending,
+                new TerminalUiAction.RunEventReceived(event(
+                        1, "event-1", new RunEventPayloads.RunInputLifecycle("input-1", "ACCEPTED", "safe-point-2"))));
+
+        // The earlier Steer is what is pending; it must not stand in for acceptance of the in-flight draft.
+        assertThat(next.pending())
+                .anySatisfy(message -> assertThat(message.kind()).isEqualTo(PendingMessage.Kind.STEER));
+        assertThat(next.waiting()).hasValueSatisfying(waiting -> {
+            assertThat(waiting.id()).isEqualTo("w1");
+            assertThat(waiting.phase()).isEqualTo(WaitingMessage.Phase.SENDING);
+        });
+    }
+
+    @Test
     void sessionOrRunChangesCannotCarryAStaleSteerIntoTheNextRun() {
         TerminalUiState accepted = reducer.reduce(
                 TerminalUiState.initial(120, 40),
@@ -1463,6 +1482,20 @@ class TerminalUiReducerTest {
 
         TerminalUiState toggledOn = reducer.reduce(toggledOff, new TerminalUiAction.SidebarToggled());
         assertThat(toggledOn.sidebarVisible()).isTrue();
+    }
+
+    @Test
+    void sidebarToggledPreservesWaitingDraft() {
+        TerminalUiState withWaiting = TerminalUiState.initial(120, 40)
+                .withWaiting(Optional.of(new WaitingMessage("w1", "keep me", WaitingMessage.Phase.WAITING)));
+
+        TerminalUiState toggled = reducer.reduce(withWaiting, new TerminalUiAction.SidebarToggled());
+
+        assertThat(toggled.sidebarVisible()).isFalse();
+        assertThat(toggled.waiting()).hasValueSatisfying(waiting -> {
+            assertThat(waiting.id()).isEqualTo("w1");
+            assertThat(waiting.text()).isEqualTo("keep me");
+        });
     }
 
     @Test
