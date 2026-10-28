@@ -26,6 +26,30 @@ class DockerAioSandboxConfigurationTest {
     }
 
     @Test
+    void digestReflectsVersionTwoPolicyBoundary() {
+        DockerAioSandboxConfiguration config = configuration(IMAGE, OptionalInt.empty());
+        assertThat(config.configurationDigest().value()).isNotBlank();
+        DockerAioSandboxConfiguration ephemeral = new DockerAioSandboxConfiguration(
+                config.installationId(),
+                config.dockerSocket(),
+                config.image(),
+                config.containerWorkspaceRoot(),
+                config.runtimes(),
+                config.uid(),
+                config.gid(),
+                config.nanoCpus(),
+                config.memoryBytes(),
+                config.pidsLimit(),
+                config.engineTimeout(),
+                config.stopTimeout(),
+                config.aioPort(),
+                config.maxConcurrentSessions(),
+                DockerAioLifecycleMode.EPHEMERAL,
+                config.idleTimeout());
+        assertThat(config.configurationDigest()).isNotEqualTo(ephemeral.configurationDigest());
+    }
+
+    @Test
     void imageMustBeDigestLocked() {
         assertThatThrownBy(() -> configuration("ghcr.io/example/sandbox:latest", OptionalInt.empty()))
                 .isInstanceOf(IllegalArgumentException.class)
