@@ -42,8 +42,7 @@ public final class WaitingPreviewLauncher {
         FakeClient client = new FakeClient(CodingTerminalTestSupport.activeView());
         CodingTerminalController controller = CodingTerminalTestSupport.controller(client);
         controller.open(CodingTerminalTestSupport.SESSION_ID);
-        controller.accept(new TerminalInput(
-                TerminalInput.Kind.SUBMIT, "先别改 assertion，只修 checkpoint recovery 路径。"));
+        controller.accept(new TerminalInput(TerminalInput.Kind.SUBMIT, "先别改 assertion，只修 checkpoint recovery 路径。"));
 
         if (controller.state().waiting().isEmpty()) {
             throw new IllegalStateException("expected Waiting draft after active Enter");
@@ -58,8 +57,7 @@ public final class WaitingPreviewLauncher {
             throw new IllegalStateException("Esc must not cancel/arm Run while Waiting exists");
         }
 
-        controller.accept(new TerminalInput(
-                TerminalInput.Kind.SUBMIT, "先别改 assertion，只修 checkpoint recovery 路径。"));
+        controller.accept(new TerminalInput(TerminalInput.Kind.SUBMIT, "先别改 assertion，只修 checkpoint recovery 路径。"));
         TerminalUiState state = withDemoTranscript(controller.state());
         WaitingMessage waiting = state.waiting().orElseThrow();
         if (waiting.phase() != WaitingMessage.Phase.WAITING) {
@@ -79,20 +77,19 @@ public final class WaitingPreviewLauncher {
         editor.setValue(state.editorBuffer());
         editor.focus();
 
-        String rendered = Strip.strip(view.render(
-                state, transcript, editor, true, false, Duration.ofSeconds(12), 0, false, false));
+        String rendered = Strip.strip(
+                view.render(state, transcript, editor, true, false, Duration.ofSeconds(12), 0, false, false));
         Path output = Path.of(args.length > 0 ? args[0] : "waiting-preview.txt");
         Files.writeString(output, rendered + System.lineSeparator(), StandardCharsets.UTF_8);
         System.out.println(rendered);
         System.out.println();
         System.out.println("Wrote Waiting preview (FakeClient, no API key) to " + output.toAbsolutePath());
-        System.out.println(
-                "steered="
-                        + client.steeredMessages.size()
-                        + " cancelledRuns="
-                        + client.cancelledSessions.size()
-                        + " waiting="
-                        + controller.state().waiting().isPresent());
+        System.out.println("steered="
+                + client.steeredMessages.size()
+                + " cancelledRuns="
+                + client.cancelledSessions.size()
+                + " waiting="
+                + controller.state().waiting().isPresent());
     }
 
     private static TerminalUiState withDemoTranscript(TerminalUiState state) {
@@ -105,19 +102,9 @@ public final class WaitingPreviewLauncher {
                         "SENT",
                         true),
                 new TranscriptItem(
-                        "t1",
-                        TranscriptItem.Kind.TOOL,
-                        "Read File · RuntimeCoreTest.java",
-                        "",
-                        "SUCCEEDED",
-                        false),
+                        "t1", TranscriptItem.Kind.TOOL, "Read File · RuntimeCoreTest.java", "", "SUCCEEDED", false),
                 new TranscriptItem(
-                        "t2",
-                        TranscriptItem.Kind.TOOL,
-                        "Apply Patch · RuntimeCore.java",
-                        "",
-                        "SUCCEEDED",
-                        false),
+                        "t2", TranscriptItem.Kind.TOOL, "Apply Patch · RuntimeCore.java", "", "SUCCEEDED", false),
                 new TranscriptItem(
                         "t3",
                         TranscriptItem.Kind.TOOL,
@@ -126,12 +113,7 @@ public final class WaitingPreviewLauncher {
                         "RUNNING",
                         false),
                 new TranscriptItem(
-                        "a1",
-                        TranscriptItem.Kind.ASSISTANT,
-                        "Assistant",
-                        "正在跑测试，等待结果后继续……",
-                        "STREAMING",
-                        true));
+                        "a1", TranscriptItem.Kind.ASSISTANT, "Assistant", "正在跑测试，等待结果后继续……", "STREAMING", true));
         return new TerminalUiState(
                 state.header(),
                 List.of("AGENTS.md", "14 tools"),

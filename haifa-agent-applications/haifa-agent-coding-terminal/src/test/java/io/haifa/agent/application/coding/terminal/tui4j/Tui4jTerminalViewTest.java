@@ -1725,13 +1725,7 @@ class Tui4jTerminalViewTest {
         TerminalUiState state = new TerminalUiState(
                         initial.header(),
                         initial.loadedResources(),
-                        List.of(item(
-                                "u1",
-                                TranscriptItem.Kind.USER,
-                                "You",
-                                "Fix failing tests",
-                                "SENT",
-                                true)),
+                        List.of(item("u1", TranscriptItem.Kind.USER, "You", "Fix failing tests", "SENT", true)),
                         List.of(),
                         "WORKING",
                         "",
@@ -1757,8 +1751,8 @@ class Tui4jTerminalViewTest {
                                 io.haifa.agent.application.coding.terminal.state.WaitingMessage.Phase.WAITING)))
                 .withStatus("WORKING");
 
-        String rendered = Strip.strip(view.render(
-                state, transcript(state), editor(120), true, false, Duration.ofSeconds(12)));
+        String rendered =
+                Strip.strip(view.render(state, transcript(state), editor(120), true, false, Duration.ofSeconds(12)));
 
         assertThat(rendered)
                 .contains(

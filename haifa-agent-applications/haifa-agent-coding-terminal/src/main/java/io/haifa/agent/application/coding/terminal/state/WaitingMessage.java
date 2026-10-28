@@ -38,7 +38,8 @@ public record WaitingMessage(String id, String text, Phase phase, String origina
     }
 
     public WaitingMessage saveEdit(String newText) {
-        String normalized = Objects.requireNonNull(newText, "newText must not be null").strip();
+        String normalized =
+                Objects.requireNonNull(newText, "newText must not be null").strip();
         if (normalized.isEmpty()) {
             return discardEdit();
         }

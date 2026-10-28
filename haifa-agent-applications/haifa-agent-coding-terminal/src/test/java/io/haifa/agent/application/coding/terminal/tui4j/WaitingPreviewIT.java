@@ -34,8 +34,7 @@ class WaitingPreviewIT {
         FakeClient client = new FakeClient(CodingTerminalTestSupport.activeView());
         CodingTerminalController controller = CodingTerminalTestSupport.controller(client);
         controller.open(CodingTerminalTestSupport.SESSION_ID);
-        controller.accept(new TerminalInput(
-                TerminalInput.Kind.SUBMIT, "先别改 assertion，只修 checkpoint recovery 路径。"));
+        controller.accept(new TerminalInput(TerminalInput.Kind.SUBMIT, "先别改 assertion，只修 checkpoint recovery 路径。"));
         assertThat(controller.state().waiting()).isPresent();
 
         controller.accept(new TerminalInput(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
@@ -44,8 +43,7 @@ class WaitingPreviewIT {
         assertThat(controller.state().cancelArmed()).isFalse();
         assertThat(controller.state().currentRunId()).isPresent();
 
-        controller.accept(new TerminalInput(
-                TerminalInput.Kind.SUBMIT, "先别改 assertion，只修 checkpoint recovery 路径。"));
+        controller.accept(new TerminalInput(TerminalInput.Kind.SUBMIT, "先别改 assertion，只修 checkpoint recovery 路径。"));
         TerminalUiState state = withDemoTranscript(controller.state());
 
         Tui4jTerminalView view = new Tui4jTerminalView();
@@ -61,14 +59,13 @@ class WaitingPreviewIT {
         editor.setValue(state.editorBuffer());
         editor.focus();
 
-        String rendered = Strip.strip(view.render(
-                state, transcript, editor, true, false, Duration.ofSeconds(12), 0, false, false));
+        String rendered = Strip.strip(
+                view.render(state, transcript, editor, true, false, Duration.ofSeconds(12), 0, false, false));
         Path output = Path.of("target/waiting-preview.txt");
         Files.createDirectories(output.getParent());
         Files.writeString(output, rendered + System.lineSeparator(), StandardCharsets.UTF_8);
 
-        assertThat(rendered)
-                .contains("Waiting", "Send Now enter", "Edit e", "Cancel esc", "checkpoint recovery");
+        assertThat(rendered).contains("Waiting", "Send Now enter", "Edit e", "Cancel esc", "checkpoint recovery");
         assertThat(client.steeredMessages).isEmpty();
     }
 
@@ -82,19 +79,9 @@ class WaitingPreviewIT {
                         "SENT",
                         true),
                 new TranscriptItem(
-                        "t1",
-                        TranscriptItem.Kind.TOOL,
-                        "Read File · RuntimeCoreTest.java",
-                        "",
-                        "SUCCEEDED",
-                        false),
+                        "t1", TranscriptItem.Kind.TOOL, "Read File · RuntimeCoreTest.java", "", "SUCCEEDED", false),
                 new TranscriptItem(
-                        "t2",
-                        TranscriptItem.Kind.TOOL,
-                        "Apply Patch · RuntimeCore.java",
-                        "",
-                        "SUCCEEDED",
-                        false),
+                        "t2", TranscriptItem.Kind.TOOL, "Apply Patch · RuntimeCore.java", "", "SUCCEEDED", false),
                 new TranscriptItem(
                         "t3",
                         TranscriptItem.Kind.TOOL,
@@ -103,12 +90,7 @@ class WaitingPreviewIT {
                         "RUNNING",
                         false),
                 new TranscriptItem(
-                        "a1",
-                        TranscriptItem.Kind.ASSISTANT,
-                        "Assistant",
-                        "正在跑测试，等待结果后继续……",
-                        "STREAMING",
-                        true));
+                        "a1", TranscriptItem.Kind.ASSISTANT, "Assistant", "正在跑测试，等待结果后继续……", "STREAMING", true));
         return new TerminalUiState(
                 state.header(),
                 List.of("AGENTS.md", "14 tools"),

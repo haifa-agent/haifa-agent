@@ -1123,14 +1123,14 @@ final class Tui4jTerminalView {
 
     private String submitHint(TerminalUiState state) {
         if (state.waiting()
-                .filter(value -> value.phase()
-                        == io.haifa.agent.application.coding.terminal.state.WaitingMessage.Phase.EDITING)
+                .filter(value ->
+                        value.phase() == io.haifa.agent.application.coding.terminal.state.WaitingMessage.Phase.EDITING)
                 .isPresent()) {
             return "enter save";
         }
         if (state.waiting()
-                .filter(value -> value.phase()
-                        == io.haifa.agent.application.coding.terminal.state.WaitingMessage.Phase.WAITING)
+                .filter(value ->
+                        value.phase() == io.haifa.agent.application.coding.terminal.state.WaitingMessage.Phase.WAITING)
                 .isPresent()) {
             return state.editorBuffer().isBlank() ? "enter send now" : "enter replace waiting";
         }
@@ -1146,20 +1146,20 @@ final class Tui4jTerminalView {
         }
         if (state.selector().isPresent()) return "enter select · escape close";
         if (state.waiting()
-                .filter(value -> value.phase()
-                        == io.haifa.agent.application.coding.terminal.state.WaitingMessage.Phase.EDITING)
+                .filter(value ->
+                        value.phase() == io.haifa.agent.application.coding.terminal.state.WaitingMessage.Phase.EDITING)
                 .isPresent()) {
             return "enter save · esc discard edit";
         }
         if (state.waiting()
-                .filter(value -> value.phase()
-                        == io.haifa.agent.application.coding.terminal.state.WaitingMessage.Phase.SENDING)
+                .filter(value ->
+                        value.phase() == io.haifa.agent.application.coding.terminal.state.WaitingMessage.Phase.SENDING)
                 .isPresent()) {
             return "steer pending · " + shortcuts.interrupt() + " interrupt";
         }
         if (state.waiting()
-                .filter(value -> value.phase()
-                        == io.haifa.agent.application.coding.terminal.state.WaitingMessage.Phase.WAITING)
+                .filter(value ->
+                        value.phase() == io.haifa.agent.application.coding.terminal.state.WaitingMessage.Phase.WAITING)
                 .isPresent()) {
             return "enter send now · e edit · esc cancel · "
                     + shortcuts.followUp()
