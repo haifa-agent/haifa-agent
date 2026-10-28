@@ -201,3 +201,46 @@ macOS / Linux：
 
 行数按换行符统计；递归扫描跳过 `.git`、`node_modules`、`target`、`__pycache__` 等生成/依赖目录。
 脚本不修改任何文件，仅读取 POM 与源码做统计。
+
+## 本地工作区约定
+
+`local-tmp/` 是被 `.gitignore` 全量忽略的本机工作区，承载构建指标、真实环境运行目录、验收证据和一次性
+产物。它不参与版本控制，所以新文件只能进下面登记的槽位，不在仓库根或 `local-tmp` 根目录随意新建目录。
+
+### 脚本与构建写入的固定槽位
+
+这些路径由代码写死，改名必须同步修改脚本、POM 与测试：
+
+| 路径 | 写入方 |
+| --- | --- |
+| `local-tmp/maven-build-metrics/` | `build-support/scripts/haifa_build_metrics.py`、`summarize_maven_build.py` |
+| `local-tmp/spotless-cache/` | 根 `pom.xml` 的 Spotless `indexFile` |
+| `local-tmp/java-language-server-control.json` | `build-support/scripts/java_language_server.py` |
+| `local-tmp/personal-assistant-real/` | `scripts/real_environment.py` |
+| `local-tmp/autonomous-delivery-ladder/` | `haifa-agent-testing/haifa-agent-autonomous-delivery/tools/ladder_usage.py`、`run_ladder.py` |
+| `local-tmp/autonomous-delivery-assets/` | 同一 `run_ladder.py`（资产缓存，可重建） |
+| `local-tmp/artifacts/ca-update-<stamp>/` | `scripts/refresh-ca/update_coding_agent.py` |
+
+### 人工与智能体创建的入驻槽位
+
+| 槽位 | 放什么 | 保留规则 |
+| --- | --- | --- |
+| `local-tmp/work/<slug>-<YYYYMMDD>/` | 在办任务的中间产物、临时诊断件、一次性脚本 | 结案前移入 `archive/`；超过 30 天未改动视为可删 |
+| `local-tmp/evidence/<kind>-<id>-<YYYYMMDD>/` | 绑定到具体 PR、验收或审计的验证证据 | PR 合并或验收结束后整体移入 `archive/<YYYY-MM>/` |
+| `local-tmp/artifacts/<name>-<YYYYMMDD>/` | 可重建的分发包、基线 JAR/ZIP、runtime db | 只允许存在最新 1 份，生成新的一份时删旧的 |
+| `local-tmp/reference/<repo>-<YYYYMMDD>/` | 可重新获取的第三方克隆、上游快照 | 目录内写 `.source` 记录 URL 与 commit；用完即删 |
+| `local-tmp/archive/<YYYY-MM>/` | 已结案证据，只读 | 只移动不删除，不回迁 |
+
+判定归属只问一个问题：这份东西能不能重建。能重建 → `artifacts/` 且只留一份；不能重建且能证明某个结论
+→ `evidence/`；只是过程垃圾 → `work/` 且到期删除。
+
+### 禁止事项
+
+1. 不在仓库根或 `local-tmp` 根目录新建临时文件；`*.log`、崩溃日志与诊断件进 `work/` 或系统临时目录。
+2. 不保存整仓或整个 worktree 的副本；需要引用某次运行，用 commit SHA 加最小证据。
+3. 同一份分发包不重复保存多份。
+4. 凭据、token、`.env` 不进入 `local-tmp`，保存到仓库外的凭据目录。
+5. 不移动上文登记的固定槽位，除非同步修改脚本、POM 与测试。
+
+每月底，或 `local-tmp` 超过 500 MB 时按上述规则整理一次，并在 `local-tmp/cleanup-<YYYY-MM-DD>.md`
+记录删除依据与剩余项。

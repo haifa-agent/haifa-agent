@@ -77,7 +77,24 @@ Agent 的 `runtime.db`，以最新 `runtime_event.occurred_at` 为窗口终点�
 
 ---
 
-## 4. 脚本单元测试
+## 4. 本地 Coding Agent 更新
+
+`refresh-ca/update-coding-agent.ps1` 构建选定分支或 worktree 的 `haifa-agent-cli`，打包带 JRE 的 CA ZIP，
+用隔离数据目录 smoke 通过后替换本机安装的 JAR 并更新用户 PATH。公共逻辑位于
+`refresh-ca/update_coding_agent.py`，`.ps1` 只原样转发参数。
+
+```powershell
+.\scripts\refresh-ca\update-coding-agent.ps1 update --branch feat-terminal-markdown-rendering
+.\scripts\refresh-ca\update-coding-agent.ps1 update --worktree terminal-markdown-rendering --dry-run
+```
+
+这是本地安装构建：跳过单元测试、不发布 SDK，不能代替 PR 验证。ZIP、旧 JAR 备份与 `report.json` 写入
+被 Git 忽略的 `local-tmp/artifacts/ca-update-<stamp>/`，成功后只保留最新一份。完整流程、安装根目录选择
+与 PATH 规则见 [`refresh-ca/README.md`](refresh-ca/README.md)。
+
+---
+
+## 5. 脚本单元测试
 
 本目录工具脚本的单元测试位于 `scripts/tests/`，离线运行命令：
 
