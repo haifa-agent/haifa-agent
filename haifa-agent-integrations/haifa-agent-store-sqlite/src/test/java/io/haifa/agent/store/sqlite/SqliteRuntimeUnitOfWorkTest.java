@@ -167,6 +167,40 @@ class SqliteRuntimeUnitOfWorkTest {
     }
 
     @Test
+    void writeUnitOfWorkRetriesTheWriterQueueOnceBeforeItFails() throws Exception {
+        try (SqliteStoreFoundation foundation = SqliteStoreFoundation.initialize(
+                new SqliteStoreConfiguration(directory.resolve("writer-retry.db"), 100, 4 * 1024 * 1024, 250),
+                java.time.Clock.systemUTC())) {
+            SqliteRuntimeUnitOfWork unitOfWork = foundation.unitOfWork();
+            CountDownLatch holderStarted = new CountDownLatch(1);
+            Thread holder = Thread.ofPlatform()
+                    .start(() -> unitOfWork.execute(() -> {
+                        holderStarted.countDown();
+                        try {
+                            Thread.sleep(350);
+                        } catch (InterruptedException interrupted) {
+                            Thread.currentThread().interrupt();
+                        }
+                        return null;
+                    }));
+            assertThat(holderStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+            // The first wait expires while the holder still owns the slot; the retry succeeds once it releases.
+            unitOfWork.execute(() -> {
+                execute(unitOfWork.currentConnection(), "CREATE TABLE retry_values(value TEXT NOT NULL)");
+                execute(unitOfWork.currentConnection(), "INSERT INTO retry_values(value) VALUES ('written')");
+                return null;
+            });
+            holder.join(TimeUnit.SECONDS.toMillis(10));
+
+            try (Connection connection = foundation.connections().openConnection()) {
+                assertThat(queryLong(connection, "SELECT COUNT(*) FROM retry_values"))
+                        .isEqualTo(1);
+            }
+        }
+    }
+
+    @Test
     void readOnlyUnitOfWorkRejectsNestedWriteScope() {
         SqliteRuntimeUnitOfWork unitOfWork =
                 SqliteTestSupport.foundation(directory).unitOfWork();

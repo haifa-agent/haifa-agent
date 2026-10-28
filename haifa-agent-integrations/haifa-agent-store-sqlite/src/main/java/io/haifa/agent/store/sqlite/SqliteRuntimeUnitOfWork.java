@@ -100,6 +100,31 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
         }
     }
 
+    /**
+     * Queues for the writer slot, retrying once when the fallback bound expires before the transaction started.
+     *
+     * <p>The wait happens before any statement runs, so an expired wait leaves nothing to roll back: a stall that
+     * delayed this caller's own scheduling can be retried instead of failing the unit of work. A caller therefore
+     * waits at most twice the configured fallback before it fails with {@code WRITER_SLOT_TIMEOUT}.
+     */
+    private long acquireWriterWithRetry(long unitOfWorkId) {
+        long started = System.nanoTime();
+        try {
+            return connections.acquireWriter();
+        } catch (SqliteStoreException failure) {
+            if (failure.failure() != SqliteStoreFailure.WRITER_SLOT_TIMEOUT) {
+                throw failure;
+            }
+            LOGGER.warn(
+                    "event=sqlite.writer.retry uowId={} waitedMs={} failure={}",
+                    unitOfWorkId,
+                    elapsedMillis(started),
+                    failure.failure());
+            connections.acquireWriter();
+            return elapsedMillis(started);
+        }
+    }
+
     private <T> T executeOutermost(Supplier<T> work, TransactionMode mode) {
         long started = System.nanoTime();
         long unitOfWorkId = UNIT_OF_WORK_IDS.incrementAndGet();
@@ -109,12 +134,17 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
         long writerWaitMillis = 0;
         try {
             if (mode == TransactionMode.WRITE) {
+                // File-system work happens before queueing, so the writer slot covers database work only.
+                connections.verifyDatabaseFiles();
                 // Queue for the write slot before leasing a connection: a queued writer must not occupy one of the
                 // pooled connections that the current holder, or a nested caller, still needs.
-                writerWaitMillis = connections.acquireWriter();
+                writerWaitMillis = acquireWriterWithRetry(unitOfWorkId);
                 writerHeld = true;
             }
-            try (Connection connection = connections.openConnection();
+            Connection connection = mode == TransactionMode.WRITE
+                    ? connections.openConnectionAfterFileVerification()
+                    : connections.openConnection();
+            try (connection;
                     SqlSession session = myBatis.openSession(connection)) {
                 long setupMillis = elapsedMillis(started);
                 Context context = new Context(unitOfWorkId, connection, session, mode == TransactionMode.READ_ONLY);

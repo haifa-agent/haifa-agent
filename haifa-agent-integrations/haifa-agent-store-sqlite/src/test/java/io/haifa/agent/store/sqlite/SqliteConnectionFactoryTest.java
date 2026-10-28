@@ -51,6 +51,11 @@ class SqliteConnectionFactoryTest {
         assertThatThrownBy(() -> SqliteStoreConfiguration.defaults(directory.toAbsolutePath()))
                 .isInstanceOf(SqliteStoreException.class)
                 .hasMessageContaining("regular file");
+
+        assertThatThrownBy(() -> new SqliteStoreConfiguration(
+                        directory.resolve("runtime.db").toAbsolutePath(), 1_250, 8_192, 0))
+                .isInstanceOf(SqliteStoreException.class)
+                .hasMessageContaining("writerQueueTimeoutMillis");
     }
 
     @Test
@@ -141,6 +146,17 @@ class SqliteConnectionFactoryTest {
         assertThat(detections).hasValue(1);
         assertThat(standaloneRootValidations).hasValue(0);
         assertThat(securedBatches).hasValueGreaterThanOrEqualTo(4);
+
+        // A write unit of work verifies the files before it queues for the writer slot, so the lease that follows
+        // must not repeat the file-system work while the slot is held.
+        int batchesBeforeAheadOfWriter = securedBatches.get();
+        factory.verifyDatabaseFiles();
+        assertThat(securedBatches).hasValue(batchesBeforeAheadOfWriter + 1);
+        try (Connection ignored = factory.openConnectionAfterFileVerification()) {
+            assertThat(securedBatches)
+                    .as("a lease after an explicit verification does not verify the files again")
+                    .hasValue(batchesBeforeAheadOfWriter + 1);
+        }
         factory.close();
     }
 
@@ -233,8 +249,10 @@ class SqliteConnectionFactoryTest {
 
     @Test
     void writerQueueFallbackBoundNamesTheThreadThatStillHoldsTheSlot() throws Exception {
-        SqliteConnectionFactory factory = SqliteTestSupport.closeAfterTest(new SqliteConnectionFactory(
-                SqliteTestSupport.configuration(directory), SecureFilePermissions::strategyForDirectory, 150));
+        SqliteStoreConfiguration configured = new SqliteStoreConfiguration(
+                SqliteTestSupport.configuration(directory).databasePath(), 1_250, 8_192, 150);
+        SqliteConnectionFactory factory = SqliteTestSupport.closeAfterTest(
+                new SqliteConnectionFactory(configured, SecureFilePermissions::strategyForDirectory));
         String holderThreadName = Thread.currentThread().getName();
         factory.acquireWriter();
         try (ExecutorService executor = Executors.newSingleThreadExecutor()) {
