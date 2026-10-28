@@ -70,8 +70,7 @@ class CodingTerminalWaitingTest {
         controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
 
         assertThat(client.steeredMessages).containsExactly("redirect the current task");
-        assertThat(controller.state().waiting())
-                .hasValueSatisfying(waiting -> assertThat(waiting.phase()).isEqualTo(WaitingMessage.Phase.SENDING));
+        assertThat(controller.state().waiting()).isEmpty();
     }
 
     @Test
@@ -185,7 +184,7 @@ class CodingTerminalWaitingTest {
     }
 
     @Test
-    void autoSubmitAfterRunUsesEditedTextWhileEditing() {
+    void runEndKeepsTheEditedDraftUntilTheUserSavesIt() {
         FakeClient client = new FakeClient(activeView());
         var pump = new TerminalEventPump(32);
         var controller = new CodingTerminalController(
@@ -200,8 +199,15 @@ class CodingTerminalWaitingTest {
                 event(1, new RunEventPayloads.RunLifecycle("COMPLETED", 2, "NONE"))));
         controller.drainEvents();
 
-        assertThat(controller.state().waiting()).isEmpty();
+        assertThat(client.submittedMessages).isEmpty();
+        assertThat(controller.state().waiting())
+                .hasValueSatisfying(waiting -> assertThat(waiting.phase()).isEqualTo(WaitingMessage.Phase.EDITING));
+        assertThat(controller.state().editorBuffer()).isEqualTo(revised);
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, revised));
+
         assertThat(client.submittedMessages).containsExactly(revised);
+        assertThat(controller.state().waiting()).isEmpty();
         assertThat(controller.state().editorBuffer()).isEmpty();
     }
 
@@ -378,6 +384,43 @@ class CodingTerminalWaitingTest {
         assertThat(controller.state().waiting()).hasValueSatisfying(waiting -> {
             assertThat(waiting.phase()).isEqualTo(WaitingMessage.Phase.WAITING);
             assertThat(waiting.text()).isEqualTo("draft that must survive");
+        });
+        assertThat(controller.state().editorBuffer()).isEqualTo(unrelated);
+        assertThat(controller.state().recoverableError()).contains("MESSAGE_REJECTED");
+    }
+
+    @Test
+    void rejectedSendNowRestoresTheDraftEvenAfterTheRunSettles() {
+        var effects = new ArrayDeque<Runnable>();
+        FakeClient client = new FakeClient(activeView()) {
+            @Override
+            public void steer(AgentSessionId sessionId, AgentRunId activeRunId, String message, String idempotencyKey) {
+                throw new io.haifa.agent.application.project.product.ProjectProductException(
+                        "MESSAGE_REJECTED", "Message rejected");
+            }
+        };
+        var pump = new TerminalEventPump(32);
+        var controller = new CodingTerminalController(
+                PROJECT_ID, client, pump, new TerminalUiReducer(), TerminalUiState.initial(120, 40), effects::add);
+        controller.open(SESSION_ID);
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "in flight draft"));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+        assertThat(effects).hasSize(1);
+
+        pump.offer(new TerminalUiAction.RunEventReceived(
+                event(1, new RunEventPayloads.RunLifecycle("COMPLETED", 2, "NONE"))));
+        controller.drainEvents();
+        assertThat(controller.state().waiting())
+                .hasValueSatisfying(waiting -> assertThat(waiting.phase()).isEqualTo(WaitingMessage.Phase.SENDING));
+        String unrelated = "typed later";
+        controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, unrelated, unrelated.length()));
+
+        effects.remove().run();
+        controller.drainEvents();
+
+        assertThat(controller.state().waiting()).hasValueSatisfying(waiting -> {
+            assertThat(waiting.phase()).isEqualTo(WaitingMessage.Phase.WAITING);
+            assertThat(waiting.text()).isEqualTo("in flight draft");
         });
         assertThat(controller.state().editorBuffer()).isEqualTo(unrelated);
         assertThat(controller.state().recoverableError()).contains("MESSAGE_REJECTED");
