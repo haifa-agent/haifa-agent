@@ -35,7 +35,7 @@ public final class SqliteIdempotencyRepository implements IdempotencyRepository 
 
     @Override
     public Optional<RunStartIdempotencyBinding> findRunBinding(String callerScope, String operation, String key) {
-        return execute(() -> Optional.ofNullable(find(callerScope, operation, key))
+        return read(() -> Optional.ofNullable(find(callerScope, operation, key))
                 .map(row -> new RunStartIdempotencyBinding(
                         row.callerScope(),
                         row.operation(),
@@ -87,7 +87,7 @@ public final class SqliteIdempotencyRepository implements IdempotencyRepository 
     @Override
     public Optional<AppliedCommandResult> findAppliedCommand(
             String callerScope, String operation, String idempotencyKey) {
-        return execute(() -> Optional.ofNullable(findApplied(callerScope, operation, idempotencyKey))
+        return read(() -> Optional.ofNullable(findApplied(callerScope, operation, idempotencyKey))
                 .map(SqliteIdempotencyRepository::toDomain));
     }
 
@@ -145,7 +145,7 @@ public final class SqliteIdempotencyRepository implements IdempotencyRepository 
 
     @Override
     public Optional<RuntimeCommandResult> findCommandResult(String callerScope, String idempotencyKey) {
-        return execute(() -> {
+        return read(() -> {
             IdempotencyRow row = find(callerScope, COMMAND_RESULT, idempotencyKey);
             if (row == null || row.resultPayload() == null) return Optional.empty();
             CommandResultPayload payload = codecs.decode(
@@ -226,6 +226,16 @@ public final class SqliteIdempotencyRepository implements IdempotencyRepository 
     private <T> T execute(Supplier<T> work) {
         try {
             return unitOfWork.execute(work);
+        } catch (SqliteStoreException exception) {
+            if (exception.getCause() instanceof RuntimeException runtimeException) throw runtimeException;
+            throw exception;
+        }
+    }
+
+    /** Queries read committed state without reserving the process-wide write slot. */
+    private <T> T read(Supplier<T> work) {
+        try {
+            return unitOfWork.executeReadOnly(work);
         } catch (SqliteStoreException exception) {
             if (exception.getCause() instanceof RuntimeException runtimeException) throw runtimeException;
             throw exception;

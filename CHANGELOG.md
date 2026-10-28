@@ -2,6 +2,12 @@
 
 ## 0.1.4-SNAPSHOT - Unreleased
 
+- SQLite store serves pure queries (session messages, runs, attempts, idempotency, interaction, checkpoint,
+  memory, summary and event reads) in a deferred `query_only` scope instead of the process-wide writer slot,
+  so listing, paging and UI polling no longer serialize behind a turn's writes.
+  `RuntimeUnitOfWork.executeReadOnly` declares that scope for the Runtime and `DefaultAgentRuntime.messages`
+  uses it; writes attempted inside a read scope still fail closed.
+
 - Coding Terminal queues Enter pressed during an Active Run into a local Waiting draft above the editor instead of
   steering immediately: empty Enter sends it as a Steer, `alt+e` edits it, and Esc cancels only the draft. When the
   Run settles the draft is submitted as the next Turn without clearing an unrelated editor draft, it never carries
