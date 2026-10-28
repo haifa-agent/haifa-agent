@@ -64,11 +64,13 @@ Terminal 默认启用 bracketed paste；完整 `PasteMessage` 中的 CRLF 会归
 门禁：紧随其后的字符、CR 或 LF 会把该 Enter 归并为编辑器换行，只有独立 Enter 才提交。该门禁只
 覆盖普通 Editor Enter；Shift/Ctrl+Enter、Alt+Enter 和 Selector/Approval Enter 保持各自既有语义。
 
-Bracketed paste 达到 3 行或超过 150 字符（`strip` 后）时，Editor 只插入 `[Pasted #N ~M lines]` 占位符，
-完整正文按原样（仅做换行/控制字符归一化）保存在进程内的当前草稿映射中；占位符按整体单元处理（左右键跨界、
-退格/删除一次清除，任何会破坏占位符的编辑被拒绝并提示 `PASTE_PLACEHOLDER_ATOMIC`），提交时再展开为完整
-原文后进入 Session 与输入历史。提交路由基于可见文本，隐藏正文不会触发 `/` 命令或 `!` shell。阈值与
-多行长文本折叠策略一致；较小粘贴仍原样插入。
+Bracketed paste 与 Ctrl+V（剪贴板读取）在达到 3 行或超过 150 字符（`strip` 后）时，Editor 只插入
+`[Pasted #N ~M lines]` 占位符（OpenCode 风格的 paste summary；`#N` 用于区分多次粘贴），完整正文按原样
+（仅做换行/控制字符归一化）保存在进程内的当前草稿映射中；占位符按整体单元处理（左右键跨界、退格/删除一次
+清除，任何会破坏占位符的编辑被拒绝并提示 `PASTE_PLACEHOLDER_ATOMIC`），渲染时以 warning chip 高亮，提交时
+再展开为完整原文后进入 Session 与输入历史。提交路由基于可见文本，隐藏正文不会触发 `/` 命令或 `!` shell。
+阈值与 OpenCode 默认一致；较小粘贴仍原样插入。Ctrl+V 由应用读取宿主剪贴板（AWT），不依赖 tui4j 未实现的
+`Command.paste()` / `ReadClipboardMessage` 物化路径。
 
 生产 Model 初始化时主动请求一次真实 Window Size，并在 Windows 上约每 500ms 重新查询，避免停留在
 `80x24` 启动尺寸或在窗口缩放、跨显示器移动后与实际终端尺寸不一致。尺寸未变化时 `Tui4jTerminalIo` 在
