@@ -87,6 +87,28 @@ public record ClarificationAnswers(List<List<String>> answers, boolean declined)
                 .toString();
     }
 
+    /**
+     * Readable answer text for the user-visible session transcript.
+     *
+     * <p>Submitted parts carry the internal wire payload, so the transcript must never store them verbatim.
+     */
+    public String userSummary(InteractionRequest request) {
+        List<ClarificationPresentation.Question> questions =
+                request.clarificationPresentation().orElseThrow().questions();
+        if (declined) {
+            return "Dismissed the questions";
+        }
+        StringBuilder text = new StringBuilder();
+        for (int index = 0; index < questions.size(); index++) {
+            if (index > 0) text.append('\n');
+            List<String> answer = answers.get(index);
+            text.append(questions.get(index).question())
+                    .append(": ")
+                    .append(answer.isEmpty() ? "(no selection)" : String.join(", ", answer));
+        }
+        return text.toString();
+    }
+
     public Map<String, Object> structuredData() {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("answers", answers);

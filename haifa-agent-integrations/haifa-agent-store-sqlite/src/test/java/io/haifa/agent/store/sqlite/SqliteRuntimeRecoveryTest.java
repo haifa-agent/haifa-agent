@@ -1685,6 +1685,13 @@ class SqliteRuntimeRecoveryTest {
                         .isEqualTo("User has answered your questions: \"Which storage?\"=\"Postgres\"."
                                 + " You can now continue with the user's answers in mind."));
             });
+            assertThat(instance.ports().state().messages(runId))
+                    .filteredOn(message -> message.role() == io.haifa.agent.core.message.MessageRole.USER)
+                    .allSatisfy(message -> assertThat(message.contents().toString())
+                            .doesNotContain("selected=")
+                            .doesNotContain("custom="))
+                    .anySatisfy(
+                            message -> assertThat(message.contents().toString()).contains("Which storage?"));
             assertThat(instance.ports()
                             .interactions()
                             .record(interaction.id())
