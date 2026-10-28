@@ -703,6 +703,86 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
+    void typesARuneEIntoTheEditorInsteadOfEditingTheWaitingDraft() {
+        var fixture = waitingFixture();
+
+        fixture.model.update(runes('e'));
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("e");
+        assertThat(fixture.controller.state().waiting()).hasValueSatisfying(waiting -> assertThat(waiting.phase())
+                .isEqualTo(io.haifa.agent.application.coding.terminal.state.WaitingMessage.Phase.WAITING));
+    }
+
+    @Test
+    void altEStartsEditingTheWaitingDraft() {
+        var fixture = waitingFixture();
+
+        fixture.model.update(new KeyPressMessage(new Key(KeyType.KeyRunes, new char[] {'e'}, true)));
+
+        assertThat(fixture.controller.state().waiting()).hasValueSatisfying(waiting -> assertThat(waiting.phase())
+                .isEqualTo(io.haifa.agent.application.coding.terminal.state.WaitingMessage.Phase.EDITING));
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("queued draft");
+    }
+
+    private Fixture waitingFixture() {
+        var pump = new TerminalEventPump(64);
+        var controller = new CodingTerminalController(
+                new ProjectId("project-1"),
+                new UnusedClient(),
+                pump,
+                new TerminalUiReducer(),
+                TerminalUiState.initial(80, 24)
+                        .withWaiting(Optional.of(new io.haifa.agent.application.coding.terminal.state.WaitingMessage(
+                                "wait-1",
+                                "queued draft",
+                                io.haifa.agent.application.coding.terminal.state.WaitingMessage.Phase.WAITING))),
+                Runnable::run);
+        return new Fixture(controller, pump, new Tui4jCodingTerminalModel(controller, pump));
+    }
+
+    @Test
+    void enterDuringAnActiveRunQueuesWaitingInsteadOfSteering() {
+        var pump = new TerminalEventPump(64);
+        TerminalUiState idle = TerminalUiState.initial(80, 24);
+        TerminalUiState active = new TerminalUiState(
+                idle.header(),
+                idle.loadedResources(),
+                idle.transcript(),
+                idle.pending(),
+                "WORKING",
+                "",
+                0,
+                idle.selector(),
+                idle.footer(),
+                idle.columns(),
+                idle.rows(),
+                idle.session(),
+                Optional.of(new AgentRunId("run-1")),
+                idle.appliedCursor(),
+                idle.seenEventIds(),
+                idle.recoverableError(),
+                idle.activity(),
+                false,
+                idle.sidebarVisible(),
+                idle.sidebarExplicitlyToggled(),
+                idle.themeName(),
+                false);
+        var controller = new CodingTerminalController(
+                new ProjectId("project-1"), new UnusedClient(), pump, new TerminalUiReducer(), active, Runnable::run);
+        var model = new Tui4jCodingTerminalModel(controller, pump);
+        var fixture = new Fixture(controller, pump, model);
+        model.update(new PasteMessage("queue me"));
+
+        commitPlainEnter(fixture);
+
+        assertThat(controller.state().waiting()).hasValueSatisfying(waiting -> {
+            assertThat(waiting.phase())
+                    .isEqualTo(io.haifa.agent.application.coding.terminal.state.WaitingMessage.Phase.WAITING);
+            assertThat(waiting.text()).isEqualTo("queue me");
+        });
+    }
+
+    @Test
     void keepsUnbracketedCrAndCrLfMultilinePasteInTheEditorUntilASeparateEnter() {
         var fixture = fixture();
         fixture.model.update(new PasteMessage("first line"));

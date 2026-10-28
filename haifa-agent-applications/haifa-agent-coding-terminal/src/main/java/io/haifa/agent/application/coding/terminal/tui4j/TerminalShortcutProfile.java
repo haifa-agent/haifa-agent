@@ -11,6 +11,7 @@ record TerminalShortcutProfile(
         String clear,
         String toggleExpansion,
         String followUp,
+        String editWaiting,
         String restoreQueuedMessage,
         String newline,
         String leader,
@@ -23,6 +24,7 @@ record TerminalShortcutProfile(
         clear = required(clear, "clear");
         toggleExpansion = required(toggleExpansion, "toggleExpansion");
         followUp = required(followUp, "followUp");
+        editWaiting = required(editWaiting, "editWaiting");
         restoreQueuedMessage = required(restoreQueuedMessage, "restoreQueuedMessage");
         newline = required(newline, "newline");
         leader = required(leader, "leader");
@@ -38,6 +40,7 @@ record TerminalShortcutProfile(
                 "ctrl+c",
                 "ctrl+o",
                 "alt+enter",
+                "alt+e",
                 "alt+up",
                 "shift+enter/ctrl+j",
                 "ctrl+x",
@@ -50,7 +53,7 @@ record TerminalShortcutProfile(
         Objects.requireNonNull(host, "host must not be null");
         if (host.operatingSystem() != TerminalHostInfo.OperatingSystem.MACOS) return standard();
         return new TerminalShortcutProfile(
-                Style.MAC_SPECIAL, "esc", "⌃C", "⌃O", "⌥↩", "⌥↑", "⇧↩/⌃J", "⌃X", "⌃P", "F2", "⌃X B");
+                Style.MAC_SPECIAL, "esc", "⌃C", "⌃O", "⌥↩", "⌥E", "⌥↑", "⇧↩/⌃J", "⌃X", "⌃P", "F2", "⌃X B");
     }
 
     boolean matchesToggleExpansion(KeyPressMessage key) {
@@ -63,6 +66,13 @@ record TerminalShortcutProfile(
 
     boolean matchesFollowUp(KeyPressMessage key) {
         return key.alt() && key.type() == KeyType.keyCR;
+    }
+
+    /** Keeps bare {@code e} free for typing; a bare rune would swallow the first character of a message. */
+    boolean matchesEditWaiting(KeyPressMessage key) {
+        if (!key.alt() || key.type() != KeyType.KeyRunes) return false;
+        char[] runes = key.runes();
+        return runes != null && runes.length == 1 && (runes[0] == 'e' || runes[0] == 'E');
     }
 
     boolean matchesRestoreQueuedMessage(KeyPressMessage key) {
