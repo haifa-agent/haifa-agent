@@ -13,7 +13,7 @@ Provider 支持两种容器生命周期模式（`DockerAioLifecycleMode`）：
 - **`WARM_SESSION`（默认模式，依据修改后 ADR-038 与 DeerFlow Parity 架构）**：
   - 容器按 Workspace 维度常驻并复用，多次工具调用间免除反复创建与销毁容器开销（实测调度延迟由约 1.8s 降至 400ms，加速 4.3 倍）。
   - 执行严格在调用方超时预算内扣减耗时（排队、准备与底层执行统一衰减）；同 Workspace 并发调用在锁队列中有界等待。
-  - 在途任务收到 `cancel()` 时立即中断并销毁/重置该容器，确保后台 runaway 进程彻底被杀灭；命令正常完成后调用 AIO `/v1/bash/sessions/{id}/close` 防止会话泄漏。
+  - 在途任务收到 `cancel()` 时立即中断并销毁/重置该容器，确保后台 runaway 进程彻底被杀灭；取消若发生在容器创建期间，创建完成的容器同样被销毁而不进入预热池。命令正常完成后调用 AIO `/v1/bash/sessions/{id}/close` 防止会话泄漏。
   - 空闲达 `idleTimeout`（默认 15 分钟）由后台守护协程自动安全回收（原子 CAS 防竞态）。
   - Provider 初始化时扫描并自动清理匹配当前 `installationId` 的遗留孤儿容器与网络。
 - **`EPHEMERAL`（可选模式）**：
