@@ -6,6 +6,10 @@
   container before it interrupts the execution thread, and a container that finishes creating after the
   cancellation request is destroyed instead of entering the warm pool. This removes the intermittent macOS
   `DockerAioWarmSandboxProviderTest.cancellingInFlightWarmExecutionAbortsImmediatelyAndDestroysContainer` failure.
+- SQLite store verifies the database files before a write unit of work queues for the writer slot, so the slot
+  covers database work only; the queue fallback is now configured by
+  `SqliteStoreConfiguration.writerQueueTimeoutMillis` (default 60 s) and an expired wait is retried once, because
+  it happens before any statement runs.
 
 - SQLite store serves pure queries (session messages, runs, attempts, idempotency, interaction, checkpoint,
   memory, summary and event reads) in a deferred `query_only` scope instead of the process-wide writer slot,

@@ -50,13 +50,8 @@ public final class SqliteConnectionFactory implements AutoCloseable {
     // reclaim, a connection that is still in use.
     private final Semaphore leases = new Semaphore(MAXIMUM_POOLED_CONNECTIONS, true);
     private final AtomicLong physicalConnectionsOpened = new AtomicLong();
-    /**
-     * Fallback bound for waiting in the in-process writer queue. SQLite's {@code busy_timeout} bounds cross-process
-     * lock contention, so it does not bound this queue: the queue is fair, and a settled position guarantees progress.
-     * This bound therefore only ends the wait of a caller whose holder leaked the writer slot, and it is deliberately
-     * far above any unit of work that a healthy process runs.
-     */
-    static final long WRITER_QUEUE_TIMEOUT_MILLIS = 60_000;
+    /** Default of the configurable fallback bound for waiting in the in-process writer queue. */
+    static final long WRITER_QUEUE_TIMEOUT_MILLIS = SqliteStoreConfiguration.DEFAULT_WRITER_QUEUE_TIMEOUT_MILLIS;
     /** A writer-slot wait or hold this long is logged, so the thread that stalled writing can be identified. */
     static final long WRITER_SLOT_DIAGNOSTIC_MILLIS = 5_000;
     // SQLite admits one writer. Writers of this process queue here and are woken as soon as the
@@ -74,12 +69,12 @@ public final class SqliteConnectionFactory implements AutoCloseable {
     private volatile boolean closed;
 
     public SqliteConnectionFactory(SqliteStoreConfiguration configuration) {
-        this(configuration, SecureFilePermissions::strategyForDirectory, WRITER_QUEUE_TIMEOUT_MILLIS);
+        this(configuration, SecureFilePermissions::strategyForDirectory, configuration.writerQueueTimeoutMillis());
     }
 
     SqliteConnectionFactory(
             SqliteStoreConfiguration configuration, PermissionStrategyDetector permissionStrategyDetector) {
-        this(configuration, permissionStrategyDetector, WRITER_QUEUE_TIMEOUT_MILLIS);
+        this(configuration, permissionStrategyDetector, configuration.writerQueueTimeoutMillis());
     }
 
     SqliteConnectionFactory(
@@ -125,6 +120,30 @@ public final class SqliteConnectionFactory implements AutoCloseable {
     }
 
     public Connection openConnection() {
+        return openConnection(true);
+    }
+
+    /**
+     * Leases a connection for a unit of work that already verified the database files through
+     * {@link #verifyDatabaseFiles()}, so the lease does not repeat that file-system work while the writer slot is
+     * held.
+     */
+    Connection openConnectionAfterFileVerification() {
+        return openConnection(false);
+    }
+
+    /**
+     * Validates and secures the database files without leasing a connection.
+     *
+     * <p>A write unit of work calls this before queueing for the writer slot, so the files are verified ahead of the
+     * slot instead of inside it.
+     */
+    void verifyDatabaseFiles() {
+        requireOpen();
+        secureDatabaseFiles();
+    }
+
+    private Connection openConnection(boolean verifyFiles) {
         long started = System.nanoTime();
         requireOpen();
         if (!initialized) {
@@ -142,7 +161,9 @@ public final class SqliteConnectionFactory implements AutoCloseable {
             pooled = current.getConnection();
             long leaseMillis = elapsedMillis(started);
             long phaseStarted = System.nanoTime();
-            secureDatabaseFiles();
+            if (verifyFiles) {
+                secureDatabaseFiles();
+            }
             long secureMillis = elapsedMillis(phaseStarted);
             requireOpen();
             Connection lease = lease(pooled);
