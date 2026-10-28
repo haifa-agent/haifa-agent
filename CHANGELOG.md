@@ -2,6 +2,11 @@
 
 ## 0.1.4-SNAPSHOT - Unreleased
 
+- Coding Terminal queues Enter pressed during an Active Run into a local Waiting draft above the editor instead of
+  steering immediately: empty Enter sends it as a Steer, `alt+e` edits it, and Esc cancels only the draft. When the
+  Run settles the draft is submitted as the next Turn without clearing an unrelated editor draft, it never carries
+  across a session switch, and its submission never blocks the next frame.
+
 - `docker-aio` sandbox provider supports warm session lifecycle mode (`DockerAioLifecycleMode.WARM_SESSION`, default per revised ADR-038):
   containers are retained and reused per workspace with idle timeout eviction, eliminating repeated cold-start
   container creation and teardown overhead across multi-turn tool commands (~4.3x speedup). Includes strict

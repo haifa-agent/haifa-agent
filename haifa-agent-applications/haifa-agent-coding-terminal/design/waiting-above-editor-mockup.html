@@ -426,7 +426,7 @@
           </div>
           <div class="meta-strip">
             <span>Normal · GPT-5.6 Sol (openai)</span>
-            <span id="editor-hint">enter send now · e edit · esc cancel waiting</span>
+            <span id="editor-hint">enter send now · alt+e edit · esc cancel waiting</span>
           </div>
           <div class="statusline">
             ⠋ WORKING (12s) · Run Command
@@ -452,7 +452,7 @@
         <ol>
           <li><code>Active + Enter</code>（有文本）→ 清空 Editor，创建 Waiting（本地，未调用 Steer API）</li>
           <li>Waiting + 空 Editor + <code>Enter</code> → Send Now（Steer）；卡变为 Sending</li>
-          <li>Waiting + 空 Editor + <code>e</code> → Edit；Save 回 Waiting，不自动发送</li>
+          <li>Waiting + 空 Editor + <code>alt+e</code> → Edit；Save 回 Waiting，不自动发送（裸 <code>e</code> 保留给输入，否则会吞掉以 e 开头的新消息首个字符）</li>
           <li>Waiting 存在时 <code>Esc</code> → <b>只取消 Waiting</b>，不 arm / 不取消 Run</li>
           <li>无 Waiting 时 <code>Esc</code> 仍按原逻辑 arm / interrupt Run</li>
           <li>Run 自然结束且仍有 Waiting → 自动作为下一条 Turn 发出</li>
@@ -502,7 +502,7 @@
       editorHint.textContent = "enter waiting · alt+enter follow-up · esc interrupt";
       renderActions(`
                 <button type="button" class="action primary" id="btn-send-now">Send Now<span class="kbd">enter</span></button>
-        <button type="button" class="action" id="btn-edit">Edit<span class="kbd">e</span></button>
+        <button type="button" class="action" id="btn-edit">Edit<span class="kbd">alt+e</span></button>
         <span class="spacer"></span>
         <button type="button" class="action ghost" id="btn-cancel">Cancel Waiting<span class="kbd">esc</span></button>
       `);

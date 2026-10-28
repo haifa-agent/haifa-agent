@@ -538,7 +538,7 @@ final class Tui4jTerminalView {
             default -> {
                 status = "Waiting";
                 hint = "hold until run finishes · follow-up";
-                actions = "  [Send Now enter]  [Edit e]  [Cancel esc]";
+                actions = "  [Send Now enter]  [Edit " + shortcuts.editWaiting() + "]  [Cancel esc]";
             }
         }
         lines.add(theme.pending("⠋ " + status + "  ") + theme.muted(hint));
@@ -1161,7 +1161,9 @@ final class Tui4jTerminalView {
                 .filter(value ->
                         value.phase() == io.haifa.agent.application.coding.terminal.state.WaitingMessage.Phase.WAITING)
                 .isPresent()) {
-            return "enter send now · e edit · esc cancel · "
+            return "enter send now · "
+                    + shortcuts.editWaiting()
+                    + " edit · esc cancel · "
                     + shortcuts.followUp()
                     + " follow-up · "
                     + shortcuts.interrupt()

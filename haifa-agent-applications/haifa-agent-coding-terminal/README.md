@@ -146,7 +146,7 @@ Windows ConPTY Gate B。
    - 空闲（Idle）期间：左侧优先显示操作反馈与引导状态（如 `/new` 提示、切模成功反馈、重命名状态等）；无反馈时显示当前工程路径；
    - 右侧展示快捷键提示（`[ctrl+o] details  [f2] models  [ctrl+p] commands`）及 Session 性能指标；空间受限时优先回退为不含 `[ctrl+o]` 的短提示并优先丢弃指标、次选裁剪工程路径，核心操作反馈与活动运行状态具有最高显示优先级；
    - 输入框上方 Meta 条右侧保持显示编辑器操作提示（如 `enter waiting · alt+enter follow-up`、
-     Waiting 存在时 `enter send now · e edit · esc cancel`，或 Idle 的 `enter send · shift+enter newline`）。
+     Waiting 存在时 `enter send now · alt+e edit · esc cancel`，或 Idle 的 `enter send · shift+enter newline`）。
 
 Theme 使用 tui4j Lip Gloss 的 Adaptive Color 表达 Accent、Muted、Surface Panel、Surface Element、Border Subtle、User、Success、Pending、
 Error、Queued 和 Focus。TrueColor 参考色会按明暗背景自适应；NoColor 环境仍依靠稳定标题、状态文字、
@@ -289,8 +289,10 @@ Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、s
 
 - 普通首条消息创建真实 Coding Session/Run；
 - Idle Enter 提交新 Turn；Active Enter（有文本）先进入输入框上方的本地 Waiting 区，不立刻 Steer；
-- Waiting 区动作：空 Editor 再按 Enter = Send Now（Steer）；空 Editor 按 `e` = Edit；
+- Waiting 区动作：空 Editor 再按 Enter = Send Now（Steer）；空 Editor 按 `alt+e` = Edit；
   Esc = 取消 Waiting（不 arm / 不取消当前 Run）。Run 自然结束后若仍有 Waiting，自动作为下一 Turn 发送；
+- Waiting 存在时 Editor 有文本再按 Enter 只替换该 Waiting 草稿（新建与空闲状态一致），不会额外提交一个 Turn；
+  需要立即发出新文本时先按 Esc 取消 Waiting 或空 Enter 发出已有草稿；
 - 普通对话按 Enter 后先清空 Editor、显示用户消息与 `Submitting`，再由 tui4j Command Worker 执行
   Session/Runtime IO；完成结果只在 UI 线程归约，避免提交期间冻结首次可见反馈；
 - Run 进入 `COMPLETED`、`FAILED`、`CANCELLED` 或 `TIMEOUT` 后立即回到 Idle；同一已结束 Run 随后
