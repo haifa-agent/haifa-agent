@@ -732,6 +732,26 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
+    void submitsTheFullLongPasteWhileKeepingItsTranscriptPreviewBounded() {
+        var client = new UnusedClient();
+        client.currentSession = sessionView("Long paste");
+        var fixture = activeFixture(client);
+        String pasted = ("abcdefghijklmnopqrstuvwx\n").repeat(1_000);
+        fixture.model.update(new PasteMessage(pasted));
+
+        var enter = fixture.model.update(key(KeyType.keyCR));
+        var submitted = fixture.model.update(enter.command().execute());
+        fixture.model.update(submitted.command().execute());
+
+        assertThat(client.submittedMessages).containsExactly(pasted);
+        assertThat(fixture.controller.state().editorBuffer()).isEmpty();
+        assertThat(fixture.controller.state().transcript()).anySatisfy(item -> {
+            assertThat(item.title()).isEqualTo("You");
+            assertThat(item.body()).endsWith("[Preview truncated; full message submitted]");
+        });
+    }
+
+    @Test
     void expandsSummarizedPasteBackToTheOriginalTextOnSubmit() {
         var fixture = fixture();
         String pasted = "alpha\nbeta\ngamma";

@@ -47,6 +47,18 @@ class TerminalUiReducerTest {
     private final TerminalUiReducer reducer = new TerminalUiReducer();
 
     @Test
+    void boundsLongUserMessagePreviewsWithoutSplittingUnicode() {
+        String symbol = "\uD83D\uDE42";
+        String text = symbol.repeat(8_001);
+
+        TerminalUiState state = reducer.reduce(
+                TerminalUiState.initial(120, 40), new TerminalUiAction.UserMessageCommitted("long-user", text));
+
+        assertThat(state.transcript()).singleElement().satisfies(item -> assertThat(item.body())
+                .isEqualTo(symbol.repeat(8_000) + "\n[Preview truncated; full message submitted]"));
+    }
+
+    @Test
     void projectsTechnicalFactsWithoutParsingMetadataLookingOutputAndPreservesExpansion() {
         String output = "用户内容\nReason: user text\nResult: user text";
         var observation = new RunEventPayloads.ToolObservation(

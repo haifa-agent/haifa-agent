@@ -2,6 +2,10 @@
 
 ## 0.1.4-SNAPSHOT - Unreleased
 
+- Long pasted messages keep their full submission body while the transcript shows a bounded Unicode-safe preview,
+  preventing the Terminal from exiting when a user message exceeds the transcript card's display limit.
+
+
 - Coding Terminal shows progress for streamed multiline pastes while preserving ordinary fast typing, draft
   boundaries and the pasted body. Buffered characters reuse an unchanged frame and move one idle-check deadline,
   avoiding a full view rebuild and a new idle timer for every pasted character.
