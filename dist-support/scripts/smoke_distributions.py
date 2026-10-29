@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise extracted Windows distributions without a Provider request or user data."""
+"""Exercise extracted distributions without a Provider request or user data."""
 import argparse
 from contextlib import closing
 import hashlib
@@ -9,6 +9,8 @@ from pathlib import Path
 import socket
 import sqlite3
 import subprocess
+import sys
+import tarfile
 import tempfile
 import time
 import urllib.error
@@ -16,11 +18,34 @@ import urllib.request
 import zipfile
 
 
+def verify_ca_linux(output: Path, checksums: dict[str, str]) -> None:
+    archives = list(output.glob("haifa-coding-agent-linux-x64-*.tar.gz"))
+    if len(archives) != 1 or archives[0].name not in checksums:
+        raise RuntimeError("Expected exactly one checksummed Linux Coding Agent package")
+    with tempfile.TemporaryDirectory(prefix="haifa-ca-linux-smoke-") as temporary:
+        directory = Path(temporary)
+        with tarfile.open(archives[0], "r:gz") as archive:
+            archive.extractall(directory, filter="data")
+        package = directory / archives[0].name.removesuffix(".tar.gz").replace("-linux-x64", "")
+        environment = os.environ.copy()
+        for key in ("HAIFA_CONFIG", "HAIFA_SQLITE_DATABASE_PATH", "HAIFA_TRANSCRIPT_ROOT", "HAIFA_LOG_DIR"):
+            environment.pop(key, None)
+        environment["HAIFA_DATA_ROOT"] = str(directory / "isolated data")
+        subprocess.run([str(package / "bin/haifa"), "--help"], env=environment,
+                       cwd=directory, check=True, stdout=subprocess.DEVNULL, timeout=60)
+        modules = subprocess.check_output([str(package / "jre/bin/java"), "--list-modules"], text=True)
+        if "java.base@21" not in modules or "jdk.random@21" not in modules:
+            raise RuntimeError("Linux runtime is missing required Java 21 modules")
+    print("PASS: Linux archive checksum, executable launcher and bundled Java 21 including jdk.random")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["verify"])
+    parser.add_argument("action", choices=["verify", "verify-ca-linux"])
     parser.add_argument("--output-dir", type=Path, default=Path("dist-support/output"))
     args = parser.parse_args()
+    if args.action == "verify-ca-linux" and not sys.platform.startswith("linux"):
+        parser.error("verify-ca-linux must run on Linux/WSL")
     root = Path(__file__).resolve().parents[2]
     output = args.output_dir.resolve()
     checksums = {}
@@ -30,6 +55,9 @@ def main() -> None:
         with (output / name).open("rb") as source:
             if hashlib.file_digest(source, "sha256").hexdigest() != digest:
                 raise RuntimeError(f"Release checksum mismatch: {name}")
+    if args.action == "verify-ca-linux":
+        verify_ca_linux(output, checksums)
+        return
     work = root / "dist-support" / "dist-work"
     work.mkdir(exist_ok=True)
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))

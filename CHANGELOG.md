@@ -2,6 +2,9 @@
 
 ## 0.1.4-SNAPSHOT - Unreleased
 
+- Coding Agent offers a Linux x64 portable distribution through `ca-linux`, with a bundled native Java 21
+  runtime, an executable POSIX launcher, platform-specific staging/cache, and offline archive verification.
+
 - Long pasted messages keep their full submission body while the transcript shows a bounded Unicode-safe preview,
   preventing the Terminal from exiting when a user message exceeds the transcript card's display limit.
 
