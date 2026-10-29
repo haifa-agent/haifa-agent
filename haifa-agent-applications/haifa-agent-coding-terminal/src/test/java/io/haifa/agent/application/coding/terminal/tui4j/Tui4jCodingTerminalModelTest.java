@@ -601,6 +601,33 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
+    void keepsTheFirstLineInsideAStreamedPasteSummary() {
+        var fixture = fixture();
+
+        Command scheduled = streamPerCharacterPaste(fixture, "1  a b c", "2", "3");
+        settleStreamedPaste(fixture, scheduled);
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~3 lines]");
+    }
+
+    @Test
+    void summarizesAStreamedCommandBlockOfFourLines() {
+        var fixture = fixture();
+
+        Command scheduled = streamPerCharacterPaste(
+                fixture,
+                "if errorlevel 1 exit /b %ERRORLEVEL%",
+                "if not exist \"%HAIFA_DATA_ROOT%\\logs\" mkdir \"%HAIFA_DATA_ROOT%\\logs\"",
+                "if errorlevel 1 exit /b %ERRORLEVEL%",
+                "if not defined HAIFA_SQLITE_DATABASE_PATH set \"HAIFA_SQLITE_DATABASE_PATH=%HAIFA_DATA_ROOT%\\data\\runtime.db\"");
+        settleStreamedPaste(fixture, scheduled);
+
+        // The pasted ` /b` must not open the completion popup and swallow the rest of the block.
+        assertThat(fixture.controller.state().selector()).isEmpty();
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~4 lines]");
+    }
+
+    @Test
     void keepsASmallStreamedPasteInline() {
         var fixture = fixture();
 
@@ -1930,6 +1957,22 @@ class Tui4jCodingTerminalModelTest {
 
     private KeyPressMessage keyWithRunes(String runes) {
         return new KeyPressMessage(new Key(KeyType.KeyRunes, runes.toCharArray()));
+    }
+
+    /** Streams a paste the way ConPTY delivers it: one key message per character. */
+    private Command streamPerCharacterPaste(Fixture fixture, String... lines) {
+        Command scheduled = Command.none();
+        for (int index = 0; index < lines.length; index++) {
+            for (char value : lines[index].toCharArray()) {
+                scheduled = fixture.model
+                        .update(keyWithRunes(String.valueOf(value)))
+                        .command();
+            }
+            if (index < lines.length - 1) {
+                scheduled = fixture.model.update(key(KeyType.keyCR)).command();
+            }
+        }
+        return scheduled;
     }
 
     private Command streamUnbracketedPaste(Fixture fixture, String... lines) {

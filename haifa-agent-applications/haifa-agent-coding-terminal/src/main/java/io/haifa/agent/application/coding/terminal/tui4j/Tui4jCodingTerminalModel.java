@@ -44,6 +44,9 @@ final class Tui4jCodingTerminalModel implements Model {
     private static final int PASTE_SUMMARY_MIN_LINES = 3;
 
     private static final int PASTE_SUMMARY_MAX_CHARACTERS = 150;
+    /** Runes received inside one poll window that only a paste can produce, so `/` and `@` must not open a popup. */
+    private static final int PASTE_RUNE_BURST_THRESHOLD = 6;
+
     static final int WINDOW_SIZE_POLL_TICKS = 10;
     private static final int MAX_SECRET_CHARACTERS = 65_536;
     private static final long LEADER_TIMEOUT_NANOS = Duration.ofMillis(1500).toNanos();
@@ -88,8 +91,12 @@ final class Tui4jCodingTerminalModel implements Model {
     private int unbracketedPasteStart = -1;
     /** Sequence of the pending burst-end timer, so every later keystroke invalidates the earlier timer. */
     private long unbracketedPasteSequence;
-    /** Start offset of the rune insertion that immediately preceded the current key, used to anchor a burst. */
-    private int lastRuneInsertStart = -1;
+    /** Start and end of the contiguous rune run before the current key, used to anchor a burst at its first char. */
+    private int typedRunStart = -1;
+
+    private int typedRunEnd = -1;
+
+    private int runesSincePoll;
     /** Keys of an open burst, held back so a streamed paste never paints one character at a time. */
     private final StringBuilder burstTail = new StringBuilder();
     /** Whether the burst tail ends with the CR half of a CRLF pair. */
@@ -186,6 +193,7 @@ final class Tui4jCodingTerminalModel implements Model {
         } else if (message instanceof ClipboardCopyResultMessage copied) {
             command = completeCopy(copied);
         } else if (message instanceof PollMessage) {
+            runesSincePoll = 0;
             controller.drainEvents();
             syncComponents();
             command = nextTick();
@@ -881,8 +889,9 @@ final class Tui4jCodingTerminalModel implements Model {
     }
 
     private Command deferEnter(TerminalInput.Kind kind) {
-        int start = lastRuneInsertStart >= 0 ? lastRuneInsertStart : editorCursor;
-        lastRuneInsertStart = -1;
+        int start = typedRunStart >= 0 ? typedRunStart : editorCursor;
+        typedRunStart = -1;
+        typedRunEnd = -1;
         long sequence = ++deferredEnterSequence;
         pendingEnter = new DeferredEnter(sequence, kind, start);
         return Command.tick(UNBRACKETED_PASTE_GUARD_INTERVAL, ignored -> new DeferredEnterMessage(sequence, kind));
@@ -1135,8 +1144,14 @@ final class Tui4jCodingTerminalModel implements Model {
         resetHistoryNavigation();
         String before = editor.value();
         int beforeCursor = editorCursor;
-        lastRuneInsertStart =
-                message instanceof KeyPressMessage pressed && pressed.type() == KeyType.KeyRunes ? beforeCursor : -1;
+        boolean typedRunes = message instanceof KeyPressMessage pressed && pressed.type() == KeyType.KeyRunes;
+        if (typedRunes) {
+            runesSincePoll++;
+        }
+        if (!typedRunes || typedRunEnd != beforeCursor) {
+            // A rune run only continues where the previous one ended; anything else starts a new run.
+            typedRunStart = typedRunes ? beforeCursor : -1;
+        }
         UpdateResult<Textarea> result = editor.update(message);
         String raw = editor.value();
         String after = sanitizeEditorInput(raw);
@@ -1147,6 +1162,7 @@ final class Tui4jCodingTerminalModel implements Model {
             synchronizeEditor(after, Math.min(beforeCursor, after.length()));
         }
         int afterCursor = cursorAfter(before, beforeCursor, after);
+        typedRunEnd = typedRunes ? afterCursor : -1;
         if (lostPastedToken(before, after)) {
             if (message instanceof KeyPressMessage key && isBackspaceKey(key)) {
                 for (String token : List.copyOf(pastedContent.keySet())) {
@@ -1170,6 +1186,10 @@ final class Tui4jCodingTerminalModel implements Model {
 
     private boolean startsCompletion(Message message, String before, int beforeCursor, String after, int afterCursor) {
         if (!(message instanceof KeyPressMessage key) || key.type() != KeyType.KeyRunes) {
+            return false;
+        }
+        if (runesSincePoll > PASTE_RUNE_BURST_THRESHOLD) {
+            // A paste can contain ` /b` or ` @path`; opening the completion popup would swallow the rest of it.
             return false;
         }
         String inserted = new String(key.runes());
