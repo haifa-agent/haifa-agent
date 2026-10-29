@@ -16,6 +16,46 @@ import org.junit.jupiter.api.Test;
 
 class CodingSessionApprovalsTest {
     @Test
+    void contentOnlyTruncationDoesNotInvalidateACompleteWriteTarget() {
+        var f = new Fixture();
+        f.states.put(f.pending.requestId(), InteractionState.APPLIED);
+        f.approvals.approve(f.pending, submission(f.pending));
+        for (String tool : List.of("file_create", "file_write")) {
+            f.truncated = true;
+            f.completeFields = java.util.Set.of("path");
+            f.next("session-1", "run-" + tool, tool, Map.of("path", "/workspace/large.txt", "content", "preview"));
+            assertThat(f.approvals.prepare(f.pending.runId(), CodingSessionApprovalsTest::submission)).isEmpty();
+        }
+        f.completeFields = java.util.Set.of();
+        f.next("session-1", "run-incomplete", "file_write", Map.of("path", "preview", "content", "preview"));
+        assertThat(f.approvals.prepare(f.pending.runId(), CodingSessionApprovalsTest::submission))
+                .hasValueSatisfying(prompt -> {
+                    assertThat(prompt.allowForSession()).isFalse();
+                    assertThat(prompt.sessionApprovalUnavailableReason()).isPresent();
+                });
+        f.next("session-1", "run-patch", "file_patch", Map.of("patch", "preview"));
+        assertThat(f.approvals.prepare(f.pending.runId(), CodingSessionApprovalsTest::submission))
+                .hasValueSatisfying(prompt -> assertThat(prompt.allowForSession()).isFalse());
+    }
+
+    @Test
+    void automaticResponseOrSubmissionFailureFallsBackToExplicitApproval() {
+        for (boolean factoryFailure : List.of(false, true)) {
+            var f = new Fixture();
+            f.states.put(f.pending.requestId(), InteractionState.APPLIED);
+            f.approvals.approve(f.pending, submission(f.pending));
+            f.next("session-1", "run-next", "file_write", Map.of());
+            f.failSubmission = !factoryFailure;
+            assertThat(f.approvals.prepare(f.pending.runId(), pending -> {
+                if (factoryFailure) throw new RuntimeContractException(RuntimeApiErrorCode.INTERACTION_NOT_FOUND, "Stale");
+                return submission(pending);
+            })).hasValueSatisfying(prompt -> assertThat(prompt.allowForSession()).isTrue());
+            f.failSubmission = false;
+            assertThat(f.approvals.prepare(f.pending.runId(), CodingSessionApprovalsTest::submission)).isPresent();
+        }
+    }
+
+    @Test
     void pendingConsentOnlyActivatesAfterTheExactSubmissionWasApplied() {
         var f = new Fixture();
         var first = f.pending;
@@ -181,6 +221,8 @@ class CodingSessionApprovalsTest {
         InteractionKind kind = InteractionKind.APPROVAL;
         boolean failSubmission;
         boolean unavailableReceipt;
+        boolean truncated;
+        java.util.Set<String> completeFields = java.util.Set.of();
         final List<InteractionResponseSubmission> submissions = new ArrayList<>();
         final Map<InteractionRequestId, InteractionState> states = new HashMap<>();
         final AgentRuntime runtime = (AgentRuntime) Proxy.newProxyInstance(
@@ -241,7 +283,7 @@ class CodingSessionApprovalsTest {
                     runId,
                     name,
                     "1.0",
-                    new ToolDataView(arguments, false),
+                    new ToolDataView(arguments, truncated, truncated ? completeFields : arguments.keySet()),
                     ToolCallStatus.WAITING_APPROVAL,
                     Optional.empty(),
                     Optional.empty(),

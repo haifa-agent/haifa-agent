@@ -8,8 +8,8 @@ import java.util.OptionalInt;
 /**
  * Narrow Docker Engine boundary used by the provider.
  *
- * <p>The production implementation speaks HTTP over an explicit Unix socket. Tests replace this
- * interface with an in-memory engine; there is no production TCP or skip-Linux switch.
+ * <p>The production implementation uses a local Unix socket or Windows named pipe. Tests replace
+ * this interface with an in-memory engine; container failures never enable host execution.
  */
 interface DockerEngine extends AutoCloseable {
     void ensureImage(String image);

@@ -44,6 +44,19 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class TerminalUiReducerTest {
+    @Test
+    void resolvedUnhydratedApprovalsDoNotLeaveLoadingCards() {
+        for (String status : java.util.List.of("RESPONDED", "APPLIED", "REJECTED", "CANCELLED")) {
+            var initial = TerminalUiState.initial(120, 40);
+            var waiting = reducer.reduce(initial, new TerminalUiAction.RunEventReceived(event(1, "approval-requested",
+                    new RunEventPayloads.InteractionLifecycle("auto-approval", "approval", "PENDING", "ignored"))));
+            assertThat(waiting.transcript()).hasSize(1);
+            var resolved = reducer.reduce(waiting, new TerminalUiAction.RunEventReceived(event(2, "approval-resolved",
+                    new RunEventPayloads.InteractionLifecycle("auto-approval", "approval", status, "ignored"))));
+            assertThat(resolved.transcript()).isEmpty();
+        }
+    }
+
     private final TerminalUiReducer reducer = new TerminalUiReducer();
 
     @Test

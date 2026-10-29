@@ -1,6 +1,7 @@
 package io.haifa.agent.sandbox.docker;
 
 import io.haifa.agent.sandbox.api.SandboxConfigurationDigest;
+import java.net.URI;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -168,9 +169,9 @@ public record DockerAioSandboxConfiguration(
 
     public SandboxConfigurationDigest configurationDigest() {
         List<String> fields = new ArrayList<>();
-        fields.add("docker-aio/v2");
+        fields.add("docker-aio/v3");
         fields.add(installationId);
-        fields.add(dockerSocket.toString());
+        fields.add(dockerEndpoint().toString());
         fields.add(image);
         fields.add(containerWorkspaceRoot);
         runtimes.entrySet().stream()
@@ -190,6 +191,37 @@ public record DockerAioSandboxConfiguration(
         fields.add("network:" + NETWORK_DRIVER + ":internal:icc=false");
         fields.add("capabilities:unprivileged:no-new-privileges");
         return SandboxConfigurationDigest.sha256Fields(fields);
+    }
+
+    /** Resolve trusted deployment environment once, then freeze the result in this configuration. */
+    public static Path localDockerSocket() {
+        return localDockerSocket(System.getProperty("os.name", ""), System.getenv("DOCKER_HOST"));
+    }
+
+    static Path localDockerSocket(String osName, String dockerHost) {
+        boolean windows = osName.toLowerCase(Locale.ROOT).startsWith("windows");
+        if (dockerHost == null || dockerHost.isBlank()) {
+            return Path.of(windows ? "\\\\.\\pipe\\docker_engine" : "/var/run/docker.sock");
+        }
+        URI endpoint = URI.create(dockerHost.trim());
+        if (endpoint.getRawQuery() != null || endpoint.getRawFragment() != null || endpoint.getUserInfo() != null) {
+            throw new IllegalArgumentException("Docker endpoint must not contain credentials, query or fragment");
+        }
+        if ("npipe".equals(endpoint.getScheme()) && windows && endpoint.getRawAuthority() == null
+                && endpoint.getPath() != null && endpoint.getPath().startsWith("//./pipe/")) {
+            return Path.of(endpoint.getPath().replace('/', '\\'));
+        }
+        if ("unix".equals(endpoint.getScheme()) && !windows && endpoint.getHost() == null
+                && endpoint.getPath() != null && endpoint.getPath().startsWith("/")) {
+            return Path.of(endpoint.getPath());
+        }
+        throw new IllegalArgumentException("DOCKER_HOST must use a local Unix socket or Windows named pipe");
+    }
+
+    public URI dockerEndpoint() {
+        String socket = dockerSocket.toString().replace('\\', '/');
+        if (socket.startsWith("//./pipe/")) return URI.create("npipe://" + socket);
+        return URI.create("unix://" + dockerSocket.toUri().getRawPath());
     }
 
     public String containerPath(String workspaceRelativePath) {

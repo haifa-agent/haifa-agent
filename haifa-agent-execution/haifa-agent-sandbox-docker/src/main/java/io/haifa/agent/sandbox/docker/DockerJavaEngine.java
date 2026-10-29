@@ -26,13 +26,13 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 
-/** Production Docker Engine transport over one explicit Unix socket. */
+/** Production Docker Engine transport over one explicit local Unix socket or Windows named pipe. */
 final class DockerJavaEngine implements DockerEngine {
     private final DockerClient client;
 
     DockerJavaEngine(DockerAioSandboxConfiguration configuration) {
         DockerClientConfig config = DefaultDockerClientConfig.createDefaultConfigBuilder()
-                .withDockerHost("unix://" + configuration.dockerSocket())
+                .withDockerHost(configuration.dockerEndpoint().toString())
                 .build();
         DockerHttpClient httpClient = new ApacheDockerHttpClient.Builder()
                 .dockerHost(config.getDockerHost())
@@ -55,7 +55,9 @@ final class DockerJavaEngine implements DockerEngine {
         } catch (NotFoundException exception) {
             throw new DockerEngineException("DOCKER_IMAGE_UNAVAILABLE", "locked image is unavailable", exception);
         } catch (RuntimeException exception) {
-            throw failure("DOCKER_IMAGE_UNAVAILABLE", "locked image could not be inspected", exception);
+            throw failure("DOCKER_ENGINE_UNAVAILABLE",
+                    "Docker Engine is unavailable; start Docker Desktop in Linux containers mode and check the configured local endpoint",
+                    exception);
         }
     }
 
@@ -113,7 +115,8 @@ final class DockerJavaEngine implements DockerEngine {
             HostConfig hostConfig = HostConfig.newHostConfig()
                     .withNetworkMode(spec.networkName())
                     .withBinds(new Bind(
-                            spec.hostWorkspaceRoot(), new Volume(spec.containerWorkspaceRoot()), AccessMode.rw))
+                            DockerDesktopPaths.bindSource(spec.hostWorkspaceRoot()),
+                            new Volume(spec.containerWorkspaceRoot()), AccessMode.rw))
                     .withSecurityOpts(List.of("no-new-privileges"))
                     .withPrivileged(false)
                     .withNanoCPUs(spec.nanoCpus())

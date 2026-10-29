@@ -56,24 +56,37 @@ final class CodingSessionApprovals {
                             InteractionResponseReceipt receipt;
                             try {
                                 receipt = runtime.respond(consent.submission);
-                            } catch (RuntimeContractException staleConsent) {
+                            } catch (RuntimeException staleConsent) {
                                 consents.remove(interaction.sessionId(), consent);
                                 return Optional.of(new CodingApprovalPrompt(interaction, true));
                             }
                             consent.active = applied(receipt, consent.submission);
                         }
                         if (consent.active) {
-                            if (consent.automatic == null
-                                    || !consent.automatic.requestId().equals(interaction.requestId())) {
-                                consent.automatic = submit.apply(interaction);
+                            try {
+                                if (consent.automatic == null
+                                        || !consent.automatic.requestId().equals(interaction.requestId())) {
+                                    consent.automatic = submit.apply(interaction);
+                                }
+                                InteractionResponseReceipt receipt = runtime.respond(consent.automatic);
+                                if (!matches(receipt, consent.automatic)
+                                        || (receipt.interactionState() != InteractionState.APPLIED
+                                                && receipt.interactionState() != InteractionState.RESPONDED)) {
+                                    consents.remove(interaction.sessionId(), consent);
+                                    return Optional.of(new CodingApprovalPrompt(interaction, true));
+                                }
+                                return Optional.empty();
+                            } catch (RuntimeException automaticFailure) {
+                                consents.remove(interaction.sessionId(), consent);
+                                return Optional.of(new CodingApprovalPrompt(interaction, true));
                             }
-                            runtime.respond(consent.automatic);
-                            return Optional.empty();
                         }
                     }
                 }
             }
-            return Optional.of(new CodingApprovalPrompt(interaction, ordinary));
+            return Optional.of(new CodingApprovalPrompt(interaction, ordinary,
+                    ordinary ? Optional.empty() : Optional.of(
+                            "This request needs approval each time: its full target must be reviewed, or it changes permissions.")));
         });
     }
 
@@ -113,16 +126,33 @@ final class CodingSessionApprovals {
                 .filter(call -> call.id().value().equals(interaction.target().reference()))
                 .filter(call -> call.runId().equals(interaction.runId())
                         && call.status() == ToolCallStatus.WAITING_APPROVAL
-                        && !call.arguments().truncated())
+                        && completeTarget(call))
                 .filter(call -> ORDINARY_TOOLS.contains(call.toolName()))
                 .anyMatch(call -> !call.toolName().equals(ProjectToolCatalog.EXECUTION_RUN)
                         || !"PERMISSION_REQUEST"
                                 .equals(call.arguments().values().get("operationFamily")));
     }
 
+    private static boolean completeTarget(io.haifa.agent.runtime.api.ToolCallView call) {
+        if (!call.arguments().truncated()) return true;
+        // Content is data, not a target. Only the trusted projector can certify the other fields.
+        // Patch text embeds its paths, so a truncated patch remains an explicit approval.
+        if (!Set.of("file_create", "file_write", "file_diff").contains(call.toolName())) return false;
+        var arguments = call.arguments();
+        return arguments.values().get("path") instanceof String path && !path.isBlank()
+                && arguments.completeFields().contains("path")
+                && arguments.values().keySet().stream()
+                        .filter(key -> !key.equals("content"))
+                        .allMatch(arguments.completeFields()::contains);
+    }
+
     private static boolean applied(InteractionResponseReceipt receipt, InteractionResponseSubmission submission) {
         return receipt.interactionState() == InteractionState.APPLIED
-                && receipt.requestId().equals(submission.requestId())
+                && matches(receipt, submission);
+    }
+
+    private static boolean matches(InteractionResponseReceipt receipt, InteractionResponseSubmission submission) {
+        return receipt.requestId().equals(submission.requestId())
                 && receipt.runId().equals(submission.runId())
                 && receipt.responseId().equals(submission.responseId());
     }

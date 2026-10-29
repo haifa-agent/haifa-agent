@@ -71,9 +71,14 @@ abstract class AbstractDockerAioProviderTest {
 
     protected DockerAioSandboxConfiguration defaultConfiguration(
             DockerAioLifecycleMode mode, int maxConcurrentSessions, Duration idleTimeout) {
+        return defaultConfiguration(mode, maxConcurrentSessions, idleTimeout, workspaceRoot.resolve("docker.sock"));
+    }
+
+    protected DockerAioSandboxConfiguration defaultConfiguration(
+            DockerAioLifecycleMode mode, int maxConcurrentSessions, Duration idleTimeout, Path socket) {
         return new DockerAioSandboxConfiguration(
                 "install-1",
-                workspaceRoot.resolve("docker.sock"),
+                socket,
                 IMAGE,
                 "/mnt/user-data/workspace",
                 Map.of("bash", "/bin/bash"),
@@ -377,6 +382,7 @@ abstract class AbstractDockerAioProviderTest {
     }
 
     protected static final class FakeAio implements AioClient {
+        public URI lastUri;
         public int execCount;
         public int killCount;
         public int closeSessionCount;
@@ -410,6 +416,7 @@ abstract class AbstractDockerAioProviderTest {
 
         @Override
         public ExecResult exec(URI baseUri, ExecRequest request) {
+            lastUri = baseUri;
             execCount++;
             lastRequest = request;
             if (execEntered != null) {

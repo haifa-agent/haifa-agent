@@ -1211,6 +1211,10 @@ final class Tui4jTerminalView {
             return isUpdate ? "Enter update · Esc cancel" : "Enter submit · Esc cancel";
         }
         if (state.selector().isPresent()) return "enter select · escape close";
+        if (state.transcript().stream().anyMatch(item -> item.kind() == TranscriptItem.Kind.APPROVAL
+                && Set.of("PENDING", "REQUESTED").contains(item.status()))) {
+            return "/approval reopen · esc interrupt";
+        }
         if (state.waiting()
                 .filter(value ->
                         value.phase() == io.haifa.agent.application.coding.terminal.state.WaitingMessage.Phase.EDITING)
