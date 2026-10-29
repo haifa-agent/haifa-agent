@@ -39,11 +39,11 @@ import java.util.function.LongSupplier;
 /** Production tui4j adapter around the authoritative terminal Controller and Reducer state. */
 final class Tui4jCodingTerminalModel implements Model {
     private static final Duration EVENT_POLL_INTERVAL = Duration.ofMillis(50);
-    private static final Duration UNBRACKETED_PASTE_GUARD_INTERVAL = Duration.ofMillis(100);
     /** Matches OpenCode defaults: summarize pastes of 3+ lines or more than 150 characters. */
     private static final int PASTE_SUMMARY_MIN_LINES = 3;
 
     private static final int PASTE_SUMMARY_MAX_CHARACTERS = 150;
+
     static final int WINDOW_SIZE_POLL_TICKS = 10;
     private static final int MAX_SECRET_CHARACTERS = 65_536;
     private static final long LEADER_TIMEOUT_NANOS = Duration.ofMillis(1500).toNanos();
@@ -82,8 +82,11 @@ final class Tui4jCodingTerminalModel implements Model {
     private long timedActivityRevision = -1;
     private long activityStartedNanos;
     private PreparedMessageSubmission pendingSubmission;
-    private long deferredEnterSequence;
-    private DeferredEnter pendingEnter;
+    private final ComposerInput composer;
+    private String lastFrame;
+    private TerminalUiState lastFrameState;
+    private boolean reuseLastFrame;
+
     private boolean secretPresentation;
     private int pasteSequence;
     private int windowSizePollTicks;
@@ -125,6 +128,7 @@ final class Tui4jCodingTerminalModel implements Model {
         this.controller = controller;
         this.pump = pump;
         this.monotonicNanos = monotonicNanos;
+        this.composer = new ComposerInput(monotonicNanos);
         this.mouseReportingEnabled = mouseReportingEnabled;
         this.clipboard = clipboard;
         this.pollWindowSize =
@@ -160,6 +164,16 @@ final class Tui4jCodingTerminalModel implements Model {
 
     @Override
     public UpdateResult<Tui4jCodingTerminalModel> update(Message message) {
+        TerminalUiState beforeUpdate = controller.state();
+        boolean heldInput = message instanceof KeyPressMessage key
+                && composer.batch() != null
+                && composer.batch().isPaste()
+                && composer.batch().continuesAt(monotonicNanos.getAsLong())
+                && composer.pendingEnter() == null
+                && batchesText(key)
+                && beforeUpdate.selector().isEmpty()
+                && !controller.secureInputRequested();
+        reuseLastFrame = false;
         Command command = Command.none();
         if (message instanceof CtrlCRequestedMessage) {
             // SIGINT (Ctrl-C) must not terminate the program: with a transcript
@@ -168,6 +182,8 @@ final class Tui4jCodingTerminalModel implements Model {
             if (selection.range().isPresent()) {
                 command = copySelectedText();
             } else {
+                // Interrupting clears the draft, so a stale batch timer must not be able to write it back.
+                settleBatch(false);
                 accept(TerminalInput.Kind.INTERRUPT);
             }
         } else if (message instanceof SelectionAutoScrollMessage scrolling) {
@@ -183,8 +199,14 @@ final class Tui4jCodingTerminalModel implements Model {
                 // checkWindowSize first so observers can detect the request without running the tick.
                 command = Command.batch(Command.checkWindowSize(), command);
             }
-        } else if (message instanceof DeferredEnterMessage deferred) {
+        } else if (message instanceof ComposerInput.EnterMessage deferred) {
             command = commitDeferredEnter(deferred);
+        } else if (message instanceof ComposerInput.IdleMessage idle) {
+            ComposerInput.IdleResult result = composer.checkIdle(idle);
+            if (result.settled()) {
+                settleBatch(true);
+            }
+            command = result.command();
         } else if (message instanceof SubmissionCompletedMessage completed) {
             if (completed.result().submission().equals(pendingSubmission)) {
                 controller.completeMessageSubmission(completed.result());
@@ -214,7 +236,7 @@ final class Tui4jCodingTerminalModel implements Model {
                         || modified.modifier() == EnterKeyModifier.Ctrl
                         || modified.modifier() == EnterKeyModifier.CtrlShift)) {
             resolvePendingEnterAsNewline();
-            edit(new PasteMessage("\n"));
+            insertLocalNewline();
         } else if (message instanceof MouseMessage mouse) {
             command = mouse(mouse);
         } else if (message instanceof KeyPressMessage key) {
@@ -234,6 +256,7 @@ final class Tui4jCodingTerminalModel implements Model {
             clearSelection();
             return UpdateResult.from(this, Command.quit());
         }
+        reuseLastFrame = heldInput && beforeUpdate == controller.state();
         return UpdateResult.from(this, command);
     }
 
@@ -404,12 +427,17 @@ final class Tui4jCodingTerminalModel implements Model {
     }
 
     void clearSelection() {
+        reuseLastFrame = false;
         selection.clear();
         stopSelectionAutoScroll();
     }
 
     @Override
     public String view() {
+        if (reuseLastFrame && lastFrame != null && lastFrameState == controller.state()) {
+            reuseLastFrame = false;
+            return lastFrame;
+        }
         TerminalUiState state = controller.state();
         String desiredTranscript = selection
                 .range()
@@ -443,6 +471,8 @@ final class Tui4jCodingTerminalModel implements Model {
             rendered = view.render(
                     state, transcript, editor, true, false, elapsed, 0, secureInput, isUpdate, secureInputHint);
         }
+        lastFrame = rendered;
+        lastFrameState = state;
         return rendered;
     }
 
@@ -468,18 +498,15 @@ final class Tui4jCodingTerminalModel implements Model {
             clearSelection();
             return Command.none();
         }
-        if (pendingEnter != null && isUnbracketedPasteContinuation(key)) {
-            resolvePendingEnterAsNewline();
-            if (key.type() == KeyType.keyLF) {
-                return Command.none();
-            }
-            if (key.type() == KeyType.keyHT) {
-                edit(new PasteMessage("    "));
-                return Command.none();
-            }
+        long now = monotonicNanos.getAsLong();
+        // A key that cannot belong to the open batch ends it here, so the batch is settled and its idle timer is
+        // invalidated before the key's own semantics read or change the draft.
+        if (composer.batch() != null && (!batchesText(key) || !composer.batch().continuesAt(now))) {
+            settleBatch(false);
         }
         TerminalUiState state = controller.state();
         if (state.selector().isPresent()) {
+            settleBatch(false);
             leaderActivatedNanos = 0;
             if ("completion".equals(state.selector().orElseThrow().kind()) && editCompletion(key)) {
                 return Command.none();
@@ -500,7 +527,6 @@ final class Tui4jCodingTerminalModel implements Model {
             return Command.none();
         }
 
-        long now = monotonicNanos.getAsLong();
         boolean leaderPending = leaderActivatedNanos > 0 && (now - leaderActivatedNanos) <= LEADER_TIMEOUT_NANOS;
         if (leaderActivatedNanos > 0 && !leaderPending) {
             leaderActivatedNanos = 0;
@@ -615,19 +641,8 @@ final class Tui4jCodingTerminalModel implements Model {
             accept(TerminalInput.Kind.EOF);
             return Command.none();
         }
-        if (key.type() == KeyType.keyHT) {
-            accept(TerminalInput.Kind.COMPLETION_REQUESTED);
-            return Command.none();
-        }
-        if (key.type() == KeyType.keyCR) {
-            if (shortcuts.matchesFollowUp(key)) {
-                return submit(TerminalInput.Kind.FOLLOW_UP);
-            }
-            return deferEnter(TerminalInput.Kind.SUBMIT);
-        }
-        if (key.type() == KeyType.keyLF) {
-            edit(new PasteMessage("\n"));
-            return Command.none();
+        if (batchesText(key)) {
+            return textKey(key, now);
         }
         if (key.type() == KeyType.KeyUp) {
             if (state.editorBuffer().contains("\n")) {
@@ -684,13 +699,7 @@ final class Tui4jCodingTerminalModel implements Model {
             int cursor = state.editorCursor();
             String token = pastedTokenBefore(buffer, cursor);
             if (token != null) {
-                int start = buffer.indexOf(token);
-                int end = start + token.length();
-                if (end < buffer.length() && buffer.charAt(end) == ' ') {
-                    end++;
-                }
-                pastedContent.remove(token);
-                replaceEditor(buffer.substring(0, start) + buffer.substring(end), start);
+                replaceEditor(withoutPasteToken(buffer, token), buffer.indexOf(token));
                 return Command.none();
             }
             int previous = TerminalTextCursor.previous(buffer, cursor);
@@ -702,13 +711,7 @@ final class Tui4jCodingTerminalModel implements Model {
             int cursor = state.editorCursor();
             String token = pastedTokenAfter(buffer, cursor);
             if (token != null) {
-                int start = buffer.indexOf(token);
-                int end = start + token.length();
-                if (end < buffer.length() && buffer.charAt(end) == ' ') {
-                    end++;
-                }
-                pastedContent.remove(token);
-                replaceEditor(buffer.substring(0, start) + buffer.substring(end), start);
+                replaceEditor(withoutPasteToken(buffer, token), buffer.indexOf(token));
                 return Command.none();
             }
             replaceEditor(TerminalTextCursor.delete(buffer, cursor), cursor);
@@ -787,35 +790,276 @@ final class Tui4jCodingTerminalModel implements Model {
         secretBuffer.setLength(0);
     }
 
-    private boolean isUnbracketedPasteContinuation(KeyPressMessage key) {
-        return key.type() == KeyType.KeyRunes
-                || key.type() == KeyType.keyCR
-                || key.type() == KeyType.keyLF
-                || key.type() == KeyType.keyHT;
+    /**
+     * Routes one text key into the composer. A batch starts at its first character, so a streamed paste keeps its own
+     * insertion range; a break a following text key confirms makes the rest of the stream held paste content.
+     */
+    private Command textKey(KeyPressMessage key, long now) {
+        if (composer.pendingEnter() != null) {
+            // Any text key behind the deferred break proves the break was paste content instead of the user's Enter.
+            confirmPendingEnterAsPaste();
+            if (key.type() == KeyType.keyLF) {
+                // This LF is the other half of the CRLF pair whose CR the batch just held.
+                composer.batch().consumeCrLfHalf(now);
+                return scheduleBatchSettle();
+            }
+            appendComposerText(StreamedInputBatch.textOf(key), key.type() == KeyType.keyCR, key);
+            return scheduleBatchSettle();
+        }
+        if (key.type() == KeyType.keyCR) {
+            if (composer.batch() != null && composer.batch().isPaste()) {
+                // The break belongs to a paste that is already streaming, so it is content and never a submit.
+                appendComposerText("\n", true, key);
+                return scheduleBatchSettle();
+            }
+            if (shortcuts.matchesFollowUp(key)) {
+                settleBatch(false);
+                return submit(TerminalInput.Kind.FOLLOW_UP);
+            }
+            return deferEnter(TerminalInput.Kind.SUBMIT);
+        }
+        if (key.type() == KeyType.keyLF
+                && composer.batch() != null
+                && composer.batch().endsWithCr()) {
+            // The CR half of this CRLF pair already wrote the one break.
+            composer.batch().consumeCrLfHalf(now);
+            return scheduleBatchSettle();
+        }
+        if (composer.batch() == null && key.type() == KeyType.keyHT) {
+            // A Tab outside a batch is the completion gesture, not indentation.
+            accept(TerminalInput.Kind.COMPLETION_REQUESTED);
+            return Command.none();
+        }
+        if (composer.batch() == null) {
+            int cursor = controller.state().editorCursor();
+            composer.beginBatch(cursor, cursor, now);
+        }
+        String text = StreamedInputBatch.textOf(key);
+        if (text.indexOf('\n') >= 0) {
+            // One key event that carries a break is multi-line paste content, so its break is never a submit gesture.
+            showReceivingBlock(now);
+            composer.batch().confirmAsPaste(now);
+        }
+        appendComposerText(text, false, key);
+        return scheduleBatchSettle();
+    }
+
+    /**
+     * Shows the receiving block for a stream the host delivers as ordinary keys. It runs only when content shows the
+     * batch is a multi-line paste, so ordinary typing keeps painting its own text and never sees a paste block. The
+     * block reports how many lines already arrived, because a large paste can stream for a long time.
+     */
+    private void showReceivingBlock(long now) {
+        if (composer.batch() == null || composer.batch().isPaste()) {
+            return;
+        }
+        String buffer = controller.state().editorBuffer();
+        int start = Math.max(0, Math.min(composer.batch().start(), buffer.length()));
+        int end = Math.max(start, Math.min(composer.batch().end(), buffer.length()));
+        String live = buffer.substring(start, end);
+        if (containsPasteToken(live)) {
+            // A summarized paste inside the live range keeps its placeholder, so its mapping survives the retraction.
+            return;
+        }
+        composer.batch().receivePaintedText(live, now);
+        String block = receivingBlockLabel(composer.batch().displayLines());
+        composer.batch().showBlock(block);
+        replaceEditor(buffer.substring(0, start) + block + buffer.substring(end), start + block.length());
+    }
+
+    /** Rewrites the block in place when the content received so far grows by a line, and does nothing otherwise. */
+    private void refreshReceivingBlock() {
+        if (composer.batch() == null || composer.batch().blockLabel() == null) {
+            return;
+        }
+        String block = receivingBlockLabel(composer.batch().displayLines());
+        if (block.equals(composer.batch().blockLabel())) {
+            return;
+        }
+        String buffer = controller.state().editorBuffer();
+        int start = Math.max(0, Math.min(composer.batch().start(), buffer.length()));
+        int end = Math.max(start, Math.min(composer.batch().end(), buffer.length()));
+        composer.batch().showBlock(block);
+        replaceEditor(buffer.substring(0, start) + block + buffer.substring(end), start + block.length());
+    }
+
+    /** Holds one received fragment and keeps the block's tentative line count in step with it. */
+    private void holdReceivedText(String text, boolean breakFromCr) {
+        int lines = composer.batch().displayLines();
+        composer.batch().hold(text, breakFromCr, monotonicNanos.getAsLong());
+        if (composer.batch().displayLines() != lines) {
+            refreshReceivingBlock();
+        }
+    }
+
+    /**
+     * Appends one composer text fragment. Live text goes through the textarea so the draft stays in arrival order;
+     * once the batch holds its stream the text is held, so a streamed paste never paints key by key and never disturbs
+     * the receiving block that stands in for it.
+     */
+    private void appendComposerText(String text, boolean breakFromCr, KeyPressMessage key) {
+        if (composer.batch() == null) {
+            edit(new PasteMessage(text));
+            return;
+        }
+        if (composer.batch().isPaste()) {
+            holdReceivedText(text, breakFromCr);
+            return;
+        }
+        if (key != null && key.type() == KeyType.KeyRunes) {
+            edit(key);
+        } else {
+            edit(new PasteMessage(text));
+        }
+        composer.batch().extend(controller.state().editorCursor(), monotonicNanos.getAsLong());
+    }
+
+    /**
+     * Whether the key carries composer text the batch can hold. Backspace arrives as a control rune burst and an Alt
+     * combination is a shortcut, so neither may join a streamed paste even though both carry runes.
+     */
+    private static boolean batchesText(KeyPressMessage key) {
+        return StreamedInputBatch.textOf(key) != null && !key.alt() && !isBackspaceKey(key);
+    }
+
+    /** The newline the user asked for, joined to the open composer.batch() when the composer is at the composer.batch()'s end. */
+    private void insertLocalNewline() {
+        appendComposerText("\n", false, null);
+    }
+
+    /**
+     * Turns the deferred break into paste content: the batch keeps the anchor of the typed run, the break becomes its
+     * first break, and everything the host keeps streaming is held instead of painted.
+     */
+    private void confirmPendingEnterAsPaste() {
+        ComposerInput.DeferredEnter enter = composer.takeEnter();
+        long now = monotonicNanos.getAsLong();
+        int cursor = controller.state().editorCursor();
+        if (composer.batch() == null) {
+            // The typed run was already settled, so the break joins a batch anchored where that run started.
+            composer.beginBatch(enter.start(), cursor, now);
+        }
+        // The break shows the run was a paste, so the painted first line moves behind the receiving block.
+        showReceivingBlock(now);
+        composer.batch().confirmAsPaste(now);
+        holdReceivedText("\n", true);
+    }
+
+    private Command scheduleBatchSettle() {
+        return composer.scheduleIdle();
+    }
+
+    /**
+     * Ends the open batch. The receiving block becomes the one paste summary both paste paths share, or the text the
+     * batch held back is written where the block stood, so the text the user already had before or after the paste is
+     * never touched and the composer never jumps to another position.
+     */
+    private void settleBatch(boolean requestCompletion) {
+        StreamedInputBatch settled = composer.finishBatch();
+        if (settled == null) {
+            return;
+        }
+        String buffer = controller.state().editorBuffer();
+        int start = Math.max(0, Math.min(settled.start(), buffer.length()));
+        int end = Math.max(start, Math.min(settled.end(), buffer.length()));
+        String held = settled.held();
+        String block = settled.blockLabel();
+        // A receiving block is display only: everything the batch received waits in its held text.
+        String region = block != null ? held : buffer.substring(start, end) + held;
+        String trimmed = region.strip();
+        if (needsPasteSummary(trimmed) && !containsPasteToken(region)) {
+            String token = nextPasteToken(lineCount(trimmed));
+            pastedContent.put(token, region);
+            replaceEditor(buffer.substring(0, start) + token + buffer.substring(end), start + token.length());
+            return;
+        }
+        if (block != null) {
+            // The received text replaces its own block, so the draft around it keeps its text and its order.
+            replaceEditor(buffer.substring(0, start) + held + buffer.substring(end), start + held.length());
+        } else if (!held.isEmpty()) {
+            replaceEditor(buffer.substring(0, end) + held + buffer.substring(end), end + held.length());
+        }
+        if (requestCompletion && region.indexOf('\n') < 0) {
+            // Only a single-line run can be a command or a path mention; a multi-line batch was a paste either way.
+            requestCompletionAfterIdle();
+        }
+    }
+
+    /**
+     * Opens the completion popup only after the typed run goes idle, so a `/` or `@` that belongs to a paste never
+     * swallows the rest of it. A deferred break keeps the composer, because it still owes the user a submit.
+     */
+    private void requestCompletionAfterIdle() {
+        if (composer.pendingEnter() != null) {
+            return;
+        }
+        TerminalUiState state = controller.state();
+        String buffer = state.editorBuffer();
+        int cursor = state.editorCursor();
+        int wordStart = cursor;
+        while (wordStart > 0 && !Character.isWhitespace(buffer.charAt(wordStart - 1))) {
+            wordStart--;
+        }
+        String word = buffer.substring(wordStart, cursor);
+        if (!word.startsWith("/") && !word.startsWith("@")) {
+            return;
+        }
+        controller.accept(new TerminalInput(TerminalInput.Kind.COMPLETION_REQUESTED, buffer, cursor));
+        syncComponents();
+    }
+
+    /** Whether a region already carries a paste summary, so collapsing it again would nest one placeholder in another. */
+    private boolean containsPasteToken(String region) {
+        for (String token : pastedContent.keySet()) {
+            if (region.contains(token)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private Command deferEnter(TerminalInput.Kind kind) {
-        long sequence = ++deferredEnterSequence;
-        pendingEnter = new DeferredEnter(sequence, kind);
-        return Command.tick(UNBRACKETED_PASTE_GUARD_INTERVAL, ignored -> new DeferredEnterMessage(sequence, kind));
+        return composer.deferEnter(kind, editorCursor);
     }
 
-    private Command commitDeferredEnter(DeferredEnterMessage deferred) {
-        if (pendingEnter == null
-                || pendingEnter.sequence() != deferred.sequence()
-                || pendingEnter.kind() != deferred.kind()) {
-            return Command.none();
+    /** The shared paste-summary thresholds: 3+ lines or more than 150 characters, matching OpenCode defaults. */
+    private static boolean needsPasteSummary(String trimmed) {
+        return !trimmed.isEmpty()
+                && (lineCount(trimmed) >= PASTE_SUMMARY_MIN_LINES || trimmed.length() > PASTE_SUMMARY_MAX_CHARACTERS);
+    }
+
+    private static int lineCount(String value) {
+        int lines = 1;
+        for (int index = 0; index < value.length(); index++) {
+            if (value.charAt(index) == '\n') {
+                lines++;
+            }
         }
-        pendingEnter = null;
-        return submit(deferred.kind());
+        return lines;
+    }
+
+    /** The OpenCode-style label for one summarized paste; the sequence keeps repeated pastes distinct. */
+    private String nextPasteToken(int lines) {
+        return "[Pasted #" + (++pasteSequence) + " ~" + lines + " lines]";
+    }
+
+    /**
+     * The block a streaming batch shows in its own range. It carries no number, because a batch that stays below the
+     * fold threshold never becomes a summary and must not consume one.
+     */
+    private static String receivingBlockLabel(int lines) {
+        return "[Pasting ~" + lines + " lines]";
+    }
+
+    private Command commitDeferredEnter(ComposerInput.EnterMessage message) {
+        ComposerInput.DeferredEnter enter = composer.consumeEnter(message);
+        return enter == null ? Command.none() : submit(enter.kind());
     }
 
     private void resolvePendingEnterAsNewline() {
-        if (pendingEnter == null) {
-            return;
+        if (composer.takeEnter() != null) {
+            insertLocalNewline();
         }
-        pendingEnter = null;
-        edit(new PasteMessage("\n"));
     }
 
     private void requestTranscriptScroll(int rows) {
@@ -1027,19 +1271,20 @@ final class Tui4jCodingTerminalModel implements Model {
         String before = editor.value();
         int beforeCursor = editorCursor;
         UpdateResult<Textarea> result = editor.update(message);
-        String after = editor.value();
-        int afterCursor = cursorAfter(message, before, beforeCursor, after);
+        String raw = editor.value();
+        String after = sanitizeEditorInput(raw);
+        if (!after.equals(raw)) {
+            // A host may deliver a keystroke it cannot decode as a raw control rune. The textarea is the render source,
+            // so the draft is corrected here instead of only on the paste boundary; an unsanitized rune would reach
+            // EDITOR_CHANGED and paint as an unmapped glyph inside the composer.
+            synchronizeEditor(after, Math.min(beforeCursor, after.length()));
+        }
+        int afterCursor = cursorAfter(before, beforeCursor, after);
         if (lostPastedToken(before, after)) {
             if (message instanceof KeyPressMessage key && isBackspaceKey(key)) {
                 for (String token : List.copyOf(pastedContent.keySet())) {
                     if (before.contains(token) && !after.contains(token)) {
-                        int start = before.indexOf(token);
-                        int end = start + token.length();
-                        if (end < before.length() && before.charAt(end) == ' ') {
-                            end++;
-                        }
-                        pastedContent.remove(token);
-                        replaceEditor(before.substring(0, start) + before.substring(end), start);
+                        replaceEditor(withoutPasteToken(before, token), before.indexOf(token));
                         return Command.none();
                     }
                 }
@@ -1049,25 +1294,8 @@ final class Tui4jCodingTerminalModel implements Model {
         }
         editorCursor = afterCursor;
         controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, after, editorCursor));
-        if (startsCompletion(message, before, beforeCursor, after, editorCursor)) {
-            controller.accept(new TerminalInput(TerminalInput.Kind.COMPLETION_REQUESTED, after, editorCursor));
-        }
         syncComponents();
         return result.command();
-    }
-
-    private boolean startsCompletion(Message message, String before, int beforeCursor, String after, int afterCursor) {
-        if (!(message instanceof KeyPressMessage key) || key.type() != KeyType.KeyRunes) {
-            return false;
-        }
-        String inserted = new String(key.runes());
-        if (!(inserted.equals("/") || inserted.equals("@"))) {
-            return false;
-        }
-        if (after.length() != before.length() + 1 || afterCursor != beforeCursor + 1) {
-            return false;
-        }
-        return beforeCursor == 0 || Character.isWhitespace(before.charAt(beforeCursor - 1));
     }
 
     private void accept(TerminalInput.Kind kind) {
@@ -1087,10 +1315,11 @@ final class Tui4jCodingTerminalModel implements Model {
     }
 
     private Command submit(TerminalInput.Kind kind) {
-        TerminalUiState state = controller.state();
         if (pendingSubmission != null) {
             return Command.none();
         }
+        settleBatch(false);
+        TerminalUiState state = controller.state();
         String expanded = expandPastedContent(state.editorBuffer());
         if (!expanded.isBlank() && !controller.isRenamingSession()) {
             resumeTranscriptFollowing();
@@ -1187,19 +1416,20 @@ final class Tui4jCodingTerminalModel implements Model {
 
     private void pasteContent(String content) {
         String normalized = sanitizeEditorInput(content);
-        String trimmed = normalized.strip();
+        settleBatch(false);
         pruneStalePastes(controller.state().editorBuffer());
-        int lines = (int) trimmed.chars().filter(character -> character == '\n').count() + 1;
-        if (!trimmed.isEmpty()
-                && (lines >= PASTE_SUMMARY_MIN_LINES || trimmed.length() > PASTE_SUMMARY_MAX_CHARACTERS)) {
-            // Keep a sequence id so multiple pastes with the same line count stay distinct map keys
-            // (OpenCode uses extmark ids; the visible label still mirrors "[Pasted ~N lines]").
-            String token = "[Pasted #" + (++pasteSequence) + " ~" + lines + " lines]";
-            pastedContent.put(token, normalized);
-            edit(new PasteMessage(token));
-            return;
+        edit(new PasteMessage(summarizedPaste(normalized)));
+    }
+
+    /** The label that replaces one pasted block, or the block itself when it is small enough to stay inline. */
+    private String summarizedPaste(String normalized) {
+        String trimmed = normalized.strip();
+        if (!needsPasteSummary(trimmed)) {
+            return normalized;
         }
-        edit(new PasteMessage(normalized));
+        String token = nextPasteToken(lineCount(trimmed));
+        pastedContent.put(token, normalized);
+        return token;
     }
 
     private String expandPastedContent(String buffer) {
@@ -1235,6 +1465,11 @@ final class Tui4jCodingTerminalModel implements Model {
                         && preserved.map(p -> !p.contains(token)).orElse(true));
     }
 
+    /**
+     * Recognizes every encoding hosts use for Backspace: the dedicated key types, the key name, and a rune burst that
+     * carries delete runes. A host may decode one keystroke into several runes or pad it with other control runes, and
+     * an unrecognized burst would reach the textarea as text and paint as an unmapped glyph inside the composer.
+     */
     private static boolean isBackspaceKey(KeyPressMessage key) {
         if (key.type() == KeyType.keyBS || key.type() == KeyType.keyDEL) {
             return true;
@@ -1242,11 +1477,33 @@ final class Tui4jCodingTerminalModel implements Model {
         if ("backspace".equalsIgnoreCase(key.key())) {
             return true;
         }
-        if (key.type() == KeyType.KeyRunes) {
-            char[] runes = key.runes();
-            return runes != null && runes.length == 1 && (runes[0] == '\b' || runes[0] == 0x7f);
+        if (key.type() != KeyType.KeyRunes) {
+            return false;
         }
-        return false;
+        char[] runes = key.runes();
+        if (runes == null || runes.length == 0) {
+            return false;
+        }
+        boolean deletes = false;
+        for (char rune : runes) {
+            if (rune == '\b' || rune == 0x7f) {
+                deletes = true;
+            } else if (!Character.isISOControl(rune)) {
+                return false;
+            }
+        }
+        return deletes;
+    }
+
+    /** Drops one summarized paste token, and the space separating it from the text, from the draft. */
+    private String withoutPasteToken(String buffer, String token) {
+        pastedContent.remove(token);
+        int start = buffer.indexOf(token);
+        int end = start + token.length();
+        if (end < buffer.length() && buffer.charAt(end) == ' ') {
+            end++;
+        }
+        return buffer.substring(0, start) + buffer.substring(end);
     }
 
     private String pastedTokenBefore(String buffer, int cursor) {
@@ -1387,17 +1644,9 @@ final class Tui4jCodingTerminalModel implements Model {
         editorCursor = checkedCursor;
     }
 
-    private int cursorAfter(Message message, String before, int beforeCursor, String after) {
-        if (message instanceof PasteMessage) {
-            return TerminalTextCursor.clamp(after, beforeCursor + (after.length() - before.length()));
-        }
-        if (!(message instanceof KeyPressMessage key)) {
-            return TerminalTextCursor.clamp(after, beforeCursor);
-        }
-        return switch (key.type()) {
-            case KeyRunes -> TerminalTextCursor.clamp(after, beforeCursor + (after.length() - before.length()));
-            default -> TerminalTextCursor.clamp(after, beforeCursor + (after.length() - before.length()));
-        };
+    /** The cursor after {@code editor.update} replaced {@code before} with {@code after}. */
+    private static int cursorAfter(String before, int beforeCursor, String after) {
+        return TerminalTextCursor.clamp(after, beforeCursor + (after.length() - before.length()));
     }
 
     private Command nextTick() {
@@ -1461,10 +1710,6 @@ final class Tui4jCodingTerminalModel implements Model {
     record ClipboardCopyResultMessage(boolean success, int characters, String text) implements Message {}
 
     record ClipboardPasteResultMessage(String content) implements Message {}
-
-    private record DeferredEnter(long sequence, TerminalInput.Kind kind) {}
-
-    private record DeferredEnterMessage(long sequence, TerminalInput.Kind kind) implements Message {}
 
     private record SubmissionCompletedMessage(MessageSubmissionResult result) implements Message {}
 }

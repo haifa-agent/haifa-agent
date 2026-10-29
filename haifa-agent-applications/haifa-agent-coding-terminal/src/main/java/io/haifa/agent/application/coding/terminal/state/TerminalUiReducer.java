@@ -21,6 +21,7 @@ import java.util.Set;
 /** Deterministic, side-effect-free projection of product and committed Runtime facts. */
 public final class TerminalUiReducer {
     private static final int MAX_TRANSCRIPT_TITLE_LENGTH = 256;
+    private static final int MAX_USER_PREVIEW_CODE_POINTS = 8_000;
     private static final int MAX_TOOL_TARGET_LENGTH = 256;
     private static final String OUTCOME_UNKNOWN_STATUS = "OUTCOME_UNKNOWN";
     private static final String TOOL_OUTCOME_UNKNOWN_CODE = "TOOL_OUTCOME_UNKNOWN";
@@ -29,6 +30,12 @@ public final class TerminalUiReducer {
     private static final Set<String> TERMINAL_RUN_STATUSES = Set.of("COMPLETED", "FAILED", "CANCELLED", "TIMEOUT");
     private static final Set<String> AUTHENTICATION_PROGRESS_STATUSES =
             Set.of("STARTING", "WAITING_USER", "EXCHANGING", "STORING");
+
+    private static String userMessagePreview(String text) {
+        if (text.codePointCount(0, text.length()) <= MAX_USER_PREVIEW_CODE_POINTS) return text;
+        int end = text.offsetByCodePoints(0, MAX_USER_PREVIEW_CODE_POINTS);
+        return text.substring(0, end) + "\n[Preview truncated; full message submitted]";
+    }
 
     public TerminalUiState reduce(TerminalUiState state, TerminalUiAction action) {
         if (action instanceof TerminalUiAction.SessionLoaded loaded) {
@@ -354,7 +361,12 @@ public final class TerminalUiReducer {
         if (action instanceof TerminalUiAction.UserMessageCommitted committed) {
             var items = new ArrayList<>(state.transcript());
             items.add(new TranscriptItem(
-                    committed.id(), TranscriptItem.Kind.USER, "You", committed.text(), "SENT", true));
+                    committed.id(),
+                    TranscriptItem.Kind.USER,
+                    "You",
+                    userMessagePreview(committed.text()),
+                    "SENT",
+                    true));
             // Preserve the editor: callers clear it explicitly when the committed text came from
             // the buffer. Auto-submitting a separate Waiting draft must not wipe an unrelated draft.
             return copy(

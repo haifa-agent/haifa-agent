@@ -30,8 +30,9 @@ import java.util.stream.Collectors;
 final class Tui4jTerminalView {
     private static final int MIN_COLUMNS = 60;
     private static final int MIN_ROWS = 16;
-    /** Visible paste-summary tokens inserted by {@code Tui4jCodingTerminalModel#pasteContent}. */
-    private static final Pattern PASTE_PLACEHOLDER = Pattern.compile("\\[Pasted #\\d+ ~\\d+ lines\\]");
+    /** Paste blocks the model puts in the editor: the receiving block and the settled {@code [Pasted …]} summary. */
+    private static final Pattern PASTE_PLACEHOLDER =
+            Pattern.compile("\\[Past(?:ed #\\d+ ~\\d+ lines|ing ~\\d+ lines)\\]");
     /** Selector kind prefix of a clarification wizard, whose rows carry answer markers instead of plain labels. */
     private static final String CLARIFICATION_SELECTOR_PREFIX = "clarification:";
 
@@ -529,8 +530,9 @@ final class Tui4jTerminalView {
     }
 
     /**
-     * Highlight OpenCode-style paste summary chips inside the textarea view. The buffer keeps the
-     * plain token text for editing/atomic delete; only the rendered frame gets the warning chip.
+     * Highlight OpenCode-style paste chips inside the textarea view: one chip for the block a stream shows while it is
+     * received and for the summary it settles into. The buffer keeps the plain token text for
+     * editing/atomic delete; only the rendered frame gets the warning chip.
      */
     private String stylePastePlaceholders(String editorView) {
         Matcher matcher = PASTE_PLACEHOLDER.matcher(editorView);
