@@ -39,13 +39,10 @@ import java.util.function.LongSupplier;
 /** Production tui4j adapter around the authoritative terminal Controller and Reducer state. */
 final class Tui4jCodingTerminalModel implements Model {
     private static final Duration EVENT_POLL_INTERVAL = Duration.ofMillis(50);
-    private static final Duration UNBRACKETED_PASTE_GUARD_INTERVAL = Duration.ofMillis(100);
     /** Matches OpenCode defaults: summarize pastes of 3+ lines or more than 150 characters. */
     private static final int PASTE_SUMMARY_MIN_LINES = 3;
 
     private static final int PASTE_SUMMARY_MAX_CHARACTERS = 150;
-    /** Runes received inside one poll window that only a paste can produce, so `/` and `@` must not open a popup. */
-    private static final int PASTE_RUNE_BURST_THRESHOLD = 6;
 
     static final int WINDOW_SIZE_POLL_TICKS = 10;
     private static final int MAX_SECRET_CHARACTERS = 65_536;
@@ -87,20 +84,10 @@ final class Tui4jCodingTerminalModel implements Model {
     private PreparedMessageSubmission pendingSubmission;
     private long deferredEnterSequence;
     private DeferredEnter pendingEnter;
-    /** Start offset of an open unbracketed-paste burst, or {@code -1} when the composer is not inside one. */
-    private int unbracketedPasteStart = -1;
-    /** Sequence of the pending burst-end timer, so every later keystroke invalidates the earlier timer. */
-    private long unbracketedPasteSequence;
-    /** Start and end of the contiguous rune run before the current key, used to anchor a burst at its first char. */
-    private int typedRunStart = -1;
-
-    private int typedRunEnd = -1;
-
-    private int runesSincePoll;
-    /** Keys of an open burst, held back so a streamed paste never paints one character at a time. */
-    private final StringBuilder burstTail = new StringBuilder();
-    /** Whether the burst tail ends with the CR half of a CRLF pair. */
-    private boolean burstTailEndsWithCr;
+    /** The text keys the host is streaming right now, or {@code null} when the composer has no open batch. */
+    private StreamedInputBatch batch;
+    /** Sequence of the pending batch-idle timer, so every later keystroke invalidates the earlier timer. */
+    private long batchSettleSequence;
 
     private boolean secretPresentation;
     private int pasteSequence;
@@ -186,6 +173,8 @@ final class Tui4jCodingTerminalModel implements Model {
             if (selection.range().isPresent()) {
                 command = copySelectedText();
             } else {
+                // Interrupting clears the draft, so a stale batch timer must not be able to write it back.
+                settleBatch(false);
                 accept(TerminalInput.Kind.INTERRUPT);
             }
         } else if (message instanceof SelectionAutoScrollMessage scrolling) {
@@ -193,7 +182,6 @@ final class Tui4jCodingTerminalModel implements Model {
         } else if (message instanceof ClipboardCopyResultMessage copied) {
             command = completeCopy(copied);
         } else if (message instanceof PollMessage) {
-            runesSincePoll = 0;
             controller.drainEvents();
             syncComponents();
             command = nextTick();
@@ -204,8 +192,8 @@ final class Tui4jCodingTerminalModel implements Model {
             }
         } else if (message instanceof DeferredEnterMessage deferred) {
             command = commitDeferredEnter(deferred);
-        } else if (message instanceof UnbracketedPasteEndMessage ended) {
-            endUnbracketedPaste(ended.sequence());
+        } else if (message instanceof BatchIdleMessage idle) {
+            settleBatchIfIdle(idle.sequence());
         } else if (message instanceof SubmissionCompletedMessage completed) {
             if (completed.result().submission().equals(pendingSubmission)) {
                 controller.completeMessageSubmission(completed.result());
@@ -235,7 +223,7 @@ final class Tui4jCodingTerminalModel implements Model {
                         || modified.modifier() == EnterKeyModifier.Ctrl
                         || modified.modifier() == EnterKeyModifier.CtrlShift)) {
             resolvePendingEnterAsNewline();
-            edit(new PasteMessage("\n"));
+            insertLocalNewline();
         } else if (message instanceof MouseMessage mouse) {
             command = mouse(mouse);
         } else if (message instanceof KeyPressMessage key) {
@@ -489,21 +477,15 @@ final class Tui4jCodingTerminalModel implements Model {
             clearSelection();
             return Command.none();
         }
-        // A key that arrives inside the guard window after a line break proves the host is streaming one paste as
-        // ordinary keys, so the burst is tracked until it goes idle and then collapsed into a paste summary.
-        boolean continuesUnbracketedPaste = pendingEnter != null && isUnbracketedPasteContinuation(key);
-        if (continuesUnbracketedPaste) {
-            openUnbracketedPaste(pendingEnter.start());
-            resolvePendingEnterAsNewline();
-            // The resolved break came from a CR, so an LF that follows it is the other half of the same CRLF pair.
-            burstTailEndsWithCr = true;
-        }
-        if (unbracketedPasteStart >= 0 && !isBurstContentKey(key)) {
-            // Anything other than pasted content ends the burst, so its text reaches the composer before the key.
-            flushBurstTail();
+        long now = monotonicNanos.getAsLong();
+        // A key that cannot belong to the open batch ends it here, so the batch is settled and its idle timer is
+        // invalidated before the key's own semantics read or change the draft.
+        if (batch != null && (!batchesText(key) || !batch.continuesAt(now))) {
+            settleBatch(false);
         }
         TerminalUiState state = controller.state();
         if (state.selector().isPresent()) {
+            settleBatch(false);
             leaderActivatedNanos = 0;
             if ("completion".equals(state.selector().orElseThrow().kind()) && editCompletion(key)) {
                 return Command.none();
@@ -524,7 +506,6 @@ final class Tui4jCodingTerminalModel implements Model {
             return Command.none();
         }
 
-        long now = monotonicNanos.getAsLong();
         boolean leaderPending = leaderActivatedNanos > 0 && (now - leaderActivatedNanos) <= LEADER_TIMEOUT_NANOS;
         if (leaderActivatedNanos > 0 && !leaderPending) {
             leaderActivatedNanos = 0;
@@ -639,34 +620,8 @@ final class Tui4jCodingTerminalModel implements Model {
             accept(TerminalInput.Kind.EOF);
             return Command.none();
         }
-        if (key.type() == KeyType.keyHT) {
-            if (unbracketedPasteStart >= 0) {
-                burstTail.append("    ");
-                burstTailEndsWithCr = false;
-                return scheduleUnbracketedPasteEnd();
-            }
-            accept(TerminalInput.Kind.COMPLETION_REQUESTED);
-            return Command.none();
-        }
-        if (key.type() == KeyType.keyCR) {
-            if (unbracketedPasteStart >= 0) {
-                burstTail.append('\n');
-                burstTailEndsWithCr = true;
-                return scheduleUnbracketedPasteEnd();
-            }
-            if (shortcuts.matchesFollowUp(key)) {
-                return submit(TerminalInput.Kind.FOLLOW_UP);
-            }
-            return deferEnter(TerminalInput.Kind.SUBMIT);
-        }
-        if (key.type() == KeyType.keyLF) {
-            if (unbracketedPasteStart >= 0 && burstTailEndsWithCr) {
-                // A CRLF pair inside one burst is a single break, and the CR half already buffered it.
-                burstTailEndsWithCr = false;
-                return scheduleUnbracketedPasteEnd();
-            }
-            edit(new PasteMessage("\n"));
-            return Command.none();
+        if (batchesText(key)) {
+            return textKey(key, now);
         }
         if (key.type() == KeyType.KeyUp) {
             if (state.editorBuffer().contains("\n")) {
@@ -750,11 +705,6 @@ final class Tui4jCodingTerminalModel implements Model {
             accept(TerminalInput.Kind.EDIT_WAITING);
             return Command.none();
         }
-        if (continuesUnbracketedPaste || unbracketedPasteStart >= 0) {
-            burstTail.append(key.runes());
-            burstTailEndsWithCr = false;
-            return scheduleUnbracketedPasteEnd();
-        }
         return edit(key);
     }
 
@@ -819,82 +769,214 @@ final class Tui4jCodingTerminalModel implements Model {
         secretBuffer.setLength(0);
     }
 
-    private boolean isUnbracketedPasteContinuation(KeyPressMessage key) {
-        return key.type() == KeyType.KeyRunes
-                || key.type() == KeyType.keyCR
-                || key.type() == KeyType.keyLF
-                || key.type() == KeyType.keyHT;
-    }
-
-    /** Keeps the burst anchored at the first line of the paste, which is the rune chunk before its first break. */
-    private void openUnbracketedPaste(int start) {
-        if (unbracketedPasteStart < 0) {
-            unbracketedPasteStart = Math.max(0, start);
+    /**
+     * Routes one text key into the composer. A batch starts at its first character, so a streamed paste keeps its own
+     * insertion range; a break a following text key confirms makes the rest of the stream held paste content.
+     */
+    private Command textKey(KeyPressMessage key, long now) {
+        if (pendingEnter != null) {
+            // Any text key behind the deferred break proves the break was paste content instead of the user's Enter.
+            confirmPendingEnterAsPaste();
+            if (key.type() == KeyType.keyLF) {
+                // This LF is the other half of the CRLF pair whose CR the batch just held.
+                batch.consumeCrLfHalf(now);
+                return scheduleBatchSettle();
+            }
+            appendComposerText(StreamedInputBatch.textOf(key), key.type() == KeyType.keyCR, key);
+            return scheduleBatchSettle();
         }
+        if (key.type() == KeyType.keyCR) {
+            if (batch != null && batch.isPaste()) {
+                // The break belongs to a paste that is already streaming, so it is content and never a submit.
+                appendComposerText("\n", true, key);
+                return scheduleBatchSettle();
+            }
+            if (shortcuts.matchesFollowUp(key)) {
+                settleBatch(false);
+                return submit(TerminalInput.Kind.FOLLOW_UP);
+            }
+            return deferEnter(TerminalInput.Kind.SUBMIT);
+        }
+        if (key.type() == KeyType.keyLF && batch != null && batch.endsWithCr()) {
+            // The CR half of this CRLF pair already wrote the one break.
+            batch.consumeCrLfHalf(now);
+            return scheduleBatchSettle();
+        }
+        if (batch == null && key.type() == KeyType.keyHT) {
+            // A Tab outside a batch is the completion gesture, not indentation.
+            accept(TerminalInput.Kind.COMPLETION_REQUESTED);
+            return Command.none();
+        }
+        if (batch == null) {
+            int cursor = controller.state().editorCursor();
+            batch = StreamedInputBatch.begin(cursor, cursor, now);
+        }
+        String text = StreamedInputBatch.textOf(key);
+        retractStreamedText(text.indexOf('\n') >= 0, now);
+        appendComposerText(text, false, key);
+        return scheduleBatchSettle();
     }
 
-    private Command scheduleUnbracketedPasteEnd() {
-        long sequence = ++unbracketedPasteSequence;
-        return Command.tick(UNBRACKETED_PASTE_GUARD_INTERVAL, ignored -> new UnbracketedPasteEndMessage(sequence));
-    }
-
-    private void endUnbracketedPaste(long sequence) {
-        if (sequence == unbracketedPasteSequence) {
-            finishUnbracketedPaste();
+    /**
+     * Recognises the text a host streams as ordinary keys: a key paced like a machine, or one key event that carries a
+     * break, proves the batch is a paste. The text it already painted is retracted, so the composer stops showing the
+     * first line while the rest of the paste is still arriving.
+     */
+    private void retractStreamedText(boolean breakInKey, long now) {
+        if (batch == null || batch.isPaste() || (!breakInKey && !batch.streamedAt(now))) {
+            return;
+        }
+        String buffer = controller.state().editorBuffer();
+        int start = Math.max(0, Math.min(batch.start(), buffer.length()));
+        int end = Math.max(start, Math.min(batch.end(), buffer.length()));
+        String live = buffer.substring(start, end);
+        if (containsPasteToken(live)) {
+            // A summarized paste inside the live range keeps its placeholder, so its mapping survives the retraction.
+            batch.confirmAsPaste(now);
+            return;
+        }
+        batch.retractLiveText(live, now);
+        if (!live.isEmpty()) {
+            replaceEditor(buffer.substring(0, start) + buffer.substring(end), start);
         }
     }
 
     /**
-     * Collapses the open burst into one paste summary when it is large enough, so a host that streams a paste as
-     * ordinary keys produces the same draft as a host that brackets it. The region is anchored at the first pasted
-     * line, so a small burst simply stays editable text.
+     * Appends one composer text fragment. Live text goes through the textarea so the draft stays in arrival order;
+     * once the batch is proven paste content the text is held, so a streamed paste never paints key by key.
      */
-    private void finishUnbracketedPaste() {
-        int start = unbracketedPasteStart;
-        unbracketedPasteStart = -1;
+    private void appendComposerText(String text, boolean breakFromCr, KeyPressMessage key) {
+        if (batch == null) {
+            edit(new PasteMessage(text));
+            return;
+        }
+        if (batch.isPaste()) {
+            batch.hold(text, breakFromCr, monotonicNanos.getAsLong());
+            return;
+        }
+        if (key != null && key.type() == KeyType.KeyRunes) {
+            edit(key);
+        } else {
+            edit(new PasteMessage(text));
+        }
+        batch.extend(controller.state().editorCursor(), monotonicNanos.getAsLong());
+    }
+
+    /**
+     * Whether the key carries composer text the batch can hold. Backspace arrives as a control rune burst and an Alt
+     * combination is a shortcut, so neither may join a streamed paste even though both carry runes.
+     */
+    private static boolean batchesText(KeyPressMessage key) {
+        return StreamedInputBatch.textOf(key) != null && !key.alt() && !isBackspaceKey(key);
+    }
+
+    /** The newline the user asked for, joined to the open batch when the composer is at the batch's end. */
+    private void insertLocalNewline() {
+        appendComposerText("\n", false, null);
+    }
+
+    /**
+     * Turns the deferred break into paste content: the batch keeps the anchor of the typed run, the break becomes its
+     * first break, and everything the host keeps streaming is held instead of painted.
+     */
+    private void confirmPendingEnterAsPaste() {
+        DeferredEnter enter = pendingEnter;
+        pendingEnter = null;
+        long now = monotonicNanos.getAsLong();
+        int cursor = controller.state().editorCursor();
+        if (batch == null) {
+            // The typed run was already settled, so the break joins a batch anchored where that run started.
+            batch = StreamedInputBatch.begin(enter.start(), cursor, now);
+        }
+        // The break proves the run was a paste, so the first line stops being painted as well.
+        retractStreamedText(true, now);
+        batch.confirmAsPaste(now);
+        batch.hold("\n", true, now);
+    }
+
+    private Command scheduleBatchSettle() {
+        long sequence = ++batchSettleSequence;
+        return Command.tick(StreamedInputBatch.IDLE_INTERVAL, ignored -> new BatchIdleMessage(sequence));
+    }
+
+    private void settleBatchIfIdle(long sequence) {
+        if (batch == null || sequence != batchSettleSequence || pendingEnter != null) {
+            // A deferred break still owes the user a decision between submit and paste content; it settles on that.
+            return;
+        }
+        settleBatch(true);
+    }
+
+    /**
+     * Ends the open batch. The batch becomes the one paste summary both paste paths share, or its held text is written
+     * back inside its own range, so the text the user already had before or after the paste is never touched.
+     */
+    private void settleBatch(boolean requestCompletion) {
+        StreamedInputBatch settled = batch;
+        batch = null;
+        if (settled == null) {
+            return;
+        }
         String buffer = controller.state().editorBuffer();
-        if (start < 0 || start > buffer.length()) {
-            flushBurstTail();
-            return;
-        }
-        String region = buffer.substring(start) + burstTail;
+        int start = Math.max(0, Math.min(settled.start(), buffer.length()));
+        int end = Math.max(start, Math.min(settled.end(), buffer.length()));
+        String held = settled.held();
+        String region = buffer.substring(start, end) + held;
         String trimmed = region.strip();
-        if (!needsPasteSummary(trimmed)) {
-            flushBurstTail();
+        if (needsPasteSummary(trimmed) && !containsPasteToken(region)) {
+            String token = nextPasteToken(lineCount(trimmed));
+            pastedContent.put(token, region);
+            replaceEditor(buffer.substring(0, start) + token + buffer.substring(end), start + token.length());
             return;
         }
-        String token = nextPasteToken(lineCount(trimmed));
-        pastedContent.put(token, region);
-        burstTail.setLength(0);
-        burstTailEndsWithCr = false;
-        replaceEditor(buffer.substring(0, start) + token, start + token.length());
-    }
-
-    /** Ends an open burst by appending its buffered text, so held-back keys are never dropped. */
-    private void flushBurstTail() {
-        String tail = burstTail.toString();
-        burstTail.setLength(0);
-        burstTailEndsWithCr = false;
-        unbracketedPasteStart = -1;
-        if (!tail.isEmpty()) {
-            edit(new PasteMessage(tail));
+        if (!held.isEmpty()) {
+            replaceEditor(buffer.substring(0, end) + held + buffer.substring(end), end + held.length());
+        }
+        if (requestCompletion && region.indexOf('\n') < 0) {
+            // Only a single-line run can be a command or a path mention; a multi-line batch was a paste either way.
+            requestCompletionAfterIdle();
         }
     }
 
-    private static boolean isBurstContentKey(KeyPressMessage key) {
-        return key.type() == KeyType.KeyRunes
-                || key.type() == KeyType.keyCR
-                || key.type() == KeyType.keyLF
-                || key.type() == KeyType.keyHT;
+    /**
+     * Opens the completion popup only after the typed run goes idle, so a `/` or `@` that belongs to a paste never
+     * swallows the rest of it. A deferred break keeps the composer, because it still owes the user a submit.
+     */
+    private void requestCompletionAfterIdle() {
+        if (pendingEnter != null) {
+            return;
+        }
+        TerminalUiState state = controller.state();
+        String buffer = state.editorBuffer();
+        int cursor = state.editorCursor();
+        int wordStart = cursor;
+        while (wordStart > 0 && !Character.isWhitespace(buffer.charAt(wordStart - 1))) {
+            wordStart--;
+        }
+        String word = buffer.substring(wordStart, cursor);
+        if (!word.startsWith("/") && !word.startsWith("@")) {
+            return;
+        }
+        controller.accept(new TerminalInput(TerminalInput.Kind.COMPLETION_REQUESTED, buffer, cursor));
+        syncComponents();
+    }
+
+    /** Whether a region already carries a paste summary, so collapsing it again would nest one placeholder in another. */
+    private boolean containsPasteToken(String region) {
+        for (String token : pastedContent.keySet()) {
+            if (region.contains(token)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private Command deferEnter(TerminalInput.Kind kind) {
-        int start = typedRunStart >= 0 ? typedRunStart : editorCursor;
-        typedRunStart = -1;
-        typedRunEnd = -1;
+        // The open batch stays as the anchor, so a break the host keeps streaming joins the run that produced it.
+        int start = batch != null ? batch.start() : editorCursor;
         long sequence = ++deferredEnterSequence;
         pendingEnter = new DeferredEnter(sequence, kind, start);
-        return Command.tick(UNBRACKETED_PASTE_GUARD_INTERVAL, ignored -> new DeferredEnterMessage(sequence, kind));
+        return Command.tick(StreamedInputBatch.IDLE_INTERVAL, ignored -> new DeferredEnterMessage(sequence, kind));
     }
 
     /** The shared paste-summary thresholds: 3+ lines or more than 150 characters, matching OpenCode defaults. */
@@ -933,7 +1015,7 @@ final class Tui4jCodingTerminalModel implements Model {
             return;
         }
         pendingEnter = null;
-        edit(new PasteMessage("\n"));
+        insertLocalNewline();
     }
 
     private void requestTranscriptScroll(int rows) {
@@ -1144,14 +1226,6 @@ final class Tui4jCodingTerminalModel implements Model {
         resetHistoryNavigation();
         String before = editor.value();
         int beforeCursor = editorCursor;
-        boolean typedRunes = message instanceof KeyPressMessage pressed && pressed.type() == KeyType.KeyRunes;
-        if (typedRunes) {
-            runesSincePoll++;
-        }
-        if (!typedRunes || typedRunEnd != beforeCursor) {
-            // A rune run only continues where the previous one ended; anything else starts a new run.
-            typedRunStart = typedRunes ? beforeCursor : -1;
-        }
         UpdateResult<Textarea> result = editor.update(message);
         String raw = editor.value();
         String after = sanitizeEditorInput(raw);
@@ -1162,7 +1236,6 @@ final class Tui4jCodingTerminalModel implements Model {
             synchronizeEditor(after, Math.min(beforeCursor, after.length()));
         }
         int afterCursor = cursorAfter(before, beforeCursor, after);
-        typedRunEnd = typedRunes ? afterCursor : -1;
         if (lostPastedToken(before, after)) {
             if (message instanceof KeyPressMessage key && isBackspaceKey(key)) {
                 for (String token : List.copyOf(pastedContent.keySet())) {
@@ -1177,29 +1250,8 @@ final class Tui4jCodingTerminalModel implements Model {
         }
         editorCursor = afterCursor;
         controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, after, editorCursor));
-        if (startsCompletion(message, before, beforeCursor, after, editorCursor)) {
-            controller.accept(new TerminalInput(TerminalInput.Kind.COMPLETION_REQUESTED, after, editorCursor));
-        }
         syncComponents();
         return result.command();
-    }
-
-    private boolean startsCompletion(Message message, String before, int beforeCursor, String after, int afterCursor) {
-        if (!(message instanceof KeyPressMessage key) || key.type() != KeyType.KeyRunes) {
-            return false;
-        }
-        if (runesSincePoll > PASTE_RUNE_BURST_THRESHOLD) {
-            // A paste can contain ` /b` or ` @path`; opening the completion popup would swallow the rest of it.
-            return false;
-        }
-        String inserted = new String(key.runes());
-        if (!(inserted.equals("/") || inserted.equals("@"))) {
-            return false;
-        }
-        if (after.length() != before.length() + 1 || afterCursor != beforeCursor + 1) {
-            return false;
-        }
-        return beforeCursor == 0 || Character.isWhitespace(before.charAt(beforeCursor - 1));
     }
 
     private void accept(TerminalInput.Kind kind) {
@@ -1222,7 +1274,7 @@ final class Tui4jCodingTerminalModel implements Model {
         if (pendingSubmission != null) {
             return Command.none();
         }
-        flushBurstTail();
+        settleBatch(false);
         TerminalUiState state = controller.state();
         String expanded = expandPastedContent(state.editorBuffer());
         if (!expanded.isBlank() && !controller.isRenamingSession()) {
@@ -1320,7 +1372,7 @@ final class Tui4jCodingTerminalModel implements Model {
 
     private void pasteContent(String content) {
         String normalized = sanitizeEditorInput(content);
-        flushBurstTail();
+        settleBatch(false);
         pruneStalePastes(controller.state().editorBuffer());
         edit(new PasteMessage(summarizedPaste(normalized)));
     }
@@ -1619,7 +1671,7 @@ final class Tui4jCodingTerminalModel implements Model {
 
     private record DeferredEnterMessage(long sequence, TerminalInput.Kind kind) implements Message {}
 
-    private record UnbracketedPasteEndMessage(long sequence) implements Message {}
+    private record BatchIdleMessage(long sequence) implements Message {}
 
     private record SubmissionCompletedMessage(MessageSubmissionResult result) implements Message {}
 }
