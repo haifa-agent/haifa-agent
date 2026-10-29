@@ -84,6 +84,13 @@ final class Tui4jCodingTerminalModel implements Model {
     private PreparedMessageSubmission pendingSubmission;
     private long deferredEnterSequence;
     private DeferredEnter pendingEnter;
+    /** Start offset of an open unbracketed-paste burst, or {@code -1} when the composer is not inside one. */
+    private int unbracketedPasteStart = -1;
+    /** Sequence of the pending burst-end timer, so every later keystroke invalidates the earlier timer. */
+    private long unbracketedPasteSequence;
+    /** Start offset of the rune insertion that immediately preceded the current key, used to anchor a burst. */
+    private int lastRuneInsertStart = -1;
+
     private boolean secretPresentation;
     private int pasteSequence;
     private int windowSizePollTicks;
@@ -185,6 +192,8 @@ final class Tui4jCodingTerminalModel implements Model {
             }
         } else if (message instanceof DeferredEnterMessage deferred) {
             command = commitDeferredEnter(deferred);
+        } else if (message instanceof UnbracketedPasteEndMessage ended) {
+            endUnbracketedPaste(ended.sequence());
         } else if (message instanceof SubmissionCompletedMessage completed) {
             if (completed.result().submission().equals(pendingSubmission)) {
                 controller.completeMessageSubmission(completed.result());
@@ -468,14 +477,18 @@ final class Tui4jCodingTerminalModel implements Model {
             clearSelection();
             return Command.none();
         }
-        if (pendingEnter != null && isUnbracketedPasteContinuation(key)) {
+        // A key that arrives inside the guard window after a line break proves the host is streaming one paste as
+        // ordinary keys, so the burst is tracked until it goes idle and then collapsed into a paste summary.
+        boolean continuesUnbracketedPaste = pendingEnter != null && isUnbracketedPasteContinuation(key);
+        if (continuesUnbracketedPaste) {
+            openUnbracketedPaste(pendingEnter.start());
             resolvePendingEnterAsNewline();
             if (key.type() == KeyType.keyLF) {
-                return Command.none();
+                return scheduleUnbracketedPasteEnd();
             }
             if (key.type() == KeyType.keyHT) {
                 edit(new PasteMessage("    "));
-                return Command.none();
+                return scheduleUnbracketedPasteEnd();
             }
         }
         TerminalUiState state = controller.state();
@@ -620,12 +633,20 @@ final class Tui4jCodingTerminalModel implements Model {
             return Command.none();
         }
         if (key.type() == KeyType.keyCR) {
+            if (unbracketedPasteStart >= 0) {
+                edit(new PasteMessage("\n"));
+                return scheduleUnbracketedPasteEnd();
+            }
             if (shortcuts.matchesFollowUp(key)) {
                 return submit(TerminalInput.Kind.FOLLOW_UP);
             }
             return deferEnter(TerminalInput.Kind.SUBMIT);
         }
         if (key.type() == KeyType.keyLF) {
+            if (unbracketedPasteStart >= 0 && controller.state().editorBuffer().endsWith("\n")) {
+                // A CRLF pair inside one burst is a single break, and the preceding CR already wrote it.
+                return scheduleUnbracketedPasteEnd();
+            }
             edit(new PasteMessage("\n"));
             return Command.none();
         }
@@ -711,7 +732,9 @@ final class Tui4jCodingTerminalModel implements Model {
             accept(TerminalInput.Kind.EDIT_WAITING);
             return Command.none();
         }
-        return edit(key);
+        Command edited = edit(key);
+        boolean insideBurst = continuesUnbracketedPaste || unbracketedPasteStart >= 0;
+        return insideBurst ? Command.batch(edited, scheduleUnbracketedPasteEnd()) : edited;
     }
 
     private Command secretKey(KeyPressMessage key) {
@@ -782,10 +805,73 @@ final class Tui4jCodingTerminalModel implements Model {
                 || key.type() == KeyType.keyHT;
     }
 
+    /** Keeps the burst anchored at the first line of the paste, which is the rune chunk before its first break. */
+    private void openUnbracketedPaste(int start) {
+        if (unbracketedPasteStart < 0) {
+            unbracketedPasteStart = Math.max(0, start);
+        }
+    }
+
+    private Command scheduleUnbracketedPasteEnd() {
+        long sequence = ++unbracketedPasteSequence;
+        return Command.tick(UNBRACKETED_PASTE_GUARD_INTERVAL, ignored -> new UnbracketedPasteEndMessage(sequence));
+    }
+
+    private void endUnbracketedPaste(long sequence) {
+        if (sequence == unbracketedPasteSequence) {
+            finishUnbracketedPaste();
+        }
+    }
+
+    /**
+     * Collapses the open burst into one paste summary when it is large enough, so a host that streams a paste as
+     * ordinary keys produces the same draft as a host that brackets it. The region is anchored at the first pasted
+     * line, so a small burst simply stays editable text.
+     */
+    private void finishUnbracketedPaste() {
+        int start = unbracketedPasteStart;
+        unbracketedPasteStart = -1;
+        String buffer = controller.state().editorBuffer();
+        if (start < 0 || start >= buffer.length()) {
+            return;
+        }
+        String region = buffer.substring(start);
+        String trimmed = region.strip();
+        if (!needsPasteSummary(trimmed)) {
+            return;
+        }
+        String token = nextPasteToken(lineCount(trimmed));
+        pastedContent.put(token, region);
+        replaceEditor(buffer.substring(0, start) + token, start + token.length());
+    }
+
     private Command deferEnter(TerminalInput.Kind kind) {
+        int start = lastRuneInsertStart >= 0 ? lastRuneInsertStart : editorCursor;
+        lastRuneInsertStart = -1;
         long sequence = ++deferredEnterSequence;
-        pendingEnter = new DeferredEnter(sequence, kind);
+        pendingEnter = new DeferredEnter(sequence, kind, start);
         return Command.tick(UNBRACKETED_PASTE_GUARD_INTERVAL, ignored -> new DeferredEnterMessage(sequence, kind));
+    }
+
+    /** The shared paste-summary thresholds: 3+ lines or more than 150 characters, matching OpenCode defaults. */
+    private static boolean needsPasteSummary(String trimmed) {
+        return !trimmed.isEmpty()
+                && (lineCount(trimmed) >= PASTE_SUMMARY_MIN_LINES || trimmed.length() > PASTE_SUMMARY_MAX_CHARACTERS);
+    }
+
+    private static int lineCount(String value) {
+        int lines = 1;
+        for (int index = 0; index < value.length(); index++) {
+            if (value.charAt(index) == '\n') {
+                lines++;
+            }
+        }
+        return lines;
+    }
+
+    /** The OpenCode-style label for one summarized paste; the sequence keeps repeated pastes distinct. */
+    private String nextPasteToken(int lines) {
+        return "[Pasted #" + (++pasteSequence) + " ~" + lines + " lines]";
     }
 
     private Command commitDeferredEnter(DeferredEnterMessage deferred) {
@@ -1014,10 +1100,12 @@ final class Tui4jCodingTerminalModel implements Model {
         resetHistoryNavigation();
         String before = editor.value();
         int beforeCursor = editorCursor;
+        lastRuneInsertStart =
+                message instanceof KeyPressMessage pressed && pressed.type() == KeyType.KeyRunes ? beforeCursor : -1;
         UpdateResult<Textarea> result = editor.update(message);
-        String typed = editor.value();
-        String after = sanitizeEditorInput(typed);
-        if (!after.equals(typed)) {
+        String raw = editor.value();
+        String after = sanitizeEditorInput(raw);
+        if (!after.equals(raw)) {
             // A host may deliver a keystroke it cannot decode as a raw control rune. The textarea is the render source,
             // so the draft is corrected here instead of only on the paste boundary; an unsanitized rune would reach
             // EDITOR_CHANGED and paint as an unmapped glyph inside the composer.
@@ -1080,6 +1168,7 @@ final class Tui4jCodingTerminalModel implements Model {
         if (pendingSubmission != null) {
             return Command.none();
         }
+        unbracketedPasteStart = -1;
         String expanded = expandPastedContent(state.editorBuffer());
         if (!expanded.isBlank() && !controller.isRenamingSession()) {
             resumeTranscriptFollowing();
@@ -1176,19 +1265,20 @@ final class Tui4jCodingTerminalModel implements Model {
 
     private void pasteContent(String content) {
         String normalized = sanitizeEditorInput(content);
-        String trimmed = normalized.strip();
+        unbracketedPasteStart = -1;
         pruneStalePastes(controller.state().editorBuffer());
-        int lines = (int) trimmed.chars().filter(character -> character == '\n').count() + 1;
-        if (!trimmed.isEmpty()
-                && (lines >= PASTE_SUMMARY_MIN_LINES || trimmed.length() > PASTE_SUMMARY_MAX_CHARACTERS)) {
-            // Keep a sequence id so multiple pastes with the same line count stay distinct map keys
-            // (OpenCode uses extmark ids; the visible label still mirrors "[Pasted ~N lines]").
-            String token = "[Pasted #" + (++pasteSequence) + " ~" + lines + " lines]";
-            pastedContent.put(token, normalized);
-            edit(new PasteMessage(token));
-            return;
+        edit(new PasteMessage(summarizedPaste(normalized)));
+    }
+
+    /** The label that replaces one pasted block, or the block itself when it is small enough to stay inline. */
+    private String summarizedPaste(String normalized) {
+        String trimmed = normalized.strip();
+        if (!needsPasteSummary(trimmed)) {
+            return normalized;
         }
-        edit(new PasteMessage(normalized));
+        String token = nextPasteToken(lineCount(trimmed));
+        pastedContent.put(token, normalized);
+        return token;
     }
 
     private String expandPastedContent(String buffer) {
@@ -1470,9 +1560,11 @@ final class Tui4jCodingTerminalModel implements Model {
 
     record ClipboardPasteResultMessage(String content) implements Message {}
 
-    private record DeferredEnter(long sequence, TerminalInput.Kind kind) {}
+    private record DeferredEnter(long sequence, TerminalInput.Kind kind, int start) {}
 
     private record DeferredEnterMessage(long sequence, TerminalInput.Kind kind) implements Message {}
+
+    private record UnbracketedPasteEndMessage(long sequence) implements Message {}
 
     private record SubmissionCompletedMessage(MessageSubmissionResult result) implements Message {}
 }

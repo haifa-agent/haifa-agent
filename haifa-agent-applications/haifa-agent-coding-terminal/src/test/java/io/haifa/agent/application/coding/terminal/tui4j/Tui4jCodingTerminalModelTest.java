@@ -581,6 +581,36 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
+    void treatsACrLfPairInsideAStreamedPasteAsOneBreak() {
+        var fixture = fixture();
+
+        Command scheduled = streamUnbracketedPasteWithCrLf(fixture, "alpha", "beta", "gamma");
+        settleStreamedPaste(fixture, scheduled);
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~3 lines]");
+    }
+
+    @Test
+    void endsAStreamedPasteWithATrailingBreakWithoutSubmitting() {
+        var fixture = fixture();
+
+        Command scheduled = streamUnbracketedPaste(fixture, "alpha", "beta", "gamma", "");
+        settleStreamedPaste(fixture, scheduled);
+
+        assertThat(fixture.controller.state().editorBuffer()).startsWith("[Pasted #1 ~");
+    }
+
+    @Test
+    void keepsASmallStreamedPasteInline() {
+        var fixture = fixture();
+
+        Command scheduled = streamUnbracketedPaste(fixture, "alpha", "beta");
+        settleStreamedPaste(fixture, scheduled);
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("alpha\nbeta");
+    }
+
+    @Test
     void keepsShortBracketedPasteVerbatim() {
         var fixture = fixture();
 
@@ -842,22 +872,18 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
-    void keepsUnbracketedCrAndCrLfMultilinePasteInTheEditorUntilASeparateEnter() {
+    void summarizesAStreamedMultilinePasteOnlyAfterTheBurstGoesIdle() {
         var fixture = fixture();
-        fixture.model.update(new PasteMessage("first line"));
 
-        var firstCr = fixture.model.update(key(KeyType.keyCR));
-        "second line".chars().forEach(value -> fixture.model.update(runes((char) value)));
-        fixture.model.update(key(KeyType.keyCR));
-        fixture.model.update(key(KeyType.keyLF));
-        "third line".chars().forEach(value -> fixture.model.update(runes((char) value)));
+        Command scheduled = streamUnbracketedPaste(fixture, "first line", "second line", "third line");
 
+        // Nothing collapses while the keys are still arriving, so a fast typist keeps ordinary text.
         assertThat(fixture.controller.state().editorBuffer()).isEqualTo("first line\nsecond line\nthird line");
         assertThat(fixture.controller.state().status()).isEqualTo("Idle");
 
-        fixture.model.update(firstCr.command().execute());
+        settleStreamedPaste(fixture, scheduled);
 
-        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("first line\nsecond line\nthird line");
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~3 lines]");
         assertThat(fixture.controller.state().transcript()).isEmpty();
 
         var explicitEnter = fixture.model.update(key(KeyType.keyCR));
@@ -1900,6 +1926,50 @@ class Tui4jCodingTerminalModelTest {
 
     private KeyPressMessage key(KeyType type) {
         return new KeyPressMessage(new Key(type));
+    }
+
+    private KeyPressMessage keyWithRunes(String runes) {
+        return new KeyPressMessage(new Key(KeyType.KeyRunes, runes.toCharArray()));
+    }
+
+    private Command streamUnbracketedPaste(Fixture fixture, String... lines) {
+        return streamUnbracketedPaste(fixture, false, lines);
+    }
+
+    private Command streamUnbracketedPasteWithCrLf(Fixture fixture, String... lines) {
+        return streamUnbracketedPaste(fixture, true, lines);
+    }
+
+    /** Streams one paste the way a host without bracketed paste delivers it: runes, break, runes, ... */
+    private Command streamUnbracketedPaste(Fixture fixture, boolean crlf, String... lines) {
+        Command scheduled = Command.none();
+        for (int index = 0; index < lines.length; index++) {
+            if (!lines[index].isEmpty()) {
+                scheduled = fixture.model.update(keyWithRunes(lines[index])).command();
+            }
+            if (index < lines.length - 1 || lines[index].isEmpty()) {
+                scheduled = fixture.model.update(key(KeyType.keyCR)).command();
+                if (crlf) {
+                    scheduled = fixture.model.update(key(KeyType.keyLF)).command();
+                }
+            }
+        }
+        return scheduled;
+    }
+
+    /** Runs the burst-end timer the model scheduled, so a streamed paste settles without waiting on real time. */
+    private void settleStreamedPaste(Fixture fixture, Command scheduled) {
+        if (Command.isNone(scheduled)) {
+            return;
+        }
+        Message message = scheduled.execute();
+        if (message instanceof BatchMessage batch) {
+            for (Command child : batch.commands()) {
+                settleStreamedPaste(fixture, child);
+            }
+            return;
+        }
+        fixture.model.update(message);
     }
 
     private void commitPlainEnter(Fixture fixture) {
