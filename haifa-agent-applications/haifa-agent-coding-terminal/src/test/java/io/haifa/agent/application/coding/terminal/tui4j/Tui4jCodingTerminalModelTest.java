@@ -11,6 +11,7 @@ import com.williamcallahan.tui4j.compat.bubbletea.Message;
 import com.williamcallahan.tui4j.compat.bubbletea.PasteMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.QuitMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.ReadClipboardMessage;
+import com.williamcallahan.tui4j.compat.bubbletea.UpdateResult;
 import com.williamcallahan.tui4j.compat.bubbletea.WindowSizeMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.input.MouseAction;
 import com.williamcallahan.tui4j.compat.bubbletea.input.MouseButton;
@@ -51,6 +52,7 @@ import io.haifa.agent.runtime.api.RunEventPayloads;
 import io.haifa.agent.runtime.api.RunEventSubscription;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -183,7 +185,8 @@ class Tui4jCodingTerminalModelTest {
 
         // The trigger opens the popup only after the typed run settles, so a `/` inside a streamed paste never
         // swallows the text that follows it.
-        settleIdleInput(command, typeRunes(command, "/"));
+        typeRunes(command, "/");
+        settleIdleInput(command);
 
         assertThat(command.controller.state().selector())
                 .get()
@@ -192,7 +195,8 @@ class Tui4jCodingTerminalModelTest {
         assertThat(command.controller.state().editorBuffer()).isEqualTo("/");
 
         var path = fixture();
-        settleIdleInput(path, typeRunes(path, "@"));
+        typeRunes(path, "@");
+        settleIdleInput(path);
 
         assertThat(path.controller.state().selector())
                 .get()
@@ -200,7 +204,7 @@ class Tui4jCodingTerminalModelTest {
                 .isEqualTo("Workspace paths");
         assertThat(path.controller.state().selector().orElseThrow().options()).contains("@README.md", "@src/");
 
-        path.model.update(runes('s'));
+        path.update(runes('s'));
         assertThat(path.controller.state().editorBuffer()).isEqualTo("@s");
         assertThat(path.controller.state().selector().orElseThrow().options()).containsExactly("@src/");
     }
@@ -209,13 +213,14 @@ class Tui4jCodingTerminalModelTest {
     void keepsFilteringAnOpenCompletionAndSubmitsAnExactSlashCommandWithOneEnter() {
         var fixture = fixture();
 
-        settleIdleInput(fixture, typeRunes(fixture, "/quit"));
+        typeRunes(fixture, "/quit");
+        settleIdleInput(fixture);
 
         assertThat(fixture.controller.state().editorBuffer()).isEqualTo("/quit");
         assertThat(fixture.controller.state().selector().orElseThrow().options())
                 .containsExactly("/quit");
 
-        fixture.model.update(key(KeyType.keyCR));
+        fixture.update(key(KeyType.keyCR));
 
         assertThat(fixture.controller.state().exitRequested()).isTrue();
     }
@@ -224,11 +229,13 @@ class Tui4jCodingTerminalModelTest {
     void keepsTheSpaceTypedAfterACommandWhileCompletionIsOpen() {
         var fixture = fixture();
 
-        settleIdleInput(fixture, typeRunes(fixture, "/rename"));
+        typeRunes(fixture, "/rename");
+        settleIdleInput(fixture);
         assertThat(fixture.controller.state().selector()).isPresent();
 
-        fixture.model.update(key(KeyType.KeySpace));
-        settleIdleInput(fixture, typeRunes(fixture, "next"));
+        fixture.update(key(KeyType.KeySpace));
+        typeRunes(fixture, "next");
+        settleIdleInput(fixture);
 
         assertThat(fixture.controller.state().editorBuffer()).isEqualTo("/rename next");
     }
@@ -586,8 +593,8 @@ class Tui4jCodingTerminalModelTest {
     void treatsACrLfPairInsideAStreamedPasteAsOneBreak() {
         var fixture = fixture();
 
-        Command scheduled = streamUnbracketedPasteWithCrLf(fixture, "alpha", " ", "gamma");
-        settleIdleInput(fixture, scheduled);
+        streamUnbracketedPasteWithCrLf(fixture, "alpha", " ", "gamma");
+        settleIdleInput(fixture);
 
         assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~3 lines]");
 
@@ -601,13 +608,13 @@ class Tui4jCodingTerminalModelTest {
     void endsAStreamedPasteWithATrailingBreakWithoutSubmitting() {
         var fixture = fixture();
 
-        Command scheduled = fixture.model.update(keyWithRunes("alpha")).command();
-        scheduled = fixture.model.update(key(KeyType.keyCR)).command();
-        scheduled = fixture.model.update(keyWithRunes("beta")).command();
-        scheduled = fixture.model.update(key(KeyType.keyCR)).command();
-        scheduled = fixture.model.update(keyWithRunes("gamma")).command();
-        scheduled = fixture.model.update(key(KeyType.keyCR)).command();
-        settleIdleInput(fixture, scheduled);
+        fixture.update(keyWithRunes("alpha"));
+        fixture.update(key(KeyType.keyCR));
+        fixture.update(keyWithRunes("beta"));
+        fixture.update(key(KeyType.keyCR));
+        fixture.update(keyWithRunes("gamma"));
+        fixture.update(key(KeyType.keyCR));
+        settleIdleInput(fixture);
 
         assertThat(fixture.controller.state().editorBuffer()).startsWith("[Pasted #1 ~");
         assertThat(fixture.controller.state().transcript()).isEmpty();
@@ -622,8 +629,8 @@ class Tui4jCodingTerminalModelTest {
     void keepsTheFirstLineInsideAStreamedPasteSummary() {
         var fixture = fixture();
 
-        Command scheduled = streamPerCharacterPaste(fixture, "1  a b c", "2", "3");
-        settleIdleInput(fixture, scheduled);
+        streamPerCharacterPaste(fixture, "1  a b c", "2", "3");
+        settleIdleInput(fixture);
 
         String token = "[Pasted #1 ~3 lines]";
         assertThat(fixture.controller.state().editorBuffer()).isEqualTo(token);
@@ -643,8 +650,8 @@ class Tui4jCodingTerminalModelTest {
         String second = "if not exist \"%HAIFA_DATA_ROOT%\\logs\" mkdir \"%HAIFA_DATA_ROOT%\\logs\"";
         String fourth =
                 "if not defined HAIFA_SQLITE_DATABASE_PATH set \"HAIFA_SQLITE_DATABASE_PATH=%HAIFA_DATA_ROOT%\\data\\runtime.db\"";
-        Command scheduled = streamPerCharacterPaste(fixture, first, second, first, fourth);
-        settleIdleInput(fixture, scheduled);
+        streamPerCharacterPaste(fixture, first, second, first, fourth);
+        settleIdleInput(fixture);
 
         // The pasted ` /b` must not open the completion popup and swallow the rest of the block.
         assertThat(fixture.controller.state().selector()).isEmpty();
@@ -660,9 +667,12 @@ class Tui4jCodingTerminalModelTest {
     void keepsASmallStreamedPasteInline() {
         var fixture = fixture();
 
-        Command scheduled = streamUnbracketedPaste(fixture, "alpha", "beta");
-        settleIdleInput(fixture, scheduled);
+        streamUnbracketedPaste(fixture, "alpha", "beta");
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasting ~2 lines]");
 
+        settleIdleInput(fixture);
+
+        // Below the fold threshold the receiving block gives way to the normalized text itself.
         assertThat(fixture.controller.state().editorBuffer()).isEqualTo("alpha\nbeta");
         assertThat(fixture.controller.state().editorCursor()).isEqualTo("alpha\nbeta".length());
     }
@@ -835,15 +845,15 @@ class Tui4jCodingTerminalModelTest {
     @Test
     void protectsASummarizedPasteFromPartialEditing() {
         var fixture = fixture();
-        fixture.model.update(new PasteMessage("alpha\nbeta\ngamma"));
-        fixture.model.update(key(KeyType.keyLF));
-        Command scheduled = fixture.model.update(runes('x')).command();
-        scheduled = fixture.model.update(runes('y')).command();
-        settleIdleInput(fixture, scheduled);
+        fixture.update(new PasteMessage("alpha\nbeta\ngamma"));
+        fixture.update(key(KeyType.keyLF));
+        fixture.update(runes('x'));
+        fixture.update(runes('y'));
+        settleIdleInput(fixture);
         String draft = fixture.controller.state().editorBuffer();
 
-        fixture.model.update(key(KeyType.KeyUp));
-        fixture.model.update(runes('Z'));
+        fixture.update(key(KeyType.KeyUp));
+        fixture.update(runes('Z'));
 
         assertThat(fixture.controller.state().editorBuffer()).isEqualTo(draft);
         assertThat(fixture.controller.state().recoverableError()).contains("PASTE_PLACEHOLDER_ATOMIC");
@@ -930,22 +940,24 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
-    void summarizesAStreamedMultilinePasteOnlyAfterTheBurstGoesIdle() {
+    void showsAReceivingBlockWhileTheBurstStreamsAndFinalizesItInPlace() {
         var fixture = fixture();
 
-        Command scheduled = streamUnbracketedPaste(fixture, "first line", "second line", "third line");
+        streamUnbracketedPaste(fixture, "first line", "second line", "third line");
 
-        // The paste is held from the second key, so the composer shows the draft alone until the batch settles.
-        assertThat(fixture.controller.state().editorBuffer()).isEmpty();
+        // The block is visible in the next view without delivering the idle message, so reception has feedback.
+        assertThat(TerminalScreenCells.plainText(fixture.model.view())).contains("[Pasting ~3 lines]");
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasting ~3 lines]");
         assertThat(fixture.controller.state().status()).isEqualTo("Idle");
 
-        settleIdleInput(fixture, scheduled);
+        settleIdleInput(fixture);
 
+        // The block finalizes at its own position instead of opening the summary somewhere else.
         assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~3 lines]");
         assertThat(fixture.controller.state().transcript()).isEmpty();
 
-        var explicitEnter = fixture.model.update(key(KeyType.keyCR));
-        var submitted = fixture.model.update(explicitEnter.command().execute());
+        var explicitEnter = fixture.update(key(KeyType.keyCR));
+        var submitted = fixture.update(explicitEnter.command().execute());
 
         assertThat(Command.isNone(submitted.command())).isFalse();
         assertThat(fixture.controller.state().editorBuffer()).isEmpty();
@@ -955,10 +967,12 @@ class Tui4jCodingTerminalModelTest {
     @Test
     void buildsTheSameSummaryForBothSpaceKeyTypes() {
         var hostTyped = fixture();
-        settleIdleInput(hostTyped, streamPerCharacterPaste(hostTyped, "1  a b c", "2", "3"));
+        streamPerCharacterPaste(hostTyped, "1  a b c", "2", "3");
+        settleIdleInput(hostTyped);
 
         var runeTyped = fixture();
-        settleIdleInput(runeTyped, streamPerCharacterPasteAsRunes(runeTyped, "1  a b c", "2", "3"));
+        streamPerCharacterPasteAsRunes(runeTyped, "1  a b c", "2", "3");
+        settleIdleInput(runeTyped);
 
         assertThat(hostTyped.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~3 lines]");
         assertThat(runeTyped.controller.state().editorBuffer())
@@ -966,33 +980,138 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
-    void keepsAStreamedPasteOutOfTheComposerUntilItSettles() {
+    void keepsTheDraftAroundAReceivingBlockWhileTheStreamArrives() {
         var fixture = fixture();
-        fixture.model.update(new PasteMessage("keep me "));
+        fixture.update(new PasteMessage("keep me "));
 
-        // The second key proves the host is streaming a paste, so the painted first character is taken back instead of
-        // waiting next to the draft until the batch settles.
-        Command scheduled = streamPerCharacterPaste(fixture, "first line", "second line", "third line");
+        // The painted first line is taken back behind a receiving block, and the draft the user already had keeps its
+        // own text and position.
+        streamPerCharacterPaste(fixture, "first line", "second line", "third line");
 
-        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("keep me ");
-        assertThat(fixture.controller.state().editorCursor()).isEqualTo("keep me ".length());
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("keep me [Pasting ~3 lines]");
+        assertThat(fixture.controller.state().editorCursor()).isEqualTo("keep me [Pasting ~3 lines]".length());
 
-        settleIdleInput(fixture, scheduled);
+        settleIdleInput(fixture);
 
         assertThat(fixture.controller.state().editorBuffer()).isEqualTo("keep me [Pasted #1 ~3 lines]");
         assertThat(fixture.controller.state().editorCursor()).isEqualTo("keep me [Pasted #1 ~3 lines]".length());
     }
 
     @Test
+    void keepsOneReceivingBlockWhileTheStreamKeepsArriving() {
+        var fixture = fixture();
+
+        streamPerCharacterPaste(fixture, "alpha", "beta");
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasting ~2 lines]");
+
+        fixture.update(key(KeyType.keyCR));
+        fixture.update(keyWithRunes("gamma"));
+        fixture.update(key(KeyType.keyCR));
+        fixture.update(keyWithRunes("delta"));
+
+        // Later lines stay in the same block and raise its tentative count instead of opening another one.
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasting ~4 lines]");
+        assertThat(fixture.controller.state().editorCursor()).isEqualTo("[Pasting ~4 lines]".length());
+
+        settleIdleInput(fixture);
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~4 lines]");
+
+        commitPlainEnter(fixture);
+
+        assertThat(fixture.controller.state().transcript()).singleElement().satisfies(item -> assertThat(item.body())
+                .isEqualTo("alpha\nbeta\ngamma\ndelta"));
+    }
+
+    @Test
+    void reusesTheFrameForHeldTextButRefreshesOnResizeAndInterrupt() {
+        var fixture = fixture(() -> 0);
+        streamPerCharacterPaste(fixture, "first", "second", "third");
+        String frame = fixture.model.view();
+
+        fixture.update(keyWithRunes(" more text"));
+        assertThat(fixture.model.view()).isSameAs(frame);
+
+        fixture.pump.offer(new TerminalUiAction.UserMessageCommitted("received-event", "runtime update"));
+        fixture.update(new Tui4jCodingTerminalModel.PollMessage());
+        assertThat(TerminalScreenCells.plainText(fixture.model.view())).contains("runtime update");
+
+        fixture.update(new WindowSizeMessage(120, 40));
+        String resized = fixture.model.view();
+        assertThat(resized).isNotSameAs(frame);
+        assertThat(TerminalScreenCells.plainText(resized)).contains("[Pasting ~3 lines]");
+
+        fixture.update(key(KeyType.keyETX));
+        assertThat(fixture.controller.state().editorBuffer()).isEmpty();
+        assertThat(TerminalScreenCells.plainText(fixture.model.view())).doesNotContain("[Pasting");
+    }
+
+    @Test
+    void anEnterCancelledByInterruptCannotCaptureNewTyping() {
+        var fixture = fixture();
+        fixture.update(runes('a'));
+        var oldEnter = fixture.update(key(KeyType.keyCR)).command();
+        fixture.update(key(KeyType.keyETX));
+        fixture.update(runes('b'));
+
+        fixture.update(oldEnter.execute());
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("b");
+        assertThat(fixture.controller.state().transcript()).isEmpty();
+    }
+
+    @Test
+    void keepsFastTypedInputAsTextAndSubmitsItWithASingleEnter() {
+        AtomicLong clock = new AtomicLong();
+        var fixture = fixture(clock::get);
+
+        fixture.model.update(runes('a'));
+        clock.addAndGet(Duration.ofMillis(10).toNanos());
+        fixture.model.update(runes('b'));
+
+        // Two keys 10ms apart are typing, not a paste: the run stays visible as text, and the Enter after it submits
+        // the run instead of becoming a newline inside it.
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("ab");
+
+        var enter = fixture.model.update(key(KeyType.keyCR));
+        clock.addAndGet(StreamedInputBatch.IDLE_INTERVAL.toNanos());
+        fixture.model.update(enter.command().execute());
+
+        assertThat(fixture.controller.state().editorBuffer()).isEmpty();
+        assertThat(fixture.controller.state().transcript()).singleElement().satisfies(item -> assertThat(item.body())
+                .isEqualTo("ab"));
+    }
+
+    @Test
+    void keepsAnExistingSummaryWhenASecondStreamedPasteFollowsIt() {
+        var fixture = fixture();
+        fixture.update(new PasteMessage("one\ntwo\nthree"));
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~3 lines]");
+
+        streamPerCharacterPaste(fixture, "a", "b", "c");
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~3 lines][Pasting ~3 lines]");
+
+        settleIdleInput(fixture);
+
+        // The settled stream keeps its own number next to the earlier summary instead of nesting or dropping it.
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~3 lines][Pasted #2 ~3 lines]");
+
+        commitPlainEnter(fixture);
+
+        assertThat(fixture.controller.state().transcript()).singleElement().satisfies(item -> assertThat(item.body())
+                .isEqualTo("one\ntwo\nthreea\nb\nc"));
+    }
+
+    @Test
     void keepsLineOrderWhenAStreamMixesCrAndLf() {
         var fixture = fixture();
 
-        Command scheduled = fixture.model.update(keyWithRunes("a")).command();
-        scheduled = fixture.model.update(key(KeyType.keyCR)).command();
-        scheduled = fixture.model.update(keyWithRunes("b")).command();
-        scheduled = fixture.model.update(key(KeyType.keyLF)).command();
-        scheduled = fixture.model.update(keyWithRunes("c")).command();
-        settleIdleInput(fixture, scheduled);
+        fixture.update(keyWithRunes("a"));
+        fixture.update(key(KeyType.keyCR));
+        fixture.update(keyWithRunes("b"));
+        fixture.update(key(KeyType.keyLF));
+        fixture.update(keyWithRunes("c"));
+        settleIdleInput(fixture);
 
         assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~3 lines]");
 
@@ -1006,12 +1125,12 @@ class Tui4jCodingTerminalModelTest {
     void summarizesAStreamThatOnlyUsesLf() {
         var fixture = fixture();
 
-        Command scheduled = fixture.model.update(keyWithRunes("alpha")).command();
-        scheduled = fixture.model.update(key(KeyType.keyLF)).command();
-        scheduled = fixture.model.update(keyWithRunes("beta")).command();
-        scheduled = fixture.model.update(key(KeyType.keyLF)).command();
-        scheduled = fixture.model.update(keyWithRunes("gamma")).command();
-        settleIdleInput(fixture, scheduled);
+        fixture.update(keyWithRunes("alpha"));
+        fixture.update(key(KeyType.keyLF));
+        fixture.update(keyWithRunes("beta"));
+        fixture.update(key(KeyType.keyLF));
+        fixture.update(keyWithRunes("gamma"));
+        settleIdleInput(fixture);
 
         assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~3 lines]");
 
@@ -1025,11 +1144,11 @@ class Tui4jCodingTerminalModelTest {
     void keepsTheHeldStreamBeforeAnExplicitNewline() {
         var fixture = fixture();
 
-        Command scheduled = fixture.model.update(keyWithRunes("a")).command();
-        scheduled = fixture.model.update(key(KeyType.keyCR)).command();
-        scheduled = fixture.model.update(keyWithRunes("b")).command();
-        fixture.model.update(new EnterKeyModifierMessage(EnterKeyModifier.Shift));
-        settleIdleInput(fixture, scheduled);
+        fixture.update(keyWithRunes("a"));
+        fixture.update(key(KeyType.keyCR));
+        fixture.update(keyWithRunes("b"));
+        fixture.update(new EnterKeyModifierMessage(EnterKeyModifier.Shift));
+        settleIdleInput(fixture);
 
         assertThat(fixture.controller.state().editorBuffer()).isEqualTo("a\nb\n");
     }
@@ -1037,12 +1156,14 @@ class Tui4jCodingTerminalModelTest {
     @Test
     void keepsTheDraftAfterTheCaretOutsideAStreamedPaste() {
         var fixture = fixture();
-        fixture.model.update(new PasteMessage("LEFT RIGHT"));
+        fixture.update(new PasteMessage("LEFT RIGHT"));
         fixture.controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, "LEFT RIGHT", 5));
-        fixture.model.update(new WindowSizeMessage(120, 40));
+        fixture.update(new WindowSizeMessage(120, 40));
 
-        Command scheduled = streamPerCharacterPaste(fixture, "a", "b", "c");
-        settleIdleInput(fixture, scheduled);
+        streamPerCharacterPaste(fixture, "a", "b", "c");
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("LEFT [Pasting ~3 lines]RIGHT");
+
+        settleIdleInput(fixture);
 
         String token = "[Pasted #1 ~3 lines]";
         assertThat(fixture.controller.state().editorBuffer()).isEqualTo("LEFT " + token + "RIGHT");
@@ -1059,14 +1180,15 @@ class Tui4jCodingTerminalModelTest {
         AtomicLong clock = new AtomicLong();
         var fixture = fixture(clock::get);
         for (char value : "old".toCharArray()) {
-            fixture.model.update(runes(value));
+            fixture.update(runes(value));
         }
 
         clock.addAndGet(Duration.ofSeconds(5).toNanos());
-        fixture.model.update(new Tui4jCodingTerminalModel.PollMessage());
+        fixture.update(new Tui4jCodingTerminalModel.PollMessage());
 
-        Command scheduled = streamPerCharacterPaste(fixture, "a", "b", "c");
-        settleIdleInput(fixture, scheduled);
+        streamPerCharacterPaste(fixture, "a", "b", "c");
+        clock.addAndGet(StreamedInputBatch.IDLE_INTERVAL.toNanos());
+        settleIdleInput(fixture);
 
         assertThat(fixture.controller.state().editorBuffer()).isEqualTo("old[Pasted #1 ~3 lines]");
         assertThat(fixture.controller.state().editorCursor()).isEqualTo("old[Pasted #1 ~3 lines]".length());
@@ -1081,8 +1203,8 @@ class Tui4jCodingTerminalModelTest {
     void doesNotExecuteTheCommandOnTheFirstLineOfAStreamedPaste() {
         var fixture = fixture();
 
-        Command scheduled = streamPerCharacterPaste(fixture, "/quit", "still a message", "third line");
-        settleIdleInput(fixture, scheduled);
+        streamPerCharacterPaste(fixture, "/quit", "still a message", "third line");
+        settleIdleInput(fixture);
 
         assertThat(fixture.controller.state().exitRequested()).isFalse();
         assertThat(fixture.controller.state().selector()).isEmpty();
@@ -1099,9 +1221,8 @@ class Tui4jCodingTerminalModelTest {
     void doesNotOpenPathCompletionForAStreamThatStartsWithAPathMention() {
         var fixture = fixture();
 
-        Command scheduled =
-                streamPerCharacterPaste(fixture, "@src/main/Main.java", "@src/main/Other.java", "@src/main/Third.java");
-        settleIdleInput(fixture, scheduled);
+        streamPerCharacterPaste(fixture, "@src/main/Main.java", "@src/main/Other.java", "@src/main/Third.java");
+        settleIdleInput(fixture);
 
         assertThat(fixture.controller.state().selector()).isEmpty();
         assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~3 lines]");
@@ -1112,8 +1233,8 @@ class Tui4jCodingTerminalModelTest {
         var fixture = fixture();
         String longLine = "x".repeat(151);
 
-        Command scheduled = streamPerCharacterPaste(fixture, longLine);
-        settleIdleInput(fixture, scheduled);
+        streamPerCharacterPaste(fixture, longLine);
+        settleIdleInput(fixture);
 
         String token = "[Pasted #1 ~1 lines]";
         assertThat(fixture.controller.state().editorBuffer()).isEqualTo(token);
@@ -1129,8 +1250,8 @@ class Tui4jCodingTerminalModelTest {
     void keepsTabIndentationInsideAStreamedPaste() {
         var fixture = fixture();
 
-        Command scheduled = streamPerCharacterPaste(fixture, "if (ready) {", "\treturn 1;", "}");
-        settleIdleInput(fixture, scheduled);
+        streamPerCharacterPaste(fixture, "if (ready) {", "\treturn 1;", "}");
+        settleIdleInput(fixture);
 
         assertThat(fixture.controller.state().selector()).isEmpty();
         assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~3 lines]");
@@ -1145,9 +1266,11 @@ class Tui4jCodingTerminalModelTest {
     void clearsAStreamedPasteOnInterruptWithoutLettingItsIdleTimerWriteBack() {
         var fixture = fixture();
 
-        Command scheduled = streamPerCharacterPaste(fixture, "panic one", "panic two", "panic three");
-        fixture.model.update(key(KeyType.keyETX));
-        settleIdleInput(fixture, scheduled);
+        streamPerCharacterPaste(fixture, "panic one", "panic two", "panic three");
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasting ~3 lines]");
+
+        fixture.update(key(KeyType.keyETX));
+        settleIdleInput(fixture);
 
         assertThat(fixture.controller.state().editorBuffer()).isEmpty();
     }
@@ -1156,48 +1279,32 @@ class Tui4jCodingTerminalModelTest {
     void writesTheHeldStreamBackBeforeABackspaceEditsIt() {
         var fixture = fixture();
 
-        Command scheduled = fixture.model.update(keyWithRunes("alpha")).command();
-        scheduled = fixture.model.update(key(KeyType.keyCR)).command();
-        scheduled = fixture.model.update(keyWithRunes("beta")).command();
-        assertThat(fixture.controller.state().editorBuffer()).isEmpty();
+        fixture.update(keyWithRunes("alpha"));
+        fixture.update(key(KeyType.keyCR));
+        fixture.update(keyWithRunes("beta"));
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasting ~2 lines]");
 
-        fixture.model.update(key(KeyType.keyBS));
-        settleIdleInput(fixture, scheduled);
+        fixture.update(key(KeyType.keyBS));
+        settleIdleInput(fixture);
 
         assertThat(fixture.controller.state().editorBuffer()).isEqualTo("alpha\nbet");
         assertThat(fixture.controller.state().transcript()).isEmpty();
     }
 
     @Test
-    void ignoresTheIdleTimerThatAnEarlierKeyScheduled() {
-        var fixture = fixture();
-
-        var earlier = fixture.model.update(keyWithRunes("a")).command();
-        fixture.model.update(key(KeyType.keyCR));
-        var latest = fixture.model.update(keyWithRunes("b")).command();
-        assertThat(fixture.controller.state().editorBuffer()).isEmpty();
-
-        fixture.model.update(earlier.execute());
-
-        assertThat(fixture.controller.state().editorBuffer()).isEmpty();
-
-        settleIdleInput(fixture, latest);
-
-        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("a\nb");
-    }
-
-    @Test
     void keepsAStreamedPasteInOrderWhilePollsAndResizesInterleave() {
         var fixture = fixture();
 
-        Command scheduled = fixture.model.update(keyWithRunes("alpha")).command();
-        scheduled = fixture.model.update(key(KeyType.keyCR)).command();
-        scheduled = fixture.model.update(keyWithRunes("beta")).command();
-        fixture.model.update(new Tui4jCodingTerminalModel.PollMessage());
-        fixture.model.update(new WindowSizeMessage(120, 40));
-        scheduled = fixture.model.update(key(KeyType.keyCR)).command();
-        scheduled = fixture.model.update(keyWithRunes("gamma")).command();
-        settleIdleInput(fixture, scheduled);
+        fixture.update(keyWithRunes("alpha"));
+        fixture.update(key(KeyType.keyCR));
+        fixture.update(keyWithRunes("beta"));
+        fixture.update(new Tui4jCodingTerminalModel.PollMessage());
+        fixture.update(new WindowSizeMessage(120, 40));
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasting ~2 lines]");
+
+        fixture.update(key(KeyType.keyCR));
+        fixture.update(keyWithRunes("gamma"));
+        settleIdleInput(fixture);
 
         assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~3 lines]");
 
@@ -2160,14 +2267,14 @@ class Tui4jCodingTerminalModelTest {
         fixture.model.init();
 
         // Scroll up
-        fixture.model.update(key(KeyType.KeyPgUp));
+        fixture.update(key(KeyType.KeyPgUp));
 
         // Now switch theme via action
         fixture.pump.offer(new TerminalUiAction.ThemeChanged("nord"));
         fixture.controller.drainEvents();
 
         // Trigger update to sync components
-        fixture.model.update(new Tui4jCodingTerminalModel.PollMessage());
+        fixture.update(new Tui4jCodingTerminalModel.PollMessage());
         String viewAfterTheme = fixture.model.view();
 
         // The view must not show the phantom "new output below" badge
@@ -2246,27 +2353,25 @@ class Tui4jCodingTerminalModelTest {
     }
 
     /** Streams a paste the way ConPTY delivers it: one key message per character, in the host's own key types. */
-    private Command streamPerCharacterPaste(Fixture fixture, String... lines) {
-        return streamPerCharacterPaste(fixture, false, lines);
+    private void streamPerCharacterPaste(Fixture fixture, String... lines) {
+        streamPerCharacterPaste(fixture, false, lines);
     }
 
     /** The same stream with every character as KeyRunes, the decoding some hosts produce for a space. */
-    private Command streamPerCharacterPasteAsRunes(Fixture fixture, String... lines) {
-        return streamPerCharacterPaste(fixture, true, lines);
+    private void streamPerCharacterPasteAsRunes(Fixture fixture, String... lines) {
+        streamPerCharacterPaste(fixture, true, lines);
     }
 
-    private Command streamPerCharacterPaste(Fixture fixture, boolean runesOnly, String... lines) {
-        Command scheduled = Command.none();
+    private void streamPerCharacterPaste(Fixture fixture, boolean runesOnly, String... lines) {
         for (int index = 0; index < lines.length; index++) {
             for (char value : lines[index].toCharArray()) {
                 KeyPressMessage pressed = runesOnly ? keyWithRunes(String.valueOf(value)) : keyForHost(value);
-                scheduled = fixture.model.update(pressed).command();
+                fixture.update(pressed);
             }
             if (index < lines.length - 1) {
-                scheduled = fixture.model.update(key(KeyType.keyCR)).command();
+                fixture.update(key(KeyType.keyCR));
             }
         }
-        return scheduled;
     }
 
     /** The key tui4j 0.3.3 actually decodes for one character of a paste: Space and Tab are their own key types. */
@@ -2281,49 +2386,46 @@ class Tui4jCodingTerminalModelTest {
     }
 
     /** Types one rune at a time like a user, so each key carries its own timestamp. */
-    private Command typeRunes(Fixture fixture, String text) {
-        Command scheduled = Command.none();
+    private void typeRunes(Fixture fixture, String text) {
         for (char value : text.toCharArray()) {
-            scheduled = fixture.model.update(runes(value)).command();
+            fixture.update(runes(value));
         }
-        return scheduled;
     }
 
-    private Command streamUnbracketedPaste(Fixture fixture, String... lines) {
-        return streamUnbracketedPaste(fixture, false, lines);
+    private void streamUnbracketedPaste(Fixture fixture, String... lines) {
+        streamUnbracketedPaste(fixture, false, lines);
     }
 
-    private Command streamUnbracketedPasteWithCrLf(Fixture fixture, String... lines) {
-        return streamUnbracketedPaste(fixture, true, lines);
+    private void streamUnbracketedPasteWithCrLf(Fixture fixture, String... lines) {
+        streamUnbracketedPaste(fixture, true, lines);
     }
 
     /** Streams one paste the way a host without bracketed paste delivers it: runes, break, runes, ... */
-    private Command streamUnbracketedPaste(Fixture fixture, boolean crlf, String... lines) {
-        Command scheduled = Command.none();
+    private void streamUnbracketedPaste(Fixture fixture, boolean crlf, String... lines) {
         for (int index = 0; index < lines.length; index++) {
             if (!lines[index].isEmpty()) {
-                scheduled = fixture.model.update(keyWithRunes(lines[index])).command();
+                fixture.update(keyWithRunes(lines[index]));
             }
             if (index < lines.length - 1 || lines[index].isEmpty()) {
-                scheduled = fixture.model.update(key(KeyType.keyCR)).command();
+                fixture.update(key(KeyType.keyCR));
                 if (crlf) {
-                    scheduled = fixture.model.update(key(KeyType.keyLF)).command();
+                    fixture.update(key(KeyType.keyLF));
                 }
             }
         }
-        return scheduled;
     }
 
-    /** Runs the idle timer the model scheduled, so a typed run settles without waiting on real time. */
-    private void settleIdleInput(Fixture fixture, Command scheduled) {
-        if (!Command.isNone(scheduled)) {
-            fixture.model.update(scheduled.execute());
+    /** Delivers the one scheduled check; later keys only move its deadline. */
+    private void settleIdleInput(Fixture fixture) {
+        while (!fixture.idleChecks.isEmpty()) {
+            Command check = fixture.idleChecks.removeFirst();
+            fixture.update(check.execute());
         }
     }
 
     private void commitPlainEnter(Fixture fixture) {
-        var guarded = fixture.model.update(key(KeyType.keyCR));
-        fixture.model.update(guarded.command().execute());
+        var guarded = fixture.update(key(KeyType.keyCR));
+        fixture.update(guarded.command().execute());
     }
 
     private Tui4jCodingTerminalModel modelWithMouseReporting(boolean enabled) {
@@ -2442,7 +2544,7 @@ class Tui4jCodingTerminalModelTest {
         for (int index = 1; index <= 6; index++) {
             fixture.pump.offer(new TerminalUiAction.UserMessageCommitted("m", "line-" + index));
         }
-        fixture.model.update(new WindowSizeMessage(120, 30));
+        fixture.update(new WindowSizeMessage(120, 30));
         fixture.model.view();
     }
 
@@ -2451,7 +2553,7 @@ class Tui4jCodingTerminalModelTest {
         fixture.pump.offer(new TerminalUiAction.RunEventReceived(event(
                 1,
                 new RunEventPayloads.ToolLifecycle("tool-1", "execution_run", "SUCCEEDED", "NONE", "git status", ""))));
-        fixture.model.update(new WindowSizeMessage(120, 30));
+        fixture.update(new WindowSizeMessage(120, 30));
         fixture.model.view();
     }
 
@@ -2511,8 +2613,26 @@ class Tui4jCodingTerminalModelTest {
                 payload);
     }
 
-    private record Fixture(
-            CodingTerminalController controller, TerminalEventPump pump, Tui4jCodingTerminalModel model) {}
+    private static final class Fixture {
+        final CodingTerminalController controller;
+        final TerminalEventPump pump;
+        final Tui4jCodingTerminalModel model;
+        final ArrayDeque<Command> idleChecks = new ArrayDeque<>();
+
+        Fixture(CodingTerminalController controller, TerminalEventPump pump, Tui4jCodingTerminalModel model) {
+            this.controller = controller;
+            this.pump = pump;
+            this.model = model;
+        }
+
+        UpdateResult<Tui4jCodingTerminalModel> update(Message message) {
+            var result = model.update(message);
+            if (result.command() instanceof ComposerInput.IdleCheck) {
+                idleChecks.addLast(result.command());
+            }
+            return result;
+        }
+    }
 
     private static final class UnusedClient implements CodingSessionClient {
         private final List<io.haifa.agent.application.project.product.coding.CodingModelOption> models;

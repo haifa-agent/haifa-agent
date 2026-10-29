@@ -5,13 +5,17 @@ import com.williamcallahan.tui4j.compat.bubbletea.input.key.KeyType;
 import java.time.Duration;
 
 /**
- * One batch of text keys at the composer: the run that starts at its first character, a break that a following key
- * proves to be paste content, and everything the host keeps streaming behind that break.
+ * One batch of text keys at the composer: the run that starts at its first character, the break that shows the run is
+ * paste content, and everything the host keeps streaming behind that break.
  *
  * <p>A host that sends no bracketed-paste markers delivers a paste as ordinary keys, so the key stream alone cannot
  * tell a paste from typing. This batch is the single place that decides: it records the batch's own insertion range so
- * the text the user had before and after the paste stays editable, it holds the stream back behind a confirmed break
- * instead of painting one key at a time, and it settles into the same paste summary the bracketed path produces.
+ * the text the user had before and after the paste stays editable, it replaces painted text with a receiving block and
+ * holds the rest of the stream back instead of painting one key at a time, and it settles into the same paste summary
+ * the bracketed path produces.
+ *
+ * <p>Only content decides that: a break the host delivers, or a break the following text continues. Key timing cannot
+ * separate a fast typist from a host streaming a clipboard, so it never starts a block and never swallows an Enter.
  *
  * <p>The batch never owns text the composer already shows: {@link #start()} and {@link #end()} bound the live range
  * inside the editor buffer, and {@link #held()} carries the text still waiting at {@link #end()}.
@@ -23,15 +27,8 @@ final class StreamedInputBatch {
      */
     static final Duration IDLE_INTERVAL = Duration.ofMillis(100);
 
-    /**
-     * A text key that arrives this soon after the previous one is machine paced: no keyboard repeats that fast, so the
-     * batch can only be a paste the host is streaming. It is the moment the composer stops painting the batch.
-     */
-    static final Duration STREAM_INTERVAL = Duration.ofMillis(50);
-
     private static final String TAB_TEXT = "    ";
     private static final long IDLE_INTERVAL_NANOS = IDLE_INTERVAL.toNanos();
-    private static final long STREAM_INTERVAL_NANOS = STREAM_INTERVAL.toNanos();
 
     private final int start;
     private final StringBuilder held = new StringBuilder();
@@ -40,6 +37,9 @@ final class StreamedInputBatch {
     private boolean previousKeyKnown;
     private boolean endsWithCr;
     private boolean paste;
+    private String blockLabel;
+    private int newlines;
+    private int trailingNewlines;
 
     private StreamedInputBatch(int start, int end, long nowNanos) {
         this.start = Math.max(0, Math.min(start, end));
@@ -88,7 +88,20 @@ final class StreamedInputBatch {
         return held.toString();
     }
 
-    /** Whether the batch is proven paste content, so a following break belongs to it instead of submitting. */
+    /** The receiving block the composer shows for this batch, or {@code null} while the batch paints its live text. */
+    String blockLabel() {
+        return blockLabel;
+    }
+
+    /**
+     * How many lines the block reports for the content received so far. It ignores the trailing break that the host may
+     * still be about to continue, so the count only grows when a line really starts.
+     */
+    int displayLines() {
+        return Math.max(1, newlines - trailingNewlines + 1);
+    }
+
+    /** Whether the batch is paste content, so a following break belongs to it instead of submitting. */
     boolean isPaste() {
         return paste;
     }
@@ -101,11 +114,6 @@ final class StreamedInputBatch {
     /** Whether a text key arriving now still belongs to this batch, or whether the batch went idle. */
     boolean continuesAt(long nowNanos) {
         return previousKeyKnown && nowNanos - lastKeyNanos <= IDLE_INTERVAL_NANOS;
-    }
-
-    /** Whether a text key arriving now is machine paced, which proves the batch is a streamed paste. */
-    boolean streamedAt(long nowNanos) {
-        return previousKeyKnown && nowNanos - lastKeyNanos <= STREAM_INTERVAL_NANOS;
     }
 
     /** Records live text the composer inserted, so the batch's own range stays exact. */
@@ -124,24 +132,49 @@ final class StreamedInputBatch {
     }
 
     /**
-     * Moves the text the composer already painted into the held range, so the first line of a streamed paste stops
-     * being visible while the rest of it arrives. The range still starts where the batch started, so the draft the
-     * user had before the paste keeps its own text and the settle still replaces only the batch.
+     * Moves the text the composer already painted into the held range, so the block can report how much arrived. The
+     * range still starts where the batch started, so the draft around the block keeps its own text and the settle still
+     * replaces only the batch.
      */
-    void retractLiveText(String liveText, long nowNanos) {
-        held.append(liveText);
-        end = start;
-        paste = true;
-        lastKeyNanos = nowNanos;
-        previousKeyKnown = true;
+    void receivePaintedText(String liveText, long nowNanos) {
+        appendHeld(liveText);
+        this.paste = true;
+        this.lastKeyNanos = nowNanos;
+        this.previousKeyKnown = true;
+    }
+
+    /** Shows {@code label} inside the batch's own range; the caller formats it from {@link #displayLines()}. */
+    void showBlock(String label) {
+        this.blockLabel = label;
+        this.end = start + label.length();
     }
 
     /** Holds one key's text back until the batch settles. */
     void hold(String text, boolean breakFromCr, long nowNanos) {
-        held.append(text);
+        appendHeld(text);
         this.endsWithCr = breakFromCr;
         this.lastKeyNanos = nowNanos;
         this.previousKeyKnown = true;
+    }
+
+    /** Appends one received fragment and keeps the line counters of the block up to date. */
+    private void appendHeld(String text) {
+        if (text.isEmpty()) {
+            return;
+        }
+        held.append(text);
+        int chunkNewlines = 0;
+        for (int index = 0; index < text.length(); index++) {
+            if (text.charAt(index) == '\n') {
+                chunkNewlines++;
+            }
+        }
+        newlines += chunkNewlines;
+        int chunkTrailing = 0;
+        while (chunkTrailing < text.length() && text.charAt(text.length() - 1 - chunkTrailing) == '\n') {
+            chunkTrailing++;
+        }
+        trailingNewlines = chunkTrailing == text.length() ? trailingNewlines + chunkTrailing : chunkTrailing;
     }
 
     /** Consumes the LF half of a CRLF pair whose CR half already held the one break. */

@@ -1861,17 +1861,22 @@ class Tui4jTerminalViewTest {
             TerminalUiState state = TerminalUiState.initial(80, 24);
             Textarea withPaste = editor(80);
             withPaste.setValue("[Pasted #1 ~6 lines]");
+            Textarea receiving = editor(80);
+            receiving.setValue("[Pasting ~2 lines]");
             Textarea plain = editor(80);
             plain.setValue("plain draft without paste token");
 
             String pasted = view.render(state, transcript(state), withPaste, true, false);
+            String streaming = view.render(state, transcript(state), receiving, true, false);
             String without = view.render(state, transcript(state), plain, true, false);
 
             assertThat(Strip.strip(pasted)).contains("[Pasted #1 ~6 lines]");
+            assertThat(Strip.strip(streaming)).contains("[Pasting ~2 lines]");
             // Chip styling adds ANSI sequences around the token beyond the shared editor background.
             int pasteAnsiExtra = pasted.length() - Strip.strip(pasted).length();
             int plainAnsiExtra = without.length() - Strip.strip(without).length();
             assertThat(pasteAnsiExtra).isGreaterThan(plainAnsiExtra);
+            assertThat(streaming.length() - Strip.strip(streaming).length()).isGreaterThan(plainAnsiExtra);
         } finally {
             renderer.setColorProfile(ColorProfile.Ascii);
             renderer.setHasDarkBackground(false);
