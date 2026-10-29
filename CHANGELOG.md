@@ -2,6 +2,18 @@
 
 ## 0.1.4-SNAPSHOT - Unreleased
 
+- Coding Agent offers a Linux x64 portable distribution through `ca-linux`, with a bundled native Java 21
+  runtime, an executable POSIX launcher, platform-specific staging/cache, and offline archive verification.
+
+- Long pasted messages keep their full submission body while the transcript shows a bounded Unicode-safe preview,
+  preventing the Terminal from exiting when a user message exceeds the transcript card's display limit.
+
+
+- Coding Terminal shows progress for streamed multiline pastes while preserving ordinary fast typing, draft
+  boundaries and the pasted body. Buffered characters reuse an unchanged frame and move one idle-check deadline,
+  avoiding a full view rebuild and a new idle timer for every pasted character.
+
+
 - Docker AIO warm sessions no longer retain a workspace container after a cancellation: `cancel()` captures the
   container before it interrupts the execution thread, and a container that finishes creating after the
   cancellation request is destroyed instead of entering the warm pool. This removes the intermittent macOS

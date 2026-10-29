@@ -3,6 +3,7 @@
 
 Builds and packages (release artifacts use a 'v'-prefixed version, e.g. v0.1.0):
 1. haifa-coding-agent-windows-x64-v<version>.zip
+   haifa-coding-agent-linux-x64-v<version>.tar.gz (ca-linux, built on Linux x64)
 2. haifa-personal-assistant-windows-x64-v<version>.zip
 3. haifa-personal-assistant-server-linux-x64-v<version>.zip
 4. haifa-agent-sdk-v<version>.zip
@@ -12,11 +13,13 @@ Builds and packages (release artifacts use a 'v'-prefixed version, e.g. v0.1.0):
 import argparse
 import hashlib
 import os
+import platform
 import re
 from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tarfile
 import xml.etree.ElementTree as ET
 import zipfile
 
@@ -91,15 +94,48 @@ def compute_sha256(file_path: Path) -> str:
     return sha.hexdigest()
 
 
+def native_runtime_platform() -> str:
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+    # Embedded Windows Python can have no PROCESSOR_ARCHITECTURE environment variable.
+    # Validate the actual bundled runtime architecture from its binary header below.
+    supported_machine = machine in ("amd64", "x86_64") or (system == "windows" and not machine)
+    if system not in ("windows", "linux") or not supported_machine:
+        raise ValueError("Bundled runtimes require a native Windows x64 or Linux x64 JDK 21")
+    return f"{system}-x64"
+
+
+def validate_jre(jre_dir: Path, target: str) -> None:
+    java = jre_dir / "bin" / ("java.exe" if target == "windows-x64" else "java")
+    with java.open("rb") as binary:
+        header = binary.read(64)
+        expected = b"MZ" if target == "windows-x64" else b"\x7fELF"
+        if not header.startswith(expected):
+            raise ValueError(f"Bundled Java runtime does not match {target}: {java}")
+        if target == "windows-x64":
+            binary.seek(int.from_bytes(header[60:64], "little"))
+            x64 = binary.read(6) == b"PE\x00\x00\x64\x86"
+        else:
+            x64 = header[4:6] == b"\x02\x01" and int.from_bytes(header[18:20], "little") == 62
+        if not x64:
+            raise ValueError("Bundled runtime must use x64 architecture")
+    release = (jre_dir / "release").read_text(encoding="utf-8")
+    if not re.search(r'^JAVA_VERSION="21(?:[.\+"]|$)', release, re.MULTILINE):
+        raise ValueError("Bundled runtime must use Java 21")
+
+
 def ensure_jre(repo_root: Path, work_dir: Path, force_rebuild: bool = False) -> Path:
-    jre_dir = work_dir / "jre"
-    java_exe = jre_dir / "bin" / ("java.exe" if os.name == "nt" else "java")
+    target = native_runtime_platform()
+    jre_dir = work_dir / "jre" / target
+    java_exe = jre_dir / "bin" / ("java.exe" if target == "windows-x64" else "java")
     if jre_dir.exists() and java_exe.exists() and not force_rebuild:
+        validate_jre(jre_dir, target)
         print(f"[INFO] Using cached minimal JRE at: {jre_dir}")
         return jre_dir
 
     if jre_dir.exists():
         shutil.rmtree(jre_dir)
+    jre_dir.parent.mkdir(parents=True, exist_ok=True)
 
     print("[INFO] Generating minimal Java 21 JRE using jlink...")
     modules = [
@@ -139,6 +175,7 @@ def ensure_jre(repo_root: Path, work_dir: Path, force_rebuild: bool = False) -> 
         sys.exit(result.returncode)
 
     java_exe = jre_dir / "bin" / ("java.exe" if os.name == "nt" else "java")
+    validate_jre(jre_dir, target)
     listed = subprocess.run(
         [str(java_exe), "--list-modules"], capture_output=True, text=True, encoding="utf-8", errors="replace"
     )
@@ -268,9 +305,15 @@ def render_ca_configuration(repo_root: Path, stage_dir: Path) -> None:
     (stage_dir / "haifa-coding.yaml").write_text(rendered, encoding="utf-8", newline="\n")
 
 
-def package_ca(repo_root: Path, work_dir: Path, output_dir: Path, version: str, jre_dir: Path) -> Path:
+def package_ca(
+    repo_root: Path, work_dir: Path, output_dir: Path, version: str, jre_dir: Path,
+    target: str = "windows-x64",
+) -> Path:
+    if target not in ("windows-x64", "linux-x64"):
+        raise ValueError(f"Unsupported Coding Agent platform: {target}")
+    validate_jre(jre_dir, target)
     print("\n" + "=" * 70)
-    print(f"[INFO] Packaging Coding Agent Windows Distribution (version: {version})...")
+    print(f"[INFO] Packaging Coding Agent {target} Distribution (version: {version})...")
     print("=" * 70)
 
     cli_target_dir = repo_root / "haifa-agent-applications" / "haifa-agent-cli" / "target"
@@ -278,13 +321,10 @@ def package_ca(repo_root: Path, work_dir: Path, output_dir: Path, version: str, 
     print(f"[INFO] Found Coding Agent CLI JAR: {cli_jar.name}")
 
     label = artifact_label(version)
-    stage_dir = work_dir / f"haifa-coding-agent-{label}"
-    if stage_dir.exists():
-        shutil.rmtree(stage_dir)
-    stage_dir.mkdir(parents=True, exist_ok=True)
+    stage_dir = stage_dir_for(work_dir, target, f"haifa-coding-agent-{label}")
 
     # 1. Copy templates
-    template_dir = repo_root / "dist-support" / "templates" / "ca"
+    template_dir = repo_root / "dist-support" / "templates" / ("ca-linux" if target == "linux-x64" else "ca")
     shutil.copytree(template_dir / "bin", stage_dir / "bin")
     shutil.copy2(template_dir / "README.txt", stage_dir / "README.txt")
 
@@ -299,20 +339,24 @@ def package_ca(repo_root: Path, work_dir: Path, output_dir: Path, version: str, 
 
     # 4. Copy JRE
     print("[INFO] Bundling minimal JRE into Coding Agent package...")
-    shutil.copytree(jre_dir, stage_dir / "jre")
+    shutil.copytree(jre_dir, stage_dir / "jre", symlinks=True)
 
-    # 5. Create ZIP
-    output_zip = output_dir / f"haifa-coding-agent-windows-x64-{label}.zip"
-    print(f"[INFO] Compressing to {output_zip.name}...")
-    with zipfile.ZipFile(output_zip, "w", zipfile.ZIP_DEFLATED) as zf:
-        for file in stage_dir.rglob("*"):
-            if file.is_file():
-                rel_path = file.relative_to(stage_dir.parent)
-                zf.write(file, rel_path)
+    if target == "linux-x64":
+        archive = output_dir / f"haifa-coding-agent-linux-x64-{label}.tar.gz"
+        with tarfile.open(archive, "w:gz") as tar:
+            tar.add(stage_dir, arcname=stage_dir.name, filter=linux_archive_permissions)
+        print(f"[SUCCESS] Coding Agent package created: {archive}")
+        return archive
+    return zip_stage(stage_dir, output_dir / f"haifa-coding-agent-windows-x64-{label}.zip", "Coding Agent")
 
-    zip_size_mb = output_zip.stat().st_size / (1024 * 1024)
-    print(f"[SUCCESS] Coding Agent package created: {output_zip} ({zip_size_mb:.2f} MB)")
-    return output_zip
+
+def linux_archive_permissions(info: tarfile.TarInfo) -> tarfile.TarInfo:
+    # Set portable permissions even when WSL stages files on a Windows-mounted drive.
+    relative = Path(info.name).parts[1:]
+    executable = relative == ("bin", "haifa") or relative[:2] == ("jre", "bin") or relative == (
+        "jre", "lib", "jspawnhelper")
+    info.mode = 0o755 if info.isdir() or executable else 0o644
+    return info
 
 
 WEB_RELATIVE_API_BASE = "/api/v1"
@@ -580,7 +624,7 @@ def package_sdk(repo_root: Path, work_dir: Path, output_dir: Path, version: str)
 def write_checksums(output_dir: Path) -> None:
     checksums_file = output_dir / "sha256sums.txt"
     lines = []
-    for z in sorted(output_dir.glob("*.zip")):
+    for z in sorted([*output_dir.glob("*.zip"), *output_dir.glob("*.tar.gz")]):
         sha = compute_sha256(z)
         lines.append(f"{sha}  {z.name}")
 
@@ -600,7 +644,7 @@ def main():
         "action",
         nargs="?",
         default="all",
-        choices=["all", "ca", "pa", "pa-server", "sdk", "jre", "sdk-modules"],
+        choices=["all", "ca", "ca-linux", "pa", "pa-server", "sdk", "jre", "sdk-modules"],
         help="Target package to build (default: all)",
     )
     parser.add_argument("--version", dest="version", default=None, help="Explicit release version")
@@ -613,6 +657,10 @@ def main():
     parser.add_argument("--output-dir", dest="output_dir", default=None, help="Output directory")
 
     args = parser.parse_args()
+    if args.action in ("all", "ca", "pa", "ca-linux"):
+        required = "linux-x64" if args.action == "ca-linux" else "windows-x64"
+        if native_runtime_platform() != required:
+            parser.error(f"{args.action} requires a native {required} JDK 21; use ca-linux on Linux/WSL")
 
     repo_root = get_repo_root()
     version = args.version or get_pom_version(repo_root)
@@ -639,13 +687,16 @@ def main():
     print("=" * 70)
 
     jre_dir = None
-    if args.action in ["all", "ca", "pa", "jre"]:
+    if args.action in ["all", "ca", "ca-linux", "pa", "jre"]:
         jre_dir = ensure_jre(repo_root, work_dir, force_rebuild=not args.skip_jre)
         if args.action == "jre":
             return
 
     if args.action in ["all", "ca"]:
         package_ca(repo_root, work_dir, output_dir, version, jre_dir)
+
+    if args.action == "ca-linux":
+        package_ca(repo_root, work_dir, output_dir, version, jre_dir, target="linux-x64")
 
     if args.action in ["all", "pa"]:
         package_pa(repo_root, work_dir, output_dir, version, jre_dir, skip_web_build=args.skip_web_build)
@@ -656,8 +707,7 @@ def main():
     if args.action in ["all", "sdk"]:
         package_sdk(repo_root, work_dir, output_dir, version)
 
-    if args.action == "all":
-        write_checksums(output_dir)
+    write_checksums(output_dir)
 
 
 if __name__ == "__main__":
