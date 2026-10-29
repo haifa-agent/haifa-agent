@@ -18,11 +18,24 @@ class DockerAioSandboxConfigurationTest {
                 .isEqualTo(Path.of("/var/run/docker.sock"));
         assertThat(DockerAioSandboxConfiguration.localDockerSocket("Linux", "unix:///tmp/custom.sock"))
                 .isEqualTo(Path.of("/tmp/custom.sock"));
-        for (String endpoint : java.util.List.of("tcp://localhost:2375", "ssh://example", "unix://host/socket",
-                "npipe:////./pipe/docker_engine?x=1", "npipe://remote//./pipe/docker_engine")) {
+        assertThat(DockerAioSandboxConfiguration.localDockerSocket("Windows 11", null))
+                .isEqualTo(Path.of("\\\\.\\pipe\\docker_engine"));
+        assertThat(DockerAioSandboxConfiguration.localDockerSocket(
+                        "Windows 11", "npipe:////./pipe/dockerDesktopLinuxEngine"))
+                .isEqualTo(Path.of("\\\\.\\pipe\\dockerDesktopLinuxEngine"));
+        for (String endpoint : java.util.List.of(
+                "tcp://localhost:2375",
+                "ssh://example",
+                "unix://host/socket",
+                "npipe:////./pipe/docker_engine?x=1",
+                "npipe://remote//./pipe/docker_engine",
+                "npipe:////./pipe/../docker_engine",
+                "npipe:////./pipe/docker_engine/child")) {
             assertThatThrownBy(() -> DockerAioSandboxConfiguration.localDockerSocket("Windows 11", endpoint))
                     .isInstanceOf(IllegalArgumentException.class);
         }
+        assertThatThrownBy(() -> DockerAioSandboxConfiguration.localDockerSocket("Linux", "unix://:2375/tmp/socket"))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

@@ -25,6 +25,13 @@ to asking each time. A new Session or app/client instance does not inherit conse
 Workspace attachment, permission elevation, input/credential interactions, unknown tools and incomplete target
 projections remain explicit. Consent is not persisted and is not a project-wide permission rule.
 
+Large `file_create`, `file_write`, and `file_diff` content does not disable session consent when the Runtime
+projection certifies the full path and every other target field. Content-only truncation or redaction is display
+data; a truncated patch still embeds unreviewed paths and requires explicit approval. Truncated or redacted targets,
+workspace attachment, and permission elevation stay per-call, with an explanation in the approval card.
+If an automatic submission fails, is invalidated, or returns an unrelated receipt, consent is cleared and the
+pending request is shown for explicit approval again.
+
 ## Shared model profile readiness
 
 Coding model preferences remain product-owned and this phase does not add `/thinking` or change the Session Store.

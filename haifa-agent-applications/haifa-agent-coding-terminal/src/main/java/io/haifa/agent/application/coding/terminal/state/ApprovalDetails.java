@@ -58,8 +58,11 @@ public record ApprovalDetails(
                 .toList());
         if (allowForSession) allowedActions.add(SESSION_APPROVAL_ACTION);
         Fact sessionScope = new Fact("Session option", "All ordinary tools · until app exit or /approval reset");
-        List<Fact> sessionFacts = allowForSession ? List.of(sessionScope)
-                : unavailableReason.map(reason -> List.of(new Fact("Approval scope", reason))).orElse(List.of());
+        List<Fact> sessionFacts = allowForSession
+                ? List.of(sessionScope)
+                : unavailableReason
+                        .map(reason -> List.of(new Fact("Approval scope", reason)))
+                        .orElse(List.of());
         var presentation = interaction.approvalPresentation();
         if (presentation.isPresent()) {
             var value = presentation.orElseThrow();

@@ -1,5 +1,9 @@
 # Haifa Agent Runtime API
 
+`ToolDataView.completeFields` 标记由 Runtime 完整复制、未截断且未脱敏的顶层参数字段。
+它允许消费者区分“仅文件正文过大”与“目标路径不完整”，不能用全局 `truncated=false`
+替代逐字段完整性检查。缺少完整性信息时保持保守；结果展示可被进一步改写，不认证结果字段。
+
 ## 持久消息分页
 
 `AgentRuntime.messages(runId, RunMessageCursor.beforeFirst(runId), limit)` 返回可信 Caller 可见 Run 的

@@ -146,6 +146,8 @@ Windows ConPTY Gate B。
 
 2. **焦点与弹层优先级契约 (Focus & Modal Priority Contract)**：
    - 普通内建工具审批增加 `Allow for this session`：当前 Coding Session 内后续普通工具审批自动通过，退出应用后清除；`/approval reset` 恢复逐次审批。首次批准仅在 Runtime 实际应用后生效，Pending 不激活；工作区授权、权限提升、凭据/输入交互、未知工具和硬性拒绝保持原流程。
+   - Esc/Ctrl+C 关闭审批选项后，可用 `/approval`（或 `/approval reopen`）重新打开当前待审批请求，编辑器草稿保持不变。查询在 CONTROL 后台通道执行，已解决或已切换 Run 的请求不会被迟到的响应重新打开。选项打开时 Esc 只关闭选项，状态栏不会提示其可中断 Run。
+   - 自动审批失败时回退为显式审批；没有交互详情的自动完成审批不会留下永久的“详情加载中”占位行。正文过大而目标完整的文件写入仍可使用 Session 批准；目标本身不完整或需要扩大权限时，审批卡解释逐次确认的原因。
    - 任何选择器弹层（审批 Approval、Shell 确认、命令面板 Command Palette、模型选择、Session 摘要等）处于激活状态时，输入焦点完全移至弹层（Editor blur），编辑器失焦并禁用一切普通文本输入；
    - 弹层处于激活状态时，所有按键均按弹层事件处理（上下移动选中项、Enter 确认当前项、Esc/Ctrl+C 取消关闭）；
    - 弹层打开期间，所有全局 Leader 快捷操作（如 `<leader>m`、`<leader>s` 等）均被严格忽略（`Kind.EXECUTE_COMMAND` 语义完全与弹层的 `Kind.SUBMIT` 隔离），严禁借用编辑器的 SUBMIT 事件意外确认审批或执行未预期的全局命令；

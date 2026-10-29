@@ -55,7 +55,8 @@ final class DockerJavaEngine implements DockerEngine {
         } catch (NotFoundException exception) {
             throw new DockerEngineException("DOCKER_IMAGE_UNAVAILABLE", "locked image is unavailable", exception);
         } catch (RuntimeException exception) {
-            throw failure("DOCKER_ENGINE_UNAVAILABLE",
+            throw failure(
+                    "DOCKER_ENGINE_UNAVAILABLE",
                     "Docker Engine is unavailable; start Docker Desktop in Linux containers mode and check the configured local endpoint",
                     exception);
         }
@@ -116,7 +117,8 @@ final class DockerJavaEngine implements DockerEngine {
                     .withNetworkMode(spec.networkName())
                     .withBinds(new Bind(
                             DockerDesktopPaths.bindSource(spec.hostWorkspaceRoot()),
-                            new Volume(spec.containerWorkspaceRoot()), AccessMode.rw))
+                            new Volume(spec.containerWorkspaceRoot()),
+                            AccessMode.rw))
                     .withSecurityOpts(List.of("no-new-privileges"))
                     .withPrivileged(false)
                     .withNanoCPUs(spec.nanoCpus())

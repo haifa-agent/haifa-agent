@@ -351,7 +351,12 @@ public final class CodingTerminalTestSupport {
     }
 
     static CodingSessionView activeView() {
+        return activeView(Optional.empty());
+    }
+
+    static CodingSessionView activeView(Optional<InteractionView> interaction) {
         AgentRunId runId = new AgentRunId("run-1");
+        AgentRunStatus status = interaction.isPresent() ? AgentRunStatus.WAITING_APPROVAL : AgentRunStatus.RUNNING;
         return new CodingSessionView(
                 new CodingSessionSummary(
                         SESSION_ID,
@@ -359,19 +364,13 @@ public final class CodingTerminalTestSupport {
                         "session",
                         io.haifa.agent.core.session.AgentSessionStatus.ACTIVE,
                         Optional.of(runId),
-                        Optional.of(AgentRunStatus.RUNNING),
+                        Optional.of(status),
                         0,
                         Instant.EPOCH,
                         0),
                 Optional.of(new AgentRunSnapshot(
-                        runId,
-                        AgentRunStatus.RUNNING,
-                        1,
-                        Instant.EPOCH,
-                        Optional.empty(),
-                        Optional.empty(),
-                        Optional.empty())),
-                Optional.empty(),
+                        runId, status, 1, Instant.EPOCH, Optional.empty(), Optional.empty(), Optional.empty())),
+                interaction,
                 Optional.empty(),
                 "sha256:configuration",
                 "cli-coding@1.0.0",

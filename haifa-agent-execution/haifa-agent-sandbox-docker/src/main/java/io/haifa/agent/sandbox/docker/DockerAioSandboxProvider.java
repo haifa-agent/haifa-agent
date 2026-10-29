@@ -244,7 +244,8 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
     URI managementAddress(DockerEngine.ContainerInspection inspected) {
         // Docker Desktop container IPs live inside its VM and cannot be used by a native Windows JVM.
         if (!"npipe".equals(configuration.dockerEndpoint().getScheme())
-                && inspected.containerIp() != null && !inspected.containerIp().isBlank()) {
+                && inspected.containerIp() != null
+                && !inspected.containerIp().isBlank()) {
             return URI.create("http://" + inspected.containerIp() + ":" + configuration.aioPort());
         }
         if (inspected.managementPort() > 0 && inspected.managementPort() <= 65_535) {
@@ -618,7 +619,9 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
                 throw failure("CONTAINER_NOT_FOUND", "sandbox container disappeared after creation");
             }
             boolean oneWorkspaceMount = inspected.mounts().size() == 1
-                    && DockerDesktopPaths.sameMount(hostWorkspaceRoot.toString(), inspected.mounts().get(0).source())
+                    && DockerDesktopPaths.sameMount(
+                            hostWorkspaceRoot.toString(),
+                            inspected.mounts().get(0).source())
                     && configuration
                             .containerWorkspaceRoot()
                             .equals(inspected.mounts().get(0).destination())
@@ -1177,7 +1180,8 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
             throw failure("CONTAINER_NOT_FOUND", "sandbox container disappeared after creation");
         }
         boolean oneWorkspaceMount = inspected.mounts().size() == 1
-                && DockerDesktopPaths.sameMount(hostWorkspaceRoot.toString(), inspected.mounts().get(0).source())
+                && DockerDesktopPaths.sameMount(
+                        hostWorkspaceRoot.toString(), inspected.mounts().get(0).source())
                 && configuration
                         .containerWorkspaceRoot()
                         .equals(inspected.mounts().get(0).destination())

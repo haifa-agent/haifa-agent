@@ -12,6 +12,7 @@ import io.haifa.agent.runtime.api.AgentRunOutputEvent;
 import io.haifa.agent.runtime.api.InteractionResponseReceipt;
 import io.haifa.agent.runtime.api.InteractionView;
 import java.util.List;
+import java.util.Optional;
 
 public sealed interface TerminalUiAction {
     record SessionLoaded(CodingSessionView view, List<String> resources) implements TerminalUiAction {}
@@ -69,11 +70,13 @@ public sealed interface TerminalUiAction {
 
     record ToolOutputPreviewReceived(ToolOutputPreview preview) implements TerminalUiAction {}
 
-    record InteractionPresented(InteractionView interaction, boolean allowForSession,
-                                Optional<String> sessionApprovalUnavailableReason) implements TerminalUiAction {
+    record InteractionPresented(
+            InteractionView interaction, boolean allowForSession, Optional<String> sessionApprovalUnavailableReason)
+            implements TerminalUiAction {
         public InteractionPresented(InteractionView interaction, boolean allowForSession) {
             this(interaction, allowForSession, Optional.empty());
         }
+
         public InteractionPresented(InteractionView interaction) {
             this(interaction, false);
         }

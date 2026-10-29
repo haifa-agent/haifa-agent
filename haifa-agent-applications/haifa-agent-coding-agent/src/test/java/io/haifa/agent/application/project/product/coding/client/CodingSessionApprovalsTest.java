@@ -20,11 +20,12 @@ class CodingSessionApprovalsTest {
         var f = new Fixture();
         f.states.put(f.pending.requestId(), InteractionState.APPLIED);
         f.approvals.approve(f.pending, submission(f.pending));
-        for (String tool : List.of("file_create", "file_write")) {
+        for (String tool : List.of("file_create", "file_write", "file_diff")) {
             f.truncated = true;
             f.completeFields = java.util.Set.of("path");
             f.next("session-1", "run-" + tool, tool, Map.of("path", "/workspace/large.txt", "content", "preview"));
-            assertThat(f.approvals.prepare(f.pending.runId(), CodingSessionApprovalsTest::submission)).isEmpty();
+            assertThat(f.approvals.prepare(f.pending.runId(), CodingSessionApprovalsTest::submission))
+                    .isEmpty();
         }
         f.completeFields = java.util.Set.of();
         f.next("session-1", "run-incomplete", "file_write", Map.of("path", "preview", "content", "preview"));
@@ -35,7 +36,47 @@ class CodingSessionApprovalsTest {
                 });
         f.next("session-1", "run-patch", "file_patch", Map.of("patch", "preview"));
         assertThat(f.approvals.prepare(f.pending.runId(), CodingSessionApprovalsTest::submission))
-                .hasValueSatisfying(prompt -> assertThat(prompt.allowForSession()).isFalse());
+                .hasValueSatisfying(
+                        prompt -> assertThat(prompt.allowForSession()).isFalse());
+    }
+
+    @Test
+    void redactedContentDoesNotHideAnUncertifiedTarget() {
+        var f = new Fixture();
+        f.completeFields = Set.of("path");
+        f.next(
+                "session-1",
+                "content-redacted",
+                "file_write",
+                Map.of("path", "/workspace/large.txt", "content", "[REDACTED]"));
+        assertThat(f.approvals.prepare(f.pending.runId(), CodingSessionApprovalsTest::submission))
+                .hasValueSatisfying(
+                        prompt -> assertThat(prompt.allowForSession()).isTrue());
+        f.completeFields = Set.of("content");
+        f.next("session-1", "path-redacted", "file_write", Map.of("path", "[REDACTED]", "content", "body"));
+        assertThat(f.approvals.prepare(f.pending.runId(), CodingSessionApprovalsTest::submission))
+                .hasValueSatisfying(
+                        prompt -> assertThat(prompt.allowForSession()).isFalse());
+    }
+
+    @Test
+    void rejectedOrMismatchedAutomaticReceiptsRestoreExplicitApprovalAndClearConsent() {
+        for (boolean mismatch : List.of(false, true)) {
+            var f = new Fixture();
+            f.states.put(f.pending.requestId(), InteractionState.APPLIED);
+            f.approvals.approve(f.pending, submission(f.pending));
+            f.next("session-1", "next", "file_write", Map.of());
+            f.states.put(f.pending.requestId(), mismatch ? InteractionState.APPLIED : InteractionState.INVALIDATED);
+            f.mismatchedReceipt = mismatch;
+            assertThat(f.approvals.prepare(f.pending.runId(), CodingSessionApprovalsTest::submission))
+                    .isPresent();
+            int attempts = f.submissions.size();
+            f.states.put(f.pending.requestId(), InteractionState.PENDING);
+            f.mismatchedReceipt = false;
+            assertThat(f.approvals.prepare(f.pending.runId(), CodingSessionApprovalsTest::submission))
+                    .isPresent();
+            assertThat(f.submissions).hasSize(attempts);
+        }
     }
 
     @Test
@@ -47,11 +88,15 @@ class CodingSessionApprovalsTest {
             f.next("session-1", "run-next", "file_write", Map.of());
             f.failSubmission = !factoryFailure;
             assertThat(f.approvals.prepare(f.pending.runId(), pending -> {
-                if (factoryFailure) throw new RuntimeContractException(RuntimeApiErrorCode.INTERACTION_NOT_FOUND, "Stale");
-                return submission(pending);
-            })).hasValueSatisfying(prompt -> assertThat(prompt.allowForSession()).isTrue());
+                        if (factoryFailure)
+                            throw new RuntimeContractException(RuntimeApiErrorCode.INTERACTION_NOT_FOUND, "Stale");
+                        return submission(pending);
+                    }))
+                    .hasValueSatisfying(
+                            prompt -> assertThat(prompt.allowForSession()).isTrue());
             f.failSubmission = false;
-            assertThat(f.approvals.prepare(f.pending.runId(), CodingSessionApprovalsTest::submission)).isPresent();
+            assertThat(f.approvals.prepare(f.pending.runId(), CodingSessionApprovalsTest::submission))
+                    .isPresent();
         }
     }
 
@@ -222,7 +267,8 @@ class CodingSessionApprovalsTest {
         boolean failSubmission;
         boolean unavailableReceipt;
         boolean truncated;
-        java.util.Set<String> completeFields = java.util.Set.of();
+        Set<String> completeFields;
+        boolean mismatchedReceipt;
         final List<InteractionResponseSubmission> submissions = new ArrayList<>();
         final Map<InteractionRequestId, InteractionState> states = new HashMap<>();
         final AgentRuntime runtime = (AgentRuntime) Proxy.newProxyInstance(
@@ -240,7 +286,9 @@ class CodingSessionApprovalsTest {
                         submissions.add(value);
                         InteractionState state = states.getOrDefault(value.requestId(), InteractionState.RESPONDED);
                         yield new InteractionResponseReceipt(
-                                value.responseId(),
+                                mismatchedReceipt
+                                        ? new InteractionResponseId("unrelated-response")
+                                        : value.responseId(),
                                 value.requestId(),
                                 value.runId(),
                                 state == InteractionState.APPLIED
@@ -259,6 +307,10 @@ class CodingSessionApprovalsTest {
         }
 
         void next(String session, String run, String name, Map<String, Object> arguments) {
+            if (Set.of("file_create", "file_write", "file_diff").contains(name) && !arguments.containsKey("path")) {
+                arguments = new HashMap<>(arguments);
+                arguments.put("path", "/workspace/file.txt");
+            }
             var runId = new AgentRunId(run);
             var callId = new ToolCallId("call-" + ++sequence);
             pending = new InteractionView(
@@ -283,7 +335,10 @@ class CodingSessionApprovalsTest {
                     runId,
                     name,
                     "1.0",
-                    new ToolDataView(arguments, truncated, truncated ? completeFields : arguments.keySet()),
+                    new ToolDataView(
+                            arguments,
+                            truncated,
+                            completeFields != null ? completeFields : truncated ? Set.of() : arguments.keySet()),
                     ToolCallStatus.WAITING_APPROVAL,
                     Optional.empty(),
                     Optional.empty(),

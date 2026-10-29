@@ -27,7 +27,7 @@ class CodingTerminalInteractionTest {
     void approvalReopenUsesControlEffectsAndDoesNotResurrectAResolvedInteraction() throws Exception {
         var started = new java.util.concurrent.CountDownLatch(1);
         var release = new java.util.concurrent.CountDownLatch(1);
-        FakeClient client = new FakeClient(view(Optional.of(approval()))) {
+        FakeClient client = new FakeClient(activeView(Optional.of(approval()))) {
             @Override
             public Optional<InteractionView> pendingInteraction(io.haifa.agent.core.run.AgentRunId runId) {
                 started.countDown();
@@ -44,8 +44,15 @@ class CodingTerminalInteractionTest {
         var interactive = new ArrayDeque<Runnable>();
         var maintenance = new ArrayDeque<Runnable>();
         var pump = new TerminalEventPump(32);
-        var controller = new CodingTerminalController(PROJECT_ID, client, pump, new TerminalUiReducer(),
-                TerminalUiState.initial(120, 40), controls::add, interactive::add, maintenance::add);
+        var controller = new CodingTerminalController(
+                PROJECT_ID,
+                client,
+                pump,
+                new TerminalUiReducer(),
+                TerminalUiState.initial(120, 40),
+                controls::add,
+                interactive::add,
+                maintenance::add);
         controller.open(SESSION_ID);
         controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
         controller.accept(input(TerminalInput.Kind.EXECUTE_COMMAND, "/approval"));
@@ -56,8 +63,8 @@ class CodingTerminalInteractionTest {
             assertThat(started.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
             controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, "draft", 5));
             pump.offer(new TerminalUiAction.TerminalResized(90, 25));
-            pump.offer(new TerminalUiAction.RunEventReceived(event(1,
-                    new RunEventPayloads.InteractionLifecycle("interaction-1", "APPROVAL", "APPLIED", "safe"))));
+            pump.offer(new TerminalUiAction.RunEventReceived(event(
+                    1, new RunEventPayloads.InteractionLifecycle("interaction-1", "APPROVAL", "APPLIED", "safe"))));
             controller.drainEvents();
             assertThat(controller.state().editorBuffer()).isEqualTo("draft");
             assertThat(controller.state().columns()).isEqualTo(90);
@@ -73,15 +80,17 @@ class CodingTerminalInteractionTest {
     @Test
     void dismissedPendingApprovalCanBeReopenedWithoutLosingTheDraft() {
         for (var close : List.of(TerminalInput.Kind.CANCEL_OR_CLOSE, TerminalInput.Kind.INTERRUPT)) {
-            FakeClient client = new FakeClient(view(Optional.of(approval())));
+            FakeClient client = new FakeClient(activeView(Optional.of(approval())));
             var controller = controller(client);
             controller.open(SESSION_ID);
             controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, "draft", 5));
             controller.accept(input(close, ""));
             assertThat(controller.state().selector()).isEmpty();
-            controller.accept(input(TerminalInput.Kind.EXECUTE_COMMAND, "/approval"));
-            assertThat(controller.state().selector()).hasValueSatisfying(
-                    selector -> assertThat(selector.options()).containsExactly("Reject", "Allow once"));
+            controller.accept(input(
+                    TerminalInput.Kind.EXECUTE_COMMAND,
+                    close == TerminalInput.Kind.INTERRUPT ? "/approval reopen" : "/approval"));
+            assertThat(controller.state().selector()).hasValueSatisfying(selector -> assertThat(selector.options())
+                    .containsExactly("Reject", "Allow once"));
             assertThat(controller.state().editorBuffer()).isEqualTo("draft");
             assertThat(client.respondedActions).isEmpty();
         }

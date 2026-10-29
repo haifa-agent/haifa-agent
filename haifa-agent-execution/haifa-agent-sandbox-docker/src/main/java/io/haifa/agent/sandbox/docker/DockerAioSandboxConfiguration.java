@@ -207,12 +207,18 @@ public record DockerAioSandboxConfiguration(
         if (endpoint.getRawQuery() != null || endpoint.getRawFragment() != null || endpoint.getUserInfo() != null) {
             throw new IllegalArgumentException("Docker endpoint must not contain credentials, query or fragment");
         }
-        if ("npipe".equals(endpoint.getScheme()) && windows && endpoint.getRawAuthority() == null
-                && endpoint.getPath() != null && endpoint.getPath().startsWith("//./pipe/")) {
+        if ("npipe".equals(endpoint.getScheme())
+                && windows
+                && endpoint.getRawAuthority() == null
+                && endpoint.getPath() != null
+                && endpoint.getPath().matches("^//\\./pipe/[A-Za-z0-9][A-Za-z0-9_.-]*$")) {
             return Path.of(endpoint.getPath().replace('/', '\\'));
         }
-        if ("unix".equals(endpoint.getScheme()) && !windows && endpoint.getHost() == null
-                && endpoint.getPath() != null && endpoint.getPath().startsWith("/")) {
+        if ("unix".equals(endpoint.getScheme())
+                && !windows
+                && endpoint.getRawAuthority() == null
+                && endpoint.getPath() != null
+                && endpoint.getPath().startsWith("/")) {
             return Path.of(endpoint.getPath());
         }
         throw new IllegalArgumentException("DOCKER_HOST must use a local Unix socket or Windows named pipe");

@@ -1,9 +1,12 @@
 # Haifa Agent Docker AIO Sandbox
 
-显式 Linux Docker Engine + AIO 的可选 Sandbox Provider，Provider ID 为 `docker-aio`。
+显式 Linux 容器 Docker Engine + AIO 的可选 Sandbox Provider，Provider ID 为 `docker-aio`。
+宿主可使用本地 Unix socket，或原生 Windows JVM + Docker Desktop 的本地 named pipe。
 
-> 状态：W14 P1 实现候选。Windows 替身测试覆盖配置、生命周期顺序、超时、取消与清理语义；
+> 状态：W14 P1 实现候选。替身测试覆盖配置、生命周期顺序、超时、取消与清理语义；
 > 真实 Linux 容器、网络隔离、cgroup 与挂载证据仍为 `NOT_RUN` / `BLOCKED_EXTERNAL`。
+> 原生 Windows named pipe、管理端口路由和驱动器路径有单元测试；真实 Docker Desktop 的 NTFS
+> 挂载与容器/宿主互写仍为 `NOT_RUN`，不能据此宣称 Windows 实机验收通过。
 > 它不是产品默认，也不改变 CA/PA 的 `host-guarded` 默认。
 
 ## 范围与生命周期模式
@@ -27,13 +30,35 @@ Provider 支持两种容器生命周期模式（`DockerAioLifecycleMode`）：
 
 `DockerAioSandboxConfiguration` 由产品装配提供，模型与 Tool 参数不能控制：
 
-- 安装标识、Unix socket 路径、锁定镜像 `repository@sha256:...`
+- 安装标识、本地 Unix socket / Windows named pipe 路径、锁定镜像 `repository@sha256:...`
 - 容器 workspace 根、镜像内 shell runtime 路径（`bash` / `python`）
 - 可选 UID/GID、nano CPU、内存、PID 上限
 - Docker Engine 请求期限与 stop 期限、AIO 端口
 
 所有字段进入 `configurationDigest()`（SHA-256）；任一字段变化都会产生不同 Provider 配置身份，
 旧 Profile / Tool / Approval 不能复用。配置与摘要不包含宿主路径的模型可见投影。
+
+### 原生 Windows Docker Desktop
+
+产品装配可用 `DockerAioSandboxConfiguration.localDockerSocket()` 解析一次本机端点，再把返回路径
+传入配置。未设置 `DOCKER_HOST` 时，Windows 使用 `npipe:////./pipe/docker_engine`，其它宿主使用
+`unix:///var/run/docker.sock`。`DOCKER_HOST` 可以显式选择本地 pipe（例如
+`npipe:////./pipe/dockerDesktopLinuxEngine`）或 Unix socket；不接受远程 pipe、TCP、SSH、凭据、
+query 或 fragment。端点进入配置摘要，不在每次执行时重新读取环境。
+
+Windows 必须将 Docker Desktop 切到 **Linux containers**。驱动器路径（包括空格和中文）转换为
+`/d/...` 等容器绑定源，inspect 只接受同一路径的精确 Desktop 别名；UNC 工作区不受支持。
+Windows 的容器 IP 位于 Desktop VM 中，因此两种生命周期都使用经核对的 loopback 映射端口；
+Linux Engine 保持优先使用 internal network 的容器 IP。
+
+Engine 不可用时返回 `DOCKER_ENGINE_UNAVAILABLE` 并提示启动 Docker Desktop、检查 Linux containers
+模式与端点；锁定镜像缺失仍是 `DOCKER_IMAGE_UNAVAILABLE`。Provider 失败后保持失败关闭，绝不自动
+执行宿主命令。产品若需要 `host-guarded`，必须由用户显式切换并重新授权，不能继承容器隔离的承诺。
+
+Windows 实机验收应在目标宿主上使用产品锁定的镜像和非 root UID/GID（通常 `1000:1000`）：
+在含空格/中文的 NTFS Workspace 中依次执行宿主创建、容器读取/修改/创建、宿主读取/修改，核对实际
+运行 UID/GID，并分别验证 WARM_SESSION 和 EPHEMERAL 的管理端口、取消与资源回收。不通过放宽至
+`chmod 777` 掩盖权限问题；记录镜像 digest、Docker Desktop/WSL2 版本和各项结果。
 
 ## 固定 AIO 协议
 
@@ -53,14 +78,14 @@ Provider 支持两种容器生命周期模式（`DockerAioLifecycleMode`）：
 - 容器/网络均带安装、session、role labels；清理只按精确身份删除，不做全局 prune。
 - 容器要求非 privileged、`no-new-privileges`，并在 inspect 中核对；资源上限、镜像、网络、mount、UID/GID 都在执行前核对。
 - 网络配置要求 Docker 接受 `internal=true`、`enable_icc=false`（禁止容器间互通与外网连通）；任一不满足即 fail closed，不降级为普通 bridge 或宿主执行。
-- 管理端口在内部网络中优先路由容器 IP（或回退 127.0.0.1 映射端口）；这不是 `network=none`，管理通路与 workload 断网通过内部网桥保障。
+- 管理端口在 Linux Engine 上优先路由容器 IP（或回退 127.0.0.1 映射端口），Windows Desktop 使用 loopback 映射端口；这不是 `network=none`，管理通路与 workload 断网通过内部网桥保障。
 - 普通 Docker 与宿主共享内核；本期不承诺敌对多租户、独立内核、microVM 或远端集群隔离。
 
 ## 已知缺口
 
 - 真实 Linux 的 Docker daemon、镜像、isolated network、seccomp/cgroup/UID/GID、挂载/链接、
   取消与回收证据尚未执行。
-- 当前管理通路使用 `127.0.0.1` 随机宿主端口；若目标 Docker 版本不支持该组合，候选实现将 fail closed，
+- Windows Desktop 管理通路使用 `127.0.0.1` 随机宿主端口；若目标 Docker 版本不支持该组合，候选实现将 fail closed，
   不会自动改用宿主执行。
 - Skill 容器装配尚未实现；`SkillScriptPlatforms.trusted(...)` 仍只提供宿主 runtime 预检。
 

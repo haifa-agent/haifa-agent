@@ -308,8 +308,8 @@ public final class TerminalUiReducer {
             Optional<ClarificationDetails> clarification = ClarificationDetails.from(interaction);
             ApprovalDetails details = clarification
                     .map(ClarificationDetails::toApprovalDetails)
-                    .orElseGet(() -> ApprovalDetails.from(interaction, presented.allowForSession(),
-                            presented.sessionApprovalUnavailableReason()));
+                    .orElseGet(() -> ApprovalDetails.from(
+                            interaction, presented.allowForSession(), presented.sessionApprovalUnavailableReason()));
             List<TranscriptItem> items = new ArrayList<>(state.transcript());
             String id = "interaction-" + interaction.requestId().value();
             int existing = index(items, id);

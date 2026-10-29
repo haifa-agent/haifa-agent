@@ -68,7 +68,8 @@ public final class ToolCallViewProjector {
                                 !safeSummary.equals(result.summary()),
                                 ToolCallViewProjector::redactText);
                     }
-                    ToolDataView structuredData = new ToolDataView(projected, resultBudget.truncated);
+                    // Result display may be rewritten by the delegation projector; certify only argument fields.
+                    ToolDataView structuredData = new ToolDataView(projected, resultBudget.truncated, Set.of());
                     BoundedText boundedSummary = BoundedText.of(safeSummary, ToolDisplayBudget.defaultOutput());
                     return new ToolResultView(
                             result.successful(),
@@ -101,8 +102,10 @@ public final class ToolCallViewProjector {
             String key = boundedText(redactText(entry.getKey()), budget);
             if (!key.equals(entry.getKey()) || sensitiveName(key)) budget.redactions++;
             projected.put(key, sensitiveName(key) ? REDACTED : projectValue(entry.getValue(), budget, depth + 1));
-            if (depth == 0 && changes == budget.truncations + budget.redactions
-                    && key.equals(entry.getKey()) && !sensitiveName(key)) {
+            if (depth == 0
+                    && changes == budget.truncations + budget.redactions
+                    && key.equals(entry.getKey())
+                    && !sensitiveName(key)) {
                 budget.completeFields.add(key);
             }
         }

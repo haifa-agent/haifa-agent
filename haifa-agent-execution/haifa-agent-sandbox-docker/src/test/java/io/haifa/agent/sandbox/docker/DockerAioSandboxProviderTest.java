@@ -31,7 +31,10 @@ class DockerAioSandboxProviderTest extends AbstractDockerAioProviderTest {
     @org.junit.jupiter.api.condition.EnabledOnOs(org.junit.jupiter.api.condition.OS.WINDOWS)
     void desktopRoutesBothLifecyclesThroughThePublishedLoopbackPort() {
         for (var mode : DockerAioLifecycleMode.values()) {
-            var config = defaultConfiguration(mode, 8, Duration.ofMinutes(15),
+            var config = defaultConfiguration(
+                    mode,
+                    8,
+                    Duration.ofMinutes(15),
                     DockerAioSandboxConfiguration.localDockerSocket("Windows 11", null));
             aio.result = new AioClient.ExecResult("aio", "cmd", "completed", 0, new byte[0], new byte[0], false, false);
             try (var desktop = createProvider(config, () -> "session-1");
