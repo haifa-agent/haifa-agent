@@ -90,6 +90,10 @@ final class Tui4jCodingTerminalModel implements Model {
     private long unbracketedPasteSequence;
     /** Start offset of the rune insertion that immediately preceded the current key, used to anchor a burst. */
     private int lastRuneInsertStart = -1;
+    /** Keys of an open burst, held back so a streamed paste never paints one character at a time. */
+    private final StringBuilder burstTail = new StringBuilder();
+    /** Whether the burst tail ends with the CR half of a CRLF pair. */
+    private boolean burstTailEndsWithCr;
 
     private boolean secretPresentation;
     private int pasteSequence;
@@ -483,13 +487,12 @@ final class Tui4jCodingTerminalModel implements Model {
         if (continuesUnbracketedPaste) {
             openUnbracketedPaste(pendingEnter.start());
             resolvePendingEnterAsNewline();
-            if (key.type() == KeyType.keyLF) {
-                return scheduleUnbracketedPasteEnd();
-            }
-            if (key.type() == KeyType.keyHT) {
-                edit(new PasteMessage("    "));
-                return scheduleUnbracketedPasteEnd();
-            }
+            // The resolved break came from a CR, so an LF that follows it is the other half of the same CRLF pair.
+            burstTailEndsWithCr = true;
+        }
+        if (unbracketedPasteStart >= 0 && !isBurstContentKey(key)) {
+            // Anything other than pasted content ends the burst, so its text reaches the composer before the key.
+            flushBurstTail();
         }
         TerminalUiState state = controller.state();
         if (state.selector().isPresent()) {
@@ -629,12 +632,18 @@ final class Tui4jCodingTerminalModel implements Model {
             return Command.none();
         }
         if (key.type() == KeyType.keyHT) {
+            if (unbracketedPasteStart >= 0) {
+                burstTail.append("    ");
+                burstTailEndsWithCr = false;
+                return scheduleUnbracketedPasteEnd();
+            }
             accept(TerminalInput.Kind.COMPLETION_REQUESTED);
             return Command.none();
         }
         if (key.type() == KeyType.keyCR) {
             if (unbracketedPasteStart >= 0) {
-                edit(new PasteMessage("\n"));
+                burstTail.append('\n');
+                burstTailEndsWithCr = true;
                 return scheduleUnbracketedPasteEnd();
             }
             if (shortcuts.matchesFollowUp(key)) {
@@ -643,8 +652,9 @@ final class Tui4jCodingTerminalModel implements Model {
             return deferEnter(TerminalInput.Kind.SUBMIT);
         }
         if (key.type() == KeyType.keyLF) {
-            if (unbracketedPasteStart >= 0 && controller.state().editorBuffer().endsWith("\n")) {
-                // A CRLF pair inside one burst is a single break, and the preceding CR already wrote it.
+            if (unbracketedPasteStart >= 0 && burstTailEndsWithCr) {
+                // A CRLF pair inside one burst is a single break, and the CR half already buffered it.
+                burstTailEndsWithCr = false;
                 return scheduleUnbracketedPasteEnd();
             }
             edit(new PasteMessage("\n"));
@@ -732,9 +742,12 @@ final class Tui4jCodingTerminalModel implements Model {
             accept(TerminalInput.Kind.EDIT_WAITING);
             return Command.none();
         }
-        Command edited = edit(key);
-        boolean insideBurst = continuesUnbracketedPaste || unbracketedPasteStart >= 0;
-        return insideBurst ? Command.batch(edited, scheduleUnbracketedPasteEnd()) : edited;
+        if (continuesUnbracketedPaste || unbracketedPasteStart >= 0) {
+            burstTail.append(key.runes());
+            burstTailEndsWithCr = false;
+            return scheduleUnbracketedPasteEnd();
+        }
+        return edit(key);
     }
 
     private Command secretKey(KeyPressMessage key) {
@@ -832,17 +845,39 @@ final class Tui4jCodingTerminalModel implements Model {
         int start = unbracketedPasteStart;
         unbracketedPasteStart = -1;
         String buffer = controller.state().editorBuffer();
-        if (start < 0 || start >= buffer.length()) {
+        if (start < 0 || start > buffer.length()) {
+            flushBurstTail();
             return;
         }
-        String region = buffer.substring(start);
+        String region = buffer.substring(start) + burstTail;
         String trimmed = region.strip();
         if (!needsPasteSummary(trimmed)) {
+            flushBurstTail();
             return;
         }
         String token = nextPasteToken(lineCount(trimmed));
         pastedContent.put(token, region);
+        burstTail.setLength(0);
+        burstTailEndsWithCr = false;
         replaceEditor(buffer.substring(0, start) + token, start + token.length());
+    }
+
+    /** Ends an open burst by appending its buffered text, so held-back keys are never dropped. */
+    private void flushBurstTail() {
+        String tail = burstTail.toString();
+        burstTail.setLength(0);
+        burstTailEndsWithCr = false;
+        unbracketedPasteStart = -1;
+        if (!tail.isEmpty()) {
+            edit(new PasteMessage(tail));
+        }
+    }
+
+    private static boolean isBurstContentKey(KeyPressMessage key) {
+        return key.type() == KeyType.KeyRunes
+                || key.type() == KeyType.keyCR
+                || key.type() == KeyType.keyLF
+                || key.type() == KeyType.keyHT;
     }
 
     private Command deferEnter(TerminalInput.Kind kind) {
@@ -1164,11 +1199,11 @@ final class Tui4jCodingTerminalModel implements Model {
     }
 
     private Command submit(TerminalInput.Kind kind) {
-        TerminalUiState state = controller.state();
         if (pendingSubmission != null) {
             return Command.none();
         }
-        unbracketedPasteStart = -1;
+        flushBurstTail();
+        TerminalUiState state = controller.state();
         String expanded = expandPastedContent(state.editorBuffer());
         if (!expanded.isBlank() && !controller.isRenamingSession()) {
             resumeTranscriptFollowing();
@@ -1265,7 +1300,7 @@ final class Tui4jCodingTerminalModel implements Model {
 
     private void pasteContent(String content) {
         String normalized = sanitizeEditorInput(content);
-        unbracketedPasteStart = -1;
+        flushBurstTail();
         pruneStalePastes(controller.state().editorBuffer());
         edit(new PasteMessage(summarizedPaste(normalized)));
     }

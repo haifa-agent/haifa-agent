@@ -63,7 +63,8 @@ Terminal 默认启用 bracketed paste；完整 `PasteMessage` 中的 CRLF 会归
 没有发送 bracketed-paste 标记、而把剪贴板内容拆成普通按键的宿主，普通 Enter 经过 100ms 输入稳定
 门禁：紧随其后的字符、CR 或 LF 会把该 Enter 归并为编辑器换行，只有独立 Enter 才提交；同一窗口内
 连续到达的按键被记为一次粘贴突发，突发空闲后按下面的阈值折叠为占位符，因此逐字送达的粘贴与带标记
-的粘贴得到同一份草稿（窗口内的一次 CRLF 只算一个换行，突发末尾的换行也不会提交）。该门禁只
+的粘贴得到同一份草稿（窗口内的一次 CRLF 只算一个换行，突发末尾的换行也不会提交）。突发期间除首次
+换行之前的首行外，其余按键先缓冲、不逐字上屏，结算时一次性插入占位符或原文。该门禁只
 覆盖普通 Editor Enter；Shift/Ctrl+Enter、Alt+Enter 和 Selector/Approval Enter 保持各自既有语义。
 
 Bracketed paste 与 Ctrl+V（剪贴板读取）在达到 3 行或超过 150 字符（`strip` 后）时，Editor 只插入

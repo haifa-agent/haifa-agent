@@ -877,8 +877,8 @@ class Tui4jCodingTerminalModelTest {
 
         Command scheduled = streamUnbracketedPaste(fixture, "first line", "second line", "third line");
 
-        // Nothing collapses while the keys are still arriving, so a fast typist keeps ordinary text.
-        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("first line\nsecond line\nthird line");
+        // Keys after the first break are held back, so a streamed paste never paints one character at a time.
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("first line\n");
         assertThat(fixture.controller.state().status()).isEqualTo("Idle");
 
         settleStreamedPaste(fixture, scheduled);
@@ -1959,17 +1959,9 @@ class Tui4jCodingTerminalModelTest {
 
     /** Runs the burst-end timer the model scheduled, so a streamed paste settles without waiting on real time. */
     private void settleStreamedPaste(Fixture fixture, Command scheduled) {
-        if (Command.isNone(scheduled)) {
-            return;
+        if (!Command.isNone(scheduled)) {
+            fixture.model.update(scheduled.execute());
         }
-        Message message = scheduled.execute();
-        if (message instanceof BatchMessage batch) {
-            for (Command child : batch.commands()) {
-                settleStreamedPaste(fixture, child);
-            }
-            return;
-        }
-        fixture.model.update(message);
     }
 
     private void commitPlainEnter(Fixture fixture) {
