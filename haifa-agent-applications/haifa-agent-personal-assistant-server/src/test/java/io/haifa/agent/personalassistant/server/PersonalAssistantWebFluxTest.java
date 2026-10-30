@@ -1168,11 +1168,18 @@ class PersonalAssistantWebFluxTest {
         return awaitStatus(runId, Set.of("COMPLETED", "FAILED", "CANCELLED", "TIMEOUT"));
     }
 
-    /** The one activity that projects the approved execution, addressed by tool name rather than by list position. */
+    /**
+     * The activity feed projects the execution tool under its readable title, so the approved execution is addressed
+     * by tool identity (machine name or display title) rather than by list position.
+     */
+    private static final Set<String> EXECUTION_TOOL_NAMES =
+            Set.of("execution_run", "Run an approved command or script");
+
     private static JsonNode executionActivity(JsonNode activities) {
         return java.util.stream.StreamSupport.stream(activities.spliterator(), false)
-                .filter(activity ->
-                        "execution_run".equals(activity.path("displayName").asText()))
+                .filter(activity -> "TOOL".equals(activity.path("kind").asText()))
+                .filter(activity -> EXECUTION_TOOL_NAMES.contains(
+                        activity.path("displayName").asText()))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("no execution_run activity in " + activities.toPrettyString()));
     }
