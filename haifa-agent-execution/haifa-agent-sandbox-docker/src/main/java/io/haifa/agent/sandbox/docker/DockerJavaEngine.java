@@ -57,7 +57,7 @@ final class DockerJavaEngine implements DockerEngine {
         } catch (RuntimeException exception) {
             throw failure(
                     "DOCKER_ENGINE_UNAVAILABLE",
-                    "Docker Engine is unavailable; start Docker Desktop in Linux containers mode and check the configured local endpoint",
+                    "Docker Engine is unavailable; start the local daemon (Docker Desktop in Linux containers mode on Windows) and check its endpoint",
                     exception);
         }
     }

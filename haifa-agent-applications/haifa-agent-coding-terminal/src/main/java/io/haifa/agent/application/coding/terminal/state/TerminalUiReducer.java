@@ -69,7 +69,7 @@ public final class TerminalUiReducer {
                     List.copyOf(loaded.resources()),
                     transcript,
                     sameRun ? state.pending() : List.of(),
-                    active.isPresent() ? "THINKING" : "Idle",
+                    active.isPresent() ? (sameRun ? state.status() : "THINKING") : "Idle",
                     state.editorBuffer(),
                     state.editorCursor(),
                     selectorAfterSessionLoad(state.selector(), view),
@@ -885,7 +885,7 @@ public final class TerminalUiReducer {
     private static String status(AgentRunEvent event, String fallback) {
         if (event.payload() instanceof RunEventPayloads.RunLifecycle lifecycle) {
             return switch (lifecycle.status()) {
-                case "RUNNING" -> "THINKING";
+                case "RUNNING" -> fallback.equalsIgnoreCase("WORKING") ? "WORKING" : "THINKING";
                 case "WAITING_APPROVAL", "WAITING_INTERACTION" -> "WAITING FOR APPROVAL";
                 default -> lifecycle.status();
             };

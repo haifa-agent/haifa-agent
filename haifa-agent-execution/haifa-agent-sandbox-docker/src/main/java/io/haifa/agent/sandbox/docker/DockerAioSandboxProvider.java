@@ -241,7 +241,7 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
         return warmContainers.size();
     }
 
-    URI managementAddress(DockerEngine.ContainerInspection inspected) {
+    private URI managementAddress(DockerEngine.ContainerInspection inspected) {
         // Docker Desktop container IPs live inside its VM and cannot be used by a native Windows JVM.
         if (!"npipe".equals(configuration.dockerEndpoint().getScheme())
                 && inspected.containerIp() != null

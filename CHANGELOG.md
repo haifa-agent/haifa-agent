@@ -2,6 +2,15 @@
 
 ## 0.1.4-SNAPSHOT - Unreleased
 
+- Session approval covers large file content previews when the full target remains certified by the Runtime;
+  incomplete or redacted targets still require individual approval. Failed automatic approvals fall back to a prompt.
+- Coding Terminal can reopen dismissed pending approval options with `/approval reopen` (or `/approval`), preserves
+  the draft, ignores stale query completions, and removes resolved approval loading placeholders.
+- Tool execution timers display `RUNNING` with the tool label; refreshing the same Run preserves its current
+  activity and clock instead of resetting the display to `THINKING`.
+- Docker AIO supports local Windows Docker Desktop named pipes, drive mount aliases and published loopback
+  management ports, with an opt-in real-daemon test for workspace read/write as UID/GID 1000.
+
 - Coding Agent offers a Linux x64 portable distribution through `ca-linux`, with a bundled native Java 21
   runtime, an executable POSIX launcher, platform-specific staging/cache, and offline archive verification.
 

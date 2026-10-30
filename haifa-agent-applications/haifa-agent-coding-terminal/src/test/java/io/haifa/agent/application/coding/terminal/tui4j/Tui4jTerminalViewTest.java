@@ -40,6 +40,21 @@ class Tui4jTerminalViewTest {
     private final Tui4jTerminalView view = new Tui4jTerminalView();
 
     @Test
+    void dismissedApprovalShowsTheCommandThatRestoresItsOptions() {
+        var state = withTranscript(
+                defaultState(),
+                List.of(new TranscriptItem(
+                        "interaction-1",
+                        TranscriptItem.Kind.APPROVAL,
+                        "Approval required",
+                        "Allow file change?",
+                        "PENDING",
+                        false)));
+        String rendered = Strip.strip(view.render(state, transcript(state), editor(120), true, false));
+        assertThat(rendered).contains("/approval reopen");
+    }
+
+    @Test
     void revealsTechnicalFactsSeparatelyFromTheToolResult() {
         var tool = item("tool-1", TranscriptItem.Kind.TOOL, "Read File · 阅读说明", "legacy body", "SUCCEEDED", true)
                 .withToolDetails(new ToolDetails(
@@ -475,7 +490,7 @@ class Tui4jTerminalViewTest {
     }
 
     @Test
-    void showsTheShortToolLabelBesideTheWorkingActivityTimer() {
+    void showsTheShortToolLabelBesideTheRunningActivityTimer() {
         TerminalUiState initial = TerminalUiState.initial(80, 24);
         TerminalUiState working = new TerminalUiState(
                 initial.header(),
@@ -498,7 +513,8 @@ class Tui4jTerminalViewTest {
                 initial.exitRequested());
 
         assertThat(view.render(working, transcript(working), editor(80), true, false, Duration.ofSeconds(12)))
-                .contains("WORKING (12s) · execution_run");
+                .contains("RUNNING (12s) · execution_run")
+                .doesNotContain("THINKING (", "WORKING (");
     }
 
     @Test
@@ -1837,7 +1853,7 @@ class Tui4jTerminalViewTest {
                         "Send Now enter",
                         "Edit alt+e",
                         "Cancel esc",
-                        "WORKING (12s)")
+                        "RUNNING (12s)")
                 .doesNotContain("enter steer");
     }
 

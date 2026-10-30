@@ -350,7 +350,7 @@ public final class CodingTerminalTestSupport {
                         modelOption, revision, true));
     }
 
-    static CodingSessionView activeView() {
+    public static CodingSessionView activeView() {
         return activeView(Optional.empty());
     }
 

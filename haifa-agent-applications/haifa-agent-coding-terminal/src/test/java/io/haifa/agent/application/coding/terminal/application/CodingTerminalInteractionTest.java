@@ -97,6 +97,27 @@ class CodingTerminalInteractionTest {
     }
 
     @Test
+    void reopeningWithoutAnActiveRunExplainsThatNoApprovalIsPending() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        var controller = controller(client);
+        controller.accept(input(TerminalInput.Kind.EXECUTE_COMMAND, "/approval reopen"));
+        assertThat(controller.state().status()).isEqualTo("No approval is pending");
+        assertThat(controller.state().selector()).isEmpty();
+        assertThat(client.pendingInteractionCalls).isZero();
+    }
+
+    @Test
+    void restoredPendingApprovalCanBeReopenedWithoutAnActiveRunSnapshot() {
+        FakeClient client = new FakeClient(view(Optional.of(approval())));
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+        controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
+        controller.accept(input(TerminalInput.Kind.EXECUTE_COMMAND, "/approval reopen"));
+        assertThat(controller.state().selector()).isPresent();
+        assertThat(client.respondedActions).isEmpty();
+    }
+
+    @Test
     void resettingSessionApprovalRunsInTheBackgroundAndKeepsTheComposerUsable() throws Exception {
         var started = new java.util.concurrent.CountDownLatch(1);
         var release = new java.util.concurrent.CountDownLatch(1);

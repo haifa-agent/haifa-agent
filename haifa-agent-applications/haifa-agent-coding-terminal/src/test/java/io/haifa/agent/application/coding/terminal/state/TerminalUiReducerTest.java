@@ -713,6 +713,31 @@ class TerminalUiReducerTest {
     }
 
     @Test
+    void refreshingTheSameRunPreservesTheExecutingToolAndItsClock() {
+        var sessionView = io.haifa.agent.application.coding.terminal.application.CodingTerminalTestSupport.activeView();
+        var loaded = reducer.reduce(
+                TerminalUiState.initial(120, 40), new TerminalUiAction.SessionLoaded(sessionView, List.of()));
+        var working = reducer.reduce(
+                loaded,
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "tool-start",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1", "execution_run", "STARTED", "NONE", "git status", ""))));
+
+        var refreshed = reducer.reduce(working, new TerminalUiAction.SessionLoaded(sessionView, List.of()));
+        var running = reducer.reduce(
+                refreshed,
+                new TerminalUiAction.RunEventReceived(
+                        event(2, "run-resumed", new RunEventPayloads.RunLifecycle("RUNNING", 2, "NONE"))));
+
+        assertThat(refreshed.status()).isEqualTo("WORKING");
+        assertThat(refreshed.activity()).isEqualTo(working.activity());
+        assertThat(running.status()).isEqualTo("WORKING");
+        assertThat(running.activity()).isEqualTo(working.activity());
+    }
+
+    @Test
     void rendersStableToolFailureCodeWithAnActionableRecoveryHint() {
         TerminalUiState failed = reducer.reduce(
                 TerminalUiState.initial(120, 40),

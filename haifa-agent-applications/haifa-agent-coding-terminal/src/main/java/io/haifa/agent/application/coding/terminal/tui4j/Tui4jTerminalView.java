@@ -1159,7 +1159,8 @@ final class Tui4jTerminalView {
     private String timedActivityStatus(String status, Duration elapsed, String activityLabel) {
         long seconds = Math.max(1, elapsed.toSeconds());
         String duration = seconds < 60 ? seconds + "s" : "%dm %ds".formatted(seconds / 60, seconds % 60);
-        String value = status.toUpperCase(Locale.ROOT) + " (" + duration + ")";
+        String phase = status.equalsIgnoreCase("WORKING") ? "RUNNING" : status.toUpperCase(Locale.ROOT);
+        String value = phase + " (" + duration + ")";
         if (status.equalsIgnoreCase("working") && !activityLabel.isBlank()) {
             return value + " · " + sanitize(activityLabel);
         }

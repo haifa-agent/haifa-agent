@@ -89,6 +89,13 @@ Working Directory 校验也不等价于 Kernel-enforced Filesystem Isolation。
 - `DockerJavaEngine`：Docker Engine API；
 - `HttpAioClient` 和 `AioClient`：固定 AIO HTTP 子集。
 
+本地 Engine 支持 Linux Unix socket 和原生 Windows Docker Desktop 命名管道（Linux containers）。
+产品装配可用 `DockerAioSandboxConfiguration.localDockerSocket()` 解析当前平台默认值或可信
+`DOCKER_HOST`，再传入原有配置构造器。Windows 盘符挂载接受精确 Desktop 路径别名，AIO 管理请求
+使用发布到本机回环地址的端口；UNC、远端 TCP/SSH Engine 不在支持范围内。
+连接失败保持容器执行失败，不能回退到 `host-guarded`。装配前置条件和需显式开启的真实环境读写用例见
+[Docker AIO 模块说明](../../haifa-agent-execution/haifa-agent-sandbox-docker/README.md)。
+
 ### 生命周期
 
 Provider 支持两种模式：

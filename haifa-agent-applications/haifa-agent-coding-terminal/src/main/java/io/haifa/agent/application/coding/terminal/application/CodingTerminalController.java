@@ -1737,17 +1737,27 @@ public final class CodingTerminalController implements AutoCloseable {
         return true;
     }
 
+    private Optional<AgentRunId> approvalRunId() {
+        return state.currentRunId().or(() -> state.session()
+                .flatMap(CodingSessionView::pendingInteraction)
+                .map(InteractionView::runId));
+    }
+
     private void resetSessionApproval(String argument) {
-        if ((argument.isBlank() || argument.equals("reopen"))
-                && state.currentRunId().isPresent()) {
-            AgentRunId runId = state.currentRunId().orElseThrow();
+        if (argument.isBlank() || argument.equals("reopen")) {
+            Optional<AgentRunId> pendingRun = approvalRunId();
+            if (pendingRun.isEmpty()) {
+                apply(new TerminalUiAction.StatusChanged("No approval is pending"));
+                return;
+            }
+            AgentRunId runId = pendingRun.orElseThrow();
             apply(new TerminalUiAction.StatusChanged("Loading pending approval"));
             submitControlEffect(
                     () -> {
                         Optional<CodingApprovalPrompt> pending =
                                 client.pendingInteraction(runId).flatMap(client::prepareApproval);
                         return () -> {
-                            if (state.currentRunId().filter(runId::equals).isEmpty()) return;
+                            if (approvalRunId().filter(runId::equals).isEmpty()) return;
                             pending.filter(value -> value.interaction().state()
                                             == io.haifa.agent.runtime.api.InteractionState.PENDING)
                                     .filter(value -> interactionStillPending(new InteractionHydrationRequest(
@@ -1763,7 +1773,7 @@ public final class CodingTerminalController implements AutoCloseable {
         }
         if (!argument.equals("reset") || state.session().isEmpty()) {
             apply(new TerminalUiAction.StatusChanged(
-                    "Use /approval to reopen a pending request or /approval reset to ask each time again"));
+                    "Use /approval reopen for options or /approval reset to ask each time"));
             return;
         }
         AgentSessionId sessionId = state.session().orElseThrow().summary().sessionId();
