@@ -258,5 +258,29 @@ class UpdaterTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'version label'):
             updater.latest_label(Path('/worktrees/bad name!'), 'd67c751')
 
+    def test_path_with_addition_keeps_both_channels_runnable(self):
+        install = str(self.install)
+        stable = Path(install) / 'haifa-coding-agent-v0.1.4-SNAPSHOT' / 'bin'
+        latest = Path(install) / 'haifa-coding-agent-latest' / 'bin'
+
+        added = updater.path_with_addition(f'C:\\Tools;{stable}', latest)
+        self.assertEqual(added, f'C:\\Tools;{stable};{latest}')
+        self.assertEqual(updater.path_with_addition(added, latest), added)
+        self.assertEqual(added.count(str(latest)), 1)
+
+    def test_packaged_jar_must_match_the_built_checkout_jar(self):
+        built = self.root / self.jar_name
+        built.write_bytes(b'built jar')
+        archive = self.root / 'package.zip'
+        with zipfile.ZipFile(archive, 'w') as package:
+            package.writestr(self.folder + '/lib/' + self.jar_name, b'built jar')
+
+        updater.verify_packaged_jar(archive, self.folder, built)
+
+        with zipfile.ZipFile(archive, 'w') as package:
+            package.writestr(self.folder + '/lib/' + self.jar_name, b'stale jar')
+        with self.assertRaisesRegex(RuntimeError, 'differs'):
+            updater.verify_packaged_jar(archive, self.folder, built)
+
 if __name__ == '__main__':
     unittest.main()

@@ -144,6 +144,19 @@ def path_with_install(old_path, install_root, new_bin):
     return ';'.join(result)
 
 
+def path_with_addition(old_path, new_bin):
+    """Add one bin directory once, keeping every other entry (both channels stay runnable)."""
+    entries = [entry for entry in old_path.split(';') if entry]
+    wanted = os.path.normcase(os.path.normpath(str(new_bin)))
+    present = {
+        os.path.normcase(os.path.normpath(os.path.expandvars(entry.strip().strip('"'))))
+        for entry in entries
+    }
+    if wanted in present:
+        return old_path
+    return ';'.join([*entries, str(new_bin)])
+
+
 def read_user_path():
     import winreg
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, 'Environment') as key:
@@ -219,6 +232,14 @@ def smoke(checkout, directory, launcher='haifa.bat'):
         )
         if result.returncode or '--workspace' not in result.stdout:
             raise RuntimeError(f'CA launcher smoke failed (exit {result.returncode}); deployment cancelled')
+
+
+def verify_packaged_jar(archive, folder, built_jar):
+    """The archive must carry exactly the JAR produced by the selected checkout."""
+    with zipfile.ZipFile(archive) as package:
+        packaged = package.read(f'{folder}/lib/{built_jar.name}')
+    if hashlib.sha256(packaged).hexdigest() != sha256_file(built_jar):
+        raise RuntimeError('Package JAR differs from selected checkout build')
 
 
 def latest_label(source, head):
@@ -419,7 +440,7 @@ def main():
             'operation': operation,
             'build': 'invoke-haifa-maven.ps1 --layer L2 -- -pl :haifa-agent-cli -am -DskipUnitTests=true clean package',
             'package': 'dist-support/scripts/build-distributions.ps1 ca',
-            'path_scope': 'unchanged' if latest else 'User', 'dry_run': args.dry_run}
+            'path_scope': 'User (append)' if latest else 'User', 'dry_run': args.dry_run}
     print(json.dumps(plan, indent=2), flush=True)
     if args.dry_run:
         return
@@ -433,10 +454,10 @@ def main():
     stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '-' + uuid.uuid4().hex[:8]
     report_dir = repo / 'local-tmp' / 'artifacts' / f'ca-update-{stamp}'
     report_dir.mkdir(parents=True)
+    old_path, value_type = read_user_path()
     if latest:
-        old_path, value_type, new_path = None, None, None
+        new_path = path_with_addition(old_path, target / 'bin')
     else:
-        old_path, value_type = read_user_path()
         new_path = path_with_install(old_path, install_root, target / 'bin')
     report = {**plan, 'commit': head, 'dirty_source': dirty, 'user_path_before': old_path,
               'path_registry_type': value_type, 'status': 'started'}
@@ -450,14 +471,16 @@ def main():
             raise RuntimeError('Source HEAD/version changed during build; deployment cancelled')
         archive = report_dir / f'haifa-coding-agent-windows-x64-v{version}.zip'
         built_jar = source / 'haifa-agent-applications/haifa-agent-cli/target' / f'haifa-agent-cli-{version}.jar'
-        with zipfile.ZipFile(archive) as package:
-            packaged_bytes = package.read(f'{target.name}/lib/{built_jar.name}')
-            if hashlib.sha256(packaged_bytes).hexdigest() != sha256(built_jar):
-                raise RuntimeError('Package JAR differs from selected checkout build')
+        folder = f'haifa-coding-agent-v{version}'
+        verify_packaged_jar(archive, folder, built_jar)
         report.update({'archive': str(archive), 'archive_sha256': sha256_file(archive)})
         if latest:
             report.update(assemble_latest(archive, install_root, version, label, report_dir))
-            report.update({'status': 'success'})
+            if read_user_path() != (old_path, value_type):
+                raise RuntimeError('User PATH changed concurrently; latest package installed but PATH not changed')
+            if new_path != old_path:
+                write_user_path(new_path, value_type)
+            report.update({'status': 'success', 'user_path_after': new_path})
         else:
             report.update(deploy(archive, install_root, version, report_dir))
             # Refuse to overwrite a simultaneous edit by another installer/settings window.
@@ -470,7 +493,8 @@ def main():
         if latest:
             print(f'[OK] {report["mode"]}: {target}\n[OK] version {label}\n'
                   f'[OK] launcher: {target / "bin" / LATEST_LAUNCHER}\n'
-                  '[INFO] User PATH and the versioned installation are unchanged.')
+                  f'[OK] User PATH: {target / "bin"}\n'
+                  '[INFO] The versioned installation is unchanged; reopen your terminal, then run haifa-latest.')
         else:
             print(f'[OK] {report["mode"]}: {target}\n[OK] User PATH: {target / "bin"}\nReopen your terminal to use the updated PATH.')
     except Exception as exc:
