@@ -9,16 +9,12 @@ import io.haifa.agent.application.project.product.coding.client.LocalCodingSessi
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.session.AgentSessionId;
-import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelCapability;
-import io.haifa.agent.model.api.ModelFinishReason;
 import io.haifa.agent.model.api.ModelMessage;
 import io.haifa.agent.model.api.ModelMessageRole;
-import io.haifa.agent.model.api.ModelToolCall;
-import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.RunEventCursor;
 import io.haifa.agent.runtime.api.RunEventPayloads;
@@ -44,7 +40,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
-import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -716,24 +711,11 @@ class LocalCodingProductAssemblyTest {
     }
 
     private static void await(CountDownLatch latch) {
-        try {
-            if (!latch.await(10, TimeUnit.SECONDS)) throw new AssertionError("model release timed out");
-        } catch (InterruptedException exception) {
-            Thread.currentThread().interrupt();
-            throw new AssertionError("model wait interrupted", exception);
-        }
+        CodingHostTestFixture.await(latch);
     }
 
     private static AgentChatResponse response(String text) {
-        return new AgentChatResponse(
-                "stub-" + text,
-                "stub-model",
-                text,
-                List.of(),
-                ModelFinishReason.STOP,
-                ModelUsage.unpriced(1, 1),
-                "stub",
-                Map.of());
+        return CodingHostTestFixture.response(text);
     }
 
     private static AgentChatResponse readWorkspace(String id, Path workspace) {
@@ -744,19 +726,11 @@ class LocalCodingProductAssemblyTest {
     }
 
     private static AgentChatResponse toolResponse(String id, String name, Map<String, Object> arguments) {
-        return new AgentChatResponse(
-                id,
-                "stub-model",
-                "",
-                List.of(new ModelToolCall(new ProviderToolCallCorrelationId(id + "-call"), name, arguments)),
-                ModelFinishReason.TOOL_CALLS,
-                ModelUsage.unpriced(1, 1),
-                "stub",
-                Map.of());
+        return CodingHostTestFixture.toolResponse(id, name, arguments);
     }
 
     private static CliConfiguration sqliteConfiguration(Path database) {
-        return configuration(ProjectPersistenceConfiguration.sqlite(database, "env://HAIFA_TEST_CONTINUATION_KEY"));
+        return CodingHostTestFixture.sqliteConfiguration(database);
     }
 
     private static CliConfiguration memoryConfiguration() {
@@ -783,7 +757,6 @@ class LocalCodingProductAssemblyTest {
     }
 
     private static AesGcmModelContinuationProtector protector() {
-        return new AesGcmModelContinuationProtector(
-                new SecretKeySpec(new byte[32], "AES"), new java.security.SecureRandom());
+        return CodingHostTestFixture.protector();
     }
 }

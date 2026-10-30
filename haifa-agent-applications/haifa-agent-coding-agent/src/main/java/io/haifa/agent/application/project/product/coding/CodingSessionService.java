@@ -251,6 +251,30 @@ public final class CodingSessionService {
         return new CodingSessionPage(summaries, next, hasMore);
     }
 
+    /** Non-reconciling read used only to capture recovery candidates before existing recovery semantics run. */
+    public CodingSessionPage listSessionsForRecovery(ProjectId projectId, int limit) {
+        return listSessionsForRecovery(projectId, CodingSessionQuery.firstPage(limit));
+    }
+
+    /** Non-reconciling read with the existing bounded query/cursor projection. */
+    public CodingSessionPage listSessionsForRecovery(ProjectId projectId, CodingSessionQuery query) {
+        Objects.requireNonNull(projectId, "projectId must not be null");
+        Objects.requireNonNull(query, "query must not be null");
+        TrustedProductCaller caller = callers.current();
+        List<CodingSessionActivity> values =
+                codingSessions.listActivities(caller.tenant(), caller.principal(), projectId, query);
+        boolean hasMore = values.size() > query.limit();
+        List<CodingSessionActivity> pageValues = hasMore ? values.subList(0, query.limit()) : values;
+        List<CodingSessionSummary> summaries =
+                pageValues.stream().map(this::summary).toList();
+        Optional<CodingSessionCursor> next = hasMore && !pageValues.isEmpty()
+                ? Optional.of(new CodingSessionCursor(
+                        pageValues.getLast().lastActivityAt(),
+                        pageValues.getLast().sessionId()))
+                : Optional.empty();
+        return new CodingSessionPage(summaries, next, hasMore);
+    }
+
     public CodingSessionView openSession(AgentSessionId sessionId) {
         TrustedProductCaller caller = callers.current();
         ProjectProductSession product = requireProductSession(sessionId, caller);

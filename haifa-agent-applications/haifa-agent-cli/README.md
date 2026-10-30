@@ -147,6 +147,20 @@ Tool 专属协议由冻结 Tool Definition 披露，复杂计划与结果复核�
 观察统计、截断标记和可选 Artifact Ref。模型返回空终态时，Runtime 只在同一冻结 Binding 上默认重试
 两次，不切换 Provider/Model，也不会从空响应调度 Tool。
 
+## CA Host mode
+
+`powershell
+haifa-coding host --workspace D:\repos\my-project --bind 127.0.0.1 --port 17861
+`
+
+Host is an explicit foreground mode built from the same CLI distribution and product assembly. It requires durable
+SQLite persistence, loads only explicit --config or the user configuration (never a workspace config overlay), and
+binds only loopback addresses. It exposes the reviewed CA Host JSON-RPC/SSE protocol under /v1/rpc, /v1/events
+and /health; the TUI remains a separate client mode and no Remote TUI is implemented here. Closing an observation,
+unsubscribing, or disconnecting a client never cancels a Run; stopping the Host is a separate explicit process action.
+
+Parallel edits in one physical workspace require independent manual worktrees. Host does not allocate worktrees,
+detect same-directory write conflicts, or provide writer/reader ownership roles.
 ## 构建与运行
 
 ### 本地发行目录（macOS / Linux）

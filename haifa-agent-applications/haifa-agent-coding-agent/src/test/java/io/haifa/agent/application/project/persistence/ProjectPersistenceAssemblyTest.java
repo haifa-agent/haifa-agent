@@ -487,6 +487,58 @@ class ProjectPersistenceAssemblyTest {
     }
 
     @Test
+    void recoveryProjectionExposesTheOriginalActiveRunWithoutReconciling() {
+        ProductFixture fixture = productFixture();
+        CapturingRuntime runtime = new CapturingRuntime();
+        TestIds ids = new TestIds("recovery-projection");
+        try (ProjectPersistenceAssembly assembly =
+                ProjectPersistenceAssembly.open(ProjectPersistenceConfiguration.memory(), CLOCK, ids, null)) {
+            CodingSessionService coding = fixture.codingService(assembly, runtime, ids);
+            var created = coding.createSession(fixture.projectId, "recover this run", List.of(), "recovery-create");
+            AgentRunId original = created.activeRun().orElseThrow().runId();
+
+            var page = coding.listSessionsForRecovery(fixture.projectId, 10);
+
+            assertThat(page.items()).singleElement().satisfies(summary -> assertThat(summary.activeRunId())
+                    .contains(original));
+            assertThat(runtime.startCount()).isEqualTo(1);
+        }
+    }
+
+    @Test
+    void hostListBoundaryReportsPageOneHundredAsTruncated() {
+        ProductFixture fixture = productFixture();
+        CapturingRuntime runtime = new CapturingRuntime();
+        TestIds ids = new TestIds("list-boundary");
+        try (ProjectPersistenceAssembly assembly =
+                ProjectPersistenceAssembly.open(ProjectPersistenceConfiguration.memory(), CLOCK, ids, null)) {
+            for (int index = 0; index < 101; index++) {
+                assembly.codingSessions()
+                        .createActivity(new CodingSessionActivity(
+                                new AgentSessionId("boundary-" + index),
+                                fixture.projectId,
+                                TENANT,
+                                PRINCIPAL,
+                                "session " + index,
+                                io.haifa.agent.core.session.AgentSessionStatus.ACTIVE,
+                                Optional.empty(),
+                                OptionalLong.empty(),
+                                Optional.empty(),
+                                NOW,
+                                NOW.plusMillis(index),
+                                0));
+            }
+            CodingSessionService coding = fixture.codingService(assembly, runtime, ids);
+
+            var page = coding.listSessions(
+                    fixture.projectId, new CodingSessionQuery(Optional.empty(), Optional.empty(), 100));
+
+            assertThat(page.items()).hasSize(100);
+            assertThat(page.hasMore()).isTrue();
+        }
+    }
+
+    @Test
     void reconcileSettlesAnAbandonedActiveRunAndClearsThePointer() {
         ProductFixture fixture = productFixture();
         CapturingRuntime runtime = new CapturingRuntime();

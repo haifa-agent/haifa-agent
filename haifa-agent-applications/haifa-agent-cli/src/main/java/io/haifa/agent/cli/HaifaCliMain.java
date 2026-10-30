@@ -49,6 +49,9 @@ public final class HaifaCliMain {
     }
 
     int run(String[] arguments, PrintStream output, PrintStream error) {
+        if (arguments.length > 0 && "host".equals(arguments[0])) {
+            return runHost(java.util.Arrays.copyOfRange(arguments, 1, arguments.length), output, error);
+        }
         try {
             CliArguments parsed = CliArguments.parse(arguments);
             if (parsed.help()) {
@@ -311,9 +314,86 @@ public final class HaifaCliMain {
         }
     }
 
+    private int runHost(String[] arguments, PrintStream output, PrintStream error) {
+        try {
+            CodingHostArguments host = CodingHostArguments.parse(arguments, Path.of("."));
+            if (host.help()) {
+                output.println(hostUsage());
+                return 0;
+            }
+            try (CodingHostServer server =
+                    CodingHostServer.start(host.workspace(), host.config(), host.bind(), host.port())) {
+                output.println("CA Host listening on http://" + host.bind() + ":" + server.port());
+                output.println(
+                        "Parallel edits in one physical directory require independent manual worktrees; Host does not create worktrees or detect concurrent write conflicts.");
+                Thread shutdown =
+                        Thread.ofPlatform().name("haifa-coding-host-shutdown").unstarted(server::close);
+                Runtime.getRuntime().addShutdownHook(shutdown);
+                try {
+                    server.awaitTermination();
+                } finally {
+                    try {
+                        Runtime.getRuntime().removeShutdownHook(shutdown);
+                    } catch (IllegalStateException shuttingDown) {
+                        // JVM shutdown is already running the hook.
+                    }
+                }
+            }
+            return 0;
+        } catch (IllegalArgumentException exception) {
+            logRejected("CLI_HOST_ARGUMENT_REJECTED", exception);
+            error.println("Invalid host command: " + safeHostArgument(exception));
+            return 1;
+        } catch (RuntimeException exception) {
+            logRejected("CLI_HOST_FAILED", exception);
+            error.println(safeHostFailure(exception));
+            return 1;
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            return 1;
+        }
+    }
+
+    private static String safeHostArgument(IllegalArgumentException exception) {
+        String message = exception.getMessage();
+        if (message != null
+                && (message.startsWith("unknown host option")
+                        || message.startsWith("missing value for")
+                        || message.startsWith("host bind")
+                        || message.startsWith("host port"))) {
+            return message;
+        }
+        return "invalid arguments";
+    }
+
+    private static String safeHostFailure(RuntimeException exception) {
+        String message = exception.getMessage();
+        if (message != null
+                && (message.startsWith("DATABASE_OWNED_BY_ANOTHER_PROCESS")
+                        || message.startsWith("HOST_DURABLE_PERSISTENCE_REQUIRED")
+                        || message.startsWith("HOST_BIND_"))) {
+            return message;
+        }
+        return "CA Host failed to start";
+    }
+
+    private static String hostUsage() {
+        return """
+                Usage: haifa-coding host [options]
+                      --workspace <path>     Workspace root (default: current directory)
+                      --config <path>        Explicit Host configuration; otherwise user config only
+                      --bind <address>       Loopback address (default: 127.0.0.1)
+                      --port <port>          Port (default: 17861)
+                  -h, --help                 Show this help
+                Parallel edits in one physical directory require independent manual worktrees;
+                Host does not create worktrees or detect concurrent write conflicts.
+                """;
+    }
+
     static String usage() {
         return """
                 Usage: haifa-coding [--terminal | -m <task>] [options]
+                       haifa-coding host [options]
                        haifa-coding resume
                        haifa-coding resume --last [<prompt>]
                        haifa-coding resume <session-id> [<prompt>]
