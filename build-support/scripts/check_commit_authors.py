@@ -15,7 +15,7 @@ import sys
 from dataclasses import dataclass
 from typing import Sequence
 
-DENY_TOKENS = ("cursoragent", "cursor-agent", "cursor[bot]")
+DENY_TOKENS = ("cursoragent", "cursor-agent", "cursor[bot]", "copilot", "claude")
 
 TRAILER_PATTERN = re.compile(
     r"^(?:co-authored-by|co-developed-by|authored-by)\s*:\s*(?P<value>.+)$",
