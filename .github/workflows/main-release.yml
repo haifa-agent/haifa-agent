@@ -91,6 +91,15 @@ jobs:
               run: |
                   version=$(sed -n 's/.*<revision>\(.*\)<\/revision>.*/\1/p' pom.xml | head -n1)
                   java -jar "haifa-agent-applications/haifa-agent-cli/target/haifa-agent-cli-${version}.jar" --help
+            - name: Upload the SDK package for the release job
+              if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+              uses: actions/upload-artifact@v4
+              with:
+                  name: haifa-sdk-package-${{ github.sha }}
+                  path: |
+                      dist-support/output/haifa-agent-sdk-*.zip
+                      dist-support/output/sha256sums.txt
+                  if-no-files-found: error
 
     release-gate:
         name: Release gate
@@ -134,24 +143,38 @@ jobs:
                   node-version: "22"
                   cache: npm
                   cache-dependency-path: haifa-agent-applications/haifa-agent-personal-assistant-web/package-lock.json
-            - name: Build CLI, Personal Assistant, and SDK artifacts
+            - name: Build CLI and Personal Assistant artifacts
               run: |
-                  $sdkModules = python dist-support/scripts/package_distributions.py sdk-modules
                   .\mvnw.cmd --batch-mode --no-transfer-progress -T 2 `
-                    -pl "$sdkModules,:haifa-agent-cli,:haifa-agent-personal-assistant-server" `
+                    -pl ":haifa-agent-cli,:haifa-agent-personal-assistant-server" `
                     -am -Prelease-artifacts verify
             - name: Install Personal Assistant Web dependencies
               working-directory: haifa-agent-applications/haifa-agent-personal-assistant-web
               run: npm ci
-            - name: Package Windows distributions
+            - name: Package the Windows-host targets and the platform-neutral server package
               shell: pwsh
               run: |
                   $version = if ($env:GITHUB_REF -like 'refs/tags/v*') { $env:GITHUB_REF_NAME.Substring(1) } else { $null }
                   if ($version) {
-                    python dist-support/scripts/package_distributions.py all --version $version
+                    python dist-support/scripts/package_distributions.py ca pa pa:linux-x64 --version $version
                   } else {
-                    python dist-support/scripts/package_distributions.py all
+                    python dist-support/scripts/package_distributions.py ca pa pa:linux-x64
                   }
+            - name: Collect the SDK package built on Linux
+              if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+              uses: actions/download-artifact@v4
+              with:
+                  name: haifa-sdk-package-${{ github.sha }}
+                  path: dist-support/sdk-package
+            - name: Merge the SDK package into the release set
+              if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  cp dist-support/sdk-package/*.zip dist-support/output/
+                  cat dist-support/sdk-package/sha256sums.txt dist-support/output/sha256sums.txt \
+                    | sort -u > dist-support/output/sha256sums.merged
+                  mv dist-support/output/sha256sums.merged dist-support/output/sha256sums.txt
             - name: Verify extracted Windows distributions
               run: python dist-support/scripts/smoke_distributions.py verify
             - name: Upload Windows packages

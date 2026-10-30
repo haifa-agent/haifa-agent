@@ -16,6 +16,10 @@ SPEC = importlib.util.spec_from_file_location("release_distributions", SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 
+# The packager puts its own directory on sys.path, so the shared contract module used
+# to build realistic fixtures is importable right after the packager is loaded.
+import distribution_contracts as CONTRACTS  # noqa: E402
+
 
 class ReleaseDistributionsTest(unittest.TestCase):
     def fixture(self, root):
@@ -144,15 +148,28 @@ class PersonalAssistantPackageShapeTest(unittest.TestCase):
 
 
 class CodingAgentLinuxPackageTest(unittest.TestCase):
+    def cli_jar(self, root):
+        return root / "haifa-agent-applications/haifa-agent-cli/target/haifa-agent-cli-0.1.4.jar"
+
+    def write_cli_jar(self, root):
+        jar = self.cli_jar(root)
+        jar.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(jar, "w") as shaded:
+            shaded.writestr(
+                "META-INF/MANIFEST.MF",
+                "Manifest-Version: 1.0\nMain-Class: io.haifa.agent.cli.HaifaCliMain\n",
+            )
+            for entry in CONTRACTS.REQUIRED_SHADED_JAR_ENTRIES:
+                shaded.writestr(entry, b"class")
+        return jar
+
     def fixture(self, root, target):
         repository = SCRIPT.parents[2]
         shutil.copytree(repository / "dist-support/templates", root / "dist-support/templates")
         config = root.joinpath(*MODULE.CA_CONFIG_SOURCE)
         config.parent.mkdir(parents=True)
         shutil.copy2(repository.joinpath(*MODULE.CA_CONFIG_SOURCE), config)
-        jar = root / "haifa-agent-applications/haifa-agent-cli/target/haifa-agent-cli-0.1.4.jar"
-        jar.parent.mkdir(parents=True)
-        jar.write_bytes(b"verified jar")
+        self.write_cli_jar(root)
         jre = root / "work/jre" / target
         (jre / "bin").mkdir(parents=True)
         executable = "java.exe" if target == "windows-x64" else "java"
@@ -179,9 +196,20 @@ class CodingAgentLinuxPackageTest(unittest.TestCase):
                 prefix = "haifa-coding-agent-v0.1.4/"
                 for executable in ("bin/haifa", "jre/bin/java"):
                     self.assertEqual(bundle.getmember(prefix + executable).mode, 0o755)
-                self.assertEqual(bundle.extractfile(prefix + "lib/haifa-agent-cli-0.1.4.jar").read(), b"verified jar")
+                self.assertEqual(
+                    bundle.extractfile(prefix + "lib/haifa-agent-cli-0.1.4.jar").read(),
+                    self.cli_jar(root).read_bytes(),
+                )
                 self.assertIn(b"SQLITE_WITH_JSONL", bundle.extractfile(prefix + "haifa-coding.yaml").read())
                 self.assertNotIn(prefix + "bin/haifa.bat", bundle.getnames())
+
+    def test_refuses_a_thin_cli_jar(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            jre = self.fixture(root, "windows-x64")
+            self.cli_jar(root).write_bytes(b"thin jar")
+            with self.assertRaisesRegex(RuntimeError, "invalid"):
+                MODULE.package_ca(root, root / "work", root / "output", "0.1.4", jre)
 
     def test_windows_ca_keeps_zip_layout_and_platform_staging_is_independent(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -196,48 +224,123 @@ class CodingAgentLinuxPackageTest(unittest.TestCase):
                 self.assertIn("haifa-coding-agent-v0.1.4/bin/haifa.bat", bundle.namelist())
             self.assertEqual(linux_marker.read_bytes(), b"linux staging")
 
-    def test_native_runtime_and_action_reject_wrong_os_or_architecture(self):
-        for system, machine, expected in (("Linux", "x86_64", "linux-x64"), ("Windows", "AMD64", "windows-x64")):
-            with patch.object(MODULE.platform, "system", return_value=system), patch.object(
-                    MODULE.platform, "machine", return_value=machine):
-                self.assertEqual(MODULE.native_runtime_platform(), expected)
-                wrong_action = "ca" if system == "Linux" else "ca-linux"
-                with patch.object(MODULE.sys, "argv", ["packager", wrong_action]), self.assertRaises(SystemExit) as error:
-                    MODULE.main()
-                self.assertEqual(error.exception.code, 2)
-        with patch.object(MODULE.platform, "machine", return_value="aarch64"), self.assertRaises(ValueError):
-            MODULE.native_runtime_platform()
-        with patch.object(MODULE.platform, "system", return_value="Windows"), patch.object(
-                MODULE.platform, "machine", return_value=""):
-            self.assertEqual(MODULE.native_runtime_platform(), "windows-x64")
-
-    def test_cached_jre_is_platform_specific_and_rejects_wrong_binary_or_java_version(self):
+    def test_cached_jre_is_reused_only_with_the_current_module_set(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             jre = self.fixture(root, "linux-x64")
-            with patch.object(MODULE, "native_runtime_platform", return_value="linux-x64"):
-                self.assertEqual(MODULE.ensure_jre(root, root / "work"), jre)
-                valid_binary = (jre / "bin/java").read_bytes()
-                (jre / "bin/java").write_bytes(b"MZ")
-                with self.assertRaisesRegex(ValueError, "does not match"):
-                    MODULE.ensure_jre(root, root / "work")
-                (jre / "bin/java").write_bytes(valid_binary)
-                (jre / "release").write_text('JAVA_VERSION="25"\n', encoding="utf-8")
-                with self.assertRaisesRegex(ValueError, "Java 21"):
-                    MODULE.ensure_jre(root, root / "work")
-                (jre / "bin/java").write_bytes(valid_binary[:18] + (183).to_bytes(2, "little") + valid_binary[20:])
-                with self.assertRaisesRegex(ValueError, "x64 architecture"):
-                    MODULE.ensure_jre(root, root / "work")
+            work = root / "work"
+            marker = MODULE.jre_module_marker(work, "linux-x64")
+            marker.write_text(" ".join(MODULE.JRE_MODULES) + "\n", encoding="utf-8")
+            with patch.object(MODULE.subprocess, "run") as jlink:
+                self.assertEqual(MODULE.ensure_jre(work, "linux-x64"), jre)
+            jlink.assert_not_called()
 
-    def test_checksums_include_both_archive_formats(self):
+            # A changed module set must rebuild instead of reusing a stale runtime.
+            marker.write_text("java.base\n", encoding="utf-8")
+            with patch.object(
+                MODULE.subprocess, "run", return_value=subprocess.CompletedProcess(["jlink"], 3)
+            ) as jlink, self.assertRaises(SystemExit) as error:
+                MODULE.ensure_jre(work, "linux-x64")
+            self.assertEqual(error.exception.code, 3)
+            jlink.assert_called_once()
+
+    def test_validate_jre_rejects_wrong_binary_architecture_and_java_version(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            jre = self.fixture(root, "linux-x64")
+            valid_binary = (jre / "bin/java").read_bytes()
+            (jre / "bin/java").write_bytes(b"MZ")
+            with self.assertRaisesRegex(ValueError, "does not match"):
+                MODULE.validate_jre(jre, "linux-x64")
+            (jre / "bin/java").write_bytes(
+                valid_binary[:18] + (183).to_bytes(2, "little") + valid_binary[20:]
+            )
+            with self.assertRaisesRegex(ValueError, "x64 architecture"):
+                MODULE.validate_jre(jre, "linux-x64")
+            (jre / "bin/java").write_bytes(valid_binary)
+            (jre / "release").write_text('JAVA_VERSION="25"\n', encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "Java 21"):
+                MODULE.validate_jre(jre, "linux-x64")
+
+    def test_checksums_cover_both_formats_for_the_packaged_version_only(self):
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary)
-            for name in ("windows.zip", "linux.tar.gz"):
+            current = (
+                "haifa-coding-agent-windows-x64-v0.1.4.zip",
+                "haifa-coding-agent-linux-x64-v0.1.4.tar.gz",
+            )
+            stale = "haifa-coding-agent-windows-x64-v0.1.3.zip"
+            for name in (*current, stale):
                 (output / name).write_bytes(name.encode())
-            MODULE.write_checksums(output)
+            MODULE.write_checksums(output, "0.1.4")
             lines = (output / "sha256sums.txt").read_text().splitlines()
-            self.assertEqual(lines, [f"{MODULE.compute_sha256(output / name)}  {name}"
-                                     for name in ("linux.tar.gz", "windows.zip")])
+            self.assertEqual(
+                lines,
+                [f"{MODULE.sha256_file(output / name)}  {name}" for name in reversed(current)],
+            )
+            self.assertNotIn(stale, "\n".join(lines))
+
+
+class TargetMatrixTest(unittest.TestCase):
+    def host(self, system, machine):
+        return (
+            patch.object(MODULE.platform, "system", return_value=system),
+            patch.object(MODULE.platform, "machine", return_value=machine),
+        )
+
+    def test_host_platform_is_windows_or_linux_x64(self):
+        for system, machine, expected in (("Linux", "x86_64", "linux-x64"), ("Windows", "AMD64", "windows-x64")):
+            patches = self.host(system, machine)
+            with patches[0], patches[1]:
+                self.assertEqual(MODULE.native_runtime_platform(), expected)
+        patches = self.host("Windows", "")
+        with patches[0], patches[1]:
+            self.assertEqual(MODULE.native_runtime_platform(), "windows-x64")
+        patches = self.host("Linux", "aarch64")
+        with patches[0], patches[1], self.assertRaisesRegex(ValueError, "native Windows x64 or Linux x64"):
+            MODULE.native_runtime_platform()
+
+    def test_macos_host_explains_why_no_release_package_exists(self):
+        patches = self.host("Darwin", "arm64")
+        with patches[0], patches[1], self.assertRaisesRegex(ValueError, "signed and notarized"):
+            MODULE.native_runtime_platform()
+
+    def test_all_expands_to_host_targets_plus_the_platform_neutral_sdk(self):
+        patches = self.host("Windows", "AMD64")
+        with patches[0], patches[1]:
+            self.assertEqual(
+                MODULE.resolve_targets(["all"]),
+                [("ca", "windows-x64"), ("pa", "windows-x64"), ("pa", "linux-x64"), ("sdk", None)],
+            )
+        patches = self.host("Linux", "x86_64")
+        with patches[0], patches[1]:
+            self.assertEqual(
+                MODULE.resolve_targets(["all"]),
+                [("ca", "linux-x64"), ("pa", "linux-x64"), ("sdk", None)],
+            )
+
+    def test_platform_suffix_selects_one_cell_and_rejects_unsupported_cells(self):
+        patches = self.host("Windows", "AMD64")
+        with patches[0], patches[1]:
+            self.assertEqual(MODULE.resolve_targets(["ca"]), [("ca", "windows-x64")])
+            self.assertEqual(MODULE.resolve_targets(["pa:linux-x64"]), [("pa", "linux-x64")])
+            self.assertEqual(MODULE.resolve_targets(["sdk"]), [("sdk", None)])
+            self.assertEqual(MODULE.resolve_targets(["jre"]), [("jre", "windows-x64")])
+            with self.assertRaisesRegex(ValueError, "native linux-x64 host"):
+                MODULE.resolve_targets(["ca:linux-x64"])
+            with self.assertRaisesRegex(ValueError, "platform neutral"):
+                MODULE.resolve_targets(["sdk:linux-x64"])
+            with self.assertRaisesRegex(ValueError, "Unknown target"):
+                MODULE.resolve_targets(["nope"])
+            with self.assertRaisesRegex(ValueError, "macOS release packages"):
+                MODULE.resolve_targets(["ca:macos-arm64"])
+
+    def test_invalid_target_exits_with_the_usage_error_code(self):
+        patches = self.host("Linux", "x86_64")
+        with patches[0], patches[1], patch.object(MODULE.sys, "argv", ["packager", "nope"]):
+            with self.assertRaises(SystemExit) as error:
+                MODULE.main()
+        self.assertEqual(error.exception.code, 2)
 
     @unittest.skipIf(os.name == "nt", "POSIX launcher process contract")
     def test_linux_launcher_preserves_arguments_data_overrides_and_exit_code(self):
