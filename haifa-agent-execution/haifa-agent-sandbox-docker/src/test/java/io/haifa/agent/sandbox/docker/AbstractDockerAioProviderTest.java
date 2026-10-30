@@ -165,6 +165,7 @@ abstract class AbstractDockerAioProviderTest {
         public String containerId = "container-1";
         public ContainerSpec spec;
         public ContainerInspection inspection;
+        public ContainerInspection lastInspection;
         public int managementPort = 32768;
         public String containerIp = "172.18.0.2";
 
@@ -241,6 +242,7 @@ abstract class AbstractDockerAioProviderTest {
             String id = "cid-" + spec.name();
             ContainerInspection insp = inspectionFor(spec, false);
             this.inspection = insp;
+            this.lastInspection = insp;
             containers.put(id, insp);
             containers.put(spec.name(), insp);
             containers.put("container-1", insp);
@@ -278,6 +280,7 @@ abstract class AbstractDockerAioProviderTest {
                         existing.managementPort(),
                         existing.containerIp());
                 this.inspection = running;
+                this.lastInspection = running;
                 containers.put(id, running);
                 containers.put(existing.name(), running);
                 containers.put("container-1", running);

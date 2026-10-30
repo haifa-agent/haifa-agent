@@ -42,7 +42,9 @@ class DockerAioSandboxProviderTest extends AbstractDockerAioProviderTest {
                 var result = session.execute(execution(ExecutionCommand.shell("printf hello")));
                 assertThat(result.status()).isEqualTo(SandboxProcessStatus.EXITED);
                 assertThat(aio.lastUri).isEqualTo(java.net.URI.create("http://127.0.0.1:32768"));
-                assertThat(engine.inspection.containerIp()).isNotBlank();
+                // Ephemeral mode tears the container down before execute() returns, so the fake
+                // clears `inspection`; the container identity assertion reads the recorded one.
+                assertThat(engine.lastInspection.containerIp()).isNotBlank();
             }
         }
     }
