@@ -2,11 +2,14 @@ package io.haifa.agent.cli;
 
 import io.haifa.agent.application.project.persistence.ProjectPersistenceConfiguration;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
+import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.ModelFinishReason;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
@@ -20,6 +23,10 @@ final class CodingHostTestFixture {
     private CodingHostTestFixture() {}
 
     static CliConfiguration sqliteConfiguration(Path database) {
+        return sqliteConfiguration(database, ApprovalMode.AUTO);
+    }
+
+    static CliConfiguration sqliteConfiguration(Path database, ApprovalMode approval) {
         CliConfiguration defaults = CliConfiguration.defaults();
         CliConfiguration.Execution execution = defaults.execution();
         return CliConfigurationBuilder.from(defaults)
@@ -32,10 +39,20 @@ final class CodingHostTestFixture {
                         execution.maxOutputLines(),
                         execution.maxProcesses(),
                         execution.inheritEnvironment()))
-                .approval(ApprovalMode.AUTO)
+                .approval(approval)
                 .timeout(Duration.ofSeconds(10))
                 .persistence(ProjectPersistenceConfiguration.sqlite(database, "env://HAIFA_TEST_CONTINUATION_KEY"))
                 .build();
+    }
+
+    static StandaloneCodingAgent openAgent(Path workspace, CliConfiguration configuration, AgentChatModel model) {
+        return StandaloneCodingAgents.open(
+                workspace,
+                configuration,
+                new PrintStream(new ByteArrayOutputStream()),
+                model,
+                ignored -> {},
+                protector());
     }
 
     static AesGcmModelContinuationProtector protector() {
