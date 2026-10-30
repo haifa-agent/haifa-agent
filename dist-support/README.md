@@ -59,6 +59,8 @@ $sdkModules = python dist-support/scripts/package_distributions.py sdk-modules
 `FileNotFoundError` 失败。
 打包要求 `--version` 与根 POM `revision` 相同，SDK 缺少任一 JAR、Flattened POM，或含 Java
 源码的模块缺少 Source / Javadoc 时失败。纯依赖 Starter 不生成 Source / Javadoc。
+CA 打包还会按与 `scripts/` 相同的契约拒绝非 shaded 的 CLI JAR（例如用 `ci-fast` 跳过 shade 的构建
+产物），POM 版本解析与默认配置校验也来自同一份 `scripts/distribution_contracts.py`。
 无需向本地 Maven 仓库安装制品。
 
 Windows PowerShell：
@@ -114,8 +116,9 @@ dist-support/
 │   └── sdk/                       # SDK 依赖说明模板 (README.txt)
 ├── scripts/
 │   ├── package_distributions.py  # 核心打包业务逻辑 (Python 3)
-│   ├── build-distributions.ps1   # PowerShell 原样透传薄入口
-│   └── build-distributions.sh    # Bash 原样透传薄入口
+│   ├── distribution_contracts.py # 与 scripts/ 共用的 POM 版本、模型配置、shaded JAR 和构建入口契约
+│   ├── build-distributions.ps1   # 转发到 build-support/scripts/invoke-python.ps1
+│   └── build-distributions.sh    # 转发到 build-support/scripts/invoke-python.sh
 ├── dist-work/                     # 打包中间工作区 (已忽略)
 └── output/                        # ZIP、tar.gz 与校验和文件 (已忽略)
 ```

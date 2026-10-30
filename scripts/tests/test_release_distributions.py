@@ -16,6 +16,10 @@ SPEC = importlib.util.spec_from_file_location("release_distributions", SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 
+# The packager puts its own directory on sys.path, so the shared contract module used
+# to build realistic fixtures is importable right after the packager is loaded.
+import distribution_contracts as CONTRACTS  # noqa: E402
+
 
 class ReleaseDistributionsTest(unittest.TestCase):
     def fixture(self, root):
@@ -144,15 +148,28 @@ class PersonalAssistantPackageShapeTest(unittest.TestCase):
 
 
 class CodingAgentLinuxPackageTest(unittest.TestCase):
+    def cli_jar(self, root):
+        return root / "haifa-agent-applications/haifa-agent-cli/target/haifa-agent-cli-0.1.4.jar"
+
+    def write_cli_jar(self, root):
+        jar = self.cli_jar(root)
+        jar.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(jar, "w") as shaded:
+            shaded.writestr(
+                "META-INF/MANIFEST.MF",
+                "Manifest-Version: 1.0\nMain-Class: io.haifa.agent.cli.HaifaCliMain\n",
+            )
+            for entry in CONTRACTS.REQUIRED_SHADED_JAR_ENTRIES:
+                shaded.writestr(entry, b"class")
+        return jar
+
     def fixture(self, root, target):
         repository = SCRIPT.parents[2]
         shutil.copytree(repository / "dist-support/templates", root / "dist-support/templates")
         config = root.joinpath(*MODULE.CA_CONFIG_SOURCE)
         config.parent.mkdir(parents=True)
         shutil.copy2(repository.joinpath(*MODULE.CA_CONFIG_SOURCE), config)
-        jar = root / "haifa-agent-applications/haifa-agent-cli/target/haifa-agent-cli-0.1.4.jar"
-        jar.parent.mkdir(parents=True)
-        jar.write_bytes(b"verified jar")
+        self.write_cli_jar(root)
         jre = root / "work/jre" / target
         (jre / "bin").mkdir(parents=True)
         executable = "java.exe" if target == "windows-x64" else "java"
@@ -179,9 +196,20 @@ class CodingAgentLinuxPackageTest(unittest.TestCase):
                 prefix = "haifa-coding-agent-v0.1.4/"
                 for executable in ("bin/haifa", "jre/bin/java"):
                     self.assertEqual(bundle.getmember(prefix + executable).mode, 0o755)
-                self.assertEqual(bundle.extractfile(prefix + "lib/haifa-agent-cli-0.1.4.jar").read(), b"verified jar")
+                self.assertEqual(
+                    bundle.extractfile(prefix + "lib/haifa-agent-cli-0.1.4.jar").read(),
+                    self.cli_jar(root).read_bytes(),
+                )
                 self.assertIn(b"SQLITE_WITH_JSONL", bundle.extractfile(prefix + "haifa-coding.yaml").read())
                 self.assertNotIn(prefix + "bin/haifa.bat", bundle.getnames())
+
+    def test_refuses_a_thin_cli_jar(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            jre = self.fixture(root, "windows-x64")
+            self.cli_jar(root).write_bytes(b"thin jar")
+            with self.assertRaisesRegex(RuntimeError, "invalid"):
+                MODULE.package_ca(root, root / "work", root / "output", "0.1.4", jre)
 
     def test_windows_ca_keeps_zip_layout_and_platform_staging_is_independent(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -236,7 +264,7 @@ class CodingAgentLinuxPackageTest(unittest.TestCase):
                 (output / name).write_bytes(name.encode())
             MODULE.write_checksums(output)
             lines = (output / "sha256sums.txt").read_text().splitlines()
-            self.assertEqual(lines, [f"{MODULE.compute_sha256(output / name)}  {name}"
+            self.assertEqual(lines, [f"{MODULE.sha256_file(output / name)}  {name}"
                                      for name in ("linux.tar.gz", "windows.zip")])
 
     @unittest.skipIf(os.name == "nt", "POSIX launcher process contract")

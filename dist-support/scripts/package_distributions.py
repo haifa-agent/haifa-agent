@@ -11,7 +11,6 @@ Builds and packages (release artifacts use a 'v'-prefixed version, e.g. v0.1.0):
 """
 
 import argparse
-import hashlib
 import os
 import platform
 import re
@@ -24,6 +23,17 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 
+# The three Coding Agent commands share one contracts module; keep the import usable
+# when this file is loaded by path (tests) instead of being run as a script.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from distribution_contracts import (  # noqa: E402 - repository scripts run unpackaged
+    read_pom_version,
+    sha256_file,
+    validate_model_configuration,
+    validate_shaded_jar,
+)
+
+
 def get_repo_root() -> Path:
     return Path(__file__).resolve().parent.parent.parent
 
@@ -33,28 +43,10 @@ def get_pom_version(repo_root: Path) -> str:
     if not pom_path.exists():
         return "0.1.0-SNAPSHOT"
     try:
-        tree = ET.parse(pom_path)
-        root = tree.getroot()
-        ns = {"m": "http://maven.apache.org/POM/4.0.0"}
-        version_elem = root.find("m:version", ns)
-        if version_elem is not None and version_elem.text:
-            return resolve_version_property(root, version_elem.text.strip(), ns)
+        return read_pom_version(pom_path)
     except Exception as exc:
         print(f"[WARN] Failed to parse pom.xml: {exc}")
     return "0.1.0-SNAPSHOT"
-
-
-def resolve_version_property(root: ET.Element, version: str, ns: dict[str, str]) -> str:
-    """Resolve a version placeholder such as `${revision}` from the POM properties."""
-    placeholder = re.fullmatch(r"\$\{([^}]+)\}", version)
-    if placeholder is None:
-        return version
-    properties = root.find("m:properties", ns)
-    value = None if properties is None else properties.find(f"m:{placeholder.group(1)}", ns)
-    if value is not None and value.text and value.text.strip():
-        return value.text.strip()
-    print(f"[WARN] Unresolved version property {version} in pom.xml")
-    return version
 
 
 def artifact_label(version: str) -> str:
@@ -84,14 +76,6 @@ def sdk_modules(repo_root: Path) -> list[tuple[Path, str, str]]:
 
     visit(repo_root)
     return result
-
-
-def compute_sha256(file_path: Path) -> str:
-    sha = hashlib.sha256()
-    with open(file_path, "rb") as f:
-        while chunk := f.read(65536):
-            sha.update(chunk)
-    return sha.hexdigest()
 
 
 def native_runtime_platform() -> str:
@@ -197,35 +181,6 @@ def find_jar(directory: Path, artifact: str, version: str) -> Path:
     return candidate
 
 
-def validate_model_configuration(content: str) -> None:
-    required_fragments = (
-        "allowedBindings:",
-        "deepseek-responses-flash",
-        "deepseek-chat-pro",
-        "model-auth://deepseek/default",
-    )
-    missing = [fragment for fragment in required_fragments if fragment not in content]
-    if missing:
-        raise ValueError(
-            "Coding Agent configuration template is missing the current model API structure: "
-            + ", ".join(missing)
-        )
-    forbidden_fragments = (
-        "apiBindings:",
-        "dialectId:",
-        "dialectVersion:",
-        "styleVersion:",
-        "adapterType:",
-        "CHATGPT2API_",
-    )
-    present = [fragment for fragment in forbidden_fragments if fragment in content]
-    if present:
-        raise ValueError(
-            "Coding Agent configuration template contains retired model configuration: "
-            + ", ".join(present)
-        )
-
-
 CA_CONFIG_SOURCE = (
     "haifa-agent-applications",
     "haifa-agent-cli",
@@ -318,6 +273,7 @@ def package_ca(
 
     cli_target_dir = repo_root / "haifa-agent-applications" / "haifa-agent-cli" / "target"
     cli_jar = find_jar(cli_target_dir, "haifa-agent-cli", version)
+    validate_shaded_jar(cli_jar)
     print(f"[INFO] Found Coding Agent CLI JAR: {cli_jar.name}")
 
     label = artifact_label(version)
@@ -625,7 +581,7 @@ def write_checksums(output_dir: Path) -> None:
     checksums_file = output_dir / "sha256sums.txt"
     lines = []
     for z in sorted([*output_dir.glob("*.zip"), *output_dir.glob("*.tar.gz")]):
-        sha = compute_sha256(z)
+        sha = sha256_file(z)
         lines.append(f"{sha}  {z.name}")
 
     with open(checksums_file, "w", encoding="utf-8") as f:

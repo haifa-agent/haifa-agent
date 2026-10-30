@@ -64,4 +64,5 @@ ZIP、旧 JAR 备份和 `report.json`（含源码 SHA、是否有未提交修改
 python -m pytest scripts/tests/test_update_coding_agent.py -q
 ```
 
-`update_coding_agent.py` 承载逻辑，`.ps1` 只原样转发参数。
+`update_coding_agent.py` 承载逻辑，`.ps1` 只原样转发参数。POM 版本解析、shaded JAR 校验、SHA-256 与
+Maven 构建入口来自 `dist-support/scripts/distribution_contracts.py`，与发行打包、本地打包共用同一份实现。
