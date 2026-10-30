@@ -20,7 +20,7 @@ Haifa Agent SDK Release Bundle
 <repositories>
     <repository>
         <id>haifa-release</id>
-        <url>file:///D:/packages/haifa-agent-sdk-v0.1.4/repository</url>
+        <url>file:///D:/packages/haifa-agent-sdk-v0.1.5-SNAPSHOT/repository</url>
     </repository>
 </repositories>
 
@@ -29,7 +29,7 @@ Haifa Agent SDK Release Bundle
         <dependency>
             <groupId>io.haifa</groupId>
             <artifactId>haifa-agent-bom</artifactId>
-            <version>0.1.4</version>
+            <version>0.1.5-SNAPSHOT</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>
@@ -45,12 +45,12 @@ Haifa Agent SDK Release Bundle
 
 【Gradle 依赖配置】
 repositories {
-    maven { url = uri("D:/packages/haifa-agent-sdk-v0.1.4/repository") }
+    maven { url = uri("D:/packages/haifa-agent-sdk-v0.1.5-SNAPSHOT/repository") }
     mavenCentral()
 }
 
 dependencies {
-    implementation platform("io.haifa:haifa-agent-bom:0.1.4")
+    implementation platform("io.haifa:haifa-agent-bom:0.1.5-SNAPSHOT")
     implementation "io.haifa:haifa-agent-sdk-starter"
 }
 
