@@ -81,7 +81,8 @@ final class CodingDatabaseOwnership implements AutoCloseable {
         try {
             channel.close();
         } catch (IOException exception) {
-            if (failure == null) failure = new IllegalStateException("Unable to close database ownership lock", exception);
+            if (failure == null)
+                failure = new IllegalStateException("Unable to close database ownership lock", exception);
             else failure.addSuppressed(exception);
         }
         if (failure != null) throw failure;

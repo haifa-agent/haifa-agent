@@ -17,16 +17,15 @@ class CliHostConfigurationTest {
     @Test
     void hostConfigurationIgnoresWorkspaceOverlayWhileEmbeddedKeepsIt() throws Exception {
         Path workspace = Files.createDirectory(directory.resolve("workspace"));
-        Path workspaceConfiguration = Files.createDirectories(workspace.resolve(".haifa-agent"))
-                .resolve("config.yaml");
+        Path workspaceConfiguration =
+                Files.createDirectories(workspace.resolve(".haifa-agent")).resolve("config.yaml");
         Files.writeString(workspaceConfiguration, "approval:\n  mode: deny\n");
-        Path userConfiguration = Files.writeString(
-                directory.resolve("user.yaml"), "approval:\n  mode: auto\n");
+        Path userConfiguration = Files.writeString(directory.resolve("user.yaml"), "approval:\n  mode: auto\n");
         CliArguments arguments = CliArguments.parse(new String[] {"-m", "host-configuration"});
         CliConfigurationLoader loader = new CliConfigurationLoader();
 
-        CliConfiguration host = loader.loadForHost(
-                arguments, workspace, Optional.of(userConfiguration), WORKSPACE_CONFIGURATION);
+        CliConfiguration host =
+                loader.loadForHost(arguments, workspace, Optional.of(userConfiguration), WORKSPACE_CONFIGURATION);
         CliConfiguration embedded =
                 loader.load(arguments, workspace, Optional.of(userConfiguration), WORKSPACE_CONFIGURATION);
 
@@ -37,8 +36,8 @@ class CliHostConfigurationTest {
     @Test
     void hostConfigurationWithoutUserFileFallsBackToDefaultsNotWorkspace() throws Exception {
         Path workspace = Files.createDirectory(directory.resolve("workspace-without-user-config"));
-        Path workspaceConfiguration = Files.createDirectories(workspace.resolve(".haifa-agent"))
-                .resolve("config.yaml");
+        Path workspaceConfiguration =
+                Files.createDirectories(workspace.resolve(".haifa-agent")).resolve("config.yaml");
         Files.writeString(workspaceConfiguration, "approval:\n  mode: deny\n");
         CliArguments arguments = CliArguments.parse(new String[] {"-m", "host-defaults"});
 
@@ -51,16 +50,13 @@ class CliHostConfigurationTest {
     @Test
     void explicitHostConfigurationStillOverridesUserAndWorkspaceFiles() throws Exception {
         Path workspace = Files.createDirectory(directory.resolve("workspace-with-explicit-config"));
-        Path workspaceConfiguration = Files.createDirectories(workspace.resolve(".haifa-agent"))
-                .resolve("config.yaml");
+        Path workspaceConfiguration =
+                Files.createDirectories(workspace.resolve(".haifa-agent")).resolve("config.yaml");
         Files.writeString(workspaceConfiguration, "approval:\n  mode: auto\n");
-        Path userConfiguration =
-                Files.writeString(directory.resolve("user.yaml"), "approval:\n  mode: auto\n");
-        Path explicitConfiguration =
-                Files.writeString(directory.resolve("explicit.yaml"), "approval:\n  mode: deny\n");
-        CliArguments arguments = CliArguments.parse(new String[] {
-            "-m", "host-explicit", "--config", explicitConfiguration.toString()
-        });
+        Path userConfiguration = Files.writeString(directory.resolve("user.yaml"), "approval:\n  mode: auto\n");
+        Path explicitConfiguration = Files.writeString(directory.resolve("explicit.yaml"), "approval:\n  mode: deny\n");
+        CliArguments arguments =
+                CliArguments.parse(new String[] {"-m", "host-explicit", "--config", explicitConfiguration.toString()});
 
         CliConfiguration host = new CliConfigurationLoader()
                 .loadForHost(arguments, workspace, Optional.of(userConfiguration), WORKSPACE_CONFIGURATION);
