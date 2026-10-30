@@ -259,6 +259,8 @@ class CodingTerminalWaitingTest {
         var controller = new CodingTerminalController(
                 PROJECT_ID, client, pump, new TerminalUiReducer(), TerminalUiState.initial(120, 40), effects::add);
         controller.open(SESSION_ID);
+        // The post-load subscription bootstrap is a maintenance effect on this shared test queue.
+        effects.removeFirst().run();
         controller.accept(input(TerminalInput.Kind.SUBMIT, "blocked send-now"));
 
         controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
@@ -403,6 +405,7 @@ class CodingTerminalWaitingTest {
         var controller = new CodingTerminalController(
                 PROJECT_ID, client, pump, new TerminalUiReducer(), TerminalUiState.initial(120, 40), effects::add);
         controller.open(SESSION_ID);
+        effects.removeFirst().run();
         controller.accept(input(TerminalInput.Kind.SUBMIT, "in flight draft"));
         controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
         assertThat(effects).hasSize(1);

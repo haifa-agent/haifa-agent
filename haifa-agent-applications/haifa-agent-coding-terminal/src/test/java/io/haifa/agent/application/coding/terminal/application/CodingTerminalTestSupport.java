@@ -411,12 +411,20 @@ public final class CodingTerminalTestSupport {
         CodingSessionView view;
         CodingSessionView reconciledView;
         List<CodingSessionSummary> summaries = List.of();
+        final java.util.ArrayDeque<CodingSessionSummary> listQueue = new java.util.ArrayDeque<>();
         CodingSessionHistoryPage history = CodingSessionHistoryPage.empty(SESSION_ID);
         List<CodingQueuedMessage> restorable = List.of();
         List<String> logicalPaths = List.of();
         List<CodingModelOption> models = List.of();
         List<CodingWorkspaceView> workspaces = List.of();
         CodingSessionCreateOptions createOptions = CodingSessionCreateOptions.defaults();
+        final java.util.Map<AgentSessionId, CodingSessionView> viewsBySession = new java.util.HashMap<>();
+        final java.util.Map<AgentSessionId, ProjectProductException> openFailures = new java.util.HashMap<>();
+        final List<AgentRunEvent> synchronouslyReplayed = new ArrayList<>();
+        final List<RunEventSubscription> subscriptions = new ArrayList<>();
+        final List<AgentRunId> cancelledRuns = new ArrayList<>();
+        int sessionLevelCancelCalls;
+        int resetSessionApprovalCalls;
         ProjectProductException submitFailure;
         ProjectProductException responseFailure;
         int submitAttempts;
@@ -488,6 +496,7 @@ public final class CodingTerminalTestSupport {
         public List<CodingSessionSummary> list(ProjectId projectId, int limit) {
             listCalls++;
             listLimit = limit;
+            if (!listQueue.isEmpty()) return List.of(listQueue.removeFirst());
             return summaries;
         }
 
@@ -499,14 +508,23 @@ public final class CodingTerminalTestSupport {
         @Override
         public CodingSessionView open(AgentSessionId sessionId) {
             opened.add(sessionId);
+            ProjectProductException failure = openFailures.get(sessionId);
+            if (failure != null) throw failure;
+            CodingSessionView selected = viewsBySession.get(sessionId);
+            if (selected != null) {
+                view = selected;
+                reconciledView = selected;
+                return selected;
+            }
             return view;
         }
 
         @Override
         public CodingSessionView reconcile(AgentSessionId sessionId) {
             reconcileCalls++;
-            view = reconciledView;
-            return reconciledView;
+            CodingSessionView selected = viewsBySession.getOrDefault(sessionId, reconciledView);
+            view = selected;
+            return selected;
         }
 
         @Override
@@ -583,7 +601,19 @@ public final class CodingTerminalTestSupport {
 
         @Override
         public void cancel(AgentSessionId sessionId, String idempotencyKey) {
+            sessionLevelCancelCalls++;
             cancelledSessions.add(sessionId);
+        }
+
+        @Override
+        public void cancel(AgentSessionId sessionId, AgentRunId requestedRunId, String idempotencyKey) {
+            cancelledSessions.add(sessionId);
+            cancelledRuns.add(requestedRunId);
+        }
+
+        @Override
+        public void resetSessionApproval(AgentSessionId sessionId) {
+            resetSessionApprovalCalls++;
         }
 
         @Override
@@ -671,6 +701,10 @@ public final class CodingTerminalTestSupport {
                     closed = true;
                 }
             };
+            subscriptions.add(lastSubscription);
+            for (AgentRunEvent event : synchronouslyReplayed) {
+                listener.onEvent(event);
+            }
             return lastSubscription;
         }
 
