@@ -33,6 +33,22 @@ class TerminalRecoveryTest {
 
         TerminalRecovery timeout = TerminalRecovery.fromCode("MODEL_TIMEOUT");
         assertThat(timeout.category()).isEqualTo(TerminalRecovery.Category.RETRYABLE);
+
+        TerminalRecovery providerUnavailable = TerminalRecovery.fromCode("MODEL_PROVIDER_UNAVAILABLE");
+        assertThat(providerUnavailable.category()).isEqualTo(TerminalRecovery.Category.RETRYABLE);
+        assertThat(providerUnavailable.action()).contains("/model");
+
+        TerminalRecovery authFailed = TerminalRecovery.fromCode("MODEL_AUTHENTICATION_FAILED");
+        assertThat(authFailed.category()).isEqualTo(TerminalRecovery.Category.USER_ACTION_REQUIRED);
+        assertThat(authFailed.action()).contains("/connect", "/model");
+
+        TerminalRecovery contextTooLong = TerminalRecovery.fromCode("MODEL_CONTEXT_TOO_LONG");
+        assertThat(contextTooLong.category()).isEqualTo(TerminalRecovery.Category.USER_ACTION_REQUIRED);
+        assertThat(contextTooLong.action()).contains("/compact");
+
+        TerminalRecovery modelNotFound = TerminalRecovery.fromCode("MODEL_NOT_FOUND");
+        assertThat(modelNotFound.category()).isEqualTo(TerminalRecovery.Category.USER_ACTION_REQUIRED);
+        assertThat(modelNotFound.action()).contains("/model");
     }
 
     @Test

@@ -1544,6 +1544,42 @@ class Tui4jTerminalViewTest {
     }
 
     @Test
+    void rendersBracketedErrorCodeWithoutDuplicateErrorPrefix() {
+        TerminalUiState base = TerminalUiState.initial(80, 24);
+        TerminalUiState state = new TerminalUiState(
+                base.header(),
+                base.loadedResources(),
+                List.of(item(
+                        "e-payment",
+                        TranscriptItem.Kind.ERROR,
+                        "[MODEL_PAYMENT_REQUIRED] Model payment is required",
+                        "Diagnostic ID: diag-12345",
+                        "FAILED",
+                        true)),
+                base.pending(),
+                base.status(),
+                base.editorBuffer(),
+                base.editorCursor(),
+                base.selector(),
+                base.footer(),
+                80,
+                24,
+                base.session(),
+                base.currentRunId(),
+                base.appliedCursor(),
+                base.seenEventIds(),
+                base.recoverableError(),
+                base.exitRequested());
+
+        String content = view.transcriptContent(state);
+        List<String> lines = content.lines().toList();
+
+        assertThat(lines.get(0)).isEqualTo("│ ✖ [MODEL_PAYMENT_REQUIRED] Model payment is required [failed]");
+        assertThat(lines.get(0)).doesNotContain("Error · [");
+        assertThat(lines.get(1)).isEqualTo("│ Diagnostic ID: diag-12345");
+    }
+
+    @Test
     void rendersFailedToolCardWithLocalizedErrorTitleAndCleanBody() {
         TerminalUiState initial = TerminalUiState.initial(100, 30);
         TerminalUiState state = new TerminalUiState(

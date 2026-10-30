@@ -50,11 +50,51 @@ public record TerminalRecovery(Category category, String code, String action) {
                     Category.USER_ACTION_REQUIRED,
                     "RUN_BUDGET_EXCEEDED",
                     "Start a new run with a smaller request or an explicitly larger budget."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "RUN_INPUT_QUOTA_EXHAUSTED",
+                    "Input token quota exceeded; run /compact to reduce prompt size or start a new session."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "RUN_OUTPUT_QUOTA_EXHAUSTED",
+                    "Output token quota exceeded; request a more concise response or start a new run."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "RUN_COST_QUOTA_EXHAUSTED",
+                    "Run cost quota exceeded; start a new run with an explicitly larger budget."),
             entry(Category.RETRYABLE, "MODEL_RATE_LIMITED", "Wait for backoff, then retry the request."),
+            entry(
+                    Category.RETRYABLE,
+                    "MODEL_PROVIDER_UNAVAILABLE",
+                    "Model provider is unavailable; retry or run /model to switch models."),
             entry(
                     Category.USER_ACTION_REQUIRED,
                     "MODEL_AUTHENTICATION_REQUIRED",
                     "Not signed in or credentials unavailable; run /connect to connect or sign in again, or run /model to switch models."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "MODEL_AUTHENTICATION_FAILED",
+                    "Model authentication failed; run /connect to configure credentials or run /model to switch models."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "MODEL_CONTEXT_TOO_LONG",
+                    "Model context limit was exceeded; run /compact to compress conversation or start a new session."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "MODEL_NOT_FOUND",
+                    "Configured model was not found; run /model to choose another model."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "MODEL_CONTENT_REJECTED",
+                    "Model request content was rejected; adjust the request and retry."),
+            entry(
+                    Category.RETRYABLE,
+                    "MODEL_RESPONSE_INVALID",
+                    "Model returned an invalid response; retry the request."),
+            entry(
+                    Category.RETRYABLE,
+                    "MODEL_CALL_FAILED",
+                    "Model call failed; retry the request or check network connection."),
             entry(
                     Category.USER_ACTION_REQUIRED,
                     "AUTH_PROVIDER_LIST_EMPTY",
@@ -135,6 +175,14 @@ public record TerminalRecovery(Category category, String code, String action) {
                     Category.USER_ACTION_REQUIRED,
                     "TOOL_OUTCOME_UNKNOWN",
                     "Inspect the tool outcome before retrying; do not blindly replay the action."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "TOOL_REQUEST_REJECTED",
+                    "Tool request was rejected; check the tool arguments and retry."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "TOOL_APPROVAL_REJECTED",
+                    "Tool approval was rejected; proceed with an alternative approach."),
             entry(
                     Category.RETRYABLE,
                     "TOOL_RESULT_PERSISTENCE_FAILED",

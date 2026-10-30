@@ -361,7 +361,10 @@ final class Tui4jTerminalTheme {
         String border = narrow ? " " : "│ ";
         String styledBorder =
                 Style.newStyle().foreground(palette.errorAccent()).bold(true).render(border);
-        Style contentStyle = Style.newStyle().foreground(isHeader ? palette.errorAccent() : palette.text());
+        var fgColor = isHeader
+                ? palette.errorAccent()
+                : (content.startsWith("Diagnostic ID: ") ? palette.muted() : palette.text());
+        Style contentStyle = Style.newStyle().foreground(fgColor);
         if (isHeader) {
             contentStyle = contentStyle.bold(true);
         }
