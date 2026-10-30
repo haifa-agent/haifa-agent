@@ -2,6 +2,16 @@
 
 ## Unreleased - 0.1.5-SNAPSHOT
 
+- Release packaging is addressed per product and platform (`ca`, `pa`, `sdk` with an optional
+  `:windows-x64` / `:linux-x64` suffix); the packager reuses one trimmed JRE per platform (module-set
+  aware) and one Web SPA build per delivery mode instead of rebuilding them, and `sha256sums.txt` lists
+  only the packaged version's artifacts. macOS release packages remain out of scope because a bundled JRE
+  would need signing and notarization; macOS development hosts keep using the local portable packaging.
+
+- All shell entry points now share one Python bootstrap, and the Coding Agent release packager, local
+  packager and updater share one contract module for the POM version, model configuration, shaded CLI JAR,
+  SHA-256 and the Maven build entry.
+
 ## 0.1.4 - 2026-10-30
 
 - Release distributions include Windows x64 Coding Agent and Personal Assistant packages, a Linux x64

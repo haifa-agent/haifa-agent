@@ -37,7 +37,7 @@ Reactor 版本由根 `pom.xml` 的 `revision` 属性单点定义，全部模块 
 
 ## 分层 Maven 入口
 
-本地开发使用 `scripts/invoke-haifa-maven.ps1` 或 `scripts/invoke-haifa-maven.sh`。入口不会改变 Maven
+本地开发使用 `build-support/scripts/invoke-haifa-maven.ps1` 或 `invoke-haifa-maven.sh`。入口不会改变 Maven
 生命周期或吞掉退出码，只补充资源感知的默认线程数和一份脱敏 JSON 指标：
 
 从运行中的 Coding Agent 终端启动构建时，入口会在 Maven 子进程中丢弃该产品导出的运行时变量
