@@ -495,15 +495,35 @@ public final class CodingSessionService {
     }
 
     public Optional<RuntimeCommandResult> abortActiveRun(AgentSessionId sessionId, String idempotencyKey) {
+        return abortActiveRun(sessionId, idempotencyKey, Optional.empty());
+    }
+
+    /**
+     * Cancels only the requested active Run. A stale target never falls through to the Session's current successor.
+     */
+    public Optional<RuntimeCommandResult> abortActiveRun(
+            AgentSessionId sessionId, AgentRunId requestedRunId, String idempotencyKey) {
+        return abortActiveRun(
+                sessionId,
+                idempotencyKey,
+                Optional.of(Objects.requireNonNull(requestedRunId, "requestedRunId must not be null")));
+    }
+
+    private Optional<RuntimeCommandResult> abortActiveRun(
+            AgentSessionId sessionId, String idempotencyKey, Optional<AgentRunId> requestedRunId) {
         TrustedProductCaller caller = callers.current();
         ProjectProductSession product = requireProductSession(sessionId, caller);
         CodingSessionActivity activity = reconcile(requireActivity(sessionId, caller), caller);
         if (activity.activeRunId().isEmpty()) {
+            if (requestedRunId.isPresent()) {
+                throw conflict("ACTIVE_RUN_MISMATCH", "Requested Run is not the active Run");
+            }
             // Reconciliation may have just settled an abandoned Run, or the Session was already idle; either way
             // the caller's cancellation intent is satisfied and there is no live Run to command.
             return Optional.empty();
         }
-        AgentRunSnapshot active = requireActive(activity, activity.activeRunId().orElseThrow());
+        AgentRunSnapshot active = requireActive(
+                activity, requestedRunId.orElseGet(() -> activity.activeRunId().orElseThrow()));
         String keyDigest = digest(idempotencyKey(idempotencyKey));
         String dispatchKey = dispatchKey(ABORT, callerScope(caller) + "|" + keyDigest);
         CodingCommandBinding binding = codingSessions.reserveCommand(new CodingCommandBinding(
