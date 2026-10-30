@@ -36,7 +36,8 @@
    - 默认数据与日志位于 `$HOME/.haifa-agent/coding`，支持与 Windows 包相同的 `HAIFA_*` 路径覆盖。
 
 6. **`sha256sums.txt`**
-   - 所有生成的 Release 压缩包的 SHA-256 哈希校验清单。
+   - 本地 `output/` 中所有压缩包的 SHA-256 哈希校验清单。CI 只上传 `*.zip` 与该清单；
+     Linux CA 的 `tar.gz` 需人工打包上传，其校验值不会自动进入该清单。
 
 ---
 
@@ -53,6 +54,9 @@ $sdkModules = python dist-support/scripts/package_distributions.py sdk-modules
 ```
 
 该命令只生成制品；前置条件是同一 SHA 的 Unit / Architecture 已通过。PA 前端需先运行 `npm ci`。
+`templates/pa/conf/pa.env` 与 `templates/pa-server/conf/pa.env` 必须已在提交中（不要写进
+`.git/info/exclude`）：打包会直接复制 `templates/pa/conf`，缺失时在干净检出上以
+`FileNotFoundError` 失败。
 打包要求 `--version` 与根 POM `revision` 相同，SDK 缺少任一 JAR、Flattened POM，或含 Java
 源码的模块缺少 Source / Javadoc 时失败。纯依赖 Starter 不生成 Source / Javadoc。
 无需向本地 Maven 仓库安装制品。
@@ -105,7 +109,8 @@ dist-support/
 ├── templates/                     # 各平台启动脚本与说明模板
 │   ├── ca/                        # Coding Agent 模板 (haifa.bat, install.bat, README.txt)
 │   ├── ca-linux/                  # Linux Coding Agent 模板 (bin/haifa, README.txt)
-│   ├── pa/                        # Personal Assistant 模板 (start.bat, stop.bat, README.txt)
+│   ├── pa/                        # Personal Assistant 模板 (bin/, conf/pa.env, README.txt)
+│   ├── pa-server/                 # Linux 服务器包模板 (bin/, conf/, docker/, README.txt)
 │   └── sdk/                       # SDK 依赖说明模板 (README.txt)
 ├── scripts/
 │   ├── package_distributions.py  # 核心打包业务逻辑 (Python 3)
@@ -132,6 +137,10 @@ python3 dist-support/scripts/smoke_distributions.py verify-ca-linux
 tar -xzf dist-support/output/haifa-coding-agent-linux-x64-v0.1.5-SNAPSHOT.tar.gz
 ./haifa-coding-agent-v0.1.5-SNAPSHOT/bin/haifa --terminal --workspace /absolute/workspace
 ```
+
+若 WSL 不可用（`wsl.exe -d Ubuntu -- bash -lc true` 直接失败并报 `Wsl/Service/E_UNEXPECTED`，或只
+输出 `localhost` 转发告警后退出），本机无法生成该包：先 `wsl.exe --shutdown` 重试，仍失败则改在
+Linux 主机打包。CI 不产出该包，需要人工上传到 Release。
 
 Windows PowerShell 进入当前 worktree 对应的 WSL 挂载目录后，也可调用同一入口：
 
