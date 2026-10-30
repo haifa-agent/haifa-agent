@@ -68,6 +68,20 @@ public interface CodingAuthenticationClient {
         throw new IllegalStateException("AUTH_LOGIN_METHOD_UNAVAILABLE");
     }
 
+    /**
+     * Authorization-code sign-in for any registered device-login provider. Unknown providers or drivers that
+     * cannot offer the mode fail with a stable code instead of opening a browser.
+     */
+    default CodingAuthenticationView loginDevice(
+            String providerId,
+            Consumer<CodingDeviceLoginView> instructions,
+            Consumer<CodingAuthenticationProgressView> progress) {
+        Objects.requireNonNull(providerId, "providerId must not be null");
+        Objects.requireNonNull(instructions, "instructions must not be null");
+        Objects.requireNonNull(progress, "progress must not be null");
+        throw new IllegalStateException("AUTH_DEVICE_CODE_UNAVAILABLE");
+    }
+
     CodingAuthenticationView saveApiKey(String providerId, char[] apiKey);
 
     default CodingAuthenticationView saveApiKey(

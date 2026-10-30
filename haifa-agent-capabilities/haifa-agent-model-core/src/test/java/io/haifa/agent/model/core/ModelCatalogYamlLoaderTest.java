@@ -99,7 +99,8 @@ class ModelCatalogYamlLoaderTest {
                                                 "siliconflow-openai-chat",
                                                 "kimi-openai-chat",
                                                 "zhipu-openai-chat",
-                                                "tokenrhythm-openai-chat"),
+                                                "tokenrhythm-openai-chat",
+                                                "opencode-go-openai-chat"),
                                 ModelApiStyles.OPENAI_RESPONSES,
                                         Set.of("deepseek-openai-responses", "openai-codex-responses"),
                                 ModelApiStyles.ANTHROPIC_MESSAGES, Set.of("deepseek-anthropic-messages"),
@@ -113,7 +114,8 @@ class ModelCatalogYamlLoaderTest {
                                 new ModelProviderId("zhipu"), Set.of(ModelAuthenticationMethod.API_KEY),
                                 new ModelProviderId("tokenrhythm"), Set.of(ModelAuthenticationMethod.API_KEY),
                                 new ModelProviderId("google-antigravity"),
-                                        Set.of(ModelAuthenticationMethod.EXTERNAL_LOGIN)))
+                                        Set.of(ModelAuthenticationMethod.EXTERNAL_LOGIN),
+                                new ModelProviderId("opencode-go"), Set.of(ModelAuthenticationMethod.EXTERNAL_LOGIN)))
                 .load();
 
         assertThat(catalog.provider("deepseek").orElseThrow().showOrder()).isEqualTo(1);
