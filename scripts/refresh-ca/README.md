@@ -32,7 +32,7 @@ $updater = '.\scripts\refresh-ca\update-coding-agent.ps1'
    这是本地安装构建，跳过测试，不发布 SDK、不执行 `mvn install`，不能代替 PR 验证。
 3. 调用**所选源码目录**的 `dist-support\scripts\build-distributions.ps1 ca` 生成带 JRE 的完整 CA ZIP，
    校验包内 JAR 与构建产物一致，再用隔离数据目录运行 `haifa.bat --help`；不调用 Provider。
-4. 目标为 `<install-root>\haifa-coding-agent-v<根 POM 版本>`，例如 `haifa-coding-agent-v0.1.4`。
+4. 目标为 `<install-root>\haifa-coding-agent-v<根 POM 版本>`，例如 `haifa-coding-agent-v0.1.5-SNAPSHOT`。
    `--install-root` 优先；否则取环境变量 `HAIFA_CA_INSTALL_ROOT`；两者都没有时退回本机约定的
    `D:\dev\haifa-agent`。
    目录已有时只备份并替换 `lib\haifa-agent-cli-<版本>.jar`，保留配置、启动器和 JRE；替换前也验证旧启动器/JRE/配置

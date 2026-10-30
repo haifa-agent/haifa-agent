@@ -450,7 +450,7 @@ final class Tui4jTerminalView {
         }
         lines.add("");
 
-        lines.add(theme.muted("• Haifa Agent v0.1.4"));
+        lines.add(theme.muted("• Haifa Agent v0.1.5-SNAPSHOT"));
         lines.add(theme.muted("• " + shortcuts.sidebarToggle() + " toggle"));
 
         while (lines.size() < height) {

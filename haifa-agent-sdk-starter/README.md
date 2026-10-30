@@ -114,7 +114,7 @@ Starter 的 `standardApproval()` preset 对任何带 NETWORK_ACCESS 的 Tool 都
 调用会产生一次 Interaction。宿主用 `agent.runs().pendingInteraction(runId)` 和
 `agent.runs().respond(...)` 响应；需要无人值守时应通过 `haifa-agent-sdk` 显式装配自己的 Policy 规则。
 
-0.1.4 Native MCP Client 只提供 Streamable HTTP；stdio 需要 Execution Broker，暂不在 Starter 公开。
+0.1.5-SNAPSHOT Native MCP Client 只提供 Streamable HTTP；stdio 需要 Execution Broker，暂不在 Starter 公开。
 
 ### 自定义装配：把声明式 MCP 接入任意 Builder
 

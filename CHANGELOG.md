@@ -1,5 +1,7 @@
 # Changelog
 
+## Unreleased - 0.1.5-SNAPSHOT
+
 ## 0.1.4 - 2026-10-30
 
 - Release distributions include Windows x64 Coding Agent and Personal Assistant packages, a Linux x64
