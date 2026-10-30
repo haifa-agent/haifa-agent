@@ -40,6 +40,28 @@ BUILD_POSITION = re.compile(r"\[(\d+)/(\d+)\]")
 BUILDING_MODULE = re.compile(r"^\[INFO\] Building .+")
 TOTAL_TIME = re.compile(r"^\[INFO\] Total time:\s+(.+?)\s*$")
 
+# A running Coding Agent exports its own runtime configuration. Inheriting it into the Maven child
+# makes the CLI configuration tests resolve the live product's paths and persistence mode instead of
+# their own fixtures, so the wrapper drops exactly these names and keeps every other HAIFA_* variable.
+INHERITED_AGENT_VARIABLES = frozenset(
+    {
+        "HAIFA_CONFIG",
+        "HAIFA_DATA_ROOT",
+        "HAIFA_LOG_DIR",
+        "HAIFA_SQLITE_DATABASE_PATH",
+        "HAIFA_TRANSCRIPT_ROOT",
+    }
+)
+
+
+def child_environment(source: dict[str, str] | None = None) -> tuple[dict[str, str], list[str]]:
+    """Return the Maven child environment without a running agent's inherited runtime configuration."""
+    environment = dict(os.environ if source is None else source)
+    inherited = [name for name in environment if name.upper() in INHERITED_AGENT_VARIABLES]
+    for name in inherited:
+        del environment[name]
+    return environment, sorted(name.upper() for name in inherited)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -413,9 +435,13 @@ def main() -> int:
     started_monotonic = time.monotonic()
     memory_before = memory_snapshot()
     creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+    child_env, cleared_variables = child_environment()
+    if cleared_variables:
+        print("[INFO] Maven child ignores inherited agent variables: " + ", ".join(cleared_variables))
     process = subprocess.Popen(
         [str(wrapper), *effective],
         cwd=root,
+        env=child_env,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,

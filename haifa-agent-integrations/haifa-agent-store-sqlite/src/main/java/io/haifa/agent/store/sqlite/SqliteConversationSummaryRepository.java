@@ -34,14 +34,14 @@ public final class SqliteConversationSummaryRepository implements ConversationSu
 
     @Override
     public Optional<ConversationSummary> latestValid(AgentSessionId sessionId) {
-        return execute(() -> Optional.ofNullable(
+        return read(() -> Optional.ofNullable(
                         unitOfWork.mapper(RuntimeStoreMapper.class).latestValidSummary(sessionId.value()))
                 .map(this::fromRow));
     }
 
     @Override
     public long latestVersion(AgentSessionId sessionId) {
-        return execute(() -> unitOfWork.mapper(RuntimeStoreMapper.class).latestSummaryVersion(sessionId.value()));
+        return read(() -> unitOfWork.mapper(RuntimeStoreMapper.class).latestSummaryVersion(sessionId.value()));
     }
 
     @Override
@@ -77,7 +77,7 @@ public final class SqliteConversationSummaryRepository implements ConversationSu
 
     @Override
     public io.haifa.agent.context.compression.SummarySnapshot latestSnapshot(AgentSessionId sessionId) {
-        return execute(() -> {
+        return read(() -> {
             long version = unitOfWork.mapper(RuntimeStoreMapper.class).latestSummaryVersion(sessionId.value());
             Optional<ConversationSummary> valid =
                     latestValid(sessionId).filter(s -> coversValidSource(s, s.coveredThrough()));
@@ -144,7 +144,7 @@ public final class SqliteConversationSummaryRepository implements ConversationSu
     @Override
     public boolean coversValidSource(ConversationSummary summary, MessageCursor through) {
         if (!summary.valid() || summary.coveredThrough().compareTo(through) < 0) return false;
-        return execute(() -> unitOfWork
+        return read(() -> unitOfWork
                         .mapper(RuntimeStoreMapper.class)
                         .validSummarySourceRangeCount(
                                 summary.sessionId().value(),
@@ -263,6 +263,16 @@ public final class SqliteConversationSummaryRepository implements ConversationSu
     private <T> T execute(Supplier<T> work) {
         try {
             return unitOfWork.execute(work);
+        } catch (SqliteStoreException exception) {
+            if (exception.getCause() instanceof RuntimeException runtimeException) throw runtimeException;
+            throw exception;
+        }
+    }
+
+    /** Queries read committed state without reserving the process-wide write slot. */
+    private <T> T read(Supplier<T> work) {
+        try {
+            return unitOfWork.executeReadOnly(work);
         } catch (SqliteStoreException exception) {
             if (exception.getCause() instanceof RuntimeException runtimeException) throw runtimeException;
             throw exception;

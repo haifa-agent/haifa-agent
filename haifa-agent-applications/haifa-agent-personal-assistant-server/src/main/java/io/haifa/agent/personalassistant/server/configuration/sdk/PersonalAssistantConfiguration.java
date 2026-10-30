@@ -5,6 +5,8 @@ import io.haifa.agent.auth.localmodel.ExternalLoginAttemptId;
 import io.haifa.agent.auth.localmodel.ExternalLoginCoordinator;
 import io.haifa.agent.auth.localmodel.ExternalLoginMethod;
 import io.haifa.agent.auth.localmodel.ExternalLoginRegistry;
+import io.haifa.agent.auth.localmodel.FileLocalModelAuthStore;
+import io.haifa.agent.auth.localmodel.LocalModelAuthStore;
 import io.haifa.agent.auth.localmodel.LocalModelAuthenticationService;
 import io.haifa.agent.auth.localmodel.LocalModelCredentialResolver;
 import io.haifa.agent.auth.localmodel.WindowsCredentialManagerClient;
@@ -64,6 +66,7 @@ import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -109,7 +112,7 @@ public class PersonalAssistantConfiguration {
             AntigravityProjectRegistry antigravityProjects,
             PersonalModelProxySettings proxySettings) {
         Map<String, String> environment = System.getenv();
-        var store = WindowsLocalModelAuthStore.defaultStore(mapper);
+        var store = modelAuthStore(System.getProperty("os.name", ""), mapper);
         var codexRegistration = CodexLocalCompatibilityRegistrationFactory.create(environment);
         var antigravityRegistration = AntigravityLocalCompatibilityRegistrationFactory.create(environment);
         List<ExternalLoginMethod> methods = new java.util.ArrayList<>();
@@ -155,6 +158,17 @@ public class PersonalAssistantConfiguration {
                         PersonalAssistantConfiguration::openBrowser,
                         8));
         return new LocalModelAuthenticationService(store, coordinator, resolver, environment::get);
+    }
+
+    /**
+     * Windows serves credentials from Credential Manager; every other host has no OS credential store and uses the
+     * strict 0600 auth file reserved for headless servers.
+     */
+    static LocalModelAuthStore modelAuthStore(String osName, ObjectMapper mapper) {
+        String normalized = osName == null ? "" : osName.toLowerCase(Locale.ROOT);
+        return normalized.contains("win")
+                ? WindowsLocalModelAuthStore.defaultStore(mapper)
+                : FileLocalModelAuthStore.defaultStore(mapper);
     }
 
     static HttpClient authenticationHttpClient(PersonalModelProxySettings settings, String providerId) {

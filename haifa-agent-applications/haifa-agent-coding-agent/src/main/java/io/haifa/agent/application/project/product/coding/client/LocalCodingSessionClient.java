@@ -47,6 +47,7 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
     private final CodingSessionService sessions;
     private final java.util.Optional<CodingSessionHistoryService> history;
     private final AgentRuntime runtime;
+    private final CodingSessionApprovals sessionApprovals;
     private final IdentifierGenerator identifiers;
     private final TimeProvider time;
     private final Supplier<List<String>> logicalPaths;
@@ -201,6 +202,7 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
         this.sessions = Objects.requireNonNull(sessions, "sessions must not be null");
         this.history = java.util.Optional.ofNullable(history);
         this.runtime = Objects.requireNonNull(runtime, "runtime must not be null");
+        this.sessionApprovals = new CodingSessionApprovals(runtime);
         this.identifiers = Objects.requireNonNull(identifiers, "identifiers must not be null");
         this.time = Objects.requireNonNull(time, "time must not be null");
         this.logicalPaths = Objects.requireNonNull(logicalPaths, "logicalPaths must not be null");
@@ -327,17 +329,78 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
     @Override
     public InteractionResponseReceipt respond(
             InteractionView interaction, InteractionAction action, String idempotencyKey) {
+        InteractionView pending = requirePending(interaction);
+        if (!pending.allowedActions().contains(action)) {
+            throw unavailable("Interaction action is unavailable");
+        }
+        return runtime.respond(response(pending, action, idempotencyKey));
+    }
+
+    @Override
+    public InteractionResponseReceipt respond(
+            InteractionView interaction,
+            InteractionAction action,
+            java.util.List<io.haifa.agent.core.content.ContentPart> inputs,
+            String idempotencyKey) {
+        InteractionView pending = requirePending(interaction);
+        if (!pending.allowedActions().contains(action)) {
+            throw unavailable("Interaction action is unavailable");
+        }
+        return runtime.respond(response(pending, action, inputs, idempotencyKey));
+    }
+
+    @Override
+    public java.util.Optional<CodingApprovalPrompt> prepareApproval(InteractionView interaction) {
         requireRunScoped(interaction.runId());
-        InteractionView pending = runtime.pendingInteraction(interaction.runId())
+        return sessionApprovals.prepare(
+                interaction.runId(),
+                pending -> response(
+                        pending,
+                        InteractionAction.APPROVE,
+                        "session-approval:" + pending.requestId().value()));
+    }
+
+    @Override
+    public InteractionResponseReceipt allowForSession(InteractionView interaction, String idempotencyKey) {
+        InteractionView pending = requirePending(interaction);
+        return sessionApprovals.approve(pending, response(pending, InteractionAction.APPROVE, idempotencyKey));
+    }
+
+    @Override
+    public void resetSessionApproval(AgentSessionId sessionId) {
+        sessions.requireSessionInProject(sessionId, projectId);
+        sessionApprovals.reset(sessionId);
+    }
+
+    private InteractionView requirePending(InteractionView interaction) {
+        requireRunScoped(interaction.runId());
+        return runtime.pendingInteraction(interaction.runId())
                 .filter(value -> value.requestId().equals(interaction.requestId())
                         && value.runId().equals(interaction.runId())
                         && value.sessionId().equals(interaction.sessionId())
                         && value.revision() == interaction.revision())
                 .orElseThrow(() -> unavailable("Interaction is unavailable"));
-        if (!pending.allowedActions().contains(action)) {
-            throw unavailable("Interaction action is unavailable");
-        }
-        return runtime.respond(new InteractionResponseSubmission(
+    }
+
+    private InteractionResponseSubmission response(
+            InteractionView pending,
+            InteractionAction action,
+            java.util.List<io.haifa.agent.core.content.ContentPart> inputs,
+            String idempotencyKey) {
+        return new InteractionResponseSubmission(
+                new InteractionResponseId(identifiers.nextValue()),
+                pending.requestId(),
+                pending.runId(),
+                pending.revision(),
+                action,
+                inputs,
+                idempotencyKey,
+                time.now());
+    }
+
+    private InteractionResponseSubmission response(
+            InteractionView pending, InteractionAction action, String idempotencyKey) {
+        return new InteractionResponseSubmission(
                 new InteractionResponseId(identifiers.nextValue()),
                 pending.requestId(),
                 pending.runId(),
@@ -345,7 +408,7 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
                 action,
                 List.of(),
                 idempotencyKey,
-                time.now()));
+                time.now());
     }
 
     @Override

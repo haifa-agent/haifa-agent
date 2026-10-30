@@ -59,6 +59,7 @@ import io.haifa.agent.runtime.core.retry.RetryListener;
 import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
+import io.haifa.agent.runtime.core.storage.StorageException;
 import io.haifa.agent.runtime.core.trace.PromptDiagnosticsSink;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceContext;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
@@ -186,6 +187,7 @@ public final class DefaultAgentLoop implements AgentLoop {
     @Override
     public AgentLoopResult run(AgentRun run, AgentRunExecutionAttempt attempt, RuntimeTraceContext traceContext) {
         decisionExecutor.applyPendingToolApproval(run);
+        decisionExecutor.applyPendingClarificationResolution(run);
         reconciler.reconcileRecoveryFacts(run, attempt);
         var restored = checkpoints.restore(run, attempt.resumedFromCheckpointId());
         AgentLoopContext progress = restored.map(value ->
@@ -827,7 +829,12 @@ public final class DefaultAgentLoop implements AgentLoop {
             };
         }
         if (error instanceof ContextRebuildExhaustedException) return AgentErrorCode.MODEL_CONTEXT_TOO_LONG;
-        if (!(error instanceof ModelInvocationException modelError)) return AgentErrorCode.MODEL_CALL_FAILED;
+        if (!(error instanceof ModelInvocationException modelError)) {
+            // A persistence failure that interrupted the step says nothing about the provider call it interrupted.
+            return findFailure(error, StorageException.class) == null
+                    ? AgentErrorCode.MODEL_CALL_FAILED
+                    : AgentErrorCode.STORAGE_UNAVAILABLE;
+        }
         if ("structured_output_unsupported".equals(modelError.providerCode())) {
             return AgentErrorCode.MODEL_STRUCTURED_OUTPUT_UNSUPPORTED;
         }

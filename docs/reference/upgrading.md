@@ -12,6 +12,31 @@ Haifa Agent 仍处于 Pre-1.0。
 4. 按产品运维流程备份 Durable SQLite / Application Data。
 5. 用新版本运行自己的 Product Test。
 
+## 0.1.3 升级到 0.1.4
+
+0.1.4 没有新增 SQLite 迁移，0.1.3 的数据库可以原地打开；仍建议先停止应用并备份完整数据目录，
+再在备份副本上验证升级，并保留 0.1.3 程序与原始备份用于回退。
+
+Personal Assistant 的发行包布局在 0.1.4 发生不兼容变化（beta 阶段，不承诺旧布局兼容）：包名改为
+`haifa-personal-assistant-{windows,linux}-x64-v<version>.zip`，可执行体从 `lib/<artifact>.jar` 变为
+`app.jar`，Windows 包新增 `conf/pa.env`，数据目录改为 `data/personal-assistant/`。升级时按新布局重新
+部署，或保留原安装目录整体作为回退；不要把新程序直接指向旧包遗留的 `lib/` 与数据路径。新增的 Linux
+服务器包（`pa-server`）不内置 JRE，前端由 nginx 以相对基址 `/api/v1` 与 `/v1/admin` 提供，并可按
+`conf/haifa-personal-assistant.service` 以非 root 用户常驻运行。
+
+无桌面密钥环的 headless Linux 主机可用 `HAIFA_CODING_AUTH_STORE=file` 启用已有的 `0600` 文件认证存储；
+默认仍是 Windows 凭据存储，在 Windows/macOS 或未知取值上会被拒绝。Personal Assistant 的模型凭据同样
+按宿主平台选择存储位置，因此 Linux 服务器可以保存并复用模型 Key。
+
+`HostExecutionPlatforms.hostGuarded(...)` 新增不可变、可信且非敏感 CLI config/data/`PATH` 覆盖的重载，
+原有调用方式保持兼容；有效环境摘要会进入既有 profile、configuration 与 Tool 身份，升级前冻结的绑定
+因此会拒绝新形态，需要重新创建。
+
+持久化 SQLite 故障现在以 `STORAGE_UNAVAILABLE`（类别 `STORAGE`）暴露，不再复用 `MODEL_CALL_FAILED`；
+依赖旧错误码判断恢复策略的 SDK 或产品代码需要同步调整。Coding Terminal 的 clarification 交互
+（`ask_clarification`）、`Allow for this session` 与 `/approval reopen` 都是增量能力，读取旧会话数据
+不需要迁移。
+
 ## 0.1.2 升级到 0.1.3
 
 0.1.3 没有新增 SQLite 迁移，现有 0.1.2 数据库可以原地打开；仍建议先停止应用并备份完整数据目录。

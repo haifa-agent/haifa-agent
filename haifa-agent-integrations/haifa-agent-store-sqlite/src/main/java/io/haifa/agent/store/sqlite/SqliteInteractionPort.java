@@ -5,7 +5,9 @@ import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.runtime.api.ApprovalPresentation;
+import io.haifa.agent.runtime.api.ClarificationPresentation;
 import io.haifa.agent.runtime.api.InteractionAction;
+import io.haifa.agent.runtime.api.InteractionInputContract;
 import io.haifa.agent.runtime.api.InteractionRequestId;
 import io.haifa.agent.runtime.api.InteractionResponse;
 import io.haifa.agent.runtime.api.InteractionResponseId;
@@ -16,6 +18,7 @@ import io.haifa.agent.runtime.api.RuntimeApiErrorCode;
 import io.haifa.agent.runtime.api.RuntimeContractException;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext;
 import io.haifa.agent.runtime.core.idempotency.CanonicalRequestDigest;
+import io.haifa.agent.runtime.core.interaction.ClarificationTarget;
 import io.haifa.agent.runtime.core.interaction.InteractionExpirationOutcome;
 import io.haifa.agent.runtime.core.interaction.InteractionPort;
 import io.haifa.agent.runtime.core.interaction.InteractionRecord;
@@ -34,6 +37,7 @@ import io.haifa.agent.store.sqlite.mybatis.RuntimeStoreMapper;
 import io.haifa.agent.store.sqlite.payload.ContentPartsPayload;
 import io.haifa.agent.store.sqlite.payload.InteractionTargetPayload;
 import io.haifa.agent.store.sqlite.payload.InteractionTargetPayloadV2;
+import io.haifa.agent.store.sqlite.payload.InteractionTargetPayloadV3;
 import io.haifa.agent.store.sqlite.payload.SqliteRuntimePayloadTypes;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
@@ -69,14 +73,26 @@ public final class SqliteInteractionPort implements InteractionPort {
         }
         execute(() -> {
             RuntimeStoreMapper mapper = unitOfWork.mapper(RuntimeStoreMapper.class);
-            EncodedPayload target = request.presentation().isPresent()
-                    ? codecs.encode(
-                            SqliteRuntimePayloadTypes.INTERACTION_TARGET_V2,
-                            InteractionTargetPayloadV2.from(request.target(), request.presentation()))
-                    : codecs.encode(
-                            SqliteRuntimePayloadTypes.INTERACTION_TARGET,
-                            InteractionTargetPayload.from(request.target()));
-            String targetKind = request.target() instanceof ToolApprovalTarget ? "tool-approval" : "generic";
+            EncodedPayload target;
+            if (request.clarificationPresentation().isPresent()) {
+                target = codecs.encode(
+                        SqliteRuntimePayloadTypes.INTERACTION_TARGET_V3,
+                        InteractionTargetPayloadV3.from(
+                                request.target(),
+                                request.presentation(),
+                                request.clarificationPresentation(),
+                                request.inputContracts()));
+            } else if (request.presentation().isPresent()) {
+                target = codecs.encode(
+                        SqliteRuntimePayloadTypes.INTERACTION_TARGET_V2,
+                        InteractionTargetPayloadV2.from(request.target(), request.presentation()));
+            } else {
+                target = codecs.encode(
+                        SqliteRuntimePayloadTypes.INTERACTION_TARGET, InteractionTargetPayload.from(request.target()));
+            }
+            String targetKind = request.target() instanceof ToolApprovalTarget
+                    ? "tool-approval"
+                    : request.target() instanceof ClarificationTarget ? "clarification" : "generic";
             mapper.insertInteractionRequest(new InteractionRequestRow(
                     request.id().value(),
                     request.runId().value(),
@@ -105,14 +121,14 @@ public final class SqliteInteractionPort implements InteractionPort {
 
     @Override
     public Optional<InteractionRequest> pending(AgentRunId runId) {
-        return execute(() -> Optional.ofNullable(
+        return read(() -> Optional.ofNullable(
                         unitOfWork.mapper(RuntimeStoreMapper.class).pendingInteraction(runId.value()))
                 .map(this::fromRequestRow));
     }
 
     @Override
     public Optional<InteractionRequest> find(InteractionRequestId requestId) {
-        return execute(() -> Optional.ofNullable(
+        return read(() -> Optional.ofNullable(
                         unitOfWork.mapper(RuntimeStoreMapper.class).findInteractionRequest(requestId.value()))
                 .map(this::fromRequestRow));
     }
@@ -128,16 +144,29 @@ public final class SqliteInteractionPort implements InteractionPort {
     @Override
     public Optional<InteractionRecord> pendingRecord(AgentRunId runId) {
         Objects.requireNonNull(runId, "runId must not be null");
-        return execute(() -> Optional.ofNullable(
+        return read(() -> Optional.ofNullable(
                         unitOfWork.mapper(RuntimeStoreMapper.class).pendingInteraction(runId.value()))
                 .map(this::fromRecordRow));
     }
 
     @Override
     public Optional<ResolvedInteraction> unappliedToolResolution(AgentRunId runId) {
-        return execute(() -> {
+        return read(() -> {
             RuntimeStoreMapper mapper = unitOfWork.mapper(RuntimeStoreMapper.class);
             InteractionRequestRow request = mapper.unappliedToolResolution(runId.value());
+            if (request == null) return Optional.empty();
+            InteractionResponseRow response = mapper.findInteractionResponseForRequest(request.requestId());
+            if (response == null) throw new IllegalStateException("resolved interaction response is missing");
+            return Optional.of(new ResolvedInteraction(fromRequestRow(request), fromResponseRow(response)));
+        });
+    }
+
+    @Override
+    public Optional<ResolvedInteraction> unappliedClarificationResolution(AgentRunId runId) {
+        Objects.requireNonNull(runId, "runId must not be null");
+        return read(() -> {
+            RuntimeStoreMapper mapper = unitOfWork.mapper(RuntimeStoreMapper.class);
+            InteractionRequestRow request = mapper.unappliedClarificationResolution(runId.value());
             if (request == null) return Optional.empty();
             InteractionResponseRow response = mapper.findInteractionResponseForRequest(request.requestId());
             if (response == null) throw new IllegalStateException("resolved interaction response is missing");
@@ -149,12 +178,11 @@ public final class SqliteInteractionPort implements InteractionPort {
     public List<InteractionRecord> toolApprovalRecords(AgentRunId runId, ToolCallId toolCallId) {
         Objects.requireNonNull(runId, "runId must not be null");
         Objects.requireNonNull(toolCallId, "toolCallId must not be null");
-        return execute(
-                () -> unitOfWork.mapper(RuntimeStoreMapper.class).toolApprovalInteractions(runId.value()).stream()
-                        .map(this::fromRecordRow)
-                        .filter(record -> record.request().target() instanceof ToolApprovalTarget target
-                                && target.toolCallId().equals(toolCallId))
-                        .toList());
+        return read(() -> unitOfWork.mapper(RuntimeStoreMapper.class).toolApprovalInteractions(runId.value()).stream()
+                .map(this::fromRecordRow)
+                .filter(record -> record.request().target() instanceof ToolApprovalTarget target
+                        && target.toolCallId().equals(toolCallId))
+                .toList());
     }
 
     @Override
@@ -321,10 +349,9 @@ public final class SqliteInteractionPort implements InteractionPort {
         Objects.requireNonNull(runId, "runId must not be null");
         Objects.requireNonNull(at, "at must not be null");
         if (limit < 1 || limit > 1_000) throw new IllegalArgumentException("limit must be in 1..1000");
-        return execute(
-                () -> unitOfWork.mapper(RuntimeStoreMapper.class).dueInteractions(runId.value(), at, limit).stream()
-                        .map(this::fromRecordRow)
-                        .toList());
+        return read(() -> unitOfWork.mapper(RuntimeStoreMapper.class).dueInteractions(runId.value(), at, limit).stream()
+                .map(this::fromRecordRow)
+                .toList());
     }
 
     @Override
@@ -407,7 +434,7 @@ public final class SqliteInteractionPort implements InteractionPort {
     }
 
     private InteractionRecord requireRecord(InteractionRequestId requestId) {
-        return execute(() -> requireRecord(unitOfWork.mapper(RuntimeStoreMapper.class), requestId));
+        return read(() -> requireRecord(unitOfWork.mapper(RuntimeStoreMapper.class), requestId));
     }
 
     private InteractionRecord requireRecord(RuntimeStoreMapper mapper, InteractionRequestId requestId) {
@@ -449,10 +476,29 @@ public final class SqliteInteractionPort implements InteractionPort {
     }
 
     private InteractionRequest fromRequestRow(InteractionRequestRow row) {
-        String expectedKind = "tool-approval".equals(row.targetType()) ? "tool-approval" : "generic";
+        String expectedKind = "tool-approval".equals(row.targetType())
+                ? "tool-approval"
+                : "clarification".equals(row.targetType()) ? "clarification" : "generic";
         InteractionTarget domainTarget;
         Optional<ApprovalPresentation> presentation;
-        if ("2".equals(row.targetSchemaVersion())) {
+        List<InteractionInputContract> inputContracts = List.of();
+        Optional<ClarificationPresentation> clarification = Optional.empty();
+        if ("3".equals(row.targetSchemaVersion())) {
+            InteractionTargetPayloadV3 target = codecs.decode(
+                    SqliteRuntimePayloadTypes.INTERACTION_TARGET_V3,
+                    new EncodedPayload(
+                            SqliteRuntimePayloadTypes.INTERACTION_TARGET_V3.name(),
+                            row.targetSchemaVersion(),
+                            row.targetPayload(),
+                            row.targetHash()));
+            if (!expectedKind.equals(target.kind())) {
+                throw new IllegalStateException("interaction target discriminator does not match payload");
+            }
+            domainTarget = target.toDomain();
+            presentation = target.presentationDomain();
+            inputContracts = target.contractsDomain();
+            clarification = target.clarificationDomain();
+        } else if ("2".equals(row.targetSchemaVersion())) {
             InteractionTargetPayloadV2 target = codecs.decode(
                     SqliteRuntimePayloadTypes.INTERACTION_TARGET_V2,
                     new EncodedPayload(
@@ -491,7 +537,9 @@ public final class SqliteInteractionPort implements InteractionPort {
                 row.createdAt(),
                 Optional.ofNullable(row.expiresAt()),
                 InteractionExpirationOutcome.valueOf(row.expirationOutcome()),
-                presentation);
+                presentation,
+                inputContracts,
+                clarification);
     }
 
     private InteractionRecord transition(
@@ -608,6 +656,16 @@ public final class SqliteInteractionPort implements InteractionPort {
     private <T> T execute(Supplier<T> work) {
         try {
             return unitOfWork.execute(work);
+        } catch (SqliteStoreException exception) {
+            if (exception.getCause() instanceof RuntimeException runtimeException) throw runtimeException;
+            throw exception;
+        }
+    }
+
+    /** Queries read committed state without reserving the process-wide write slot. */
+    private <T> T read(Supplier<T> work) {
+        try {
+            return unitOfWork.executeReadOnly(work);
         } catch (SqliteStoreException exception) {
             if (exception.getCause() instanceof RuntimeException runtimeException) throw runtimeException;
             throw exception;

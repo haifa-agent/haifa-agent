@@ -1,5 +1,16 @@
 # Haifa Agent Runtime Core
 
+`ToolCallViewProjector` 为 Tool 参数投影提供顶层 `completeFields`：字段内容或名称发生截断、脱敏，
+以及嵌套节点超出预算时，均不认证该字段。展示预算和原始 Tool 参数保持各自语义；结果展示可能经过派生处理，
+因此不认证完整字段，避免调用方把结果展示误认为原始值。
+
+Active Context 的失效回调只更新短时缓存锁，不等待会话构建锁，避免 Run 完成或消息撤回与 Store 读取形成反向锁等待。
+构建中发生失效时，读取会重建后再发布，防止撤回的消息重新进入缓存。InMemory Run 查询在同一 Store 读锁内投影状态与 output，
+不会把两个提交时点的值拼成一个快照。
+`RunStateRepository.read` 禁止投影等待 Run 执行完成或 Runtime 回调，并不承诺所有存储读取都没有阻塞 I/O。
+默认内存装配的 `output` 只做 `ConcurrentHashMap.get`；SQLite 的 `output` 仍沿既有 Unit of Work 执行同步
+数据库读取，可能等待数据库资源。SQLite 使用默认 `read`，不把前一次 Run 查询的事务延长到投影期间。
+
 已提交模型 Assistant 消息的公开 `modelCallId` 取自同一次 `ModelInvocationResult`，由既有消息 metadata
 持久化并经消息分页窄投影公开；重开 Store 不丢失关联，旧记录缺失时保留空值，redaction 清除公开关联。
 
@@ -325,7 +336,10 @@ Runtime 配置快照还可冻结 provider-neutral `modelRequestOptions`。该结
 
 Model、Tool、预算和完成门禁在拥有语义的边界映射到稳定 `AgentErrorCode`。分类后的
 `AgentError` 在 Step、Attempt、Run、Runtime Event 和 Trace 复用同一个 `diagnosticId`；
-`RUNTIME_EXECUTION_FAILED` 只处理无法更精确分类的软件故障。可选 `FailureDiagnosticSink`
+`RUNTIME_EXECUTION_FAILED` 只处理无法更精确分类的软件故障。持久化失败通过 `storage.StorageException`（及其
+子类，例如 Store 适配器的异常）表达，并按 `STORAGE_UNAVAILABLE`（类别 `STORAGE`）分类；中断 `model.call`
+步骤的存储失败不会因此被报告为 `MODEL_CALL_FAILED`，适配器内部失败码仍只进入日志与技术详情，不进入公共 payload。
+可选 `FailureDiagnosticSink`
 接收所有终止 Attempt 的原始 Throwable 与已分类安全上下文，由实现负责有界脱敏存储；Trace 或诊断 Sink 失败属于观测投影失败，不会改变已经确定的
 Run/Attempt 事实。具有副作用且结果不确定的 Tool 仍映射为 `TOOL_OUTCOME_UNKNOWN` 并禁止盲目重放。
 - Runtime 只调用 Core `AgentRun` 的受控行为，不复制生命周期合法性表。
@@ -341,6 +355,9 @@ Run/Attempt 事实。具有副作用且结果不确定的 Tool 仍映射为 `TOO
 - Skill 激活是 Run-scope 的幂等事实，保存在 Skill 状态仓。继续执行时检查冻结 Binding 与内容访问，不复制到 Checkpoint。
 - `ToolCall` 是工具调用的权威记录。`ToolCallPart`/`ToolResultPart` 只保存领域 `ToolCallId`、Provider correlation 等协议引用和有界摘要；组装下一轮模型请求时，从权威 `ToolCall.result()` 重建已归一化的 `structuredData` 与 `truncated`；`task` 结果排除仅供展示的 `outputPreview`、`outputSha256`、`outputTruncated`，Runtime idempotency key 不发送给模型。
 - Session Context 的 Token 估算同样从权威 `ToolCall` 读取完整 arguments 与 structured result；Tool 执行和持久化 Trace 记录实际 AgentLoop iteration，不使用占位值。
+- Tool 生命周期事件的 `ToolObservation.outputPreview` 优先复制工具结果中仅供展示的 `outputPreview`，随后按
+  16 KiB/200 行重新限额并执行既有凭据脱敏；工具声明已截断时保留其原始字节/行数与两个已知原因，未知原因
+  不猜测。工具结果没有该键时回退有界 `summary`，事件不读取 Provider 载荷也不改动权威 `ToolResult`。
 - Provider 在 Tool dispatch 后抛出异常时，Runtime 会先把权威 `ToolCall` 和 Step 收敛为失败并追加
   使用同一 Provider correlation 的安全 `ToolResultPart`，再终止当前 Run。后续 Run 因此仍能组装
   完整的 Assistant Tool Call / Tool Result 协议；`OUTCOME_UNKNOWN` 只用于告知状态，不允许自动重放。
@@ -370,6 +387,9 @@ Run/Attempt 事实。具有副作用且结果不确定的 Tool 仍映射为 `TOO
 - Application 通过 `RuntimeCoreBuilder.persistence(...)` 与 `workerId(...)` 注入完整适配器装配。
   Runtime 不重放 Unit of Work；具体持久化适配器只能在用户事务工作开始前、尚未取得数据库写锁时做有限重试，
   对未知提交结果或已经变更的内存聚合必须 fail closed。
+- `RuntimeUnitOfWork.executeReadOnly` 声明纯查询作用域：单写者的存储适配器必须让读请求不与写者排队，
+  该作用域只观察已提交状态、在其内写必须失败，内存组合默认退化为 `execute`。消息分页等 Runtime 只读 API
+  使用该作用域，因此 UI 轮询不再占用写槽位。
 - `OutboxMessage` 保存与对应 `RuntimeEvent` 相同的 Run 内 `sequence` 和稳定 `schemaVersion`。本地
   `ExecutionOwnershipPort` 以当前进程实例 ID 精确匹配 Attempt `workerId`，进程重启后的旧 Attempt
   不再被误判为仍由本地持有。

@@ -42,6 +42,8 @@ import io.haifa.agent.project.store.WorkspaceStore;
 import io.haifa.agent.project.workspace.Workspace;
 import io.haifa.agent.project.workspace.WorkspaceAccessMode;
 import io.haifa.agent.project.workspace.WorkspaceId;
+import io.haifa.agent.runtime.api.display.BoundedText;
+import io.haifa.agent.runtime.api.display.ToolDisplayBudget;
 import io.haifa.agent.tool.api.ToolReconciliation;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -291,9 +293,11 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         createTarget(mutationContext, target, bytes);
         recordCreate(target, bytes, mutationContext);
         String afterContentHash = "sha256:" + digest(bytes);
-        return success(
-                "Created " + target.displayPath(),
-                Map.of("path", target.displayPath(), "afterContentHash", afterContentHash));
+        return withOutputPreview(
+                success(
+                        "Created " + target.displayPath(),
+                        Map.of("path", target.displayPath(), "afterContentHash", afterContentHash)),
+                "Written content:\n" + content);
     }
 
     private ToolResult write(MutationContext mutationContext, Map<String, Object> values) {
@@ -313,16 +317,20 @@ final class LocalFileToolOperations implements ProjectToolOperations {
             createTarget(mutationContext, target, bytes);
             recordCreate(target, bytes, mutationContext);
             String afterContentHash = "sha256:" + digest(bytes);
-            return success(
-                    "Created " + target.displayPath(),
-                    Map.of("path", target.displayPath(), "afterContentHash", afterContentHash));
+            return withOutputPreview(
+                    success(
+                            "Created " + target.displayPath(),
+                            Map.of("path", target.displayPath(), "afterContentHash", afterContentHash)),
+                    "Written content:\n" + content);
         }
         writeTarget(mutationContext, target, bytes, before.contentHash());
         recordReplace(target, before, bytes, mutationContext);
         String afterContentHash = "sha256:" + digest(bytes);
-        return success(
-                "Wrote " + target.displayPath(),
-                Map.of("path", target.displayPath(), "afterContentHash", afterContentHash));
+        return withOutputPreview(
+                success(
+                        "Wrote " + target.displayPath(),
+                        Map.of("path", target.displayPath(), "afterContentHash", afterContentHash)),
+                "Written content:\n" + content);
     }
 
     private ToolResult delete(MutationContext mutationContext, Map<String, Object> values) {
@@ -630,28 +638,34 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         }
 
         List<String> appliedPaths = new ArrayList<>();
+        StringBuilder appliedPreview = new StringBuilder();
         Map<String, String> afterContentHashes = new LinkedHashMap<>();
         for (PatchPlanItem item : plan) {
             try {
                 commitPatchFile(mutationContext, item);
                 appliedPaths.add(item.target().displayPath());
+                appliedPreview.append(item.preview());
                 afterContentHashes.put(item.target().displayPath(), "sha256:" + digest(item.content()));
             } catch (WorkspaceFileException | WorkspaceMutationException exception) {
-                return patchFailure(
-                        patchText,
-                        appliedPaths,
-                        item.target().displayPath(),
-                        publicErrorCode(exception),
-                        "RE_READ_AND_REGENERATE_PATCH",
-                        !appliedPaths.isEmpty());
+                return withOutputPreview(
+                        patchFailure(
+                                patchText,
+                                appliedPaths,
+                                item.target().displayPath(),
+                                publicErrorCode(exception),
+                                "RE_READ_AND_REGENERATE_PATCH",
+                                !appliedPaths.isEmpty()),
+                        appliedPreview.toString());
             } catch (IllegalArgumentException exception) {
-                return patchFailure(
-                        patchText,
-                        appliedPaths,
-                        item.target().displayPath(),
-                        "PATCH_CONFLICT",
-                        "RE_READ_AND_REGENERATE_PATCH",
-                        !appliedPaths.isEmpty());
+                return withOutputPreview(
+                        patchFailure(
+                                patchText,
+                                appliedPaths,
+                                item.target().displayPath(),
+                                "PATCH_CONFLICT",
+                                "RE_READ_AND_REGENERATE_PATCH",
+                                !appliedPaths.isEmpty()),
+                        appliedPreview.toString());
             }
         }
 
@@ -669,17 +683,21 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                         afterContentHashes.values().iterator().next());
             }
         }
-        return success("Applied patch to " + document.files().size() + " file(s).", Map.copyOf(data));
+        return withOutputPreview(
+                success("Applied patch to " + document.files().size() + " file(s).", Map.copyOf(data)),
+                appliedPreview.toString());
     }
 
     private PatchPlanItem preflightPatchFile(FilePatch file, ResolvedTarget target) {
         if (file.creation()) {
             ensureAbsent(target);
-            return new PatchPlanItem(file, target, applyHunksToContent(file, ""), null, 0);
+            AppliedPatch applied = applyHunksToContent(file, "");
+            return new PatchPlanItem(file, target, applied.content(), null, 0, applied.preview());
         }
         TargetContent current = readAll(target);
+        AppliedPatch applied = applyHunksToContent(file, current.text());
         return new PatchPlanItem(
-                file, target, applyHunksToContent(file, current.text()), current.contentHash(), current.size());
+                file, target, applied.content(), current.contentHash(), current.size(), applied.preview());
     }
 
     private void commitPatchFile(MutationContext mutationContext, PatchPlanItem item) {
@@ -738,9 +756,18 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         return failure("Patch was not fully applied", Map.copyOf(data));
     }
 
-    private static byte[] applyHunksToContent(FilePatch patch, String source) {
+    /**
+     * Applies one parsed file patch and returns the exact bytes to commit together with a display-only Unified Diff
+     * of the changes this loop actually applied. Hunk headers are rebuilt from real applied positions, so the
+     * preview describes this invocation instead of an after-the-fact repository diff. The text is normalized to LF
+     * and never emits {@code \ No newline at end of file}: it is a display sample, not a byte-reversible patch.
+     */
+    private static AppliedPatch applyHunksToContent(FilePatch patch, String source) {
         List<String> original = splitLines(source);
         List<String> output = new ArrayList<>();
+        String path = patch.targetPath().projectPath().value();
+        StringBuilder preview =
+                new StringBuilder("--- " + (patch.creation() ? "/dev/null" : path) + "\n+++ " + path + "\n");
         int cursor = 0;
         for (int hunkIndex = 0; hunkIndex < patch.hunks().size(); hunkIndex++) {
             PatchHunk hunk = patch.hunks().get(hunkIndex);
@@ -759,23 +786,61 @@ final class LocalFileToolOperations implements ProjectToolOperations {
             }
             output.addAll(original.subList(cursor, target));
             cursor = target;
+            // Records the applied positions: the old side is 1-based, the new side already includes earlier hunks.
+            int newStart = output.size();
+            StringBuilder changed = new StringBuilder();
             for (PatchLine line : hunk.lines()) {
                 if (line.type() == PatchLineType.ADD) {
                     output.add(line.text());
+                    changed.append('+').append(line.text()).append('\n');
                     continue;
                 }
                 if (cursor < original.size() && original.get(cursor).equals(line.text())) {
                     if (line.type() == PatchLineType.CONTEXT) output.add(line.text());
+                    changed.append(line.type() == PatchLineType.CONTEXT ? ' ' : '-')
+                            .append(line.text())
+                            .append('\n');
                     cursor++;
                 }
             }
+            int oldCount = cursor - target;
+            int newCount = output.size() - newStart;
+            preview.append("@@ -")
+                    .append(oldCount == 0 ? target : target + 1)
+                    .append(',')
+                    .append(oldCount)
+                    .append(" +")
+                    .append(newCount == 0 ? newStart : newStart + 1)
+                    .append(',')
+                    .append(newCount)
+                    .append(" @@\n")
+                    .append(changed);
         }
         output.addAll(original.subList(cursor, original.size()));
         String joined = String.join("\n", output);
         if (!output.isEmpty() && (source.endsWith("\n") || patch.creation())) {
             joined += "\n";
         }
-        return joined.getBytes(StandardCharsets.UTF_8);
+        return new AppliedPatch(joined.getBytes(StandardCharsets.UTF_8), preview.toString());
+    }
+
+    /** A bounded copy of this invocation's committed output; the summary stays concise. */
+    private static ToolResult withOutputPreview(ToolResult result, String value) {
+        if (value.isEmpty()) return result;
+        BoundedText preview = BoundedText.of(value, ToolDisplayBudget.defaultOutput());
+        Map<String, Object> data = new LinkedHashMap<>(result.structuredData());
+        data.put("outputPreview", preview.text());
+        data.put("outputPreviewTruncated", preview.truncated());
+        data.put("outputPreviewByteCount", preview.byteCount());
+        data.put("outputPreviewLineCount", preview.lineCount());
+        preview.truncationReason().ifPresent(reason -> data.put("outputPreviewTruncationReason", reason.name()));
+        return new ToolResult(
+                result.successful(),
+                result.summary(),
+                Map.copyOf(data),
+                result.assets(),
+                result.artifacts(),
+                result.truncated());
     }
 
     private static int locateContextualHunk(
@@ -881,7 +946,14 @@ final class LocalFileToolOperations implements ProjectToolOperations {
             WorkspaceAccessMode requiredMode) {}
 
     private record PatchPlanItem(
-            FilePatch file, ResolvedTarget target, byte[] content, String beforeHash, long beforeSize) {}
+            FilePatch file,
+            ResolvedTarget target,
+            byte[] content,
+            String beforeHash,
+            long beforeSize,
+            String preview) {}
+
+    private record AppliedPatch(byte[] content, String preview) {}
 
     private record TargetMetadata(FileType type, long size, String contentHash) {}
 

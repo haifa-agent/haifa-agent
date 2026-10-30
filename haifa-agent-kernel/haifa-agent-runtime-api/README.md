@@ -1,5 +1,12 @@
 # Haifa Agent Runtime API
 
+## Tool 参数完整性
+
+`ToolDataView.completeFields()` 标识由可信投影完整复制、且未经截断或脱敏的顶层字段。
+`truncated` 仍表示整体展示预算是否截断；某个大字段被截断不会使其他完整字段丢失该标识。
+这允许调用方区分内容预览被截断与目标路径不完整，不提供原始参数或绕过 Runtime 权限检查。
+原两参数构造器保留；旧的截断投影及缺失完整性 metadata 的载荷不认证任何字段。
+
 ## 持久消息分页
 
 `AgentRuntime.messages(runId, RunMessageCursor.beforeFirst(runId), limit)` 返回可信 Caller 可见 Run 的

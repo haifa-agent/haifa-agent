@@ -32,6 +32,7 @@ import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.AgentRunEventListener;
 import io.haifa.agent.runtime.api.AgentRunSnapshot;
+import io.haifa.agent.runtime.api.ClarificationPresentation;
 import io.haifa.agent.runtime.api.InteractionAction;
 import io.haifa.agent.runtime.api.InteractionConsequenceView;
 import io.haifa.agent.runtime.api.InteractionInputContract;
@@ -257,6 +258,68 @@ public final class CodingTerminalTestSupport {
                 new InteractionConsequenceView("Run tool", "Reject tool", "Expire request"));
     }
 
+    static InteractionView clarification(boolean multiple) {
+        return clarification(new ClarificationPresentation(
+                "Storage",
+                List.of(new ClarificationPresentation.Question(
+                        "Storage",
+                        "Which storage?",
+                        multiple,
+                        true,
+                        List.of(
+                                new ClarificationPresentation.Option("opt-0-0", "Postgres", Optional.empty()),
+                                new ClarificationPresentation.Option("opt-0-1", "SQLite", Optional.empty()))))));
+    }
+
+    /** Two questions with option rationales, the shape a wizard must walk through. */
+    static InteractionView multiQuestionClarification() {
+        return clarification(new ClarificationPresentation(
+                "Delivery plan",
+                List.of(
+                        new ClarificationPresentation.Question(
+                                "Storage",
+                                "Which storage?",
+                                false,
+                                true,
+                                List.of(
+                                        new ClarificationPresentation.Option(
+                                                "opt-0-0", "Postgres", Optional.of("Runs as a server")),
+                                        new ClarificationPresentation.Option("opt-0-1", "SQLite", Optional.empty()))),
+                        new ClarificationPresentation.Question(
+                                "Location",
+                                "Where should it live?",
+                                false,
+                                true,
+                                List.of(
+                                        new ClarificationPresentation.Option(
+                                                "opt-1-0",
+                                                "In the repository",
+                                                Optional.of("Follows the repository layout")),
+                                        new ClarificationPresentation.Option(
+                                                "opt-1-1", "In the temp folder", Optional.empty()))))));
+    }
+
+    static InteractionView clarification(ClarificationPresentation presentation) {
+        return new InteractionView(
+                new InteractionRequestId("interaction-clarification"),
+                new AgentRunId("run-1"),
+                SESSION_ID,
+                0,
+                InteractionKind.CLARIFICATION,
+                InteractionState.PENDING,
+                "Clarification",
+                "Which storage?",
+                List.of(InteractionAction.SUBMIT, InteractionAction.CANCEL),
+                InteractionInputContract.NONE,
+                new InteractionTargetView("tool", "ask_clarification", Optional.empty(), Optional.empty(), "workspace"),
+                new InteractionRequesterView("user", "local user"),
+                Instant.EPOCH,
+                Optional.of(Instant.EPOCH.plusSeconds(60)),
+                new InteractionConsequenceView("Answer questions", "Dismiss questions", "Expire request"),
+                Optional.empty(),
+                Optional.of(presentation));
+    }
+
     public static CodingSessionView view(Optional<InteractionView> interaction) {
         return view(interaction, 0, "session");
     }
@@ -287,8 +350,13 @@ public final class CodingTerminalTestSupport {
                         modelOption, revision, true));
     }
 
-    static CodingSessionView activeView() {
+    public static CodingSessionView activeView() {
+        return activeView(Optional.empty());
+    }
+
+    static CodingSessionView activeView(Optional<InteractionView> interaction) {
         AgentRunId runId = new AgentRunId("run-1");
+        AgentRunStatus status = interaction.isPresent() ? AgentRunStatus.WAITING_APPROVAL : AgentRunStatus.RUNNING;
         return new CodingSessionView(
                 new CodingSessionSummary(
                         SESSION_ID,
@@ -296,19 +364,13 @@ public final class CodingTerminalTestSupport {
                         "session",
                         io.haifa.agent.core.session.AgentSessionStatus.ACTIVE,
                         Optional.of(runId),
-                        Optional.of(AgentRunStatus.RUNNING),
+                        Optional.of(status),
                         0,
                         Instant.EPOCH,
                         0),
                 Optional.of(new AgentRunSnapshot(
-                        runId,
-                        AgentRunStatus.RUNNING,
-                        1,
-                        Instant.EPOCH,
-                        Optional.empty(),
-                        Optional.empty(),
-                        Optional.empty())),
-                Optional.empty(),
+                        runId, status, 1, Instant.EPOCH, Optional.empty(), Optional.empty(), Optional.empty())),
+                interaction,
                 Optional.empty(),
                 "sha256:configuration",
                 "cli-coding@1.0.0",
@@ -345,7 +407,7 @@ public final class CodingTerminalTestSupport {
                 payload);
     }
 
-    static final class FakeClient implements CodingSessionClient {
+    static class FakeClient implements CodingSessionClient {
         CodingSessionView view;
         CodingSessionView reconciledView;
         List<CodingSessionSummary> summaries = List.of();
@@ -365,7 +427,8 @@ public final class CodingTerminalTestSupport {
         final List<AgentSessionId> opened = new ArrayList<>();
         final List<String> restored = new ArrayList<>();
         final List<InteractionAction> respondedActions = new ArrayList<>();
-        final List<AgentSessionId> cancelledSessions = new ArrayList<>();
+        final List<List<io.haifa.agent.core.content.ContentPart>> respondedInputs = new ArrayList<>();
+        public final List<AgentSessionId> cancelledSessions = new ArrayList<>();
         final List<String> revokedWorkspaces = new ArrayList<>();
         CodingShellPlan.State shellState = CodingShellPlan.State.READY;
         boolean shellApproved;
@@ -487,6 +550,16 @@ public final class CodingTerminalTestSupport {
         public Optional<InteractionView> pendingInteraction(AgentRunId runId) {
             pendingInteractionCalls++;
             return reconciledView.pendingInteraction();
+        }
+
+        @Override
+        public InteractionResponseReceipt respond(
+                InteractionView interaction,
+                InteractionAction action,
+                List<io.haifa.agent.core.content.ContentPart> inputs,
+                String idempotencyKey) {
+            respondedInputs.add(inputs);
+            return respond(interaction, action, idempotencyKey);
         }
 
         @Override

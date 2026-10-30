@@ -1,0 +1,28 @@
+[Unit]
+Description=Haifa Personal Assistant (loopback 20001, fronted by nginx)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 不需要 root：用普通服务用户即可（root 也能运行，但不推荐）。
+# 安装到其它路径时同步修改 User/Group/WorkingDirectory/EnvironmentFile/ExecStart/ReadWritePaths。
+User=haifa-pa
+Group=haifa-pa
+WorkingDirectory=/opt/haifa-personal-assistant
+EnvironmentFile=/opt/haifa-personal-assistant/conf/pa.env
+ExecStart=/opt/haifa-personal-assistant/bin/start.sh
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=40
+SuccessExitStatus=143
+
+# 收紧权限：只允许写安装目录（数据、日志、临时目录都在其中）
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/haifa-personal-assistant
+
+[Install]
+WantedBy=multi-user.target

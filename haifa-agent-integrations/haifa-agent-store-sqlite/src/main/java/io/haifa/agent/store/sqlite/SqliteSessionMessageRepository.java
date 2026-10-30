@@ -77,7 +77,7 @@ public final class SqliteSessionMessageRepository
     @Override
     public List<AgentMessage> messagesAfter(AgentSessionId sessionId, MessageCursor cursor, int limit) {
         requireLimit(limit);
-        return execute(() ->
+        return read(() ->
                 unitOfWork
                         .mapper(RuntimeStoreMapper.class)
                         .messagesAfter(sessionId.value(), cursor.value(), limit)
@@ -89,7 +89,7 @@ public final class SqliteSessionMessageRepository
     @Override
     public RecentMessageWindow recentMessages(AgentSessionId sessionId, MessageCursor atOrBefore, int limit) {
         requireLimit(limit);
-        List<AgentMessage> messages = execute(() ->
+        List<AgentMessage> messages = read(() ->
                 unitOfWork
                         .mapper(RuntimeStoreMapper.class)
                         .recentMessages(sessionId.value(), atOrBefore.value(), limit)
@@ -107,20 +107,20 @@ public final class SqliteSessionMessageRepository
 
     @Override
     public Optional<MessageCursor> latestMessageCursor(AgentSessionId sessionId) {
-        return execute(() -> Optional.ofNullable(
+        return read(() -> Optional.ofNullable(
                         unitOfWork.mapper(RuntimeStoreMapper.class).latestMessageSequence(sessionId.value()))
                 .map(MessageCursor::new));
     }
 
     @Override
     public Optional<AgentMessage> message(AgentMessageId id) {
-        return execute(() -> Optional.ofNullable(
+        return read(() -> Optional.ofNullable(
                         unitOfWork.mapper(RuntimeStoreMapper.class).findMessage(id.value()))
                 .map(this::fromRow));
     }
 
     public List<AgentMessage> messagesForRun(AgentRunId runId) {
-        return execute(() -> unitOfWork.mapper(RuntimeStoreMapper.class).messagesForRun(runId.value()).stream()
+        return read(() -> unitOfWork.mapper(RuntimeStoreMapper.class).messagesForRun(runId.value()).stream()
                 .map(this::fromRow)
                 .toList());
     }
@@ -129,7 +129,7 @@ public final class SqliteSessionMessageRepository
     public List<AgentMessage> runMessagesAfter(AgentRunId runId, long after, long head, int limit) {
         requireLimit(limit);
         if (after < 0 || head < after) throw new IllegalArgumentException("invalid message window");
-        return execute(() ->
+        return read(() ->
                 unitOfWork.mapper(RuntimeStoreMapper.class).runMessagesAfter(runId.value(), after, head, limit).stream()
                         .map(this::fromRow)
                         .toList());
@@ -137,13 +137,12 @@ public final class SqliteSessionMessageRepository
 
     @Override
     public long runMessageCountThrough(AgentRunId runId, long sequence) {
-        return execute(
-                () -> unitOfWork.mapper(RuntimeStoreMapper.class).runMessageCountThrough(runId.value(), sequence));
+        return read(() -> unitOfWork.mapper(RuntimeStoreMapper.class).runMessageCountThrough(runId.value(), sequence));
     }
 
     @Override
     public OptionalLong runMessageHead(AgentRunId runId) {
-        Long head = execute(() -> unitOfWork.mapper(RuntimeStoreMapper.class).runMessageHead(runId.value()));
+        Long head = read(() -> unitOfWork.mapper(RuntimeStoreMapper.class).runMessageHead(runId.value()));
         return head == null ? OptionalLong.empty() : OptionalLong.of(head);
     }
 
@@ -287,6 +286,16 @@ public final class SqliteSessionMessageRepository
     private <T> T execute(Supplier<T> work) {
         try {
             return unitOfWork.execute(work);
+        } catch (SqliteStoreException exception) {
+            if (exception.getCause() instanceof RuntimeException runtimeException) throw runtimeException;
+            throw exception;
+        }
+    }
+
+    /** Queries read committed state without reserving the process-wide write slot. */
+    private <T> T read(Supplier<T> work) {
+        try {
+            return unitOfWork.executeReadOnly(work);
         } catch (SqliteStoreException exception) {
             if (exception.getCause() instanceof RuntimeException runtimeException) throw runtimeException;
             throw exception;

@@ -35,7 +35,7 @@ V1、V2、V4～V13、V15 与 V1000～V1007；V3 legacy Policy family 和独立 V
 `SqliteConnectionFactory` 复用物理连接：`openConnection()` 从一个小连接池（MyBatis `PooledDataSource`，
 上限 8）租出连接，关闭返回的连接即归还。归还时连接被恢复为新开状态（结束未完成的事务、`query_only=OFF`），
 无法恢复的连接会被丢弃；已归还的连接对象拒绝再次使用。池满时等待以 `busyTimeoutMillis` 为界，超时以
-`DATABASE_BUSY` 失败。每次租出仍会重新校验数据库文件权限。
+`DATABASE_BUSY` 失败。写 UoW 在排队前校验数据库文件，随后的租出不再重复该校验；其余租出仍会各自校验。
 
 由此带来的使用要求：
 
@@ -172,13 +172,30 @@ namespace/statement 唯一性、`${}` 禁止和启动期解析校验：
 5. 创建 `SqliteRuntimeUnitOfWork` 与显式 Payload Codec 注册入口。
 
 UoW 始终保持 JDBC `autoCommit=true`，在同一 Connection 上显式执行事务控制。写 UoW 使用
-`BEGIN IMMEDIATE`，Event Journal 的纯查询使用 deferred、query-only 事务，不占用 SQLite 的单写者
-槽位。外层 UoW 独占 Connection 和 SqlSession；同线程只读调用可加入现有写事务并观察其状态，写调用
+`BEGIN IMMEDIATE`；纯查询（Event Journal、Session 消息、Run、Attempt、Idempotency 与 Interaction 等仓储的
+`find`/`list`/`head`/`count`）使用 deferred、query-only 事务，不占用 SQLite 的单写者槽位。仓储的私有
+`read(...)` 包装声明这一作用域，`RuntimeUnitOfWork.executeReadOnly` 是同一语义的 Runtime 端口，写方法仍走
+`execute`。外层 UoW 独占 Connection 和 SqlSession；同线程只读调用可加入现有写事务并观察其状态，写调用
 不得嵌套进入只读事务。任何嵌套失败都会把外层标记为 rollback-only。MyBatis 使用 `MANAGED` 且
 `closeConnection=false`，不会提交、回滚或关闭 UoW Connection。
 
 `BEGIN IMMEDIATE` 在事务工作执行前遇到 SQLite `BUSY/LOCKED` 时由 Store 自身做有界重试；耗尽后分类为
 `DATABASE_BUSY`。事务工作开始后的 SQL、提交不确定性或其他数据库错误不会被重试或归入该类别。
+
+进程内的写者不按 `busy_timeout` 排队。写 UoW 先校验数据库文件、再取得本进程的公平写槽位、最后租连接，因此
+排队者不会占满连接池，排队时间也不受跨进程 `busy_timeout` 约束，文件系统工作也不在槽位内进行。排队本身只有
+独立且可配置的兜底上限（`SqliteStoreConfiguration.writerQueueTimeoutMillis`，默认 60 s），仅在持有者疑似泄漏
+槽位时触发。该等待发生在任何语句执行之前，一次超时没有可回滚的内容，因此写 UoW 会在同一次调用内重试一次
+（`sqlite.writer.retry`，最坏等待为兜底上限的两倍），仍失败才以 `WRITER_SLOT_TIMEOUT` 结束。写槽位不可由同一
+线程嵌套获取；嵌套写加入
+外层 UoW，不重复取锁。`sqlite.writer.acquired` / `sqlite.writer.released` 日志给出持有线程、已持有时长与排队
+长度；兜底触发时还会输出 `sqlite.writer.timeout`，其中 `waitedMs` 是实际等待时长，`writerLocked=false` 且
+`holderThread=none` 表示没有写者持有槽位、等待者自身被延迟（例如虚拟线程载体饥饿），而不是槽位泄漏；持有者
+存在时会同时输出锁的实际 owner、状态与有界栈帧，即使诊断记录在获取与释放之间丢失也可定位。owner 在超时报告
+开始时只采样一次，`ownership=consistent|changed|unknown|none` 标记 owner 与 holder 记录是否一致；发生锁交接
+时不会把新 holder 的持有时长归到旧 owner 上。`sqlite.uow` 在
+失败路径同样输出，并新增 `waitMs` 阶段，使“排队慢”与“事务内工作慢”可以区分。`DATABASE_BUSY` 只保留给跨进程
+`BEGIN IMMEDIATE` 竞争与连接池租出超时。
 
 ## Schema 与 Migration
 

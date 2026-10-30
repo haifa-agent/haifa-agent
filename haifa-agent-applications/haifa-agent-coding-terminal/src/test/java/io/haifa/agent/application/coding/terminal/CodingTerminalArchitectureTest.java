@@ -58,4 +58,18 @@ class CodingTerminalArchitectureTest {
                 .haveFullyQualifiedName("java.io.File")
                 .check(classes);
     }
+
+    @Test
+    void markdownParsingAndTokensStayIndependentOfTerminalAndRuntimeLibraries() {
+        var classes = new ClassFileImporter()
+                .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
+                .importPackages("io.haifa.agent.application.coding.terminal.markdown");
+        noClasses()
+                .that()
+                .resideInAnyPackage("..markdown.parse..", "..markdown.style..")
+                .should()
+                .dependOnClassesThat()
+                .resideOutsideOfPackages("java..", "..markdown.parse..", "..markdown.style..")
+                .check(classes);
+    }
 }

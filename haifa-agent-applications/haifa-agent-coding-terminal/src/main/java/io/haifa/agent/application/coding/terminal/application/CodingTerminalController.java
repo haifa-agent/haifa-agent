@@ -3,12 +3,16 @@ package io.haifa.agent.application.coding.terminal.application;
 import io.haifa.agent.application.coding.terminal.event.TerminalEventPump;
 import io.haifa.agent.application.coding.terminal.event.TerminalInput;
 import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
+import io.haifa.agent.application.coding.terminal.state.ApprovalDetails;
+import io.haifa.agent.application.coding.terminal.state.ClarificationDetails;
 import io.haifa.agent.application.coding.terminal.state.PendingMessage;
 import io.haifa.agent.application.coding.terminal.state.TerminalRecovery;
 import io.haifa.agent.application.coding.terminal.state.TerminalSelector;
+import io.haifa.agent.application.coding.terminal.state.TerminalSelectorDetail;
 import io.haifa.agent.application.coding.terminal.state.TerminalThemes;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiReducer;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
+import io.haifa.agent.application.coding.terminal.state.WaitingMessage;
 import io.haifa.agent.application.project.product.ProjectProductException;
 import io.haifa.agent.application.project.product.coding.CodingModelOption;
 import io.haifa.agent.application.project.product.coding.CodingModelState;
@@ -19,6 +23,7 @@ import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.application.project.product.coding.CodingShellPlan;
 import io.haifa.agent.application.project.product.coding.CodingShellResult;
 import io.haifa.agent.application.project.product.coding.CodingWorkspaceView;
+import io.haifa.agent.application.project.product.coding.client.CodingApprovalPrompt;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationClient;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationMethodView;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationProviderView;
@@ -86,6 +91,7 @@ public final class CodingTerminalController implements AutoCloseable {
     private final TerminalCommandRouter commands = new TerminalCommandRouter();
     private final TerminalCompletionProvider completions;
     private TerminalUiState state;
+    private String activeTranscriptItemId = "";
     private RunEventSubscription subscription;
     private RunOutputSubscription outputSubscription;
     private ToolOutputPreviewPublisher.ToolOutputPreviewSubscription previewSubscription;
@@ -146,6 +152,8 @@ public final class CodingTerminalController implements AutoCloseable {
     private boolean acknowledgementInFlight;
     private boolean reconcileInFlight;
     private InteractionHydrationRequest interactionHydrationInFlight;
+    private ClarificationDraft clarificationDraft;
+    private boolean awaitingClarificationText;
     private InteractionView activeInteraction;
     private long activeCompletionRequestId;
     private static final long CANCEL_ARMED_TIMEOUT_MILLIS = 5_000L;
@@ -344,12 +352,37 @@ public final class CodingTerminalController implements AutoCloseable {
         if ((input.kind() != TerminalInput.Kind.SUBMIT && input.kind() != TerminalInput.Kind.FOLLOW_UP)
                 || renamingSession
                 || state.selector().isPresent()
-                || input.text().isBlank()
                 || routingText.startsWith("!")
+                || input.text().isBlank()
                 || commands.route(routingText) != TerminalCommand.MESSAGE) {
             return Optional.empty();
         }
+        if (input.kind() == TerminalInput.Kind.SUBMIT
+                && !awaitingNewSessionMessage
+                && (state.currentRunId().isPresent() || hasQueuedWaiting() || isEditingWaiting())) {
+            // Queueing, replacing and saving a Waiting draft are local state changes; accept() performs them.
+            return Optional.empty();
+        }
         return Optional.of(beginMessageSubmission(input.text(), input.kind() == TerminalInput.Kind.FOLLOW_UP));
+    }
+
+    private Optional<PreparedMessageSubmission> prepareSendWaitingNow() {
+        Optional<WaitingMessage> waiting = state.waiting()
+                .filter(value ->
+                        value.phase() == WaitingMessage.Phase.WAITING || value.phase() == WaitingMessage.Phase.EDITING);
+        // Allow flush while a Run is active (Steer now) or after it ended with a stranded draft.
+        if (waiting.isEmpty()) {
+            return Optional.empty();
+        }
+        WaitingMessage message = waiting.orElseThrow();
+        String text = message.phase() == WaitingMessage.Phase.EDITING
+                ? message.saveEdit(state.editorBuffer()).text()
+                : message.text();
+        boolean clearEditor = message.phase() == WaitingMessage.Phase.EDITING
+                || state.editorBuffer().isBlank();
+        apply(new TerminalUiAction.WaitingChanged(
+                Optional.of(new WaitingMessage(message.id(), text, WaitingMessage.Phase.SENDING, text))));
+        return Optional.of(beginMessageSubmission(text, false, clearEditor));
     }
 
     /** Performs only client IO and does not mutate Controller state. */
@@ -393,7 +426,13 @@ public final class CodingTerminalController implements AutoCloseable {
         if (result.failureCode().isPresent()) {
             String code = result.failureCode().orElseThrow();
             apply(new TerminalUiAction.UserMessageRejected(result.submission().idempotencyKey()));
-            if (state.editorBuffer().isBlank()) {
+            Optional<WaitingMessage> sending =
+                    state.waiting().filter(value -> value.phase() == WaitingMessage.Phase.SENDING);
+            if (sending.isPresent()) {
+                WaitingMessage restored = sending.orElseThrow();
+                apply(new TerminalUiAction.WaitingChanged(Optional.of(
+                        new WaitingMessage(restored.id(), result.submission().text(), WaitingMessage.Phase.WAITING))));
+            } else if (state.editorBuffer().isBlank()) {
                 apply(new TerminalUiAction.EditorChanged(
                         result.submission().text(), result.submission().text().length()));
             }
@@ -422,6 +461,12 @@ public final class CodingTerminalController implements AutoCloseable {
             if (result.submission().sessionId().isEmpty()) pendingNewSessionModelId = null;
         } catch (ProjectProductException exception) {
             apply(new TerminalUiAction.RecoverableFailure(exception.code()));
+        }
+        if (state.waiting()
+                .filter(value -> value.phase() == WaitingMessage.Phase.SENDING)
+                .isPresent()) {
+            // Delivered: an in-flight draft must not outlive a successful submission.
+            apply(new TerminalUiAction.WaitingChanged(Optional.empty()));
         }
     }
 
@@ -770,7 +815,8 @@ public final class CodingTerminalController implements AutoCloseable {
         interactionHydrationInFlight = request;
         submitControlEffect(
                 () -> {
-                    Optional<InteractionView> interaction = client.pendingInteraction(request.runId());
+                    Optional<CodingApprovalPrompt> interaction =
+                            client.pendingInteraction(request.runId()).flatMap(client::prepareApproval);
                     return () -> completeInteractionHydration(request, interaction);
                 },
                 code -> {
@@ -780,13 +826,13 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void completeInteractionHydration(
-            InteractionHydrationRequest request, Optional<InteractionView> interaction) {
+            InteractionHydrationRequest request, Optional<CodingApprovalPrompt> interaction) {
         if (!request.equals(interactionHydrationInFlight)) return;
         interactionHydrationInFlight = null;
         if (state.currentRunId().filter(request.runId()::equals).isEmpty() || !interactionStillPending(request)) return;
         interaction
-                .filter(value -> value.requestId().value().equals(request.requestId()))
-                .filter(value -> value.state() == io.haifa.agent.runtime.api.InteractionState.PENDING)
+                .filter(value -> value.interaction().requestId().value().equals(request.requestId()))
+                .filter(value -> value.interaction().state() == io.haifa.agent.runtime.api.InteractionState.PENDING)
                 .ifPresent(this::openInteractionSelector);
     }
 
@@ -865,8 +911,18 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     public void accept(TerminalInput input) {
+        accept(input, input.text());
+    }
+
+    /**
+     * Accepts input while routing shell/slash decisions on {@code routingText} (what the user sees)
+     * and submitting {@code input.text()} (expanded paste / real draft).
+     */
+    public void accept(TerminalInput input, String routingText) {
+        Objects.requireNonNull(input, "input must not be null");
+        Objects.requireNonNull(routingText, "routingText must not be null");
         try {
-            acceptGuarded(input);
+            acceptGuarded(input, routingText);
         } catch (ProjectProductException exception) {
             if ((input.kind() == TerminalInput.Kind.SUBMIT || input.kind() == TerminalInput.Kind.FOLLOW_UP)
                     && !input.text().isBlank()) {
@@ -910,7 +966,26 @@ public final class CodingTerminalController implements AutoCloseable {
         }
     }
 
-    private void acceptGuarded(TerminalInput input) {
+    private void acceptGuarded(TerminalInput input, String routingText) {
+        if (clarificationDraft != null
+                && state.selector().isEmpty()
+                && (input.kind() == TerminalInput.Kind.SUBMIT || input.kind() == TerminalInput.Kind.FOLLOW_UP)) {
+            // While a clarification is pending, composed text belongs to the answer and never to the steer queue.
+            if (input.text().isBlank()) {
+                apply(new TerminalUiAction.StatusChanged("Type your answer and press Enter"));
+                return;
+            }
+            awaitingClarificationText = false;
+            apply(new TerminalUiAction.SelectorClosed());
+            apply(new TerminalUiAction.EditorChanged("", 0));
+            if (clarificationDraft.current().allowCustom()) {
+                answerClarificationWithText(input.text());
+            } else {
+                openClarificationSelector(0);
+                apply(new TerminalUiAction.StatusChanged("Choose an option with Space, then press Enter"));
+            }
+            return;
+        }
         drainEvents();
         if (input.kind() == TerminalInput.Kind.TICK) {
             updateAuthenticationCountdown();
@@ -990,6 +1065,10 @@ public final class CodingTerminalController implements AutoCloseable {
             cycleModel(-1);
             return;
         }
+        if (input.kind() == TerminalInput.Kind.EDIT_WAITING) {
+            beginEditWaiting();
+            return;
+        }
         if (input.kind() == TerminalInput.Kind.CANCEL_OR_CLOSE) {
             if (state.selector()
                     .filter(selector -> "auth-wait".equals(selector.kind()) || "auth-device".equals(selector.kind()))
@@ -1006,6 +1085,17 @@ public final class CodingTerminalController implements AutoCloseable {
             }
             if (authenticationInProgress) {
                 cancelAuthentication();
+                return;
+            }
+            // Waiting region owns Esc: cancel/discard the local draft first, never arm Run interrupt.
+            if (state.waiting()
+                    .filter(value -> value.phase() == WaitingMessage.Phase.EDITING)
+                    .isPresent()) {
+                discardWaitingEdit();
+                return;
+            }
+            if (state.waiting().isPresent()) {
+                cancelWaiting();
                 return;
             }
             if (hasActiveRun()) {
@@ -1034,11 +1124,16 @@ public final class CodingTerminalController implements AutoCloseable {
             }
             return;
         }
+        if (input.kind() == TerminalInput.Kind.TOGGLE_TECHNICAL_DETAILS) {
+            if (state.selector().isPresent()) return;
+            activeTranscriptItem(true).ifPresent(value -> {
+                if (!value.expanded()) apply(new TerminalUiAction.ToggleExpanded(value.id()));
+                apply(new TerminalUiAction.ToggleTechnicalDetails(value.id()));
+            });
+            return;
+        }
         if (input.kind() == TerminalInput.Kind.TOGGLE_EXPANSION) {
-            state.transcript().stream()
-                    .filter(io.haifa.agent.application.coding.terminal.state.TranscriptItem::toggleable)
-                    .reduce((first, second) -> second)
-                    .ifPresent(value -> apply(new TerminalUiAction.ToggleExpanded(value.id())));
+            activeTranscriptItem(false).ifPresent(value -> apply(new TerminalUiAction.ToggleExpanded(value.id())));
             return;
         }
         if (state.selector().isPresent()) {
@@ -1073,21 +1168,50 @@ public final class CodingTerminalController implements AutoCloseable {
                 || input.kind() == TerminalInput.Kind.NAVIGATE_BACK) {
             return;
         }
-        submitText(input.text(), input.kind() == TerminalInput.Kind.FOLLOW_UP);
+        submitText(input.text(), input.kind() == TerminalInput.Kind.FOLLOW_UP, routingText);
     }
 
     private void submitText(String text, boolean followUp) {
+        submitText(text, followUp, text);
+    }
+
+    private void submitText(String text, boolean followUp, String routingText) {
+        if (clarificationDraft != null) {
+            if (text.isBlank()) {
+                return;
+            }
+            answerClarificationWithText(text);
+            return;
+        }
+        Optional<WaitingMessage> editing =
+                state.waiting().filter(value -> value.phase() == WaitingMessage.Phase.EDITING);
+        if (editing.isPresent() && !followUp) {
+            saveWaitingEdit(text);
+            return;
+        }
         if (text.isBlank()) {
+            if (!followUp
+                    && state.waiting()
+                            .filter(value -> value.phase() == WaitingMessage.Phase.WAITING)
+                            .isPresent()) {
+                sendWaitingNow();
+            }
             return;
         }
-        if (text.startsWith("!")) {
-            shell(text);
+        // Route on visible text so collapsed paste placeholders cannot trigger shell/slash paths.
+        if (routingText.startsWith("!")) {
+            shell(text.startsWith("!") ? text : routingText);
             return;
         }
-        TerminalCommand command = commands.route(text);
+        TerminalCommand command = commands.route(routingText);
         if (command != TerminalCommand.MESSAGE) {
             apply(new TerminalUiAction.EditorChanged("", 0));
-            command(command, text);
+            command(command, routingText);
+            return;
+        }
+        // A queued draft owns Enter in every Run state: replacing it must not start an extra Turn.
+        if (!followUp && !awaitingNewSessionMessage && (state.currentRunId().isPresent() || hasQueuedWaiting())) {
+            queueWaiting(text);
             return;
         }
         PreparedMessageSubmission submission = beginMessageSubmission(text, followUp);
@@ -1099,7 +1223,110 @@ public final class CodingTerminalController implements AutoCloseable {
                 code -> apply(new TerminalUiAction.RecoverableFailure(code)));
     }
 
+    private void queueWaiting(String text) {
+        String normalized = text.strip();
+        if (normalized.isEmpty()) {
+            return;
+        }
+        if (state.waiting()
+                .filter(value -> value.phase() == WaitingMessage.Phase.SENDING)
+                .isPresent()) {
+            apply(new TerminalUiAction.RecoverableFailure("WAITING_SEND_IN_PROGRESS"));
+            apply(new TerminalUiAction.EditorChanged(text, text.length()));
+            return;
+        }
+        String id = state.waiting().map(WaitingMessage::id).orElseGet(() -> UUID.randomUUID()
+                .toString());
+        apply(new TerminalUiAction.WaitingChanged(
+                Optional.of(new WaitingMessage(id, normalized, WaitingMessage.Phase.WAITING))));
+        apply(new TerminalUiAction.EditorChanged("", 0));
+    }
+
+    private boolean hasQueuedWaiting() {
+        return state.waiting()
+                .filter(value -> value.phase() == WaitingMessage.Phase.WAITING)
+                .isPresent();
+    }
+
+    private boolean isEditingWaiting() {
+        return state.waiting()
+                .filter(value -> value.phase() == WaitingMessage.Phase.EDITING)
+                .isPresent();
+    }
+
+    private void sendWaitingNow() {
+        Optional<PreparedMessageSubmission> prepared = prepareSendWaitingNow();
+        if (prepared.isEmpty()) {
+            return;
+        }
+        PreparedMessageSubmission submission = prepared.orElseThrow();
+        submitEffect(
+                () -> {
+                    MessageSubmissionResult result = executeMessageSubmission(submission);
+                    return () -> completeMessageSubmission(result);
+                },
+                code -> {
+                    Optional<WaitingMessage> sending =
+                            state.waiting().filter(value -> value.phase() == WaitingMessage.Phase.SENDING);
+                    if (sending.isPresent()) {
+                        WaitingMessage restored = sending.orElseThrow();
+                        apply(new TerminalUiAction.WaitingChanged(Optional.of(
+                                new WaitingMessage(restored.id(), submission.text(), WaitingMessage.Phase.WAITING))));
+                    }
+                    apply(new TerminalUiAction.RecoverableFailure(code));
+                });
+    }
+
+    private void beginEditWaiting() {
+        Optional<WaitingMessage> waiting =
+                state.waiting().filter(value -> value.phase() == WaitingMessage.Phase.WAITING);
+        if (waiting.isEmpty()) {
+            return;
+        }
+        WaitingMessage message = waiting.orElseThrow().beginEdit();
+        apply(new TerminalUiAction.WaitingChanged(Optional.of(message)));
+        apply(new TerminalUiAction.EditorChanged(message.text(), message.text().length()));
+    }
+
+    private void saveWaitingEdit(String text) {
+        Optional<WaitingMessage> waiting =
+                state.waiting().filter(value -> value.phase() == WaitingMessage.Phase.EDITING);
+        if (waiting.isEmpty()) {
+            return;
+        }
+        WaitingMessage saved = waiting.orElseThrow().saveEdit(text);
+        apply(new TerminalUiAction.WaitingChanged(Optional.of(saved)));
+        apply(new TerminalUiAction.EditorChanged("", 0));
+        if (state.currentRunId().isEmpty()) {
+            // The Run already ended while editing: saving is the user's send request.
+            trySubmitWaitingWhenIdle();
+        }
+    }
+
+    private void cancelWaiting() {
+        if (state.waiting().isEmpty()) {
+            return;
+        }
+        // Only the draft goes away; an unrelated editor draft must survive.
+        apply(new TerminalUiAction.WaitingChanged(Optional.empty()));
+    }
+
+    private void discardWaitingEdit() {
+        Optional<WaitingMessage> waiting =
+                state.waiting().filter(value -> value.phase() == WaitingMessage.Phase.EDITING);
+        if (waiting.isEmpty()) {
+            return;
+        }
+        WaitingMessage discarded = waiting.orElseThrow().discardEdit();
+        apply(new TerminalUiAction.WaitingChanged(Optional.of(discarded)));
+        apply(new TerminalUiAction.EditorChanged("", 0));
+    }
+
     private PreparedMessageSubmission beginMessageSubmission(String text, boolean followUp) {
+        return beginMessageSubmission(text, followUp, true);
+    }
+
+    private PreparedMessageSubmission beginMessageSubmission(String text, boolean followUp, boolean clearEditor) {
         String key = UUID.randomUUID().toString();
         Optional<AgentSessionId> sessionId =
                 state.session().map(value -> value.summary().sessionId());
@@ -1111,7 +1338,9 @@ public final class CodingTerminalController implements AutoCloseable {
             activeRunId = Optional.empty();
             initialModelId = Optional.ofNullable(pendingNewSessionModelId);
         }
-        apply(new TerminalUiAction.EditorChanged("", 0));
+        if (clearEditor) {
+            apply(new TerminalUiAction.EditorChanged("", 0));
+        }
         apply(new TerminalUiAction.UserMessageCommitted(key, text));
         apply(new TerminalUiAction.StatusChanged("Submitting"));
         return new PreparedMessageSubmission(
@@ -1257,6 +1486,9 @@ public final class CodingTerminalController implements AutoCloseable {
                 detachSubscriptions();
                 awaitingNewSessionMessage = true;
                 pendingNewSessionModelId = null;
+                if (state.waiting().isPresent()) {
+                    apply(new TerminalUiAction.WaitingChanged(Optional.empty()));
+                }
                 apply(new TerminalUiAction.StatusChanged("New session: enter the first message"));
             }
             case RESUME -> {
@@ -1345,6 +1577,7 @@ public final class CodingTerminalController implements AutoCloseable {
             case SETTINGS ->
                 apply(new TerminalUiAction.RecoverableFailure(TerminalCommandRouter.CAPABILITY_NOT_IMPLEMENTED));
             case TRUST -> workspaceTrust(argument);
+            case APPROVAL -> resetSessionApproval(argument);
             case SESSION -> {
                 List<String> options = new ArrayList<>();
                 state.session()
@@ -1504,6 +1737,55 @@ public final class CodingTerminalController implements AutoCloseable {
         return true;
     }
 
+    private Optional<AgentRunId> approvalRunId() {
+        return state.currentRunId().or(() -> state.session()
+                .flatMap(CodingSessionView::pendingInteraction)
+                .map(InteractionView::runId));
+    }
+
+    private void resetSessionApproval(String argument) {
+        if (argument.isBlank() || argument.equals("reopen")) {
+            Optional<AgentRunId> pendingRun = approvalRunId();
+            if (pendingRun.isEmpty()) {
+                apply(new TerminalUiAction.StatusChanged("No approval is pending"));
+                return;
+            }
+            AgentRunId runId = pendingRun.orElseThrow();
+            apply(new TerminalUiAction.StatusChanged("Loading pending approval"));
+            submitControlEffect(
+                    () -> {
+                        Optional<CodingApprovalPrompt> pending =
+                                client.pendingInteraction(runId).flatMap(client::prepareApproval);
+                        return () -> {
+                            if (approvalRunId().filter(runId::equals).isEmpty()) return;
+                            pending.filter(value -> value.interaction().state()
+                                            == io.haifa.agent.runtime.api.InteractionState.PENDING)
+                                    .filter(value -> interactionStillPending(new InteractionHydrationRequest(
+                                            runId,
+                                            value.interaction().requestId().value())))
+                                    .ifPresentOrElse(
+                                            this::openInteractionSelector,
+                                            () -> apply(new TerminalUiAction.StatusChanged("No approval is pending")));
+                        };
+                    },
+                    code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+            return;
+        }
+        if (!argument.equals("reset") || state.session().isEmpty()) {
+            apply(new TerminalUiAction.StatusChanged(
+                    "Use /approval reopen for options or /approval reset to ask each time"));
+            return;
+        }
+        AgentSessionId sessionId = state.session().orElseThrow().summary().sessionId();
+        apply(new TerminalUiAction.StatusChanged("Resetting session approval"));
+        submitControlEffect(
+                () -> {
+                    client.resetSessionApproval(sessionId);
+                    return () -> apply(new TerminalUiAction.StatusChanged("Session approval reset · ask each time"));
+                },
+                code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+    }
+
     private void workspaceTrust(String argument) {
         if (argument.isBlank()) {
             apply(new TerminalUiAction.StatusChanged("Loading workspace trust"));
@@ -1563,9 +1845,19 @@ public final class CodingTerminalController implements AutoCloseable {
                 .map(value -> new PendingMessage(
                         value.followUpId(), PendingMessage.Kind.FOLLOW_UP, value.summary(), value.revision()))
                 .toList();
+        Optional<CodingApprovalPrompt> approval = view.pendingInteraction().flatMap(client::prepareApproval);
         if (view.activeRun().isEmpty()) {
             return new LoadedSession(
-                    view, resources, history, pending, List.of(), null, null, null, RunOutputCursor.BEFORE_FIRST);
+                    view,
+                    resources,
+                    history,
+                    pending,
+                    List.of(),
+                    null,
+                    null,
+                    null,
+                    RunOutputCursor.BEFORE_FIRST,
+                    approval);
         }
         AgentRunId runId = view.activeRun().orElseThrow().runId();
         RunEventCursor cursor = previousCursor
@@ -1604,7 +1896,8 @@ public final class CodingTerminalController implements AutoCloseable {
                 nextSubscription,
                 nextOutputSubscription,
                 runId,
-                nextOutputCursor);
+                nextOutputCursor,
+                approval);
     }
 
     private void applyLoadedSession(LoadedSession loaded) {
@@ -1627,7 +1920,7 @@ public final class CodingTerminalController implements AutoCloseable {
         for (AgentRunEvent event : loaded.events()) {
             apply(new TerminalUiAction.RunEventReceived(event));
         }
-        loaded.view().pendingInteraction().ifPresent(this::openInteractionSelector);
+        loaded.approval().ifPresent(this::openInteractionSelector);
         replacePreviewSubscription(
                 loaded.view().activeRun().map(value -> value.runId()).orElse(null));
         closeSubscriptionsInBackground(previousSubscription, previousOutputSubscription);
@@ -1674,22 +1967,294 @@ public final class CodingTerminalController implements AutoCloseable {
                 restoreOptions.size() - 1)));
     }
 
-    private void openInteractionSelector(InteractionView interaction) {
+    private void openInteractionSelector(CodingApprovalPrompt prompt) {
+        InteractionView interaction = prompt.interaction();
         activeInteraction = interaction;
-        apply(new TerminalUiAction.InteractionPresented(interaction));
+        apply(new TerminalUiAction.InteractionPresented(
+                interaction, prompt.allowForSession(), prompt.sessionApprovalUnavailableReason()));
+        Optional<ClarificationDetails> clarification = ClarificationDetails.from(interaction);
+        if (clarification.isPresent()) {
+            if (clarificationDraft == null
+                    || !clarificationDraft.interaction().requestId().equals(interaction.requestId())) {
+                clarificationDraft = new ClarificationDraft(interaction, clarification.orElseThrow());
+                apply(new TerminalUiAction.StatusChanged("Awaiting your clarification answer"));
+            }
+            if (state.selector().isPresent()
+                    && state.selector().orElseThrow().kind().startsWith("clarification:")) {
+                return;
+            }
+            openClarificationSelector(0);
+            return;
+        }
         if (state.selector().isPresent()
                 && state.selector().orElseThrow().kind().startsWith("interaction:")) {
             return;
         }
-        List<String> options = interaction.allowedActions().stream()
-                .map(InteractionAction::value)
-                .toList();
+        List<String> options = new ArrayList<>(interaction.allowedActions().stream()
+                .map(action -> ApprovalDetails.actionLabel(action.value()))
+                .toList());
+        if (prompt.allowForSession()) options.add(ApprovalDetails.SESSION_APPROVAL_LABEL);
         if (options.isEmpty()) {
             apply(new TerminalUiAction.RecoverableFailure("INTERACTION_ACTIONS_EMPTY"));
             return;
         }
         apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
                 "interaction:" + interaction.requestId().value(), "Approval · " + interaction.title(), options, 0)));
+    }
+
+    private void openClarificationSelector(int initialSelection) {
+        if (awaitingClarificationText) {
+            apply(new TerminalUiAction.SelectorClosed());
+            return;
+        }
+
+        ClarificationDraft draft = clarificationDraft;
+        ClarificationDetails.Question question = draft.current();
+        List<String> labels = new ArrayList<>();
+        List<TerminalSelectorDetail> details = new ArrayList<>();
+        for (ClarificationDetails.Option option : question.options()) {
+            labels.add(draft.marker(option.optionId()) + " " + option.label());
+            details.add(TerminalSelectorDetail.plain(option.description().orElse("")));
+        }
+        if (question.allowCustom()) {
+            labels.add(ClarificationDetails.CUSTOM_ENTRY_LABEL);
+            details.add(TerminalSelectorDetail.plain(ClarificationDetails.CUSTOM_ENTRY_DESCRIPTION));
+        }
+        if (question.multiple()) {
+            boolean last = draft.last();
+            labels.add(last ? ClarificationDetails.SUBMIT_LABEL : ClarificationDetails.DONE_LABEL);
+            details.add(TerminalSelectorDetail.plain(
+                    last ? ClarificationDetails.SUBMIT_DESCRIPTION : ClarificationDetails.DONE_DESCRIPTION));
+        }
+        labels.add(ClarificationDetails.CANCEL_LABEL);
+        details.add(TerminalSelectorDetail.plain(ClarificationDetails.CANCEL_DESCRIPTION));
+        apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
+                "clarification:" + draft.interaction().requestId().value(),
+                draft.title(),
+                labels,
+                Math.min(Math.max(initialSelection, 0), labels.size() - 1),
+                details)));
+    }
+
+    /** Space only marks an option: it never advances a question and never submits an answer. */
+    private void toggleClarificationOption(int selected) {
+        ClarificationDraft draft = clarificationDraft;
+        if (draft == null) {
+            apply(new TerminalUiAction.RecoverableFailure("CLARIFICATION_NOT_PENDING"));
+            return;
+        }
+        ClarificationDetails.Question question = draft.current();
+        int options = question.options().size();
+        if (selected < options) {
+            draft.toggle(question.options().get(selected).optionId());
+            openClarificationSelector(selected);
+            return;
+        }
+        if (question.allowCustom() && selected == options) {
+            beginClarificationText();
+        }
+    }
+
+    /** Enter confirms the current question; an unanswerable multi-choice entry keeps the selector open. */
+    private void confirmClarificationOption(int selected) {
+        ClarificationDraft draft = clarificationDraft;
+        if (draft == null) {
+            apply(new TerminalUiAction.RecoverableFailure("CLARIFICATION_NOT_PENDING"));
+            return;
+        }
+        ClarificationDetails.Question question = draft.current();
+        int options = question.options().size();
+        if (selected < options) {
+            if (question.multiple()) {
+                if (!draft.currentAnswered()) {
+                    apply(new TerminalUiAction.StatusChanged("Select at least one option with Space first"));
+                    openClarificationSelector(selected);
+                    return;
+                }
+                draft.confirm();
+            } else {
+                draft.select(question.options().get(selected).optionId());
+                draft.advance();
+            }
+            continueClarification(0);
+            return;
+        }
+        if (question.allowCustom() && selected == options) {
+            beginClarificationText();
+            return;
+        }
+        if (question.multiple() && selected == options + (question.allowCustom() ? 1 : 0)) {
+            draft.confirm();
+            continueClarification();
+            return;
+        }
+        dismissClarification();
+    }
+
+    private void beginClarificationText() {
+        awaitingClarificationText = true;
+        apply(new TerminalUiAction.SelectorClosed());
+        apply(new TerminalUiAction.StatusChanged("Type your answer and press Enter"));
+    }
+
+    private void answerClarificationWithText(String text) {
+        awaitingClarificationText = false;
+        clarificationDraft.answerWithText(text);
+        continueClarification();
+    }
+
+    private void continueClarification() {
+        continueClarification(0);
+    }
+
+    private void continueClarification(int nextSelection) {
+        ClarificationDraft draft = clarificationDraft;
+        if (draft == null) return;
+        if (draft.ready()) {
+            submitClarification();
+            return;
+        }
+        openClarificationSelector(nextSelection);
+    }
+
+    private void dismissClarification() {
+        awaitingClarificationText = false;
+        ClarificationDraft draft = clarificationDraft;
+        clarificationDraft = null;
+        activeInteraction = null;
+        apply(new TerminalUiAction.SelectorClosed());
+        apply(new TerminalUiAction.StatusChanged("Dismissing questions"));
+        String idempotencyKey = UUID.randomUUID().toString();
+        submitControlEffect(
+                () -> {
+                    var receipt = client.respond(draft.interaction(), InteractionAction.CANCEL, idempotencyKey);
+                    return () -> {
+                        if (receipt != null) apply(new TerminalUiAction.InteractionReceiptReceived(receipt));
+                    };
+                },
+                this::handleInteractionResponseFailure);
+    }
+
+    private void submitClarification() {
+        awaitingClarificationText = false;
+        ClarificationDraft draft = clarificationDraft;
+        clarificationDraft = null;
+        activeInteraction = null;
+        apply(new TerminalUiAction.SelectorClosed());
+        apply(new TerminalUiAction.StatusChanged("Submitting answer"));
+        java.util.List<io.haifa.agent.core.content.ContentPart> parts =
+                ClarificationDetails.answerParts(draft.selections(), draft.customAnswers());
+        String idempotencyKey = UUID.randomUUID().toString();
+        submitControlEffect(
+                () -> {
+                    var receipt = client.respond(draft.interaction(), InteractionAction.SUBMIT, parts, idempotencyKey);
+                    return () -> {
+                        if (receipt != null) apply(new TerminalUiAction.InteractionReceiptReceived(receipt));
+                    };
+                },
+                this::handleInteractionResponseFailure);
+    }
+
+    /** The answer draft of one pending clarification; question order and the free-text lane stay separate. */
+    private static final class ClarificationDraft {
+        private final InteractionView interaction;
+        private final ClarificationDetails details;
+        private final List<List<String>> selected = new ArrayList<>();
+        private final List<String> custom = new ArrayList<>();
+        private int index;
+        private boolean confirmed;
+
+        ClarificationDraft(InteractionView interaction, ClarificationDetails details) {
+            this.interaction = interaction;
+            this.details = details;
+            for (int position = 0; position < details.questions().size(); position++) {
+                selected.add(new ArrayList<>());
+                custom.add("");
+            }
+        }
+
+        InteractionView interaction() {
+            return interaction;
+        }
+
+        List<List<String>> selections() {
+            return selected;
+        }
+
+        List<String> customAnswers() {
+            return custom;
+        }
+
+        ClarificationDetails.Question current() {
+            return details.questions().get(index);
+        }
+
+        /** The modal title of the current question, including its step within the wizard. */
+        String title() {
+            return details.selectorTitle(index);
+        }
+
+        boolean last() {
+            return index == details.questions().size() - 1;
+        }
+
+        String marker(String optionId) {
+            return ClarificationDetails.marker(
+                    current().multiple(), selected.get(index).contains(optionId));
+        }
+
+        void toggle(String optionId) {
+            List<String> current = selected.get(index);
+            if (current.remove(optionId)) {
+                return;
+            }
+            if (!current().multiple()) {
+                current.clear();
+            }
+            current.add(optionId);
+        }
+
+        void select(String optionId) {
+            List<String> current = selected.get(index);
+            current.clear();
+            current.add(optionId);
+        }
+
+        void advance() {
+            if (!last()) {
+                index++;
+                confirmed = false;
+            }
+        }
+
+        void confirm() {
+            if (!last()) {
+                advance();
+                return;
+            }
+            confirmed = true;
+        }
+
+        boolean ready() {
+            return complete() && (confirmed || !current().multiple());
+        }
+
+        void answerWithText(String text) {
+            custom.set(index, text.trim());
+            advance();
+        }
+
+        boolean currentAnswered() {
+            return !selected.get(index).isEmpty() || !custom.get(index).isBlank();
+        }
+
+        boolean complete() {
+            if (!last()) return false;
+            for (int position = 0; position < selected.size(); position++) {
+                if (selected.get(position).isEmpty() && custom.get(position).isBlank()) return false;
+            }
+            return true;
+        }
     }
 
     private boolean rejectConcurrentLogin() {
@@ -2460,6 +3025,14 @@ public final class CodingTerminalController implements AutoCloseable {
             restorePreservedDraft();
             return;
         }
+        if (input.kind() == TerminalInput.Kind.TOGGLE_SELECTION) {
+            TerminalSelector toggled = state.selector().orElseThrow();
+            if (!toggled.kind().startsWith("clarification:")) {
+                return;
+            }
+            toggleClarificationOption(toggled.selected());
+            return;
+        }
         if (input.kind() != TerminalInput.Kind.SUBMIT) {
             return;
         }
@@ -2682,6 +3255,10 @@ public final class CodingTerminalController implements AutoCloseable {
                 if (selected == 0) apply(new TerminalUiAction.ExitRequested());
             }
             default -> {
+                if (selector.kind().startsWith("clarification:")) {
+                    confirmClarificationOption(selected);
+                    return;
+                }
                 if (!selector.kind().startsWith("interaction:")) {
                     apply(new TerminalUiAction.RecoverableFailure("SELECTOR_KIND_UNSUPPORTED"));
                     return;
@@ -2690,17 +3267,31 @@ public final class CodingTerminalController implements AutoCloseable {
                         .filter(value -> selector.kind()
                                 .equals("interaction:" + value.requestId().value()))
                         .orElseThrow();
-                InteractionAction action = interaction.allowedActions().get(selected);
+                boolean forSession = selected == interaction.allowedActions().size();
+                InteractionAction action = forSession
+                        ? InteractionAction.APPROVE
+                        : interaction.allowedActions().get(selected);
                 apply(new TerminalUiAction.SelectorClosed());
-                apply(new TerminalUiAction.StatusChanged("Approving"));
+                apply(new TerminalUiAction.StatusChanged(
+                        action.equals(InteractionAction.REJECT)
+                                ? "Rejecting"
+                                : action.equals(InteractionAction.APPROVE) ? "Approving" : "Submitting response"));
                 activeInteraction = null;
                 String idempotencyKey = UUID.randomUUID().toString();
                 submitControlEffect(
                         () -> {
-                            var receipt = client.respond(interaction, action, idempotencyKey);
+                            var receipt = forSession
+                                    ? client.allowForSession(interaction, idempotencyKey)
+                                    : client.respond(interaction, action, idempotencyKey);
                             return () -> {
                                 if (receipt != null) {
                                     apply(new TerminalUiAction.InteractionReceiptReceived(receipt));
+                                    if (forSession)
+                                        apply(new TerminalUiAction.StatusChanged(
+                                                receipt.interactionState()
+                                                                == io.haifa.agent.runtime.api.InteractionState.APPLIED
+                                                        ? "Session approval enabled"
+                                                        : "Session approval requested"));
                                 }
                             };
                         },
@@ -3006,10 +3597,22 @@ public final class CodingTerminalController implements AutoCloseable {
         return List.copyOf(grouped.values());
     }
 
-    /** Toggles one transcript item, used by pointer expansion as well as the keyboard path. */
+    /** Explicitly selects and toggles a transcript item from pointer expansion. */
     public void toggleTranscriptItem(String itemId) {
         if (itemId == null || itemId.isBlank()) return;
+        activeTranscriptItemId = itemId;
         apply(new TerminalUiAction.ToggleExpanded(itemId));
+    }
+
+    private Optional<io.haifa.agent.application.coding.terminal.state.TranscriptItem> activeTranscriptItem(
+            boolean technical) {
+        var candidates = state.transcript().stream()
+                .filter(item -> technical ? item.toolDetails().isPresent() : item.toggleable())
+                .toList();
+        return candidates.stream()
+                .filter(item -> item.id().equals(activeTranscriptItemId))
+                .findFirst()
+                .or(() -> candidates.stream().reduce((first, second) -> second));
     }
 
     public void cycleModel(int delta) {
@@ -3230,6 +3833,8 @@ public final class CodingTerminalController implements AutoCloseable {
             }
             outputCursor = new RunOutputCursor(received.event().sequence());
         }
+        boolean hadActiveRun = state.currentRunId().isPresent();
+        boolean hadSelector = state.selector().isPresent();
         state = reducer.reduce(state, action);
         if (action instanceof TerminalUiAction.AuthenticationCompleted) {
             scheduleReconcile();
@@ -3249,6 +3854,43 @@ public final class CodingTerminalController implements AutoCloseable {
                 && state.session().isPresent()) {
             pendingAcknowledgement = received.event().cursor();
         }
+        boolean runBecameIdle = hadActiveRun && state.currentRunId().isEmpty();
+        boolean selectorClosedWhileIdle = hadSelector
+                && state.selector().isEmpty()
+                && state.currentRunId().isEmpty();
+        if (runBecameIdle || selectorClosedWhileIdle) {
+            trySubmitWaitingWhenIdle();
+        }
+    }
+
+    private void trySubmitWaitingWhenIdle() {
+        if (state.currentRunId().isPresent()) {
+            return;
+        }
+        // Only resolved drafts auto-submit: an EDITING draft still owns the editor, and the model expands its
+        // pasted content only when the user saves, so submitting editorBuffer() here would send placeholders.
+        Optional<WaitingMessage> waiting =
+                state.waiting().filter(value -> value.phase() == WaitingMessage.Phase.WAITING);
+        if (waiting.isEmpty() || state.selector().isPresent() || clarificationDraft != null) {
+            return;
+        }
+        WaitingMessage message = waiting.orElseThrow();
+        String text = message.text();
+        boolean clearEditor = state.editorBuffer().isBlank();
+        // Keep the draft as SENDING so a rejected submission restores it through completeMessageSubmission().
+        apply(new TerminalUiAction.WaitingChanged(
+                Optional.of(new WaitingMessage(message.id(), text, WaitingMessage.Phase.SENDING, text))));
+        PreparedMessageSubmission submission = beginMessageSubmission(text, false, clearEditor);
+        submitEffect(
+                () -> {
+                    MessageSubmissionResult result = executeMessageSubmission(submission);
+                    return () -> completeMessageSubmission(result);
+                },
+                code -> {
+                    apply(new TerminalUiAction.WaitingChanged(
+                            Optional.of(new WaitingMessage(message.id(), text, WaitingMessage.Phase.WAITING))));
+                    apply(new TerminalUiAction.RecoverableFailure(code));
+                });
     }
 
     private void schedulePendingCursorAcknowledgement() {
@@ -3338,7 +3980,8 @@ public final class CodingTerminalController implements AutoCloseable {
             RunEventSubscription subscription,
             RunOutputSubscription outputSubscription,
             AgentRunId outputRunId,
-            RunOutputCursor outputCursor) {
+            RunOutputCursor outputCursor,
+            Optional<CodingApprovalPrompt> approval) {
         public LoadedSession {
             view = Objects.requireNonNull(view, "view must not be null");
             resources = List.copyOf(resources);
@@ -3346,6 +3989,7 @@ public final class CodingTerminalController implements AutoCloseable {
             pending = List.copyOf(pending);
             events = List.copyOf(events);
             outputCursor = Objects.requireNonNull(outputCursor, "outputCursor must not be null");
+            approval = Objects.requireNonNull(approval, "approval must not be null");
         }
     }
 

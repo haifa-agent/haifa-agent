@@ -3,19 +3,23 @@
 
 Builds and packages (release artifacts use a 'v'-prefixed version, e.g. v0.1.0):
 1. haifa-coding-agent-windows-x64-v<version>.zip
+   haifa-coding-agent-linux-x64-v<version>.tar.gz (ca-linux, built on Linux x64)
 2. haifa-personal-assistant-windows-x64-v<version>.zip
-3. haifa-agent-sdk-v<version>.zip
-4. sha256sums.txt
+3. haifa-personal-assistant-server-linux-x64-v<version>.zip
+4. haifa-agent-sdk-v<version>.zip
+5. sha256sums.txt
 """
 
 import argparse
 import hashlib
 import os
+import platform
 import re
 from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tarfile
 import xml.etree.ElementTree as ET
 import zipfile
 
@@ -90,15 +94,48 @@ def compute_sha256(file_path: Path) -> str:
     return sha.hexdigest()
 
 
+def native_runtime_platform() -> str:
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+    # Embedded Windows Python can have no PROCESSOR_ARCHITECTURE environment variable.
+    # Validate the actual bundled runtime architecture from its binary header below.
+    supported_machine = machine in ("amd64", "x86_64") or (system == "windows" and not machine)
+    if system not in ("windows", "linux") or not supported_machine:
+        raise ValueError("Bundled runtimes require a native Windows x64 or Linux x64 JDK 21")
+    return f"{system}-x64"
+
+
+def validate_jre(jre_dir: Path, target: str) -> None:
+    java = jre_dir / "bin" / ("java.exe" if target == "windows-x64" else "java")
+    with java.open("rb") as binary:
+        header = binary.read(64)
+        expected = b"MZ" if target == "windows-x64" else b"\x7fELF"
+        if not header.startswith(expected):
+            raise ValueError(f"Bundled Java runtime does not match {target}: {java}")
+        if target == "windows-x64":
+            binary.seek(int.from_bytes(header[60:64], "little"))
+            x64 = binary.read(6) == b"PE\x00\x00\x64\x86"
+        else:
+            x64 = header[4:6] == b"\x02\x01" and int.from_bytes(header[18:20], "little") == 62
+        if not x64:
+            raise ValueError("Bundled runtime must use x64 architecture")
+    release = (jre_dir / "release").read_text(encoding="utf-8")
+    if not re.search(r'^JAVA_VERSION="21(?:[.\+"]|$)', release, re.MULTILINE):
+        raise ValueError("Bundled runtime must use Java 21")
+
+
 def ensure_jre(repo_root: Path, work_dir: Path, force_rebuild: bool = False) -> Path:
-    jre_dir = work_dir / "jre"
-    java_exe = jre_dir / "bin" / ("java.exe" if os.name == "nt" else "java")
+    target = native_runtime_platform()
+    jre_dir = work_dir / "jre" / target
+    java_exe = jre_dir / "bin" / ("java.exe" if target == "windows-x64" else "java")
     if jre_dir.exists() and java_exe.exists() and not force_rebuild:
+        validate_jre(jre_dir, target)
         print(f"[INFO] Using cached minimal JRE at: {jre_dir}")
         return jre_dir
 
     if jre_dir.exists():
         shutil.rmtree(jre_dir)
+    jre_dir.parent.mkdir(parents=True, exist_ok=True)
 
     print("[INFO] Generating minimal Java 21 JRE using jlink...")
     modules = [
@@ -138,6 +175,7 @@ def ensure_jre(repo_root: Path, work_dir: Path, force_rebuild: bool = False) -> 
         sys.exit(result.returncode)
 
     java_exe = jre_dir / "bin" / ("java.exe" if os.name == "nt" else "java")
+    validate_jre(jre_dir, target)
     listed = subprocess.run(
         [str(java_exe), "--list-modules"], capture_output=True, text=True, encoding="utf-8", errors="replace"
     )
@@ -267,9 +305,15 @@ def render_ca_configuration(repo_root: Path, stage_dir: Path) -> None:
     (stage_dir / "haifa-coding.yaml").write_text(rendered, encoding="utf-8", newline="\n")
 
 
-def package_ca(repo_root: Path, work_dir: Path, output_dir: Path, version: str, jre_dir: Path) -> Path:
+def package_ca(
+    repo_root: Path, work_dir: Path, output_dir: Path, version: str, jre_dir: Path,
+    target: str = "windows-x64",
+) -> Path:
+    if target not in ("windows-x64", "linux-x64"):
+        raise ValueError(f"Unsupported Coding Agent platform: {target}")
+    validate_jre(jre_dir, target)
     print("\n" + "=" * 70)
-    print(f"[INFO] Packaging Coding Agent Windows Distribution (version: {version})...")
+    print(f"[INFO] Packaging Coding Agent {target} Distribution (version: {version})...")
     print("=" * 70)
 
     cli_target_dir = repo_root / "haifa-agent-applications" / "haifa-agent-cli" / "target"
@@ -277,13 +321,10 @@ def package_ca(repo_root: Path, work_dir: Path, output_dir: Path, version: str, 
     print(f"[INFO] Found Coding Agent CLI JAR: {cli_jar.name}")
 
     label = artifact_label(version)
-    stage_dir = work_dir / f"haifa-coding-agent-{label}"
-    if stage_dir.exists():
-        shutil.rmtree(stage_dir)
-    stage_dir.mkdir(parents=True, exist_ok=True)
+    stage_dir = stage_dir_for(work_dir, target, f"haifa-coding-agent-{label}")
 
     # 1. Copy templates
-    template_dir = repo_root / "dist-support" / "templates" / "ca"
+    template_dir = repo_root / "dist-support" / "templates" / ("ca-linux" if target == "linux-x64" else "ca")
     shutil.copytree(template_dir / "bin", stage_dir / "bin")
     shutil.copy2(template_dir / "README.txt", stage_dir / "README.txt")
 
@@ -298,20 +339,98 @@ def package_ca(repo_root: Path, work_dir: Path, output_dir: Path, version: str, 
 
     # 4. Copy JRE
     print("[INFO] Bundling minimal JRE into Coding Agent package...")
-    shutil.copytree(jre_dir, stage_dir / "jre")
+    shutil.copytree(jre_dir, stage_dir / "jre", symlinks=True)
 
-    # 5. Create ZIP
-    output_zip = output_dir / f"haifa-coding-agent-windows-x64-{label}.zip"
-    print(f"[INFO] Compressing to {output_zip.name}...")
-    with zipfile.ZipFile(output_zip, "w", zipfile.ZIP_DEFLATED) as zf:
-        for file in stage_dir.rglob("*"):
-            if file.is_file():
-                rel_path = file.relative_to(stage_dir.parent)
-                zf.write(file, rel_path)
+    if target == "linux-x64":
+        archive = output_dir / f"haifa-coding-agent-linux-x64-{label}.tar.gz"
+        with tarfile.open(archive, "w:gz") as tar:
+            tar.add(stage_dir, arcname=stage_dir.name, filter=linux_archive_permissions)
+        print(f"[SUCCESS] Coding Agent package created: {archive}")
+        return archive
+    return zip_stage(stage_dir, output_dir / f"haifa-coding-agent-windows-x64-{label}.zip", "Coding Agent")
 
-    zip_size_mb = output_zip.stat().st_size / (1024 * 1024)
-    print(f"[SUCCESS] Coding Agent package created: {output_zip} ({zip_size_mb:.2f} MB)")
-    return output_zip
+
+def linux_archive_permissions(info: tarfile.TarInfo) -> tarfile.TarInfo:
+    # Set portable permissions even when WSL stages files on a Windows-mounted drive.
+    relative = Path(info.name).parts[1:]
+    executable = relative == ("bin", "haifa") or relative[:2] == ("jre", "bin") or relative == (
+        "jre", "lib", "jspawnhelper")
+    info.mode = 0o755 if info.isdir() or executable else 0o644
+    return info
+
+
+WEB_RELATIVE_API_BASE = "/api/v1"
+WEB_RELATIVE_ADMIN_API_BASE = "/v1/admin"
+WEB_ABSOLUTE_LOOPBACK_TOKEN = "http://127.0.0.1:20001/api/v1"
+
+
+def verify_web_dist(web_dist_dir: Path, relative_api_base: bool) -> None:
+    """Fail fast when the Web dist does not match the delivery mode of the target package.
+
+    The Windows portable package is opened straight from the loopback Server, so its SPA must keep
+    the absolute loopback base. The Linux server package is served by nginx, so its SPA must use the
+    same-origin relative bases. Mixing the two yields a UI that silently calls the visitor's own
+    machine, therefore a mismatch stops packaging instead of shipping it.
+    """
+    index = web_dist_dir / "index.html"
+    if not index.is_file():
+        raise FileNotFoundError(f"Web dist is incomplete: {index}")
+    script_text = "".join(
+        script.read_text(encoding="utf-8", errors="replace")
+        for script in sorted((web_dist_dir / "assets").glob("*.js"))
+    )
+    has_loopback = WEB_ABSOLUTE_LOOPBACK_TOKEN in script_text
+    if relative_api_base and has_loopback:
+        raise ValueError(
+            "Web dist still targets the loopback API; rebuild with "
+            f"VITE_PERSONAL_ASSISTANT_API_BASE_URL={WEB_RELATIVE_API_BASE} for the server package"
+        )
+    if not relative_api_base and not has_loopback:
+        raise ValueError(
+            "Web dist does not target the loopback API; rebuild without VITE_* overrides "
+            "for the Windows portable package"
+        )
+    if relative_api_base and WEB_RELATIVE_API_BASE not in script_text:
+        raise ValueError(f"Web dist is missing the relative API base {WEB_RELATIVE_API_BASE}")
+    if relative_api_base and WEB_RELATIVE_ADMIN_API_BASE not in script_text:
+        raise ValueError(f"Web dist is missing the relative Admin API base {WEB_RELATIVE_ADMIN_API_BASE}")
+
+
+def build_web_dist(repo_root: Path, skip_web_build: bool, relative_api_base: bool) -> Path:
+    """Build (or reuse) personal-assistant-web/dist for one delivery mode and verify it."""
+    web_dir = repo_root / "haifa-agent-applications" / "haifa-agent-personal-assistant-web"
+    web_dist_dir = web_dir / "dist"
+
+    if skip_web_build and (web_dist_dir / "index.html").is_file():
+        print("[INFO] Reusing existing personal-assistant-web/dist")
+    else:
+        print("[INFO] Building Personal Assistant Web frontend (npm run build)...")
+        environment = os.environ.copy()
+        if relative_api_base:
+            environment["VITE_PERSONAL_ASSISTANT_API_BASE_URL"] = WEB_RELATIVE_API_BASE
+            environment["VITE_PERSONAL_ASSISTANT_ADMIN_API_BASE_URL"] = WEB_RELATIVE_ADMIN_API_BASE
+        else:
+            environment.pop("VITE_PERSONAL_ASSISTANT_API_BASE_URL", None)
+            environment.pop("VITE_PERSONAL_ASSISTANT_ADMIN_API_BASE_URL", None)
+        npm_cmd = "npm.cmd" if os.name == "nt" else "npm"
+        result = subprocess.run(
+            [npm_cmd, "run", "build"],
+            cwd=web_dir,
+            env=environment,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if result.returncode != 0:
+            print(f"[ERROR] Failed to build PA Web frontend:\n{result.stderr}")
+            sys.exit(result.returncode)
+        print("[INFO] PA Web frontend built successfully.")
+
+    verify_web_dist(web_dist_dir, relative_api_base)
+    mode = "same-origin relative API" if relative_api_base else "loopback absolute API"
+    print(f"[INFO] Web dist verified for {mode}")
+    return web_dist_dir
 
 
 def inject_web_dist_into_server_jar(source_jar: Path, web_dist_dir: Path, target_jar: Path) -> None:
@@ -338,6 +457,39 @@ def inject_web_dist_into_server_jar(source_jar: Path, web_dist_dir: Path, target
     print(f"[INFO] Embedded {len(dist_files)} static web assets into server JAR.")
 
 
+PA_PACKAGE_NAME = "haifa-personal-assistant"
+
+
+def pa_package_name(version: str) -> str:
+    """Shared top-level directory name so both packages look identical inside the zip."""
+    return f"{PA_PACKAGE_NAME}-{artifact_label(version)}"
+
+
+def pa_artifact_name(platform: str, version: str) -> str:
+    """Shared artifact shape: haifa-personal-assistant-<platform>-v<version>.zip."""
+    return f"{PA_PACKAGE_NAME}-{platform}-{artifact_label(version)}.zip"
+
+
+def stage_dir_for(work_dir: Path, profile: str, package_name: str) -> Path:
+    """Per-profile staging root, so one invocation can build both packages without clobbering."""
+    stage_dir = work_dir / profile / package_name
+    if stage_dir.exists():
+        shutil.rmtree(stage_dir)
+    stage_dir.mkdir(parents=True, exist_ok=True)
+    return stage_dir
+
+
+def zip_stage(stage_dir: Path, output_zip: Path, description: str) -> Path:
+    print(f"[INFO] Compressing to {output_zip.name}...")
+    with zipfile.ZipFile(output_zip, "w", zipfile.ZIP_DEFLATED) as zf:
+        for file in stage_dir.rglob("*"):
+            if file.is_file():
+                zf.write(file, file.relative_to(stage_dir.parent))
+    zip_size_mb = output_zip.stat().st_size / (1024 * 1024)
+    print(f"[SUCCESS] {description} package created: {output_zip} ({zip_size_mb:.2f} MB)")
+    return output_zip
+
+
 def package_pa(
     repo_root: Path, work_dir: Path, output_dir: Path, version: str, jre_dir: Path, skip_web_build: bool = False
 ) -> Path:
@@ -345,62 +497,73 @@ def package_pa(
     print(f"[INFO] Packaging Personal Assistant Windows Distribution (version: {version})...")
     print("=" * 70)
 
-    web_dir = repo_root / "haifa-agent-applications" / "haifa-agent-personal-assistant-web"
-    web_dist_dir = web_dir / "dist"
-
-    if not skip_web_build or not (web_dist_dir / "index.html").exists():
-        print("[INFO] Building Personal Assistant Web frontend (npm run build)...")
-        npm_cmd = "npm.cmd" if os.name == "nt" else "npm"
-        result = subprocess.run(
-            [npm_cmd, "run", "build"],
-            cwd=web_dir,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
-        if result.returncode != 0:
-            print(f"[ERROR] Failed to build PA Web frontend:\n{result.stderr}")
-            sys.exit(result.returncode)
-        print("[INFO] PA Web frontend built successfully.")
+    web_dist_dir = build_web_dist(repo_root, skip_web_build=skip_web_build, relative_api_base=False)
 
     server_target_dir = repo_root / "haifa-agent-applications" / "haifa-agent-personal-assistant-server" / "target"
     server_jar = find_jar(server_target_dir, "haifa-agent-personal-assistant-server", version)
     print(f"[INFO] Found Personal Assistant Server JAR: {server_jar.name}")
 
-    label = artifact_label(version)
-    stage_dir = work_dir / f"haifa-personal-assistant-{label}"
-    if stage_dir.exists():
-        shutil.rmtree(stage_dir)
-    stage_dir.mkdir(parents=True, exist_ok=True)
+    stage_dir = stage_dir_for(work_dir, "windows", pa_package_name(version))
 
-    # 1. Copy templates
+    # 1. Copy templates (bin + conf, same layout the Linux package uses)
     template_dir = repo_root / "dist-support" / "templates" / "pa"
-    shutil.copytree(template_dir / "bin", stage_dir / "bin")
+    for name in ("bin", "conf"):
+        shutil.copytree(template_dir / name, stage_dir / name)
     shutil.copy2(template_dir / "README.txt", stage_dir / "README.txt")
 
-    # 2. Inject Web UI and copy lib
-    lib_dir = stage_dir / "lib"
-    lib_dir.mkdir(exist_ok=True)
-    embedded_server_jar = lib_dir / server_jar.name
-    inject_web_dist_into_server_jar(server_jar, web_dist_dir, embedded_server_jar)
+    # 2. Windows is opened straight from loopback, so the SPA is embedded into app.jar
+    inject_web_dist_into_server_jar(server_jar, web_dist_dir, stage_dir / "app.jar")
 
     # 3. Copy JRE
     print("[INFO] Bundling minimal JRE into Personal Assistant package...")
     shutil.copytree(jre_dir, stage_dir / "jre")
 
     # 4. Create ZIP
-    output_zip = output_dir / f"haifa-personal-assistant-windows-x64-{label}.zip"
-    print(f"[INFO] Compressing to {output_zip.name}...")
-    with zipfile.ZipFile(output_zip, "w", zipfile.ZIP_DEFLATED) as zf:
-        for file in stage_dir.rglob("*"):
-            if file.is_file():
-                rel_path = file.relative_to(stage_dir.parent)
-                zf.write(file, rel_path)
+    return zip_stage(
+        stage_dir,
+        output_dir / pa_artifact_name("windows-x64", version),
+        "Personal Assistant Windows",
+    )
 
-    zip_size_mb = output_zip.stat().st_size / (1024 * 1024)
-    print(f"[SUCCESS] Personal Assistant package created: {output_zip} ({zip_size_mb:.2f} MB)")
-    return output_zip
+
+def package_pa_server(
+    repo_root: Path, work_dir: Path, output_dir: Path, version: str, skip_web_build: bool = False
+) -> Path:
+    """Package the headless Linux server layout: system JDK, nginx-served SPA, systemd unit."""
+    print("\n" + "=" * 70)
+    print(f"[INFO] Packaging Personal Assistant Server Linux Distribution (version: {version})...")
+    print("=" * 70)
+
+    web_dist_dir = build_web_dist(repo_root, skip_web_build=skip_web_build, relative_api_base=True)
+
+    server_target_dir = repo_root / "haifa-agent-applications" / "haifa-agent-personal-assistant-server" / "target"
+    server_jar = find_jar(server_target_dir, "haifa-agent-personal-assistant-server", version)
+    print(f"[INFO] Found Personal Assistant Server JAR: {server_jar.name}")
+
+    with zipfile.ZipFile(server_jar) as jar:
+        jar_entries = set(jar.namelist())
+    if "BOOT-INF/classes/static/index.html" in jar_entries:
+        raise ValueError(
+            "Server JAR embeds the Web SPA; the Linux package serves it from nginx and must ship the plain JAR"
+        )
+    if not any(entry.startswith("BOOT-INF/lib/") for entry in jar_entries):
+        raise ValueError("Server JAR is not a Spring Boot executable archive")
+
+    stage_dir = stage_dir_for(work_dir, "linux", pa_package_name(version))
+
+    template_dir = repo_root / "dist-support" / "templates" / "pa-server"
+    for name in ("bin", "conf", "docker"):
+        shutil.copytree(template_dir / name, stage_dir / name)
+    shutil.copy2(template_dir / "README.txt", stage_dir / "README.txt")
+
+    shutil.copy2(server_jar, stage_dir / "app.jar")
+    shutil.copytree(web_dist_dir, stage_dir / "web")
+
+    return zip_stage(
+        stage_dir,
+        output_dir / pa_artifact_name("linux-x64", version),
+        "Personal Assistant Linux",
+    )
 
 
 def package_sdk(repo_root: Path, work_dir: Path, output_dir: Path, version: str) -> Path:
@@ -461,7 +624,7 @@ def package_sdk(repo_root: Path, work_dir: Path, output_dir: Path, version: str)
 def write_checksums(output_dir: Path) -> None:
     checksums_file = output_dir / "sha256sums.txt"
     lines = []
-    for z in sorted(output_dir.glob("*.zip")):
+    for z in sorted([*output_dir.glob("*.zip"), *output_dir.glob("*.tar.gz")]):
         sha = compute_sha256(z)
         lines.append(f"{sha}  {z.name}")
 
@@ -481,7 +644,7 @@ def main():
         "action",
         nargs="?",
         default="all",
-        choices=["all", "ca", "pa", "sdk", "jre", "sdk-modules"],
+        choices=["all", "ca", "ca-linux", "pa", "pa-server", "sdk", "jre", "sdk-modules"],
         help="Target package to build (default: all)",
     )
     parser.add_argument("--version", dest="version", default=None, help="Explicit release version")
@@ -494,6 +657,10 @@ def main():
     parser.add_argument("--output-dir", dest="output_dir", default=None, help="Output directory")
 
     args = parser.parse_args()
+    if args.action in ("all", "ca", "pa", "ca-linux"):
+        required = "linux-x64" if args.action == "ca-linux" else "windows-x64"
+        if native_runtime_platform() != required:
+            parser.error(f"{args.action} requires a native {required} JDK 21; use ca-linux on Linux/WSL")
 
     repo_root = get_repo_root()
     version = args.version or get_pom_version(repo_root)
@@ -520,7 +687,7 @@ def main():
     print("=" * 70)
 
     jre_dir = None
-    if args.action in ["all", "ca", "pa", "jre"]:
+    if args.action in ["all", "ca", "ca-linux", "pa", "jre"]:
         jre_dir = ensure_jre(repo_root, work_dir, force_rebuild=not args.skip_jre)
         if args.action == "jre":
             return
@@ -528,14 +695,19 @@ def main():
     if args.action in ["all", "ca"]:
         package_ca(repo_root, work_dir, output_dir, version, jre_dir)
 
+    if args.action == "ca-linux":
+        package_ca(repo_root, work_dir, output_dir, version, jre_dir, target="linux-x64")
+
     if args.action in ["all", "pa"]:
         package_pa(repo_root, work_dir, output_dir, version, jre_dir, skip_web_build=args.skip_web_build)
+
+    if args.action in ["all", "pa-server"]:
+        package_pa_server(repo_root, work_dir, output_dir, version, skip_web_build=args.skip_web_build)
 
     if args.action in ["all", "sdk"]:
         package_sdk(repo_root, work_dir, output_dir, version)
 
-    if args.action == "all":
-        write_checksums(output_dir)
+    write_checksums(output_dir)
 
 
 if __name__ == "__main__":

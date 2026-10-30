@@ -37,10 +37,10 @@ function Resolve-WorktreePublishVersion {
 
     if ($isMainCheckout) {
         if ($branch -ne 'dev') {
-            throw "Main checkout must be on branch 'dev' to publish baseline 0.1.3-SNAPSHOT (current branch: '$branch')."
+            throw "Main checkout must be on branch 'dev' to publish baseline 0.1.4-SNAPSHOT (current branch: '$branch')."
         }
         $identifier = 'baseline'
-        $version = '0.1.3-SNAPSHOT'
+        $version = '0.1.4-SNAPSHOT'
     } else {
         $identifier = Split-Path -Leaf $RepoRoot
         if ($identifier -notmatch '^[A-Za-z0-9.-]+$') {
@@ -49,7 +49,7 @@ function Resolve-WorktreePublishVersion {
         if ($identifier -eq 'dev' -or $identifier -eq 'main' -or $identifier -eq 'baseline') {
             throw "Worktree '$identifier' cannot publish to baseline coordinates."
         }
-        $version = "0.1.3-$identifier-SNAPSHOT"
+        $version = "0.1.4-$identifier-SNAPSHOT"
     }
 
     return [PSCustomObject]@{
@@ -199,6 +199,7 @@ function Get-ReactorModuleClassification {
         'haifa-agent-execution\haifa-agent-execution-host',
         'haifa-agent-execution\haifa-agent-sandbox-api',
         'haifa-agent-execution\haifa-agent-sandbox-host',
+        'haifa-agent-execution\haifa-agent-sandbox-docker',
         'haifa-agent-capabilities\haifa-agent-credential-api',
         'haifa-agent-capabilities\haifa-agent-credential-core',
         'haifa-agent-capabilities\haifa-agent-memory-api',

@@ -60,15 +60,38 @@ JVM 不支持该信号，因此生产 Model 在 Windows 上以 50ms 轮询每计
 Window Size 作为兜底；该兜底尚未在真实 Windows 终端上人工验收。旧 JLine 实现没有回退路径。
 
 Terminal 默认启用 bracketed paste；完整 `PasteMessage` 中的 CRLF 会归一化为换行且不会提交。对于
-没有发送 bracketed-paste 标记、而把剪贴板内容拆成普通按键的宿主，普通 Enter 经过 100ms 输入稳定
-门禁：紧随其后的字符、CR 或 LF 会把该 Enter 归并为编辑器换行，只有独立 Enter 才提交。该门禁只
-覆盖普通 Editor Enter；Shift/Ctrl+Enter、Alt+Enter 和 Selector/Approval Enter 保持各自既有语义。
+没有发送 bracketed-paste 标记、而把剪贴板内容拆成普通按键的宿主，每个落键统一解码：Space 是独立的
+`KeySpace` 键型（按一个空格插入）、Tab 归一化为四个空格、CR/LF 在同一缓冲内按到达顺序写入正文，只有相邻
+的 CR+LF 去重为一个换行。一次输入批次从该串行文本的首字符开始并记录自己独占的插入区间，因此粘进草稿中间
+时前后的原有文字仍可单独编辑；紧随普通 Enter 的文本、CR 或 LF 会让该 Enter 成为粘贴内容而不是提交，
+只有独立 Enter 才提交，批次末端的换行同样不提交。识别只看内容证据：紧随普通 Enter 的续行文本或单个键事件
+自带换行，才说明宿主在逐键送达多行内容，本批已上屏的文字会立刻被收回并替换为接收块
+`[Pasting ~M lines]`，其余按键只暂存、不再逐字上屏；空闲或遇到非文本操作时在接收块的原位置一次性定稿——
+达到阈值时换成 `[Pasted #N ~M lines]`，未达阈值时换回归一化后的原文——与带标记的粘贴得到同一份草稿。
+接收块不需要等结束计时器就可见，并按已到达的行数刷新行数，所以长粘贴期间能看出进度；渲染时与最终占位符
+共用 warning chip 高亮。按键节奏不参与识别（相邻按键的时间间隔无法区分快速输入与宿主流式送达），因此普通
+输入始终按原样上屏、不会出现粘贴块，连续快速输入后的单个 Enter 也仍按独立 Enter 提交；单行长内容同样按
+原样上屏，只在结束后按阈值折叠。`/` 与 `@` 只在输入串行结束（空闲）后才打开
+补全弹窗，所以以命令或路径提及开头的粘贴不会在首行被补全或命令路径吞掉。相邻按键的时间间隔只用于划定输入批次
+（超过 100ms 视为新批次），不用于认定输入来自剪贴板。批次不会改变正文或跨越原有草稿边界；该门禁只
+覆盖普通 Editor Enter，Shift/Ctrl+Enter、Alt+Enter 和 Selector/Approval Enter 保持各自既有语义。
 
-Bracketed paste 达到 3 行或超过 150 字符（`strip` 后）时，Editor 只插入 `[Pasted #N ~M lines]` 占位符，
-完整正文按原样（仅做换行/控制字符归一化）保存在进程内的当前草稿映射中；占位符按整体单元处理（左右键跨界、
-退格/删除一次清除，任何会破坏占位符的编辑被拒绝并提示 `PASTE_PLACEHOLDER_ATOMIC`），提交时再展开为完整
-原文后进入 Session 与输入历史。提交路由基于可见文本，隐藏正文不会触发 `/` 命令或 `!` shell。阈值与
-多行长文本折叠策略一致；较小粘贴仍原样插入。
+输入批次、独立 Enter 和空闲检查由包内 `ComposerInput` 协调；接收中的新字符只移动空闲期限，同一批次最多
+保留一个空闲检查，Enter 的提交保护单独处理。只追加暂存正文、没有改变可见内容的按键复用上一帧，避免长粘贴
+逐字符重建整份界面；行数变化、定稿、Resize、Runtime/Poll、滚动、选择和中断仍会刷新画面。接收标签只负责
+展示，是否缓冲由批次的接收状态决定，不以标签是否存在来猜测输入语义。
+
+Bracketed paste 与 Ctrl+V（剪贴板读取）在达到 3 行或超过 150 字符（`strip` 后）时，Editor 只插入
+`[Pasted #N ~M lines]` 占位符（OpenCode 风格的 paste summary；`#N` 用于区分多次粘贴），完整正文按原样
+（仅做换行/控制字符归一化）保存在进程内的当前草稿映射中；占位符按整体单元处理（左右键跨界、退格/删除一次
+清除，任何会破坏占位符的编辑被拒绝并提示 `PASTE_PLACEHOLDER_ATOMIC`），渲染时以 warning chip 高亮，提交时
+再展开为完整原文后进入 Session 与输入历史。很长的用户正文在聊天记录中只显示带标记的有界预览，完整正文仍提交给 Session，
+不会因聊天卡片的显示上限导致终端退出。提交路由基于可见文本，隐藏正文不会触发 `/` 命令或 `!` shell。
+Backspace 同时按 `keyBS`/`keyDEL`、键名和 delete rune 突发三种编码识别：宿主把一次退格拆成多个 rune 或混入
+其它控制 rune 时仍整体清除该占位符；非粘贴按键进入草稿前同样做控制字符消毒，不可解码的 rune 不会以乱码块
+落在输入框里。
+阈值与 OpenCode 默认一致；较小粘贴仍原样插入。Ctrl+V 由应用读取宿主剪贴板（AWT），不依赖 tui4j 未实现的
+`Command.paste()` / `ReadClipboardMessage` 物化路径。
 
 生产 Model 初始化时主动请求一次真实 Window Size，并在 Windows 上约每 500ms 重新查询，避免停留在
 `80x24` 启动尺寸或在窗口缩放、跨显示器移动后与实际终端尺寸不一致。尺寸未变化时 `Tui4jTerminalIo` 在
@@ -98,15 +121,13 @@ Windows ConPTY Gate B。
 │                                                             │  Git branch: main              │
 │                                                             │  Model: <model> (<provider>)   │
 │                                                             │  Resources: skills, MCP        │
-│                                                             │  Haifa Agent v0.1.3            │
+│                                                             │  Haifa Agent v0.1.4            │
+│ [交互卡片槽位：Approval / Selector / 命令面板]              │                                │
+│ ▌ [Textarea 输入区，3 行，按左栏宽度换行]                   │                                │
+│ ▌                                                           │                                │
+│ ▌                                                           │                                │
+│ Normal · model                 enter send                    │                                │
 ├─────────────────────────────────────────────────────────────┴────────────────────────────────┤
-│ [交互卡片槽位] (审批确认 Approval / 交互选择器 Selector / 命令面板)                          │
-├──────────────────────────────────────────────────────────────────────────────────────────────┤
-│ ┌─ Integrated Prompt Box (一体化输入框) ──────────────────────────────────────────────────┐  │
-│ │ ▌ [Textarea 输入区, 3行紧凑高度]                                                         │  │
-│ │ ▌                                                                                       │  │
-│ │ ▌ Normal  auto · claude-3-5-sonnet (anthropic)          enter send · shift+enter newline│  │
-│ └─▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀┘  │
 │  ~/workspace/haifa-agent (空闲为路径/执行中为Spinner)    5.2k · 35s     [f2] models  [ctrl+p] commands │
 └──────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -119,10 +140,15 @@ Windows ConPTY Gate B。
 1. **响应式双栏与侧栏 (Sidebar)**：
    - 宽屏（终端宽度 >= 100 列）：启用双栏布局，左侧为主交互区，右侧为 40 列固定宽度的信息侧栏；
    - 窄屏（终端宽度 < 100 列）：自动隐藏侧栏，保持专注单栏编辑与浏览；
+   - 分栏竖线连续覆盖会话视口、输入框、输入提示和选择器；编辑器布局与左栏共用同一宽度，长文本按终端单元格换行，不进入右侧栏。侧栏切换或窗口缩放时重新排版，保留草稿和光标；最底部全局状态/快捷键栏保持通栏。
    - 窄屏信息可达性：窄屏用户无需展开侧栏，即可通过 `<leader>s`（`/session`）弹层随时查看同等详尽的环境、Session、Git、模型与资源摘要；
    - 布局自适应与用户显式折叠偏好：首次启动或窗口 Resize 时，终端根据当前列宽（>=100 列）自动计算侧栏展示；一旦用户使用 `<leader>b` 显式折叠或展开侧栏，终端锁定用户的显式偏好（`sidebarExplicitlyToggled`），后续窗口缩放事件不会强行覆盖用户的偏好选择。
 
 2. **焦点与弹层优先级契约 (Focus & Modal Priority Contract)**：
+   - 普通内建工具审批增加 `Allow for this session`：当前 Coding Session 内后续普通工具审批自动通过，退出应用后清除；`/approval reset` 恢复逐次审批。首次批准仅在 Runtime 实际应用后生效，Pending 不激活；工作区授权、权限提升、凭据/输入交互、未知工具和硬性拒绝保持原流程。
+   - 审批选项被 Esc/Ctrl+C 关闭后，输入 `/approval` 或 `/approval reopen` 可恢复当前待处理选项，编辑区草稿保留。查询走后台 CONTROL 通道，审批已结束时不会重新弹窗；自动审批完成后不保留 loading 占位卡片。
+   - 大文件写入仅截断内容预览且目标完整时仍可沿用会话授权；路径不完整、被脱敏或 patch 预览截断时逐次确认，审批详情会说明原因。
+   - 底部计时器区分模型阶段 `THINKING` 与工具执行阶段 `RUNNING · 工具名`；刷新同一 Run 或收到其整体运行状态事件时，保留正在执行的工具阶段和计时起点。
    - 任何选择器弹层（审批 Approval、Shell 确认、命令面板 Command Palette、模型选择、Session 摘要等）处于激活状态时，输入焦点完全移至弹层（Editor blur），编辑器失焦并禁用一切普通文本输入；
    - 弹层处于激活状态时，所有按键均按弹层事件处理（上下移动选中项、Enter 确认当前项、Esc/Ctrl+C 取消关闭）；
    - 弹层打开期间，所有全局 Leader 快捷操作（如 `<leader>m`、`<leader>s` 等）均被严格忽略（`Kind.EXECUTE_COMMAND` 语义完全与弹层的 `Kind.SUBMIT` 隔离），严禁借用编辑器的 SUBMIT 事件意外确认审批或执行未预期的全局命令；
@@ -145,7 +171,8 @@ Windows ConPTY Gate B。
    - 活动 Run 期间：底部状态栏左侧显示单调计时的运行状态 `⠋ <timedActivity> · esc interrupt`；新输出在视口外产生时追加 ` · new output below`，严禁使用路径文字覆盖活动状态指示；
    - 空闲（Idle）期间：左侧优先显示操作反馈与引导状态（如 `/new` 提示、切模成功反馈、重命名状态等）；无反馈时显示当前工程路径；
    - 右侧展示快捷键提示（`[ctrl+o] details  [f2] models  [ctrl+p] commands`）及 Session 性能指标；空间受限时优先回退为不含 `[ctrl+o]` 的短提示并优先丢弃指标、次选裁剪工程路径，核心操作反馈与活动运行状态具有最高显示优先级；
-   - 输入框上方 Meta 条右侧保持显示编辑器操作提示（如 `enter steer · alt+enter follow-up` 或 `enter send · shift+enter newline`）。
+   - 输入框上方 Meta 条右侧保持显示编辑器操作提示（如 `enter waiting · alt+enter follow-up`、
+     Waiting 存在时 `enter send now · alt+e edit · esc cancel`，或 Idle 的 `enter send · shift+enter newline`）。
 
 Theme 使用 tui4j Lip Gloss 的 Adaptive Color 表达 Accent、Muted、Surface Panel、Surface Element、Border Subtle、User、Success、Pending、
 Error、Queued 和 Focus。TrueColor 参考色会按明暗背景自适应；NoColor 环境仍依靠稳定标题、状态文字、
@@ -159,15 +186,26 @@ Error、Queued 和 Focus。TrueColor 参考色会按明暗背景自适应；NoCo
 - Assistant 正文保持 2-cell 左对齐以与 User 边线气泡形成清晰的视觉层级；输入框 Prompt Box 适配
   Surface Element 底色，侧栏垂直分割线统一使用 Border Subtle，消除界面视觉断层；
 - 高频 Markdown 子集只在 View 层转换为终端样式，`TranscriptItem`、Session 与持久化继续保留原始 Markdown；
-- Tool 根据 `requested/started/succeeded/failed/cancelled` 使用状态色。正常完成/`EXITED` 的折叠项严格占一行：
-  以 `✓` 状态符号开头，随后是工具名背景徽标、调用说明（优先模型 `intentSummary`/`description`，否则安全
-  Target Summary，再否则工具名）、辅助信息（非零退出码与耗时）和右端折叠符 `›`；说明在 `REQUESTED`
-  阶段即可展示，不提前显示成功。连续折叠项之间不插入空行，不再渲染正文预览行或 `ctrl+o expand`
-  长提示。`EXITED` 始终是成功状态，
-  非零退出码（如 `exit 1`）只作为弱化事实展示，不会变成红色故障；`exit 0` 不重复展示。
-  真实 `FAILED`/`DENIED`/`TIMEOUT`/`UNKNOWN` 仍保留错误或未知语义，并在折叠态保留最多两行安全原因。
-  折叠态耗时始终显示；按 `ctrl+o` 或点击条目可展开/收起，展开后显示既有有界详情和
-  `Duration … · N lines · X KB` 元数据尾行。点击仅在鼠标捕获开启时可用，且完成文本选择后不触发展开。
+- Tool 主行使用该 Run 冻结定义的可读标题（如 `Read File`、`Apply Patch`、`Run Command`），不再把机器名
+  直接当展示名；展开后的元数据保留机器名与分类徽标，历史事件缺少机器标识时只对已知内置名做固定映射。
+  正常完成/`EXITED` 的折叠项严格占一行：正常成功以 `✓` 开头，非零进程退出以中性 `○` 开头，随后是标题徽标、调用说明（优先模型
+  `intentSummary`/`description`，否则安全 Target Summary，再否则标题）、辅助信息（非零退出码与耗时）和
+  右端折叠符 `›`；说明在 `REQUESTED` 阶段即可展示，不提前显示成功。连续折叠项之间不插入空行。
+  `EXITED` 仍表示进程已退出，非零退出码（如 `exit 1`）在折叠和展开时都保留，不把它显示为绿色通过，
+  也不升级为 Run 失败；`exit 0` 不重复展示。不根据命令文本或模型意图推断“预期内失败”。
+- 一次普通工具调用失败使用克制的黄色 `!` 和单行“未完成：短原因”，折叠态不再强制附带两行详情；
+  展开后仍显示真实错误码、目标、结果和安全输出。用户拒绝/规则阻止使用中性 `–` 与“已拒绝/规则阻止”，
+  用户取消使用中性 `–` 与“已取消”，都不再画成系统故障红叉。`OUTCOME_UNKNOWN` 继续使用醒目的黄色 `?`
+  和“结果未确认”提示，折叠态保留最多两行处理信息；`ATTENTION`/`RECOVERY REQUIRED` 等阻断状态仍用红色。
+  Run 自身的失败仍由红色 Run Summary 表示，不把历史普通失败全部染红。
+- 折叠态耗时始终显示；按 `ctrl+o` 或点击条目可展开/收起。鼠标选中过的条目保持为当前展开目标，
+  未选中过条目时回退到最近可展开项。点击仅在鼠标捕获开启时可用，且完成文本选择后不触发展开。
+  新 Tool 生命周期投影将业务输出与 `Technical details` 分离：`ctrl+x t`（macOS `⌃X T`）切换当前工具的
+  技术信息，包含机器名、关联 ID、原因码、Result Ref 与可得进程状态，以及 `Duration … · N lines · X KB`。
+  展开后的业务输出优先使用 Runtime 投影的有界 `outputPreview`（当前为本次实际写入的文件内容或本次调用
+  Diff），Diff 由 `TerminalDiffHighlighter` 逐行高亮并保留缩进，NoColor 退化为相同纯文本；工具结果没有该
+  事实时回退既有有界摘要，不从自然语言或事后文件反推。
+  第二层展开状态在同一调用的更新中保留；旧事件或缺少结构化投影的历史条目继续显示原有详情，不猜测输出文本结构。
 - 运行中的执行工具通过进程内 transient publisher 增量刷新同一 Tool Call 卡片的
   `Output (streaming):` 段；每批最多 4 KiB，卡片正文最多保留 16 KiB 尾部，stderr 和 preview
   丢弃会显式标记；执行侧达到输出上限时使用独立截断标记，避免与预览丢批混淆。该内容不持久化、
@@ -175,6 +213,11 @@ Error、Queued 和 Focus。TrueColor 参考色会按明暗背景自适应；NoCo
 - Run 进入终态（completed/failed/cancelled/timeout）时追加一张 Run Summary 卡片，
   标题显示终态与可得耗时（如 `Run completed · 24s`），正文显示终态、稳定错误码及耗时，
   不再从本地 Transcript 反推或累加工具与变更集计数；
+- Run `COMPLETED` 时只把具有同一 Run 关联的最近 Assistant 消息标为 `Assistant / Final response`，
+  不解析正文判断完成程度，仍调用现有 Markdown renderer 并保留原始正文。`ctrl+x y`（macOS `⌃X Y`）
+  通过既有后台 Clipboard/OSC 52 路径复制该回复的已渲染正文；`ctrl+x a`（macOS `⌃X A`）定位同一 Run 的
+  首个工具活动，无活动时提示不可用。历史消息缺少可信 Run 关联时不猜测。完成后底栏显示 `Ready for follow-up`，
+  沿用唯一输入框；Run completed 卡片仅表示生命周期终态，不证明测试通过或工作全部完成。
 - Approval 使用 Pending 语义，Error 使用 Error 语义；`delivery-*` 与
   `resource-*` Resource 项默认可折叠为一行，认证、历史等关键 Resource 项保持展开可见；
 - Editor 的当前操作提示使用弱化的 Muted 语义，Selector 仍使用 Focus 语义；普通 Editor 始终保留
@@ -196,6 +239,9 @@ delta，重复 frame 不重新解析；只有权威正文替换或 16 KB 有界�
 - [ ] Mermaid、数学公式与 KaTeX；
 - [ ] GFM 删除线、任务复选框及其他扩展；
 - [ ] OSC 8 可点击链接（当前显示 `label (URL)`）；
+- [ ] 目录表格、读取正文分页和项目持久化范围授权仍需各自产品事实/激活机制；`file_create`/`file_write`/`file_patch`
+  已展示本次调用实际写入的内容与 Diff，`file_read`、`file_list` 等工具的结构化结果仍只有有界摘要，
+  Terminal 不从 View 直接读取文件，也不从事后仓库状态或自然语言生成这些内容。
 - [ ] Tool 专用结构化预览器、跨 Tool 聚合和批量展开；首版实时输出仍保持每个稳定 Tool Call ID
   独立、有界地展示。
 
@@ -228,7 +274,7 @@ Phase B 的工作流反馈只投影稳定产品 DTO 和 Runtime 事件：
   `WAITING FOR APPROVAL`（等待用户审批）。计时是当前活动阶段耗时，不是整轮 Run 总耗时：新 Run、
   工具开始、工具完成后返回模型、进入/离开审批、应用 Steer、恢复、验证和取消阶段时从 `1s` 重新开始；
   Assistant Delta、轮询、重复事件和 viewport 操作不重置。`WORKING` 只追加短 Tool
-  名称，例如 `WORKING (12s) · execution_run`；内部仅以单调递增 revision 区分阶段，不展示 RunId 或
+  标题，例如 `WORKING (12s) · Run Command`；内部仅以单调递增 revision 区分阶段，不展示 RunId 或
 - 错误按 Retryable、User action required、Interrupted、Terminal capability、Terminal failure
   五类给出稳定错误码和下一步操作；失败和 Selector 都不清空草稿；遇到 `MODEL_AUTHENTICATION_REQUIRED`
   时保持用户草稿，并弹出模型就绪恢复选择器，安全默认项为通过 `/model` 切换已就绪模型，次选为 `/connect`；
@@ -268,7 +314,11 @@ Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、s
 选中态，未选项降低视觉权重；无色模式仍保留相同文字、标记、状态和顺序。
 
 - 普通首条消息创建真实 Coding Session/Run；
-- Idle Enter 提交新 Turn，Active Enter 发送 Steer；
+- Idle Enter 提交新 Turn；Active Enter（有文本）先进入输入框上方的本地 Waiting 区，不立刻 Steer；
+- Waiting 区动作：空 Editor 再按 Enter = Send Now（Steer）；空 Editor 按 `alt+e` = Edit；
+  Esc = 取消 Waiting（不 arm / 不取消当前 Run）。Run 自然结束后若仍有 Waiting，自动作为下一 Turn 发送；
+- Waiting 存在时 Editor 有文本再按 Enter 只替换该 Waiting 草稿（新建与空闲状态一致），不会额外提交一个 Turn；
+  需要立即发出新文本时先按 Esc 取消 Waiting 或空 Enter 发出已有草稿；
 - 普通对话按 Enter 后先清空 Editor、显示用户消息与 `Submitting`，再由 tui4j Command Worker 执行
   Session/Runtime IO；完成结果只在 UI 线程归约，避免提交期间冻结首次可见反馈；
 - Run 进入 `COMPLETED`、`FAILED`、`CANCELLED` 或 `TIMEOUT` 后立即回到 Idle；同一已结束 Run 随后
@@ -276,9 +326,9 @@ Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、s
 - Active Alt+Enter 写入持久 Follow-up Queue，Alt+Up 选择并恢复待发消息；
 - 第二轮输入遇到 Run 刚结束/刚激活的状态竞态时，Terminal 先 reconcile 再按最新状态重试一次；
   其他产品错误只显示稳定错误码并保留草稿，不退出进程；
-- Escape 是活动 Run 的全局取消键：裸 Escape 不得被当作 EOF；即使 Selector 打开或
-  本地 Run 状态尚未刷新，也先关闭 Selector、reconcile 后向产品取消接口发送命令并显示 Cancelling。
-  空闲时 Escape 只关闭 Selector；Ctrl+C 仍先清空非空 Editor，空 Editor 时取消活动 Run；
+- Escape：若存在 Waiting，只取消 Waiting；否则是活动 Run 的全局取消键（先 arm 再确认）。
+  裸 Escape 不得被当作 EOF；Selector 打开时先关闭 Selector。空闲时 Escape 只关闭 Selector；
+  Ctrl+C 仍先清空非空 Editor，空 Editor 时取消活动 Run；
 - `/resume` 选择并打开真实 Session；顶层 `haifa-coding resume`、`resume --last` 和
   `resume <SESSION_ID>` 复用同一产品客户端与打开流程；
 - `/resume <query>` 搜索 Session，`/rename [name]`（兼容 `/name`）使用 revision 重命名，
@@ -333,6 +383,42 @@ Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、s
 - `/settings`、`/tree`、`/fork`、`/clone` 在没有真实 API 时返回
   `CAPABILITY_NOT_IMPLEMENTED`，不显示装饰性选择器；
 - `/quit` 退出；活动 Run 下 EOF 显示明确的退出选择。
+
+## Assistant Markdown rendering
+
+Assistant text uses a product-local AST renderer for heading levels, emphasis, inline code, links,
+images as alt text and URLs, three visible list indentation levels, nested list/quote/code blocks,
+horizontal rules, and pipe tables. Tables wrap cells by terminal cell width; when columns cannot
+fit, each row becomes a list of `column: value` lines. Code panels have a language label, a left
+stripe and a dedicated background, including whitespace and wrapped lines. NoColor keeps the
+structural text without SGR sequences. Markdown source in Session and TranscriptItem is unchanged.
+
+Streaming reparses the mutable top-level tail. A prefix can be frozen only after its containers
+are closed and a structural blank followed by another top-level block proves the boundary.
+The final block stays mutable. Resize reuses the AST and only reflows rendered lines; replacement
+and bounded-tail rollover rebuild the document. Cache entries are removed with transcript retention
+and cleared on theme changes. Parse metrics count sanitized source characters actually parsed,
+including reparsed tail characters; `fullParseCount` counts initial document construction and
+replacement rebuilds, while `lastDeltaCharacters` counts newly received sanitized characters.
+
+An internal startup-only escape hatch selects the improved line renderer with the system property
+`-Dhaifa.terminal.markdown.renderer=legacy` or environment variable
+`HAIFA_TERMINAL_MARKDOWN_RENDERER=legacy`. The system property takes precedence. Unset values use
+the AST renderer; an unrecognized value logs one fixed warning and uses AST. No automatic fallback
+or live switching occurs. The escape hatch is not part of user YAML configuration. Legacy preserves
+the P1/P2 spacing and styles but does not support nested blocks or tables. Retire it and its switch
+after two released versions with no unresolved AST rendering regressions, retaining parser and
+renderer tests as the behavior baseline.
+
+The supported product content width is at least 12 terminal cells; smaller top-level requests use
+that minimum in both renderers. Nested containers reduce or omit decoration before leaving fewer
+than two content cells, so CJK and emoji graphemes remain intact. Oversized tokens, including runs
+of hyphens, are hard-wrapped without discarding text or ANSI styles. Table columns use a shared
+width ceiling found by binary search, preserving a two-cell minimum and stable tie-breaking;
+allocation costs O(columns * log(maximum natural column width)), rather than one scan per removed cell.
+Font shape, host contrast,
+and mouse selection/scroll behavior still require checks in the target terminal; unit tests do not
+establish those visual acceptance results.
 
 ## 构建与启动
 
@@ -393,7 +479,7 @@ key，并在所有重启间保持不变。
 15. 分别粘贴带 bracketed-paste 标记和不带标记的多行文本，确认所有行停留在 Editor，末尾换行也不
     提交；随后单独按 Enter 才提交一次。
 16. PageUp 回翻后直接提交新消息，确认新一轮自动回到底部且不显示陈旧的 `new output below`；模型交互
-    显示 `THINKING (1s)`，工具开始后显示 `WORKING (1s) · tool-name`，工具完成并返回模型后重新显示
+    显示 `THINKING (1s)`，工具开始后显示 `WORKING (1s) · <tool title>`（如 `Run Command`），工具完成并返回模型后重新显示
     `THINKING (1s)`。进入审批显示 `WAITING FOR APPROVAL (1s)`；同一阶段在 61 秒显示为 `1m 1s`，
     Assistant Delta 和工具输出块不能重置计时。
 
@@ -426,3 +512,19 @@ They are bounded in memory and are not part of the durable Run Event Feed, SQLit
 projection, checkpoint, or cross-process replay contract. Durable Tool, Interaction and Run
 lifecycle events continue to use the Run Event Feed. After a completed Run is reopened, the
 authoritative Assistant text comes from the persisted Session messages.
+
+## Clarification input
+
+`ask_clarification` surfaces in the terminal as a compact `Clarification · <title>` transcript card with one line per
+question. The option list and its rationale live in the selector, so the card never repeats them and never needs a
+fold. While that selector is open it is the only region that advertises keys: the composer's `[Send Now]`/`[Cancel]`
+strip and the run interrupt hint stay hidden, and one blank row separates the modal from the regions it covers. A
+multi-question clarification is a wizard, so the selector title always states `Step X of Y` with the question header,
+every option shows its own rationale on the line below it, and the focused row right-aligns an `[enter]` marker so an
+unmarked single-choice row cannot read as "press Space first".
+
+Space only marks an option (multi-choice `[ ]` ↔ `[✓]`, single choice `( )` ↔ `(✓)`, both U+2713) and never submits;
+Enter selects the focused option, confirms the current question, and moves on to the next one. "Type your own answer"
+hands the composer to the free-text lane while the card stays pending. The answer is submitted as one part per question
+with format `clarification-answer.v1`, so the Runtime validates it like any other interaction input. "Cancel" answers
+with the `cancel` action, which resumes the run without an answer instead of cancelling it.

@@ -39,6 +39,8 @@ public final class SqliteRuntimePayloadTypes {
             new PayloadType<>("interaction-target", "1", InteractionTargetPayload.class);
     public static final PayloadType<InteractionTargetPayloadV2> INTERACTION_TARGET_V2 =
             new PayloadType<>("interaction-target", "2", InteractionTargetPayloadV2.class);
+    public static final PayloadType<InteractionTargetPayloadV3> INTERACTION_TARGET_V3 =
+            new PayloadType<>("interaction-target", "3", InteractionTargetPayloadV3.class);
     public static final PayloadType<ConversationSummaryPayload> CONVERSATION_SUMMARY =
             new PayloadType<>("conversation-summary-content", "1", ConversationSummaryPayload.class);
     public static final PayloadType<ConversationSummaryPayloadV2> CONVERSATION_SUMMARY_V2 =
@@ -74,6 +76,7 @@ public final class SqliteRuntimePayloadTypes {
                 .register(COMMAND_RESULT)
                 .register(INTERACTION_TARGET)
                 .register(INTERACTION_TARGET_V2)
+                .register(INTERACTION_TARGET_V3)
                 .register(CONVERSATION_SUMMARY)
                 .register(CONVERSATION_SUMMARY_V2)
                 .register(CONVERSATION_SUMMARY_V3)

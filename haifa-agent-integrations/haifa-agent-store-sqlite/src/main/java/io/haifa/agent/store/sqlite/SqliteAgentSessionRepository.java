@@ -62,7 +62,7 @@ public final class SqliteAgentSessionRepository implements AgentSessionRepositor
     @Override
     public Optional<AgentSession> find(AgentSessionId sessionId) {
         Objects.requireNonNull(sessionId, "sessionId must not be null");
-        return execute(() -> Optional.ofNullable(
+        return read(() -> Optional.ofNullable(
                         unitOfWork.mapper(RuntimeStoreMapper.class).findSession(sessionId.value()))
                 .map(this::fromRow));
     }
@@ -119,6 +119,18 @@ public final class SqliteAgentSessionRepository implements AgentSessionRepositor
     private <T> T execute(Supplier<T> work) {
         try {
             return unitOfWork.execute(work);
+        } catch (SqliteStoreException exception) {
+            if (exception.getCause() instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            throw exception;
+        }
+    }
+
+    /** Queries read committed state without reserving the process-wide write slot. */
+    private <T> T read(Supplier<T> work) {
+        try {
+            return unitOfWork.executeReadOnly(work);
         } catch (SqliteStoreException exception) {
             if (exception.getCause() instanceof RuntimeException runtimeException) {
                 throw runtimeException;

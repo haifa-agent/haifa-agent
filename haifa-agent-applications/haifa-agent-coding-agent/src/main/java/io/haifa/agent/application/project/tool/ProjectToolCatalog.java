@@ -29,6 +29,11 @@ import java.util.Set;
 
 /** Builds the project product's model-visible tools through the platform Tool catalog. */
 public final class ProjectToolCatalog {
+    /** The Tool that widens the trusted workspace, so its approval stays per call. */
+    public static final String WORKSPACE_ATTACH = "workspace_attach";
+    /** The host-process Tool whose permission requests stay per call. */
+    public static final String EXECUTION_RUN = "execution_run";
+
     private final Duration maximumExecutionTimeout;
     private static final Map<String, String> REQUIRED_CAPABILITY = Map.ofEntries(
             Map.entry("file_list", "file_read"),
@@ -41,10 +46,14 @@ public final class ProjectToolCatalog {
             Map.entry("file_move", "file_write"),
             Map.entry("file_diff", "file_read"),
             Map.entry("file_patch", "file_write"),
-            Map.entry("workspace_attach", "file_read"),
-            Map.entry("execution_run", "execution_run"));
+            Map.entry(WORKSPACE_ATTACH, "file_read"),
+            Map.entry("ask_clarification", "file_read"),
+            Map.entry(EXECUTION_RUN, "execution_run"));
     private static final Set<String> WRITES =
             Set.of("file_create", "file_write", "file_delete", "file_move", "file_patch");
+
+    /** Every built-in project Tool name, so enablement and session consent never keep a second copy. */
+    public static final Set<String> BUILT_IN_TOOL_NAMES = Set.copyOf(REQUIRED_CAPABILITY.keySet());
 
     public ProjectToolCatalog() {
         this(Duration.ofMinutes(30));
@@ -248,7 +257,7 @@ public final class ProjectToolCatalog {
     }
 
     public Set<String> names() {
-        return REQUIRED_CAPABILITY.keySet();
+        return BUILT_IN_TOOL_NAMES;
     }
 
     private ToolDefinition definition(
@@ -322,23 +331,34 @@ public final class ProjectToolCatalog {
 
     private static String title(String name) {
         return switch (name) {
-            case "file_list" -> "List workspace files";
-            case "file_stat" -> "Inspect workspace path";
-            case "file_read" -> "Read workspace file";
-            case "file_search" -> "Search workspace files";
-            case "file_create" -> "Create workspace file";
-            case "file_write" -> "Write workspace file";
-            case "file_delete" -> "Delete workspace path";
-            case "file_move" -> "Move workspace path";
-            case "file_diff" -> "Preview file diff";
-            case "file_patch" -> "Apply workspace patch";
-            case "workspace_attach" -> "Attach a user-approved directory";
-            case "execution_run" -> "Run a local shell command";
+            case "file_list" -> "List Files";
+            case "file_stat" -> "Inspect Path";
+            case "file_read" -> "Read File";
+            case "file_search" -> "Search Files";
+            case "file_create" -> "Create File";
+            case "file_write" -> "Write File";
+            case "file_delete" -> "Delete File";
+            case "file_move" -> "Move File";
+            case "file_diff" -> "Preview Diff";
+            case "file_patch" -> "Apply Patch";
+            case "workspace_attach" -> "Add Directory";
+            case "execution_run" -> "Run Command";
+            case "ask_clarification" -> "Ask Clarification";
             default -> throw new IllegalArgumentException("unknown project tool " + name);
         };
     }
 
     private static String description(String name, SandboxProfile executionProfile) {
+        if (name.equals("ask_clarification")) {
+            return "Ask the user to choose between bounded options or type a free-text answer before continuing. "
+                    + "Send 1..3 questions in one call; keep each header under 32 characters and provide 2..6 options "
+                    + "per question; put the recommended option first and suffix its label with \" (Recommended)\". "
+                    + "Never add your own \"Other\" option: when custom is true the product adds a free-text answer. "
+                    + "Do not ask for information you can obtain from the workspace, and ask at most three times "
+                    + "per run. A dismissed question resumes the run without an answer, so state your assumption "
+                    + "explicitly instead of waiting forever.";
+        }
+
         if (name.equals("execution_run")) {
             return "Run complete command text through the frozen "
                     + executionProfile.providerId()
@@ -378,6 +398,24 @@ public final class ProjectToolCatalog {
                     + "All files are preflighted with optimistic checks before the "
                     + "first write. Cross-directory patches are rejected. A commit-time failure reports its committed prefix "
                     + "and requires a fresh read before regenerating the patch.";
+        }
+        if (name.equals("file_list")) {
+            return "List files in the workspace.";
+        }
+        if (name.equals("file_stat")) {
+            return "Inspect a path in the workspace.";
+        }
+        if (name.equals("file_search")) {
+            return "Search files in the workspace.";
+        }
+        if (name.equals("file_diff")) {
+            return "Preview a file diff in the workspace.";
+        }
+        if (name.equals("file_delete")) {
+            return "Delete a path in the workspace. Preserve unrelated user changes.";
+        }
+        if (name.equals("file_move")) {
+            return "Move a path in the workspace. Preserve unrelated user changes.";
         }
         if (name.equals("workspace_attach")) {
             return "Request one additional existing local directory for this Coding Agent. Supply an "
@@ -531,6 +569,64 @@ public final class ProjectToolCatalog {
                                         + "UNKNOWN when the command cannot be classified, and do not infer it from "
                                         + "arbitrary shell syntax."));
             }
+            case "ask_clarification" -> {
+                properties.put(
+                        "questions",
+                        Map.of(
+                                "type",
+                                "array",
+                                "minItems",
+                                1,
+                                "maxItems",
+                                3,
+                                "items",
+                                Map.of(
+                                        "type",
+                                        "object",
+                                        "properties",
+                                        Map.of(
+                                                "header",
+                                                Map.of("type", "string", "minLength", 1, "maxLength", 32),
+                                                "question",
+                                                Map.of("type", "string", "minLength", 1, "maxLength", 2000),
+                                                "multiple",
+                                                Map.of("type", "boolean"),
+                                                "custom",
+                                                Map.of("type", "boolean"),
+                                                "options",
+                                                Map.of(
+                                                        "type",
+                                                        "array",
+                                                        "minItems",
+                                                        2,
+                                                        "maxItems",
+                                                        6,
+                                                        "items",
+                                                        Map.of(
+                                                                "type",
+                                                                "object",
+                                                                "properties",
+                                                                Map.of(
+                                                                        "label",
+                                                                        Map.of(
+                                                                                "type",
+                                                                                "string",
+                                                                                "minLength",
+                                                                                1,
+                                                                                "maxLength",
+                                                                                120),
+                                                                        "description",
+                                                                        Map.of("type", "string", "maxLength", 300)),
+                                                                "required",
+                                                                List.of("label"),
+                                                                "additionalProperties",
+                                                                false))),
+                                        "required",
+                                        List.of("header", "question", "options"),
+                                        "additionalProperties",
+                                        false)));
+                required.add("questions");
+            }
             default -> throw new IllegalArgumentException("unknown project tool " + name);
         }
         putCallDescription(properties);
@@ -547,6 +643,28 @@ public final class ProjectToolCatalog {
     }
 
     private static Map<String, Object> outputSchema(String name) {
+        if (name.equals("ask_clarification")) {
+            return Map.of(
+                    "$schema",
+                    ToolSchema.DRAFT_2020_12,
+                    "type",
+                    "object",
+                    "properties",
+                    Map.of(
+                            "answers",
+                            Map.of(
+                                    "type",
+                                    "array",
+                                    "items",
+                                    Map.of("type", "array", "items", Map.of("type", "string"))),
+                            "declined",
+                            Map.of("type", "boolean")),
+                    "required",
+                    List.of("answers", "declined"),
+                    "additionalProperties",
+                    false);
+        }
+
         if (name.equals("file_read")) {
             return Map.of(
                     "$schema",

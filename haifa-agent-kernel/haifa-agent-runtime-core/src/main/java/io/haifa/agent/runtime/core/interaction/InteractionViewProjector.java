@@ -25,13 +25,14 @@ public final class InteractionViewProjector {
                 title(kind),
                 boundedSafePrompt(request.prompt()),
                 InteractionSemantics.allowedActions(kind),
-                InteractionSemantics.inputContract(kind),
+                InteractionSemantics.inputContract(request),
                 target(request.target()),
                 new InteractionRequesterView(request.requester().principalType(), "requester"),
                 request.createdAt(),
                 request.expiresAt(),
                 consequences(request, kind),
-                request.presentation());
+                request.presentation(),
+                request.clarificationPresentation());
     }
 
     static String boundedSafePrompt(String prompt) {
@@ -56,6 +57,14 @@ public final class InteractionViewProjector {
                     Optional.of(tool.definitionHash()),
                     Optional.of(tool.argumentsDigest()),
                     "Approval required for " + tool.coordinate());
+        }
+        if (target instanceof ClarificationTarget clarification) {
+            return new InteractionTargetView(
+                    "clarification",
+                    clarification.toolCallId().value(),
+                    Optional.empty(),
+                    Optional.empty(),
+                    "Answer required to continue the run");
         }
         GenericInteractionTarget generic = (GenericInteractionTarget) target;
         return new InteractionTargetView(

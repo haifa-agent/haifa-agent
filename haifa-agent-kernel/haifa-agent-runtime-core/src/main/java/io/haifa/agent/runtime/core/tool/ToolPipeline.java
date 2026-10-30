@@ -405,6 +405,12 @@ public final class ToolPipeline {
         } catch (AgentExecutionFailureException classified) {
             throw classified;
         } catch (RuntimeException exception) {
+            LOGGER.warn(
+                    "event=tool.execute.failure runId={} toolCallId={} tool={}",
+                    run.id().value(),
+                    call.id().value(),
+                    definition.name().value(),
+                    exception);
             if (exception instanceof io.haifa.agent.tool.api.ToolInvocationException invocationFailure) {
                 if (invocationFailure.dispatchState() == io.haifa.agent.tool.api.ToolDispatchState.DISPATCHED
                         || invocationFailure.dispatchState()
@@ -841,7 +847,8 @@ public final class ToolPipeline {
             ToolResult result) {
         var data = new java.util.LinkedHashMap<String, Object>();
         data.put("toolCallId", call.id().value());
-        data.put("displayName", call.toolName());
+        data.put("displayName", displayName(run, call));
+        data.put("toolName", call.toolName());
         data.put("status", status);
         data.put("reasonCode", reasonCode);
         data.put("targetSummary", ToolTargetSummary.from(call));
@@ -867,11 +874,51 @@ public final class ToolPipeline {
     /** Copies only already typed result facts into a bounded observation; provider payloads are never read. */
     private static Optional<RunEventPayloads.ToolObservation> boundedObservation(ToolResult result) {
         if (result == null) return Optional.empty();
-        BoundedText preview = BoundedText.of(result.summary(), TOOL_DISPLAY_BUDGET);
+        BoundedText preview = boundedPreview(result);
         Optional<String> processState =
                 allowlistedProcessState(result.structuredData().get("processState"));
         Optional<Integer> exitCode = allowlistedExitCode(result.structuredData().get("exitCode"));
         return Optional.of(new RunEventPayloads.ToolObservation(Optional.of(preview), processState, exitCode));
+    }
+
+    /**
+     * Prefers a producer's dedicated display copy over the summary and always re-applies the display budget and
+     * credential redaction. When the producer already sampled a larger result, its original size facts and its
+     * truncation reason are kept, so a reader never mistakes the smaller copy for the whole output.
+     */
+    private static BoundedText boundedPreview(ToolResult result) {
+        Object producerPreview = result.structuredData().get("outputPreview");
+        String text = producerPreview instanceof String value ? value : result.summary();
+        BoundedText preview = BoundedText.of(ToolCallViewProjector.redactText(text), TOOL_DISPLAY_BUDGET);
+        if (!(producerPreview instanceof String)
+                || !Boolean.TRUE.equals(result.structuredData().get("outputPreviewTruncated"))) {
+            return preview;
+        }
+        return new BoundedText(
+                preview.text(),
+                true,
+                Math.max(preview.byteCount(), producerSize(result, "outputPreviewByteCount")),
+                Math.max(preview.lineCount(), producerSize(result, "outputPreviewLineCount")),
+                preview.truncationReason().or(() -> producerTruncationReason(result)));
+    }
+
+    private static long producerSize(ToolResult result, String key) {
+        Object value = result.structuredData().get(key);
+        return value instanceof Number number
+                        && Double.isFinite(number.doubleValue())
+                        && number.doubleValue() == Math.rint(number.doubleValue())
+                        && number.longValue() >= 0
+                ? number.longValue()
+                : 0;
+    }
+
+    /** Only the two known reason names are copied; an unknown producer value never becomes a guessed reason. */
+    private static Optional<BoundedText.TruncationReason> producerTruncationReason(ToolResult result) {
+        Object value = result.structuredData().get("outputPreviewTruncationReason");
+        if (!(value instanceof String reason)) return Optional.empty();
+        if ("OUTPUT_LINES".equals(reason)) return Optional.of(BoundedText.TruncationReason.OUTPUT_LINES);
+        if ("OUTPUT_BYTES".equals(reason)) return Optional.of(BoundedText.TruncationReason.OUTPUT_BYTES);
+        return Optional.empty();
     }
 
     private static Optional<String> allowlistedProcessState(Object value) {
@@ -963,6 +1010,18 @@ public final class ToolPipeline {
         var configuration = state.configuration(run.configurationSnapshot())
                 .orElseThrow(() -> new IllegalStateException("run configuration snapshot is unavailable"));
         return bindings.resolve(configuration.toolBindings(), request);
+    }
+
+    /** Resolves the frozen display title for one persisted call; display failures fall back to the machine name. */
+    public String displayName(AgentRun run, ToolCall call) {
+        Objects.requireNonNull(run, "run must not be null");
+        Objects.requireNonNull(call, "call must not be null");
+        try {
+            return ToolDisplayName.resolve(
+                    binding(run, request(call)).definition().title(), call.toolName());
+        } catch (RuntimeException exception) {
+            return ToolDisplayName.resolve(call.toolName(), call.toolName());
+        }
     }
 
     public ToolRequest canonicalize(AgentRun run, ToolRequest request) {

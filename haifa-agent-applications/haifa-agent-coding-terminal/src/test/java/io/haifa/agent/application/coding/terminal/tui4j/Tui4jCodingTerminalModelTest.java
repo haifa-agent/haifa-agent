@@ -10,6 +10,8 @@ import com.williamcallahan.tui4j.compat.bubbletea.KeyPressMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.Message;
 import com.williamcallahan.tui4j.compat.bubbletea.PasteMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.QuitMessage;
+import com.williamcallahan.tui4j.compat.bubbletea.ReadClipboardMessage;
+import com.williamcallahan.tui4j.compat.bubbletea.UpdateResult;
 import com.williamcallahan.tui4j.compat.bubbletea.WindowSizeMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.input.MouseAction;
 import com.williamcallahan.tui4j.compat.bubbletea.input.MouseButton;
@@ -50,6 +52,7 @@ import io.haifa.agent.runtime.api.RunEventPayloads;
 import io.haifa.agent.runtime.api.RunEventSubscription;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -177,10 +180,13 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
-    void opensCommandAndWorkspacePathCompletionAsSoonAsTheTriggerIsTyped() {
+    void opensCommandAndWorkspacePathCompletionOnceTheTypedTriggerGoesIdle() {
         var command = fixture();
 
-        command.model.update(runes('/'));
+        // The trigger opens the popup only after the typed run settles, so a `/` inside a streamed paste never
+        // swallows the text that follows it.
+        typeRunes(command, "/");
+        settleIdleInput(command);
 
         assertThat(command.controller.state().selector())
                 .get()
@@ -189,7 +195,8 @@ class Tui4jCodingTerminalModelTest {
         assertThat(command.controller.state().editorBuffer()).isEqualTo("/");
 
         var path = fixture();
-        path.model.update(runes('@'));
+        typeRunes(path, "@");
+        settleIdleInput(path);
 
         assertThat(path.controller.state().selector())
                 .get()
@@ -197,7 +204,7 @@ class Tui4jCodingTerminalModelTest {
                 .isEqualTo("Workspace paths");
         assertThat(path.controller.state().selector().orElseThrow().options()).contains("@README.md", "@src/");
 
-        path.model.update(runes('s'));
+        path.update(runes('s'));
         assertThat(path.controller.state().editorBuffer()).isEqualTo("@s");
         assertThat(path.controller.state().selector().orElseThrow().options()).containsExactly("@src/");
     }
@@ -206,13 +213,14 @@ class Tui4jCodingTerminalModelTest {
     void keepsFilteringAnOpenCompletionAndSubmitsAnExactSlashCommandWithOneEnter() {
         var fixture = fixture();
 
-        "/quit".chars().forEach(value -> fixture.model.update(runes((char) value)));
+        typeRunes(fixture, "/quit");
+        settleIdleInput(fixture);
 
         assertThat(fixture.controller.state().editorBuffer()).isEqualTo("/quit");
         assertThat(fixture.controller.state().selector().orElseThrow().options())
                 .containsExactly("/quit");
 
-        fixture.model.update(key(KeyType.keyCR));
+        fixture.update(key(KeyType.keyCR));
 
         assertThat(fixture.controller.state().exitRequested()).isTrue();
     }
@@ -221,11 +229,13 @@ class Tui4jCodingTerminalModelTest {
     void keepsTheSpaceTypedAfterACommandWhileCompletionIsOpen() {
         var fixture = fixture();
 
-        "/rename".chars().forEach(value -> fixture.model.update(runes((char) value)));
+        typeRunes(fixture, "/rename");
+        settleIdleInput(fixture);
         assertThat(fixture.controller.state().selector()).isPresent();
 
-        fixture.model.update(key(KeyType.KeySpace));
-        "next".chars().forEach(value -> fixture.model.update(runes((char) value)));
+        fixture.update(key(KeyType.KeySpace));
+        typeRunes(fixture, "next");
+        settleIdleInput(fixture);
 
         assertThat(fixture.controller.state().editorBuffer()).isEqualTo("/rename next");
     }
@@ -545,6 +555,129 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
+    void deletesThePasteSummaryWhenBackspaceArrivesAsARepeatedDeleteRune() {
+        var fixture = fixture();
+        fixture.model.update(new PasteMessage("alpha\nbeta\ngamma"));
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~3 lines]");
+
+        // mintty and ConPTY can deliver Backspace as a rune burst instead of the dedicated keyBS type.
+        fixture.model.update(new KeyPressMessage(new Key(KeyType.KeyRunes, new char[] {0x7f, 0x7f})));
+
+        assertThat(fixture.controller.state().editorBuffer()).isEmpty();
+    }
+
+    @Test
+    void deletesThePasteSummaryWhenBackspaceArrivesWithPaddingControlRunes() {
+        var fixture = fixture();
+        fixture.model.update(new PasteMessage("alpha\nbeta\ngamma"));
+
+        fixture.model.update(new KeyPressMessage(new Key(KeyType.KeyRunes, new char[] {'\b', 0x01})));
+
+        assertThat(fixture.controller.state().editorBuffer()).isEmpty();
+        assertThat(fixture.controller.state().editorCursor()).isZero();
+    }
+
+    @Test
+    void neverKeepsAnUndecodableControlRuneInTheDraft() {
+        var fixture = fixture();
+        fixture.model.update(new PasteMessage("draft"));
+
+        fixture.model.update(new KeyPressMessage(new Key(KeyType.KeyRunes, new char[] {'a', 0x1f, 'b'})));
+
+        assertThat(fixture.controller.state().editorBuffer())
+                .startsWith("draft")
+                .doesNotContain("\u001f");
+    }
+
+    @Test
+    void treatsACrLfPairInsideAStreamedPasteAsOneBreak() {
+        var fixture = fixture();
+
+        streamUnbracketedPasteWithCrLf(fixture, "alpha", " ", "gamma");
+        settleIdleInput(fixture);
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~3 lines]");
+
+        commitPlainEnter(fixture);
+
+        assertThat(fixture.controller.state().transcript()).singleElement().satisfies(item -> assertThat(item.body())
+                .isEqualTo("alpha\n \ngamma"));
+    }
+
+    @Test
+    void endsAStreamedPasteWithATrailingBreakWithoutSubmitting() {
+        var fixture = fixture();
+
+        fixture.update(keyWithRunes("alpha"));
+        fixture.update(key(KeyType.keyCR));
+        fixture.update(keyWithRunes("beta"));
+        fixture.update(key(KeyType.keyCR));
+        fixture.update(keyWithRunes("gamma"));
+        fixture.update(key(KeyType.keyCR));
+        settleIdleInput(fixture);
+
+        assertThat(fixture.controller.state().editorBuffer()).startsWith("[Pasted #1 ~");
+        assertThat(fixture.controller.state().transcript()).isEmpty();
+
+        commitPlainEnter(fixture);
+
+        assertThat(fixture.controller.state().transcript()).singleElement().satisfies(item -> assertThat(item.body())
+                .isEqualTo("alpha\nbeta\ngamma\n"));
+    }
+
+    @Test
+    void keepsTheFirstLineInsideAStreamedPasteSummary() {
+        var fixture = fixture();
+
+        streamPerCharacterPaste(fixture, "1  a b c", "2", "3");
+        settleIdleInput(fixture);
+
+        String token = "[Pasted #1 ~3 lines]";
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo(token);
+        assertThat(fixture.controller.state().editorCursor()).isEqualTo(token.length());
+
+        commitPlainEnter(fixture);
+
+        assertThat(fixture.controller.state().transcript()).singleElement().satisfies(item -> assertThat(item.body())
+                .isEqualTo("1  a b c\n2\n3"));
+    }
+
+    @Test
+    void summarizesAStreamedCommandBlockOfFourLines() {
+        var fixture = fixture();
+
+        String first = "if errorlevel 1 exit /b %ERRORLEVEL%";
+        String second = "if not exist \"%HAIFA_DATA_ROOT%\\logs\" mkdir \"%HAIFA_DATA_ROOT%\\logs\"";
+        String fourth =
+                "if not defined HAIFA_SQLITE_DATABASE_PATH set \"HAIFA_SQLITE_DATABASE_PATH=%HAIFA_DATA_ROOT%\\data\\runtime.db\"";
+        streamPerCharacterPaste(fixture, first, second, first, fourth);
+        settleIdleInput(fixture);
+
+        // The pasted ` /b` must not open the completion popup and swallow the rest of the block.
+        assertThat(fixture.controller.state().selector()).isEmpty();
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~4 lines]");
+
+        commitPlainEnter(fixture);
+
+        assertThat(fixture.controller.state().transcript()).singleElement().satisfies(item -> assertThat(item.body())
+                .isEqualTo(String.join("\n", first, second, first, fourth)));
+    }
+
+    @Test
+    void keepsASmallStreamedPasteInline() {
+        var fixture = fixture();
+
+        streamUnbracketedPaste(fixture, "alpha", "beta");
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasting ~2 lines]");
+
+        settleIdleInput(fixture);
+
+        // Below the fold threshold the receiving block gives way to the normalized text itself.
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("alpha\nbeta");
+        assertThat(fixture.controller.state().editorCursor()).isEqualTo("alpha\nbeta".length());
+    }
+
+    @Test
     void keepsShortBracketedPasteVerbatim() {
         var fixture = fixture();
 
@@ -554,16 +687,39 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
-    void summarizesTwoLineBracketedPasteAndDeletesItInOneStroke() {
+    void keepsTwoLineBracketedPasteVerbatimBelowOpenCodeThreshold() {
         var fixture = fixture();
 
         fixture.model.update(new PasteMessage("one\ntwo"));
 
-        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~2 lines]");
+        // OpenCode summarizes at 3+ lines; two-line pastes stay editable inline.
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("one\ntwo");
+    }
 
-        fixture.model.update(key(KeyType.keyBS));
+    @Test
+    void summarizesCtrlVClipboardPasteLikeBracketedPaste() {
+        var clipboard = new RecordingClipboard(true);
+        clipboard.pasteText = "alpha\nbeta\ngamma\ndelta";
+        var fixture = fixtureWithClipboard(clipboard);
 
-        assertThat(fixture.controller.state().editorBuffer()).isEmpty();
+        var pending = fixture.model.update(key(KeyType.keySYN));
+        assertThat(Command.isNone(pending.command())).isFalse();
+        fixture.model.update(pending.command().execute());
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~4 lines]");
+    }
+
+    @Test
+    void summarizesReadClipboardMessageFromTextareaPasteBinding() {
+        var clipboard = new RecordingClipboard(true);
+        clipboard.pasteText = "one\ntwo\nthree";
+        var fixture = fixtureWithClipboard(clipboard);
+
+        var pending = fixture.model.update(new ReadClipboardMessage());
+        assertThat(Command.isNone(pending.command())).isFalse();
+        fixture.model.update(pending.command().execute());
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~3 lines]");
     }
 
     @Test
@@ -573,6 +729,26 @@ class Tui4jCodingTerminalModelTest {
         fixture.model.update(new PasteMessage("x".repeat(151)));
 
         assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~1 lines]");
+    }
+
+    @Test
+    void submitsTheFullLongPasteWhileKeepingItsTranscriptPreviewBounded() {
+        var client = new UnusedClient();
+        client.currentSession = sessionView("Long paste");
+        var fixture = activeFixture(client);
+        String pasted = ("abcdefghijklmnopqrstuvwx\n").repeat(1_000);
+        fixture.model.update(new PasteMessage(pasted));
+
+        var enter = fixture.model.update(key(KeyType.keyCR));
+        var submitted = fixture.model.update(enter.command().execute());
+        fixture.model.update(submitted.command().execute());
+
+        assertThat(client.submittedMessages).containsExactly(pasted);
+        assertThat(fixture.controller.state().editorBuffer()).isEmpty();
+        assertThat(fixture.controller.state().transcript()).anySatisfy(item -> {
+            assertThat(item.title()).isEqualTo("You");
+            assertThat(item.body()).endsWith("[Preview truncated; full message submitted]");
+        });
     }
 
     @Test
@@ -689,44 +865,473 @@ class Tui4jCodingTerminalModelTest {
     @Test
     void protectsASummarizedPasteFromPartialEditing() {
         var fixture = fixture();
-        fixture.model.update(new PasteMessage("alpha\nbeta\ngamma"));
-        fixture.model.update(key(KeyType.keyLF));
-        fixture.model.update(runes('x'));
-        fixture.model.update(runes('y'));
+        fixture.update(new PasteMessage("alpha\nbeta\ngamma"));
+        fixture.update(key(KeyType.keyLF));
+        fixture.update(runes('x'));
+        fixture.update(runes('y'));
+        settleIdleInput(fixture);
         String draft = fixture.controller.state().editorBuffer();
 
-        fixture.model.update(key(KeyType.KeyUp));
-        fixture.model.update(runes('Z'));
+        fixture.update(key(KeyType.KeyUp));
+        fixture.update(runes('Z'));
 
         assertThat(fixture.controller.state().editorBuffer()).isEqualTo(draft);
         assertThat(fixture.controller.state().recoverableError()).contains("PASTE_PLACEHOLDER_ATOMIC");
     }
 
     @Test
-    void keepsUnbracketedCrAndCrLfMultilinePasteInTheEditorUntilASeparateEnter() {
+    void typesARuneEIntoTheEditorInsteadOfEditingTheWaitingDraft() {
+        var fixture = waitingFixture();
+
+        fixture.model.update(runes('e'));
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("e");
+        assertThat(fixture.controller.state().waiting()).hasValueSatisfying(waiting -> assertThat(waiting.phase())
+                .isEqualTo(io.haifa.agent.application.coding.terminal.state.WaitingMessage.Phase.WAITING));
+    }
+
+    @Test
+    void altEStartsEditingTheWaitingDraft() {
+        var fixture = waitingFixture();
+
+        fixture.model.update(new KeyPressMessage(new Key(KeyType.KeyRunes, new char[] {'e'}, true)));
+
+        assertThat(fixture.controller.state().waiting()).hasValueSatisfying(waiting -> assertThat(waiting.phase())
+                .isEqualTo(io.haifa.agent.application.coding.terminal.state.WaitingMessage.Phase.EDITING));
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("queued draft");
+    }
+
+    private Fixture waitingFixture() {
+        var pump = new TerminalEventPump(64);
+        var controller = new CodingTerminalController(
+                new ProjectId("project-1"),
+                new UnusedClient(),
+                pump,
+                new TerminalUiReducer(),
+                TerminalUiState.initial(80, 24)
+                        .withWaiting(Optional.of(new io.haifa.agent.application.coding.terminal.state.WaitingMessage(
+                                "wait-1",
+                                "queued draft",
+                                io.haifa.agent.application.coding.terminal.state.WaitingMessage.Phase.WAITING))),
+                Runnable::run);
+        return new Fixture(controller, pump, new Tui4jCodingTerminalModel(controller, pump));
+    }
+
+    @Test
+    void enterDuringAnActiveRunQueuesWaitingInsteadOfSteering() {
+        var pump = new TerminalEventPump(64);
+        TerminalUiState idle = TerminalUiState.initial(80, 24);
+        TerminalUiState active = new TerminalUiState(
+                idle.header(),
+                idle.loadedResources(),
+                idle.transcript(),
+                idle.pending(),
+                "WORKING",
+                "",
+                0,
+                idle.selector(),
+                idle.footer(),
+                idle.columns(),
+                idle.rows(),
+                idle.session(),
+                Optional.of(new AgentRunId("run-1")),
+                idle.appliedCursor(),
+                idle.seenEventIds(),
+                idle.recoverableError(),
+                idle.activity(),
+                false,
+                idle.sidebarVisible(),
+                idle.sidebarExplicitlyToggled(),
+                idle.themeName(),
+                false);
+        var controller = new CodingTerminalController(
+                new ProjectId("project-1"), new UnusedClient(), pump, new TerminalUiReducer(), active, Runnable::run);
+        var model = new Tui4jCodingTerminalModel(controller, pump);
+        var fixture = new Fixture(controller, pump, model);
+        model.update(new PasteMessage("queue me"));
+
+        commitPlainEnter(fixture);
+
+        assertThat(controller.state().waiting()).hasValueSatisfying(waiting -> {
+            assertThat(waiting.phase())
+                    .isEqualTo(io.haifa.agent.application.coding.terminal.state.WaitingMessage.Phase.WAITING);
+            assertThat(waiting.text()).isEqualTo("queue me");
+        });
+    }
+
+    @Test
+    void showsAReceivingBlockWhileTheBurstStreamsAndFinalizesItInPlace() {
         var fixture = fixture();
-        fixture.model.update(new PasteMessage("first line"));
 
-        var firstCr = fixture.model.update(key(KeyType.keyCR));
-        "second line".chars().forEach(value -> fixture.model.update(runes((char) value)));
-        fixture.model.update(key(KeyType.keyCR));
-        fixture.model.update(key(KeyType.keyLF));
-        "third line".chars().forEach(value -> fixture.model.update(runes((char) value)));
+        streamUnbracketedPaste(fixture, "first line", "second line", "third line");
 
-        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("first line\nsecond line\nthird line");
+        // The block is visible in the next view without delivering the idle message, so reception has feedback.
+        assertThat(TerminalScreenCells.plainText(fixture.model.view())).contains("[Pasting ~3 lines]");
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasting ~3 lines]");
         assertThat(fixture.controller.state().status()).isEqualTo("Idle");
 
-        fixture.model.update(firstCr.command().execute());
+        settleIdleInput(fixture);
 
-        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("first line\nsecond line\nthird line");
+        // The block finalizes at its own position instead of opening the summary somewhere else.
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~3 lines]");
         assertThat(fixture.controller.state().transcript()).isEmpty();
 
-        var explicitEnter = fixture.model.update(key(KeyType.keyCR));
-        var submitted = fixture.model.update(explicitEnter.command().execute());
+        var explicitEnter = fixture.update(key(KeyType.keyCR));
+        var submitted = fixture.update(explicitEnter.command().execute());
 
         assertThat(Command.isNone(submitted.command())).isFalse();
         assertThat(fixture.controller.state().editorBuffer()).isEmpty();
         assertThat(fixture.controller.state().status()).isEqualTo("Submitting");
+    }
+
+    @Test
+    void buildsTheSameSummaryForBothSpaceKeyTypes() {
+        var hostTyped = fixture();
+        streamPerCharacterPaste(hostTyped, "1  a b c", "2", "3");
+        settleIdleInput(hostTyped);
+
+        var runeTyped = fixture();
+        streamPerCharacterPasteAsRunes(runeTyped, "1  a b c", "2", "3");
+        settleIdleInput(runeTyped);
+
+        assertThat(hostTyped.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~3 lines]");
+        assertThat(runeTyped.controller.state().editorBuffer())
+                .isEqualTo(hostTyped.controller.state().editorBuffer());
+    }
+
+    @Test
+    void keepsTheDraftAroundAReceivingBlockWhileTheStreamArrives() {
+        var fixture = fixture();
+        fixture.update(new PasteMessage("keep me "));
+
+        // The painted first line is taken back behind a receiving block, and the draft the user already had keeps its
+        // own text and position.
+        streamPerCharacterPaste(fixture, "first line", "second line", "third line");
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("keep me [Pasting ~3 lines]");
+        assertThat(fixture.controller.state().editorCursor()).isEqualTo("keep me [Pasting ~3 lines]".length());
+
+        settleIdleInput(fixture);
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("keep me [Pasted #1 ~3 lines]");
+        assertThat(fixture.controller.state().editorCursor()).isEqualTo("keep me [Pasted #1 ~3 lines]".length());
+    }
+
+    @Test
+    void keepsOneReceivingBlockWhileTheStreamKeepsArriving() {
+        var fixture = fixture();
+
+        streamPerCharacterPaste(fixture, "alpha", "beta");
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasting ~2 lines]");
+
+        fixture.update(key(KeyType.keyCR));
+        fixture.update(keyWithRunes("gamma"));
+        fixture.update(key(KeyType.keyCR));
+        fixture.update(keyWithRunes("delta"));
+
+        // Later lines stay in the same block and raise its tentative count instead of opening another one.
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasting ~4 lines]");
+        assertThat(fixture.controller.state().editorCursor()).isEqualTo("[Pasting ~4 lines]".length());
+
+        settleIdleInput(fixture);
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~4 lines]");
+
+        commitPlainEnter(fixture);
+
+        assertThat(fixture.controller.state().transcript()).singleElement().satisfies(item -> assertThat(item.body())
+                .isEqualTo("alpha\nbeta\ngamma\ndelta"));
+    }
+
+    @Test
+    void reusesTheFrameForHeldTextButRefreshesOnResizeAndInterrupt() {
+        var fixture = fixture(() -> 0);
+        streamPerCharacterPaste(fixture, "first", "second", "third");
+        String frame = fixture.model.view();
+
+        fixture.update(keyWithRunes(" more text"));
+        assertThat(fixture.model.view()).isSameAs(frame);
+
+        fixture.pump.offer(new TerminalUiAction.UserMessageCommitted("received-event", "runtime update"));
+        fixture.update(new Tui4jCodingTerminalModel.PollMessage());
+        assertThat(TerminalScreenCells.plainText(fixture.model.view())).contains("runtime update");
+
+        fixture.update(new WindowSizeMessage(120, 40));
+        String resized = fixture.model.view();
+        assertThat(resized).isNotSameAs(frame);
+        assertThat(TerminalScreenCells.plainText(resized)).contains("[Pasting ~3 lines]");
+
+        fixture.update(key(KeyType.keyETX));
+        assertThat(fixture.controller.state().editorBuffer()).isEmpty();
+        assertThat(TerminalScreenCells.plainText(fixture.model.view())).doesNotContain("[Pasting");
+    }
+
+    @Test
+    void anEnterCancelledByInterruptCannotCaptureNewTyping() {
+        var fixture = fixture();
+        fixture.update(runes('a'));
+        var oldEnter = fixture.update(key(KeyType.keyCR)).command();
+        fixture.update(key(KeyType.keyETX));
+        fixture.update(runes('b'));
+
+        fixture.update(oldEnter.execute());
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("b");
+        assertThat(fixture.controller.state().transcript()).isEmpty();
+    }
+
+    @Test
+    void keepsFastTypedInputAsTextAndSubmitsItWithASingleEnter() {
+        AtomicLong clock = new AtomicLong();
+        var fixture = fixture(clock::get);
+
+        fixture.model.update(runes('a'));
+        clock.addAndGet(Duration.ofMillis(10).toNanos());
+        fixture.model.update(runes('b'));
+
+        // Two keys 10ms apart are typing, not a paste: the run stays visible as text, and the Enter after it submits
+        // the run instead of becoming a newline inside it.
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("ab");
+
+        var enter = fixture.model.update(key(KeyType.keyCR));
+        clock.addAndGet(StreamedInputBatch.IDLE_INTERVAL.toNanos());
+        fixture.model.update(enter.command().execute());
+
+        assertThat(fixture.controller.state().editorBuffer()).isEmpty();
+        assertThat(fixture.controller.state().transcript()).singleElement().satisfies(item -> assertThat(item.body())
+                .isEqualTo("ab"));
+    }
+
+    @Test
+    void keepsAnExistingSummaryWhenASecondStreamedPasteFollowsIt() {
+        var fixture = fixture();
+        fixture.update(new PasteMessage("one\ntwo\nthree"));
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~3 lines]");
+
+        streamPerCharacterPaste(fixture, "a", "b", "c");
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~3 lines][Pasting ~3 lines]");
+
+        settleIdleInput(fixture);
+
+        // The settled stream keeps its own number next to the earlier summary instead of nesting or dropping it.
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~3 lines][Pasted #2 ~3 lines]");
+
+        commitPlainEnter(fixture);
+
+        assertThat(fixture.controller.state().transcript()).singleElement().satisfies(item -> assertThat(item.body())
+                .isEqualTo("one\ntwo\nthreea\nb\nc"));
+    }
+
+    @Test
+    void keepsLineOrderWhenAStreamMixesCrAndLf() {
+        var fixture = fixture();
+
+        fixture.update(keyWithRunes("a"));
+        fixture.update(key(KeyType.keyCR));
+        fixture.update(keyWithRunes("b"));
+        fixture.update(key(KeyType.keyLF));
+        fixture.update(keyWithRunes("c"));
+        settleIdleInput(fixture);
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~3 lines]");
+
+        commitPlainEnter(fixture);
+
+        assertThat(fixture.controller.state().transcript()).singleElement().satisfies(item -> assertThat(item.body())
+                .isEqualTo("a\nb\nc"));
+    }
+
+    @Test
+    void summarizesAStreamThatOnlyUsesLf() {
+        var fixture = fixture();
+
+        fixture.update(keyWithRunes("alpha"));
+        fixture.update(key(KeyType.keyLF));
+        fixture.update(keyWithRunes("beta"));
+        fixture.update(key(KeyType.keyLF));
+        fixture.update(keyWithRunes("gamma"));
+        settleIdleInput(fixture);
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~3 lines]");
+
+        commitPlainEnter(fixture);
+
+        assertThat(fixture.controller.state().transcript()).singleElement().satisfies(item -> assertThat(item.body())
+                .isEqualTo("alpha\nbeta\ngamma"));
+    }
+
+    @Test
+    void keepsTheHeldStreamBeforeAnExplicitNewline() {
+        var fixture = fixture();
+
+        fixture.update(keyWithRunes("a"));
+        fixture.update(key(KeyType.keyCR));
+        fixture.update(keyWithRunes("b"));
+        fixture.update(new EnterKeyModifierMessage(EnterKeyModifier.Shift));
+        settleIdleInput(fixture);
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("a\nb\n");
+    }
+
+    @Test
+    void keepsTheDraftAfterTheCaretOutsideAStreamedPaste() {
+        var fixture = fixture();
+        fixture.update(new PasteMessage("LEFT RIGHT"));
+        fixture.controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, "LEFT RIGHT", 5));
+        fixture.update(new WindowSizeMessage(120, 40));
+
+        streamPerCharacterPaste(fixture, "a", "b", "c");
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("LEFT [Pasting ~3 lines]RIGHT");
+
+        settleIdleInput(fixture);
+
+        String token = "[Pasted #1 ~3 lines]";
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("LEFT " + token + "RIGHT");
+        assertThat(fixture.controller.state().editorCursor()).isEqualTo(("LEFT " + token).length());
+
+        commitPlainEnter(fixture);
+
+        assertThat(fixture.controller.state().transcript()).singleElement().satisfies(item -> assertThat(item.body())
+                .isEqualTo("LEFT a\nb\ncRIGHT"));
+    }
+
+    @Test
+    void keepsTextTypedBeforeTheStreamOutsideThePasteSummary() {
+        AtomicLong clock = new AtomicLong();
+        var fixture = fixture(clock::get);
+        for (char value : "old".toCharArray()) {
+            fixture.update(runes(value));
+        }
+
+        clock.addAndGet(Duration.ofSeconds(5).toNanos());
+        fixture.update(new Tui4jCodingTerminalModel.PollMessage());
+
+        streamPerCharacterPaste(fixture, "a", "b", "c");
+        clock.addAndGet(StreamedInputBatch.IDLE_INTERVAL.toNanos());
+        settleIdleInput(fixture);
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("old[Pasted #1 ~3 lines]");
+        assertThat(fixture.controller.state().editorCursor()).isEqualTo("old[Pasted #1 ~3 lines]".length());
+
+        commitPlainEnter(fixture);
+
+        assertThat(fixture.controller.state().transcript()).singleElement().satisfies(item -> assertThat(item.body())
+                .isEqualTo("olda\nb\nc"));
+    }
+
+    @Test
+    void doesNotExecuteTheCommandOnTheFirstLineOfAStreamedPaste() {
+        var fixture = fixture();
+
+        streamPerCharacterPaste(fixture, "/quit", "still a message", "third line");
+        settleIdleInput(fixture);
+
+        assertThat(fixture.controller.state().exitRequested()).isFalse();
+        assertThat(fixture.controller.state().selector()).isEmpty();
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~3 lines]");
+
+        commitPlainEnter(fixture);
+
+        assertThat(fixture.controller.state().exitRequested()).isFalse();
+        assertThat(fixture.controller.state().transcript()).singleElement().satisfies(item -> assertThat(item.body())
+                .isEqualTo("/quit\nstill a message\nthird line"));
+    }
+
+    @Test
+    void doesNotOpenPathCompletionForAStreamThatStartsWithAPathMention() {
+        var fixture = fixture();
+
+        streamPerCharacterPaste(fixture, "@src/main/Main.java", "@src/main/Other.java", "@src/main/Third.java");
+        settleIdleInput(fixture);
+
+        assertThat(fixture.controller.state().selector()).isEmpty();
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~3 lines]");
+    }
+
+    @Test
+    void summarizesALongStreamedSingleLineWithoutAnyBreak() {
+        var fixture = fixture();
+        String longLine = "x".repeat(151);
+
+        streamPerCharacterPaste(fixture, longLine);
+        settleIdleInput(fixture);
+
+        String token = "[Pasted #1 ~1 lines]";
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo(token);
+        assertThat(fixture.controller.state().editorCursor()).isEqualTo(token.length());
+
+        commitPlainEnter(fixture);
+
+        assertThat(fixture.controller.state().transcript()).singleElement().satisfies(item -> assertThat(item.body())
+                .isEqualTo(longLine));
+    }
+
+    @Test
+    void keepsTabIndentationInsideAStreamedPaste() {
+        var fixture = fixture();
+
+        streamPerCharacterPaste(fixture, "if (ready) {", "\treturn 1;", "}");
+        settleIdleInput(fixture);
+
+        assertThat(fixture.controller.state().selector()).isEmpty();
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~3 lines]");
+
+        commitPlainEnter(fixture);
+
+        assertThat(fixture.controller.state().transcript()).singleElement().satisfies(item -> assertThat(item.body())
+                .isEqualTo("if (ready) {\n    return 1;\n}"));
+    }
+
+    @Test
+    void clearsAStreamedPasteOnInterruptWithoutLettingItsIdleTimerWriteBack() {
+        var fixture = fixture();
+
+        streamPerCharacterPaste(fixture, "panic one", "panic two", "panic three");
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasting ~3 lines]");
+
+        fixture.update(key(KeyType.keyETX));
+        settleIdleInput(fixture);
+
+        assertThat(fixture.controller.state().editorBuffer()).isEmpty();
+    }
+
+    @Test
+    void writesTheHeldStreamBackBeforeABackspaceEditsIt() {
+        var fixture = fixture();
+
+        fixture.update(keyWithRunes("alpha"));
+        fixture.update(key(KeyType.keyCR));
+        fixture.update(keyWithRunes("beta"));
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasting ~2 lines]");
+
+        fixture.update(key(KeyType.keyBS));
+        settleIdleInput(fixture);
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("alpha\nbet");
+        assertThat(fixture.controller.state().transcript()).isEmpty();
+    }
+
+    @Test
+    void keepsAStreamedPasteInOrderWhilePollsAndResizesInterleave() {
+        var fixture = fixture();
+
+        fixture.update(keyWithRunes("alpha"));
+        fixture.update(key(KeyType.keyCR));
+        fixture.update(keyWithRunes("beta"));
+        fixture.update(new Tui4jCodingTerminalModel.PollMessage());
+        fixture.update(new WindowSizeMessage(120, 40));
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasting ~2 lines]");
+
+        fixture.update(key(KeyType.keyCR));
+        fixture.update(keyWithRunes("gamma"));
+        settleIdleInput(fixture);
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("[Pasted #1 ~3 lines]");
+
+        commitPlainEnter(fixture);
+
+        assertThat(fixture.controller.state().transcript()).singleElement().satisfies(item -> assertThat(item.body())
+                .isEqualTo("alpha\nbeta\ngamma"));
     }
 
     @Test
@@ -923,15 +1528,135 @@ class Tui4jCodingTerminalModelTest {
                 2,
                 new RunEventPayloads.ToolLifecycle("tool-1", "execution_run", "STARTED", "NONE", "git status", ""))));
         fixture.model.update(new WindowSizeMessage(80, 24));
-        assertThat(fixture.model.view()).contains("WORKING (1s) · execution_run");
+        assertThat(fixture.model.view()).contains("RUNNING (1s) · Run Command");
         clock.set(Duration.ofSeconds(14).toNanos());
-        assertThat(fixture.model.view()).contains("WORKING (5s) · execution_run");
+        assertThat(fixture.model.view()).contains("RUNNING (5s) · Run Command");
 
         fixture.pump.offer(new TerminalUiAction.RunEventReceived(event(
                 3,
                 new RunEventPayloads.ToolLifecycle("tool-1", "execution_run", "SUCCEEDED", "NONE", "git status", ""))));
         fixture.model.update(new WindowSizeMessage(80, 24));
-        assertThat(fixture.model.view()).contains("THINKING (1s)").doesNotContain("WORKING (");
+        assertThat(fixture.model.view()).contains("THINKING (1s)").doesNotContain("RUNNING (");
+    }
+
+    @Test
+    void collapsesOrdinaryToolFailureButKeepsUnknownResultDetailsVisible() {
+        var fixture = fixture();
+        fixture.pump.offer(new TerminalUiAction.RunEventReceived(
+                event(1, new RunEventPayloads.RunLifecycle("RUNNING", 1, "NONE"))));
+        fixture.model.update(new WindowSizeMessage(120, 40));
+
+        fixture.pump.offer(new TerminalUiAction.RunEventReceived(event(
+                2,
+                new RunEventPayloads.ToolLifecycle(
+                        "tool-1",
+                        "Apply Patch",
+                        "FAILED",
+                        "PATCH_AMBIGUOUS_MATCH",
+                        "README.md",
+                        "",
+                        Optional.empty(),
+                        "",
+                        "file_patch"))));
+        fixture.model.update(new WindowSizeMessage(120, 40));
+        String failed = fixture.model.view();
+        assertThat(failed).contains("apply patch", "Not completed: Multiple matches");
+        assertThat(failed).doesNotContain("Reason: PATCH_AMBIGUOUS_MATCH");
+
+        fixture.pump.offer(new TerminalUiAction.RunEventReceived(event(
+                3,
+                new RunEventPayloads.ToolLifecycle(
+                        "tool-2",
+                        "Run Command",
+                        "OUTCOME_UNKNOWN",
+                        "TOOL_OUTCOME_UNKNOWN",
+                        "rm -rf",
+                        "",
+                        Optional.empty(),
+                        "",
+                        "execution_run"))));
+        fixture.model.update(new WindowSizeMessage(120, 40));
+        assertThat(fixture.model.view()).contains("Outcome: UNKNOWN", "Target: rm -rf");
+    }
+
+    @Test
+    void keyboardFallbackKeepsFollowingNewToolsWithoutCreatingAnExplicitSelection() {
+        var fixture = fixture();
+        fixture.model.update(new PasteMessage("preserved draft"));
+        for (int index = 1; index <= 3; index++) {
+            fixture.pump.offer(new TerminalUiAction.RunEventReceived(event(
+                    index,
+                    new RunEventPayloads.ToolLifecycle(
+                            "tool-" + index, "Read File", "SUCCEEDED", "NONE", "README.md", "result-" + index))));
+            fixture.model.update(new WindowSizeMessage(120, 40));
+            if (index == 2) {
+                fixture.model.update(key(KeyType.keyCAN));
+                fixture.model.update(runes('t'));
+            } else {
+                fixture.model.update(key(KeyType.keySI));
+            }
+            assertThat(fixture.controller.state().transcript().getLast())
+                    .satisfies(item -> assertThat(item.expanded()).isTrue());
+        }
+        assertThat(fixture.controller.state().transcript())
+                .allSatisfy(item -> assertThat(item.expanded()).isTrue());
+        assertThat(fixture.controller.state().transcript().get(1).toolDetails())
+                .hasValueSatisfying(details -> assertThat(details.expanded()).isTrue());
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("preserved draft");
+    }
+
+    @Test
+    void technicalShortcutFollowsTheSelectedToolAndPreservesDraft() {
+        var fixture = fixture();
+        for (int index = 1; index <= 2; index++) {
+            fixture.pump.offer(new TerminalUiAction.RunEventReceived(event(
+                    index,
+                    new RunEventPayloads.ToolLifecycle(
+                            "tool-" + index,
+                            "Read File",
+                            "SUCCEEDED",
+                            "NONE",
+                            "README.md",
+                            "result-" + index,
+                            Optional.empty(),
+                            "读取说明",
+                            "file_read"))));
+        }
+        fixture.model.update(new WindowSizeMessage(120, 40));
+        fixture.model.update(new PasteMessage("保留草稿"));
+        fixture.controller.toggleTranscriptItem("tool-tool-1");
+        fixture.model.update(key(KeyType.keyCAN));
+        fixture.model.update(runes('t'));
+
+        var selected = fixture.controller.state().transcript().getFirst();
+        assertThat(selected.toolDetails())
+                .hasValueSatisfying(details -> assertThat(details.expanded()).isTrue());
+        assertThat(fixture.controller.state().transcript().getLast().toolDetails())
+                .hasValueSatisfying(details -> assertThat(details.expanded()).isFalse());
+        fixture.model.update(key(KeyType.keySI));
+        assertThat(fixture.controller.state().transcript().getFirst().expanded())
+                .isFalse();
+        assertThat(fixture.controller.state().transcript().getLast().expanded()).isFalse();
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("保留草稿");
+    }
+
+    @Test
+    void finalResponseShortcutCopiesThroughTheBackgroundClipboardCommandWithoutChangingDraft() {
+        var clipboard = new RecordingClipboard(true);
+        var fixture = fixtureWithClipboard(clipboard);
+        fixture.pump.offer(new TerminalUiAction.RunEventReceived(
+                event(1, new RunEventPayloads.AssistantTextDelta("generation-1", "**完成**"))));
+        fixture.pump.offer(new TerminalUiAction.RunEventReceived(
+                event(2, new RunEventPayloads.RunLifecycle("COMPLETED", 1, "NONE"))));
+        fixture.model.update(new WindowSizeMessage(120, 40));
+        fixture.model.update(new PasteMessage("next instruction"));
+        fixture.model.update(key(KeyType.keyCAN));
+        var copy = fixture.model.update(runes('y')).command();
+
+        assertThat(clipboard.text).isNull();
+        fixture.model.update(copy.execute());
+        assertThat(clipboard.text).contains("完成").doesNotContain("**", "Assistant / Final response");
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("next instruction");
     }
 
     @Test
@@ -1336,6 +2061,49 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
+    void reflowsTheDraftWithinTheMainColumnWhenTheSidebarOrWindowChanges() {
+        var fixture = fixture();
+        String draft = "中🙂ab".repeat(18);
+        fixture.model.update(new WindowSizeMessage(120, 30));
+        fixture.model.update(new PasteMessage(draft));
+
+        for (int columns : List.of(120, 99, 100, 160)) {
+            fixture.model.update(new WindowSizeMessage(columns, 30));
+            for (int toggle = 0; toggle < 2; toggle++) {
+                var state = fixture.controller.state();
+                boolean sidebar = state.sidebarVisible() && columns >= 100;
+                List<String> lines = TerminalScreenCells.plainText(fixture.model.view())
+                        .lines()
+                        .toList();
+                int inputStart = java.util.stream.IntStream.range(0, lines.size())
+                        .filter(row -> lines.get(row).startsWith("┃"))
+                        .findFirst()
+                        .orElseThrow();
+                StringBuilder visibleDraft = new StringBuilder();
+                for (String line : lines.subList(inputStart, lines.size() - 2)) {
+                    String input = line;
+                    if (sidebar) {
+                        int divider = line.lastIndexOf('│');
+                        assertThat(divider).isGreaterThanOrEqualTo(0);
+                        input = line.substring(0, divider);
+                        assertThat(com.williamcallahan.tui4j.ansi.TextWidth.measureCellWidth(input))
+                                .isEqualTo(columns - 43);
+                        assertThat(line.substring(divider + 1)).doesNotContain("中", "🙂", "ab");
+                    }
+                    visibleDraft.append(input.replace("┃", "").replace(" ", ""));
+                }
+                assertThat(visibleDraft.toString()).contains(draft);
+                assertThat(state.editorBuffer()).isEqualTo(draft);
+                assertThat(state.editorCursor()).isEqualTo(draft.length());
+                fixture.model.update(key(KeyType.keyCAN));
+                fixture.model.update(runes('b'));
+            }
+        }
+        fixture.model.update(runes('Z'));
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo(draft + "Z");
+    }
+
+    @Test
     void togglesSidebarUsingLeaderKeyCombination() {
         var fixture = fixture();
         boolean initialVisible = fixture.controller.state().sidebarVisible();
@@ -1519,14 +2287,14 @@ class Tui4jCodingTerminalModelTest {
         fixture.model.init();
 
         // Scroll up
-        fixture.model.update(key(KeyType.KeyPgUp));
+        fixture.update(key(KeyType.KeyPgUp));
 
         // Now switch theme via action
         fixture.pump.offer(new TerminalUiAction.ThemeChanged("nord"));
         fixture.controller.drainEvents();
 
         // Trigger update to sync components
-        fixture.model.update(new Tui4jCodingTerminalModel.PollMessage());
+        fixture.update(new Tui4jCodingTerminalModel.PollMessage());
         String viewAfterTheme = fixture.model.view();
 
         // The view must not show the phantom "new output below" badge
@@ -1600,9 +2368,84 @@ class Tui4jCodingTerminalModelTest {
         return new KeyPressMessage(new Key(type));
     }
 
+    private KeyPressMessage keyWithRunes(String runes) {
+        return new KeyPressMessage(new Key(KeyType.KeyRunes, runes.toCharArray()));
+    }
+
+    /** Streams a paste the way ConPTY delivers it: one key message per character, in the host's own key types. */
+    private void streamPerCharacterPaste(Fixture fixture, String... lines) {
+        streamPerCharacterPaste(fixture, false, lines);
+    }
+
+    /** The same stream with every character as KeyRunes, the decoding some hosts produce for a space. */
+    private void streamPerCharacterPasteAsRunes(Fixture fixture, String... lines) {
+        streamPerCharacterPaste(fixture, true, lines);
+    }
+
+    private void streamPerCharacterPaste(Fixture fixture, boolean runesOnly, String... lines) {
+        for (int index = 0; index < lines.length; index++) {
+            for (char value : lines[index].toCharArray()) {
+                KeyPressMessage pressed = runesOnly ? keyWithRunes(String.valueOf(value)) : keyForHost(value);
+                fixture.update(pressed);
+            }
+            if (index < lines.length - 1) {
+                fixture.update(key(KeyType.keyCR));
+            }
+        }
+    }
+
+    /** The key tui4j 0.3.3 actually decodes for one character of a paste: Space and Tab are their own key types. */
+    private KeyPressMessage keyForHost(char value) {
+        if (value == ' ') {
+            return key(KeyType.KeySpace);
+        }
+        if (value == '\t') {
+            return key(KeyType.keyHT);
+        }
+        return keyWithRunes(String.valueOf(value));
+    }
+
+    /** Types one rune at a time like a user, so each key carries its own timestamp. */
+    private void typeRunes(Fixture fixture, String text) {
+        for (char value : text.toCharArray()) {
+            fixture.update(runes(value));
+        }
+    }
+
+    private void streamUnbracketedPaste(Fixture fixture, String... lines) {
+        streamUnbracketedPaste(fixture, false, lines);
+    }
+
+    private void streamUnbracketedPasteWithCrLf(Fixture fixture, String... lines) {
+        streamUnbracketedPaste(fixture, true, lines);
+    }
+
+    /** Streams one paste the way a host without bracketed paste delivers it: runes, break, runes, ... */
+    private void streamUnbracketedPaste(Fixture fixture, boolean crlf, String... lines) {
+        for (int index = 0; index < lines.length; index++) {
+            if (!lines[index].isEmpty()) {
+                fixture.update(keyWithRunes(lines[index]));
+            }
+            if (index < lines.length - 1 || lines[index].isEmpty()) {
+                fixture.update(key(KeyType.keyCR));
+                if (crlf) {
+                    fixture.update(key(KeyType.keyLF));
+                }
+            }
+        }
+    }
+
+    /** Delivers the one scheduled check; later keys only move its deadline. */
+    private void settleIdleInput(Fixture fixture) {
+        while (!fixture.idleChecks.isEmpty()) {
+            Command check = fixture.idleChecks.removeFirst();
+            fixture.update(check.execute());
+        }
+    }
+
     private void commitPlainEnter(Fixture fixture) {
-        var guarded = fixture.model.update(key(KeyType.keyCR));
-        fixture.model.update(guarded.command().execute());
+        var guarded = fixture.update(key(KeyType.keyCR));
+        fixture.update(guarded.command().execute());
     }
 
     private Tui4jCodingTerminalModel modelWithMouseReporting(boolean enabled) {
@@ -1721,7 +2564,7 @@ class Tui4jCodingTerminalModelTest {
         for (int index = 1; index <= 6; index++) {
             fixture.pump.offer(new TerminalUiAction.UserMessageCommitted("m", "line-" + index));
         }
-        fixture.model.update(new WindowSizeMessage(120, 30));
+        fixture.update(new WindowSizeMessage(120, 30));
         fixture.model.view();
     }
 
@@ -1730,7 +2573,7 @@ class Tui4jCodingTerminalModelTest {
         fixture.pump.offer(new TerminalUiAction.RunEventReceived(event(
                 1,
                 new RunEventPayloads.ToolLifecycle("tool-1", "execution_run", "SUCCEEDED", "NONE", "git status", ""))));
-        fixture.model.update(new WindowSizeMessage(120, 30));
+        fixture.update(new WindowSizeMessage(120, 30));
         fixture.model.view();
     }
 
@@ -1752,6 +2595,7 @@ class Tui4jCodingTerminalModelTest {
     private static final class RecordingClipboard implements TerminalClipboard {
         private final boolean succeed;
         private String text;
+        private String pasteText;
 
         RecordingClipboard(boolean succeed) {
             this.succeed = succeed;
@@ -1761,6 +2605,11 @@ class Tui4jCodingTerminalModelTest {
         public boolean copy(String value) {
             this.text = value;
             return succeed;
+        }
+
+        @Override
+        public java.util.Optional<String> read() {
+            return java.util.Optional.ofNullable(pasteText).filter(value -> !value.isEmpty());
         }
     }
 
@@ -1784,8 +2633,26 @@ class Tui4jCodingTerminalModelTest {
                 payload);
     }
 
-    private record Fixture(
-            CodingTerminalController controller, TerminalEventPump pump, Tui4jCodingTerminalModel model) {}
+    private static final class Fixture {
+        final CodingTerminalController controller;
+        final TerminalEventPump pump;
+        final Tui4jCodingTerminalModel model;
+        final ArrayDeque<Command> idleChecks = new ArrayDeque<>();
+
+        Fixture(CodingTerminalController controller, TerminalEventPump pump, Tui4jCodingTerminalModel model) {
+            this.controller = controller;
+            this.pump = pump;
+            this.model = model;
+        }
+
+        UpdateResult<Tui4jCodingTerminalModel> update(Message message) {
+            var result = model.update(message);
+            if (result.command() instanceof ComposerInput.IdleCheck) {
+                idleChecks.addLast(result.command());
+            }
+            return result;
+        }
+    }
 
     private static final class UnusedClient implements CodingSessionClient {
         private final List<io.haifa.agent.application.project.product.coding.CodingModelOption> models;

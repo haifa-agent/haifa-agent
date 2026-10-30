@@ -86,13 +86,13 @@ public final class SqliteRunInputPort implements RunInputPort {
     public Optional<RunInputRecord> findExisting(RunInputSubmission submission, String callerScope) {
         Objects.requireNonNull(submission, "submission must not be null");
         String normalizedScope = requireText(callerScope, "callerScope");
-        return execute(() -> existing(unitOfWork.mapper(RuntimeStoreMapper.class), submission, normalizedScope));
+        return read(() -> existing(unitOfWork.mapper(RuntimeStoreMapper.class), submission, normalizedScope));
     }
 
     @Override
     public Optional<RunInputRecord> find(RunInputId inputId) {
         Objects.requireNonNull(inputId, "inputId must not be null");
-        return execute(() -> Optional.ofNullable(
+        return read(() -> Optional.ofNullable(
                         unitOfWork.mapper(RuntimeStoreMapper.class).findRunInput(inputId.value()))
                 .map(this::fromRow));
     }
@@ -101,7 +101,7 @@ public final class SqliteRunInputPort implements RunInputPort {
     public List<RunInputRecord> pending(AgentRunId runId, int limit) {
         Objects.requireNonNull(runId, "runId must not be null");
         if (limit < 1 || limit > 100) throw new IllegalArgumentException("limit must be in 1..100");
-        return execute(() -> unitOfWork.mapper(RuntimeStoreMapper.class).pendingRunInputs(runId.value(), limit).stream()
+        return read(() -> unitOfWork.mapper(RuntimeStoreMapper.class).pendingRunInputs(runId.value(), limit).stream()
                 .map(this::fromRow)
                 .toList());
     }
@@ -218,6 +218,16 @@ public final class SqliteRunInputPort implements RunInputPort {
     private <T> T execute(Supplier<T> work) {
         try {
             return unitOfWork.execute(work);
+        } catch (SqliteStoreException exception) {
+            if (exception.getCause() instanceof RuntimeException runtimeException) throw runtimeException;
+            throw exception;
+        }
+    }
+
+    /** Queries read committed state without reserving the process-wide write slot. */
+    private <T> T read(Supplier<T> work) {
+        try {
+            return unitOfWork.executeReadOnly(work);
         } catch (SqliteStoreException exception) {
             if (exception.getCause() instanceof RuntimeException runtimeException) throw runtimeException;
             throw exception;

@@ -111,7 +111,8 @@ public sealed interface RunEventPayload
             String targetSummary,
             String resultRef,
             Optional<ToolObservation> observation,
-            String intentSummary)
+            String intentSummary,
+            String toolName)
             implements RunEventPayload {
         /** Backward-compatible constructor for producers that carry no bounded observation. */
         public ToolLifecycle(
@@ -121,7 +122,7 @@ public sealed interface RunEventPayload
                 String reasonCode,
                 String targetSummary,
                 String resultRef) {
-            this(toolCallId, displayName, status, reasonCode, targetSummary, resultRef, Optional.empty(), "");
+            this(toolCallId, displayName, status, reasonCode, targetSummary, resultRef, Optional.empty(), "", "");
         }
 
         /** Backward-compatible constructor for producers that omit the optional intent summary. */
@@ -133,7 +134,20 @@ public sealed interface RunEventPayload
                 String targetSummary,
                 String resultRef,
                 Optional<ToolObservation> observation) {
-            this(toolCallId, displayName, status, reasonCode, targetSummary, resultRef, observation, "");
+            this(toolCallId, displayName, status, reasonCode, targetSummary, resultRef, observation, "", "");
+        }
+
+        /** Backward-compatible constructor for producers that do not yet carry a machine tool name. */
+        public ToolLifecycle(
+                String toolCallId,
+                String displayName,
+                String status,
+                String reasonCode,
+                String targetSummary,
+                String resultRef,
+                Optional<ToolObservation> observation,
+                String intentSummary) {
+            this(toolCallId, displayName, status, reasonCode, targetSummary, resultRef, observation, intentSummary, "");
         }
 
         public ToolLifecycle {
@@ -145,6 +159,7 @@ public sealed interface RunEventPayload
             resultRef = optional(resultRef, "resultRef", 512);
             observation = java.util.Objects.requireNonNull(observation, "observation must not be null");
             intentSummary = optional(intentSummary, "intentSummary", 256);
+            toolName = optional(toolName, "toolName", 128);
         }
     }
 

@@ -22,6 +22,7 @@ import io.haifa.agent.runtime.core.loop.AgentLoopResult;
 import io.haifa.agent.runtime.core.middleware.RuntimePhase;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationException;
 import io.haifa.agent.runtime.core.storage.ExecutionAttemptRepository;
+import io.haifa.agent.runtime.core.storage.StorageException;
 import io.haifa.agent.runtime.core.trace.FailureDiagnosticSink;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceContext;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
@@ -311,7 +312,12 @@ public final class AttemptExecutor {
             details = Map.of();
         }
         return new AgentError(
-                classifiedErrorCode(quotaExceeded, budgetExceeded, contextBuild, continuationFailure),
+                classifiedErrorCode(
+                        quotaExceeded,
+                        budgetExceeded,
+                        contextBuild,
+                        continuationFailure,
+                        findFailure(error, StorageException.class) != null),
                 details,
                 ids.nextValue(),
                 time.now());
@@ -319,7 +325,7 @@ public final class AttemptExecutor {
 
     static AgentErrorCode classifiedErrorCode(
             RuntimeLimitExceededException budgetExceeded, ContextBuildException contextBuild) {
-        return classifiedErrorCode(null, budgetExceeded, contextBuild, null);
+        return classifiedErrorCode(null, budgetExceeded, contextBuild, null, false);
     }
 
     static AgentErrorCode classifiedErrorCode(
@@ -327,6 +333,15 @@ public final class AttemptExecutor {
             RuntimeLimitExceededException budgetExceeded,
             ContextBuildException contextBuild,
             ModelContinuationException continuationFailure) {
+        return classifiedErrorCode(quotaExceeded, budgetExceeded, contextBuild, continuationFailure, false);
+    }
+
+    static AgentErrorCode classifiedErrorCode(
+            RuntimeQuotaExceededException quotaExceeded,
+            RuntimeLimitExceededException budgetExceeded,
+            ContextBuildException contextBuild,
+            ModelContinuationException continuationFailure,
+            boolean storageFailure) {
         if (continuationFailure != null) return AgentErrorCode.CROSS_MODEL_CONTINUATION_INVALID;
         if (quotaExceeded != null) {
             return switch (quotaExceeded.resource()) {
@@ -348,7 +363,9 @@ public final class AttemptExecutor {
                 default -> AgentErrorCode.RUN_BUDGET_EXCEEDED;
             };
         }
-        if (contextBuild == null) return AgentErrorCode.RUNTIME_EXECUTION_FAILED;
+        if (contextBuild == null) {
+            return storageFailure ? AgentErrorCode.STORAGE_UNAVAILABLE : AgentErrorCode.RUNTIME_EXECUTION_FAILED;
+        }
         return switch (contextBuild.failure()) {
             case MODEL_WINDOW_TOO_SMALL, REQUIRED_CONTEXT_TOO_LARGE -> AgentErrorCode.MODEL_CONTEXT_TOO_LONG;
             case UNSUPPORTED_CONTEXT_CONTENT -> AgentErrorCode.RUNTIME_EXECUTION_FAILED;

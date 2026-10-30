@@ -333,7 +333,9 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         }
         AgentRunSnapshot resumed = resume(
                 new ResumeAgentRunRequest("interaction-response:" + response.idempotencyKey(), run.id(), List.of()));
-        interactions.markResolutionApplied(response.requestId());
+        if (!consumedByLoop(response.requestId())) {
+            interactions.markResolutionApplied(response.requestId());
+        }
         return resumed;
     }
 
@@ -348,17 +350,32 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                         "tool-approval-response:" + response.idempotencyKey(), run.id(), List.of()));
             } else if (response.action().equals(InteractionAction.REJECT)
                     || response.action().equals(InteractionAction.CANCEL)) {
-                if (!run.status().isTerminal()) {
-                    transitions.cancelled(
-                            run,
-                            new RunTerminationReason(
-                                    "INTERACTION_REJECTED", "Interaction was rejected by the operator"));
+                boolean returnsToAgent = interactions
+                        .find(response.requestId())
+                        .filter(request -> !request.approval())
+                        .filter(request -> request.expirationOutcome()
+                                == io.haifa.agent.runtime.core.interaction.InteractionExpirationOutcome.RETURN_TO_AGENT)
+                        .isPresent();
+                if (returnsToAgent) {
+                    resume(new ResumeAgentRunRequest(
+                            "interaction-cancelled:" + response.idempotencyKey(), run.id(), List.of()));
+                } else {
+                    if (!run.status().isTerminal()) {
+                        transitions.cancelled(
+                                run,
+                                new RunTerminationReason(
+                                        "INTERACTION_REJECTED", "Interaction was rejected by the operator"));
+                    }
+                    if (!consumedByLoop(response.requestId())) {
+                        interactions.markResolutionApplied(response.requestId());
+                    }
                 }
-                interactions.markResolutionApplied(response.requestId());
             } else {
                 resume(new ResumeAgentRunRequest(
                         "interaction-response:" + response.idempotencyKey(), run.id(), List.of()));
-                interactions.markResolutionApplied(response.requestId());
+                if (!consumedByLoop(response.requestId())) {
+                    interactions.markResolutionApplied(response.requestId());
+                }
             }
         }
         InteractionRecord current = interactions.record(response.requestId()).orElseThrow();
@@ -378,6 +395,24 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                 snapshot.version());
     }
 
+    private boolean consumedByLoop(io.haifa.agent.runtime.api.InteractionRequestId requestId) {
+        return interactions
+                .find(requestId)
+                .map(request -> request.target() instanceof io.haifa.agent.runtime.core.interaction.ToolApprovalTarget
+                        || request.target() instanceof io.haifa.agent.runtime.core.interaction.ClarificationTarget)
+                .orElse(false);
+    }
+
+    private static void validateClarificationAnswer(
+            io.haifa.agent.runtime.core.interaction.InteractionRequest request,
+            InteractionResponseType responseType,
+            List<io.haifa.agent.core.content.ContentPart> inputs) {
+        if (request.clarificationPresentation().isEmpty() || responseType != InteractionResponseType.CLARIFY) {
+            return;
+        }
+        io.haifa.agent.runtime.core.interaction.ClarificationAnswers.parse(inputs, request);
+    }
+
     private ResponseOutcome recordResponse(InteractionResponse response) {
         AgentRun run = requireRun(response.runId());
         requireCaller(run);
@@ -388,6 +423,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         if (!request.tenant().equals(caller.tenant())) {
             throw new SecurityException("response tenant does not match interaction");
         }
+        validateClarificationAnswer(request, response.type(), response.inputs());
         io.haifa.agent.policy.api.ApprovalVerification approvalResult = verifyApproval(request, caller);
         var resolution = interactions.respond(response, caller, time.now());
         boolean toolApproval =
@@ -411,6 +447,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                     io.haifa.agent.runtime.api.RuntimeApiErrorCode.INTERACTION_NOT_FOUND,
                     "The interaction does not exist or is not visible");
         }
+        validateClarificationAnswer(request, legacyType(response.action()), response.inputs());
         var approvalResult = verifyApprovalForContract(request, caller);
         var resolution = interactions.respond(response, caller, time.now());
         InteractionResponse legacy = new InteractionResponse(
@@ -754,10 +791,10 @@ public final class DefaultAgentRuntime implements AgentRuntime {
     @Override
     public Optional<AgentRunSnapshot> find(AgentRunId runId) {
         var caller = callers.current();
-        return runs.find(Objects.requireNonNull(runId))
-                .filter(run -> caller.tenant().equals(run.tenant())
-                        && caller.principal().equals(run.principal()))
-                .map(run -> AgentRunSnapshot.from(run, state.output(run.id())));
+        return runs.read(Objects.requireNonNull(runId), found -> found.filter(
+                        run -> caller.tenant().equals(run.tenant())
+                                && caller.principal().equals(run.principal()))
+                .map(run -> AgentRunSnapshot.from(run, state.output(run.id()))));
     }
 
     @Override
@@ -802,11 +839,11 @@ public final class DefaultAgentRuntime implements AgentRuntime {
     @Override
     public Optional<io.haifa.agent.runtime.api.AgentRunViewSnapshot> view(AgentRunId runId) {
         var caller = callers.current();
-        return runs.find(Objects.requireNonNull(runId))
-                .filter(run -> caller.tenant().equals(run.tenant())
-                        && caller.principal().equals(run.principal()))
+        return runs.read(Objects.requireNonNull(runId), found -> found.filter(
+                        run -> caller.tenant().equals(run.tenant())
+                                && caller.principal().equals(run.principal()))
                 .map(run -> new io.haifa.agent.runtime.api.AgentRunViewSnapshot(
-                        run.sessionId(), AgentRunSnapshot.from(run, state.output(run.id()))));
+                        run.sessionId(), AgentRunSnapshot.from(run, state.output(run.id())))));
     }
 
     @Override
@@ -876,7 +913,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
             if (!runId.equals(after.runId()) || limit < 1 || limit > 500)
                 throw new io.haifa.agent.runtime.api.RuntimeContractException(
                         io.haifa.agent.runtime.api.RuntimeApiErrorCode.CURSOR_INVALID, "Invalid message page request");
-            return unitOfWork.execute(() -> io.haifa.agent.runtime.core.message.RunMessageProjector.page(
+            return unitOfWork.executeReadOnly(() -> io.haifa.agent.runtime.core.message.RunMessageProjector.page(
                     state, runId, after.exclusiveSequence(), limit));
         } catch (io.haifa.agent.runtime.api.RuntimeContractException refusal) {
             throw refusal;
@@ -1086,9 +1123,6 @@ public final class DefaultAgentRuntime implements AgentRuntime {
 
     private void appendInteractionResponseMessage(
             AgentRun run, InteractionResponse response, MessageVisibility visibility) {
-        List<ContentPart> contents = response.inputs().isEmpty()
-                ? List.of(new TextPart("Interaction response: " + response.type(), "plain"))
-                : response.inputs();
         state.appendSessionMessage(new SessionMessageDraft(
                 new AgentMessageId(ids.nextValue()),
                 run.sessionId(),
@@ -1097,12 +1131,28 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                 MessageRole.USER,
                 MessageStatus.COMPLETED,
                 visibility,
-                contents,
+                interactionResponseContents(response),
                 Map.of(
                         "interactionRequestId", response.requestId().value(),
                         "interactionResponseId", response.responseId().value(),
                         "interactionResponseType", response.type().name()),
                 time.now()));
+    }
+
+    /** The transcript shows what the user answered, never the internal clarification answer payload. */
+    private List<ContentPart> interactionResponseContents(InteractionResponse response) {
+        if (response.inputs().isEmpty()) {
+            return List.of(new TextPart("Interaction response: " + response.type(), "plain"));
+        }
+        return interactions
+                .find(response.requestId())
+                .filter(request -> request.clarificationPresentation().isPresent())
+                .filter(request -> response.type() == InteractionResponseType.CLARIFY)
+                .map(request -> List.<ContentPart>of(new TextPart(
+                        io.haifa.agent.runtime.core.interaction.ClarificationAnswers.parse(response.inputs(), request)
+                                .userSummary(request),
+                        "plain")))
+                .orElse(response.inputs());
     }
 
     private AgentRun requireRun(AgentRunId runId) {
@@ -1117,9 +1167,11 @@ public final class DefaultAgentRuntime implements AgentRuntime {
     }
 
     private AgentRunSnapshot snapshot(AgentRunId runId) {
-        AgentRun run = requireRun(runId);
-        requireCaller(run);
-        return AgentRunSnapshot.from(run, state.output(runId));
+        return runs.read(runId, found -> {
+            AgentRun run = found.orElseThrow(() -> new IllegalArgumentException("unknown run: " + runId.value()));
+            requireCaller(run);
+            return AgentRunSnapshot.from(run, state.output(runId));
+        });
     }
 
     private void requireCaller(AgentRun run) {

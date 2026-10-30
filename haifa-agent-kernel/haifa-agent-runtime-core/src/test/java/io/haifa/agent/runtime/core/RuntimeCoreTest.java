@@ -9,6 +9,7 @@ import io.haifa.agent.context.compression.CompressionPolicy;
 import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.error.AgentError;
+import io.haifa.agent.core.error.AgentErrorCategory;
 import io.haifa.agent.core.error.AgentErrorCode;
 import io.haifa.agent.core.message.AgentMessageId;
 import io.haifa.agent.core.message.MessageRole;
@@ -95,8 +96,12 @@ import io.haifa.agent.runtime.core.retry.RetryPolicy;
 import io.haifa.agent.runtime.core.retry.RuntimeBackoffPolicy;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.storage.OptimisticLockException;
+import io.haifa.agent.runtime.core.storage.RuntimeEvent;
+import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
+import io.haifa.agent.runtime.core.storage.RuntimeEventSlice;
 import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
+import io.haifa.agent.runtime.core.storage.StorageException;
 import io.haifa.agent.runtime.core.tool.InMemoryToolExecutionJournal;
 import io.haifa.agent.runtime.core.tool.ToolJournalState;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
@@ -1847,6 +1852,97 @@ class RuntimeCoreTest {
     }
 
     @Test
+    void duplicatePublicApprovalSubmissionReportsApplicationWithoutExecutingAgain() {
+        var calls = new AtomicInteger();
+        Fixture fixture = fixture(
+                model(
+                        new ToolCallDecision(List.of(toolRequest(
+                                "session-consent",
+                                "write",
+                                "1.0.0",
+                                new ToolArguments("write.input", "1.0", Map.of())))),
+                        finalDecision("done")),
+                builder -> TestToolPlatform.install(
+                        builder,
+                        "write",
+                        "1.0.0",
+                        "write.input",
+                        true,
+                        TestToolPlatform.approvalRequired(),
+                        invocation -> {
+                            calls.incrementAndGet();
+                            return new ToolResult(true, "written", Map.of(), List.of(), List.of(), false);
+                        }));
+        var accepted = fixture.runtime.start(request("session-consent"));
+        fixture.scheduler.runAll();
+        var pending = fixture.runtime.pendingInteraction(accepted.runId()).orElseThrow();
+        var submission = new io.haifa.agent.runtime.api.InteractionResponseSubmission(
+                new InteractionResponseId("session-consent-response"),
+                pending.requestId(),
+                accepted.runId(),
+                pending.revision(),
+                io.haifa.agent.runtime.api.InteractionAction.APPROVE,
+                List.of(),
+                "session-consent-key",
+                Instant.parse("2026-07-21T00:00:00Z"));
+        fixture.runtime.respond(submission);
+        fixture.scheduler.runAll();
+
+        var duplicate = fixture.runtime.respond(submission);
+        assertThat(duplicate.status()).isEqualTo(io.haifa.agent.runtime.api.InteractionResponseReceiptStatus.DUPLICATE);
+        assertThat(duplicate.interactionState()).isEqualTo(io.haifa.agent.runtime.api.InteractionState.APPLIED);
+        assertThat(calls).hasValue(1);
+    }
+
+    @Test
+    void projectsExplicitToolOutputPreviewWithRedactionAndProducerTruncationFacts() {
+        ToolRequest request =
+                toolRequest("written-preview", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of()));
+        Fixture fixture = fixture(
+                model(new ToolCallDecision(List.of(request)), finalDecision("done")),
+                builder -> TestToolPlatform.install(
+                        builder,
+                        "write",
+                        "1.0.0",
+                        "write.input",
+                        true,
+                        invocation -> new ToolResult(
+                                true,
+                                "Wrote file",
+                                Map.of(
+                                        "outputPreview",
+                                        "Written content:\n  token=example-value\n ... [truncated] ... ",
+                                        "outputPreviewTruncated",
+                                        true,
+                                        "outputPreviewByteCount",
+                                        50_000L,
+                                        "outputPreviewLineCount",
+                                        2_000L,
+                                        "outputPreviewTruncationReason",
+                                        "OUTPUT_LINES"),
+                                List.of(),
+                                List.of(),
+                                false)));
+
+        var accepted = fixture.runtime.start(request("written-preview"));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .filteredOn(event -> event.type().equals("tool.succeeded"))
+                .singleElement()
+                .satisfies(event -> {
+                    assertThat(event.data())
+                            .containsEntry("outputPreviewTruncated", true)
+                            .containsEntry("outputPreviewByteCount", 50_000L)
+                            .containsEntry("outputPreviewLineCount", 2_000L)
+                            .containsEntry("outputPreviewTruncationReason", "OUTPUT_LINES");
+                    assertThat((String) event.data().get("outputPreview"))
+                            .contains("Written content:", "token=[REDACTED]")
+                            .doesNotContain("example-value", "Wrote file");
+                });
+    }
+
+    @Test
     void boundsLongSuccessfulToolOutputPreviewWhileKeepingOriginalSizeFacts() {
         ToolRequest request =
                 toolRequest("long-output", "cat", "1.0.0", new ToolArguments("cat.input", "1.0", Map.of()));
@@ -3187,6 +3283,99 @@ class RuntimeCoreTest {
 
     private static Fixture fixture(AgentChatModel model) {
         return fixture(model, builder -> builder);
+    }
+
+    @Test
+    void reportsAStoreFailureDuringTheModelStepAsStorageUnavailable() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        RuntimePersistencePorts inMemory = RuntimePersistencePorts.inMemory(store);
+        RuntimePersistencePorts failingPersistence = new RuntimePersistencePorts(
+                inMemory.sessions(),
+                inMemory.runs(),
+                inMemory.attempts(),
+                inMemory.checkpoints(),
+                inMemory.state(),
+                new ModelCallEventFailure(inMemory.events()),
+                inMemory.outbox(),
+                inMemory.idempotency(),
+                inMemory.unitOfWork(),
+                inMemory.toolJournal(),
+                inMemory.interactions(),
+                inMemory.runInputs(),
+                inMemory.conversationSummaries(),
+                inMemory.toolResultAssets(),
+                inMemory.messageRedactions());
+        ManualExecutionScheduler scheduler = new ManualExecutionScheduler();
+        AtomicInteger sequence = new AtomicInteger();
+        AtomicInteger providerCalls = new AtomicInteger();
+        AgentChatModel chatModel = request -> {
+            providerCalls.incrementAndGet();
+            return response(finalDecision("never reached"));
+        };
+        DefaultAgentRuntime runtime = new RuntimeCoreBuilder()
+                .registerChatModel("openai-compatible", "1.0.0", chatModel)
+                .scheduler(scheduler)
+                .persistence(failingPersistence)
+                .identifierGenerator(() -> "storage-failure-" + sequence.incrementAndGet())
+                .timeProvider(() -> Instant.parse("2026-07-21T00:00:00Z"))
+                .build();
+
+        var accepted = runtime.start(request("storage-failure"));
+        scheduler.runAll();
+
+        var failedRun = runtime.find(accepted.runId()).orElseThrow();
+        assertThat(failedRun.status()).isEqualTo(AgentRunStatus.FAILED);
+        assertThat(failedRun.error().orElseThrow().code()).isEqualTo(AgentErrorCode.STORAGE_UNAVAILABLE);
+        assertThat(failedRun.error().orElseThrow().category()).isEqualTo(AgentErrorCategory.STORAGE);
+        assertThat(providerCalls)
+                .as("the provider is never contacted when the model step cannot persist its start")
+                .hasValue(0);
+        assertThat(store.eventsFor(accepted.runId()))
+                .extracting(RuntimeEvent::type)
+                .doesNotContain("model.call.started");
+    }
+
+    /** Fails the durable write a model step performs before the provider is called. */
+    private static final class ModelCallEventFailure implements RuntimeEventAppender {
+        private final RuntimeEventAppender delegate;
+
+        private ModelCallEventFailure(RuntimeEventAppender delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public RuntimeEvent append(AgentRunId runId, String type, Map<String, Object> data, Instant occurredAt) {
+            if ("model.call.started".equals(type)) {
+                throw new StorageException("SQLite writer slot is unavailable");
+            }
+            return delegate.append(runId, type, data, occurredAt);
+        }
+
+        @Override
+        public List<RuntimeEvent> eventsFor(AgentRunId runId) {
+            return delegate.eventsFor(runId);
+        }
+
+        @Override
+        public RuntimeEventSlice eventsAfter(
+                AgentRunId runId, long exclusiveSequence, OptionalLong observedHead, int limit) {
+            return delegate.eventsAfter(runId, exclusiveSequence, observedHead, limit);
+        }
+
+        @Override
+        public OptionalLong earliestSequence(AgentRunId runId) {
+            return delegate.earliestSequence(runId);
+        }
+
+        @Override
+        public OptionalLong headSequence(AgentRunId runId) {
+            return delegate.headSequence(runId);
+        }
+
+        @Override
+        public long deleteBefore(AgentRunId runId, long retainFromSequence, Instant deletedAt) {
+            return delegate.deleteBefore(runId, retainFromSequence, deletedAt);
+        }
     }
 
     private static ResolvedModelSnapshot constrainedContextModel() {

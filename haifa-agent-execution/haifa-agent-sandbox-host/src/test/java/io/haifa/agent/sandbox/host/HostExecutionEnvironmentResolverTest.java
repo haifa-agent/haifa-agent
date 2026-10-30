@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
@@ -26,6 +28,87 @@ class HostExecutionEnvironmentResolverTest {
         applicationData = Files.createDirectory(root.resolve("application-data"));
         workspace = Files.createDirectory(root.resolve("workspace"));
         scratch = Files.createDirectory(root.resolve("scratch"));
+    }
+
+    @Test
+    void trustedOverridesAreBoundedProtectedAndCaseSafe() {
+        var baseline = HostExecutionEnvironmentResolver.resolveHostUser(
+                Map.of("HOME", home.toString(), "LARKSUITE_CLI_CONFIG_DIR", "not-inherited"),
+                "Linux",
+                home,
+                applicationData,
+                workspace,
+                scratch,
+                Set.of());
+        assertThat(baseline.environment()).doesNotContainKey("LARKSUITE_CLI_CONFIG_DIR");
+        var input = new LinkedHashMap<>(Map.of("Path", "cli-bin", "CLI_CONFIG_DIR", "config-path"));
+        var resolved = HostExecutionEnvironmentResolver.withTrustedOverrides(baseline, input, "Windows 11");
+        input.put("CLI_CONFIG_DIR", "changed");
+        assertThat(resolved.environment())
+                .containsEntry("PATH", "cli-bin")
+                .containsEntry("CLI_CONFIG_DIR", "config-path");
+        assertThat(resolved.allowedEnvironmentNames())
+                .isEqualTo(resolved.environment().keySet());
+        assertThatThrownBy(() -> resolved.environment().put("OTHER", "value"))
+                .isInstanceOf(UnsupportedOperationException.class);
+        assertThat(resolved.toString()).doesNotContain("cli-bin", "config-path");
+        for (String name : List.of(
+                "HOME",
+                "home",
+                "USERPROFILE",
+                "HOMEDRIVE",
+                "HOMEPATH",
+                "APPDATA",
+                "LOCALAPPDATA",
+                "SystemRoot",
+                "SYSTEMDRIVE",
+                "WINDIR",
+                "COMSPEC",
+                "PATHEXT",
+                "TEMP",
+                "Tmp",
+                "TMPDIR",
+                "XDG_CONFIG_HOME",
+                "SHELL",
+                "PYTHONPATH",
+                "NODE_PATH",
+                "SSH_AUTH_SOCK",
+                "GH_PROMPT_DISABLED",
+                "GIT_PAGER",
+                "API_TOKEN",
+                "HTTP_PROXY",
+                "bad-name")) {
+            assertThatThrownBy(() -> HostExecutionEnvironmentResolver.withTrustedOverrides(
+                            baseline, Map.of(name, "hidden-sentinel"), "Windows 11"))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageNotContaining("hidden-sentinel");
+        }
+        for (String value : List.of("", " ", "nul\0value", "x".repeat(32_769))) {
+            assertThatThrownBy(() -> HostExecutionEnvironmentResolver.withTrustedOverrides(
+                            baseline, Map.of("CLI_CONFIG_DIR", value), "Linux"))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+        var invalid = new LinkedHashMap<String, String>();
+        invalid.put(null, "hidden-sentinel");
+        assertThatThrownBy(() -> HostExecutionEnvironmentResolver.withTrustedOverrides(baseline, invalid, "Linux"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageNotContaining("hidden-sentinel");
+        invalid.clear();
+        invalid.put("CLI_CONFIG_DIR", null);
+        assertThatThrownBy(() -> HostExecutionEnvironmentResolver.withTrustedOverrides(baseline, invalid, "Linux"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> HostExecutionEnvironmentResolver.withTrustedOverrides(baseline, null, "Linux"))
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> HostExecutionEnvironmentResolver.withTrustedOverrides(
+                        baseline, Map.of("Path", "first", "PATH", "second"), "Windows 11"))
+                .isInstanceOf(IllegalArgumentException.class);
+        invalid.clear();
+        for (int i = 0; i < 257; i++) invalid.put("CLI_VAR_" + i, "value");
+        assertThatThrownBy(() -> HostExecutionEnvironmentResolver.withTrustedOverrides(baseline, invalid, "Linux"))
+                .isInstanceOf(IllegalArgumentException.class);
+        invalid.remove("CLI_VAR_256");
+        assertThatThrownBy(() -> HostExecutionEnvironmentResolver.withTrustedOverrides(baseline, invalid, "Linux"))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

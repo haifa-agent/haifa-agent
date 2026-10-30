@@ -16,6 +16,7 @@ public final class TerminalCompletionProvider {
             "/compact",
             "/session",
             "/trust",
+            "/approval",
             "/reload",
             "/rename",
             "/export",

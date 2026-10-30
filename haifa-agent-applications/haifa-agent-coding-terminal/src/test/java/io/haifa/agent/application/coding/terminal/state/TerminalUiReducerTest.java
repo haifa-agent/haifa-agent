@@ -44,7 +44,98 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class TerminalUiReducerTest {
+    @Test
+    void resolvedUnhydratedApprovalsDoNotLeaveLoadingCards() {
+        for (String status :
+                java.util.List.of("RESPONDED", "APPLIED", "REJECTED", "CANCELLED", "INVALIDATED", "EXPIRED")) {
+            var initial = TerminalUiState.initial(120, 40);
+            var waiting = reducer.reduce(
+                    initial,
+                    new TerminalUiAction.RunEventReceived(event(
+                            1,
+                            "approval-requested",
+                            new RunEventPayloads.InteractionLifecycle(
+                                    "auto-approval", "approval", "PENDING", "ignored"))));
+            assertThat(waiting.transcript()).hasSize(1);
+            var resolved = reducer.reduce(
+                    waiting,
+                    new TerminalUiAction.RunEventReceived(event(
+                            2,
+                            "approval-resolved",
+                            new RunEventPayloads.InteractionLifecycle(
+                                    "auto-approval", "approval", status, "ignored"))));
+            assertThat(resolved.transcript()).isEmpty();
+        }
+    }
+
     private final TerminalUiReducer reducer = new TerminalUiReducer();
+
+    @Test
+    void boundsLongUserMessagePreviewsWithoutSplittingUnicode() {
+        String symbol = "\uD83D\uDE42";
+        String text = symbol.repeat(8_001);
+
+        TerminalUiState state = reducer.reduce(
+                TerminalUiState.initial(120, 40), new TerminalUiAction.UserMessageCommitted("long-user", text));
+
+        assertThat(state.transcript()).singleElement().satisfies(item -> assertThat(item.body())
+                .isEqualTo(symbol.repeat(8_000) + "\n[Preview truncated; full message submitted]"));
+    }
+
+    @Test
+    void projectsTechnicalFactsWithoutParsingMetadataLookingOutputAndPreservesExpansion() {
+        String output = "用户内容\nReason: user text\nResult: user text";
+        var observation = new RunEventPayloads.ToolObservation(
+                Optional.of(BoundedText.of(output, new ToolDisplayBudget(1024, 20))),
+                Optional.empty(),
+                Optional.empty());
+        var lifecycle = new RunEventPayloads.ToolLifecycle(
+                "call-1",
+                "Read File",
+                "SUCCEEDED",
+                "NONE",
+                "README.md",
+                "actual-result-ref",
+                Optional.of(observation),
+                "读取说明",
+                "file_read");
+        TerminalUiState state = reducer.reduce(
+                TerminalUiState.initial(120, 40), new TerminalUiAction.RunEventReceived(event(1, "tool-1", lifecycle)));
+        state = reducer.reduce(state, new TerminalUiAction.ToggleTechnicalDetails("tool-call-1"));
+        state = reducer.reduce(state, new TerminalUiAction.RunEventReceived(event(2, "tool-2", lifecycle)));
+
+        assertThat(state.transcript()).singleElement().satisfies(item -> {
+            assertThat(item.toolDetails()).hasValueSatisfying(details -> {
+                assertThat(details.content()).contains(output).doesNotContain("actual-result-ref");
+                assertThat(details.technical())
+                        .contains("file_read", "actual-result-ref")
+                        .doesNotContain("user text");
+                assertThat(details.expanded()).isTrue();
+            });
+            assertThat(item.sourceRunId()).contains("run-1");
+        });
+    }
+
+    @Test
+    void marksFinalResponseFromCompletionFactsWithoutChangingMarkdownOrLosingLateCommit() {
+        String markdown = "# 完成\n\n**结果**与 `code` 保持原文";
+        TerminalUiState state = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunOutputReceived(
+                        output(1, "final-generation", AgentRunOutputEventType.ASSISTANT_TEXT_DELTA, markdown)));
+        state = reducer.reduce(
+                state,
+                new TerminalUiAction.RunEventReceived(
+                        event(1, "completed", new RunEventPayloads.RunLifecycle("COMPLETED", 1, "NONE"))));
+        state = reducer.reduce(
+                state,
+                new TerminalUiAction.RunOutputReceived(
+                        output(2, "final-generation", AgentRunOutputEventType.ASSISTANT_TEXT_COMMITTED, "")));
+
+        assertThat(state.transcript().getFirst().status()).isEqualTo("FINAL");
+        assertThat(state.transcript().getFirst().body()).isEqualTo(markdown);
+        assertThat(state.transcript().getLast().kind()).isEqualTo(TranscriptItem.Kind.SUMMARY);
+    }
 
     @Test
     void deviceLoginWaitingPanelShowsTheCodeAndCopyActions() {
@@ -275,7 +366,7 @@ class TerminalUiReducerTest {
                 .singleElement()
                 .satisfies(item -> {
                     assertThat(item.status()).isEqualTo("REQUESTED");
-                    assertThat(item.title()).isEqualTo("execution_run · 查找包含 ToolCall 的文件");
+                    assertThat(item.title()).isEqualTo("Run Command · 查找包含 ToolCall 的文件");
                     assertThat(item.body()).contains("Target: rg -l ToolCall .");
                 });
 
@@ -312,7 +403,7 @@ class TerminalUiReducerTest {
                 .singleElement()
                 .satisfies(item -> {
                     assertThat(item.status()).isEqualTo("SUCCEEDED");
-                    assertThat(item.title()).isEqualTo("execution_run · 查找包含 ToolCall 的文件");
+                    assertThat(item.title()).isEqualTo("Run Command · 查找包含 ToolCall 的文件");
                     assertThat(item.body()).contains("Target: rg -l ToolCall .", "Result: artifact:tool-1");
                 });
     }
@@ -327,7 +418,7 @@ class TerminalUiReducerTest {
                         new RunEventPayloads.ToolLifecycle(
                                 "tool-1", "file_read", "REQUESTED", "NONE", "RuntimeCore.java", ""))));
         assertThat(state.transcript()).singleElement().satisfies(item -> assertThat(item.title())
-                .isEqualTo("file_read · RuntimeCore.java"));
+                .isEqualTo("Read File · RuntimeCore.java"));
     }
 
     @Test
@@ -436,7 +527,7 @@ class TerminalUiReducerTest {
                         Instant.parse("2026-07-27T00:00:02.500Z"))));
         assertThat(succeeded.transcript()).singleElement().satisfies(item -> {
             assertThat(item.durationMillis()).contains(1500L);
-            assertThat(item.title()).isEqualTo("execution_run · rg search");
+            assertThat(item.title()).isEqualTo("Run Command · rg search");
         });
     }
 
@@ -613,12 +704,37 @@ class TerminalUiReducerTest {
         assertThat(requested.activity()).isEqualTo(thinking.activity());
         assertThat(working.status()).isEqualTo("WORKING");
         assertThat(working.activity().revision()).isEqualTo(thinking.activity().revision() + 1);
-        assertThat(working.activity().label()).isEqualTo("execution_run");
+        assertThat(working.activity().label()).isEqualTo("Run Command");
         assertThat(resumedThinking.status()).isEqualTo("THINKING");
         assertThat(resumedThinking.activity().revision())
                 .isEqualTo(working.activity().revision() + 1);
         assertThat(resumedThinking.activity().label()).isEmpty();
         assertThat(modelOutput.activity()).isEqualTo(resumedThinking.activity());
+    }
+
+    @Test
+    void refreshingTheSameRunPreservesTheExecutingToolAndItsClock() {
+        var sessionView = io.haifa.agent.application.coding.terminal.application.CodingTerminalTestSupport.activeView();
+        var loaded = reducer.reduce(
+                TerminalUiState.initial(120, 40), new TerminalUiAction.SessionLoaded(sessionView, List.of()));
+        var working = reducer.reduce(
+                loaded,
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "tool-start",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1", "execution_run", "STARTED", "NONE", "git status", ""))));
+
+        var refreshed = reducer.reduce(working, new TerminalUiAction.SessionLoaded(sessionView, List.of()));
+        var running = reducer.reduce(
+                refreshed,
+                new TerminalUiAction.RunEventReceived(
+                        event(2, "run-resumed", new RunEventPayloads.RunLifecycle("RUNNING", 2, "NONE"))));
+
+        assertThat(refreshed.status()).isEqualTo("WORKING");
+        assertThat(refreshed.activity()).isEqualTo(working.activity());
+        assertThat(running.status()).isEqualTo("WORKING");
+        assertThat(running.activity()).isEqualTo(working.activity());
     }
 
     @Test
@@ -832,9 +948,149 @@ class TerminalUiReducerTest {
                                 "tool-1", "file_stat", "SUCCEEDED", "NONE", "file_stat", "artifact:tool-1"))));
 
         assertThat(state.transcript()).singleElement().satisfies(item -> {
-            assertThat(item.title()).isEqualTo("file_stat");
+            assertThat(item.title()).isEqualTo("Inspect Path");
             assertThat(item.body()).doesNotContain("Target: file_stat");
         });
+    }
+
+    @Test
+    void usesFrozenToolTitleAndMachineNameForNewLifecycleEvents() {
+        TerminalUiState state = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1",
+                                "Read File",
+                                "SUCCEEDED",
+                                "NONE",
+                                "README.md",
+                                "",
+                                Optional.empty(),
+                                "",
+                                "file_read"))));
+
+        assertThat(state.transcript()).singleElement().satisfies(item -> {
+            assertThat(item.title()).isEqualTo("Read File · README.md");
+            assertThat(item.toolName()).contains("file_read");
+        });
+    }
+
+    @Test
+    void mapsLegacyMachineNamesToReadableToolTitles() {
+        TerminalUiState state = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1", "file_read", "SUCCEEDED", "NONE", "README.md", ""))));
+
+        assertThat(state.transcript()).singleElement().satisfies(item -> {
+            assertThat(item.title()).isEqualTo("Read File · README.md");
+            assertThat(item.toolName()).contains("file_read");
+        });
+    }
+
+    @Test
+    void appendsOrdinaryFailureReasonWithoutChangingUnknownStatus() {
+        TerminalUiState failed = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1",
+                                "Apply Patch",
+                                "FAILED",
+                                "PATCH_AMBIGUOUS_MATCH",
+                                "README.md",
+                                "",
+                                Optional.empty(),
+                                "",
+                                "file_patch"))));
+        assertThat(failed.transcript()).singleElement().satisfies(item -> {
+            assertThat(item.title()).isEqualTo("Apply Patch · README.md · Not completed: Multiple matches");
+            assertThat(item.body()).contains("PATCH_AMBIGUOUS_MATCH");
+        });
+
+        TerminalUiState unknown = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1",
+                                "Run Command",
+                                "OUTCOME_UNKNOWN",
+                                "TOOL_OUTCOME_UNKNOWN",
+                                "rm -rf",
+                                "",
+                                Optional.empty(),
+                                "",
+                                "execution_run"))));
+        assertThat(unknown.transcript()).singleElement().satisfies(item -> {
+            assertThat(item.title()).isEqualTo("Run Command · rm -rf");
+            assertThat(item.body()).contains("TOOL_OUTCOME_UNKNOWN");
+        });
+    }
+
+    @Test
+    void appendsNeutralLabelsForDeniedCancelledAndRuleBlockedTools() {
+        TerminalUiState denied = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1",
+                                "Apply Patch",
+                                "DENIED",
+                                "TOOL_APPROVAL_REJECTED",
+                                "README.md",
+                                "",
+                                Optional.empty(),
+                                "",
+                                "file_patch"))));
+        assertThat(denied.transcript()).singleElement().satisfies(item -> assertThat(item.title())
+                .endsWith("· Rejected"));
+
+        TerminalUiState cancelled = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1",
+                                "Apply Patch",
+                                "CANCELLED",
+                                "RUN_CANCELLED",
+                                "README.md",
+                                "",
+                                Optional.empty(),
+                                "",
+                                "file_patch"))));
+        assertThat(cancelled.transcript()).singleElement().satisfies(item -> assertThat(item.title())
+                .endsWith("· Cancelled"));
+
+        TerminalUiState blocked = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1",
+                                "Apply Patch",
+                                "CANCELLED",
+                                "CAPABILITY_DENIED",
+                                "README.md",
+                                "",
+                                Optional.empty(),
+                                "",
+                                "file_patch"))));
+        assertThat(blocked.transcript()).singleElement().satisfies(item -> assertThat(item.title())
+                .endsWith("· Blocked by policy"));
     }
 
     @Test
@@ -1017,6 +1273,25 @@ class TerminalUiReducerTest {
         });
         assertThat(duplicateRefresh.pending()).hasSize(2);
         assertThat(applied.pending()).containsExactly(followUp);
+    }
+
+    @Test
+    void sendingDraftSurvivesAnUnrelatedAcceptedSteer() {
+        TerminalUiState sending = TerminalUiState.initial(120, 40)
+                .withWaiting(Optional.of(new WaitingMessage("w1", "queued draft", WaitingMessage.Phase.SENDING)));
+
+        TerminalUiState next = reducer.reduce(
+                sending,
+                new TerminalUiAction.RunEventReceived(event(
+                        1, "event-1", new RunEventPayloads.RunInputLifecycle("input-1", "ACCEPTED", "safe-point-2"))));
+
+        // The earlier Steer is what is pending; it must not stand in for acceptance of the in-flight draft.
+        assertThat(next.pending())
+                .anySatisfy(message -> assertThat(message.kind()).isEqualTo(PendingMessage.Kind.STEER));
+        assertThat(next.waiting()).hasValueSatisfying(waiting -> {
+            assertThat(waiting.id()).isEqualTo("w1");
+            assertThat(waiting.phase()).isEqualTo(WaitingMessage.Phase.SENDING);
+        });
     }
 
     @Test
@@ -1268,6 +1543,20 @@ class TerminalUiReducerTest {
 
         TerminalUiState toggledOn = reducer.reduce(toggledOff, new TerminalUiAction.SidebarToggled());
         assertThat(toggledOn.sidebarVisible()).isTrue();
+    }
+
+    @Test
+    void sidebarToggledPreservesWaitingDraft() {
+        TerminalUiState withWaiting = TerminalUiState.initial(120, 40)
+                .withWaiting(Optional.of(new WaitingMessage("w1", "keep me", WaitingMessage.Phase.WAITING)));
+
+        TerminalUiState toggled = reducer.reduce(withWaiting, new TerminalUiAction.SidebarToggled());
+
+        assertThat(toggled.sidebarVisible()).isFalse();
+        assertThat(toggled.waiting()).hasValueSatisfying(waiting -> {
+            assertThat(waiting.id()).isEqualTo("w1");
+            assertThat(waiting.text()).isEqualTo("keep me");
+        });
     }
 
     @Test

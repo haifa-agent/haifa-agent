@@ -21,6 +21,7 @@ import java.util.Set;
 /** Deterministic, side-effect-free projection of product and committed Runtime facts. */
 public final class TerminalUiReducer {
     private static final int MAX_TRANSCRIPT_TITLE_LENGTH = 256;
+    private static final int MAX_USER_PREVIEW_CODE_POINTS = 8_000;
     private static final int MAX_TOOL_TARGET_LENGTH = 256;
     private static final String OUTCOME_UNKNOWN_STATUS = "OUTCOME_UNKNOWN";
     private static final String TOOL_OUTCOME_UNKNOWN_CODE = "TOOL_OUTCOME_UNKNOWN";
@@ -29,6 +30,12 @@ public final class TerminalUiReducer {
     private static final Set<String> TERMINAL_RUN_STATUSES = Set.of("COMPLETED", "FAILED", "CANCELLED", "TIMEOUT");
     private static final Set<String> AUTHENTICATION_PROGRESS_STATUSES =
             Set.of("STARTING", "WAITING_USER", "EXCHANGING", "STORING");
+
+    private static String userMessagePreview(String text) {
+        if (text.codePointCount(0, text.length()) <= MAX_USER_PREVIEW_CODE_POINTS) return text;
+        int end = text.offsetByCodePoints(0, MAX_USER_PREVIEW_CODE_POINTS);
+        return text.substring(0, end) + "\n[Preview truncated; full message submitted]";
+    }
 
     public TerminalUiState reduce(TerminalUiState state, TerminalUiAction action) {
         if (action instanceof TerminalUiAction.SessionLoaded loaded) {
@@ -57,12 +64,12 @@ public final class TerminalUiReducer {
                     modelFooterSummary(view),
                     view.summary().activeRunStatus().map(Enum::name).orElse("IDLE"),
                     "");
-            return copy(
+            TerminalUiState loadedState = copy(
                     state,
                     List.copyOf(loaded.resources()),
                     transcript,
                     sameRun ? state.pending() : List.of(),
-                    active.isPresent() ? "THINKING" : "Idle",
+                    active.isPresent() ? (sameRun ? state.status() : "THINKING") : "Idle",
                     state.editorBuffer(),
                     state.editorCursor(),
                     selectorAfterSessionLoad(state.selector(), view),
@@ -75,36 +82,39 @@ public final class TerminalUiReducer {
                     seen,
                     Optional.empty(),
                     state.exitRequested());
+            // Waiting is session-local; never carry a draft into another session.
+            return sameSession ? loadedState : loadedState.withWaiting(Optional.empty());
         }
         if (action instanceof TerminalUiAction.SessionCleared cleared) {
             return copy(
-                    state,
-                    List.of("Loaded resources: none"),
-                    List.of(),
-                    List.of(),
-                    cleared.status(),
-                    "",
-                    0,
-                    Optional.empty(),
-                    new TerminalFooter(
-                            state.footer().project(),
-                            state.footer().gitBranch(),
-                            state.footer().worktree(),
-                            state.footer().worktreeBranch(),
+                            state,
+                            List.of("Loaded resources: none"),
+                            List.of(),
+                            List.of(),
+                            cleared.status(),
                             "",
-                            "context: —",
-                            "",
-                            "",
-                            "IDLE",
-                            ""),
-                    state.columns(),
-                    state.rows(),
-                    Optional.empty(),
-                    Optional.empty(),
-                    Optional.empty(),
-                    java.util.Set.of(),
-                    Optional.empty(),
-                    state.exitRequested());
+                            0,
+                            Optional.empty(),
+                            new TerminalFooter(
+                                    state.footer().project(),
+                                    state.footer().gitBranch(),
+                                    state.footer().worktree(),
+                                    state.footer().worktreeBranch(),
+                                    "",
+                                    "context: —",
+                                    "",
+                                    "",
+                                    "IDLE",
+                                    ""),
+                            state.columns(),
+                            state.rows(),
+                            Optional.empty(),
+                            Optional.empty(),
+                            Optional.empty(),
+                            java.util.Set.of(),
+                            Optional.empty(),
+                            state.exitRequested())
+                    .withWaiting(Optional.empty());
         }
         if (action instanceof TerminalUiAction.HistoryLoaded loaded) {
             if (state.session()
@@ -295,7 +305,11 @@ public final class TerminalUiReducer {
         }
         if (action instanceof TerminalUiAction.InteractionPresented presented) {
             var interaction = presented.interaction();
-            var details = ApprovalDetails.from(interaction);
+            Optional<ClarificationDetails> clarification = ClarificationDetails.from(interaction);
+            ApprovalDetails details = clarification
+                    .map(ClarificationDetails::toApprovalDetails)
+                    .orElseGet(() -> ApprovalDetails.from(
+                            interaction, presented.allowForSession(), presented.sessionApprovalUnavailableReason()));
             List<TranscriptItem> items = new ArrayList<>(state.transcript());
             String id = "interaction-" + interaction.requestId().value();
             int existing = index(items, id);
@@ -304,8 +318,10 @@ public final class TerminalUiReducer {
                     items,
                     new TranscriptItem(
                             id,
-                            TranscriptItem.Kind.APPROVAL,
-                            "Approval · " + details.title(),
+                            clarification.isPresent()
+                                    ? TranscriptItem.Kind.CLARIFICATION
+                                    : TranscriptItem.Kind.APPROVAL,
+                            (clarification.isPresent() ? "Clarification · " : "Approval · ") + details.title(),
                             details.content(),
                             interaction.state().name(),
                             expanded,
@@ -346,15 +362,22 @@ public final class TerminalUiReducer {
         if (action instanceof TerminalUiAction.UserMessageCommitted committed) {
             var items = new ArrayList<>(state.transcript());
             items.add(new TranscriptItem(
-                    committed.id(), TranscriptItem.Kind.USER, "You", committed.text(), "SENT", true));
+                    committed.id(),
+                    TranscriptItem.Kind.USER,
+                    "You",
+                    userMessagePreview(committed.text()),
+                    "SENT",
+                    true));
+            // Preserve the editor: callers clear it explicitly when the committed text came from
+            // the buffer. Auto-submitting a separate Waiting draft must not wipe an unrelated draft.
             return copy(
                     state,
                     state.loadedResources(),
                     items,
                     state.pending(),
                     state.status(),
-                    "",
-                    0,
+                    state.editorBuffer(),
+                    state.editorCursor(),
                     state.selector(),
                     state.footer(),
                     state.columns(),
@@ -403,6 +426,9 @@ public final class TerminalUiReducer {
                     .forEach(merged::add);
             return copyWithPending(state, List.copyOf(merged));
         }
+        if (action instanceof TerminalUiAction.WaitingChanged waiting) {
+            return state.withWaiting(waiting.waiting());
+        }
         if (action instanceof TerminalUiAction.StatusChanged status) {
             return copyWithStatus(state, status.status());
         }
@@ -420,6 +446,13 @@ public final class TerminalUiReducer {
                     .map(value -> value.id().equals(toggle.itemId()) ? value.toggle() : value)
                     .toList();
             return copyWithTranscript(state, items);
+        }
+        if (action instanceof TerminalUiAction.ToggleTechnicalDetails toggle) {
+            return copyWithTranscript(
+                    state,
+                    state.transcript().stream()
+                            .map(value -> value.id().equals(toggle.itemId()) ? value.toggleTechnicalDetails() : value)
+                            .toList());
         }
         if (action instanceof TerminalUiAction.TerminalResized resized) {
             int newCols = Math.max(1, resized.columns());
@@ -508,7 +541,10 @@ public final class TerminalUiReducer {
                     state.activity(),
                     state.exitRequested(),
                     !state.sidebarVisible(),
-                    true);
+                    true,
+                    state.themeName(),
+                    state.cancelArmed(),
+                    state.waiting());
         }
         if (action instanceof TerminalUiAction.ThemeChanged theme) {
             return state.withThemeName(theme.themeName());
@@ -541,18 +577,24 @@ public final class TerminalUiReducer {
                     state.sidebarVisible(),
                     state.sidebarExplicitlyToggled(),
                     state.themeName(),
-                    armed.armed());
+                    armed.armed(),
+                    state.waiting());
         }
         throw new IllegalArgumentException("Unsupported Terminal UI action");
     }
 
     private static TranscriptItem appendToolPreview(TranscriptItem current, ToolOutputPreview preview) {
+        TranscriptItem updated = current.withStatus(current.status(), appendPreview(current.body(), preview));
+        return current.toolDetails()
+                .map(details -> updated.withToolDetails(details.withContent(appendPreview(details.content(), preview))))
+                .orElse(updated);
+    }
+
+    private static String appendPreview(String body, ToolOutputPreview preview) {
         final String heading = "\n" + ToolBodyLines.OUTPUT_STREAMING + "\n";
-        int headingIndex = current.body().indexOf(heading);
-        String prefix = headingIndex >= 0
-                ? current.body().substring(0, headingIndex + heading.length())
-                : current.body() + heading;
-        String previous = headingIndex >= 0 ? current.body().substring(headingIndex + heading.length()) : "";
+        int headingIndex = body.indexOf(heading);
+        String prefix = headingIndex >= 0 ? body.substring(0, headingIndex + heading.length()) : body + heading;
+        String previous = headingIndex >= 0 ? body.substring(headingIndex + heading.length()) : "";
         String channel = previewChannelMarker(previous, preview.channel());
         String outputTruncated =
                 preview.outputTruncated() ? "\n" + ToolBodyLines.EXECUTION_OUTPUT_TRUNCATED + "\n" : "";
@@ -560,7 +602,7 @@ public final class TerminalUiReducer {
         String output = previous + channel + preview.text() + outputTruncated + previewDropped;
         int maximumOutput = Math.max(0, 16_384 - prefix.length());
         if (output.length() > maximumOutput) output = output.substring(output.length() - maximumOutput);
-        return current.withStatus(current.status(), prefix + output);
+        return prefix + output;
     }
 
     private static String previewChannelMarker(String previous, ExecutionOutputChannel channel) {
@@ -593,6 +635,8 @@ public final class TerminalUiReducer {
                         .filter(value -> value.kind() == PendingMessage.Kind.FOLLOW_UP)
                         .toList()
                 : projectPending(state.pending(), event);
+        // SENDING is resolved only by the submission result: a pending Steer may belong to an earlier input.
+        Optional<WaitingMessage> waiting = state.waiting();
         var seen = new HashSet<>(state.seenEventIds());
         seen.add(event.eventId());
         TerminalFooter footer = footer(state.footer(), event);
@@ -602,8 +646,8 @@ public final class TerminalUiReducer {
                 : Optional.empty();
         String projectedStatus = status(event, state.status());
         TerminalActivity projectedActivity = activity(state, event, projectedStatus);
-        return copy(
-                state,
+        return new TerminalUiState(
+                state.header(),
                 state.loadedResources(),
                 transcript,
                 pending,
@@ -623,15 +667,26 @@ public final class TerminalUiReducer {
                 state.exitRequested(),
                 state.sidebarVisible(),
                 state.sidebarExplicitlyToggled(),
-                runSettled ? false : state.cancelArmed());
+                state.themeName(),
+                runSettled ? false : state.cancelArmed(),
+                waiting);
     }
 
     private static Optional<TerminalSelector> selectorAfterSessionLoad(
             Optional<TerminalSelector> current, CodingSessionView view) {
-        if (current.isEmpty() || !current.orElseThrow().kind().startsWith("interaction:")) {
+        if (current.isEmpty()) {
             return current;
         }
-        String expected = "interaction:"
+        String kind = current.orElseThrow().kind();
+        String prefix;
+        if (kind.startsWith("interaction:")) {
+            prefix = "interaction:";
+        } else if (kind.startsWith("clarification:")) {
+            prefix = "clarification:";
+        } else {
+            return current;
+        }
+        String expected = prefix
                 + view.pendingInteraction()
                         .map(interaction -> interaction.requestId().value())
                         .orElse("");
@@ -655,12 +710,13 @@ public final class TerminalUiReducer {
             int index = index(items, "assistant-" + payload.generationId());
             if (index < 0) {
                 items.add(new TranscriptItem(
-                        "assistant-" + payload.generationId(),
-                        TranscriptItem.Kind.ASSISTANT,
-                        "Assistant",
-                        payload.textDelta(),
-                        "STREAMING",
-                        true));
+                                "assistant-" + payload.generationId(),
+                                TranscriptItem.Kind.ASSISTANT,
+                                "Assistant",
+                                payload.textDelta(),
+                                "STREAMING",
+                                true)
+                        .withSourceRunId(event.runId().value()));
             } else {
                 items.set(index, items.get(index).append(payload.textDelta()));
             }
@@ -675,19 +731,30 @@ public final class TerminalUiReducer {
                 duration = Optional.of(Math.max(0, event.occurredAt().toEpochMilli() - startedAt.orElseThrow()));
             }
             boolean expanded = existing >= 0 && items.get(existing).expanded();
+            String displayName = ToolPresentation.displayName(payload);
             upsert(
                     items,
                     new TranscriptItem(
-                            id,
-                            TranscriptItem.Kind.TOOL,
-                            toolTitle(payload),
-                            toolBody(payload),
-                            projectedStatus,
-                            expanded,
-                            Optional.empty(),
-                            startedAt,
-                            duration,
-                            payload.observation().flatMap(RunEventPayloads.ToolObservation::exitCode)));
+                                    id,
+                                    TranscriptItem.Kind.TOOL,
+                                    toolTitle(payload, displayName),
+                                    toolBody(payload, displayName),
+                                    projectedStatus,
+                                    expanded,
+                                    Optional.empty(),
+                                    startedAt,
+                                    duration,
+                                    payload.observation().flatMap(RunEventPayloads.ToolObservation::exitCode),
+                                    Optional.of(ToolPresentation.machineName(payload)),
+                                    Optional.of(new ToolDetails(
+                                            toolBody(payload, displayName, false),
+                                            toolTechnicalDetails(payload),
+                                            existing >= 0
+                                                    && items.get(existing)
+                                                            .toolDetails()
+                                                            .map(ToolDetails::expanded)
+                                                            .orElse(false))))
+                            .withSourceRunId(event.runId().value()));
         } else if (event.payload() instanceof RunEventPayloads.ResourceAvailable payload
                 && !isInternalCheckpoint(payload)) {
             upsert(
@@ -704,8 +771,14 @@ public final class TerminalUiReducer {
             int existing = index(items, id);
             Optional<ApprovalDetails> details =
                     existing < 0 ? Optional.empty() : items.get(existing).approvalDetails();
+            boolean pending = Set.of("PENDING", "REQUESTED").contains(payload.state());
+            if (!pending && details.isEmpty()) {
+                // Automatic approvals have no interactive card; do not retain an unhydrated placeholder.
+                if (existing >= 0) items.remove(existing);
+                return List.copyOf(items);
+            }
             boolean expanded = existing >= 0 && items.get(existing).expanded();
-            String title = details.map(value -> "Approval · " + value.title()).orElse("Approval · " + payload.kind());
+            String title = details.map(value -> "Approval · " + value.title()).orElse("Approval · Approval required");
             String body = details.map(ApprovalDetails::content).orElse("Structured approval details are loading.");
             upsert(
                     items,
@@ -739,7 +812,10 @@ public final class TerminalUiReducer {
         }
         if (event.payload() instanceof RunEventPayloads.RunLifecycle lifecycle
                 && TERMINAL_RUN_STATUSES.contains(lifecycle.status())) {
-            items.add(runSummaryItem(lifecycle, event));
+            if ("COMPLETED".equals(lifecycle.status()))
+                markFinalResponse(items, event.runId().value());
+            items.add(runSummaryItem(lifecycle, event)
+                    .withSourceRunId(event.runId().value()));
         }
         return List.copyOf(items);
     }
@@ -766,13 +842,27 @@ public final class TerminalUiReducer {
         if (event.type() == AgentRunOutputEventType.ASSISTANT_TEXT_DELTA) {
             if (index < 0) {
                 items.add(new TranscriptItem(
-                        itemId, TranscriptItem.Kind.ASSISTANT, "Assistant", event.textDelta(), "STREAMING", true));
+                                itemId,
+                                TranscriptItem.Kind.ASSISTANT,
+                                "Assistant",
+                                event.textDelta(),
+                                "STREAMING",
+                                true)
+                        .withSourceRunId(event.runId().value()));
             } else {
                 items.set(index, items.get(index).append(event.textDelta()));
             }
         } else if (event.type() == AgentRunOutputEventType.ASSISTANT_TEXT_COMMITTED && index >= 0) {
             TranscriptItem current = items.get(index);
             items.set(index, current.withStatus("COMMITTED", current.body()));
+            if (items.stream()
+                    .anyMatch(item -> item.kind() == TranscriptItem.Kind.SUMMARY
+                            && "COMPLETED".equals(item.status())
+                            && item.sourceRunId()
+                                    .filter(event.runId().value()::equals)
+                                    .isPresent())) {
+                markFinalResponse(items, event.runId().value());
+            }
         } else if ((event.type() == AgentRunOutputEventType.RUN_OUTPUT_FAILED
                         || event.type() == AgentRunOutputEventType.RUN_OUTPUT_SUPERSEDED)
                 && index >= 0) {
@@ -781,10 +871,21 @@ public final class TerminalUiReducer {
         return copyWithTranscript(state, List.copyOf(items));
     }
 
+    private static void markFinalResponse(List<TranscriptItem> items, String runId) {
+        for (int index = items.size() - 1; index >= 0; index--) {
+            TranscriptItem item = items.get(index);
+            if (item.kind() == TranscriptItem.Kind.ASSISTANT
+                    && item.sourceRunId().filter(runId::equals).isPresent()) {
+                items.set(index, item.withStatus("FINAL", item.body()));
+                return;
+            }
+        }
+    }
+
     private static String status(AgentRunEvent event, String fallback) {
         if (event.payload() instanceof RunEventPayloads.RunLifecycle lifecycle) {
             return switch (lifecycle.status()) {
-                case "RUNNING" -> "THINKING";
+                case "RUNNING" -> fallback.equalsIgnoreCase("WORKING") ? "WORKING" : "THINKING";
                 case "WAITING_APPROVAL", "WAITING_INTERACTION" -> "WAITING FOR APPROVAL";
                 default -> lifecycle.status();
             };
@@ -833,7 +934,7 @@ public final class TerminalUiReducer {
         String label = "";
         if (event.payload() instanceof RunEventPayloads.ToolLifecycle lifecycle
                 && ("STARTED".equals(lifecycle.status()) || "RUNNING".equals(lifecycle.status()))) {
-            label = boundedActivityLabel(lifecycle.displayName());
+            label = boundedActivityLabel(ToolPresentation.displayName(lifecycle));
         } else if (projectedStatus.equalsIgnoreCase("WORKING")) {
             label = state.activity().label();
         }
@@ -937,10 +1038,16 @@ public final class TerminalUiReducer {
         return -1;
     }
 
-    private static String toolBody(RunEventPayloads.ToolLifecycle lifecycle) {
+    private static String toolBody(RunEventPayloads.ToolLifecycle lifecycle, String displayName) {
+        return toolBody(lifecycle, displayName, true);
+    }
+
+    private static String toolBody(RunEventPayloads.ToolLifecycle lifecycle, String displayName, boolean technical) {
         List<String> lines = new ArrayList<>();
         String target = boundedTarget(lifecycle.targetSummary());
-        if (!target.isBlank() && !target.equalsIgnoreCase(lifecycle.displayName())) {
+        if (!target.isBlank()
+                && !target.equalsIgnoreCase(displayName)
+                && !target.equalsIgnoreCase(ToolPresentation.machineName(lifecycle))) {
             lines.add(ToolBodyLines.TARGET_PREFIX + " " + target);
         }
         Optional<String> reasonCode = normalizedReasonCode(lifecycle.reasonCode());
@@ -949,11 +1056,11 @@ public final class TerminalUiReducer {
             if (!OUTCOME_UNKNOWN_STATUS.equalsIgnoreCase(lifecycle.status())) {
                 lines.add(ToolBodyLines.STATUS_PREFIX + " " + lifecycle.status());
             }
-            reasonCode.ifPresent(reason -> lines.add(ToolBodyLines.REASON_PREFIX + " " + reason));
+            if (technical) reasonCode.ifPresent(reason -> lines.add(ToolBodyLines.REASON_PREFIX + " " + reason));
             lines.add(ToolBodyLines.NEXT_PREFIX + " " + OUTCOME_UNKNOWN_NEXT_ACTION);
         } else {
             reasonCode.ifPresent(reason -> {
-                lines.add(ToolBodyLines.REASON_PREFIX + " " + reason);
+                if (technical) lines.add(ToolBodyLines.REASON_PREFIX + " " + reason);
                 String nextAction = nextAction(reason);
                 if (!nextAction.isBlank()) lines.add(ToolBodyLines.NEXT_PREFIX + " " + nextAction);
             });
@@ -971,7 +1078,21 @@ public final class TerminalUiReducer {
                 });
         String resultRef =
                 lifecycle.resultRef() == null ? "" : lifecycle.resultRef().strip();
-        if (!resultRef.isBlank()) lines.add(ToolBodyLines.RESULT_PREFIX + " " + resultRef);
+        if (technical && !resultRef.isBlank()) lines.add(ToolBodyLines.RESULT_PREFIX + " " + resultRef);
+        return String.join("\n", lines);
+    }
+
+    private static String toolTechnicalDetails(RunEventPayloads.ToolLifecycle lifecycle) {
+        List<String> lines = new ArrayList<>();
+        lines.add("Tool: " + ToolPresentation.machineName(lifecycle));
+        lines.add("Call ID: " + lifecycle.toolCallId());
+        normalizedReasonCode(lifecycle.reasonCode()).ifPresent(reason -> lines.add("Reason: " + reason));
+        if (lifecycle.resultRef() != null && !lifecycle.resultRef().isBlank())
+            lines.add("Result: " + lifecycle.resultRef());
+        lifecycle
+                .observation()
+                .flatMap(RunEventPayloads.ToolObservation::processState)
+                .ifPresent(process -> lines.add("Process: " + process));
         return String.join("\n", lines);
     }
 
@@ -1062,15 +1183,17 @@ public final class TerminalUiReducer {
         return stage + "Reason code: " + code + "\nNext: " + next;
     }
 
-    private static String toolTitle(RunEventPayloads.ToolLifecycle lifecycle) {
-        String toolName = lifecycle.displayName();
+    private static String toolTitle(RunEventPayloads.ToolLifecycle lifecycle, String displayName) {
+        String suffix = ToolPresentation.statusSuffix(lifecycle.status(), lifecycle.reasonCode());
+        String machineName = ToolPresentation.machineName(lifecycle);
         String headline = toolHeadline(lifecycle);
-        if (headline.isBlank() || headline.equalsIgnoreCase(toolName)) {
-            return toolName;
+        if (headline.isBlank() || headline.equalsIgnoreCase(displayName) || headline.equalsIgnoreCase(machineName)) {
+            return displayName + suffix;
         }
-        String prefix = toolName + " · ";
-        int available = MAX_TRANSCRIPT_TITLE_LENGTH - prefix.length();
-        if (headline.length() <= available) return prefix + headline;
+        String prefix = displayName + " · ";
+        int available = MAX_TRANSCRIPT_TITLE_LENGTH - prefix.length() - suffix.length();
+        if (available <= 1) return displayName + suffix;
+        if (headline.length() <= available) return prefix + headline + suffix;
         int end = Math.max(0, available - 1);
         if (end > 0
                 && end < headline.length()
@@ -1078,7 +1201,7 @@ public final class TerminalUiReducer {
                 && Character.isHighSurrogate(headline.charAt(end - 1))) {
             end--;
         }
-        return prefix + headline.substring(0, end) + "…";
+        return prefix + headline.substring(0, end) + "…" + suffix;
     }
 
     /**
@@ -1420,6 +1543,7 @@ public final class TerminalUiReducer {
                 sidebarVisible,
                 sidebarExplicitlyToggled,
                 state.themeName(),
-                cancelArmed);
+                cancelArmed,
+                state.waiting());
     }
 }

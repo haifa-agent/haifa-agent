@@ -10,7 +10,7 @@ Reactor 版本由根 `pom.xml` 的 `revision` 属性单点定义，全部模块 
 <version>${revision}</version>
 ...
 <properties>
-    <revision>0.1.3</revision>
+    <revision>0.1.4</revision>
 </properties>
 ```
 
@@ -22,14 +22,19 @@ Reactor 版本由根 `pom.xml` 的 `revision` 属性单点定义，全部模块 
 ## 本地 SDK 版本化发布
 
 向本地 Maven 仓库发布 SDK 统一使用 `scripts/publish-local-sdk.ps1`，禁止直接执行 `mvn install`：
-- 主检出在 `dev` 分支上发布基线 `0.1.3-SNAPSHOT`；
-- 各 `feat-*` worktree 自动发布到 `0.1.3-<worktree 目录名>-SNAPSHOT`；
+- 主检出在 `dev` 分支上发布基线 `0.1.4-SNAPSHOT`；
+- 各 `feat-*` worktree 自动发布到 `0.1.4-<worktree 目录名>-SNAPSHOT`；
 - 发布过程核对所有公开 JAR/POM 的 SHA-256 和版本展开，并在 `io/haifa/haifa-agent-bom/<version>/haifa-sdk-publish-manifest.json` 写出发布清单。
 
 ## 分层 Maven 入口
 
 本地开发使用 `scripts/invoke-haifa-maven.ps1` 或 `scripts/invoke-haifa-maven.sh`。入口不会改变 Maven
 生命周期或吞掉退出码，只补充资源感知的默认线程数和一份脱敏 JSON 指标：
+
+从运行中的 Coding Agent 终端启动构建时，入口会在 Maven 子进程中丢弃该产品导出的运行时变量
+（`HAIFA_CONFIG`、`HAIFA_DATA_ROOT`、`HAIFA_LOG_DIR`、`HAIFA_SQLITE_DATABASE_PATH`、
+`HAIFA_TRANSCRIPT_ROOT`），否则 CLI 配置测试会读到线上产品的路径与持久化模式而不是自身夹具；其余
+`HAIFA_*` 变量（如 `HAIFA_PYTHON_EXECUTABLE`、`HAIFA_GO_EXECUTABLE`、`HAIFA_NODE_PTY_MODULE`）原样传递。
 
 | 层级 | 默认线程 | 用途 | 是否 clean |
 | --- | ---: | --- | --- |
@@ -84,6 +89,29 @@ classpath。该设置只进入测试 JVM，用于避免系统临时盘与 worktr
 
 `ci-integration` 继续保留给独立或旧调用方，语义仍是 Unit + Integration。`integration-only` 和
 `release-artifacts` 不能脱离同 SHA 聚合门禁单独证明交付完成。
+
+## 提交作者门禁
+
+`.github/workflows/commit-authorship-gate.yml` 在目标为 `dev`、`main` 的 `pull_request`、`merge_group` 和手工
+触发上运行 `Commit authorship gate`，由 `scripts/check_commit_authors.py` 拒绝作者、提交者或归属 trailer
+（`Co-authored-by`、`Co-developed-by`、`Authored-by`）命中 `cursoragent`、`cursor-agent`、`cursor[bot]`、
+`copilot`、`claude`
+的提交。合并提交被排除，因此 GitHub 生成的 PR 与 merge group 合成提交不会命中。提交范围取 PR 基线与头、
+merge group 的 `base_sha`/`head_sha`；无法解析基线时 fail-closed，以退出码 2 失败。
+
+本地按同一条规则复跑：
+
+```powershell
+python .\build-support\scripts\check_commit_authors.py --range origin/dev..HEAD
+```
+
+```bash
+python ./build-support/scripts/check_commit_authors.py --range origin/dev..HEAD
+```
+
+要让它真正阻断合并，需在 `dev`/`main` 的 ruleset 中把该 job 名加入 `required_status_checks`；job 改名会让
+规则失配并长期阻塞合并。Git 的作者与提交者字段由客户端自填、可在推送前改写，所以该门禁只做归属卫生，
+不构成安全边界。
 
 ## 只读影响范围建议
 
@@ -196,3 +224,46 @@ macOS / Linux：
 
 行数按换行符统计；递归扫描跳过 `.git`、`node_modules`、`target`、`__pycache__` 等生成/依赖目录。
 脚本不修改任何文件，仅读取 POM 与源码做统计。
+
+## 本地工作区约定
+
+`local-tmp/` 是被 `.gitignore` 全量忽略的本机工作区，承载构建指标、真实环境运行目录、验收证据和一次性
+产物。它不参与版本控制，所以新文件只能进下面登记的槽位，不在仓库根或 `local-tmp` 根目录随意新建目录。
+
+### 脚本与构建写入的固定槽位
+
+这些路径由代码写死，改名必须同步修改脚本、POM 与测试：
+
+| 路径 | 写入方 |
+| --- | --- |
+| `local-tmp/maven-build-metrics/` | `build-support/scripts/haifa_build_metrics.py`、`summarize_maven_build.py` |
+| `local-tmp/spotless-cache/` | 根 `pom.xml` 的 Spotless `indexFile` |
+| `local-tmp/java-language-server-control.json` | `build-support/scripts/java_language_server.py` |
+| `local-tmp/personal-assistant-real/` | `scripts/real_environment.py` |
+| `local-tmp/autonomous-delivery-ladder/` | `haifa-agent-testing/haifa-agent-autonomous-delivery/tools/ladder_usage.py`、`run_ladder.py` |
+| `local-tmp/autonomous-delivery-assets/` | 同一 `run_ladder.py`（资产缓存，可重建） |
+| `local-tmp/artifacts/ca-update-<stamp>/` | `scripts/refresh-ca/update_coding_agent.py` |
+
+### 人工与智能体创建的入驻槽位
+
+| 槽位 | 放什么 | 保留规则 |
+| --- | --- | --- |
+| `local-tmp/work/<slug>-<YYYYMMDD>/` | 在办任务的中间产物、临时诊断件、一次性脚本 | 结案前移入 `archive/`；超过 30 天未改动视为可删 |
+| `local-tmp/evidence/<kind>-<id>-<YYYYMMDD>/` | 绑定到具体 PR、验收或审计的验证证据 | PR 合并或验收结束后整体移入 `archive/<YYYY-MM>/` |
+| `local-tmp/artifacts/<name>-<YYYYMMDD>/` | 可重建的分发包、基线 JAR/ZIP、runtime db | 只允许存在最新 1 份，生成新的一份时删旧的 |
+| `local-tmp/reference/<repo>-<YYYYMMDD>/` | 可重新获取的第三方克隆、上游快照 | 目录内写 `.source` 记录 URL 与 commit；用完即删 |
+| `local-tmp/archive/<YYYY-MM>/` | 已结案证据，只读 | 只移动不删除，不回迁 |
+
+判定归属只问一个问题：这份东西能不能重建。能重建 → `artifacts/` 且只留一份；不能重建且能证明某个结论
+→ `evidence/`；只是过程垃圾 → `work/` 且到期删除。
+
+### 禁止事项
+
+1. 不在仓库根或 `local-tmp` 根目录新建临时文件；`*.log`、崩溃日志与诊断件进 `work/` 或系统临时目录。
+2. 不保存整仓或整个 worktree 的副本；需要引用某次运行，用 commit SHA 加最小证据。
+3. 同一份分发包不重复保存多份。
+4. 凭据、token、`.env` 不进入 `local-tmp`，保存到仓库外的凭据目录。
+5. 不移动上文登记的固定槽位，除非同步修改脚本、POM 与测试。
+
+每月底，或 `local-tmp` 超过 500 MB 时按上述规则整理一次，并在 `local-tmp/cleanup-<YYYY-MM-DD>.md`
+记录删除依据与剩余项。

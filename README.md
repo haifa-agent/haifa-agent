@@ -3,7 +3,7 @@
 [![Feature PR Fast](https://github.com/haifa-agent/haifa-agent/actions/workflows/feature-pr-fast.yml/badge.svg?branch=dev)](https://github.com/haifa-agent/haifa-agent/actions/workflows/feature-pr-fast.yml)
 ![Java 21](https://img.shields.io/badge/Java-21-ED8B00?logo=openjdk&logoColor=white)
 ![Spring Boot 3.5](https://img.shields.io/badge/Spring%20Boot-3.5-6DB33F?logo=springboot&logoColor=white)
-![Version](https://img.shields.io/badge/version-0.1.3-blue)
+![Version](https://img.shields.io/badge/version-0.1.4-blue)
 
 **Java / Spring 生态的 Agent Runtime、SDK 与本地 Agent 应用。**
 
@@ -11,7 +11,7 @@
 
 你可以直接使用 Haifa Agent 自带的 **Coding Agent** 和 **Personal Assistant**，也可以通过 **Java SDK** 把 Agent 能力嵌入现有 Java / Spring Boot 应用。
 
-> 当前版本：`0.1.3`
+> 当前版本：`0.1.4`
 >
 > 项目仍处于快速演进阶段，README 和 `docs/` 只描述当前源码已经实现的能力。
 
@@ -149,6 +149,9 @@ Tool、MCP、Execution、Memory 等能力不会被默认全部打开，而是根
 export PATH="$HOME/.haifa-agent/coding:$PATH"
 ```
 
+无桌面密钥环的 Linux / WSL2 环境可显式启用文件认证存储：`export HAIFA_CODING_AUTH_STORE=file`。
+此时模型登录凭据保存在当前用户的 `~/.haifa-agent/auth.json`，文件权限为 `0600`；不会自动从桌面密钥库降级。
+
 进入任意项目：
 
 ```bash
@@ -189,7 +192,7 @@ Pure Java 项目：
         <dependency>
             <groupId>io.haifa</groupId>
             <artifactId>haifa-agent-bom</artifactId>
-            <version>0.1.3</version>
+            <version>0.1.4</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>
@@ -204,7 +207,7 @@ Pure Java 项目：
 </dependencies>
 ```
 
-`0.1.3` SDK 通过 GitHub Release 的 Maven 文件仓库 ZIP 分发。配置方式见 [Installation](docs/get-started/installation.md)。
+`0.1.4` SDK 通过 GitHub Release 的 Maven 文件仓库 ZIP 分发。配置方式见 [Installation](docs/get-started/installation.md)。
 
 [Installation →](docs/get-started/installation.md)
 
@@ -513,16 +516,18 @@ Haifa Agent 当前重点面向：
 
 > **单机 / 本地可信环境中的 Java Agent Runtime 与产品开发。**
 
-`0.1.3` 暂不提供：
+`0.1.4` 暂不提供：
 
 - Distributed Worker / Control Plane
 - Graph / Workflow Runtime
 - Enterprise IAM / Approval Workflow
-- Built-in Container / gVisor / microVM Sandbox
+- 产品默认的 Container / gVisor / microVM Sandbox
 - MCP Server Hosting
 - 通用公网 Multi-tenant Agent Server
 
-当前 `host-guarded` Execution 提供的是受控 Host Process Execution，而不是 OS Kernel-level Isolation。
+当前产品默认的 `host-guarded` Execution 提供的是受控 Host Process Execution，而不是
+OS Kernel-level Isolation。SDK 另提供显式装配的 Linux `docker-aio` Provider 候选；其真实
+Linux 运行与隔离证据仍为 `NOT_RUN`，不属于产品默认路径。
 
 如果需要执行完全不可信代码，应把 Haifa Agent 放入外部 VM / Container 等安全边界。
 

@@ -9,6 +9,7 @@ import io.haifa.agent.runtime.api.display.BoundedText;
 import io.haifa.agent.runtime.api.display.ToolDisplayBudget;
 import java.time.Instant;
 import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class PersonalAssistantActivityTest {
@@ -189,6 +190,16 @@ class PersonalAssistantActivityTest {
         ActivityView merged = PersonalAssistantApplication.mergeActivity(earlier, terminal);
         assertThat(merged.version()).isEqualTo(5);
         assertThat(merged.toolDetail()).isEqualTo(terminal.toolDetail());
+    }
+
+    @Test
+    void toolKindUsesMachineNameWhenDisplayNameIsAReadableTitle() {
+        assertThat(PersonalAssistantApplication.toolKind("mcp.remote", "Search Docs", Set.of()))
+                .isEqualTo(ActivityKind.MCP);
+        assertThat(PersonalAssistantApplication.toolKind("file_read", "Read File", Set.of()))
+                .isEqualTo(ActivityKind.TOOL);
+        assertThat(PersonalAssistantApplication.toolKind("", "mcp.legacy", Set.of()))
+                .isEqualTo(ActivityKind.MCP);
     }
 
     private static RunEventPayloads.ToolLifecycle lifecycle(

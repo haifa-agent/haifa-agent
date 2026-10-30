@@ -1,5 +1,140 @@
 # Changelog
 
+## 0.1.4 - 2026-10-30
+
+- Release distributions include Windows x64 Coding Agent and Personal Assistant packages, a Linux x64
+  Personal Assistant server package, a Linux x64 Coding Agent portable archive and the complete SDK Maven
+  file repository for 0.1.4. No new SQLite migration is required; the package layout changes and removed
+  behaviour are listed in [the upgrade guide](docs/reference/upgrading.md).
+
+- The Runtime owns a clarification loop: `ask_clarification` turns one model call into a clarification
+  interaction of 1..3 questions with single- or multi-choice options plus an optional free-text answer,
+  validates the reply against the frozen input contract, persists it as the Tool result and resumes the Run.
+  A dismissed clarification resumes the Run with an unanswered payload instead of cancelling it, a Run may
+  ask at most three times, and interception only applies to calls that carry `questions`, so third-party
+  `ask_clarification` tools still dispatch normally. Coding Terminal renders a `Clarification · Step X of Y`
+  card with a selector, toggled options, per-option rationale, a composer free-text lane and a cancel entry,
+  and the transcript keeps a readable answer summary instead of the internal `selected=`/`custom=` payload.
+
+- `haifa-agent-sandbox-docker` adds a Docker + AIO Sandbox Provider behind the `ContainerExecutionPlatforms`
+  one-shot facade in the SDK Starter: cap-drop ALL, no-new-privileges, non-privileged cgroup v2 memory/CPU/PID
+  limits, a single workspace mount and loopback/isolated networking. Container failures never fall back to
+  host execution, and local Windows Docker Desktop named pipes, drive mount aliases and published loopback
+  management ports are supported.
+
+- `HostExecutionPlatforms.hostGuarded(...)` gains a backward-compatible overload for immutable trusted
+  non-sensitive CLI config/data/`PATH` overrides. Host user, system and temp boundaries stay protected, and the
+  effective environment digest joins the existing profile, configuration and Tool identities, so previously
+  frozen bindings reject the new shape.
+
+- Coding Agent on headless Linux selects the existing `0600` file-backed auth store with
+  `HAIFA_CODING_AUTH_STORE=file`; the Windows credential store stays the default and file mode is rejected on
+  Windows/macOS or for unknown store names. Personal Assistant model credentials follow the host platform the
+  same way, so a Linux server can store and reuse model keys.
+
+- Personal Assistant gains a `pa-server` packaging target for Linux and shares one layout with the Windows
+  package: `haifa-personal-assistant-{windows,linux}-x64-v<version>.zip`, an `app.jar` entry name, a common
+  `conf/pa.env` key set, a `data/personal-assistant` data root and systemd/nginx/compose materials. The Linux
+  unit no longer runs as root, and nginx serves the SPA from the install directory on relative `/api/v1` and
+  `/v1/admin` bases.
+
+- Session approval covers large file content previews when the full target remains certified by the Runtime;
+  incomplete or redacted targets still require individual approval. Failed automatic approvals fall back to a prompt.
+- Coding Terminal can reopen dismissed pending approval options with `/approval reopen` (or `/approval`), preserves
+  the draft, ignores stale query completions, and removes resolved approval loading placeholders.
+- Tool execution timers display `RUNNING` with the tool label; refreshing the same Run preserves its current
+  activity and clock instead of resetting the display to `THINKING`.
+- Docker AIO supports local Windows Docker Desktop named pipes, drive mount aliases and published loopback
+  management ports, with an opt-in real-daemon test for workspace read/write as UID/GID 1000.
+
+- Coding Agent offers a Linux x64 portable distribution through `ca-linux`, with a bundled native Java 21
+  runtime, an executable POSIX launcher, platform-specific staging/cache, and offline archive verification.
+
+- Long pasted messages keep their full submission body while the transcript shows a bounded Unicode-safe preview,
+  preventing the Terminal from exiting when a user message exceeds the transcript card's display limit.
+
+
+- Coding Terminal shows progress for streamed multiline pastes while preserving ordinary fast typing, draft
+  boundaries and the pasted body. Buffered characters reuse an unchanged frame and move one idle-check deadline,
+  avoiding a full view rebuild and a new idle timer for every pasted character.
+
+
+- Docker AIO warm sessions no longer retain a workspace container after a cancellation: `cancel()` captures the
+  container before it interrupts the execution thread, and a container that finishes creating after the
+  cancellation request is destroyed instead of entering the warm pool. This removes the intermittent macOS
+  `DockerAioWarmSandboxProviderTest.cancellingInFlightWarmExecutionAbortsImmediatelyAndDestroysContainer` failure.
+- SQLite store verifies the database files before a write unit of work queues for the writer slot, so the slot
+  covers database work only; the queue fallback is now configured by
+  `SqliteStoreConfiguration.writerQueueTimeoutMillis` (default 60 s) and an expired wait is retried once, because
+  it happens before any statement runs.
+
+- SQLite store serves pure queries (session messages, runs, attempts, idempotency, interaction, checkpoint,
+  memory, summary and event reads) in a deferred `query_only` scope instead of the process-wide writer slot,
+  so listing, paging and UI polling no longer serialize behind a turn's writes.
+  `RuntimeUnitOfWork.executeReadOnly` declares that scope for the Runtime and `DefaultAgentRuntime.messages`
+  uses it; writes attempted inside a read scope still fail closed.
+
+- Coding Terminal queues Enter pressed during an Active Run into a local Waiting draft above the editor instead of
+  steering immediately: empty Enter sends it as a Steer, `alt+e` edits it, and Esc cancels only the draft. When the
+  Run settles the draft is submitted as the next Turn without clearing an unrelated editor draft, it never carries
+  across a session switch, and its submission never blocks the next frame.
+
+- `docker-aio` sandbox provider supports warm session lifecycle mode (`DockerAioLifecycleMode.WARM_SESSION`, default per revised ADR-038):
+  containers are retained and reused per workspace with idle timeout eviction, eliminating repeated cold-start
+  container creation and teardown overhead across multi-turn tool commands (~4.3x speedup). Includes strict
+  timeout budget deadline deduction, in-flight cancellation container reset, concurrency queuing within deadline,
+  cold-start cleanup rollback, startup orphan sweep, and ephemeral fallback mode (`EPHEMERAL`).
+
+- Coding Terminal offers `Allow for this session` for ordinary built-in tool approvals. Consent activates only
+  after the initial approval is applied, remains local to the Coding Session and app instance, and can be cleared
+  with `/approval reset`; workspace trust, credential interactions and hard denials retain their existing checks.
+
+- Coding Terminal extends the sidebar divider through the composer and selectors. Input wraps within the
+  main column when the sidebar is visible, and reflows on sidebar toggles and terminal resize without losing drafts.
+
+- Coding Terminal separates tool results from optional technical details, keeps non-zero command exits neutral,
+  and labels completed responses without changing Markdown rendering. New leader shortcuts copy the rendered
+  final response, return to its own Run's tool activity, and expand technical facts while preserving drafts.
+  Approval actions use readable English labels; persistent project permission rules and the remaining per-tool rich
+  previews stay deferred.
+
+- Successful `file_create`, `file_write` and `file_patch` results carry a bounded, display-only `outputPreview`:
+  the content this call actually wrote, or a Unified Diff rebuilt from the hunks it actually applied. Runtime
+  copies that copy into the tool observation after credential redaction, keeps a producer's truncation facts,
+  and falls back to the bounded summary for every tool that produces no display copy. Coding Terminal therefore
+  shows real written content and a per-call diff instead of only the success summary; persistent project permission rules,
+  directory tables, read paging and the other per-tool rich previews remain unimplemented.
+
+- A slow SQLite writer no longer turns into a hard failure for every other writer: the in-process write queue
+  waits under its own fallback bound instead of `busy_timeout × 2`, takes the write slot before leasing a
+  connection, and names the holding thread when the slot is never released. Storage failures that interrupt a Run
+  now surface as the new `STORAGE_UNAVAILABLE` error code (category `STORAGE`) instead of `MODEL_CALL_FAILED`, and
+  `sqlite.uow` logs the queue wait as `waitMs` and is emitted on the failure path too. The fallback now logs
+  `sqlite.writer.timeout` with the actual wait, the lock owner/state/stack and an explicit no-holder marker, so a
+  starved waiter is distinguishable from a leaked writer slot.
+
+- MCP connection initialization no longer blocks inside `synchronized` monitors or a global connection-manager
+  lock. Concurrent acquires for one server/tenant/principal/credential binding share a single handshake, different
+  bindings connect in parallel, and the facade/stdio/OAuth lifecycle uses virtual-thread-friendly locks, so a slow
+  MCP server cannot pin carriers or stall unrelated HTTP and Store requests.
+
+- Coding Terminal shows frozen tool titles such as `Read File`, `Apply Patch` and `Run Command` in tool
+  rows while keeping machine names in expanded metadata. Ordinary single-call failures use a one-line
+  yellow "unfinished" warning, denials and cancellations are neutral, and unknown outcomes keep their
+  warning details; Run failures remain red. Tool lifecycle events now carry an optional `toolName` so
+  display titles and machine identities stay separate, and shortened built-in titles use concise
+  workspace-scoped model descriptions.
+
+- Coding Terminal keeps hyphenated table cells and deeply nested CJK/emoji content within their
+  width budgets, normalizes undersized render requests, and allocates table column widths by binary search.
+
+- Runtime avoids an intermittent in-memory context-cache deadlock during concurrent Run completion,
+  preserves invalidation during context rebuilds, and projects Run state and output within one repository read.
+
+- Coding Terminal renders assistant Markdown with heading levels, dedicated emphasis/code colors,
+  block spacing, nested lists and quotes, code panels and responsive pipe tables. Streaming reuses
+  stable blocks, Resize only reflows, and an explicit internal startup switch retains the line renderer.
+
 ## 0.1.3 - 2026-10-22
 
 - Release distributions include Windows x64 Coding Agent and Personal Assistant packages plus the complete

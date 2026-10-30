@@ -2,6 +2,7 @@ package io.haifa.agent.application.coding.terminal.event;
 
 import io.haifa.agent.application.coding.terminal.state.PendingMessage;
 import io.haifa.agent.application.coding.terminal.state.TerminalSelector;
+import io.haifa.agent.application.coding.terminal.state.WaitingMessage;
 import io.haifa.agent.application.project.product.coding.CodingSessionHistoryPage;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationProgressView;
@@ -11,6 +12,7 @@ import io.haifa.agent.runtime.api.AgentRunOutputEvent;
 import io.haifa.agent.runtime.api.InteractionResponseReceipt;
 import io.haifa.agent.runtime.api.InteractionView;
 import java.util.List;
+import java.util.Optional;
 
 public sealed interface TerminalUiAction {
     record SessionLoaded(CodingSessionView view, List<String> resources) implements TerminalUiAction {}
@@ -68,7 +70,17 @@ public sealed interface TerminalUiAction {
 
     record ToolOutputPreviewReceived(ToolOutputPreview preview) implements TerminalUiAction {}
 
-    record InteractionPresented(InteractionView interaction) implements TerminalUiAction {}
+    record InteractionPresented(
+            InteractionView interaction, boolean allowForSession, Optional<String> sessionApprovalUnavailableReason)
+            implements TerminalUiAction {
+        public InteractionPresented(InteractionView interaction, boolean allowForSession) {
+            this(interaction, allowForSession, Optional.empty());
+        }
+
+        public InteractionPresented(InteractionView interaction) {
+            this(interaction, false);
+        }
+    }
 
     record InteractionReceiptReceived(InteractionResponseReceipt receipt) implements TerminalUiAction {}
 
@@ -80,6 +92,8 @@ public sealed interface TerminalUiAction {
 
     record PendingChanged(List<PendingMessage> messages) implements TerminalUiAction {}
 
+    record WaitingChanged(java.util.Optional<WaitingMessage> waiting) implements TerminalUiAction {}
+
     record StatusChanged(String status) implements TerminalUiAction {}
 
     record SelectorOpened(TerminalSelector selector) implements TerminalUiAction {}
@@ -89,6 +103,8 @@ public sealed interface TerminalUiAction {
     record SelectorClosed() implements TerminalUiAction {}
 
     record ToggleExpanded(String itemId) implements TerminalUiAction {}
+
+    record ToggleTechnicalDetails(String itemId) implements TerminalUiAction {}
 
     record TerminalResized(int columns, int rows) implements TerminalUiAction {}
 

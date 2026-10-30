@@ -114,7 +114,7 @@ Starter 的 `standardApproval()` preset 对任何带 NETWORK_ACCESS 的 Tool 都
 调用会产生一次 Interaction。宿主用 `agent.runs().pendingInteraction(runId)` 和
 `agent.runs().respond(...)` 响应；需要无人值守时应通过 `haifa-agent-sdk` 显式装配自己的 Policy 规则。
 
-0.1.3 Native MCP Client 只提供 Streamable HTTP；stdio 需要 Execution Broker，暂不在 Starter 公开。
+0.1.4 Native MCP Client 只提供 Streamable HTTP；stdio 需要 Execution Broker，暂不在 Starter 公开。
 
 ### 自定义装配：把声明式 MCP 接入任意 Builder
 
@@ -204,7 +204,50 @@ execution.applyTo(builder); // 注册 execution_run、managed resource 与宿主
 - 本入口不安装 execution 专用 schema 校验器：自持 Tool platform 的产品应把 `registration()`
   注册到自己的 platform，并按 Personal Assistant 的方式用 `ExecutionToolSchemaValidator` 包裹校验器。
 
+可信宿主需要给 CLI 指定配置目录、数据目录或 PATH 时，使用四参数重载：
+
+```java
+var execution = HostExecutionPlatforms.hostGuarded(
+        spec, caller.tenant(), caller.principal(),
+        Map.of("MY_CLI_CONFIG_DIR", cliConfigRoot.toString(),
+               "MY_CLI_DATA_DIR", cliDataRoot.toString()));
+```
+
+覆盖 Map 必须来自可信产品配置，只允许非敏感部署事实，不接受模型参数，也不是 Token/Secret 注入入口。
+装配时冻结快照，后续修改原 Map 不影响子进程，不修改 JVM 属性或全局环境。三参数入口和空 Map 保持原行为，
+不会额外继承产品环境变量；非空覆盖的有效环境名称和值摘要进入既有 Sandbox profile、configuration 和 Tool binding
+身份，环境改变后旧冻结绑定不能复用。环境值不会出现在平台诊断或审批文案中。
+
+名称须符合 `[A-Za-z_][A-Za-z0-9_]{0,127}`；覆盖及合并后环境最多 256 项，值非空白、无 NUL 且不超过
+32,768 字符。Windows 名称统一为大写并拒绝大小写别名冲突。`PATH` 可以由可信宿主覆盖并绑定身份；
+HOME、用户/系统/临时目录、XDG、Shell、解释器环境、认证 socket 和固定非交互控制变量禁止覆盖，疑似凭据或
+代理变量同样拒绝。此 Map 只选择进程环境，不形成 OS 用户隔离，网络仍为普通宿主网络。
+
 验证：`./mvnw -pl :haifa-agent-sdk-starter -am test`。
+
+### Linux 容器执行（Explicit Docker AIO execution）
+
+`ContainerExecutionPlatforms.dockerAio(...)` 是宿主执行门面的显式容器版本，仍只注册同一个
+`execution_run` Tool、同一个 Broker/Policy/Approval 路径：
+
+```java
+var execution = ContainerExecutionPlatforms.dockerAio(
+        new ContainerExecutionPlatforms.ContainerExecutionSpec(
+                workspaceRoot, Duration.ofSeconds(30), Duration.ofMinutes(5), 1_048_576, 2_000),
+        dockerAioConfiguration,
+        caller.tenant(), caller.principal());
+execution.applyTo(builder);
+```
+
+- **可信配置**：镜像 digest、Unix socket、容器 workspace、UID/GID、资源与期限来自
+  `DockerAioSandboxConfiguration`；模型不能选择镜像、mount、网络、socket 或宿主目录。
+- **生命周期**：`open` 只分配本地 session；`execute` 在请求 deadline 内完成 create/ready/exec/
+  stop/delete/network delete；`close` 只做幂等兜底。容器/网络身份按安装+session labels 精确回收。
+- **失败关闭**：Docker/镜像/权限/网络组合不可用即失败，不回退 `host-guarded`；HTTP 200 不被当作命令成功。
+- **能力边界**：`supportsManagedProcess=false`，MCP stdio 与交互终端不迁入容器；当前不做流式 stdout/stderr。
+- **未验证**：真实 Linux 容器、isolated network、cgroup、挂载/链接与取消回收均 `NOT_RUN`；
+  该入口不是产品默认，也不改变 CA/PA 默认配置。
+- Skill 容器装配尚未提供；`SkillScriptPlatforms.trusted(...)` 仍只接受宿主 runtime 预检。
 
 ### 冻结技能脚本执行（Trusted Skill script entry files）
 

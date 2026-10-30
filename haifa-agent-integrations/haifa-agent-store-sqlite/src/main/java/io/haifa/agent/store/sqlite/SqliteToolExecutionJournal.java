@@ -117,7 +117,7 @@ public final class SqliteToolExecutionJournal implements ToolExecutionJournal {
 
     @Override
     public Optional<ToolDispatchEvidence> dispatchEvidence(AgentRunId runId, RuntimeIdempotencyKey key) {
-        return execute(() -> Optional.ofNullable(
+        return read(() -> Optional.ofNullable(
                         unitOfWork.mapper(RuntimeStoreMapper.class).findToolJournal(runId.value(), key.value()))
                 .filter(row -> row.dispatchExecutionId() != null)
                 .map(this::dispatchEvidence));
@@ -184,7 +184,7 @@ public final class SqliteToolExecutionJournal implements ToolExecutionJournal {
 
     @Override
     public Optional<ToolJournalState> state(AgentRunId runId, RuntimeIdempotencyKey key) {
-        return execute(() -> Optional.ofNullable(
+        return read(() -> Optional.ofNullable(
                         unitOfWork.mapper(RuntimeStoreMapper.class).findToolJournal(runId.value(), key.value()))
                 .map(ToolJournalRow::state)
                 .map(ToolJournalState::valueOf));
@@ -192,11 +192,11 @@ public final class SqliteToolExecutionJournal implements ToolExecutionJournal {
 
     @Override
     public boolean hasUncertain(AgentRunId runId) {
-        return execute(() -> unitOfWork.mapper(RuntimeStoreMapper.class).hasUncertainToolJournal(runId.value()) == 1);
+        return read(() -> unitOfWork.mapper(RuntimeStoreMapper.class).hasUncertainToolJournal(runId.value()) == 1);
     }
 
     private Optional<ToolResult> result(AgentRunId runId, RuntimeIdempotencyKey key, ToolJournalState expectedState) {
-        return execute(() -> {
+        return read(() -> {
             ToolJournalRow row =
                     unitOfWork.mapper(RuntimeStoreMapper.class).findToolJournal(runId.value(), key.value());
             if (row == null || !expectedState.name().equals(row.state())) return Optional.empty();
@@ -305,6 +305,16 @@ public final class SqliteToolExecutionJournal implements ToolExecutionJournal {
     private <T> T execute(Supplier<T> work) {
         try {
             return unitOfWork.execute(work);
+        } catch (SqliteStoreException exception) {
+            if (exception.getCause() instanceof RuntimeException runtimeException) throw runtimeException;
+            throw exception;
+        }
+    }
+
+    /** Queries read committed state without reserving the process-wide write slot. */
+    private <T> T read(Supplier<T> work) {
+        try {
+            return unitOfWork.executeReadOnly(work);
         } catch (SqliteStoreException exception) {
             if (exception.getCause() instanceof RuntimeException runtimeException) throw runtimeException;
             throw exception;

@@ -6,8 +6,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.haifa.agent.application.coding.terminal.event.TerminalEventPump;
 import io.haifa.agent.application.coding.terminal.event.TerminalInput;
 import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
+import io.haifa.agent.application.coding.terminal.state.ClarificationDetails;
+import io.haifa.agent.application.coding.terminal.state.TerminalSelectorDetail;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiReducer;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
+import io.haifa.agent.application.coding.terminal.state.TranscriptItem;
 import io.haifa.agent.application.project.product.ProjectProductException;
 import io.haifa.agent.application.project.product.coding.CodingModelOption;
 import io.haifa.agent.application.project.product.coding.CodingWorkspaceView;
@@ -21,6 +24,304 @@ import org.junit.jupiter.api.Test;
 
 class CodingTerminalInteractionTest {
     @Test
+    void approvalReopenUsesControlEffectsAndDoesNotResurrectAResolvedInteraction() throws Exception {
+        var started = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        FakeClient client = new FakeClient(activeView(Optional.of(approval()))) {
+            @Override
+            public Optional<InteractionView> pendingInteraction(io.haifa.agent.core.run.AgentRunId runId) {
+                started.countDown();
+                try {
+                    release.await();
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(interrupted);
+                }
+                return Optional.of(approval());
+            }
+        };
+        var controls = new ArrayDeque<Runnable>();
+        var interactive = new ArrayDeque<Runnable>();
+        var maintenance = new ArrayDeque<Runnable>();
+        var pump = new TerminalEventPump(32);
+        var controller = new CodingTerminalController(
+                PROJECT_ID,
+                client,
+                pump,
+                new TerminalUiReducer(),
+                TerminalUiState.initial(120, 40),
+                controls::add,
+                interactive::add,
+                maintenance::add);
+        controller.open(SESSION_ID);
+        controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
+        controller.accept(input(TerminalInput.Kind.EXECUTE_COMMAND, "/approval"));
+        assertThat(interactive).isEmpty();
+        var worker = new Thread(controls.removeFirst());
+        worker.start();
+        try {
+            assertThat(started.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, "draft", 5));
+            pump.offer(new TerminalUiAction.TerminalResized(90, 25));
+            pump.offer(new TerminalUiAction.RunEventReceived(event(
+                    1, new RunEventPayloads.InteractionLifecycle("interaction-1", "APPROVAL", "APPLIED", "safe"))));
+            controller.drainEvents();
+            assertThat(controller.state().editorBuffer()).isEqualTo("draft");
+            assertThat(controller.state().columns()).isEqualTo(90);
+        } finally {
+            release.countDown();
+            worker.join(5_000);
+        }
+        controller.drainEvents();
+        assertThat(controller.state().selector()).isEmpty();
+        assertThat(client.reconcileCalls).isZero();
+    }
+
+    @Test
+    void dismissedPendingApprovalCanBeReopenedWithoutLosingTheDraft() {
+        for (var close : List.of(TerminalInput.Kind.CANCEL_OR_CLOSE, TerminalInput.Kind.INTERRUPT)) {
+            FakeClient client = new FakeClient(activeView(Optional.of(approval())));
+            var controller = controller(client);
+            controller.open(SESSION_ID);
+            controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, "draft", 5));
+            controller.accept(input(close, ""));
+            assertThat(controller.state().selector()).isEmpty();
+            controller.accept(input(
+                    TerminalInput.Kind.EXECUTE_COMMAND,
+                    close == TerminalInput.Kind.INTERRUPT ? "/approval reopen" : "/approval"));
+            assertThat(controller.state().selector()).hasValueSatisfying(selector -> assertThat(selector.options())
+                    .containsExactly("Reject", "Allow once"));
+            assertThat(controller.state().editorBuffer()).isEqualTo("draft");
+            assertThat(client.respondedActions).isEmpty();
+        }
+    }
+
+    @Test
+    void reopeningWithoutAnActiveRunExplainsThatNoApprovalIsPending() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        var controller = controller(client);
+        controller.accept(input(TerminalInput.Kind.EXECUTE_COMMAND, "/approval reopen"));
+        assertThat(controller.state().status()).isEqualTo("No approval is pending");
+        assertThat(controller.state().selector()).isEmpty();
+        assertThat(client.pendingInteractionCalls).isZero();
+    }
+
+    @Test
+    void restoredPendingApprovalCanBeReopenedWithoutAnActiveRunSnapshot() {
+        FakeClient client = new FakeClient(view(Optional.of(approval())));
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+        controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
+        controller.accept(input(TerminalInput.Kind.EXECUTE_COMMAND, "/approval reopen"));
+        assertThat(controller.state().selector()).isPresent();
+        assertThat(client.respondedActions).isEmpty();
+    }
+
+    @Test
+    void resettingSessionApprovalRunsInTheBackgroundAndKeepsTheComposerUsable() throws Exception {
+        var started = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var effects = new ArrayDeque<Runnable>();
+        FakeClient client = new FakeClient(view(Optional.empty())) {
+            @Override
+            public void resetSessionApproval(io.haifa.agent.core.session.AgentSessionId sessionId) {
+                assertThat(sessionId).isEqualTo(SESSION_ID);
+                started.countDown();
+                try {
+                    release.await();
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(interrupted);
+                }
+            }
+        };
+        var pump = new TerminalEventPump(32);
+        var controller = new CodingTerminalController(
+                PROJECT_ID, client, pump, new TerminalUiReducer(), TerminalUiState.initial(120, 40), effects::add);
+        controller.open(SESSION_ID);
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "/approval reset"));
+        var worker = new Thread(effects.remove());
+        worker.start();
+        try {
+            assertThat(started.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(controller.state().status()).isEqualTo("Resetting session approval");
+            controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, "next task", 9));
+            pump.offer(new TerminalUiAction.TerminalResized(90, 25));
+            controller.drainEvents();
+            controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
+            assertThat(controller.state().columns()).isEqualTo(90);
+            assertThat(controller.state().editorBuffer()).isEqualTo("next task");
+        } finally {
+            release.countDown();
+            worker.join(5_000);
+        }
+        controller.drainEvents();
+        assertThat(controller.state().status()).isEqualTo("Session approval reset · ask each time");
+    }
+
+    @Test
+    void sessionApprovalUsesTheProductOptionAndKeepsTheUiResponsiveUntilItReturns() throws Exception {
+        var started = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var effects = new ArrayDeque<Runnable>();
+        FakeClient client = new FakeClient(view(Optional.of(approval()))) {
+            @Override
+            public Optional<io.haifa.agent.application.project.product.coding.client.CodingApprovalPrompt>
+                    prepareApproval(InteractionView interaction) {
+                return Optional.of(new io.haifa.agent.application.project.product.coding.client.CodingApprovalPrompt(
+                        interaction, true));
+            }
+
+            @Override
+            public io.haifa.agent.runtime.api.InteractionResponseReceipt allowForSession(
+                    InteractionView interaction, String key) {
+                started.countDown();
+                try {
+                    release.await();
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(interrupted);
+                }
+                return respond(interaction, InteractionAction.APPROVE, key);
+            }
+        };
+        var pump = new TerminalEventPump(32);
+        var controller = new CodingTerminalController(
+                PROJECT_ID, client, pump, new TerminalUiReducer(), TerminalUiState.initial(120, 40), effects::add);
+        controller.open(SESSION_ID);
+        assertThat(controller.state().selector().orElseThrow().options())
+                .containsExactly("Reject", "Allow once", "Allow for this session");
+        controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, "保留草稿", 4));
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+        var worker = new Thread(effects.remove());
+        worker.start();
+        try {
+            assertThat(started.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(controller.state().selector()).isEmpty();
+            assertThat(controller.state().status()).isEqualTo("Approving");
+            pump.offer(new TerminalUiAction.TerminalResized(90, 25));
+            controller.drainEvents();
+            controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
+            assertThat(controller.state().columns()).isEqualTo(90);
+            assertThat(controller.state().editorBuffer()).isEqualTo("保留草稿");
+        } finally {
+            release.countDown();
+            worker.join(5_000);
+        }
+        controller.drainEvents();
+        assertThat(client.respondedActions).containsExactly(InteractionAction.APPROVE);
+    }
+
+    @Test
+    void togglesAMultiChoiceClarificationOptionOnAndOff() {
+        FakeClient client = new FakeClient(view(Optional.of(clarification(true))));
+        client.reconciledView = view(Optional.empty());
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+
+        assertThat(controller.state().selector().orElseThrow().options())
+                .containsExactly("[ ] Postgres", "[ ] SQLite", "Type your own answer", "Send answer", "Cancel");
+
+        controller.accept(input(TerminalInput.Kind.TOGGLE_SELECTION, ""));
+        assertThat(controller.state().selector().orElseThrow().options().get(0)).isEqualTo("[\u2713] Postgres");
+
+        controller.accept(input(TerminalInput.Kind.TOGGLE_SELECTION, ""));
+        assertThat(controller.state().selector().orElseThrow().options().get(0)).isEqualTo("[ ] Postgres");
+    }
+
+    @Test
+    void submitsFreeTextAsTheClarificationAnswerInsteadOfASteer() {
+        FakeClient client = new FakeClient(view(Optional.of(clarification(false))));
+        client.reconciledView = view(Optional.empty());
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+        assertThat(controller.state().selector()).isEmpty();
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "first line\nsecond line"));
+
+        assertThat(client.steeredMessages).isEmpty();
+        assertThat(client.respondedInputs).hasSize(1);
+        String answer = ((io.haifa.agent.core.content.TextPart)
+                        client.respondedInputs.get(0).get(0))
+                .text();
+        assertThat(answer).isEqualTo("selected=\ncustom=first line second line");
+    }
+
+    @Test
+    void submitsFreeTextAsAFollowUpInsteadOfASteer() {
+        FakeClient client = new FakeClient(view(Optional.of(clarification(false))));
+        client.reconciledView = view(Optional.empty());
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+        assertThat(controller.state().selector()).isEmpty();
+
+        controller.accept(input(TerminalInput.Kind.FOLLOW_UP, "sqlite"));
+
+        assertThat(client.steeredMessages).isEmpty();
+        assertThat(client.respondedInputs).hasSize(1);
+        assertThat(((io.haifa.agent.core.content.TextPart)
+                                client.respondedInputs.get(0).get(0))
+                        .text())
+                .isEqualTo("selected=\ncustom=sqlite");
+    }
+
+    @Test
+    void togglesASingleChoiceClarificationOptionOnAndOff() {
+        FakeClient client = new FakeClient(view(Optional.of(clarification(false))));
+        client.reconciledView = view(Optional.empty());
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+
+        assertThat(controller.state().selector().orElseThrow().options())
+                .containsExactly("( ) Postgres", "( ) SQLite", "Type your own answer", "Cancel");
+
+        controller.accept(input(TerminalInput.Kind.TOGGLE_SELECTION, ""));
+        assertThat(controller.state().selector().orElseThrow().options().get(0)).isEqualTo("(\u2713) Postgres");
+
+        controller.accept(input(TerminalInput.Kind.TOGGLE_SELECTION, ""));
+        assertThat(controller.state().selector().orElseThrow().options().get(0)).isEqualTo("( ) Postgres");
+    }
+
+    @Test
+    void walksAMultiQuestionClarificationWithItsStepAndOptionRationales() {
+        FakeClient client = new FakeClient(view(Optional.of(multiQuestionClarification())));
+        client.reconciledView = view(Optional.empty());
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+
+        var first = controller.state().selector().orElseThrow();
+        assertThat(first.title()).isEqualTo("Clarification · Step 1 of 2 · Storage");
+        assertThat(first.options()).containsExactly("( ) Postgres", "( ) SQLite", "Type your own answer", "Cancel");
+        assertThat(first.details())
+                .extracting(TerminalSelectorDetail::description)
+                .containsExactly(
+                        "Runs as a server",
+                        "",
+                        ClarificationDetails.CUSTOM_ENTRY_DESCRIPTION,
+                        ClarificationDetails.CANCEL_DESCRIPTION);
+        assertThat(controller.state().transcript()).singleElement().satisfies(item -> {
+            assertThat(item.kind()).isEqualTo(TranscriptItem.Kind.CLARIFICATION);
+            assertThat(item.body()).isEqualTo("Storage: Which storage?\nLocation: Where should it live?");
+        });
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+
+        assertThat(controller.state().selector().orElseThrow().title())
+                .isEqualTo("Clarification · Step 2 of 2 · Location");
+        assertThat(controller.state().status()).isEqualTo("Awaiting your clarification answer");
+    }
+
+    @Test
     void pendingInteractionUsesTheSameSelectorInputOwnerAndRuntimeClient() {
         InteractionView interaction = approval();
         FakeClient client = new FakeClient(view(Optional.of(interaction)));
@@ -30,6 +331,7 @@ class CodingTerminalInteractionTest {
         controller.open(SESSION_ID);
 
         assertThat(controller.state().selector()).isPresent();
+        assertThat(controller.state().selector().orElseThrow().options()).containsExactly("Reject", "Allow once");
         assertThat(controller.state().editorBuffer()).isEqualTo("preserved draft");
         assertThat(controller.state().editorCursor()).isEqualTo(9);
         assertThat(controller.state().transcript()).singleElement().satisfies(item -> {

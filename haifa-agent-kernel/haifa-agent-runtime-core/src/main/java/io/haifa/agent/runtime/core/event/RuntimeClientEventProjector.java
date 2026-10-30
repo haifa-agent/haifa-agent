@@ -241,7 +241,8 @@ public final class RuntimeClientEventProjector {
                         text(event.data(), "targetSummary", ""),
                         text(event.data(), "resultRef", ""),
                         toolObservation(event.data()),
-                        text(event.data(), "intentSummary", "")));
+                        text(event.data(), "intentSummary", ""),
+                        text(event.data(), "toolName", "")));
     }
 
     /** Rebuilds the bounded observation from allowlisted journal fields already written by the pipeline. */

@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import reactor.core.publisher.Mono;
@@ -35,7 +36,7 @@ public final class ExecutionBrokerMcpTransport implements McpClientTransport {
     private final McpStdioCredentialContext credentials;
     private final McpJsonMapper mapper;
     private final AtomicBoolean closing = new AtomicBoolean();
-    private final Object lifecycleLock = new Object();
+    private final ReentrantLock lifecycleLock = new ReentrantLock();
     private volatile Function<Mono<McpSchema.JSONRPCMessage>, Mono<McpSchema.JSONRPCMessage>> handler;
     private volatile Consumer<Throwable> exceptionHandler = ignored -> {};
     private volatile ManagedProcessSession session;
@@ -115,7 +116,8 @@ public final class ExecutionBrokerMcpTransport implements McpClientTransport {
     private ManagedProcessSession ensureSession(Map<String, String> leases) {
         ManagedProcessSession current = session;
         if (current != null && !current.isClosed()) return current;
-        synchronized (lifecycleLock) {
+        lifecycleLock.lock();
+        try {
             current = session;
             if (current != null && !current.isClosed()) return current;
             McpManagedProcessLaunch prepared = launches.prepare(server, identity, leases);
@@ -132,6 +134,8 @@ public final class ExecutionBrokerMcpTransport implements McpClientTransport {
                 prepared.close();
                 throw exception;
             }
+        } finally {
+            lifecycleLock.unlock();
         }
     }
 
@@ -209,7 +213,8 @@ public final class ExecutionBrokerMcpTransport implements McpClientTransport {
 
     private void closeNow() {
         if (!closing.compareAndSet(false, true)) return;
-        synchronized (lifecycleLock) {
+        lifecycleLock.lock();
+        try {
             try {
                 if (session != null) session.close();
             } finally {
@@ -220,6 +225,8 @@ public final class ExecutionBrokerMcpTransport implements McpClientTransport {
                     launch = null;
                 }
             }
+        } finally {
+            lifecycleLock.unlock();
         }
     }
 }

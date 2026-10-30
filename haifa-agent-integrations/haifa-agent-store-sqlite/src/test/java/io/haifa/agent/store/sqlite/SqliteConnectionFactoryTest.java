@@ -51,6 +51,11 @@ class SqliteConnectionFactoryTest {
         assertThatThrownBy(() -> SqliteStoreConfiguration.defaults(directory.toAbsolutePath()))
                 .isInstanceOf(SqliteStoreException.class)
                 .hasMessageContaining("regular file");
+
+        assertThatThrownBy(() -> new SqliteStoreConfiguration(
+                        directory.resolve("runtime.db").toAbsolutePath(), 1_250, 8_192, 0))
+                .isInstanceOf(SqliteStoreException.class)
+                .hasMessageContaining("writerQueueTimeoutMillis");
     }
 
     @Test
@@ -141,6 +146,17 @@ class SqliteConnectionFactoryTest {
         assertThat(detections).hasValue(1);
         assertThat(standaloneRootValidations).hasValue(0);
         assertThat(securedBatches).hasValueGreaterThanOrEqualTo(4);
+
+        // A write unit of work verifies the files before it queues for the writer slot, so the lease that follows
+        // must not repeat the file-system work while the slot is held.
+        int batchesBeforeAheadOfWriter = securedBatches.get();
+        factory.verifyDatabaseFiles();
+        assertThat(securedBatches).hasValue(batchesBeforeAheadOfWriter + 1);
+        try (Connection ignored = factory.openConnectionAfterFileVerification()) {
+            assertThat(securedBatches)
+                    .as("a lease after an explicit verification does not verify the files again")
+                    .hasValue(batchesBeforeAheadOfWriter + 1);
+        }
         factory.close();
     }
 
@@ -189,6 +205,151 @@ class SqliteConnectionFactoryTest {
             if (!released) {
                 factory.releaseWriter();
             }
+        }
+    }
+
+    @Test
+    void queuedWriterKeepsWaitingBeyondTheBusyTimeoutItIsNotBoundedBy() throws Exception {
+        SqliteStoreConfiguration configuration =
+                new SqliteStoreConfiguration(directory.resolve("queued.db").toAbsolutePath(), 50, 8_192);
+        SqliteConnectionFactory factory = SqliteTestSupport.closeAfterTest(new SqliteConnectionFactory(configuration));
+        CountDownLatch queuedWriterStarted = new CountDownLatch(1);
+        CountDownLatch queuedWriterAcquired = new CountDownLatch(1);
+        factory.acquireWriter();
+        boolean released = false;
+        try (ExecutorService executor = Executors.newSingleThreadExecutor()) {
+            Future<?> queuedWriter = executor.submit(() -> {
+                queuedWriterStarted.countDown();
+                factory.acquireWriter();
+                queuedWriterAcquired.countDown();
+                factory.releaseWriter();
+                return null;
+            });
+            assertThat(queuedWriterStarted.await(10, TimeUnit.SECONDS)).isTrue();
+
+            // The holder keeps the slot while the queued writer is already asking for it; that is the window in
+            // which the busy timeout used to fail the queued writer instead of letting it wait.
+            assertThat(queuedWriterAcquired.await(300, TimeUnit.MILLISECONDS))
+                    .as("the queued writer keeps waiting for the held write slot")
+                    .isFalse();
+
+            factory.releaseWriter();
+            released = true;
+
+            assertThat(queuedWriterAcquired.await(10, TimeUnit.SECONDS))
+                    .as("the queued writer takes the slot once it is released")
+                    .isTrue();
+            queuedWriter.get();
+        } finally {
+            if (!released) {
+                factory.releaseWriter();
+            }
+        }
+    }
+
+    @Test
+    void writerQueueFallbackBoundNamesTheThreadThatStillHoldsTheSlot() throws Exception {
+        SqliteStoreConfiguration configured = new SqliteStoreConfiguration(
+                SqliteTestSupport.configuration(directory).databasePath(), 1_250, 8_192, 150);
+        SqliteConnectionFactory factory = SqliteTestSupport.closeAfterTest(
+                new SqliteConnectionFactory(configured, SecureFilePermissions::strategyForDirectory));
+        String holderThreadName = Thread.currentThread().getName();
+        factory.acquireWriter();
+        try (ExecutorService executor = Executors.newSingleThreadExecutor()) {
+            Future<Long> queuedWriter = executor.submit(factory::acquireWriter);
+
+            assertThatThrownBy(() -> queuedWriter.get(10, TimeUnit.SECONDS))
+                    .hasCauseInstanceOf(SqliteStoreException.class)
+                    .satisfies(failure -> {
+                        SqliteStoreException storeFailure = (SqliteStoreException) failure.getCause();
+                        assertThat(storeFailure.failure()).isEqualTo(SqliteStoreFailure.WRITER_SLOT_TIMEOUT);
+                        assertThat(storeFailure.getMessage())
+                                .contains(holderThreadName, "waitedMs=", "writerLocked=true");
+                    });
+        } finally {
+            factory.releaseWriter();
+        }
+    }
+
+    @Test
+    void nestedWriterSlotAcquisitionIsRejectedInsteadOfOverwritingTheHolder() {
+        SqliteConnectionFactory factory = SqliteTestSupport.closeAfterTest(
+                new SqliteConnectionFactory(SqliteTestSupport.configuration(directory)));
+        factory.acquireWriter();
+        try {
+            assertThatThrownBy(factory::acquireWriter)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("nested");
+        } finally {
+            factory.releaseWriter();
+        }
+    }
+
+    @Test
+    void writerTimeoutDescriptionDistinguishesAnUnheldSlotFromALeakedOne() {
+        SqliteConnectionFactory factory = SqliteTestSupport.closeAfterTest(
+                new SqliteConnectionFactory(SqliteTestSupport.configuration(directory)));
+
+        assertThat(factory.writerTimeoutDescription(60_001, 3, null))
+                .contains(
+                        "waitedMs=60001",
+                        "holderThread=none",
+                        "holderHeldMs=unknown",
+                        "ownership=none",
+                        "writerLocked=false",
+                        "queuedWriters=3");
+
+        factory.acquireWriter();
+        try {
+            assertThat(factory.writerTimeoutDescription(60_001, 3, Thread.currentThread()))
+                    .contains(
+                            "holderThread=" + Thread.currentThread().getName(),
+                            "ownership=consistent",
+                            "writerLocked=true",
+                            "queuedWriters=3");
+        } finally {
+            factory.releaseWriter();
+        }
+    }
+
+    @Test
+    void writerTimeoutDescriptionMarksAChangedOwnerDuringHandoff() throws Exception {
+        SqliteConnectionFactory factory = SqliteTestSupport.closeAfterTest(
+                new SqliteConnectionFactory(SqliteTestSupport.configuration(directory)));
+        factory.acquireWriter();
+        factory.releaseWriter();
+        Thread previousOwner = Thread.currentThread();
+        CountDownLatch acquired = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        try (ExecutorService executor = Executors.newSingleThreadExecutor()) {
+            Future<?> holder = executor.submit(() -> {
+                factory.acquireWriter();
+                acquired.countDown();
+                await(release);
+                factory.releaseWriter();
+                return null;
+            });
+            try {
+                assertThat(acquired.await(10, TimeUnit.SECONDS)).isTrue();
+                assertThat(factory.writerTimeoutDescription(60_001, 3, previousOwner))
+                        .contains(
+                                "holderThread=" + previousOwner.getName(),
+                                "holderHeldMs=unknown",
+                                "ownership=changed",
+                                "writerLocked=true");
+            } finally {
+                release.countDown();
+            }
+            holder.get(10, TimeUnit.SECONDS);
+        }
+    }
+
+    private static void await(CountDownLatch latch) {
+        try {
+            if (!latch.await(10, TimeUnit.SECONDS)) throw new IllegalStateException("timed out");
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("interrupted", exception);
         }
     }
 

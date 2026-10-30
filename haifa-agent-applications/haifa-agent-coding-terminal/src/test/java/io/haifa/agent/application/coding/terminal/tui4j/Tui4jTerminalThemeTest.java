@@ -245,4 +245,35 @@ class Tui4jTerminalThemeTest {
         assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(lightText))
                 .isEqualTo("text");
     }
+
+    @Test
+    void markdownStylesHaveDedicatedColorsAndUniformCodeBackgrounds() {
+        renderer.setColorProfile(ColorProfile.TrueColor);
+        for (String name : Tui4jTerminalTheme.availableThemeNames()) {
+            theme.switchTheme(name);
+            for (boolean dark : new boolean[] {true, false}) {
+                renderer.setHasDarkBackground(dark);
+                assertThat(theme.heading(1, "Title")).isNotEqualTo(theme.heading(3, "Title"));
+                assertThat(theme.strong("x")).contains("\u001B[").isNotEqualTo(theme.accent("x"));
+                assertThat(theme.emphasis("x")).contains("\u001B[");
+                assertThat(theme.inlineCode("x")).isNotEqualTo(theme.queued("x"));
+                String background = theme.markdownTokens().blockBackground().dark();
+                if (!dark) background = theme.markdownTokens().blockBackground().light();
+                int rgb = Integer.parseInt(background.substring(1), 16);
+                String sgr = "48;2;" + (rgb >> 16) + ";" + ((rgb >> 8) & 255) + ";" + (rgb & 255);
+                assertThat(java.util.List.of(
+                                theme.syntaxKeyword("if"),
+                                theme.syntaxPlain("name "),
+                                theme.syntaxString("s"),
+                                theme.syntaxComment("c"),
+                                theme.syntaxNumber("1"),
+                                theme.syntaxType("T"),
+                                theme.syntaxLiteral("true"),
+                                theme.syntaxPunctuation(";"),
+                                theme.codeBlock("plain")))
+                        .allMatch(value -> value.contains(sgr));
+                assertThat(theme.user("message")).doesNotContain(sgr);
+            }
+        }
+    }
 }

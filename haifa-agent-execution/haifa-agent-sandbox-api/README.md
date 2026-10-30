@@ -16,5 +16,7 @@
 `SandboxCapabilities` 只声明进程树收割（`processTreeTermination`）。网络断网、文件挂载隔离、CPU、内存、
 磁盘、PID、Kernel、Container 与多租户保证都不在该模型内，也不由平台承诺。
 
-当前唯一实现是 `host-guarded`（`haifa-agent-sandbox-host`），基于 Java `ProcessBuilder` 在宿主机上执行，
-Windows / Linux / macOS 行为一致。
+默认实现是 `host-guarded`（`haifa-agent-sandbox-host`），基于 Java `ProcessBuilder` 在宿主机上执行，
+Windows / Linux / macOS 行为一致。可选的显式 Linux 容器实现是 `docker-aio`
+（`haifa-agent-sandbox-docker`），复用同一套 `SandboxProvider` / `SandboxSession` / Broker 契约；
+它的隔离与真实 Linux 运行证据仍为 `NOT_RUN`，且不改变 CA/PA 的默认 Provider。
