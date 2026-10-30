@@ -90,6 +90,28 @@ classpath。该设置只进入测试 JVM，用于避免系统临时盘与 worktr
 `ci-integration` 继续保留给独立或旧调用方，语义仍是 Unit + Integration。`integration-only` 和
 `release-artifacts` 不能脱离同 SHA 聚合门禁单独证明交付完成。
 
+## 提交作者门禁
+
+`.github/workflows/commit-authorship-gate.yml` 在目标为 `dev`、`main` 的 `pull_request`、`merge_group` 和手工
+触发上运行 `Commit authorship gate`，由 `scripts/check_commit_authors.py` 拒绝作者、提交者或归属 trailer
+（`Co-authored-by`、`Co-developed-by`、`Authored-by`）命中 `cursoragent`、`cursor-agent`、`cursor[bot]`
+的提交。合并提交被排除，因此 GitHub 生成的 PR 与 merge group 合成提交不会命中。提交范围取 PR 基线与头、
+merge group 的 `base_sha`/`head_sha`；无法解析基线时 fail-closed，以退出码 2 失败。
+
+本地按同一条规则复跑：
+
+```powershell
+python .\build-support\scripts\check_commit_authors.py --range origin/dev..HEAD
+```
+
+```bash
+python ./build-support/scripts/check_commit_authors.py --range origin/dev..HEAD
+```
+
+要让它真正阻断合并，需在 `dev`/`main` 的 ruleset 中把该 job 名加入 `required_status_checks`；job 改名会让
+规则失配并长期阻塞合并。Git 的作者与提交者字段由客户端自填、可在推送前改写，所以该门禁只做归属卫生，
+不构成安全边界。
+
 ## 只读影响范围建议
 
 `scripts/suggest_maven_scope.py` 读取当前 worktree（含未跟踪文件）与 `HEAD` 的 Git diff，并从 Maven
