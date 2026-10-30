@@ -8,14 +8,20 @@ import io.haifa.agent.application.project.persistence.ProjectPersistenceConfigur
 import io.haifa.agent.application.project.product.coding.client.LocalCodingSessionClient;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunStatus;
+import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
+import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelFinishReason;
+import io.haifa.agent.model.api.ModelMessage;
+import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelUsage;
+import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.RunEventCursor;
+import io.haifa.agent.runtime.api.RunEventPayloads;
 import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -27,10 +33,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -419,6 +428,157 @@ class LocalCodingProductAssemblyTest {
             assertThatThrownBy(() -> client.findOutcome(firstRunId)).hasMessageContaining("Session is unavailable");
         }
         assertThat(modelCalls).hasValue(4);
+    }
+
+    @Test
+    void twoSessionsOfOneProjectAdvanceConcurrentlyWithIndependentDurableEvidence() throws Exception {
+        Path workspace = Files.createDirectory(root.resolve("parallel-sessions"));
+        Path alphaDirectory = Files.createDirectory(workspace.resolve("alpha"));
+        Path betaDirectory = Files.createDirectory(workspace.resolve("beta"));
+        Files.writeString(alphaDirectory.resolve("alpha-marker.txt"), "alpha fixture");
+        Files.writeString(betaDirectory.resolve("beta-marker.txt"), "beta fixture");
+        Path database = root.resolve("parallel-sessions.db");
+        CliConfiguration configuration = sqliteConfiguration(database);
+
+        ConcurrentHashMap<AgentRunId, AtomicInteger> modelCalls = new ConcurrentHashMap<>();
+        ConcurrentHashMap<AgentRunId, List<String>> secondCallToolPaths = new ConcurrentHashMap<>();
+        CountDownLatch bothFirstCallsInFlight = new CountDownLatch(2);
+        CountDownLatch releaseFirstCalls = new CountDownLatch(1);
+        AtomicInteger totalModelCalls = new AtomicInteger();
+        var model = (io.haifa.agent.model.api.AgentChatModel) request -> {
+            int call = modelCalls
+                    .computeIfAbsent(request.runId(), ignored -> new AtomicInteger())
+                    .incrementAndGet();
+            totalModelCalls.incrementAndGet();
+            boolean alpha = isAlphaRequest(request);
+            if (call == 1) {
+                bothFirstCallsInFlight.countDown();
+                await(releaseFirstCalls);
+                return toolResponse(
+                        "parallel-read-" + request.runId().value(),
+                        "file_list",
+                        Map.of("path", (alpha ? alphaDirectory : betaDirectory).toString()));
+            }
+            secondCallToolPaths.put(request.runId(), toolResultPaths(request));
+            return response(alpha ? "alpha-answer" : "beta-answer");
+        };
+
+        AgentSessionId sessionA;
+        AgentSessionId sessionB;
+        AgentRunId runA;
+        AgentRunId runB;
+        try (LocalCodingAgent agent = agent(workspace, configuration, model)) {
+            LocalCodingSessionClient client = client(agent);
+            var createdA = client.create(agent.projectId(), "alpha task", "parallel-alpha");
+            sessionA = createdA.summary().sessionId();
+            runA = createdA.activeRun().orElseThrow().runId();
+            assertThat(createdA.summary().projectId()).isEqualTo(agent.projectId());
+            assertThat(client.open(sessionA).summary().activeRunId()).contains(runA);
+
+            var createdB = client.create(agent.projectId(), "beta task", "parallel-beta");
+            sessionB = createdB.summary().sessionId();
+            runB = createdB.activeRun().orElseThrow().runId();
+            assertThat(createdB.summary().projectId()).isEqualTo(agent.projectId());
+            assertThat(sessionB).isNotEqualTo(sessionA);
+            assertThat(runB).isNotEqualTo(runA);
+            assertThat(client.open(sessionB).summary().activeRunId()).contains(runB);
+
+            try {
+                assertThat(bothFirstCallsInFlight.await(10, TimeUnit.SECONDS))
+                        .as("both Coding Sessions must enter their first model call before release")
+                        .isTrue();
+                assertThat(client.list(agent.projectId(), 10))
+                        .filteredOn(summary -> summary.sessionId().equals(sessionA))
+                        .singleElement()
+                        .satisfies(summary -> assertThat(summary.activeRunId()).contains(runA));
+                assertThat(client.list(agent.projectId(), 10))
+                        .filteredOn(summary -> summary.sessionId().equals(sessionB))
+                        .singleElement()
+                        .satisfies(summary -> assertThat(summary.activeRunId()).contains(runB));
+            } finally {
+                releaseFirstCalls.countDown();
+            }
+
+            awaitTerminal(agent, runA);
+            awaitTerminal(agent, runB);
+
+            var eventsA =
+                    client.events(runA, RunEventCursor.beforeFirst(runA), 1_000).items();
+            var eventsB =
+                    client.events(runB, RunEventCursor.beforeFirst(runB), 1_000).items();
+            assertRunScoped(eventsA, runA, sessionA);
+            assertRunScoped(eventsB, runB, sessionB);
+            Set<String> toolCallsA = toolCallIds(eventsA, runA, sessionA);
+            Set<String> toolCallsB = toolCallIds(eventsB, runB, sessionB);
+            assertThat(toolCallsA).isNotEmpty();
+            assertThat(toolCallsB).isNotEmpty();
+            assertThat(toolCallsA).doesNotContainAnyElementsOf(toolCallsB);
+
+            assertThat(client.history(sessionA, 100).items())
+                    .extracting(value -> value.body())
+                    .contains("alpha-answer")
+                    .doesNotContain("beta-answer");
+            assertThat(client.history(sessionB, 100).items())
+                    .extracting(value -> value.body())
+                    .contains("beta-answer")
+                    .doesNotContain("alpha-answer");
+
+            assertThat(secondCallToolPaths.keySet()).containsExactlyInAnyOrder(runA, runB);
+            assertThat(secondCallToolPaths.get(runA))
+                    .anyMatch(path -> path.endsWith("alpha-marker.txt"))
+                    .noneMatch(path -> path.endsWith("beta-marker.txt"));
+            assertThat(secondCallToolPaths.get(runB))
+                    .anyMatch(path -> path.endsWith("beta-marker.txt"))
+                    .noneMatch(path -> path.endsWith("alpha-marker.txt"));
+
+            assertThat(modelCalls.get(runA)).hasValue(2);
+            assertThat(modelCalls.get(runB)).hasValue(2);
+            assertThat(client.list(agent.projectId(), 10))
+                    .filteredOn(summary -> summary.sessionId().equals(sessionA)
+                            || summary.sessionId().equals(sessionB))
+                    .hasSize(2)
+                    .allSatisfy(summary -> assertThat(summary.activeRunId()).isEmpty());
+        }
+        assertThat(Files.isRegularFile(database)).isTrue();
+        assertThat(totalModelCalls).hasValue(4);
+    }
+
+    private static boolean isAlphaRequest(AgentChatRequest request) {
+        return request.messages().stream()
+                .filter(message -> message.role() == ModelMessageRole.USER)
+                .anyMatch(message -> message.content().contains("alpha task"));
+    }
+
+    private static List<String> toolResultPaths(AgentChatRequest request) {
+        List<String> paths = new ArrayList<>();
+        for (ModelMessage message : request.messages()) {
+            if (message.role() != ModelMessageRole.TOOL) continue;
+            if (!(message.toolResultData().get("entries") instanceof List<?> entries)) continue;
+            for (Object entry : entries) {
+                if (entry instanceof Map<?, ?> values && values.get("path") instanceof String path) {
+                    paths.add(path);
+                }
+            }
+        }
+        return paths;
+    }
+
+    private static void assertRunScoped(List<AgentRunEvent> events, AgentRunId runId, AgentSessionId sessionId) {
+        assertThat(events).isNotEmpty().allSatisfy(event -> {
+            assertThat(event.runId()).isEqualTo(runId);
+            assertThat(event.sessionId()).isEqualTo(sessionId);
+        });
+    }
+
+    private static Set<String> toolCallIds(List<AgentRunEvent> events, AgentRunId runId, AgentSessionId sessionId) {
+        Set<String> ids = new LinkedHashSet<>();
+        for (AgentRunEvent event : events) {
+            if (!(event.payload() instanceof RunEventPayloads.ToolLifecycle tool)) continue;
+            assertThat(event.runId()).isEqualTo(runId);
+            assertThat(event.sessionId()).isEqualTo(sessionId);
+            ids.add(tool.toolCallId());
+        }
+        return ids;
     }
 
     private LocalCodingAgent agent(
