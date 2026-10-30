@@ -20,6 +20,12 @@ $updater = '.\scripts\refresh-ca\update-coding-agent.ps1'
 
 # 只查看源目录、版本和安装计划，不创建 worktree、不构建、不安装、不改 PATH
 & $updater update --branch feat-terminal-markdown-rendering --dry-run
+
+# 打 latest 包：与版本目录并列的 haifa-coding-agent-latest，界面显示 <worktree>-<提交前 6 位>
+& $updater latest --worktree feat-opencode-go-login
+
+# 只看 latest 计划
+& $updater latest --worktree feat-opencode-go-login --dry-run
 ```
 
 每次执行的流程：
@@ -44,6 +50,25 @@ $updater = '.\scripts\refresh-ca\update-coding-agent.ps1'
 
 JAR 被运行中的 CA 锁定时会报错，退出 CA 后重新执行；脚本不结束现有进程。
 即使替换成功，运行中的进程也需要重新启动才能加载新代码。
+
+## latest 通道
+
+`latest` 动作复用 `update` 的源码选择、构建与打包步骤，但发布到并列目录
+`<install-root>\haifa-coding-agent-latest`，`haifa-coding-agent-v<版本>` 目录保持不变。
+
+它与版本包只有两个文件不同：
+
+- `bin\haifa-latest.bat`：内容与版本包的 `bin\haifa.bat` 逐字节相同，仅改文件名，便于两个通道共存；
+- `lib\haifa-agent-cli-<版本>.jar`：只把 `META-INF/haifa/coding-agent-version.properties` 的 `version`
+  键重写为 `<worktree 目录名>-<提交前 6 位>`（例如 `feat-opencode-go-login-d67c75`），其余条目逐字节保留。
+
+`jre`、`haifa-coding.yaml`、`README.txt`、`bin\install.bat` 与版本包一致。脚本不改用户 PATH 和系统 PATH，
+直接运行 `<install-root>\haifa-coding-agent-latest\bin\haifa-latest.bat`。目录已存在时先把旧目录改名为
+`.haifa-coding-agent-latest.previous-<ID>`，换入成功后再删除；`haifa-latest` 正在运行时会提示退出后重试。
+
+版本键的来源：终端底部版本显示改为读取 `META-INF/haifa/coding-agent-version.properties`（构建期由根 POM
+版本过滤注入，Java 侧为 `CodingAgentVersion`），所以打包只需替换这一个键，不必重新编译。JAR 里缺少该键时
+`latest` 直接失败，避免打出显示错误版本的包。
 
 ## 产物去向
 

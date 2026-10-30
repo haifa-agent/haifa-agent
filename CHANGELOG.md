@@ -2,6 +2,13 @@
 
 ## Unreleased - 0.1.5-SNAPSHOT
 
+- The Coding Agent footer version now comes from `META-INF/haifa/coding-agent-version.properties`
+  instead of a hard-coded string, and `scripts/refresh-ca` gained a `latest` channel that publishes
+  `<install-root>\haifa-coding-agent-latest`. That package differs from the versioned one only in
+  `bin\haifa-latest.bat` and the CLI JAR's rewritten version key
+  (`<worktree>-<first six commit characters>`), and it leaves the User PATH and the versioned
+  installation untouched.
+
 - OpenCode Go is available as a normal subscription connection: the connection center lists it for
   every user and signs in with the console authorization code (RFC 8628 device grant), so headless
   Linux hosts need no browser or loopback callback. The packaged catalog adds the reviewed
