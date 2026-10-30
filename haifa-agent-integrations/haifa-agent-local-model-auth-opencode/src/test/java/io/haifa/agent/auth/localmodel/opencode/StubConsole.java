@@ -19,6 +19,7 @@ final class StubConsole implements AutoCloseable {
 
     private final HttpServer server;
     private final List<String> requests = Collections.synchronizedList(new ArrayList<>());
+    private final List<String> userAgents = Collections.synchronizedList(new ArrayList<>());
 
     private StubConsole(HttpServer server) {
         this.server = server;
@@ -32,6 +33,8 @@ final class StubConsole implements AutoCloseable {
                 String body = readBody(exchange);
                 stub.requests.add(exchange.getRequestMethod() + " "
                         + exchange.getRequestURI().getPath() + " " + body);
+                String userAgent = exchange.getRequestHeaders().getFirst("User-Agent");
+                stub.userAgents.add(userAgent == null ? "" : userAgent);
                 handler.handle(exchange.getRequestURI().getPath(), exchange);
             } finally {
                 exchange.close();
@@ -54,9 +57,17 @@ final class StubConsole implements AutoCloseable {
         return List.copyOf(requests);
     }
 
+    List<String> userAgents() {
+        return List.copyOf(userAgents);
+    }
+
     static void respond(HttpExchange exchange, int status, String body) throws IOException {
+        respondWith(exchange, status, "application/json", body);
+    }
+
+    static void respondWith(HttpExchange exchange, int status, String contentType, String body) throws IOException {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-        exchange.getResponseHeaders().add("Content-Type", "application/json");
+        exchange.getResponseHeaders().add("Content-Type", contentType);
         exchange.sendResponseHeaders(status, bytes.length);
         exchange.getResponseBody().write(bytes);
     }

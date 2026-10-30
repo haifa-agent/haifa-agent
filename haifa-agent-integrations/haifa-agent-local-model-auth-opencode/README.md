@@ -67,7 +67,16 @@ classification (`authorization_pending`, `slow_down`, `access_denied`, `expired_
 and content-type rejection, cancel/expiry semantics, refresh rotation, `invalid_grant` → re-login,
 cross-account refresh rejection, and the connection-center method list.
 
-Not verified yet (needs a real console account): the live device-code payload shape, the poll interval
-and `expires_in` values the console actually returns, whether `org_id`/`supports_org_scope` carries
-product meaning for Go, the provider's subscription check for non-Go workspaces, and whether the
-`/auth/device/token` endpoint prefers JSON over form encoding.
+Verified against the live console (2026-10-30, unauthenticated part of the grant): `POST
+https://opencode.ai/console/auth/device/code` answers `device_code`, `user_code`,
+`verification_uri` (`/console/device`, console-relative), `verification_uri_complete` (same path plus a
+`user_code` query), `expires_in` = 600 and `interval` = 5; a pending `POST
+https://opencode.ai/console/auth/device/token` answers HTTP 400 with `error` =
+`authorization_pending`; and the edge in front of both endpoints answers a client without a
+recognised `User-Agent` with an HTTP error page, so every request sends the product user agent
+declared in `OpenCodeGoEndpoints#USER_AGENT`.
+
+Not verified yet (needs an authorized console account): the issued-token payload shape (the client
+accepts snake_case, camelCase, `token`/`data` wrappers, and relative or absolute expiry), whether
+`org_id`/`supports_org_scope` carries product meaning for Go, the provider's subscription check for
+non-Go workspaces, and whether `/auth/token` prefers form encoding for refresh.

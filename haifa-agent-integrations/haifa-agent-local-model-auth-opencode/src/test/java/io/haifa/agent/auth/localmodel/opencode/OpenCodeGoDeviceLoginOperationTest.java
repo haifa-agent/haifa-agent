@@ -9,6 +9,7 @@ import io.haifa.agent.auth.localmodel.ExternalLoginAttemptSnapshot;
 import io.haifa.agent.auth.localmodel.ExternalLoginMode;
 import io.haifa.agent.auth.localmodel.ExternalLoginOperationContext;
 import io.haifa.agent.auth.localmodel.StoredExternalCredential;
+import java.net.URI;
 import java.net.http.HttpClient;
 import java.time.Clock;
 import java.time.Duration;
@@ -159,6 +160,73 @@ class OpenCodeGoDeviceLoginOperationTest {
         }
     }
 
+    @Test
+    void identifiesItselfInsteadOfTheJdkDefaultUserAgent() throws Exception {
+        try (StubConsole stub = StubConsole.start((path, exchange) -> {
+            if (path.endsWith("/auth/device/code")) {
+                StubConsole.respond(exchange, 200, deviceCodeResponse(stubPortOf(exchange)));
+            } else if (path.endsWith("/auth/device/token")) {
+                StubConsole.respond(exchange, 400, "{\"error\":\"authorization_pending\"}");
+            } else {
+                StubConsole.respond(exchange, 404, "{}");
+            }
+        })) {
+            OpenCodeGoDeviceLoginOperation operation = operation(stub, duration -> {}, snapshot -> {});
+            operation.cancel();
+            try {
+                operation.execute();
+            } catch (RuntimeException expected) {
+                // Cancellation ends the attempt; the recorded requests are what this test checks.
+            }
+
+            assertThat(stub.userAgents()).isNotEmpty();
+            assertThat(stub.userAgents()).allMatch(OpenCodeGoEndpoints.USER_AGENT::equals);
+        }
+    }
+
+    @Test
+    void resolvesTheConsoleRelativeVerificationPageWithoutItsQuery() throws Exception {
+        try (StubConsole stub = StubConsole.start((path, exchange) -> {
+            if (path.endsWith("/auth/device/code")) {
+                StubConsole.respond(exchange, 200, relativeDeviceCodeResponse());
+            } else if (path.endsWith("/auth/device/token")) {
+                StubConsole.respond(exchange, 200, tokenResponse());
+            } else {
+                StubConsole.respond(exchange, 200, "{\"id\":\"account-1\"}");
+            }
+        })) {
+            List<ExternalLoginAttemptSnapshot> progress = new ArrayList<>();
+            operation(stub, duration -> {}, progress::add).execute();
+
+            URI verification = progress.stream()
+                    .filter(value -> value.userCode().isPresent())
+                    .findFirst()
+                    .orElseThrow()
+                    .verificationUri()
+                    .orElseThrow();
+            assertThat(verification).isEqualTo(stub.verificationUri());
+            assertThat(verification.getRawQuery()).isNull();
+        }
+    }
+
+    @Test
+    void mapsAnEdgeChallengePageToAnInvalidResponse() throws Exception {
+        try (StubConsole stub = StubConsole.start((path, exchange) -> {
+            if (path.endsWith("/auth/device/code")) {
+                StubConsole.respond(exchange, 200, deviceCodeResponse(stubPortOf(exchange)));
+            } else if (path.endsWith("/auth/device/token")) {
+                StubConsole.respondWith(exchange, 200, "text/html", "<html>blocked</html>");
+            } else {
+                StubConsole.respond(exchange, 404, "{}");
+            }
+        })) {
+            assertThatThrownBy(() ->
+                            operation(stub, duration -> {}, snapshot -> {}).execute())
+                    .isInstanceOf(RuntimeException.class)
+                    .hasMessage("AUTH_DEVICE_CODE_RESPONSE_INVALID");
+        }
+    }
+
     private OpenCodeGoDeviceLoginOperation operation(
             StubConsole stub,
             OpenCodeGoDeviceLoginOperation.Sleeper sleeper,
@@ -177,8 +245,46 @@ class OpenCodeGoDeviceLoginOperationTest {
         return Clock.fixed(Instant.parse("2026-10-30T00:00:00Z"), ZoneOffset.UTC);
     }
 
+    @Test
+    void acceptsTokenPayloadAliasesWhileKeepingTheLifetimeBounds() throws Exception {
+        assertThat(credentialFor(tokenResponse()).refreshToken()).isEqualTo("refresh-token");
+
+        long absoluteExpiry = fixedClock().millis() + Duration.ofSeconds(3600).toMillis();
+        StoredExternalCredential camel = credentialFor("{\"accessToken\":\"access-token\","
+                + "\"refreshToken\":\"refresh-token\",\"expiresAt\":" + absoluteExpiry + "}");
+        assertThat(camel.accessToken()).isEqualTo("access-token");
+        assertThat(camel.expiresAtEpochMillis() - camel.issuedAtEpochMillis())
+                .isEqualTo(Duration.ofSeconds(3600).toMillis());
+
+        StoredExternalCredential nested = credentialFor("{\"token\":" + tokenResponse() + "}");
+        assertThat(nested.refreshToken()).isEqualTo("refresh-token");
+
+        assertThatThrownBy(() -> credentialFor(
+                        "{\"access_token\":\"access-token\",\"refresh_token\":\"refresh-token\",\"expires_in\":5}"))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessage("AUTH_DEVICE_CODE_RESPONSE_INVALID");
+        assertThatThrownBy(() -> credentialFor("{\"access_token\":\"access-token\",\"expires_in\":3600}"))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessage("AUTH_DEVICE_CODE_RESPONSE_INVALID");
+    }
+
     private static int stubPortOf(com.sun.net.httpserver.HttpExchange exchange) {
         return exchange.getLocalAddress().getPort();
+    }
+
+    /** Completes one attempt against a stub that answers the first poll with the given token payload. */
+    private StoredExternalCredential credentialFor(String tokenBody) throws Exception {
+        try (StubConsole stub = StubConsole.start((path, exchange) -> {
+            if (path.endsWith("/auth/device/code")) {
+                StubConsole.respond(exchange, 200, relativeDeviceCodeResponse());
+            } else if (path.endsWith("/auth/device/token")) {
+                StubConsole.respond(exchange, 200, tokenBody);
+            } else {
+                StubConsole.respond(exchange, 200, "{\"id\":\"account-1\"}");
+            }
+        })) {
+            return operation(stub, duration -> {}, snapshot -> {}).execute();
+        }
     }
 
     private static String deviceCodeResponse(int port) {
@@ -190,5 +296,13 @@ class OpenCodeGoDeviceLoginOperationTest {
 
     private static String tokenResponse() {
         return "{\"access_token\":\"access-token\",\"refresh_token\":\"refresh-token\",\"expires_in\":3600}";
+    }
+
+    /** Shape captured from the live console: both verification fields are console-relative paths. */
+    private static String relativeDeviceCodeResponse() {
+        return "{\"device_code\":\"device-code\",\"user_code\":\"TEST-CODE\","
+                + "\"verification_uri\":\"/console/device\","
+                + "\"verification_uri_complete\":\"/console/device?user_code=TEST-CODE&client_id=opencode-cli\","
+                + "\"expires_in\":600,\"interval\":5}";
     }
 }

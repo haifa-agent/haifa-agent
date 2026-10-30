@@ -23,6 +23,14 @@ public final class OpenCodeGoEndpoints {
     /** Stable registration marker so a refreshed credential can be traced back to this driver. */
     public static final String CLIENT_REGISTRATION_REF = "opencode-go-console-v1";
 
+    /**
+     * Stable product user agent.
+     *
+     * <p>The console sits behind an edge that refuses unrecognised client signatures with an HTTP error page, so
+     * every request identifies this product instead of the JDK default. It never claims to be a browser.
+     */
+    public static final String USER_AGENT = "haifa-coding-agent/opencode-go-login";
+
     private static final URI OFFICIAL_CONSOLE_BASE = URI.create("https://opencode.ai/console");
 
     private final String base;

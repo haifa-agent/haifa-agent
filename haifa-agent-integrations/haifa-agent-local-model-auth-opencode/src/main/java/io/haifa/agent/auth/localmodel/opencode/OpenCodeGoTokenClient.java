@@ -200,19 +200,96 @@ public final class OpenCodeGoTokenClient {
         return id;
     }
 
+    /**
+     * Maps one issued token payload.
+     *
+     * <p>The console documents snake_case fields; the camelCase aliases and the {@code token}/{@code data}
+     * wrappers stay accepted because a subscription credential must never fail on a naming difference alone.
+     * Every accepted value still goes through the same length, charset, and lifetime bounds.
+     */
     private TokenSet tokenSet(JsonNode root) {
-        String accessToken = required(root, "access_token", MAX_FIELD_CHARACTERS);
-        String refreshToken = required(root, "refresh_token", MAX_FIELD_CHARACTERS);
-        long lifetimeSeconds = positiveLong(root, "expires_in");
+        JsonNode payload = unwrap(root);
+        String accessToken = firstText(payload, "access_token", "accessToken", "access");
+        String refreshToken = firstText(payload, "refresh_token", "refreshToken", "refresh");
+        if (accessToken == null || refreshToken == null) {
+            throw new OpenCodeGoTokenException("AUTH_DEVICE_CODE_RESPONSE_INVALID", false);
+        }
+        long lifetimeSeconds = lifetimeSeconds(payload);
         long issuedAt = clock.millis();
         long expiresAt =
                 Math.addExact(issuedAt, Duration.ofSeconds(lifetimeSeconds).toMillis());
         return new TokenSet(accessToken, refreshToken, expiresAt, issuedAt);
     }
 
+    private static JsonNode unwrap(JsonNode root) {
+        for (String wrapper : new String[] {"token", "data"}) {
+            JsonNode nested = root.get(wrapper);
+            if (nested != null && nested.isObject()) return nested;
+        }
+        return root;
+    }
+
+    private static String firstText(JsonNode payload, String... fields) {
+        for (String field : fields) {
+            String value = optionalText(payload.get(field));
+            if (value != null) return requireText(value, field, MAX_FIELD_CHARACTERS);
+        }
+        return null;
+    }
+
+    /** Seconds until expiry, from a relative {@code expires_in} or an absolute {@code expires_at}. */
+    private long lifetimeSeconds(JsonNode payload) {
+        JsonNode relative = payload.get("expires_in");
+        if (relative != null) return boundedLifetime(number(relative));
+        JsonNode absolute = firstNode(payload, "expires_at", "expiresAt", "expires");
+        if (absolute == null) throw new OpenCodeGoTokenException("AUTH_DEVICE_CODE_RESPONSE_INVALID", false);
+        long expiresAt = absolute.isNumber() ? absolute.longValue() : absoluteEpochMillis(absolute.textValue());
+        return boundedLifetime((expiresAt - clock.millis()) / 1000L);
+    }
+
+    private static JsonNode firstNode(JsonNode payload, String... fields) {
+        for (String field : fields) {
+            JsonNode node = payload.get(field);
+            if (node != null && !node.isNull()) return node;
+        }
+        return null;
+    }
+
+    private static long number(JsonNode node) {
+        if (node.isTextual()) {
+            try {
+                return Long.parseLong(node.textValue().trim());
+            } catch (NumberFormatException exception) {
+                throw new OpenCodeGoTokenException("AUTH_DEVICE_CODE_RESPONSE_INVALID", false);
+            }
+        }
+        return node.longValue();
+    }
+
+    private static long absoluteEpochMillis(String value) {
+        String normalized = value == null ? "" : value.trim();
+        try {
+            return Long.parseLong(normalized);
+        } catch (NumberFormatException ignored) {
+            try {
+                return java.time.Instant.parse(normalized).toEpochMilli();
+            } catch (java.time.format.DateTimeParseException exception) {
+                throw new OpenCodeGoTokenException("AUTH_DEVICE_CODE_RESPONSE_INVALID", false);
+            }
+        }
+    }
+
+    private static long boundedLifetime(long seconds) {
+        if (seconds < MIN_TOKEN_LIFETIME_SECONDS || seconds > MAX_TOKEN_LIFETIME_SECONDS) {
+            throw new OpenCodeGoTokenException("AUTH_DEVICE_CODE_RESPONSE_INVALID", false);
+        }
+        return seconds;
+    }
+
     private HttpRequest.Builder request(URI uri) {
         return HttpRequest.newBuilder(uri)
                 .timeout(REQUEST_TIMEOUT.compareTo(timeout) >= 0 ? REQUEST_TIMEOUT : timeout)
+                .header("User-Agent", OpenCodeGoEndpoints.USER_AGENT)
                 .header("Accept", "application/json");
     }
 
@@ -259,20 +336,32 @@ public final class OpenCodeGoTokenClient {
     }
 
     private URI verificationUri(JsonNode root) {
-        String complete = optionalText(root.get("verification_uri_complete"));
-        URI candidate = cleanDisplayUri(optionalText(root.get("verification_uri")));
-        if (candidate == null) candidate = cleanDisplayUri(complete);
+        URI candidate = resolveDisplayUri(optionalText(root.get("verification_uri")));
+        if (candidate == null) {
+            candidate = resolveDisplayUri(optionalText(root.get("verification_uri_complete")));
+        }
         return candidate == null ? endpoints.verificationUri() : candidate;
     }
 
-    private static URI cleanDisplayUri(String value) {
+    /**
+     * Accepts the two documented forms: an absolute page URL, or a console-relative path such as
+     * {@code /console/device}. The query is always dropped so a user code never travels in a link.
+     */
+    private URI resolveDisplayUri(String value) {
         if (value == null) return null;
         try {
-            URI uri = URI.create(value).normalize();
-            boolean http = "https".equalsIgnoreCase(uri.getScheme()) || "http".equalsIgnoreCase(uri.getScheme());
-            if (!uri.isAbsolute() || !http || uri.getHost() == null || uri.getRawUserInfo() != null) return null;
-            return URI.create(uri.getScheme() + "://" + uri.getRawAuthority()
-                    + (uri.getRawPath() == null ? "" : uri.getRawPath()));
+            URI base = endpoints.consoleBase();
+            URI parsed = URI.create(value);
+            URI absolute = parsed.isAbsolute()
+                    ? parsed
+                    : URI.create(base.getScheme() + "://" + base.getRawAuthority() + "/")
+                            .resolve(parsed);
+            String scheme =
+                    absolute.getScheme() == null ? "" : absolute.getScheme().toLowerCase(Locale.ROOT);
+            if (!"https".equals(scheme) && !"http".equals(scheme)) return null;
+            if (absolute.getHost() == null || absolute.getRawUserInfo() != null) return null;
+            return URI.create(absolute.getScheme() + "://" + absolute.getRawAuthority()
+                    + (absolute.getRawPath() == null ? "" : absolute.getRawPath()));
         } catch (IllegalArgumentException exception) {
             return null;
         }
@@ -302,26 +391,6 @@ public final class OpenCodeGoTokenClient {
             throw new OpenCodeGoTokenException("AUTH_DEVICE_CODE_RESPONSE_INVALID", false);
         }
         return normalized;
-    }
-
-    private static long positiveLong(JsonNode root, String field) {
-        JsonNode node = root.get(field);
-        long value;
-        if (node == null) {
-            throw new OpenCodeGoTokenException("AUTH_DEVICE_CODE_RESPONSE_INVALID", false);
-        } else if (node.isTextual()) {
-            try {
-                value = Long.parseLong(node.textValue().trim());
-            } catch (NumberFormatException exception) {
-                throw new OpenCodeGoTokenException("AUTH_DEVICE_CODE_RESPONSE_INVALID", false);
-            }
-        } else {
-            value = node.longValue();
-        }
-        if (value < MIN_TOKEN_LIFETIME_SECONDS || value > MAX_TOKEN_LIFETIME_SECONDS) {
-            throw new OpenCodeGoTokenException("AUTH_DEVICE_CODE_RESPONSE_INVALID", false);
-        }
-        return value;
     }
 
     private static long positiveLongOrDefault(JsonNode root, String field, long fallback) {
