@@ -47,12 +47,22 @@ public record ApprovalDetails(
     }
 
     public static ApprovalDetails from(InteractionView interaction, boolean allowForSession) {
+        return from(interaction, allowForSession, Optional.empty());
+    }
+
+    public static ApprovalDetails from(
+            InteractionView interaction, boolean allowForSession, Optional<String> unavailableReason) {
         Objects.requireNonNull(interaction, "interaction must not be null");
         List<String> allowedActions = new java.util.ArrayList<>(interaction.allowedActions().stream()
                 .map(InteractionAction::value)
                 .toList());
         if (allowForSession) allowedActions.add(SESSION_APPROVAL_ACTION);
         Fact sessionScope = new Fact("Session option", "All ordinary tools · until app exit or /approval reset");
+        List<Fact> sessionFacts = allowForSession
+                ? List.of(sessionScope)
+                : unavailableReason
+                        .map(reason -> List.of(new Fact("Approval scope", reason)))
+                        .orElse(List.of());
         var presentation = interaction.approvalPresentation();
         if (presentation.isPresent()) {
             var value = presentation.orElseThrow();
@@ -63,9 +73,7 @@ public record ApprovalDetails(
                     value.content(),
                     java.util.stream.Stream.concat(
                                     value.environment().stream().map(fact -> new Fact(fact.label(), fact.value())),
-                                    allowForSession
-                                            ? java.util.stream.Stream.of(sessionScope)
-                                            : java.util.stream.Stream.empty())
+                                    sessionFacts.stream())
                             .toList(),
                     value.technical().stream()
                             .map(fact -> new Fact(fact.label(), fact.value()))
@@ -78,7 +86,7 @@ public record ApprovalDetails(
                 interaction.consequences().accepted(),
                 "Content",
                 interaction.safePrompt(),
-                allowForSession ? List.of(sessionScope) : List.of(),
+                sessionFacts,
                 List.of(),
                 Optional.empty(),
                 allowedActions);

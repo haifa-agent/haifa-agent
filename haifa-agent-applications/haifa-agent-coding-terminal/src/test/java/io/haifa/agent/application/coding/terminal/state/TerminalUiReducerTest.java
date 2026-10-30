@@ -44,6 +44,30 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class TerminalUiReducerTest {
+    @Test
+    void resolvedUnhydratedApprovalsDoNotLeaveLoadingCards() {
+        for (String status :
+                java.util.List.of("RESPONDED", "APPLIED", "REJECTED", "CANCELLED", "INVALIDATED", "EXPIRED")) {
+            var initial = TerminalUiState.initial(120, 40);
+            var waiting = reducer.reduce(
+                    initial,
+                    new TerminalUiAction.RunEventReceived(event(
+                            1,
+                            "approval-requested",
+                            new RunEventPayloads.InteractionLifecycle(
+                                    "auto-approval", "approval", "PENDING", "ignored"))));
+            assertThat(waiting.transcript()).hasSize(1);
+            var resolved = reducer.reduce(
+                    waiting,
+                    new TerminalUiAction.RunEventReceived(event(
+                            2,
+                            "approval-resolved",
+                            new RunEventPayloads.InteractionLifecycle(
+                                    "auto-approval", "approval", status, "ignored"))));
+            assertThat(resolved.transcript()).isEmpty();
+        }
+    }
+
     private final TerminalUiReducer reducer = new TerminalUiReducer();
 
     @Test
@@ -686,6 +710,31 @@ class TerminalUiReducerTest {
                 .isEqualTo(working.activity().revision() + 1);
         assertThat(resumedThinking.activity().label()).isEmpty();
         assertThat(modelOutput.activity()).isEqualTo(resumedThinking.activity());
+    }
+
+    @Test
+    void refreshingTheSameRunPreservesTheExecutingToolAndItsClock() {
+        var sessionView = io.haifa.agent.application.coding.terminal.application.CodingTerminalTestSupport.activeView();
+        var loaded = reducer.reduce(
+                TerminalUiState.initial(120, 40), new TerminalUiAction.SessionLoaded(sessionView, List.of()));
+        var working = reducer.reduce(
+                loaded,
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "tool-start",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1", "execution_run", "STARTED", "NONE", "git status", ""))));
+
+        var refreshed = reducer.reduce(working, new TerminalUiAction.SessionLoaded(sessionView, List.of()));
+        var running = reducer.reduce(
+                refreshed,
+                new TerminalUiAction.RunEventReceived(
+                        event(2, "run-resumed", new RunEventPayloads.RunLifecycle("RUNNING", 2, "NONE"))));
+
+        assertThat(refreshed.status()).isEqualTo("WORKING");
+        assertThat(refreshed.activity()).isEqualTo(working.activity());
+        assertThat(running.status()).isEqualTo("WORKING");
+        assertThat(running.activity()).isEqualTo(working.activity());
     }
 
     @Test

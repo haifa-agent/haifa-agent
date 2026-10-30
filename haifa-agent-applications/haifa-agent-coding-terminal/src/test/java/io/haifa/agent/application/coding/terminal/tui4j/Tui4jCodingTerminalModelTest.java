@@ -1528,15 +1528,15 @@ class Tui4jCodingTerminalModelTest {
                 2,
                 new RunEventPayloads.ToolLifecycle("tool-1", "execution_run", "STARTED", "NONE", "git status", ""))));
         fixture.model.update(new WindowSizeMessage(80, 24));
-        assertThat(fixture.model.view()).contains("WORKING (1s) · Run Command");
+        assertThat(fixture.model.view()).contains("RUNNING (1s) · Run Command");
         clock.set(Duration.ofSeconds(14).toNanos());
-        assertThat(fixture.model.view()).contains("WORKING (5s) · Run Command");
+        assertThat(fixture.model.view()).contains("RUNNING (5s) · Run Command");
 
         fixture.pump.offer(new TerminalUiAction.RunEventReceived(event(
                 3,
                 new RunEventPayloads.ToolLifecycle("tool-1", "execution_run", "SUCCEEDED", "NONE", "git status", ""))));
         fixture.model.update(new WindowSizeMessage(80, 24));
-        assertThat(fixture.model.view()).contains("THINKING (1s)").doesNotContain("WORKING (");
+        assertThat(fixture.model.view()).contains("THINKING (1s)").doesNotContain("RUNNING (");
     }
 
     @Test

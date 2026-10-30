@@ -1737,9 +1737,43 @@ public final class CodingTerminalController implements AutoCloseable {
         return true;
     }
 
+    private Optional<AgentRunId> approvalRunId() {
+        return state.currentRunId().or(() -> state.session()
+                .flatMap(CodingSessionView::pendingInteraction)
+                .map(InteractionView::runId));
+    }
+
     private void resetSessionApproval(String argument) {
+        if (argument.isBlank() || argument.equals("reopen")) {
+            Optional<AgentRunId> pendingRun = approvalRunId();
+            if (pendingRun.isEmpty()) {
+                apply(new TerminalUiAction.StatusChanged("No approval is pending"));
+                return;
+            }
+            AgentRunId runId = pendingRun.orElseThrow();
+            apply(new TerminalUiAction.StatusChanged("Loading pending approval"));
+            submitControlEffect(
+                    () -> {
+                        Optional<CodingApprovalPrompt> pending =
+                                client.pendingInteraction(runId).flatMap(client::prepareApproval);
+                        return () -> {
+                            if (approvalRunId().filter(runId::equals).isEmpty()) return;
+                            pending.filter(value -> value.interaction().state()
+                                            == io.haifa.agent.runtime.api.InteractionState.PENDING)
+                                    .filter(value -> interactionStillPending(new InteractionHydrationRequest(
+                                            runId,
+                                            value.interaction().requestId().value())))
+                                    .ifPresentOrElse(
+                                            this::openInteractionSelector,
+                                            () -> apply(new TerminalUiAction.StatusChanged("No approval is pending")));
+                        };
+                    },
+                    code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+            return;
+        }
         if (!argument.equals("reset") || state.session().isEmpty()) {
-            apply(new TerminalUiAction.StatusChanged("Use /approval reset in a Coding Session to ask each time again"));
+            apply(new TerminalUiAction.StatusChanged(
+                    "Use /approval reopen for options or /approval reset to ask each time"));
             return;
         }
         AgentSessionId sessionId = state.session().orElseThrow().summary().sessionId();
@@ -1936,7 +1970,8 @@ public final class CodingTerminalController implements AutoCloseable {
     private void openInteractionSelector(CodingApprovalPrompt prompt) {
         InteractionView interaction = prompt.interaction();
         activeInteraction = interaction;
-        apply(new TerminalUiAction.InteractionPresented(interaction, prompt.allowForSession()));
+        apply(new TerminalUiAction.InteractionPresented(
+                interaction, prompt.allowForSession(), prompt.sessionApprovalUnavailableReason()));
         Optional<ClarificationDetails> clarification = ClarificationDetails.from(interaction);
         if (clarification.isPresent()) {
             if (clarificationDraft == null

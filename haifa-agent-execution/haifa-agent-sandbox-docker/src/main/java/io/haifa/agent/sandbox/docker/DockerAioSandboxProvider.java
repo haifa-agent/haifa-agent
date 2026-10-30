@@ -241,6 +241,19 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
         return warmContainers.size();
     }
 
+    private URI managementAddress(DockerEngine.ContainerInspection inspected) {
+        // Docker Desktop container IPs live inside its VM and cannot be used by a native Windows JVM.
+        if (!"npipe".equals(configuration.dockerEndpoint().getScheme())
+                && inspected.containerIp() != null
+                && !inspected.containerIp().isBlank()) {
+            return URI.create("http://" + inspected.containerIp() + ":" + configuration.aioPort());
+        }
+        if (inspected.managementPort() > 0 && inspected.managementPort() <= 65_535) {
+            return URI.create("http://127.0.0.1:" + inspected.managementPort());
+        }
+        throw failure("CONTAINER_IDENTITY_MISMATCH", "sandbox container has no reachable management address");
+    }
+
     private DockerEngine engine() {
         DockerEngine value = engine;
         if (value == null) {
@@ -370,15 +383,7 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
 
                     DockerEngine.ContainerInspection inspected = engine().inspectContainer(containerId);
                     verifyContainer(inspected);
-                    if (inspected.containerIp() != null
-                            && !inspected.containerIp().isBlank()) {
-                        managementUri = URI.create("http://" + inspected.containerIp() + ":" + configuration.aioPort());
-                    } else if (inspected.managementPort() > 0) {
-                        managementUri = URI.create("http://127.0.0.1:" + inspected.managementPort());
-                    } else {
-                        throw failure(
-                                "CONTAINER_IDENTITY_MISMATCH", "sandbox container has no reachable management address");
-                    }
+                    managementUri = managementAddress(inspected);
 
                     if (cancelled.get()) return cancelledResult(started);
                     Duration readyBudget = remaining(businessDeadline);
@@ -614,9 +619,9 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
                 throw failure("CONTAINER_NOT_FOUND", "sandbox container disappeared after creation");
             }
             boolean oneWorkspaceMount = inspected.mounts().size() == 1
-                    && hostWorkspaceRoot
-                            .toString()
-                            .equals(inspected.mounts().get(0).source())
+                    && DockerDesktopPaths.sameMount(
+                            hostWorkspaceRoot.toString(),
+                            inspected.mounts().get(0).source())
                     && configuration
                             .containerWorkspaceRoot()
                             .equals(inspected.mounts().get(0).destination())
@@ -1131,14 +1136,7 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
             DockerEngine.ContainerInspection inspected = engine().inspectContainer(containerId);
             verifyWarmContainer(inspected, hostWorkspaceRoot, networkName, containerLabels);
 
-            URI managementUri;
-            if (inspected.containerIp() != null && !inspected.containerIp().isBlank()) {
-                managementUri = URI.create("http://" + inspected.containerIp() + ":" + configuration.aioPort());
-            } else if (inspected.managementPort() > 0) {
-                managementUri = URI.create("http://127.0.0.1:" + inspected.managementPort());
-            } else {
-                throw failure("CONTAINER_IDENTITY_MISMATCH", "sandbox container has no reachable management address");
-            }
+            URI managementUri = managementAddress(inspected);
 
             Duration readyBudget = timeout.compareTo(Duration.ofSeconds(10)) > 0 ? Duration.ofSeconds(10) : timeout;
             if (readyBudget.isZero() || !aio().awaitReady(managementUri, readyBudget)) {
@@ -1182,7 +1180,8 @@ public final class DockerAioSandboxProvider implements SandboxProvider, AutoClos
             throw failure("CONTAINER_NOT_FOUND", "sandbox container disappeared after creation");
         }
         boolean oneWorkspaceMount = inspected.mounts().size() == 1
-                && hostWorkspaceRoot.toString().equals(inspected.mounts().get(0).source())
+                && DockerDesktopPaths.sameMount(
+                        hostWorkspaceRoot.toString(), inspected.mounts().get(0).source())
                 && configuration
                         .containerWorkspaceRoot()
                         .equals(inspected.mounts().get(0).destination())

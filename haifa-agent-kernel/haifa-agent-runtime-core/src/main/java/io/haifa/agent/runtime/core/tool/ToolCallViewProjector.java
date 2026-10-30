@@ -46,8 +46,10 @@ public final class ToolCallViewProjector {
 
     public static ToolCallView project(ToolCall call) {
         ProjectionBudget argumentsBudget = new ProjectionBudget();
-        ToolDataView arguments =
-                new ToolDataView(projectMap(call.arguments().values(), argumentsBudget, 0), argumentsBudget.truncated);
+        ToolDataView arguments = new ToolDataView(
+                projectMap(call.arguments().values(), argumentsBudget, 0),
+                argumentsBudget.truncated,
+                argumentsBudget.completeFields);
         return new ToolCallView(
                 call.id(),
                 call.runId(),
@@ -66,7 +68,8 @@ public final class ToolCallViewProjector {
                                 !safeSummary.equals(result.summary()),
                                 ToolCallViewProjector::redactText);
                     }
-                    ToolDataView structuredData = new ToolDataView(projected, resultBudget.truncated);
+                    // Result displays may be derived; only argument projections certify complete fields.
+                    ToolDataView structuredData = new ToolDataView(projected, resultBudget.truncated, Set.of());
                     BoundedText boundedSummary = BoundedText.of(safeSummary, ToolDisplayBudget.defaultOutput());
                     return new ToolResultView(
                             result.successful(),
@@ -84,28 +87,42 @@ public final class ToolCallViewProjector {
 
     private static Map<String, Object> projectMap(Map<String, Object> source, ProjectionBudget budget, int depth) {
         if (depth > MAX_DEPTH || !budget.consume()) {
-            budget.truncated = true;
+            budget.truncate();
             return Map.of("truncated", TRUNCATED);
         }
         Map<String, Object> projected = new LinkedHashMap<>();
         for (var entry : source.entrySet()) {
             if (!budget.consume()) {
                 projected.put("truncated", TRUNCATED);
-                budget.truncated = true;
+                budget.completeFields.remove("truncated");
+                budget.truncate();
                 break;
             }
+            int changes = budget.truncations + budget.redactions;
             String key = boundedText(redactText(entry.getKey()), budget);
+            if (depth == 0) budget.completeFields.remove(key);
+            if (!key.equals(entry.getKey()) || sensitiveName(key)) budget.redactions++;
             projected.put(key, sensitiveName(key) ? REDACTED : projectValue(entry.getValue(), budget, depth + 1));
+            if (depth == 0
+                    && changes == budget.truncations + budget.redactions
+                    && key.equals(entry.getKey())
+                    && !sensitiveName(key)) {
+                budget.completeFields.add(key);
+            }
         }
         return Map.copyOf(projected);
     }
 
     private static Object projectValue(Object value, ProjectionBudget budget, int depth) {
         if (depth > MAX_DEPTH || !budget.consume()) {
-            budget.truncated = true;
+            budget.truncate();
             return TRUNCATED;
         }
-        if (value instanceof String text) return boundedText(redactText(text), budget);
+        if (value instanceof String text) {
+            String redacted = redactText(text);
+            if (!redacted.equals(text)) budget.redactions++;
+            return boundedText(redacted, budget);
+        }
         if (value instanceof Map<?, ?> map) {
             Map<String, Object> typed = new LinkedHashMap<>();
             map.forEach((key, element) -> typed.put(String.valueOf(key), element));
@@ -114,7 +131,7 @@ public final class ToolCallViewProjector {
         if (value instanceof List<?> list) return projectList(list, budget, depth);
         if (value instanceof Set<?> set) return projectList(new ArrayList<>(set), budget, depth);
         if (value instanceof Number || value instanceof Boolean) return value;
-        budget.truncated = true;
+        budget.truncate();
         return TRUNCATED;
     }
 
@@ -123,7 +140,7 @@ public final class ToolCallViewProjector {
         for (Object value : source) {
             if (!budget.consume()) {
                 projected.add(TRUNCATED);
-                budget.truncated = true;
+                budget.truncate();
                 break;
             }
             projected.add(projectValue(value, budget, depth + 1));
@@ -133,7 +150,7 @@ public final class ToolCallViewProjector {
 
     private static String boundedText(String value, ProjectionBudget budget) {
         BoundedText bounded = BoundedText.of(value, MAX_STRING_BYTES, MAX_STRING_LINES);
-        if (bounded.truncated()) budget.truncated = true;
+        if (bounded.truncated()) budget.truncate();
         return bounded.text();
     }
 
@@ -152,6 +169,14 @@ public final class ToolCallViewProjector {
     private static final class ProjectionBudget {
         private int nodes;
         private boolean truncated;
+        private int truncations;
+        private int redactions;
+        private final Set<String> completeFields = new java.util.HashSet<>();
+
+        private void truncate() {
+            truncated = true;
+            truncations++;
+        }
 
         private boolean consume() {
             if (nodes >= MAX_NODES) return false;

@@ -20,6 +20,29 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class ToolCallViewProjectorTest {
+    @Test
+    void completeFieldsDistinguishBoundedContentFromAnIncompleteOrRedactedTarget() {
+        for (String path : List.of("/workspace/large.txt", "p".repeat(20_000), "token: synthetic-secret")) {
+            ToolCall call = new ToolCall(
+                    new ToolCallId("bounded-fields"),
+                    new AgentRunId("run-projection"),
+                    new AgentStepId("bounded-fields"),
+                    new ProviderToolCallCorrelationId("bounded-fields"),
+                    new RuntimeIdempotencyKey("bounded-fields"),
+                    "file_write",
+                    "1.0",
+                    new ToolArguments("file_write.input", "1.0", Map.of("path", path, "content", "x\n".repeat(300))),
+                    REQUESTED_AT);
+            var arguments = ToolCallViewProjector.project(call).arguments();
+            assertThat(arguments.truncated()).isTrue();
+            assertThat(arguments.completeFields()).doesNotContain("content");
+            if (path.equals("/workspace/large.txt"))
+                assertThat(arguments.completeFields()).contains("path");
+            else assertThat(arguments.completeFields()).doesNotContain("path");
+            assertThat(call.arguments().values()).containsEntry("path", path);
+        }
+    }
+
     private static final Instant REQUESTED_AT = Instant.parse("2026-09-27T14:00:00Z");
     private static final Instant STARTED_AT = REQUESTED_AT.plusSeconds(1);
     private static final Instant COMPLETED_AT = REQUESTED_AT.plusSeconds(2);

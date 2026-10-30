@@ -13,6 +13,47 @@ class DockerAioSandboxConfigurationTest {
     private static final String IMAGE = "ghcr.io/example/sandbox@sha256:" + "a".repeat(64);
 
     @Test
+    void localEndpointResolutionRejectsRemoteOrAmbiguousHosts() {
+        assertThat(DockerAioSandboxConfiguration.localDockerSocket("Linux", null))
+                .isEqualTo(Path.of("/var/run/docker.sock"));
+        assertThat(DockerAioSandboxConfiguration.localDockerSocket("Linux", "unix:///tmp/custom.sock"))
+                .isEqualTo(Path.of("/tmp/custom.sock"));
+        assertThat(DockerAioSandboxConfiguration.localDockerSocket("Windows 11", null))
+                .isEqualTo(Path.of("\\\\.\\pipe\\docker_engine"));
+        assertThat(DockerAioSandboxConfiguration.localDockerSocket(
+                        "Windows 11", "npipe:////./pipe/dockerDesktopLinuxEngine"))
+                .isEqualTo(Path.of("\\\\.\\pipe\\dockerDesktopLinuxEngine"));
+        for (String endpoint : java.util.List.of(
+                "tcp://localhost:2375",
+                "ssh://example",
+                "unix://host/socket",
+                "npipe:////./pipe/docker_engine?x=1",
+                "npipe://remote//./pipe/docker_engine",
+                "npipe:////./pipe/../docker_engine",
+                "npipe:////./pipe/docker_engine/child")) {
+            assertThatThrownBy(() -> DockerAioSandboxConfiguration.localDockerSocket("Windows 11", endpoint))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+        assertThatThrownBy(() -> DockerAioSandboxConfiguration.localDockerSocket("Linux", "unix://:2375/tmp/socket"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @org.junit.jupiter.api.condition.EnabledOnOs(org.junit.jupiter.api.condition.OS.WINDOWS)
+    void nativeNamedPipeSurvivesPathNormalizationAndBuildsTheTransport() throws Exception {
+        Path socket = DockerAioSandboxConfiguration.localDockerSocket("Windows 11", null);
+        assertThat(socket).isEqualTo(Path.of("\\\\.\\pipe\\docker_engine"));
+        assertThat(DockerAioSandboxConfiguration.localDockerSocket("Windows 11", "npipe:////./pipe/docker_engine"))
+                .isEqualTo(socket);
+        var config = configuration(IMAGE, OptionalInt.empty(), socket);
+        assertThat(config.dockerEndpoint().toString()).isEqualTo("npipe:////./pipe/docker_engine");
+        try (var engine = new DockerJavaEngine(config)) {
+            // Transport construction is local; no daemon or image is required.
+            assertThat(engine).isNotNull();
+        }
+    }
+
+    @Test
     void digestChangesWithEveryTrustedIdentityField() {
         DockerAioSandboxConfiguration first = configuration(IMAGE, OptionalInt.empty());
         DockerAioSandboxConfiguration same = configuration(IMAGE, OptionalInt.empty());
@@ -97,9 +138,13 @@ class DockerAioSandboxConfigurationTest {
     }
 
     private static DockerAioSandboxConfiguration configuration(String image, OptionalInt uid) {
+        return configuration(image, uid, Path.of("docker.sock").toAbsolutePath());
+    }
+
+    private static DockerAioSandboxConfiguration configuration(String image, OptionalInt uid, Path socket) {
         return new DockerAioSandboxConfiguration(
                 "install",
-                Path.of("docker.sock").toAbsolutePath(),
+                socket,
                 image,
                 "/workspace",
                 Map.of("bash", "/bin/bash"),

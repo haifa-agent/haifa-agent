@@ -1,5 +1,9 @@
 # Haifa Agent Runtime Core
 
+`ToolCallViewProjector` 为 Tool 参数投影提供顶层 `completeFields`：字段内容或名称发生截断、脱敏，
+以及嵌套节点超出预算时，均不认证该字段。展示预算和原始 Tool 参数保持各自语义；结果展示可能经过派生处理，
+因此不认证完整字段，避免调用方把结果展示误认为原始值。
+
 Active Context 的失效回调只更新短时缓存锁，不等待会话构建锁，避免 Run 完成或消息撤回与 Store 读取形成反向锁等待。
 构建中发生失效时，读取会重建后再发布，防止撤回的消息重新进入缓存。InMemory Run 查询在同一 Store 读锁内投影状态与 output，
 不会把两个提交时点的值拼成一个快照。

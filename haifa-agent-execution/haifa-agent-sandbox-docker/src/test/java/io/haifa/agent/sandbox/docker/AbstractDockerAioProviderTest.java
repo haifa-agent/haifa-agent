@@ -71,9 +71,14 @@ abstract class AbstractDockerAioProviderTest {
 
     protected DockerAioSandboxConfiguration defaultConfiguration(
             DockerAioLifecycleMode mode, int maxConcurrentSessions, Duration idleTimeout) {
+        return defaultConfiguration(mode, maxConcurrentSessions, idleTimeout, workspaceRoot.resolve("docker.sock"));
+    }
+
+    protected DockerAioSandboxConfiguration defaultConfiguration(
+            DockerAioLifecycleMode mode, int maxConcurrentSessions, Duration idleTimeout, Path socket) {
         return new DockerAioSandboxConfiguration(
                 "install-1",
-                workspaceRoot.resolve("docker.sock"),
+                socket,
                 IMAGE,
                 "/mnt/user-data/workspace",
                 Map.of("bash", "/bin/bash"),
@@ -160,6 +165,7 @@ abstract class AbstractDockerAioProviderTest {
         public String containerId = "container-1";
         public ContainerSpec spec;
         public ContainerInspection inspection;
+        public ContainerInspection lastInspection;
         public int managementPort = 32768;
         public String containerIp = "172.18.0.2";
 
@@ -236,6 +242,7 @@ abstract class AbstractDockerAioProviderTest {
             String id = "cid-" + spec.name();
             ContainerInspection insp = inspectionFor(spec, false);
             this.inspection = insp;
+            this.lastInspection = insp;
             containers.put(id, insp);
             containers.put(spec.name(), insp);
             containers.put("container-1", insp);
@@ -273,6 +280,7 @@ abstract class AbstractDockerAioProviderTest {
                         existing.managementPort(),
                         existing.containerIp());
                 this.inspection = running;
+                this.lastInspection = running;
                 containers.put(id, running);
                 containers.put(existing.name(), running);
                 containers.put("container-1", running);
@@ -377,6 +385,7 @@ abstract class AbstractDockerAioProviderTest {
     }
 
     protected static final class FakeAio implements AioClient {
+        public URI lastUri;
         public int execCount;
         public int killCount;
         public int closeSessionCount;
@@ -410,6 +419,7 @@ abstract class AbstractDockerAioProviderTest {
 
         @Override
         public ExecResult exec(URI baseUri, ExecRequest request) {
+            lastUri = baseUri;
             execCount++;
             lastRequest = request;
             if (execEntered != null) {

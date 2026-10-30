@@ -69,7 +69,7 @@ public final class TerminalUiReducer {
                     List.copyOf(loaded.resources()),
                     transcript,
                     sameRun ? state.pending() : List.of(),
-                    active.isPresent() ? "THINKING" : "Idle",
+                    active.isPresent() ? (sameRun ? state.status() : "THINKING") : "Idle",
                     state.editorBuffer(),
                     state.editorCursor(),
                     selectorAfterSessionLoad(state.selector(), view),
@@ -308,7 +308,8 @@ public final class TerminalUiReducer {
             Optional<ClarificationDetails> clarification = ClarificationDetails.from(interaction);
             ApprovalDetails details = clarification
                     .map(ClarificationDetails::toApprovalDetails)
-                    .orElseGet(() -> ApprovalDetails.from(interaction, presented.allowForSession()));
+                    .orElseGet(() -> ApprovalDetails.from(
+                            interaction, presented.allowForSession(), presented.sessionApprovalUnavailableReason()));
             List<TranscriptItem> items = new ArrayList<>(state.transcript());
             String id = "interaction-" + interaction.requestId().value();
             int existing = index(items, id);
@@ -770,8 +771,14 @@ public final class TerminalUiReducer {
             int existing = index(items, id);
             Optional<ApprovalDetails> details =
                     existing < 0 ? Optional.empty() : items.get(existing).approvalDetails();
+            boolean pending = Set.of("PENDING", "REQUESTED").contains(payload.state());
+            if (!pending && details.isEmpty()) {
+                // Automatic approvals have no interactive card; do not retain an unhydrated placeholder.
+                if (existing >= 0) items.remove(existing);
+                return List.copyOf(items);
+            }
             boolean expanded = existing >= 0 && items.get(existing).expanded();
-            String title = details.map(value -> "Approval · " + value.title()).orElse("Approval · " + payload.kind());
+            String title = details.map(value -> "Approval · " + value.title()).orElse("Approval · Approval required");
             String body = details.map(ApprovalDetails::content).orElse("Structured approval details are loading.");
             upsert(
                     items,
@@ -878,7 +885,7 @@ public final class TerminalUiReducer {
     private static String status(AgentRunEvent event, String fallback) {
         if (event.payload() instanceof RunEventPayloads.RunLifecycle lifecycle) {
             return switch (lifecycle.status()) {
-                case "RUNNING" -> "THINKING";
+                case "RUNNING" -> fallback.equalsIgnoreCase("WORKING") ? "WORKING" : "THINKING";
                 case "WAITING_APPROVAL", "WAITING_INTERACTION" -> "WAITING FOR APPROVAL";
                 default -> lifecycle.status();
             };
