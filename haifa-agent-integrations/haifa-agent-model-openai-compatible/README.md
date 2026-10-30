@@ -79,7 +79,7 @@ Chat Completions 当前支持：
 | 火山方舟 | `volcengine-ark-openai-chat` | 是 | 是 | 是 | 由受治理豆包/Endpoint profile 决定 |
 | SiliconFlow | `siliconflow-openai-chat` | 是 | 是 | 是 | 不发送厂商推理控制扩展 |
 | TokenRhythm | `tokenrhythm-openai-chat` | 是 | 是 | 是 | 不发送厂商推理控制扩展 |
-| OpenCode Go | `opencode-go-openai-chat` | 是 | 是 | 是 | 不发厂商推理控制扩展；发送文档要求的 `x-opencode-session`（run id）与产品 `User-Agent` |
+| OpenCode Go | `opencode-go-openai-chat` | 是 | 是 | 是 | 发送文档要求的 `x-opencode-session`（冻结的根 Run 亲和值）与产品 `User-Agent`；`reasoningMode: ENABLED` 时映射 DeepSeek thinking 并保留工具轮受保护续接 |
 
 配置通过 Provider 下的 `apiBindings` 声明 Style。省略 dialect 即 `standard`；只有存在已验证协议差异
 时才声明非标准 dialect。当前未发布旧配置或快照，不保留旧 options、Provider-ID 猜测或双轨入口。
@@ -352,3 +352,8 @@ DeepSeek Chat 的精确 Binding 包含 `deepseek-flash`、兼容别名 `deepseek
 开启思考与 temperature、强制 `tool_choice` 组合会在 HTTP dispatch 前拒绝。
 带 tools 时复用受保护 continuation 回传同 Binding 的普通与 Tool assistant 历史；
 不带 tools 的 DeepSeek 请求省略历史 reasoning，不提供思考正文展示。
+
+## Console usage 扩展
+
+Console 网关在标准 usage 之外还返回命名空间扩展：`usage.cost`（美元计价成本）与`usage.opencode.tokens.{input,output,reasoning,cache_read}`。Chat 适配器在存在时把它们映射到`ModelUsage`：`cost` 按美分取整为 `costMinorUnits`，`opencode.tokens.cache_read` 与 `opencode.tokens.reasoning` 作为缓存命中与推理 token 的兜底来源，缺省字段保持未知成本。Go 订阅额度内的请求返回 `cost = 0`，因此记录为已知的零成本。
+渠道的模型清单位于订阅根 `https://opencode.ai/inference/go/v1/models`，健康探测通过`OpenAiCompatibleDialect#modelsUri` 由方言给出 URI，不再把 `/models` 拼在 Chat Completions 基址后。

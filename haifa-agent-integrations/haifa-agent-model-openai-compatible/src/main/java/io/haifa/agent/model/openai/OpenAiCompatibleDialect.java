@@ -4,6 +4,7 @@ import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.ModelErrorCategory;
 import io.haifa.agent.model.api.ModelProviderDefinition;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
+import java.net.URI;
 import java.net.http.HttpRequest;
 import java.util.Map;
 
@@ -27,6 +28,18 @@ public interface OpenAiCompatibleDialect {
      * credentials or prompt material here.
      */
     default void applyHeaders(HttpRequest.Builder builder, AgentChatRequest request) {}
+
+    /**
+     * Absolute model-list URI used by the health probe.
+     *
+     * <p>The default derives {@code /models} from the Chat Completions base; a channel that publishes its model list
+     * elsewhere overrides it instead of making the probe guess.
+     */
+    default URI modelsUri(URI endpoint) {
+        String base = endpoint.toString();
+        while (base.endsWith("/")) base = base.substring(0, base.length() - 1);
+        return URI.create(base + "/models");
+    }
 
     default void applyStreamingRequest(AgentChatRequest request, Map<String, Object> body) {
         body.put("stream_options", Map.of("include_usage", true));

@@ -59,11 +59,22 @@ The packaged catalog ships three reviewed bindings (`DeepSeek V4 Pro`, `DeepSeek
 `opencode-go-openai-chat` dialect, which freezes the official HTTPS host and the
 `/inference/go/openai/v1` path. The request body stays standard, but the channel's documented
 transport contract needs two headers, so the dialect owns exactly those: `x-opencode-session` carries
-the run id of the conversation turn, and `User-Agent` names this product
-(`haifa-coding-agent/opencode-go`). `OpenAiCompatibleDialects.OPENCODE_GO` adds them through
-`OpenAiCompatibleDialect#applyHeaders` on both the streaming and the synchronous path; every other
-dialect keeps the shared headers unchanged. Reasoning profiles for this channel are intentionally not
-declared yet.
+the frozen conversation affinity (the root Run id, so delegated children share it), and `User-Agent`
+names this product (`haifa-coding-agent/opencode-go`). `OpenAiCompatibleDialects.OPENCODE_GO` adds
+them through `OpenAiCompatibleDialect#applyHeaders` on both the streaming and the synchronous path;
+every other dialect keeps the shared headers unchanged.
+
+The three bindings declare the reasoning profiles the channel actually serves (`deepseek-v4.1-flash`
+low/high/max, `deepseek-v4-pro` high/max, `kimi-k3` max) with `toolReasoningContinuationRequired`.
+`reasoningMode: ENABLED` therefore sends the DeepSeek thinking contract the channel translates
+(`thinking`, `reasoning_effort`), keeps the reasoning on tool turns, and relies on the shared
+protected continuation store instead of exposing `reasoning_content` in public output.
+
+The channel publishes its model list on the subscription root
+(`https://opencode.ai/inference/go/v1/models`), so the health probe asks the dialect for the URI
+instead of appending `/models` to the Chat Completions base. The Console usage extension
+(`usage.opencode.tokens.*` and the priced `usage.cost`) is mapped onto `ModelUsage`; a Go request
+inside the plan reports `cost = 0`, which the runtime records as a known cost of zero.
 
 ## Verified and unverified behaviour
 
@@ -88,8 +99,13 @@ the product user agent, the same credential, endpoint and configuration complete
 Coding Agent runs across all three bindings (`deepseek-v4.1-flash`, `deepseek-v4-pro`, `kimi-k3`),
 including three forced `file_list` Tool round-trips and multi-call runs that reported prompt-cache
 reads (6144 and 10240 tokens). So the console device-grant access token authenticates Go inference
-directly and no Console API key is needed. No `reasoning_content` delta appeared in any run, which
-matches the bindings that declare no reasoning profile.
+directly and no Console API key is needed.
+
+Verified in the same session with `reasoningMode: ENABLED`: the channel accepted `thinking` plus
+`reasoning_effort`, the tool-call turn reported `reasoningTokens=154` and `finishReason=TOOL_CALLS`,
+the follow-up call finished with `STOP`, the Run completed, and one protected continuation row was
+stored. Without an explicit reasoning mode the channel returns no reasoning delta, which matches the
+`DISABLED` default.
 
 Known gap from the same session: an invalid bearer token is answered with HTTP 400 and an empty body
 plus an `x-opencode-log-id` header, so a revoked credential would surface as `MODEL_REQUEST_INVALID`

@@ -58,26 +58,53 @@ final class OpenCodeGoOpenAiChatDialect implements OpenAiCompatibleDialect {
 
     @Override
     public void applyRequest(AgentChatRequest request, Map<String, Object> body) {
-        // The shared transport already emits the standard Chat Completions fields for this channel.
+        String thinking = frozen(request, "thinking", "disabled");
+        if (!"enabled".equals(thinking)) return;
+        // The channel translates the DeepSeek thinking contract, which rejects sampling and forced tool selection.
+        if (request.options().containsKey("temperature")
+                || request.model().invocationOptions().containsKey("temperature")) {
+            throw new IllegalArgumentException("OpenCode Go thinking cannot be combined with temperature");
+        }
+        Object toolChoice = body.get("tool_choice");
+        if (toolChoice != null && !"auto".equals(toolChoice) && !"none".equals(toolChoice)) {
+            throw new IllegalArgumentException("OpenCode Go thinking does not support forced tool_choice");
+        }
+        body.put("thinking", Map.of("type", "enabled"));
+        body.put("reasoning_effort", frozen(request, "reasoning_effort", "high"));
     }
 
     /**
      * Adds the Go channel's two documented transport headers.
      *
-     * <p>The session value is the run id: it is stable for every physical call of one conversation turn, which is
-     * what the channel uses for routing and prompt-cache locality, and it never carries prompt material.
+     * <p>The session value is the conversation affinity: the Runtime freezes the root Run id, so every physical call
+     * of one conversation and of its delegated children carries the same value for routing and prompt-cache
+     * locality. It never carries prompt material.
      */
     @Override
     public void applyHeaders(HttpRequest.Builder builder, AgentChatRequest request) {
-        builder.header(SESSION_HEADER, headerValue(request.runId().value(), "session id"))
+        builder.header(SESSION_HEADER, headerValue(request.sessionAffinity(), "session affinity"))
                 .header("User-Agent", USER_AGENT);
     }
 
+    /** The Go model list lives on the subscription root, not below the Chat Completions base path. */
+    @Override
+    public URI modelsUri(URI endpoint) {
+        if (!REQUIRED_PATH.equals(normalizedPath(endpoint))) return OpenAiCompatibleDialect.super.modelsUri(endpoint);
+        return URI.create(endpoint.getScheme() + "://" + endpoint.getRawAuthority() + "/inference/go/v1/models");
+    }
+
     private static String headerValue(String value, String field) {
+        if (value == null || value.isBlank()) throw new IllegalArgumentException(field + " must not be blank");
         if (value.indexOf('\r') >= 0 || value.indexOf('\n') >= 0 || value.indexOf('\0') >= 0) {
             throw new IllegalArgumentException(field + " contains invalid control characters");
         }
-        return value;
+        return value.trim();
+    }
+
+    private static String frozen(AgentChatRequest request, String key, String fallback) {
+        return String.valueOf(request.model()
+                .invocationOptions()
+                .getOrDefault(key, request.model().providerOptions().getOrDefault(key, fallback)));
     }
 
     private static void validateEndpoint(URI endpoint, boolean allowInsecureHttp) {
@@ -101,9 +128,6 @@ final class OpenCodeGoOpenAiChatDialect implements OpenAiCompatibleDialect {
     private static void validateModel(String providerModelId, Set<ModelCapability> capabilities) {
         if (!MODELS.contains(providerModelId)) {
             throw new IllegalArgumentException("OpenCode Go model binding is not verified");
-        }
-        if (capabilities.contains(ModelCapability.REASONING)) {
-            throw new IllegalArgumentException("OpenCode Go reasoning profiles are not verified yet");
         }
     }
 

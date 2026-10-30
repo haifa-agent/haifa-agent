@@ -2,6 +2,14 @@
 
 ## Unreleased - 0.1.5-SNAPSHOT
 
+- OpenCode Go now behaves like the channel documents: model requests carry the frozen root-Run
+  affinity as `x-opencode-session` so delegated children share routing and prompt cache, the three
+  bindings declare the reasoning profiles the channel serves (`reasoningMode: ENABLED` maps the
+  DeepSeek thinking contract and keeps tool-turn continuation), the Console usage extension
+  (`usage.cost`, `usage.opencode.tokens.*`) feeds `ModelUsage` instead of being dropped, and the
+  health probe reads the dialect's model-list URI (`/inference/go/v1/models`) instead of appending
+  `/models` to the Chat Completions base.
+
 - The Coding Agent footer version now comes from `META-INF/haifa/coding-agent-version.properties`
   instead of a hard-coded string, and `scripts/refresh-ca` gained a `latest` channel that publishes
   `<install-root>\haifa-coding-agent-latest`. That package differs from the versioned one only in

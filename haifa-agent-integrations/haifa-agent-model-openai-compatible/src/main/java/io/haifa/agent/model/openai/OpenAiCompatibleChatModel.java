@@ -904,14 +904,44 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
         }
         long directCacheHit = nonNegativeLong(request, usage, "prompt_cache_hit_tokens", false);
         long standardCached = nonNegativeLong(request, usage.path("prompt_tokens_details"), "cached_tokens", false);
+        // The Console gateway also reports billed tokens and a priced cost under a namespaced usage extension.
+        JsonNode consoleTokens = usage.path("opencode").path("tokens");
+        long consoleCacheRead = nonNegativeLong(request, consoleTokens, "cache_read", false);
+        long cacheHitTokens =
+                directCacheHit != 0 ? directCacheHit : standardCached != 0 ? standardCached : consoleCacheRead;
+        long reasoningTokens =
+                nonNegativeLong(request, usage.path("completion_tokens_details"), "reasoning_tokens", false);
+        if (reasoningTokens == 0) reasoningTokens = nonNegativeLong(request, consoleTokens, "reasoning", false);
+        java.util.OptionalLong costMinorUnits = consoleCostMinorUnits(request, usage);
         return new ModelUsage(
                 nonNegativeLong(request, usage, "prompt_tokens", true),
                 nonNegativeLong(request, usage, "completion_tokens", true),
-                directCacheHit == 0 ? standardCached : directCacheHit,
+                cacheHitTokens,
                 nonNegativeLong(request, usage, "prompt_cache_miss_tokens", false),
-                nonNegativeLong(request, usage.path("completion_tokens_details"), "reasoning_tokens", false),
-                false,
-                0);
+                reasoningTokens,
+                costMinorUnits.isPresent(),
+                costMinorUnits.orElse(0));
+    }
+
+    /**
+     * Reads the Console usage cost, which is priced in US dollars, as integer minor units (cents).
+     *
+     * <p>Sub-cent amounts round to the nearest cent so a reported cost never inflates a Run budget.
+     */
+    private java.util.OptionalLong consoleCostMinorUnits(AgentChatRequest request, JsonNode usage) {
+        JsonNode cost = usage.path("cost");
+        if (cost.isMissingNode() || cost.isNull()) return java.util.OptionalLong.empty();
+        if (!cost.isNumber() || !Double.isFinite(cost.asDouble()) || cost.asDouble() < 0) {
+            throw failure(
+                    request,
+                    ModelErrorCategory.MALFORMED_RESPONSE,
+                    false,
+                    200,
+                    "invalid_usage_cost",
+                    "provider usage cost is not a non-negative number",
+                    null);
+        }
+        return java.util.OptionalLong.of(Math.round(cost.asDouble() * 100));
     }
 
     private long nonNegativeLong(AgentChatRequest request, JsonNode object, String field, boolean required) {

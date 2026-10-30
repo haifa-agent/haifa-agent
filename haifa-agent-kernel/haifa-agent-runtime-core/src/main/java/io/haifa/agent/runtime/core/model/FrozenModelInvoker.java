@@ -263,6 +263,7 @@ public final class FrozenModelInvoker {
                 callId,
                 requestId,
                 run.id(),
+                run.rootRunId().value(),
                 iteration,
                 physicalAttempt,
                 binding.configuration().model(),

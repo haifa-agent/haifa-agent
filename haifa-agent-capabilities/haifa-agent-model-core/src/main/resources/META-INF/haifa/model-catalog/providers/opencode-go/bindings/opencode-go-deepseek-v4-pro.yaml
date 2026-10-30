@@ -1,25 +1,25 @@
 schemaVersion: haifa.model-catalog-binding/v1
 bindingId: opencode-go-deepseek-v4-pro
-version: "2026-10-go1"
+version: "2026-10-go2"
 providerModelId: deepseek-v4-pro
 displayName: DeepSeek V4 Pro (OpenCode Go)
 status: ACTIVE
 apiStyle: openai-chat-completions
 dialect: opencode-go-openai-chat
-capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT]
+capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
 profile:
   version: "2.0"
-  reasoningBehavior: NONE
-  allowedReasoningModes: [DISABLED]
-  allowedReasoningEfforts: []
+  reasoningBehavior: OPTIONAL
+  allowedReasoningModes: [DISABLED, ENABLED]
+  allowedReasoningEfforts: [HIGH, MAX]
   maximumReasoningTokens: null
   minimumOutputTokens: 1
   maximumOutputTokens: 384000
   contextWindowTokens: 1000000
-  toolReasoningContinuationRequired: false
+  toolReasoningContinuationRequired: true
   nativeStreaming: true
   usageStreaming: true
-  reasoningStreaming: false
+  reasoningStreaming: true
   partialOutputFailureBehavior: NON_RETRYABLE
   inputModalities: [TEXT]
   outputModalities: [TEXT]

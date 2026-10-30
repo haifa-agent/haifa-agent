@@ -1352,6 +1352,11 @@ final class LocalCodingAgent implements AutoCloseable {
             // Retain and replay reasoning for every assistant message, not only tool-call turns.
             invocationOptions.put("requires_reasoning_continuation", true);
         }
+        if (OpenAiCompatibleDialects.OPENCODE_GO.equals(model.dialect())
+                && model.reasoningMode() != ModelReasoningMode.DISABLED) {
+            // The Go channel translates the DeepSeek thinking contract, so a tool turn keeps its reasoning.
+            invocationOptions.put("requires_reasoning_continuation", true);
+        }
         ResolvedModelSnapshot snapshot = ResolvedModelSnapshot.create(
                 new ModelProviderId(model.providerId()),
                 "cli-v1",
