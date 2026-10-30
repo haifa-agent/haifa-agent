@@ -1,6 +1,42 @@
 # Changelog
 
-## 0.1.4-SNAPSHOT - Unreleased
+## 0.1.4 - 2026-10-30
+
+- Release distributions include Windows x64 Coding Agent and Personal Assistant packages, a Linux x64
+  Personal Assistant server package, a Linux x64 Coding Agent portable archive and the complete SDK Maven
+  file repository for 0.1.4. No new SQLite migration is required; the package layout changes and removed
+  behaviour are listed in [the upgrade guide](docs/reference/upgrading.md).
+
+- The Runtime owns a clarification loop: `ask_clarification` turns one model call into a clarification
+  interaction of 1..3 questions with single- or multi-choice options plus an optional free-text answer,
+  validates the reply against the frozen input contract, persists it as the Tool result and resumes the Run.
+  A dismissed clarification resumes the Run with an unanswered payload instead of cancelling it, a Run may
+  ask at most three times, and interception only applies to calls that carry `questions`, so third-party
+  `ask_clarification` tools still dispatch normally. Coding Terminal renders a `Clarification · Step X of Y`
+  card with a selector, toggled options, per-option rationale, a composer free-text lane and a cancel entry,
+  and the transcript keeps a readable answer summary instead of the internal `selected=`/`custom=` payload.
+
+- `haifa-agent-sandbox-docker` adds a Docker + AIO Sandbox Provider behind the `ContainerExecutionPlatforms`
+  one-shot facade in the SDK Starter: cap-drop ALL, no-new-privileges, non-privileged cgroup v2 memory/CPU/PID
+  limits, a single workspace mount and loopback/isolated networking. Container failures never fall back to
+  host execution, and local Windows Docker Desktop named pipes, drive mount aliases and published loopback
+  management ports are supported.
+
+- `HostExecutionPlatforms.hostGuarded(...)` gains a backward-compatible overload for immutable trusted
+  non-sensitive CLI config/data/`PATH` overrides. Host user, system and temp boundaries stay protected, and the
+  effective environment digest joins the existing profile, configuration and Tool identities, so previously
+  frozen bindings reject the new shape.
+
+- Coding Agent on headless Linux selects the existing `0600` file-backed auth store with
+  `HAIFA_CODING_AUTH_STORE=file`; the Windows credential store stays the default and file mode is rejected on
+  Windows/macOS or for unknown store names. Personal Assistant model credentials follow the host platform the
+  same way, so a Linux server can store and reuse model keys.
+
+- Personal Assistant gains a `pa-server` packaging target for Linux and shares one layout with the Windows
+  package: `haifa-personal-assistant-{windows,linux}-x64-v<version>.zip`, an `app.jar` entry name, a common
+  `conf/pa.env` key set, a `data/personal-assistant` data root and systemd/nginx/compose materials. The Linux
+  unit no longer runs as root, and nginx serves the SPA from the install directory on relative `/api/v1` and
+  `/v1/admin` bases.
 
 - Session approval covers large file content previews when the full target remains certified by the Runtime;
   incomplete or redacted targets still require individual approval. Failed automatic approvals fall back to a prompt.
@@ -98,9 +134,6 @@
 - Coding Terminal renders assistant Markdown with heading levels, dedicated emphasis/code colors,
   block spacing, nested lists and quotes, code panels and responsive pipe tables. Streaming reuses
   stable blocks, Resize only reflows, and an explicit internal startup switch retains the line renderer.
-
-- Open the 0.1.4 development line after the 0.1.3 release. Local SDK publishing uses
-  `0.1.4-SNAPSHOT` from the main `dev` checkout and isolated worktree coordinates elsewhere.
 
 ## 0.1.3 - 2026-10-22
 
