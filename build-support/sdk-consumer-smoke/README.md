@@ -8,7 +8,7 @@ current Gradle. For a release bundle, run:
 
 ```bash
 python3 build-support/sdk-consumer-smoke/verify.py \
-  --repository /absolute/path/haifa-agent-sdk-v0.1.3/repository --version 0.1.3
+  --repository /absolute/path/haifa-agent-sdk-v0.1.4/repository --version 0.1.4
 ```
 
 The bundle route uses an empty temporary Maven local repository and the extracted file repository;
