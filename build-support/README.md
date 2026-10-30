@@ -94,7 +94,8 @@ classpath。该设置只进入测试 JVM，用于避免系统临时盘与 worktr
 
 `.github/workflows/commit-authorship-gate.yml` 在目标为 `dev`、`main` 的 `pull_request`、`merge_group` 和手工
 触发上运行 `Commit authorship gate`，由 `scripts/check_commit_authors.py` 拒绝作者、提交者或归属 trailer
-（`Co-authored-by`、`Co-developed-by`、`Authored-by`）命中 `cursoragent`、`cursor-agent`、`cursor[bot]`
+（`Co-authored-by`、`Co-developed-by`、`Authored-by`）命中 `cursoragent`、`cursor-agent`、`cursor[bot]`、
+`copilot`、`claude`
 的提交。合并提交被排除，因此 GitHub 生成的 PR 与 merge group 合成提交不会命中。提交范围取 PR 基线与头、
 merge group 的 `base_sha`/`head_sha`；无法解析基线时 fail-closed，以退出码 2 失败。
 
