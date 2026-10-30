@@ -12,7 +12,10 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
@@ -24,11 +27,15 @@ import java.util.Objects;
  * device codes, and tokens never enter an exception message or a log record.
  */
 public final class OpenCodeGoTokenClient {
+    /** Routes to the same JUL log the product already points users at; only shapes are ever logged. */
+    private static final System.Logger LOG = System.getLogger(OpenCodeGoTokenClient.class.getName());
+
     private static final int MAX_RESPONSE_BYTES = 256 * 1024;
     private static final int MAX_FIELD_CHARACTERS = 64 * 1024;
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(30);
     private static final long MIN_TOKEN_LIFETIME_SECONDS = 60;
-    private static final long MAX_TOKEN_LIFETIME_SECONDS = 604_800;
+    /** Sanity ceiling only: the console decides its own token lifetime, and subscriptions may exceed a week. */
+    private static final long MAX_TOKEN_LIFETIME_SECONDS = 34_560_000;
 
     private final HttpClient http;
     private final ObjectMapper json;
@@ -193,10 +200,15 @@ public final class OpenCodeGoTokenClient {
         if (response.status() < 200 || response.status() >= 300) {
             throw new OpenCodeGoTokenException("AUTH_LOGIN_SERVICE_UNAVAILABLE", true);
         }
-        JsonNode root = parseJson(response);
-        String id = optionalText(root.get("id"));
-        if (id == null) id = optionalText(root.get("email"));
-        if (id == null) throw new OpenCodeGoTokenException("AUTH_DEVICE_CODE_RESPONSE_INVALID", false);
+        JsonNode payload = unwrap(parseJson(response));
+        String id = firstText(payload, "id", "user_id", "userId", "account_id", "accountId", "email");
+        if (id == null) {
+            LOG.log(
+                    System.Logger.Level.WARNING,
+                    "opencode-go account payload lacks a stable identifier; present fields: {0}",
+                    fieldNames(payload));
+            throw new OpenCodeGoTokenException("AUTH_DEVICE_CODE_RESPONSE_INVALID", false);
+        }
         return id;
     }
 
@@ -212,6 +224,10 @@ public final class OpenCodeGoTokenClient {
         String accessToken = firstText(payload, "access_token", "accessToken", "access");
         String refreshToken = firstText(payload, "refresh_token", "refreshToken", "refresh");
         if (accessToken == null || refreshToken == null) {
+            LOG.log(
+                    System.Logger.Level.WARNING,
+                    "opencode-go token payload lacks a token field; present fields: {0}",
+                    fieldNames(payload));
             throw new OpenCodeGoTokenException("AUTH_DEVICE_CODE_RESPONSE_INVALID", false);
         }
         long lifetimeSeconds = lifetimeSeconds(payload);
@@ -253,6 +269,14 @@ public final class OpenCodeGoTokenClient {
             if (node != null && !node.isNull()) return node;
         }
         return null;
+    }
+
+    /** Names only, never values: enough to diagnose a contract change without leaking a secret. */
+    private static List<String> fieldNames(JsonNode payload) {
+        List<String> names = new ArrayList<>();
+        payload.fieldNames().forEachRemaining(names::add);
+        Collections.sort(names);
+        return names;
     }
 
     private static long number(JsonNode node) {
@@ -317,12 +341,15 @@ public final class OpenCodeGoTokenClient {
     }
 
     private JsonNode parseJson(Response response) {
-        if (!response.contentType().toLowerCase(Locale.ROOT).contains("application/json")) {
-            throw new OpenCodeGoTokenException("AUTH_DEVICE_CODE_RESPONSE_INVALID", false);
-        }
         try {
             return json.readTree(response.body());
         } catch (IOException exception) {
+            LOG.log(
+                    System.Logger.Level.WARNING,
+                    "opencode-go console response is not JSON: status={0} contentType={1} bytes={2}",
+                    response.status(),
+                    response.contentType(),
+                    response.body().length);
             throw new OpenCodeGoTokenException("AUTH_DEVICE_CODE_RESPONSE_INVALID", false);
         }
     }

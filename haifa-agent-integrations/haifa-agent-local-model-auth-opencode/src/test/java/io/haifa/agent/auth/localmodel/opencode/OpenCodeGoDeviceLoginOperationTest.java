@@ -272,13 +272,35 @@ class OpenCodeGoDeviceLoginOperationTest {
         return exchange.getLocalAddress().getPort();
     }
 
+    @Test
+    void acceptsLongLivedTokensAndJsonWithoutTheJsonContentType() throws Exception {
+        StoredExternalCredential monthly = credentialFor(
+                "{\"access_token\":\"access-token\",\"refresh_token\":\"refresh-token\",\"expires_in\":2592000}");
+        assertThat(monthly.expiresAtEpochMillis() - monthly.issuedAtEpochMillis())
+                .isEqualTo(Duration.ofDays(30).toMillis());
+
+        StoredExternalCredential unlabelled = credentialFor(
+                "{\"access_token\":\"access-token\",\"refresh_token\":\"refresh-token\",\"expires_in\":3600}",
+                "text/plain;charset=UTF-8");
+        assertThat(unlabelled.accessToken()).isEqualTo("access-token");
+
+        assertThatThrownBy(() -> credentialFor(
+                        "{\"access_token\":\"access-token\",\"refresh_token\":\"refresh-token\",\"expires_in\":30}"))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessage("AUTH_DEVICE_CODE_RESPONSE_INVALID");
+    }
+
     /** Completes one attempt against a stub that answers the first poll with the given token payload. */
     private StoredExternalCredential credentialFor(String tokenBody) throws Exception {
+        return credentialFor(tokenBody, "application/json");
+    }
+
+    private StoredExternalCredential credentialFor(String tokenBody, String contentType) throws Exception {
         try (StubConsole stub = StubConsole.start((path, exchange) -> {
             if (path.endsWith("/auth/device/code")) {
                 StubConsole.respond(exchange, 200, relativeDeviceCodeResponse());
             } else if (path.endsWith("/auth/device/token")) {
-                StubConsole.respond(exchange, 200, tokenBody);
+                StubConsole.respondWith(exchange, 200, contentType, tokenBody);
             } else {
                 StubConsole.respond(exchange, 200, "{\"id\":\"account-1\"}");
             }
