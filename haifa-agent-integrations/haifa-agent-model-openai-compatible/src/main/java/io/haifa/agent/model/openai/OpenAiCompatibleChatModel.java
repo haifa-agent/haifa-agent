@@ -155,14 +155,15 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                     "model request cannot be serialized",
                     exception);
         }
-        HttpRequest httpRequest = HttpRequest.newBuilder(
+        HttpRequest.Builder requestBuilder = HttpRequest.newBuilder(
                         chatCompletionsUri(request.model().endpoint()))
                 .timeout(request.timeout())
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json")
                 .header("Authorization", "Bearer " + credential.value().trim())
-                .POST(HttpRequest.BodyPublishers.ofByteArray(body))
-                .build();
+                .POST(HttpRequest.BodyPublishers.ofByteArray(body));
+        dialect(request).applyHeaders(requestBuilder, request);
+        HttpRequest httpRequest = requestBuilder.build();
         try {
             HttpResponse<InputStream> response = http.send(httpRequest, HttpResponse.BodyHandlers.ofInputStream());
             if (response.statusCode() == 402) {
@@ -250,14 +251,15 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                     "model request cannot be serialized",
                     exception);
         }
-        HttpRequest httpRequest = HttpRequest.newBuilder(
+        HttpRequest.Builder requestBuilder = HttpRequest.newBuilder(
                         chatCompletionsUri(request.model().endpoint()))
                 .timeout(request.timeout())
                 .header("Content-Type", "application/json")
                 .header("Accept", "text/event-stream")
                 .header("Authorization", "Bearer " + credential.value().trim())
-                .POST(HttpRequest.BodyPublishers.ofByteArray(body))
-                .build();
+                .POST(HttpRequest.BodyPublishers.ofByteArray(body));
+        dialect(request).applyHeaders(requestBuilder, request);
+        HttpRequest httpRequest = requestBuilder.build();
         ModelStreamObservation observation = new ModelStreamObservation();
         try {
             HttpResponse<InputStream> response = http.send(httpRequest, HttpResponse.BodyHandlers.ofInputStream());

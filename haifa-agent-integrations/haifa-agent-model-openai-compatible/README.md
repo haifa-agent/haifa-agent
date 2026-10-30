@@ -79,6 +79,7 @@ Chat Completions 当前支持：
 | 火山方舟 | `volcengine-ark-openai-chat` | 是 | 是 | 是 | 由受治理豆包/Endpoint profile 决定 |
 | SiliconFlow | `siliconflow-openai-chat` | 是 | 是 | 是 | 不发送厂商推理控制扩展 |
 | TokenRhythm | `tokenrhythm-openai-chat` | 是 | 是 | 是 | 不发送厂商推理控制扩展 |
+| OpenCode Go | `opencode-go-openai-chat` | 是 | 是 | 是 | 不发厂商推理控制扩展；发送文档要求的 `x-opencode-session`（run id）与产品 `User-Agent` |
 
 配置通过 Provider 下的 `apiBindings` 声明 Style。省略 dialect 即 `standard`；只有存在已验证协议差异
 时才声明非标准 dialect。当前未发布旧配置或快照，不保留旧 options、Provider-ID 猜测或双轨入口。

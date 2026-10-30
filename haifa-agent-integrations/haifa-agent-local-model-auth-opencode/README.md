@@ -57,8 +57,13 @@ models:
 The packaged catalog ships three reviewed bindings (`DeepSeek V4 Pro`, `DeepSeek V4.1 Flash`,
 `Kimi K3`) on the
 `opencode-go-openai-chat` dialect, which freezes the official HTTPS host and the
-`/inference/go/openai/v1` path and adds no vendor request extension. Reasoning profiles for this
-channel are intentionally not declared yet.
+`/inference/go/openai/v1` path. The request body stays standard, but the channel's documented
+transport contract needs two headers, so the dialect owns exactly those: `x-opencode-session` carries
+the run id of the conversation turn, and `User-Agent` names this product
+(`haifa-coding-agent/opencode-go`). `OpenAiCompatibleDialects.OPENCODE_GO` adds them through
+`OpenAiCompatibleDialect#applyHeaders` on both the streaming and the synchronous path; every other
+dialect keeps the shared headers unchanged. Reasoning profiles for this channel are intentionally not
+declared yet.
 
 ## Verified and unverified behaviour
 
@@ -75,6 +80,20 @@ https://opencode.ai/console/auth/device/token` answers HTTP 400 with `error` =
 `authorization_pending`; and the edge in front of both endpoints answers a client without a
 recognised `User-Agent` with an HTTP error page, so every request sends the product user agent
 declared in `OpenCodeGoEndpoints#USER_AGENT`.
+
+Verified against the live Go channel (2026-10-30, authorized console account): a Chat Completions
+request without `x-opencode-session` is answered with HTTP 400 `missingsessionid` and the documented
+routing explanation, which Runtime reports as `MODEL_REQUEST_INVALID`. With the session header and
+the product user agent, the same credential, endpoint and configuration completed eight one-shot
+Coding Agent runs across all three bindings (`deepseek-v4.1-flash`, `deepseek-v4-pro`, `kimi-k3`),
+including three forced `file_list` Tool round-trips and multi-call runs that reported prompt-cache
+reads (6144 and 10240 tokens). So the console device-grant access token authenticates Go inference
+directly and no Console API key is needed. No `reasoning_content` delta appeared in any run, which
+matches the bindings that declare no reasoning profile.
+
+Known gap from the same session: an invalid bearer token is answered with HTTP 400 and an empty body
+plus an `x-opencode-log-id` header, so a revoked credential would surface as `MODEL_REQUEST_INVALID`
+rather than an `AUTH_*` reason.
 
 Not verified yet (needs an authorized console account): the issued-token payload shape (the client
 accepts snake_case, camelCase, `token`/`data` wrappers, and relative or absolute expiry), whether

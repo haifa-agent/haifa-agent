@@ -5,6 +5,7 @@ import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelProviderDefinition;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import java.net.URI;
+import java.net.http.HttpRequest;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -13,10 +14,18 @@ import java.util.Set;
  * OpenCode Go subscription channel over the standard OpenAI Chat Completions contract.
  *
  * <p>The console exposes the Go models behind one documented OpenAI-compatible base URL, so the dialect only
- * freezes the endpoint and the reviewed model ids; no vendor request extension is added.
+ * freezes the endpoint and the reviewed model ids. The body stays standard, but the Go channel refuses to route a
+ * request that omits its documented session header, so the dialect owns exactly two transport headers: a stable
+ * {@code x-opencode-session} value and a product user agent.
  */
 final class OpenCodeGoOpenAiChatDialect implements OpenAiCompatibleDialect {
     static final OpenCodeGoOpenAiChatDialect INSTANCE = new OpenCodeGoOpenAiChatDialect();
+
+    /** Documented Go routing header; the channel answers HTTP 400 {@code missingsessionid} without it. */
+    static final String SESSION_HEADER = "x-opencode-session";
+
+    /** Stable product identity; the Go channel asks every client to name itself instead of the default JDK agent. */
+    static final String USER_AGENT = "haifa-coding-agent/opencode-go";
 
     private static final Set<String> MODELS = Set.of("deepseek-v4-pro", "deepseek-v4.1-flash", "kimi-k3");
     private static final Set<String> HOSTS = Set.of("opencode.ai");
@@ -50,6 +59,25 @@ final class OpenCodeGoOpenAiChatDialect implements OpenAiCompatibleDialect {
     @Override
     public void applyRequest(AgentChatRequest request, Map<String, Object> body) {
         // The shared transport already emits the standard Chat Completions fields for this channel.
+    }
+
+    /**
+     * Adds the Go channel's two documented transport headers.
+     *
+     * <p>The session value is the run id: it is stable for every physical call of one conversation turn, which is
+     * what the channel uses for routing and prompt-cache locality, and it never carries prompt material.
+     */
+    @Override
+    public void applyHeaders(HttpRequest.Builder builder, AgentChatRequest request) {
+        builder.header(SESSION_HEADER, headerValue(request.runId().value(), "session id"))
+                .header("User-Agent", USER_AGENT);
+    }
+
+    private static String headerValue(String value, String field) {
+        if (value.indexOf('\r') >= 0 || value.indexOf('\n') >= 0 || value.indexOf('\0') >= 0) {
+            throw new IllegalArgumentException(field + " contains invalid control characters");
+        }
+        return value;
     }
 
     private static void validateEndpoint(URI endpoint, boolean allowInsecureHttp) {

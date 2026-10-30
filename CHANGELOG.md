@@ -15,7 +15,10 @@
   `opencode-go-deepseek-v4-pro`, `opencode-go-deepseek-flash` and `opencode-go-kimi-k3` bindings on the new
   `opencode-go-openai-chat` dialect, and the device-code failures (`AUTH_DEVICE_CODE_UNAVAILABLE`,
   `AUTH_DEVICE_CODE_REQUEST_FAILED`, `AUTH_DEVICE_CODE_RESPONSE_INVALID`,
-  `AUTH_DEVICE_CODE_POLL_FAILED`, `AUTH_DEVICE_RESPONSE_TOO_LARGE`) now carry recovery guidance.
+  `AUTH_DEVICE_CODE_POLL_FAILED`, `AUTH_DEVICE_RESPONSE_TOO_LARGE`) now carry recovery guidance. The
+  OpenCode Go dialect also sends the channel's two documented transport headers, `x-opencode-session`
+  (the run id) and a product `User-Agent`; without the session header the gateway answers HTTP 400
+  `missingsessionid`, which Runtime reported as `MODEL_REQUEST_INVALID`.
 
 - Release packaging is addressed per product and platform (`ca`, `pa`, `sdk` with an optional
   `:windows-x64` / `:linux-x64` suffix); the packager reuses one trimmed JRE per platform (module-set

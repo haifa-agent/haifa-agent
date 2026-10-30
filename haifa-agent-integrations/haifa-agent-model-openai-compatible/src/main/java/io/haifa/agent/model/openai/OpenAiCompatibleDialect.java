@@ -4,6 +4,7 @@ import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.ModelErrorCategory;
 import io.haifa.agent.model.api.ModelProviderDefinition;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
+import java.net.http.HttpRequest;
 import java.util.Map;
 
 /** Provider-specific semantics layered over the shared OpenAI Chat transport. */
@@ -17,6 +18,15 @@ public interface OpenAiCompatibleDialect {
     void validateSnapshot(ResolvedModelSnapshot snapshot, boolean allowInsecureHttp);
 
     void applyRequest(AgentChatRequest request, Map<String, Object> body);
+
+    /**
+     * Adds dialect-owned transport headers that the shared request builders cannot derive.
+     *
+     * <p>Only a channel with a documented header contract implements this hook; the default adds nothing, so a
+     * provider that follows the standard contract keeps exactly the shared headers. Implementations must never emit
+     * credentials or prompt material here.
+     */
+    default void applyHeaders(HttpRequest.Builder builder, AgentChatRequest request) {}
 
     default void applyStreamingRequest(AgentChatRequest request, Map<String, Object> body) {
         body.put("stream_options", Map.of("include_usage", true));
