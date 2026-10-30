@@ -4,8 +4,22 @@
 
 ## 产出制品
 
-在 `dist-support/output/` 目录下按动作生成以下 Release 发布包及 SHA-256 校验清单。制品名称中的版本统一带
-`v` 前缀（例如传入 `0.1.0` 时输出 `v0.1.0`），与 Git Tag `v0.1.0` 保持一致：
+打包目标按「产品 × 平台」寻址，写成 `<product>[:<platform>]`。制品名称中的版本统一带 `v` 前缀
+（例如传入 `0.1.0` 时输出 `v0.1.0`），与 Git Tag `v0.1.0` 保持一致：
+
+| 目标 | 产物 | 内置 JRE | 构建宿主 | 平台无关 |
+| --- | --- | --- | --- | --- |
+| `ca:windows-x64` | `haifa-coding-agent-windows-x64-v<version>.zip` | 是 | Windows x64 | 否 |
+| `ca:linux-x64` | `haifa-coding-agent-linux-x64-v<version>.tar.gz` | 是 | Linux x64 | 否 |
+| `pa:windows-x64` | `haifa-personal-assistant-windows-x64-v<version>.zip` | 是 | Windows x64 | 否 |
+| `pa:linux-x64` | `haifa-personal-assistant-linux-x64-v<version>.zip` | 否（系统 JDK 21） | 任意 | 是 |
+| `sdk` | `haifa-agent-sdk-v<version>.zip` | 否 | 任意 | 是 |
+
+不带平台后缀时取当前宿主平台（Windows 上的 `ca` 即 `ca:windows-x64`）；`all` 表示「本宿主能产出的
+全部目标 + 平台无关目标」，即 `ca:<host>`、`pa:<host>`、`pa:linux-x64`、`sdk`。`macos-x64` 与
+`macos-arm64` **没有发行包**：内置 JRE 需要签名与公证，本仓库不交付；macOS 开发机用
+[`scripts/package-local-coding-agent.sh`](../scripts/package-local-coding-agent.sh) 配系统 JDK 生成可搬运目录。
+打包脚本对上述矩阵之外的组合直接报错，不会静默跳过或产出错标平台的运行时。
 
 1. **`haifa-coding-agent-windows-x64-v<version>.zip`**
    - 专为 Windows 终端交互打造的 Coding Agent 绿色便携包；
@@ -36,7 +50,8 @@
    - 默认数据与日志位于 `$HOME/.haifa-agent/coding`，支持与 Windows 包相同的 `HAIFA_*` 路径覆盖。
 
 6. **`sha256sums.txt`**
-   - 本地 `output/` 中所有压缩包的 SHA-256 哈希校验清单。CI 只上传 `*.zip` 与该清单；
+   - **本次打包版本**全部压缩包（`*.zip` 与 `*.tar.gz`）的 SHA-256 校验清单；输出目录里其他版本的
+     旧包不会混入。CI 只上传 `*.zip` 与该清单；
      Linux CA 的 `tar.gz` 需人工打包上传，其校验值不会自动进入该清单。
 
 ---
@@ -59,6 +74,8 @@ $sdkModules = python dist-support/scripts/package_distributions.py sdk-modules
 `FileNotFoundError` 失败。
 打包要求 `--version` 与根 POM `revision` 相同，SDK 缺少任一 JAR、Flattened POM，或含 Java
 源码的模块缺少 Source / Javadoc 时失败。纯依赖 Starter 不生成 Source / Javadoc。
+CA 打包还会按与 `scripts/` 相同的契约拒绝非 shaded 的 CLI JAR（例如用 `ci-fast` 跳过 shade 的构建
+产物），POM 版本解析与默认配置校验也来自同一份 `scripts/distribution_contracts.py`。
 无需向本地 Maven 仓库安装制品。
 
 Windows PowerShell：
@@ -66,8 +83,9 @@ Windows PowerShell：
 .\dist-support\scripts\build-distributions.ps1 all
 ```
 
-`all` 包含需要 Windows JDK 的 CA/PA 便携包，须在 Windows x64 上运行。
-Linux / WSL 使用下面的 `ca-linux`，无内置 JRE 的 `pa-server` 与 `sdk` 仍可独立跨平台打包。
+`all` 在 Windows x64 上产出 CA/PA 便携包、Linux 服务器包与 SDK；在 Linux 上产出 `ca:linux-x64`、
+`pa:linux-x64` 与 `sdk`。内置 JRE 的目标必须在对应原生平台打包，其余目标（`pa:linux-x64`、`sdk`）
+可在任意宿主执行。
 
 ### 2. 指定版本号打包（如正式发版 `0.1.0`）
 
@@ -75,28 +93,40 @@ Linux / WSL 使用下面的 `ca-linux`，无内置 JRE 的 `pa-server` 与 `sdk`
 .\dist-support\scripts\build-distributions.ps1 all --version 0.1.0
 ```
 
-### 3. 单独构建指定产品包
+### 3. 选择产品与平台
 
-- 仅构建 Coding Agent：
-  ```powershell
-  .\dist-support\scripts\build-distributions.ps1 ca
-  ```
-- 在 Linux / WSL 构建 Coding Agent：
-  ```bash
-  bash dist-support/scripts/build-distributions.sh ca-linux
-  ```
-- 仅构建 Personal Assistant：
-  ```powershell
-  .\dist-support\scripts\build-distributions.ps1 pa
-  ```
-- 仅构建 SDK Bundle：
-  ```powershell
-  .\dist-support\scripts\build-distributions.ps1 sdk
-  ```
-- 复用已生成的 JRE（避免重复裁剪）：
-  ```powershell
-  .\dist-support\scripts\build-distributions.ps1 all --skip-jre
-  ```
+可以一次给出多个目标；同一次调用里可复用的中间产物只准备一次：
+
+```powershell
+# Windows 宿主的 CA、PA，再单独补一个平台无关的 Linux 服务器包
+.\dist-support\scripts\build-distributions.ps1 ca pa pa:linux-x64
+
+# 只打当前宿主平台的 Coding Agent（Windows 上即 ca:windows-x64）
+.\dist-support\scripts\build-distributions.ps1 ca
+
+# 只打 SDK Bundle（任何宿主都可以）
+.\dist-support\scripts\build-distributions.ps1 sdk
+
+# 只预热当前宿主平台的裁剪 JRE，不产出发布包
+.\dist-support\scripts\build-distributions.ps1 jre
+```
+
+```bash
+# 在 Linux / WSL 打 Linux Coding Agent
+bash dist-support/scripts/build-distributions.sh ca:linux-x64
+```
+
+### 4. 复用规则
+
+打包过程中的三项工作只做一次，并且跨调用复用：
+
+| 中间产物 | 复用范围 | 何时失效重建 |
+| --- | --- | --- |
+| 裁剪 JRE（`dist-work/jre/<platform>`） | 跨调用复用 | `--rebuild-jre`；模块集合变化（`dist-work/jre/<platform>.modules` 记录）；架构或 Java 版本校验失败 |
+| Web SPA（`haifa-agent-personal-assistant-web/dist`） | 同一次调用内每种基址只构建一次 | 回环基址与相对基址必然各构建一次；`--skip-web-build` 直接复用现有 dist |
+| SDK 仓库收集 | 每次 `sdk` 目标一次 | 按当前版本重新压缩 |
+
+JRE 默认复用缓存；只有显式 `--rebuild-jre`、模块集合变化或缓存校验失败时才重新执行 `jlink`。
 
 ---
 
@@ -114,23 +144,24 @@ dist-support/
 │   └── sdk/                       # SDK 依赖说明模板 (README.txt)
 ├── scripts/
 │   ├── package_distributions.py  # 核心打包业务逻辑 (Python 3)
-│   ├── build-distributions.ps1   # PowerShell 原样透传薄入口
-│   └── build-distributions.sh    # Bash 原样透传薄入口
+│   ├── distribution_contracts.py # 与 scripts/ 共用的 POM 版本、模型配置、shaded JAR 和构建入口契约
+│   ├── build-distributions.ps1   # 转发到 build-support/scripts/invoke-python.ps1
+│   └── build-distributions.sh    # 转发到 build-support/scripts/invoke-python.sh
 ├── dist-work/                     # 打包中间工作区 (已忽略)
 └── output/                        # ZIP、tar.gz 与校验和文件 (已忽略)
 ```
 
 ---
 
-## Linux Coding Agent（`ca-linux`）
+## Linux Coding Agent（`ca:linux-x64`）
 
-在 Linux x86_64 主机或 WSL Ubuntu 中运行，要求 Python 3.12+、Linux JDK 21 的 `jlink`
+在 Linux x86_64 主机或 WSL Ubuntu 中运行，要求 Python 3.11+、Linux JDK 21 的 `jlink`
 位于 PATH，且 CLI JAR 已按当前 POM 版本构建。打包只收集制品，不会自动运行 Maven。
 
 ```bash
-bash dist-support/scripts/build-distributions.sh ca-linux
-# 后续打包可复用本平台的运行时
-bash dist-support/scripts/build-distributions.sh ca-linux --skip-jre
+bash dist-support/scripts/build-distributions.sh ca:linux-x64
+# 如需强制重裁运行时（默认复用 dist-work/jre/linux-x64）
+bash dist-support/scripts/build-distributions.sh ca:linux-x64 --rebuild-jre
 # 从压缩包重新解压，用内置 Java 检查启动；使用临时数据，不调用模型
 python3 dist-support/scripts/smoke_distributions.py verify-ca-linux
 
@@ -145,28 +176,27 @@ Linux 主机打包。CI 不产出该包，需要人工上传到 Release。
 Windows PowerShell 进入当前 worktree 对应的 WSL 挂载目录后，也可调用同一入口：
 
 ```powershell
-wsl.exe -d Ubuntu -- bash dist-support/scripts/build-distributions.sh ca-linux
+wsl.exe -d Ubuntu -- bash dist-support/scripts/build-distributions.sh ca:linux-x64
 ```
 
-`ca` 只生成 Windows 包，`ca-linux` 只生成 Linux 包；脚本拒绝使用不匹配的平台或 ARM 主机
-生成标注 x64 的运行时包。JRE 缓存分别在 `dist-work/jre/windows-x64`、
-`dist-work/jre/linux-x64`，CA 暂存目录也按平台隔离。单独打包任一产品后都会更新
-`sha256sums.txt`，同时保留输出目录中现有 ZIP 与 tar.gz 的校验项。
+`ca:windows-x64` 与 `ca:linux-x64` 互不代打：内置 JRE 的目标必须在本机原生平台构建，脚本拒绝
+错宿主或 ARM 主机。JRE 缓存分别在 `dist-work/jre/windows-x64`、`dist-work/jre/linux-x64`，
+CA 暂存目录也按平台隔离。写完任一批目标后都会重写 `sha256sums.txt`，且只收录当前版本的包。
 
 tar.gz 明确保留启动脚本、Java 与进程辅助程序的执行权限，即使 WSL 暂存目录位于 Windows
 挂载盘上也无需手动 chmod。包内 README 说明模型连接与数据目录；首次运行会打开连接模型窗口。
 
 内置 JRE 的兼容范围取决于构建 JDK。已在 WSL Ubuntu 24.04 验证，其他发行版、旧 glibc
 与 musl 环境未验证。`all` 不自动跨系统生成该包；发布 Linux CA 时须在 Linux 主机单独执行
-`ca-linux`，现有 Windows Release 上传流程仍保持原有产物范围。
+`ca:linux-x64`，现有 Windows Release 上传流程仍保持原有产物范围。
 
 ---
 
-## Linux 服务器包（`pa-server`）
+## Linux 服务器包（`pa:linux-x64`）
 
 `haifa-personal-assistant-linux-x64-v<version>.zip` 面向 Linux 常驻部署，与 Windows 便携包的差异：
 
-| 项目 | Windows 便携包（`pa`） | Linux 服务器包（`pa-server`） |
+| 项目 | Windows 便携包（`pa:windows-x64`） | Linux 服务器包（`pa:linux-x64`） |
 | --- | --- | --- |
 | JRE | 内置 jlink 裁剪运行时 | 不内置，使用系统 JDK 21 |
 | 前端 | 注入 JAR 的 `BOOT-INF/classes/static/`，浏览器同源直连 | 独立 `web/` 目录，基址为 `/api/v1` 与 `/v1/admin`，由 nginx 提供 |
@@ -181,18 +211,19 @@ localhost”的产物。该文件也是 `templates/pa-server/` 的同步依据�
 
 ```powershell
 # 仅打包 Linux 服务器包（前端会按同源相对基址重建）
-.\dist-support\scripts\build-distributions.ps1 pa-server
+.\dist-support\scripts\build-distributions.ps1 pa:linux-x64
 
 # 复核全部产物校验和并冒烟
 python dist-support/scripts/smoke_distributions.py verify
 ```
 
 ```bash
-./dist-support/scripts/build-distributions.sh pa-server
+./dist-support/scripts/build-distributions.sh pa:linux-x64
 ```
 
-`all` 现在按 `ca → pa → pa-server → sdk` 顺序打包，结束后磁盘上的 `dist/` 停留在服务器（相对基址）形态；
-若紧接着只跑 `pa --skip-web-build`，校验会失败并提示重新构建，这是预期行为。
+`all` 与一次给出多个目标的调用都按「内置 JRE 目标 → `pa:linux-x64` → `sdk`」的顺序执行，且每种 Web
+基址只构建一次；结束后磁盘上的 `dist/` 停留在服务器（相对基址）形态。若紧接着只跑
+`pa:windows-x64 --skip-web-build`，校验会失败并提示重新构建，这是预期行为。
 
 包内 `docker/` 另提供容器化运行材料（本机 Docker Hub 带宽极低时也可用）：
 

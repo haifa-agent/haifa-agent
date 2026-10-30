@@ -14,8 +14,18 @@ import subprocess
 import sys
 import tempfile
 import uuid
-import xml.etree.ElementTree as ET
 import zipfile
+
+# The Coding Agent commands share one contracts module; keep the import usable when
+# this file is loaded by path (tests) instead of being run as a script.
+sys.path.insert(
+    0, str(Path(__file__).resolve().parents[2] / 'dist-support' / 'scripts')
+)
+from distribution_contracts import (  # noqa: E402 - repository scripts run unpackaged
+    cli_build_command,
+    pom_version,
+    sha256_file,
+)
 
 DEFAULT_REPO = Path(__file__).resolve().parents[2]
 DEFAULT_INSTALL = Path(os.environ.get('HAIFA_CA_INSTALL_ROOT', r'D:\dev\haifa-agent'))
@@ -85,34 +95,21 @@ def select_source(repo, target, kind):
     return checkout, sha
 
 
-def pom_version(content):
-    root = ET.fromstring(content)
-    ns = {'m': 'http://maven.apache.org/POM/4.0.0'}
-    version = root.findtext('m:version', namespaces=ns) or ''
-    if version == '${revision}':
-        version = root.findtext('m:properties/m:revision', namespaces=ns) or ''
-    if not re.fullmatch(r'[0-9][A-Za-z0-9_.-]*', version):
-        raise ValueError(f'Unsupported root POM version: {version!r}')
-    return version
-
-
-def sha256(path):
-    with path.open('rb') as stream:
-        return hashlib.file_digest(stream, 'sha256').hexdigest()
-
-
 def is_reparse(path):
     """Catch Windows junctions too, including on Python 3.11."""
     return path.exists() and bool(path.lstat().st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
 
 
-def run_ps(script, args, cwd):
+def run(command, cwd):
+    print('[RUN] ' + subprocess.list2cmdline(command), flush=True)
+    subprocess.run(command, cwd=cwd, check=True)
+
+
+def powershell_entry(script):
     shell = shutil.which('pwsh') or shutil.which('powershell')
     if not shell:
         raise RuntimeError('PowerShell is required')
-    command = [shell, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(script), *args]
-    print('[RUN] ' + subprocess.list2cmdline(command), flush=True)
-    subprocess.run(command, cwd=cwd, check=True)
+    return [shell, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(script)]
 
 
 def is_ca_bin(entry, install_root):
@@ -232,7 +229,7 @@ def deploy(archive, install_root, version, report_dir):
         packaged_jar = packaged / 'lib' / jar_name
         if not packaged_jar.is_file():
             raise ValueError('Expected CLI JAR missing from package')
-        expected_hash = sha256(packaged_jar)
+        expected_hash = sha256_file(packaged_jar)
         smoke(packaged, staging)
         backup = None
         if target.exists():
@@ -280,9 +277,9 @@ def deploy(archive, install_root, version, report_dir):
                 raise
             installed_jar = target / 'lib' / jar_name
             mode = 'new-install'
-        if sha256(installed_jar) != expected_hash:
+        if sha256_file(installed_jar) != expected_hash:
             raise RuntimeError('Installed JAR checksum mismatch')
-        return {'mode': mode, 'jar_sha256': sha256(installed_jar),
+        return {'mode': mode, 'jar_sha256': sha256_file(installed_jar),
                 'jar_backup': str(backup) if backup else None}
 
 
@@ -348,10 +345,9 @@ def main():
     report_file = report_dir / 'report.json'
     report_file.write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
     try:
-        run_ps(source / 'build-support/scripts/invoke-haifa-maven.ps1',
-               ['--layer', 'L2', '--', '-pl', ':haifa-agent-cli', '-am', '-DskipUnitTests=true', 'clean', 'package'], source)
-        run_ps(source / 'dist-support/scripts/build-distributions.ps1',
-               ['ca', '--output-dir', str(report_dir)], source)
+        run(cli_build_command(source), source)
+        run(powershell_entry(source / 'dist-support/scripts/build-distributions.ps1')
+            + ['ca', '--output-dir', str(report_dir)], source)
         if git(source, 'rev-parse', 'HEAD') != head or pom_version((source / 'pom.xml').read_text(encoding='utf-8')) != version:
             raise RuntimeError('Source HEAD/version changed during build; deployment cancelled')
         archive = report_dir / f'haifa-coding-agent-windows-x64-v{version}.zip'
@@ -360,7 +356,7 @@ def main():
             packaged_bytes = package.read(f'{target.name}/lib/{built_jar.name}')
             if hashlib.sha256(packaged_bytes).hexdigest() != sha256(built_jar):
                 raise RuntimeError('Package JAR differs from selected checkout build')
-        report.update({'archive': str(archive), 'archive_sha256': sha256(archive)})
+        report.update({'archive': str(archive), 'archive_sha256': sha256_file(archive)})
         report.update(deploy(archive, install_root, version, report_dir))
         # Refuse to overwrite a simultaneous edit by another installer/settings window.
         if read_user_path() != (old_path, value_type):

@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
 """Haifa Agent Release Distribution Packager.
 
-Builds and packages (release artifacts use a 'v'-prefixed version, e.g. v0.1.0):
-1. haifa-coding-agent-windows-x64-v<version>.zip
-   haifa-coding-agent-linux-x64-v<version>.tar.gz (ca-linux, built on Linux x64)
-2. haifa-personal-assistant-windows-x64-v<version>.zip
-3. haifa-personal-assistant-server-linux-x64-v<version>.zip
-4. haifa-agent-sdk-v<version>.zip
-5. sha256sums.txt
+Packages products per platform; release artifact labels use a 'v' prefix (v0.1.0):
+
+  ca:windows-x64  haifa-coding-agent-windows-x64-v<version>.zip            bundled JRE
+  ca:linux-x64    haifa-coding-agent-linux-x64-v<version>.tar.gz           bundled JRE, Linux host
+  pa:windows-x64  haifa-personal-assistant-windows-x64-v<version>.zip      bundled JRE, loopback SPA
+  pa:linux-x64    haifa-personal-assistant-server-linux-x64-v<version>.zip system JDK, nginx SPA
+  sdk             haifa-agent-sdk-v<version>.zip                           platform neutral
+
+Reusable inputs are prepared at most once per invocation: the trimmed JRE per platform
+is reused from the cache while its module set is unchanged, and the Web SPA is built
+once per delivery mode. sha256sums.txt lists only the packaged version's artifacts.
 """
 
 import argparse
-import hashlib
 import os
 import platform
 import re
@@ -24,6 +27,17 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 
+# The three Coding Agent commands share one contracts module; keep the import usable
+# when this file is loaded by path (tests) instead of being run as a script.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from distribution_contracts import (  # noqa: E402 - repository scripts run unpackaged
+    read_pom_version,
+    sha256_file,
+    validate_model_configuration,
+    validate_shaded_jar,
+)
+
+
 def get_repo_root() -> Path:
     return Path(__file__).resolve().parent.parent.parent
 
@@ -33,28 +47,10 @@ def get_pom_version(repo_root: Path) -> str:
     if not pom_path.exists():
         return "0.1.0-SNAPSHOT"
     try:
-        tree = ET.parse(pom_path)
-        root = tree.getroot()
-        ns = {"m": "http://maven.apache.org/POM/4.0.0"}
-        version_elem = root.find("m:version", ns)
-        if version_elem is not None and version_elem.text:
-            return resolve_version_property(root, version_elem.text.strip(), ns)
+        return read_pom_version(pom_path)
     except Exception as exc:
         print(f"[WARN] Failed to parse pom.xml: {exc}")
     return "0.1.0-SNAPSHOT"
-
-
-def resolve_version_property(root: ET.Element, version: str, ns: dict[str, str]) -> str:
-    """Resolve a version placeholder such as `${revision}` from the POM properties."""
-    placeholder = re.fullmatch(r"\$\{([^}]+)\}", version)
-    if placeholder is None:
-        return version
-    properties = root.find("m:properties", ns)
-    value = None if properties is None else properties.find(f"m:{placeholder.group(1)}", ns)
-    if value is not None and value.text and value.text.strip():
-        return value.text.strip()
-    print(f"[WARN] Unresolved version property {version} in pom.xml")
-    return version
 
 
 def artifact_label(version: str) -> str:
@@ -86,22 +82,45 @@ def sdk_modules(repo_root: Path) -> list[tuple[Path, str, str]]:
     return result
 
 
-def compute_sha256(file_path: Path) -> str:
-    sha = hashlib.sha256()
-    with open(file_path, "rb") as f:
-        while chunk := f.read(65536):
-            sha.update(chunk)
-    return sha.hexdigest()
+WINDOWS_X64 = "windows-x64"
+LINUX_X64 = "linux-x64"
+
+# Product -> platforms that ship a release distribution. The SDK bundle is platform neutral.
+PRODUCT_PLATFORMS = {"ca": (WINDOWS_X64, LINUX_X64), "pa": (WINDOWS_X64, LINUX_X64), "sdk": ()}
+
+# Targets whose package embeds a trimmed JRE, so they must be built on that native platform.
+HOST_BOUND_TARGETS = {("ca", WINDOWS_X64), ("ca", LINUX_X64), ("pa", WINDOWS_X64)}
+
+# Platforms that deliberately have no release package. The reason is user-facing.
+UNAVAILABLE_PLATFORMS = {
+    "macos-x64": (
+        "macOS release packages need a signed and notarized bundled JRE, which this repository does not "
+        "ship; macOS development hosts use scripts/package-local-coding-agent.sh with the system JDK"
+    ),
+    "macos-arm64": (
+        "macOS release packages need a signed and notarized bundled JRE, which this repository does not "
+        "ship; macOS development hosts use scripts/package-local-coding-agent.sh with the system JDK"
+    ),
+}
+
+# Utility targets: they prepare reusable inputs instead of producing a release artifact.
+UTILITY_TARGETS = ("jre", "sdk-modules")
 
 
 def native_runtime_platform() -> str:
+    """Return the native platform that can bundle a JRE on this host."""
     system = platform.system().lower()
     machine = platform.machine().lower()
     # Embedded Windows Python can have no PROCESSOR_ARCHITECTURE environment variable.
     # Validate the actual bundled runtime architecture from its binary header below.
     supported_machine = machine in ("amd64", "x86_64") or (system == "windows" and not machine)
+    if system == "darwin":
+        raise ValueError(UNAVAILABLE_PLATFORMS["macos-arm64" if machine in ("arm64", "aarch64") else "macos-x64"])
     if system not in ("windows", "linux") or not supported_machine:
-        raise ValueError("Bundled runtimes require a native Windows x64 or Linux x64 JDK 21")
+        raise ValueError(
+            f"Unsupported packaging host {system or 'unknown'}-{machine or 'unknown'}: bundled runtimes "
+            "require a native Windows x64 or Linux x64 JDK 21"
+        )
     return f"{system}-x64"
 
 
@@ -124,48 +143,64 @@ def validate_jre(jre_dir: Path, target: str) -> None:
         raise ValueError("Bundled runtime must use Java 21")
 
 
-def ensure_jre(repo_root: Path, work_dir: Path, force_rebuild: bool = False) -> Path:
-    target = native_runtime_platform()
-    jre_dir = work_dir / "jre" / target
-    java_exe = jre_dir / "bin" / ("java.exe" if target == "windows-x64" else "java")
-    if jre_dir.exists() and java_exe.exists() and not force_rebuild:
-        validate_jre(jre_dir, target)
-        print(f"[INFO] Using cached minimal JRE at: {jre_dir}")
-        return jre_dir
+JRE_MODULES = (
+    "java.base",
+    "java.logging",
+    "java.desktop",
+    "java.management",
+    "java.naming",
+    "java.net.http",
+    "java.security.jgss",
+    "java.security.sasl",
+    "java.sql",
+    "java.xml",
+    "java.instrument",
+    "java.scripting",
+    "jdk.unsupported",
+    "jdk.crypto.ec",
+    "jdk.httpserver",
+    # ServiceLoader-provided RandomGenerator algorithms (L32X64MixRandom, ...) are not
+    # reachable from java.base in the module graph, so jlink must include jdk.random explicitly.
+    "jdk.random",
+)
+
+
+def jre_module_marker(work_dir: Path, target_platform: str) -> Path:
+    """Record the module set of a cached JRE; the marker lives outside the shipped directory."""
+    return work_dir / "jre" / f"{target_platform}.modules"
+
+
+def ensure_jre(work_dir: Path, target_platform: str, rebuild: bool = False) -> Path:
+    """Return the trimmed Java 21 runtime for one platform, reusing a valid cache."""
+    jre_dir = work_dir / "jre" / target_platform
+    java_exe = jre_dir / "bin" / ("java.exe" if target_platform == WINDOWS_X64 else "java")
+    marker = jre_module_marker(work_dir, target_platform)
+
+    if not rebuild and java_exe.is_file() and marker.is_file():
+        try:
+            cached_modules = marker.read_text(encoding="utf-8").split()
+            validate_jre(jre_dir, target_platform)
+        except (OSError, ValueError) as error:
+            print(f"[INFO] Rebuilding the cached {target_platform} JRE: {error}")
+        else:
+            if cached_modules == list(JRE_MODULES):
+                print(f"[INFO] Reusing the cached minimal JRE at: {jre_dir}")
+                return jre_dir
+            print(f"[INFO] Rebuilding the cached {target_platform} JRE: the required module set changed")
 
     if jre_dir.exists():
         shutil.rmtree(jre_dir)
+    marker.unlink(missing_ok=True)
     jre_dir.parent.mkdir(parents=True, exist_ok=True)
 
-    print("[INFO] Generating minimal Java 21 JRE using jlink...")
-    modules = [
-        "java.base",
-        "java.logging",
-        "java.desktop",
-        "java.management",
-        "java.naming",
-        "java.net.http",
-        "java.security.jgss",
-        "java.security.sasl",
-        "java.sql",
-        "java.xml",
-        "java.instrument",
-        "java.scripting",
-        "jdk.unsupported",
-        "jdk.crypto.ec",
-        "jdk.httpserver",
-        # ServiceLoader-provided RandomGenerator algorithms (L32X64MixRandom, ...) are not
-        # reachable from java.base in the module graph, so jlink must include jdk.random explicitly.
-        "jdk.random",
-    ]
-
+    print(f"[INFO] Generating minimal Java 21 JRE for {target_platform} using jlink...")
     cmd = [
         "jlink",
         "--no-header-files",
         "--no-man-pages",
         "--strip-debug",
         "--compress=zip-6",
-        f"--add-modules={','.join(modules)}",
+        f"--add-modules={','.join(JRE_MODULES)}",
         f"--output={str(jre_dir)}",
     ]
 
@@ -174,17 +209,17 @@ def ensure_jre(repo_root: Path, work_dir: Path, force_rebuild: bool = False) -> 
         print(f"[ERROR] jlink execution failed:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}")
         sys.exit(result.returncode)
 
-    java_exe = jre_dir / "bin" / ("java.exe" if os.name == "nt" else "java")
-    validate_jre(jre_dir, target)
+    validate_jre(jre_dir, target_platform)
     listed = subprocess.run(
         [str(java_exe), "--list-modules"], capture_output=True, text=True, encoding="utf-8", errors="replace"
     )
     available = {line.split("@", 1)[0].strip() for line in listed.stdout.splitlines() if line.strip()}
-    missing = [module for module in modules if module not in available]
+    missing = [module for module in JRE_MODULES if module not in available]
     if listed.returncode != 0 or missing:
         print(f"[ERROR] Minimal JRE is missing required modules: {', '.join(missing) or 'unknown'}")
         sys.exit(1)
 
+    marker.write_text(" ".join(JRE_MODULES) + "\n", encoding="utf-8")
     jre_size_mb = sum(f.stat().st_size for f in jre_dir.rglob("*") if f.is_file()) / (1024 * 1024)
     print(f"[INFO] Minimal JRE generated successfully! Size: {jre_size_mb:.2f} MB")
     return jre_dir
@@ -195,35 +230,6 @@ def find_jar(directory: Path, artifact: str, version: str) -> Path:
     if not candidate.is_file():
         raise FileNotFoundError(f"Build the exact release artifact before packaging: {candidate}")
     return candidate
-
-
-def validate_model_configuration(content: str) -> None:
-    required_fragments = (
-        "allowedBindings:",
-        "deepseek-responses-flash",
-        "deepseek-chat-pro",
-        "model-auth://deepseek/default",
-    )
-    missing = [fragment for fragment in required_fragments if fragment not in content]
-    if missing:
-        raise ValueError(
-            "Coding Agent configuration template is missing the current model API structure: "
-            + ", ".join(missing)
-        )
-    forbidden_fragments = (
-        "apiBindings:",
-        "dialectId:",
-        "dialectVersion:",
-        "styleVersion:",
-        "adapterType:",
-        "CHATGPT2API_",
-    )
-    present = [fragment for fragment in forbidden_fragments if fragment in content]
-    if present:
-        raise ValueError(
-            "Coding Agent configuration template contains retired model configuration: "
-            + ", ".join(present)
-        )
 
 
 CA_CONFIG_SOURCE = (
@@ -318,6 +324,7 @@ def package_ca(
 
     cli_target_dir = repo_root / "haifa-agent-applications" / "haifa-agent-cli" / "target"
     cli_jar = find_jar(cli_target_dir, "haifa-agent-cli", version)
+    validate_shaded_jar(cli_jar)
     print(f"[INFO] Found Coding Agent CLI JAR: {cli_jar.name}")
 
     label = artifact_label(version)
@@ -491,13 +498,11 @@ def zip_stage(stage_dir: Path, output_zip: Path, description: str) -> Path:
 
 
 def package_pa(
-    repo_root: Path, work_dir: Path, output_dir: Path, version: str, jre_dir: Path, skip_web_build: bool = False
+    repo_root: Path, work_dir: Path, output_dir: Path, version: str, jre_dir: Path, web_dist_dir: Path
 ) -> Path:
     print("\n" + "=" * 70)
-    print(f"[INFO] Packaging Personal Assistant Windows Distribution (version: {version})...")
+    print(f"[INFO] Packaging Personal Assistant {WINDOWS_X64} Distribution (version: {version})...")
     print("=" * 70)
-
-    web_dist_dir = build_web_dist(repo_root, skip_web_build=skip_web_build, relative_api_base=False)
 
     server_target_dir = repo_root / "haifa-agent-applications" / "haifa-agent-personal-assistant-server" / "target"
     server_jar = find_jar(server_target_dir, "haifa-agent-personal-assistant-server", version)
@@ -521,20 +526,18 @@ def package_pa(
     # 4. Create ZIP
     return zip_stage(
         stage_dir,
-        output_dir / pa_artifact_name("windows-x64", version),
+        output_dir / pa_artifact_name(WINDOWS_X64, version),
         "Personal Assistant Windows",
     )
 
 
 def package_pa_server(
-    repo_root: Path, work_dir: Path, output_dir: Path, version: str, skip_web_build: bool = False
+    repo_root: Path, work_dir: Path, output_dir: Path, version: str, web_dist_dir: Path
 ) -> Path:
     """Package the headless Linux server layout: system JDK, nginx-served SPA, systemd unit."""
     print("\n" + "=" * 70)
-    print(f"[INFO] Packaging Personal Assistant Server Linux Distribution (version: {version})...")
+    print(f"[INFO] Packaging Personal Assistant {LINUX_X64} Server Distribution (version: {version})...")
     print("=" * 70)
-
-    web_dist_dir = build_web_dist(repo_root, skip_web_build=skip_web_build, relative_api_base=True)
 
     server_target_dir = repo_root / "haifa-agent-applications" / "haifa-agent-personal-assistant-server" / "target"
     server_jar = find_jar(server_target_dir, "haifa-agent-personal-assistant-server", version)
@@ -561,7 +564,7 @@ def package_pa_server(
 
     return zip_stage(
         stage_dir,
-        output_dir / pa_artifact_name("linux-x64", version),
+        output_dir / pa_artifact_name(LINUX_X64, version),
         "Personal Assistant Linux",
     )
 
@@ -621,13 +624,19 @@ def package_sdk(repo_root: Path, work_dir: Path, output_dir: Path, version: str)
     return output_zip
 
 
-def write_checksums(output_dir: Path) -> None:
-    checksums_file = output_dir / "sha256sums.txt"
-    lines = []
-    for z in sorted([*output_dir.glob("*.zip"), *output_dir.glob("*.tar.gz")]):
-        sha = compute_sha256(z)
-        lines.append(f"{sha}  {z.name}")
+def release_artifacts(output_dir: Path, version: str) -> list[Path]:
+    """Archives of exactly this release version; stale packages in the output directory are ignored."""
+    suffixes = (f"-{artifact_label(version)}.zip", f"-{artifact_label(version)}.tar.gz")
+    return sorted(
+        artifact
+        for artifact in [*output_dir.glob("*.zip"), *output_dir.glob("*.tar.gz")]
+        if artifact.name.endswith(suffixes)
+    )
 
+
+def write_checksums(output_dir: Path, version: str) -> None:
+    checksums_file = output_dir / "sha256sums.txt"
+    lines = [f"{sha256_file(artifact)}  {artifact.name}" for artifact in release_artifacts(output_dir, version)]
     with open(checksums_file, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
 
@@ -638,76 +647,183 @@ def write_checksums(output_dir: Path) -> None:
     print("=" * 70)
 
 
+def resolve_targets(tokens: list[str]) -> list[tuple[str, str | None]]:
+    """Expand `product[:platform]` selections into ordered (product, platform) pairs.
+
+    The host platform is only probed for selections that actually need it, so the
+    platform-neutral SDK bundle stays packable on any host.
+    """
+    hosts: list[str] = []
+
+    def host() -> str:
+        if not hosts:
+            hosts.append(native_runtime_platform())
+        return hosts[0]
+
+    selections: list[str] = []
+    for token in tokens or ["all"]:
+        if token == "all":
+            selections.extend((f"ca:{host()}", f"pa:{host()}", f"pa:{LINUX_X64}", "sdk"))
+        else:
+            selections.append(token)
+
+    resolved: list[tuple[str, str | None]] = []
+    for token in selections:
+        product, _, requested = token.partition(":")
+        if product in UTILITY_TARGETS:
+            if requested:
+                raise ValueError(f"{product} takes no platform suffix")
+            resolved.append((product, host() if product == "jre" else None))
+            continue
+        if product not in PRODUCT_PLATFORMS:
+            supported = ", ".join([*PRODUCT_PLATFORMS, "all", *UTILITY_TARGETS])
+            raise ValueError(f"Unknown target {token!r}; choose from {supported}")
+        if product == "sdk":
+            if requested:
+                raise ValueError("sdk is platform neutral; drop the platform suffix")
+            resolved.append((product, None))
+            continue
+        platforms = PRODUCT_PLATFORMS[product]
+        for candidate in [requested] if requested else [host()]:
+            if candidate in UNAVAILABLE_PLATFORMS:
+                raise ValueError(UNAVAILABLE_PLATFORMS[candidate])
+            if candidate not in platforms:
+                raise ValueError(
+                    f"{product} has no {candidate} release package; supported: {', '.join(platforms)}"
+                )
+            if (product, candidate) in HOST_BOUND_TARGETS and candidate != host():
+                raise ValueError(
+                    f"{product}:{candidate} embeds a JRE and must be packaged on a native {candidate} host"
+                )
+            resolved.append((product, candidate))
+
+    return list(dict.fromkeys(resolved))
+
+
+class Preparation:
+    """Builds each reusable input at most once per invocation and reuses valid caches on disk."""
+
+    def __init__(self, repo_root: Path, work_dir: Path, rebuild_jre: bool, skip_web_build: bool):
+        self.repo_root = repo_root
+        self.work_dir = work_dir
+        self.rebuild_jre = rebuild_jre
+        self.skip_web_build = skip_web_build
+        self._jre: dict[str, Path] = {}
+        self._web: dict[bool, Path] = {}
+
+    def jre(self, target_platform: str) -> Path:
+        if target_platform not in self._jre:
+            self._jre[target_platform] = ensure_jre(
+                self.work_dir, target_platform, rebuild=self.rebuild_jre
+            )
+        return self._jre[target_platform]
+
+    def web(self, relative_api_base: bool) -> Path:
+        if relative_api_base not in self._web:
+            self._web[relative_api_base] = build_web_dist(
+                self.repo_root, self.skip_web_build, relative_api_base
+            )
+        return self._web[relative_api_base]
+
+
+def package_target(
+    product: str,
+    target_platform: str | None,
+    repo_root: Path,
+    work_dir: Path,
+    output_dir: Path,
+    version: str,
+    preparation: Preparation,
+) -> Path:
+    """Package one product/platform cell with the already prepared reusable inputs."""
+    if product == "ca":
+        return package_ca(
+            repo_root, work_dir, output_dir, version, preparation.jre(target_platform), target_platform
+        )
+    if product == "pa" and target_platform == WINDOWS_X64:
+        return package_pa(
+            repo_root,
+            work_dir,
+            output_dir,
+            version,
+            preparation.jre(target_platform),
+            preparation.web(relative_api_base=False),
+        )
+    if product == "pa":
+        return package_pa_server(
+            repo_root, work_dir, output_dir, version, preparation.web(relative_api_base=True)
+        )
+    return package_sdk(repo_root, work_dir, output_dir, version)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Haifa Agent Release Distribution Packager")
     parser.add_argument(
-        "action",
-        nargs="?",
-        default="all",
-        choices=["all", "ca", "ca-linux", "pa", "pa-server", "sdk", "jre", "sdk-modules"],
-        help="Target package to build (default: all)",
+        "targets",
+        nargs="*",
+        metavar="product[:platform]",
+        help="ca, pa, sdk, all, jre or sdk-modules, optionally suffixed with windows-x64 or linux-x64; "
+        "the platform defaults to this host and `all` means every target this host can produce",
     )
     parser.add_argument("--version", dest="version", default=None, help="Explicit release version")
     parser.add_argument(
         "--skip-web-build",
         action="store_true",
-        help="Reuse existing personal-assistant-web/dist without running npm build",
+        help="Reuse the existing personal-assistant-web/dist instead of running npm build",
     )
-    parser.add_argument("--skip-jre", action="store_true", help="Reuse existing cached JRE")
+    parser.add_argument(
+        "--rebuild-jre",
+        action="store_true",
+        help="Re-run jlink instead of reusing a cached JRE with the same module set",
+    )
     parser.add_argument("--output-dir", dest="output_dir", default=None, help="Output directory")
 
     args = parser.parse_args()
-    if args.action in ("all", "ca", "pa", "ca-linux"):
-        required = "linux-x64" if args.action == "ca-linux" else "windows-x64"
-        if native_runtime_platform() != required:
-            parser.error(f"{args.action} requires a native {required} JDK 21; use ca-linux on Linux/WSL")
-
     repo_root = get_repo_root()
-    version = args.version or get_pom_version(repo_root)
-    if args.action == "sdk-modules":
+
+    if "sdk-modules" in args.targets:
+        if len(args.targets) > 1:
+            parser.error("sdk-modules cannot be combined with other targets")
         print(",".join(":" + artifact for _, artifact, _ in sdk_modules(repo_root)))
         return
+
+    version = args.version or get_pom_version(repo_root)
     if version != get_pom_version(repo_root):
         raise ValueError("Release version must match the root POM revision; rebuild before packaging")
+    try:
+        targets = resolve_targets(args.targets)
+    except ValueError as error:
+        parser.error(str(error))
 
     dist_support_dir = repo_root / "dist-support"
     work_dir = dist_support_dir / "dist-work"
     output_dir = Path(args.output_dir) if args.output_dir else dist_support_dir / "output"
-
     work_dir.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    described = ", ".join(product + (f":{platform}" if platform else "") for product, platform in targets)
     print("=" * 70)
-    print(f"Haifa Agent Release Distribution Builder")
+    print("Haifa Agent Release Distribution Builder")
     print(f"Version:      {version}")
     print(f"Artifacts:    {artifact_label(version)}")
-    print(f"Action:       {args.action}")
+    print(f"Targets:      {described}")
     print(f"Output Dir:   {output_dir}")
     print(f"Work Dir:     {work_dir}")
     print("=" * 70)
 
-    jre_dir = None
-    if args.action in ["all", "ca", "ca-linux", "pa", "jre"]:
-        jre_dir = ensure_jre(repo_root, work_dir, force_rebuild=not args.skip_jre)
-        if args.action == "jre":
-            return
+    preparation = Preparation(repo_root, work_dir, args.rebuild_jre, args.skip_web_build)
+    packaged = False
+    for product, target_platform in targets:
+        if product == "jre":
+            preparation.jre(target_platform)
+            continue
+        package_target(
+            product, target_platform, repo_root, work_dir, output_dir, version, preparation
+        )
+        packaged = True
 
-    if args.action in ["all", "ca"]:
-        package_ca(repo_root, work_dir, output_dir, version, jre_dir)
-
-    if args.action == "ca-linux":
-        package_ca(repo_root, work_dir, output_dir, version, jre_dir, target="linux-x64")
-
-    if args.action in ["all", "pa"]:
-        package_pa(repo_root, work_dir, output_dir, version, jre_dir, skip_web_build=args.skip_web_build)
-
-    if args.action in ["all", "pa-server"]:
-        package_pa_server(repo_root, work_dir, output_dir, version, skip_web_build=args.skip_web_build)
-
-    if args.action in ["all", "sdk"]:
-        package_sdk(repo_root, work_dir, output_dir, version)
-
-    write_checksums(output_dir)
+    if packaged:
+        write_checksums(output_dir, version)
 
 
 if __name__ == "__main__":

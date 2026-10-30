@@ -6,15 +6,19 @@ import shutil
 import subprocess
 import sys
 import time
-import zipfile
 from pathlib import Path
 from typing import Optional
 
 
-REQUIRED_SHADED_JAR_ENTRIES = (
-    "io/haifa/agent/cli/HaifaCliMain.class",
-    "com/williamcallahan/tui4j/compat/bubbletea/ProgramCore.class",
-    "com/williamcallahan/tui4j/compat/bubbletea/ProgramCleanup.class",
+# The Coding Agent commands share one contracts module; keep the import usable when
+# this file is loaded by path (tests) instead of being run as a script.
+sys.path.insert(
+    0, str(Path(__file__).resolve().parents[1] / "dist-support" / "scripts")
+)
+from distribution_contracts import (  # noqa: E402 - repository scripts run unpackaged
+    cli_build_command,
+    validate_model_configuration,
+    validate_shaded_jar,
 )
 
 
@@ -49,30 +53,11 @@ def resolve_output_directory(repository_directory: Path, value: Optional[str]) -
     return output_directory
 
 
-def cli_build_command(maven_wrapper: Path) -> list[str]:
-    return [
-        str(maven_wrapper),
-        "--batch-mode",
-        "--no-transfer-progress",
-        "-pl",
-        ":haifa-agent-cli",
-        "-am",
-        "-DskipUnitTests=true",
-        "clean",
-        "package",
-    ]
-
-
 def build_cli(repository_directory: Path) -> Path:
-    wrapper_name = "mvnw.cmd" if os.name == "nt" else "mvnw"
-    maven_wrapper = repository_directory / wrapper_name
-    if not maven_wrapper.is_file():
-        raise FileNotFoundError(f"Maven Wrapper is missing: {maven_wrapper}")
-
     print("Building the Haifa Coding Agent shaded JAR...", flush=True)
     build_started_ns = time.time_ns()
     subprocess.run(
-        cli_build_command(maven_wrapper), cwd=repository_directory, check=True
+        cli_build_command(repository_directory), cwd=repository_directory, check=True
     )
 
     target_directory = (
@@ -101,25 +86,6 @@ def build_cli(repository_directory: Path) -> Path:
         )
     validate_shaded_jar(jar_file)
     return jar_file
-
-
-def validate_shaded_jar(jar_file: Path) -> None:
-    try:
-        with zipfile.ZipFile(jar_file) as archive:
-            entries = set(archive.namelist())
-            manifest = archive.read("META-INF/MANIFEST.MF").decode(
-                "utf-8", errors="strict"
-            )
-    except (OSError, KeyError, UnicodeError, zipfile.BadZipFile) as error:
-        raise RuntimeError(f"The shaded CLI JAR is invalid: {jar_file}") from error
-    missing = [entry for entry in REQUIRED_SHADED_JAR_ENTRIES if entry not in entries]
-    if missing:
-        raise RuntimeError(
-            "The shaded CLI JAR is missing required runtime classes: "
-            + ", ".join(missing)
-        )
-    if "Main-Class: io.haifa.agent.cli.HaifaCliMain" not in manifest:
-        raise RuntimeError("The shaded CLI JAR has an invalid Main-Class manifest")
 
 
 def deploy_jar(jar_file: Path, output_directory: Path) -> None:
@@ -183,35 +149,6 @@ exec "$java_executable" -jar "${script_dir}/haifa-agent.jar" --config "${script_
 
 def yaml_single_quoted(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
-
-
-def validate_model_configuration(content: str) -> None:
-    required_fragments = (
-        "allowedBindings:",
-        "deepseek-responses-flash",
-        "deepseek-chat-pro",
-        "model-auth://deepseek/default",
-    )
-    missing = [fragment for fragment in required_fragments if fragment not in content]
-    if missing:
-        raise ValueError(
-            "Coding Agent configuration template is missing the current model API structure: "
-            + ", ".join(missing)
-        )
-    forbidden_fragments = (
-        "apiBindings:",
-        "dialectId:",
-        "dialectVersion:",
-        "styleVersion:",
-        "adapterType:",
-        "CHATGPT2API_",
-    )
-    present = [fragment for fragment in forbidden_fragments if fragment in content]
-    if present:
-        raise ValueError(
-            "Coding Agent configuration template contains retired model configuration: "
-            + ", ".join(present)
-        )
 
 
 def render_configuration(

@@ -19,6 +19,15 @@ Reactor 版本由根 `pom.xml` 的 `revision` 属性单点定义，全部模块 
 模块目录下被 Git 忽略的 `.flattened-pom.xml`，再以该文件安装或部署，消费者不会读到 `${revision}`
 字面量。
 
+## Python 入口解析
+
+`build-support/`、`dist-support/`、`scripts/` 与自动交付工具下的全部 `.ps1` / `.sh` 入口只做一件事：
+把参数原样转交 `build-support/scripts/invoke-python.ps1` 或 `build-support/scripts/invoke-python.sh`。
+解释器解析顺序固定为 `HAIFA_PYTHON_EXECUTABLE`、`python.exe`/`python3`、`py -3`（POSIX 为
+`HAIFA_PYTHON_EXECUTABLE`、`python3`、`python`），参数不做改写，子进程退出码原样返回。
+
+新增入口不得再复制这段查找逻辑；公共业务逻辑仍然只放在对应的 `.py` 中。
+
 ## 本地 SDK 版本化发布
 
 向本地 Maven 仓库发布 SDK 统一使用 `scripts/publish-local-sdk.ps1`，禁止直接执行 `mvn install`：
@@ -28,7 +37,7 @@ Reactor 版本由根 `pom.xml` 的 `revision` 属性单点定义，全部模块 
 
 ## 分层 Maven 入口
 
-本地开发使用 `scripts/invoke-haifa-maven.ps1` 或 `scripts/invoke-haifa-maven.sh`。入口不会改变 Maven
+本地开发使用 `build-support/scripts/invoke-haifa-maven.ps1` 或 `invoke-haifa-maven.sh`。入口不会改变 Maven
 生命周期或吞掉退出码，只补充资源感知的默认线程数和一份脱敏 JSON 指标：
 
 从运行中的 Coding Agent 终端启动构建时，入口会在 Maven 子进程中丢弃该产品导出的运行时变量
