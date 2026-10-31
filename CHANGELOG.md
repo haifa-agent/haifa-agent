@@ -2,7 +2,7 @@
 
 ## Unreleased - 0.1.5-SNAPSHOT
 
-- Coding Terminal clarification questions move backward and forward with the left and right keys, and the marked
+- Coding Terminal clarification questions move backward and forward with ← and →, and the marked
   options or typed text are listed in a review step before `Send answer` submits them.
 
 - OpenCode Go now behaves like the channel documents: model requests carry the frozen root-Run

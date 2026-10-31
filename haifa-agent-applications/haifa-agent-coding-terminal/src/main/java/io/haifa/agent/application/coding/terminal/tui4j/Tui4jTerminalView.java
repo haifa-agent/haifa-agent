@@ -1140,16 +1140,16 @@ final class Tui4jTerminalView {
     }
 
     /**
-     * Keys for a clarification modal. A multi-question wizard advertises left and right, and the review advertises
-     * the way back to a question. A single question keeps the mark-and-enter hint.
+     * Keys for a clarification modal. A multi-question wizard advertises ← and →, and the review advertises the way
+     * back to a question. A single question keeps the mark-and-enter hint.
      */
     private static String clarificationHint(String title) {
         if (title.startsWith("Clarification · Review")) {
-            return "└─ left back · enter edit or send · esc close";
+            return "└─ ← back · enter edit or send · esc close";
         }
         Matcher step = CLARIFICATION_STEP_COUNT.matcher(title);
         if (step.find() && Integer.parseInt(step.group(1)) > 1) {
-            return "└─ left previous · right next · enter select · space mark";
+            return "└─ ← previous · → next · enter select · space mark";
         }
         return "└─ enter select · space mark · escape close (editor preserved)";
     }

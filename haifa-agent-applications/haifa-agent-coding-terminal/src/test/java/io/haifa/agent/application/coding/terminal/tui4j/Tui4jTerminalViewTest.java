@@ -256,7 +256,8 @@ class Tui4jTerminalViewTest {
 
         assertThat(rendered)
                 .containsSubsequence("Step 1 of 2 · Storage", "( ) Postgres", "Runs as a server")
-                .contains("[enter]", "left previous", "right next", "enter select · space mark");
+                .contains("[enter]", "← previous", "→ next", "enter select · space mark")
+                .doesNotContain("left previous", "right next");
     }
 
     @Test
@@ -282,8 +283,8 @@ class Tui4jTerminalViewTest {
 
         assertThat(rendered)
                 .containsSubsequence("Storage: Postgres", "Which storage?", "Send answer")
-                .contains("left back", "enter edit or send", "…")
-                .doesNotContain("left previous", "space mark", "in the repository ".repeat(12));
+                .contains("← back", "enter edit or send", "…")
+                .doesNotContain("left back", "← previous", "space mark", "in the repository ".repeat(12));
     }
 
     @Test
@@ -335,7 +336,7 @@ class Tui4jTerminalViewTest {
                         "hold until run finishes",
                         "please handle the review")
                 .contains("enter select · space mark")
-                .doesNotContain("left previous", "Send Now enter", "esc interrupt", "again to interrupt");
+                .doesNotContain("← previous", "left previous", "Send Now enter", "esc interrupt", "again to interrupt");
         assertThat(lines.get(selectorRow - 1)).isBlank();
     }
 

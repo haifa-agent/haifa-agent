@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Clarification 左右翻页与提交前预览</title>
+<title>Clarification ← → 翻页与提交前预览</title>
 <style>
   :root {
     --page: #0c0d10;
@@ -112,11 +112,11 @@
 </style>
 </head>
 <body>
-  <h1>Clarification 左右翻页与提交前预览</h1>
-  <p class="lead">按当前 Coding Terminal 的 dark 主题和按键画的画面稿。英文文案、勾选符号、底栏提示和「先预览再发送」都与现在的实现一致。方向键、空格、回车可以在最下面那一屏里直接试。</p>
+  <h1>Clarification ← → 翻页与提交前预览</h1>
+  <p class="lead">按当前 Coding Terminal 的 dark 主题和按键画的画面稿。英文文案、勾选符号、底栏提示和「先预览再发送」都与现在的实现一致。← →、空格、回车可以在最下面那一屏里直接试。</p>
 
-  <h2>左右翻页</h2>
-  <p class="section-note">多个问题不再只能从第一题走到最后一题。左、右会换题，已经勾过的答案和高亮行都留着。这一题还没答完也可以往右看。</p>
+  <h2>← → 翻页</h2>
+  <p class="section-note">多个问题不再只能从第一题走到最后一题。←、→ 会换题，已经勾过的答案和高亮行都留着。这一题还没答完也可以按 → 看。</p>
   <div class="frames" id="nav-frames"></div>
 
   <h2>提交前预览</h2>
@@ -124,7 +124,7 @@
   <div class="frames" id="review-frames"></div>
 
   <h2>自己按一遍</h2>
-  <p class="section-note">点一下终端，然后用键盘。左 / 右换题，上 / 下移动，空格打勾，回车确认。也可以点右边的键。</p>
+  <p class="section-note">点一下终端，然后用键盘。← / → 换题，↑ / ↓ 移动，空格打勾，回车确认。也可以点旁边的按钮。</p>
   <div class="live">
     <div>
       <div class="chips" id="scenarios"></div>
@@ -136,11 +136,11 @@
       <h3>按键</h3>
       <div class="keys" id="keys"></div>
       <ol>
-        <li>左右换题，不丢已选答案，高亮停在离开时的那一行。</li>
+        <li>← → 换题，不丢已选答案，高亮停在离开时的那一行。</li>
         <li>空格只打勾。单选是 ( ) / (✓)，多选是 [ ] / [✓]。</li>
-        <li>最后一题还没答完时，向右不会打开预览。</li>
+        <li>最后一题还没答完时，→ 不会打开预览。</li>
         <li>预览里回车某一题会回去改；回车 Send answer 才提交。</li>
-        <li>预览里按左，回到刚才那一题，而不是回到高亮的那一行。</li>
+        <li>预览里按 ←，回到刚才那一题，而不是回到高亮的那一行。</li>
       </ol>
       <div class="payload" id="payload"></div>
     </aside>
@@ -307,9 +307,9 @@ function titleOf(state) {
 }
 
 function hintOf(title) {
-  if (title.startsWith("Clarification · Review")) return "└─ left back · enter edit or send · esc close";
+  if (title.startsWith("Clarification · Review")) return "└─ ← back · enter edit or send · esc close";
   const step = title.match(/^Clarification · Step \d+ of (\d+) · /);
-  if (step && Number(step[1]) > 1) return "└─ left previous · right next · enter select · space mark";
+  if (step && Number(step[1]) > 1) return "└─ ← previous · → next · enter select · space mark";
   return "└─ enter select · space mark · escape close (editor preserved)";
 }
 
@@ -627,19 +627,19 @@ function mountStills() {
     still(
       "frame-step-1",
       "第 1 题，高亮停在 SQLite",
-      "底栏写出 left previous · right next。这一行还没打勾也可以按右键看下一题。高亮行右边是 [enter]，避免把单选读成必须先按空格。",
+      "底栏写出 ← previous · → next。这一行还没打勾也可以按 → 看下一题。高亮行右侧是 [enter]，避免把单选读成必须先按空格。",
       state => { state.row = 1; }
     ),
     still(
       "frame-step-2",
-      "按 Right 之后的第 2 题",
-      "直接到 Location。第 1 题可以还是空的。再按 Left 会回到刚才的高亮行。",
+      "按 → 之后的第 2 题",
+      "直接到 Location。第 1 题可以还是空的。再按 ← 会回到刚才的高亮行。",
       state => { state.index = 1; state.focus[0] = 1; state.row = 0; }
     ),
     still(
       "frame-back",
-      "Left 回到第 1 题，勾和焦点都在",
-      "在 SQLite 上回车选中并进入第 2 题，再按 Left。高亮仍是第二行，(✓) 还在，不会跳回 Postgres。",
+      "← 回到第 1 题，勾和焦点都在",
+      "在 SQLite 上回车选中并进入第 2 题，再按 ←。高亮仍是第二行，(✓) 还在，不会跳回 Postgres。",
       state => { state.selected[0] = ["opt-0-1"]; state.focus[0] = 1; state.row = 1; }
     )
   );
@@ -648,7 +648,7 @@ function mountStills() {
     still(
       "frame-review",
       "两题都选定之后的预览",
-      "Storage 是 SQLite，Location 是 In the temp folder。这时还没有提交。回车第一行会回到 Storage；回车 Send answer 才发送。Left 回到刚才那一题。",
+      "Storage 是 SQLite，Location 是 In the temp folder。这时还没有提交。回车第一行会回到 Storage；回车 Send answer 才发送。← 回到刚才那一题。",
       state => {
         state.selected[0] = ["opt-0-1"];
         state.selected[1] = ["opt-1-1"];
