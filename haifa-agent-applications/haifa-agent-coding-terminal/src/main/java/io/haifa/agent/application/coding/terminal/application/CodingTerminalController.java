@@ -1021,6 +1021,14 @@ public final class CodingTerminalController implements AutoCloseable {
             startAntigravityLogin();
             return;
         }
+        if ("opencode".equals(provider) || "opencode-go".equals(provider)) {
+            if (parts.length > 1 && "device".equals(parts[1])) {
+                startOpenCodeGoLogin();
+            } else {
+                openProviderMethods("opencode-go");
+            }
+            return;
+        }
         openProviderMethods(provider);
     }
 
@@ -1097,6 +1105,7 @@ public final class CodingTerminalController implements AutoCloseable {
                 }
             }
             case "google-antigravity" -> startAntigravityLogin();
+            case "opencode-go" -> startOpenCodeGoLogin();
             default -> apply(new TerminalUiAction.RecoverableFailure("AUTH_METHOD_UNSUPPORTED"));
         }
     }
@@ -3235,6 +3244,28 @@ public final class CodingTerminalController implements AutoCloseable {
                 code -> completeAuthenticationFailure("ChatGPT", code));
     }
 
+    private void startOpenCodeGoLogin() {
+        if (rejectConcurrentLogin()) {
+            return;
+        }
+        authenticationInProgress = true;
+        apply(new TerminalUiAction.StatusChanged("Requesting an OpenCode Go authorization code"));
+        submitEffect(
+                () -> {
+                    CodingAuthenticationView connected = authentication.loginDevice(
+                            "opencode-go",
+                            instruction -> rememberDevice(instruction),
+                            progress -> pump.offer(new TerminalUiAction.AuthenticationProgressed(progress.phase())));
+                    return () -> {
+                        completeAuthentication();
+                        pump.offer(new TerminalUiAction.AuthenticationCompleted(
+                                "OpenCode Go", connected.unofficialLocalCompatibility()));
+                        offerConnectionNextStep("opencode-go", "OpenCode Go");
+                    };
+                },
+                code -> completeAuthenticationFailure("OpenCode Go", code));
+    }
+
     private void rememberAuthorization(String connectionName, CodingBrowserLoginView instructions) {
         pendingAuthorizationUri.set(instructions.authorizationUri().toString());
         authenticationExpiresAtMillis = instructions.expiresAtEpochMillis();
@@ -3321,10 +3352,13 @@ public final class CodingTerminalController implements AutoCloseable {
         }
         lastAuthenticationCountdownSecond = seconds;
         String remaining = "%02d:%02d".formatted(seconds / 60, seconds % 60);
+        String waiting = pendingDeviceCode.get() == null
+                ? "Waiting for browser authorization"
+                : "Waiting for the authorization code";
         apply(new TerminalUiAction.StatusChanged(
                 seconds == 0
-                        ? "Waiting for browser authorization · expiring soon · Esc to cancel"
-                        : "Waiting for browser authorization · " + remaining + " remaining · Esc to cancel"));
+                        ? waiting + " · expiring soon · Esc to cancel"
+                        : waiting + " · " + remaining + " remaining · Esc to cancel"));
     }
 
     private void beginApiKeyInput(String input) {

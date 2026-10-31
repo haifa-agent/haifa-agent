@@ -1,0 +1,28 @@
+schemaVersion: haifa.model-catalog-binding/v1
+bindingId: opencode-go-deepseek-flash
+version: "2026-10-go2"
+providerModelId: deepseek-v4.1-flash
+displayName: DeepSeek V4.1 Flash (OpenCode Go)
+status: ACTIVE
+apiStyle: openai-chat-completions
+dialect: opencode-go-openai-chat
+capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+profile:
+  version: "2.0"
+  reasoningBehavior: OPTIONAL
+  allowedReasoningModes: [DISABLED, ENABLED]
+  allowedReasoningEfforts: [LOW, HIGH, MAX]
+  maximumReasoningTokens: null
+  minimumOutputTokens: 1
+  maximumOutputTokens: 384000
+  contextWindowTokens: 1000000
+  toolReasoningContinuationRequired: true
+  nativeStreaming: true
+  usageStreaming: true
+  reasoningStreaming: true
+  partialOutputFailureBehavior: NON_RETRYABLE
+  inputModalities: [TEXT]
+  outputModalities: [TEXT]
+  imageInput: null
+  status: VERIFIED
+  lastVerifiedOn: "2026-10-30"

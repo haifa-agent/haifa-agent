@@ -11,6 +11,7 @@ import io.haifa.agent.auth.localmodel.ExternalLoginAttemptId;
 import io.haifa.agent.auth.localmodel.ExternalLoginAttemptSnapshot;
 import io.haifa.agent.auth.localmodel.ExternalLoginAttemptState;
 import io.haifa.agent.auth.localmodel.ExternalLoginMethodDescriptor;
+import io.haifa.agent.auth.localmodel.ExternalLoginMethodId;
 import io.haifa.agent.auth.localmodel.ExternalLoginMode;
 import io.haifa.agent.auth.localmodel.LocalModelAuthenticationService;
 import io.haifa.agent.auth.localmodel.LocalModelConnectionView;
@@ -154,7 +155,8 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient,
     public boolean apiKeyConnectionSupported() {
         return hasWritableCredentialReference(selectedProviderId)
                 && !selectedCredentialReference.startsWith("model-auth://openai-codex/")
-                && !selectedCredentialReference.startsWith("model-auth://google-antigravity/");
+                && !selectedCredentialReference.startsWith("model-auth://google-antigravity/")
+                && !selectedCredentialReference.startsWith("model-auth://opencode-go/");
     }
 
     private boolean hasWritableCredentialReference(String providerId) {
@@ -332,6 +334,21 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient,
                 started.attemptId(),
                 Objects.requireNonNull(instructions, "instructions must not be null"),
                 null,
+                Objects.requireNonNull(progress, "progress must not be null"));
+    }
+
+    @Override
+    public CodingAuthenticationView loginDevice(
+            String providerId,
+            Consumer<CodingDeviceLoginView> instructions,
+            Consumer<CodingAuthenticationProgressView> progress) {
+        ExternalLoginAttemptSnapshot started = authentication.startExternalLogin(
+                new ExternalLoginMethodId(Objects.requireNonNull(providerId, "providerId must not be null")),
+                ExternalLoginMode.DEVICE_CODE);
+        return await(
+                started.attemptId(),
+                null,
+                Objects.requireNonNull(instructions, "instructions must not be null"),
                 Objects.requireNonNull(progress, "progress must not be null"));
     }
 

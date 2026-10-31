@@ -107,7 +107,31 @@ public record TerminalRecovery(Category category, String code, String action) {
             entry(
                     Category.USER_ACTION_REQUIRED,
                     "AUTH_DEVICE_CODE_DENIED",
-                    "Device code authorization was denied; retry or use browser sign-in."),
+                    "Device code authorization was denied; run /connect to request a new code."),
+            entry(
+                    Category.RETRYABLE,
+                    "AUTH_DEVICE_CODE_UNAVAILABLE",
+                    "The authorization-code service could not be reached; check your network and run /connect again."),
+            entry(
+                    Category.RETRYABLE,
+                    "AUTH_DEVICE_CODE_REQUEST_FAILED",
+                    "The authorization-code request was rejected; run /connect again in a moment."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "AUTH_DEVICE_CODE_RESPONSE_INVALID",
+                    "The authorization-code response could not be read; run /connect again."),
+            entry(
+                    Category.RETRYABLE,
+                    "AUTH_DEVICE_CODE_POLL_FAILED",
+                    "Waiting for authorization failed; run /connect again."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "AUTH_DEVICE_RESPONSE_TOO_LARGE",
+                    "The authorization service returned an oversized response; run /connect again."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "AUTH_LOGIN_MODE_UNAVAILABLE",
+                    "This provider only supports authorization-code sign-in; run /connect and pick that method."),
             entry(
                     Category.USER_ACTION_REQUIRED,
                     "AUTH_SECRET_INVALID",
