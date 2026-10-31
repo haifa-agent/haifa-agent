@@ -922,7 +922,9 @@ final class Tui4jTerminalView {
 
         String status = item.status().toLowerCase(Locale.ROOT);
         String titleText = sanitize(item.title());
-        String headerText = titleText.toLowerCase(Locale.ROOT).startsWith("error")
+        boolean alreadyErrorOrBracketed =
+                titleText.toLowerCase(Locale.ROOT).startsWith("error") || titleText.startsWith("[");
+        String headerText = alreadyErrorOrBracketed
                 ? "✖ " + titleText + " [" + status + "]"
                 : "✖ Error · " + titleText + " [" + status + "]";
 
