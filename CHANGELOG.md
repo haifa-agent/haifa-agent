@@ -2,6 +2,15 @@
 
 ## Unreleased - 0.1.5-SNAPSHOT
 
+- The Coding Agent can now run its Terminal as a thin client of one CA Host: `haifa-coding tui --connect
+  http://127.0.0.1:<port> [--session <id> | --new]` resumes that Host's last Session by default and is dispatched
+  before the process opens local logs, configuration, credentials, Runtime or SQLite. Tool-output preview, session
+  consent and credential setup stay on the Host and are refused up front; ordinary per-approval approve/reject and
+  logout remain. An unavailable or incompatible Host fails fast with a stable `REMOTE_*` code instead of falling back
+  to an embedded Run, and when a settled Run has already advanced to a queued follow-up the terminal performs one
+  bounded reconcile per settled Run to move onto the successor. The packaged `haifa.bat` / `haifa` launchers pass the
+  `tui` vector through untouched, keep the `host` subcommand ahead of the bundled `--config`, and no longer create the
+  per-user data directories for the remote mode.
 - OpenCode Go now behaves like the channel documents: model requests carry the frozen root-Run
   affinity as `x-opencode-session` so delegated children share routing and prompt cache, the three
   bindings declare the reasoning profiles the channel serves (`reasoningMode: ENABLED` maps the

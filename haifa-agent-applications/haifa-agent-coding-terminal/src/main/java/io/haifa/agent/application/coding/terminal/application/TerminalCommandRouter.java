@@ -33,6 +33,8 @@ public final class TerminalCommandRouter {
             case "/trust" -> TerminalCommand.TRUST;
             case "/approval" -> TerminalCommand.APPROVAL;
             case "/session" -> TerminalCommand.SESSION;
+            // Keyboard-reachable Session switching for a collapsed sidebar or a terminal without a mouse.
+            case "/sessions" -> TerminalCommand.SESSIONS;
             case "/command", "/commands", "/help" -> TerminalCommand.COMMANDS;
             case "/theme" -> TerminalCommand.THEME;
             case "/mouse" -> TerminalCommand.MOUSE;

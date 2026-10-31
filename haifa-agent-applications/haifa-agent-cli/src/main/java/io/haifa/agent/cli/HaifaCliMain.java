@@ -22,16 +22,29 @@ public final class HaifaCliMain {
     private static final java.util.logging.Logger LOGGER =
             java.util.logging.Logger.getLogger(HaifaCliMain.class.getName());
     private final CliTerminalRunner terminalRunner;
+    private final CliRemoteTerminalRunner remoteTerminalRunner;
 
     HaifaCliMain() {
-        this(new LocalCodingTerminalRunner());
+        this(new LocalCodingTerminalRunner(), new RemoteCodingTerminalRunner());
     }
 
     HaifaCliMain(CliTerminalRunner terminalRunner) {
+        this(terminalRunner, new RemoteCodingTerminalRunner());
+    }
+
+    HaifaCliMain(CliTerminalRunner terminalRunner, CliRemoteTerminalRunner remoteTerminalRunner) {
         this.terminalRunner = java.util.Objects.requireNonNull(terminalRunner, "terminalRunner must not be null");
+        this.remoteTerminalRunner =
+                java.util.Objects.requireNonNull(remoteTerminalRunner, "remoteTerminalRunner must not be null");
     }
 
     public static void main(String[] arguments) {
+        // The remote TUI is a thin client. Dispatch it before file logging, local configuration, credentials,
+        // Runtime or database assembly so a remote session never creates local state.
+        if (CodingTuiArguments.isRemoteCommand(arguments)) {
+            System.exit(runRemote(arguments, System.out, System.err));
+            return;
+        }
         int exitCode;
         try (CliFileLogging logging = CliFileLogging.open(System.getenv())) {
             try {
@@ -48,7 +61,48 @@ public final class HaifaCliMain {
         if (exitCode != 0) System.exit(exitCode);
     }
 
+    private static int runRemote(String[] arguments, PrintStream output, PrintStream error) {
+        try {
+            CodingTuiArguments parsed = CodingTuiArguments.parse(arguments);
+            if (parsed.help()) {
+                output.println(remoteUsage());
+                return 0;
+            }
+            new HaifaCliMain().runRemoteMode(parsed, output);
+            return 0;
+        } catch (IllegalArgumentException exception) {
+            logRejected("CLI_TUI_ARGUMENT_REJECTED", exception);
+            error.println("Invalid remote command: " + safeTuiArgument(exception));
+            error.println("Use tui --help for usage.");
+            return 1;
+        } catch (io.haifa.agent.application.project.product.ProjectProductException exception) {
+            logRejected("CLI_TUI_REMOTE_REJECTED", exception);
+            error.println("[" + exception.code() + "] " + exception.getMessage());
+            return 1;
+        } catch (IllegalStateException exception) {
+            logRejected("CLI_TUI_STATE_REJECTED", exception);
+            if (Tui4jCodingTerminal.TUI_UNAVAILABLE.equals(exception.getMessage())) {
+                error.println(Tui4jCodingTerminal.TUI_UNAVAILABLE + ": an interactive terminal is required.");
+                return 1;
+            }
+            error.println("Unable to run the remote Coding Terminal.");
+            return 1;
+        } catch (RuntimeException exception) {
+            logRejected("CLI_TUI_REMOTE_FAILED", exception);
+            error.println("Unable to run the remote Coding Terminal.");
+            return 1;
+        }
+    }
+
+    /** Runs one parsed remote session; package-private so tests can prove selection without a real Host. */
+    void runRemoteMode(CodingTuiArguments parsed, PrintStream output) {
+        remoteTerminalRunner.run(parsed.endpoint(), parsed.startup(), output);
+    }
+
     int run(String[] arguments, PrintStream output, PrintStream error) {
+        if (arguments.length > 0 && "host".equals(arguments[0])) {
+            return runHost(java.util.Arrays.copyOfRange(arguments, 1, arguments.length), output, error);
+        }
         try {
             CliArguments parsed = CliArguments.parse(arguments);
             if (parsed.help()) {
@@ -311,9 +365,125 @@ public final class HaifaCliMain {
         }
     }
 
+    private int runHost(String[] arguments, PrintStream output, PrintStream error) {
+        try {
+            CodingHostArguments host = CodingHostArguments.parse(arguments, Path.of("."));
+            if (host.help()) {
+                output.println(hostUsage());
+                return 0;
+            }
+            try (CodingHostServer server =
+                    CodingHostServer.start(host.workspace(), host.config(), host.bind(), host.port())) {
+                output.println("CA Host listening on http://" + host.bind() + ":" + server.port());
+                output.println(
+                        "Parallel edits in one physical directory require independent manual worktrees; Host does not create worktrees or detect concurrent write conflicts.");
+                Thread shutdown =
+                        Thread.ofPlatform().name("haifa-coding-host-shutdown").unstarted(server::close);
+                Runtime.getRuntime().addShutdownHook(shutdown);
+                try {
+                    server.awaitTermination();
+                } finally {
+                    try {
+                        Runtime.getRuntime().removeShutdownHook(shutdown);
+                    } catch (IllegalStateException shuttingDown) {
+                        // JVM shutdown is already running the hook.
+                    }
+                }
+            }
+            return 0;
+        } catch (IllegalArgumentException exception) {
+            logRejected("CLI_HOST_ARGUMENT_REJECTED", exception);
+            error.println("Invalid host command: " + safeHostArgument(exception));
+            return 1;
+        } catch (RuntimeException exception) {
+            logRejected("CLI_HOST_FAILED", exception);
+            error.println(safeHostFailure(exception));
+            return 1;
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            return 1;
+        }
+    }
+
+    private static String safeHostArgument(IllegalArgumentException exception) {
+        String message = exception.getMessage();
+        if (message != null
+                && (message.startsWith("unknown host option")
+                        || message.startsWith("missing value for")
+                        || message.startsWith("host bind")
+                        || message.startsWith("host port"))) {
+            return message;
+        }
+        return "invalid arguments";
+    }
+
+    /**
+     * Narrows a remote-mode argument failure to the parser's own vocabulary.
+     *
+     * <p>A rejected value may contain a user-supplied endpoint or identifier, so anything the parser did not
+     * phrase itself collapses to a fixed message instead of echoing it back.
+     */
+    private static String safeTuiArgument(IllegalArgumentException exception) {
+        String message = exception.getMessage();
+        if (message != null
+                && (message.startsWith("unknown tui option")
+                        || message.startsWith("missing value for")
+                        || message.startsWith("tui requires")
+                        || message.startsWith("tui --connect")
+                        || message.startsWith("--connect may only")
+                        || message.startsWith("--session may only")
+                        || message.startsWith("--new may only")
+                        || message.startsWith("--session cannot")
+                        || message.equals("missing tui command"))) {
+            return message;
+        }
+        return "invalid arguments";
+    }
+
+    private static String remoteUsage() {
+        return """
+                Usage: haifa-coding tui --connect <endpoint> [--session <session-id> | --new]
+                      --connect <endpoint>   Running CA Host (http://127.0.0.1:17861)
+                      --session <session-id>
+                  --new                      Start a new Session instead of resuming the last one
+
+                The remote TUI is a thin client: it connects to one running CA Host and does not read this
+                machine's workspace, model configuration, credentials or database. The Host owns the Runtime,
+                persistence, tool-output preview, session consent and credential setup. Ordinary per-approval
+                approve/reject and logout stay available. A Host that is unavailable or speaks another protocol
+                fails fast; the terminal never falls back to an embedded Run.
+                """;
+    }
+
+    private static String safeHostFailure(RuntimeException exception) {
+        String message = exception.getMessage();
+        if (message != null
+                && (message.startsWith("DATABASE_OWNED_BY_ANOTHER_PROCESS")
+                        || message.startsWith("HOST_DURABLE_PERSISTENCE_REQUIRED")
+                        || message.startsWith("HOST_BIND_"))) {
+            return message;
+        }
+        return "CA Host failed to start";
+    }
+
+    private static String hostUsage() {
+        return """
+                Usage: haifa-coding host [options]
+                      --workspace <path>     Workspace root (default: current directory)
+                      --config <path>        Explicit Host configuration; otherwise user config only
+                      --bind <address>       Loopback address (default: 127.0.0.1)
+                      --port <port>          Port (default: 17861)
+                  -h, --help                 Show this help
+                Parallel edits in one physical directory require independent manual worktrees;
+                Host does not create worktrees or detect concurrent write conflicts.
+                """;
+    }
+
     static String usage() {
         return """
                 Usage: haifa-coding [--terminal | -m <task>] [options]
+                       haifa-coding host [options]
+                       haifa-coding tui --connect <endpoint> [--session <session-id> | --new]
                        haifa-coding resume
                        haifa-coding resume --last [<prompt>]
                        haifa-coding resume <session-id> [<prompt>]

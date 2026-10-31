@@ -118,6 +118,14 @@ public interface CodingSessionClient {
 
     void cancel(AgentSessionId sessionId, String idempotencyKey);
 
+    /**
+     * Cancels only the requested active Run. Implementations that cannot prove the target identity must keep this
+     * default and fail explicitly instead of delegating to the Session-level cancellation above.
+     */
+    default void cancel(AgentSessionId sessionId, AgentRunId requestedRunId, String idempotencyKey) {
+        throw new UnsupportedOperationException("Exact-target Run cancellation is unavailable");
+    }
+
     default CodingSessionSummary rename(AgentSessionId sessionId, String displayName, long expectedRevision) {
         throw new UnsupportedOperationException("Session rename is unavailable");
     }

@@ -505,6 +505,25 @@ Event replay retains at most the latest 2,000 lifecycle events in one background
 large session cannot allocate an unbounded intermediate list. Durable conversation messages remain
 the authoritative reopened transcript.
 
+## Selection generation and Remote v1 capabilities
+
+Every selection transition allocates a monotonic generation. Snapshot/history/replay loads install the
+view first and subscribe afterwards from the authoritative cursor, so a synchronously replayed
+subscription event is reduced against the newly installed session. Async load, command, approval,
+model, shell, cursor and stream completions carry the captured Session/Run/generation and may only
+update the view they were started for. A->B->A therefore rejects an old A result even when the
+SessionId matches again. A failed transition keeps the previous view and stream usable and can be
+retried; stale subscribe completions close only their own handles and never cancel Runs. Cancel
+always targets the captured active Run through `cancel(sessionId, requestedRunId, key)`.
+
+`CodingTerminalApplication` and `CodingTerminalController` accept an immutable
+`CodingTerminalConnectionOptions` for the composition root. Existing constructors keep
+`embedded()`. Remote v1 supplies `remoteV1()`: Tool preview, session-level consent/reset, and
+credential setup (API key, browser/device sign-in) are refused in the UI with Host-side guidance
+before any secret is collected. Auth status and logout remain available, and ordinary precise
+approve/reject is unchanged. `CodingSessionClient` remains the only product interface; there is no
+capability registry or transport import in this module.
+
 ## Assistant streaming boundary
 
 Assistant deltas are consumed through the closeable, Run-scoped transient output subscription.

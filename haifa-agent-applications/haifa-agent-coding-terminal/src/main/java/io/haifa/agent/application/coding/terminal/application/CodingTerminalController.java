@@ -9,6 +9,7 @@ import io.haifa.agent.application.coding.terminal.state.PendingMessage;
 import io.haifa.agent.application.coding.terminal.state.TerminalRecovery;
 import io.haifa.agent.application.coding.terminal.state.TerminalSelector;
 import io.haifa.agent.application.coding.terminal.state.TerminalSelectorDetail;
+import io.haifa.agent.application.coding.terminal.state.TerminalSessionRow;
 import io.haifa.agent.application.coding.terminal.state.TerminalThemes;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiReducer;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
@@ -52,7 +53,6 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.RejectedExecutionException;
@@ -68,8 +68,10 @@ public final class CodingTerminalController implements AutoCloseable {
     private static final int PAGE_SIZE = 200;
     private static final int HISTORY_LIMIT = 100;
     private static final int MAX_REPLAY_EVENTS = 2_000;
+    private static final int MAX_REPLAY_PAGES = 10;
     private static final int CONTROL_COMPLETION_QUEUE_CAPACITY = 64;
     private static final int COMPLETION_QUEUE_CAPACITY = 256;
+    private static final int DEFAULT_MAX_OBSERVATIONS = 8;
     private static final Set<String> RETRYABLE_SESSION_RACES =
             Set.of("ACTIVE_RUN_SETTLED", "ACTIVE_RUN_MISMATCH", "CODING_SESSION_ACTIVE");
     private final ProjectId projectId;
@@ -86,7 +88,12 @@ public final class CodingTerminalController implements AutoCloseable {
     private final ArrayBlockingQueue<Runnable> controlCompletions =
             new ArrayBlockingQueue<>(CONTROL_COMPLETION_QUEUE_CAPACITY);
     private final ArrayBlockingQueue<Runnable> effectCompletions = new ArrayBlockingQueue<>(COMPLETION_QUEUE_CAPACITY);
-    private final ConcurrentLinkedQueue<AutoCloseable> deferredSubscriptionCloses = new ConcurrentLinkedQueue<>();
+    private int observationCapacity = DEFAULT_MAX_OBSERVATIONS;
+    private final Object observationLock = new Object();
+    private final java.util.Set<AutoCloseable> ownedObservations = new java.util.HashSet<>();
+    private final java.util.Set<ObservationPermit> liveObservations = new java.util.HashSet<>();
+    final java.util.concurrent.ThreadPoolExecutor cleanupEffects = newCleanupExecutor(DEFAULT_MAX_OBSERVATIONS * 3);
+    private final ArrayBlockingQueue<Runnable> deferredCleanup = new ArrayBlockingQueue<>(DEFAULT_MAX_OBSERVATIONS * 3);
     private final AtomicLong completionRequestIds = new AtomicLong();
     private final TerminalCommandRouter commands = new TerminalCommandRouter();
     private final TerminalCompletionProvider completions;
@@ -94,9 +101,15 @@ public final class CodingTerminalController implements AutoCloseable {
     private String activeTranscriptItemId = "";
     private RunEventSubscription subscription;
     private RunOutputSubscription outputSubscription;
+    private ObservationPermit subscriptionPermit;
     private ToolOutputPreviewPublisher.ToolOutputPreviewSubscription previewSubscription;
+    private ObservationPermit previewPermit;
     private ToolOutputPreviewPublisher previewPublisher = ToolOutputPreviewPublisher.noop();
+    private boolean observationRecoveryPending;
     private AgentRunId previewRunId;
+    private long previewGeneration;
+    private long previewEpoch;
+    private long nextPreviewEpoch;
     private io.haifa.agent.core.run.AgentRunId outputRunId;
     private RunOutputCursor outputCursor = RunOutputCursor.BEFORE_FIRST;
     private boolean awaitingNewSessionMessage;
@@ -127,7 +140,7 @@ public final class CodingTerminalController implements AutoCloseable {
     private String preservedDraftBuffer;
     private int preservedDraftCursor;
     private boolean renamingSession;
-    private boolean modelSwitchInProgress;
+    private final Map<SelectionToken, Long> modelSwitchesInFlight = new java.util.HashMap<>();
 
     public enum BailianConfigStep {
         NONE,
@@ -149,15 +162,39 @@ public final class CodingTerminalController implements AutoCloseable {
     private String existingBailianRegion;
     private String pendingNewSessionModelId;
     private RunEventCursor pendingAcknowledgement;
-    private boolean acknowledgementInFlight;
-    private boolean reconcileInFlight;
+    private final Map<SelectionToken, Long> acknowledgementsInFlight = new java.util.HashMap<>();
+    private final Map<SelectionToken, Long> reconcilesInFlight = new java.util.HashMap<>();
     private InteractionHydrationRequest interactionHydrationInFlight;
     private ClarificationDraft clarificationDraft;
     private boolean awaitingClarificationText;
     private InteractionView activeInteraction;
     private long activeCompletionRequestId;
     private static final long CANCEL_ARMED_TIMEOUT_MILLIS = 5_000L;
+    private static final String REMOTE_CREDENTIAL_SETUP_GUIDANCE =
+            "Model sign-in and API key setup are managed by the Host application; use its local interface";
+    private static final String REMOTE_SESSION_CONSENT_GUIDANCE =
+            "Session approval changes are unavailable in remote mode; approve or reject each request";
     private long cancelArmedAtMillis = 0L;
+    /** Bounded sidebar refresh cadence; well above the event poll so the list never follows tool deltas (D6). */
+    private static final long SESSION_ROWS_POLL_INTERVAL_MILLIS = 2_000L;
+
+    private boolean sessionRowsInFlight;
+    private long sessionRowsFetchedAtMillis;
+    private final CodingTerminalConnectionOptions connectionOptions;
+    private long nextSelectionGeneration;
+    private long selectionGeneration;
+    private long pendingSelectionGeneration;
+    private long nextObservationEpoch;
+    private long observationEpoch;
+    private long nextOperationEpoch;
+    private AgentRunId observedRunId;
+    private long observedRunVersion = -1L;
+    private boolean observedRunTerminal;
+    private boolean staleSnapshotRecoveryRequested;
+    /** The settled Run whose single follow-up handoff reconcile was already requested. */
+    private AgentRunId handoffRecoveryForRun;
+
+    private volatile boolean closed;
 
     public CodingTerminalController(
             ProjectId projectId,
@@ -172,6 +209,7 @@ public final class CodingTerminalController implements AutoCloseable {
                 pump,
                 reducer,
                 initialState,
+                CodingTerminalConnectionOptions.embedded(),
                 newEffectExecutor("haifa-coding-terminal-control"),
                 newEffectExecutor("haifa-coding-terminal-effects"),
                 newEffectExecutor("haifa-coding-terminal-maintenance"),
@@ -192,6 +230,7 @@ public final class CodingTerminalController implements AutoCloseable {
                 pump,
                 reducer,
                 initialState,
+                CodingTerminalConnectionOptions.embedded(),
                 newEffectExecutor("haifa-coding-terminal-control"),
                 newEffectExecutor("haifa-coding-terminal-effects"),
                 newEffectExecutor("haifa-coding-terminal-maintenance"),
@@ -212,6 +251,106 @@ public final class CodingTerminalController implements AutoCloseable {
                 pump,
                 reducer,
                 initialState,
+                CodingTerminalConnectionOptions.embedded(),
+                effects,
+                effects,
+                effects,
+                false);
+    }
+
+    /** Production composition with owned lanes and explicit UI capability input. */
+    public CodingTerminalController(
+            ProjectId projectId,
+            CodingSessionClient client,
+            CodingAuthenticationClient authentication,
+            TerminalEventPump pump,
+            TerminalUiReducer reducer,
+            TerminalUiState initialState,
+            CodingTerminalConnectionOptions connectionOptions) {
+        this(
+                projectId,
+                client,
+                authentication,
+                pump,
+                reducer,
+                initialState,
+                connectionOptions,
+                newEffectExecutor("haifa-coding-terminal-control"),
+                newEffectExecutor("haifa-coding-terminal-effects"),
+                newEffectExecutor("haifa-coding-terminal-maintenance"),
+                true);
+    }
+
+    public CodingTerminalController(
+            ProjectId projectId,
+            CodingSessionClient client,
+            CodingAuthenticationClient authentication,
+            TerminalEventPump pump,
+            TerminalUiReducer reducer,
+            TerminalUiState initialState,
+            CodingTerminalConnectionOptions connectionOptions,
+            Executor controlEffects,
+            Executor effects,
+            Executor maintenanceEffects) {
+        this(
+                projectId,
+                client,
+                authentication,
+                pump,
+                reducer,
+                initialState,
+                connectionOptions,
+                controlEffects,
+                effects,
+                maintenanceEffects,
+                false);
+    }
+
+    CodingTerminalController(
+            ProjectId projectId,
+            CodingSessionClient client,
+            CodingAuthenticationClient authentication,
+            TerminalEventPump pump,
+            TerminalUiReducer reducer,
+            TerminalUiState initialState,
+            CodingTerminalConnectionOptions connectionOptions,
+            int observationCapacity,
+            Executor controlEffects,
+            Executor effects,
+            Executor maintenanceEffects) {
+        this(
+                projectId,
+                client,
+                authentication,
+                pump,
+                reducer,
+                initialState,
+                connectionOptions,
+                controlEffects,
+                effects,
+                maintenanceEffects,
+                false);
+        if (observationCapacity < 1) throw new IllegalArgumentException("observationCapacity must be positive");
+        this.observationCapacity = observationCapacity;
+    }
+
+    public CodingTerminalController(
+            ProjectId projectId,
+            CodingSessionClient client,
+            CodingAuthenticationClient authentication,
+            TerminalEventPump pump,
+            TerminalUiReducer reducer,
+            TerminalUiState initialState,
+            CodingTerminalConnectionOptions connectionOptions,
+            Executor effects) {
+        this(
+                projectId,
+                client,
+                authentication,
+                pump,
+                reducer,
+                initialState,
+                connectionOptions,
                 effects,
                 effects,
                 effects,
@@ -226,7 +365,18 @@ public final class CodingTerminalController implements AutoCloseable {
             TerminalUiReducer reducer,
             TerminalUiState initialState,
             Executor effects) {
-        this(projectId, client, authentication, pump, reducer, initialState, effects, effects, effects, false);
+        this(
+                projectId,
+                client,
+                authentication,
+                pump,
+                reducer,
+                initialState,
+                CodingTerminalConnectionOptions.embedded(),
+                effects,
+                effects,
+                effects,
+                false);
     }
 
     public CodingTerminalController(
@@ -244,6 +394,7 @@ public final class CodingTerminalController implements AutoCloseable {
                 pump,
                 reducer,
                 initialState,
+                CodingTerminalConnectionOptions.embedded(),
                 effects,
                 effects,
                 maintenanceEffects,
@@ -266,6 +417,7 @@ public final class CodingTerminalController implements AutoCloseable {
                 pump,
                 reducer,
                 initialState,
+                CodingTerminalConnectionOptions.embedded(),
                 controlEffects,
                 effects,
                 maintenanceEffects,
@@ -279,6 +431,7 @@ public final class CodingTerminalController implements AutoCloseable {
             TerminalEventPump pump,
             TerminalUiReducer reducer,
             TerminalUiState initialState,
+            CodingTerminalConnectionOptions connectionOptions,
             Executor controlEffects,
             Executor effects,
             Executor maintenanceEffects,
@@ -292,6 +445,7 @@ public final class CodingTerminalController implements AutoCloseable {
         this.controlEffects = Objects.requireNonNull(controlEffects, "controlEffects must not be null");
         this.effects = Objects.requireNonNull(effects, "effects must not be null");
         this.maintenanceEffects = Objects.requireNonNull(maintenanceEffects, "maintenanceEffects must not be null");
+        this.connectionOptions = Objects.requireNonNull(connectionOptions, "connectionOptions must not be null");
         this.ownedControlEffects = ownsEffects ? (ExecutorService) controlEffects : null;
         this.ownedEffects = ownsEffects ? (ExecutorService) effects : null;
         this.ownedMaintenanceEffects = ownsEffects ? (ExecutorService) maintenanceEffects : null;
@@ -313,6 +467,21 @@ public final class CodingTerminalController implements AutoCloseable {
                 new ThreadPoolExecutor.AbortPolicy());
     }
 
+    private static java.util.concurrent.ThreadPoolExecutor newCleanupExecutor(int capacity) {
+        return new java.util.concurrent.ThreadPoolExecutor(
+                1,
+                1,
+                0,
+                TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<>(capacity),
+                runnable -> {
+                    Thread thread = new Thread(runnable, "haifa-coding-terminal-cleanup");
+                    thread.setDaemon(true);
+                    return thread;
+                },
+                new ThreadPoolExecutor.AbortPolicy());
+    }
+
     public boolean mouseReportingEnabled() {
         return mouseReportingEnabled;
     }
@@ -323,6 +492,145 @@ public final class CodingTerminalController implements AutoCloseable {
 
     public TerminalUiState state() {
         return state;
+    }
+
+    /** Allocates a new selection transaction; only the newest pending generation may install a view. */
+    private long beginSelection() {
+        long generation = ++nextSelectionGeneration;
+        pendingSelectionGeneration = generation;
+        return generation;
+    }
+
+    private void abandonSelection(long generation) {
+        if (pendingSelectionGeneration == generation) {
+            pendingSelectionGeneration = 0;
+        }
+    }
+
+    private boolean isApplicableLoad(long generation) {
+        return generation == selectionGeneration
+                || (pendingSelectionGeneration != 0 && generation == pendingSelectionGeneration);
+    }
+
+    private boolean isCurrentSelection(SelectionToken token) {
+        if (token.generation() != selectionGeneration) return false;
+        return Objects.equals(
+                token.sessionId(),
+                state.session().map(value -> value.summary().sessionId()).orElse(null));
+    }
+
+    private SelectionToken currentSelection() {
+        return new SelectionToken(
+                selectionGeneration,
+                state.session().map(value -> value.summary().sessionId()).orElse(null));
+    }
+
+    private boolean isCurrentStream(long generation, AgentRunId runId, AgentSessionId sessionId) {
+        if (closed) return false;
+        if (generation != 0L && generation != selectionGeneration) return false;
+        boolean sameSession = state.session()
+                .map(value -> value.summary().sessionId().equals(sessionId))
+                .orElse(false);
+        // Generation 0 is the unscoped convenience constructor that reducers and direct tests still use; it has no
+        // selection to compare against, so it may pass without a loaded Session. A scoped action always has to match
+        // the selected Session before its events may touch the transcript.
+        if (!sameSession && generation != 0L) return false;
+        Optional<AgentRunId> known = state.currentRunId()
+                .or(() -> state.session().flatMap(CodingSessionView::activeRun).map(value -> value.runId()))
+                .or(() -> state.session()
+                        .flatMap(CodingSessionView::pendingInteraction)
+                        .map(InteractionView::runId));
+        // Without a known Run identity only the unscoped form may pass; a scoped action must match the visible Run.
+        return known.map(runId::equals).orElse(generation == 0L);
+    }
+
+    private boolean isCurrentOutputStream(long generation, AgentRunId runId) {
+        if (closed) return false;
+        if (generation != 0L && generation != selectionGeneration) return false;
+        if (runId.equals(outputRunId)
+                || state.currentRunId().filter(runId::equals).isPresent()) return true;
+        return generation == 0L && outputRunId == null && state.currentRunId().isEmpty();
+    }
+
+    private boolean isCurrentPreviewStream(long generation, AgentRunId runId) {
+        if (closed) return false;
+        if (generation != 0L && generation != selectionGeneration) return false;
+        return previewRunId != null && previewRunId.equals(runId);
+    }
+
+    private boolean isOperationInFlight(Map<SelectionToken, Long> operations, SelectionToken token) {
+        return operations.containsKey(token);
+    }
+
+    private long beginOperation(Map<SelectionToken, Long> operations, SelectionToken token) {
+        long operation = ++nextOperationEpoch;
+        operations.put(token, operation);
+        return operation;
+    }
+
+    private void completeOperation(Map<SelectionToken, Long> operations, SelectionToken token, long operation) {
+        operations.computeIfPresent(token, (key, value) -> value == operation ? null : value);
+    }
+
+    private void clearOperationsForPreviousSelection() {
+        reconcilesInFlight.clear();
+        acknowledgementsInFlight.clear();
+        modelSwitchesInFlight.clear();
+    }
+
+    private boolean isCurrentStreamScope(long generation, AgentSessionId sessionId, AgentRunId runId) {
+        if (closed || generation != selectionGeneration) return false;
+        boolean sameSession = state.session()
+                .map(value -> value.summary().sessionId().equals(sessionId))
+                .orElse(false);
+        if (!sameSession) return false;
+        return state.currentRunId().filter(runId::equals).isPresent()
+                || state.session()
+                        .flatMap(CodingSessionView::activeRun)
+                        .map(value -> value.runId())
+                        .filter(runId::equals)
+                        .isPresent();
+    }
+
+    private ObservationPermit admitObservation() {
+        synchronized (observationLock) {
+            if (closed || liveObservations.size() >= observationCapacity) return null;
+            ObservationPermit permit = new ObservationPermit();
+            liveObservations.add(permit);
+            return permit;
+        }
+    }
+
+    private void releaseObservation(ObservationPermit permit) {
+        if (permit == null) return;
+        synchronized (observationLock) {
+            liveObservations.remove(permit);
+        }
+    }
+
+    private void rejectObservationAdmission() {
+        observationRecoveryPending = true;
+        if (!closed) apply(new TerminalUiAction.RecoverableFailure("TERMINAL_OBSERVATION_CAPACITY"));
+    }
+
+    private void tryObservationRecovery() {
+        if (!observationRecoveryPending || closed) return;
+        if (state.session().isEmpty()) {
+            observationRecoveryPending = false;
+            return;
+        }
+        synchronized (observationLock) {
+            if (liveObservations.size() >= observationCapacity) return;
+        }
+        observationRecoveryPending = false;
+        scheduleReconcile();
+    }
+
+    private void completeSelectionFailure(long generation, String code) {
+        boolean pending = pendingSelectionGeneration == generation;
+        abandonSelection(generation);
+        if (!pending && generation != selectionGeneration) return;
+        apply(new TerminalUiAction.RecoverableFailure(code));
     }
 
     public void attachToolOutputPreviewPublisher(ToolOutputPreviewPublisher publisher) {
@@ -407,8 +715,12 @@ public final class CodingTerminalController implements AutoCloseable {
                         true);
                 view = client.reconcile(sessionId);
             }
-            LoadedSession loaded =
-                    readSession(view, submission.appliedCursor(), submission.outputRunId(), submission.outputCursor());
+            LoadedSession loaded = readSession(
+                    view,
+                    submission.selectionGeneration(),
+                    submission.appliedCursor(),
+                    submission.outputRunId(),
+                    submission.outputCursor());
             return MessageSubmissionResult.succeeded(submission, loaded);
         } catch (ProjectProductException exception) {
             return MessageSubmissionResult.failed(submission, exception.code());
@@ -423,7 +735,11 @@ public final class CodingTerminalController implements AutoCloseable {
     /** Applies a completed background submission on the single terminal UI thread. */
     public void completeMessageSubmission(MessageSubmissionResult result) {
         Objects.requireNonNull(result, "result must not be null");
+        long generation = result.submission().selectionGeneration();
+        boolean stale = generation != selectionGeneration && generation != pendingSelectionGeneration;
         if (result.failureCode().isPresent()) {
+            abandonSelection(generation);
+            if (stale) return;
             String code = result.failureCode().orElseThrow();
             apply(new TerminalUiAction.UserMessageRejected(result.submission().idempotencyKey()));
             Optional<WaitingMessage> sending =
@@ -458,22 +774,44 @@ public final class CodingTerminalController implements AutoCloseable {
         }
         try {
             applyLoadedSession(result.loadedSession().orElseThrow());
-            if (result.submission().sessionId().isEmpty()) pendingNewSessionModelId = null;
+            if (selectionGeneration == generation
+                    && result.submission().sessionId().isEmpty()) {
+                pendingNewSessionModelId = null;
+            }
         } catch (ProjectProductException exception) {
             apply(new TerminalUiAction.RecoverableFailure(exception.code()));
         }
-        if (state.waiting()
-                .filter(value -> value.phase() == WaitingMessage.Phase.SENDING)
-                .isPresent()) {
+        if (selectionGeneration == generation
+                && state.waiting()
+                        .filter(value -> value.phase() == WaitingMessage.Phase.SENDING)
+                        .isPresent()) {
             // Delivered: an in-flight draft must not outlive a successful submission.
             apply(new TerminalUiAction.WaitingChanged(Optional.empty()));
         }
     }
 
-    /** Loads an explicitly selected session; interactive session changes use background effects. */
+    /**
+     * Startup/test helper that loads an explicit Session before the tui4j update loop exists.
+     *
+     * <p>Interactive Session changes ({@code /resume}, automatic last-session load) use bounded background effects;
+     * this method must not be invoked from an update path.
+     */
     public void open(AgentSessionId sessionId) {
         automaticLastSessionLoadPending = false;
-        applyLoadedSession(readSession(client.open(sessionId), Optional.empty(), null, RunOutputCursor.BEFORE_FIRST));
+        openSynchronously(sessionId);
+    }
+
+    private void openSynchronously(AgentSessionId sessionId) {
+        long generation = beginSelection();
+        LoadedSession loaded;
+        try {
+            loaded = readSession(
+                    client.open(sessionId), generation, Optional.empty(), null, RunOutputCursor.BEFORE_FIRST);
+        } catch (RuntimeException exception) {
+            abandonSelection(generation);
+            throw exception;
+        }
+        applyLoadedSession(loaded);
     }
 
     /** Starts a bounded startup intent without blocking the terminal event loop. */
@@ -510,6 +848,7 @@ public final class CodingTerminalController implements AutoCloseable {
 
     private void startAutomaticLastSessionLoad() {
         automaticLastSessionLoadPending = true;
+        long generation = beginSelection();
         apply(new TerminalUiAction.StatusChanged("Loading most recent session"));
         submitEffect(
                 () -> {
@@ -518,28 +857,39 @@ public final class CodingTerminalController implements AutoCloseable {
                             ? Optional.empty()
                             : Optional.of(readSession(
                                     client.open(sessions.getFirst().sessionId()),
+                                    generation,
                                     Optional.empty(),
                                     null,
                                     RunOutputCursor.BEFORE_FIRST));
-                    return () -> completeAutomaticLastSessionLoad(loaded);
+                    return () -> completeAutomaticLastSessionLoad(generation, loaded);
                 },
-                this::completeAutomaticLastSessionLoadFailure);
+                code -> completeAutomaticLastSessionLoadFailure(generation, code));
     }
 
-    private void completeAutomaticLastSessionLoad(Optional<LoadedSession> loaded) {
-        if (!automaticLastSessionLoadCanApply()) return;
+    private void completeAutomaticLastSessionLoad(long generation, Optional<LoadedSession> loaded) {
+        if (pendingSelectionGeneration != generation) return;
+        if (!automaticLastSessionLoadCanApply()) {
+            abandonSelection(generation);
+            return;
+        }
         automaticLastSessionLoadPending = false;
         if (loaded.isPresent()) {
             applyLoadedSession(loaded.orElseThrow());
         } else {
+            abandonSelection(generation);
             apply(new TerminalUiAction.StatusChanged("Idle"));
         }
         offerAuthenticationOnboarding();
     }
 
-    private void completeAutomaticLastSessionLoadFailure(String code) {
-        if (!automaticLastSessionLoadCanApply()) return;
+    private void completeAutomaticLastSessionLoadFailure(long generation, String code) {
+        if (pendingSelectionGeneration != generation) return;
+        if (!automaticLastSessionLoadCanApply()) {
+            abandonSelection(generation);
+            return;
+        }
         automaticLastSessionLoadPending = false;
+        abandonSelection(generation);
         apply(new TerminalUiAction.RecoverableFailure(code));
         offerAuthenticationOnboarding();
     }
@@ -553,12 +903,20 @@ public final class CodingTerminalController implements AutoCloseable {
 
     private void offerAuthenticationOnboarding() {
         if (state.selector().isEmpty() && authentication.connectionRequired()) {
+            if (!connectionOptions.credentialSetupEnabled()) {
+                apply(new TerminalUiAction.StatusChanged(REMOTE_CREDENTIAL_SETUP_GUIDANCE));
+                return;
+            }
             apply(new TerminalUiAction.StatusChanged("No model is connected yet; choose a provider"));
             openConnectionCenter("");
         }
     }
 
     private void openConnectionCenter(String argument) {
+        if (!connectionOptions.credentialSetupEnabled()) {
+            apply(new TerminalUiAction.StatusChanged(REMOTE_CREDENTIAL_SETUP_GUIDANCE));
+            return;
+        }
         String normalized = argument == null ? "" : argument.strip();
         if (!normalized.isEmpty()) {
             routeConnectionArgument(normalized);
@@ -731,6 +1089,10 @@ public final class CodingTerminalController implements AutoCloseable {
 
     private void startAuthenticationMethod(
             CodingAuthenticationProviderView provider, CodingAuthenticationMethodView method) {
+        if (!connectionOptions.credentialSetupEnabled()) {
+            apply(new TerminalUiAction.StatusChanged(REMOTE_CREDENTIAL_SETUP_GUIDANCE));
+            return;
+        }
         if (!method.available()) {
             apply(new TerminalUiAction.RecoverableFailure(
                     method.unavailableReason().orElse("AUTH_METHOD_UNSUPPORTED")));
@@ -755,7 +1117,7 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void openForResume(AgentSessionId sessionId, Optional<String> prompt) {
-        open(sessionId);
+        openSynchronously(sessionId);
         if (prompt.isEmpty()) return;
         String text = prompt.orElseThrow();
         if (state.currentRunId().isPresent()) {
@@ -767,6 +1129,70 @@ public final class CodingTerminalController implements AutoCloseable {
         completeMessageSubmission(executeMessageSubmission(submission));
     }
 
+    /**
+     * Refreshes the sidebar task list at most once per interval.
+     *
+     * <p>D6 freezes the sidebar to bounded {@code session/list} polling without cursor pagination, so this runs on the
+     * periodic tick and is skipped while another refresh is still in flight. It never runs per tool delta, and it never
+     * touches the transcript, the selection generation or the current Run: a stale list only mislabels rows until the
+     * next poll, while a cancelled Run would be unrecoverable.
+     */
+    public void refreshSessionRows() {
+        // The list only exists to fill the sidebar, so a collapsed sidebar must not poll the Host at all.
+        if (!state.sidebarVisible()) return;
+        long now = System.currentTimeMillis();
+        if (sessionRowsInFlight || now - sessionRowsFetchedAtMillis < SESSION_ROWS_POLL_INTERVAL_MILLIS) return;
+        sessionRowsInFlight = true;
+        submitControlEffect(
+                () -> {
+                    List<TerminalSessionRow> rows =
+                            TerminalSessionRow.ordered(client.list(projectId, TerminalUiState.MAX_SESSION_ROWS));
+                    return () -> {
+                        sessionRowsInFlight = false;
+                        sessionRowsFetchedAtMillis = System.currentTimeMillis();
+                        apply(new TerminalUiAction.SessionRowsLoaded(rows));
+                    };
+                },
+                code -> {
+                    sessionRowsInFlight = false;
+                    sessionRowsFetchedAtMillis = System.currentTimeMillis();
+                });
+    }
+
+    /** Moves the sidebar cursor by a bounded delta from the keyboard. */
+    public void moveSessionRow(int delta) {
+        apply(new TerminalUiAction.SessionRowMoved(delta));
+    }
+
+    /**
+     * Opens the Session under the sidebar cursor, or a specific row, without cancelling the current Run.
+     *
+     * <p>Switching only changes what this TUI observes. The previous Session's Run keeps running on the Host: the old
+     * observation subscription is replaced by the load path, and this method never calls {@code cancel}. A failed load
+     * reports the stable error and leaves the current Session installed instead of showing a half-loaded one.
+     */
+    public void openSidebarSelection() {
+        state.selectedSessionRow().ifPresent(row -> openSidebarRow(row.sessionId()));
+    }
+
+    public void openSidebarRow(AgentSessionId sessionId) {
+        Objects.requireNonNull(sessionId, "sessionId must not be null");
+        if (state.session()
+                .map(current -> current.summary().sessionId().equals(sessionId))
+                .orElse(false)) {
+            return;
+        }
+        apply(new TerminalUiAction.StatusChanged("Opening session"));
+        long generation = beginSelection();
+        submitEffect(
+                () -> {
+                    LoadedSession loaded = readSession(
+                            client.open(sessionId), generation, Optional.empty(), null, RunOutputCursor.BEFORE_FIRST);
+                    return () -> applyLoadedSession(loaded);
+                },
+                code -> completeSelectionFailure(generation, code));
+    }
+
     public void drainEvents() {
         try {
             drainEventsGuarded();
@@ -776,6 +1202,8 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void drainEventsGuarded() {
+        drainDeferredCleanup();
+        tryObservationRecovery();
         drainEffectCompletions();
         boolean reconcile = pump.consumeOverflow();
         for (TerminalUiAction action : pump.drain(PAGE_SIZE)) {
@@ -802,7 +1230,7 @@ public final class CodingTerminalController implements AutoCloseable {
         drainEffectCompletions();
     }
 
-    private static Optional<InteractionHydrationRequest> interactionHydration(TerminalUiAction action) {
+    private Optional<InteractionHydrationRequest> interactionHydration(TerminalUiAction action) {
         if (!(action instanceof TerminalUiAction.RunEventReceived received)
                 || !(received.event().payload() instanceof RunEventPayloads.InteractionLifecycle lifecycle)) {
             return Optional.empty();
@@ -810,7 +1238,8 @@ public final class CodingTerminalController implements AutoCloseable {
         if (!lifecycle.state().equals("PENDING") && !lifecycle.state().equals("REQUESTED")) {
             return Optional.empty();
         }
-        return Optional.of(new InteractionHydrationRequest(received.event().runId(), lifecycle.requestId()));
+        return Optional.of(
+                new InteractionHydrationRequest(received.event().runId(), lifecycle.requestId(), selectionGeneration));
     }
 
     private void scheduleInteractionHydration(InteractionHydrationRequest request) {
@@ -838,6 +1267,7 @@ public final class CodingTerminalController implements AutoCloseable {
             InteractionHydrationRequest request, Optional<CodingApprovalPrompt> interaction) {
         if (!request.equals(interactionHydrationInFlight)) return;
         interactionHydrationInFlight = null;
+        if (request.generation() != selectionGeneration) return;
         if (state.currentRunId().filter(request.runId()::equals).isEmpty() || !interactionStillPending(request)) return;
         interaction
                 .filter(value -> value.interaction().requestId().value().equals(request.requestId()))
@@ -1341,11 +1771,15 @@ public final class CodingTerminalController implements AutoCloseable {
                 state.session().map(value -> value.summary().sessionId());
         Optional<AgentRunId> activeRunId = state.currentRunId();
         Optional<String> initialModelId = Optional.empty();
+        long generation;
         if (awaitingNewSessionMessage || sessionId.isEmpty()) {
+            generation = beginSelection();
             awaitingNewSessionMessage = false;
             sessionId = Optional.empty();
             activeRunId = Optional.empty();
             initialModelId = Optional.ofNullable(pendingNewSessionModelId);
+        } else {
+            generation = selectionGeneration;
         }
         if (clearEditor) {
             apply(new TerminalUiAction.EditorChanged("", 0));
@@ -1361,11 +1795,13 @@ public final class CodingTerminalController implements AutoCloseable {
                 initialModelId,
                 state.appliedCursor(),
                 outputRunId,
-                outputCursor);
+                outputCursor,
+                generation);
     }
 
     private void shell(String input) {
         CodingSessionView current = requireCurrentSession();
+        SelectionToken token = currentSelection();
         boolean includeInContext = !input.startsWith("!!");
         int prefix = includeInContext ? 1 : 2;
         String command = input.substring(prefix).strip();
@@ -1374,9 +1810,13 @@ public final class CodingTerminalController implements AutoCloseable {
         submitEffect(
                 () -> {
                     CodingShellPlan plan = client.planShell(current.summary().sessionId(), command, includeInContext);
-                    return () -> completeShellPlan(plan);
+                    return () -> {
+                        if (isCurrentSelection(token)) completeShellPlan(plan);
+                    };
                 },
-                code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+                code -> {
+                    if (isCurrentSelection(token)) apply(new TerminalUiAction.RecoverableFailure(code));
+                });
     }
 
     private void completeShellPlan(CodingShellPlan plan) {
@@ -1397,13 +1837,18 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void scheduleShellExecution(CodingShellPlan plan, boolean approved) {
+        SelectionToken token = currentSelection();
         apply(new TerminalUiAction.StatusChanged("Running shell command"));
         submitEffect(
                 () -> {
                     CodingShellResult result = client.executeShell(plan.token(), approved);
-                    return () -> completeShell(plan, result);
+                    return () -> {
+                        if (isCurrentSelection(token)) completeShell(plan, result);
+                    };
                 },
-                code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+                code -> {
+                    if (isCurrentSelection(token)) apply(new TerminalUiAction.RecoverableFailure(code));
+                });
     }
 
     private void completeShell(CodingShellPlan plan, CodingShellResult result) {
@@ -1456,7 +1901,8 @@ public final class CodingTerminalController implements AutoCloseable {
             Optional<String> initialModelId,
             Optional<RunEventCursor> appliedCursor,
             AgentRunId outputRunId,
-            RunOutputCursor outputCursor) {
+            RunOutputCursor outputCursor,
+            long selectionGeneration) {
         public PreparedMessageSubmission {
             text = Objects.requireNonNull(text, "text must not be null");
             idempotencyKey = Objects.requireNonNull(idempotencyKey, "idempotencyKey must not be null");
@@ -1549,6 +1995,7 @@ public final class CodingTerminalController implements AutoCloseable {
             }
             case COMPACT -> {
                 CodingSessionView current = requireCurrentSession();
+                SelectionToken token = currentSelection();
                 apply(new TerminalUiAction.StatusChanged("Compacting session context"));
                 submitEffect(
                         () -> {
@@ -1556,14 +2003,18 @@ public final class CodingTerminalController implements AutoCloseable {
                                     client.reconcile(current.summary().sessionId());
                             var result = client.compact(reconciled.summary().sessionId(), argument);
                             return () -> {
+                                if (!isCurrentSelection(token)) return;
                                 apply(new TerminalUiAction.ContextChanged(result.safeIndicator()));
                                 apply(new TerminalUiAction.StatusChanged("Session context compacted"));
                             };
                         },
-                        code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+                        code -> {
+                            if (isCurrentSelection(token)) apply(new TerminalUiAction.RecoverableFailure(code));
+                        });
             }
             case EXPORT -> {
                 CodingSessionView current = requireCurrentSession();
+                SelectionToken token = currentSelection();
                 apply(new TerminalUiAction.StatusChanged("Exporting session"));
                 submitEffect(
                         () -> {
@@ -1571,12 +2022,15 @@ public final class CodingTerminalController implements AutoCloseable {
                                     client.reconcile(current.summary().sessionId());
                             var exported = client.export(reconciled.summary().sessionId(), argument);
                             return () -> {
+                                if (!isCurrentSelection(token)) return;
                                 apply(new TerminalUiAction.ExportCompleted(
                                         exported.logicalPath(), exported.messageCount()));
                                 apply(new TerminalUiAction.StatusChanged("Session exported"));
                             };
                         },
-                        code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+                        code -> {
+                            if (isCurrentSelection(token)) apply(new TerminalUiAction.RecoverableFailure(code));
+                        });
             }
             case CONNECT -> openConnectionCenter(argument);
             case LOGIN_REMOVED -> apply(new TerminalUiAction.StatusChanged("The login command has moved to /connect"));
@@ -1617,6 +2071,12 @@ public final class CodingTerminalController implements AutoCloseable {
                                 () -> options.add("No active session"));
                 apply(new TerminalUiAction.SelectorOpened(
                         new TerminalSelector("session", "Session & Environment", options, 0)));
+            }
+            case SESSIONS -> {
+                // Reuses the reviewed resume selector instead of a parallel Session navigator, so keyboard-only and
+                // narrow terminals reach the same Session list the sidebar shows.
+                preserveDraft();
+                showResumeOptions(client.list(projectId, TerminalUiState.MAX_SESSION_ROWS));
             }
             case COMMANDS -> openCommandSelector();
             case THEME -> handleThemeCommand(argument);
@@ -1668,6 +2128,7 @@ public final class CodingTerminalController implements AutoCloseable {
 
     private void executeRename(String newTitle) {
         CodingSessionView current = requireCurrentSession();
+        SelectionToken token = currentSelection();
         apply(new TerminalUiAction.StatusChanged("Renaming session"));
         submitEffect(
                 () -> {
@@ -1678,13 +2139,20 @@ public final class CodingTerminalController implements AutoCloseable {
                             newTitle,
                             reconciled.summary().revision());
                     LoadedSession loaded = readSession(
-                            client.open(renamed.sessionId()), Optional.empty(), null, RunOutputCursor.BEFORE_FIRST);
+                            client.open(renamed.sessionId()),
+                            token.generation(),
+                            Optional.empty(),
+                            null,
+                            RunOutputCursor.BEFORE_FIRST);
                     return () -> {
+                        if (!isCurrentSelection(token)) return;
                         applyLoadedSession(loaded);
                         apply(new TerminalUiAction.StatusChanged("Session renamed"));
                     };
                 },
-                code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+                code -> {
+                    if (isCurrentSelection(token)) apply(new TerminalUiAction.RecoverableFailure(code));
+                });
     }
 
     private void executeNonDraftCommand(String text) {
@@ -1709,6 +2177,7 @@ public final class CodingTerminalController implements AutoCloseable {
         if (state.currentRunId().isEmpty()) {
             if (state.session().isEmpty()) return false;
             AgentSessionId sessionId = state.session().orElseThrow().summary().sessionId();
+            SelectionToken token = currentSelection();
             Optional<RunEventCursor> cursor = state.appliedCursor();
             AgentRunId previousOutputRunId = outputRunId;
             RunOutputCursor previousOutputCursor = outputCursor;
@@ -1716,17 +2185,27 @@ public final class CodingTerminalController implements AutoCloseable {
             submitEffect(
                     () -> {
                         LoadedSession loaded = readSession(
-                                client.reconcile(sessionId), cursor, previousOutputRunId, previousOutputCursor);
+                                client.reconcile(sessionId),
+                                token.generation(),
+                                cursor,
+                                previousOutputRunId,
+                                previousOutputCursor);
                         return () -> {
+                            if (!isCurrentSelection(token)) return;
                             applyLoadedSession(loaded);
                             if (state.currentRunId().isPresent()) {
-                                cancelCurrentRunIfPresent();
+                                // Refresh only: a cancel must target the Run the user actually saw, never a
+                                // successor discovered by this reconcile.
+                                apply(new TerminalUiAction.StatusChanged(
+                                        "Active run refreshed; press esc again to cancel it"));
                             } else {
                                 apply(new TerminalUiAction.StatusChanged("Idle"));
                             }
                         };
                     },
-                    code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+                    code -> {
+                        if (isCurrentSelection(token)) apply(new TerminalUiAction.RecoverableFailure(code));
+                    });
             return true;
         }
         if (state.selector().isPresent()) {
@@ -1736,13 +2215,17 @@ public final class CodingTerminalController implements AutoCloseable {
         }
         apply(new TerminalUiAction.StatusChanged("Cancelling"));
         AgentSessionId sessionId = state.session().orElseThrow().summary().sessionId();
+        AgentRunId requestedRunId = state.currentRunId().orElseThrow();
+        SelectionToken token = currentSelection();
         String idempotencyKey = UUID.randomUUID().toString();
         submitControlEffect(
                 () -> {
-                    client.cancel(sessionId, idempotencyKey);
+                    client.cancel(sessionId, requestedRunId, idempotencyKey);
                     return () -> {};
                 },
-                code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+                code -> {
+                    if (isCurrentSelection(token)) apply(new TerminalUiAction.RecoverableFailure(code));
+                });
         return true;
     }
 
@@ -1753,6 +2236,10 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void resetSessionApproval(String argument) {
+        if (argument.equals("reset") && !connectionOptions.sessionConsentEnabled()) {
+            apply(new TerminalUiAction.StatusChanged(REMOTE_SESSION_CONSENT_GUIDANCE));
+            return;
+        }
         if (argument.isBlank() || argument.equals("reopen")) {
             Optional<AgentRunId> pendingRun = approvalRunId();
             if (pendingRun.isEmpty()) {
@@ -1760,24 +2247,29 @@ public final class CodingTerminalController implements AutoCloseable {
                 return;
             }
             AgentRunId runId = pendingRun.orElseThrow();
+            SelectionToken token = currentSelection();
             apply(new TerminalUiAction.StatusChanged("Loading pending approval"));
             submitControlEffect(
                     () -> {
                         Optional<CodingApprovalPrompt> pending =
                                 client.pendingInteraction(runId).flatMap(client::prepareApproval);
                         return () -> {
+                            if (!isCurrentSelection(token)) return;
                             if (approvalRunId().filter(runId::equals).isEmpty()) return;
                             pending.filter(value -> value.interaction().state()
                                             == io.haifa.agent.runtime.api.InteractionState.PENDING)
                                     .filter(value -> interactionStillPending(new InteractionHydrationRequest(
                                             runId,
-                                            value.interaction().requestId().value())))
+                                            value.interaction().requestId().value(),
+                                            selectionGeneration)))
                                     .ifPresentOrElse(
                                             this::openInteractionSelector,
                                             () -> apply(new TerminalUiAction.StatusChanged("No approval is pending")));
                         };
                     },
-                    code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+                    code -> {
+                        if (isCurrentSelection(token)) apply(new TerminalUiAction.RecoverableFailure(code));
+                    });
             return;
         }
         if (!argument.equals("reset") || state.session().isEmpty()) {
@@ -1786,13 +2278,20 @@ public final class CodingTerminalController implements AutoCloseable {
             return;
         }
         AgentSessionId sessionId = state.session().orElseThrow().summary().sessionId();
+        SelectionToken token = currentSelection();
         apply(new TerminalUiAction.StatusChanged("Resetting session approval"));
         submitControlEffect(
                 () -> {
                     client.resetSessionApproval(sessionId);
-                    return () -> apply(new TerminalUiAction.StatusChanged("Session approval reset · ask each time"));
+                    return () -> {
+                        if (isCurrentSelection(token)) {
+                            apply(new TerminalUiAction.StatusChanged("Session approval reset · ask each time"));
+                        }
+                    };
                 },
-                code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+                code -> {
+                    if (isCurrentSelection(token)) apply(new TerminalUiAction.RecoverableFailure(code));
+                });
     }
 
     private void workspaceTrust(String argument) {
@@ -1843,8 +2342,15 @@ public final class CodingTerminalController implements AutoCloseable {
                 + (workspace.revocable() ? " · revocable" : "");
     }
 
+    /**
+     * Reads the authoritative snapshot, history and durable event replay without installing a subscription.
+     *
+     * <p>The UI installs this snapshot first and only then subscribes from the returned cursor, so a synchronously
+     * replayed subscription event can never be reduced against the previous selection.
+     */
     private LoadedSession readSession(
             CodingSessionView view,
+            long generation,
             Optional<RunEventCursor> previousCursor,
             AgentRunId previousOutputRunId,
             RunOutputCursor previousOutputCursor) {
@@ -1858,6 +2364,7 @@ public final class CodingTerminalController implements AutoCloseable {
         if (view.activeRun().isEmpty()) {
             return new LoadedSession(
                     view,
+                    generation,
                     resources,
                     history,
                     pending,
@@ -1873,54 +2380,87 @@ public final class CodingTerminalController implements AutoCloseable {
                 .filter(value -> value.runId().equals(runId))
                 .orElseGet(() -> RunEventCursor.beforeFirst(runId));
         ArrayDeque<AgentRunEvent> events = new ArrayDeque<>(MAX_REPLAY_EVENTS);
-        boolean more;
-        do {
+        boolean more = true;
+        int pages = 0;
+        while (more) {
             var page = client.events(runId, cursor, PAGE_SIZE);
             for (AgentRunEvent event : page.items()) {
-                if (events.size() == MAX_REPLAY_EVENTS) events.removeFirst();
+                if (events.size() >= MAX_REPLAY_EVENTS) {
+                    more = false;
+                    break;
+                }
                 events.addLast(event);
             }
+            if (!more) break;
             cursor = page.nextCursor();
-            more = page.hasMore();
-        } while (more);
-        RunEventCursor subscribeAfter = cursor;
-        RunEventSubscription nextSubscription = client.subscribe(
-                runId, subscribeAfter, event -> pump.offer(new TerminalUiAction.RunEventReceived(event)));
+            more = page.hasMore() && ++pages < MAX_REPLAY_PAGES;
+        }
+        // Subscribe from the last event actually represented by this replay; any remainder is
+        // recovered gap-free by the subscription instead of being ACKed past.
+        RunEventCursor subscribeAfter =
+                events.isEmpty() ? cursor : events.getLast().cursor();
         RunOutputCursor nextOutputCursor =
                 runId.equals(previousOutputRunId) ? previousOutputCursor : RunOutputCursor.BEFORE_FIRST;
-        RunOutputSubscription nextOutputSubscription;
-        try {
-            nextOutputSubscription = client.subscribeOutput(
-                    runId, nextOutputCursor, event -> pump.offer(new TerminalUiAction.RunOutputReceived(event)));
-        } catch (RuntimeException exception) {
-            nextSubscription.close();
-            throw exception;
-        }
         return new LoadedSession(
                 view,
+                generation,
                 resources,
                 history,
                 pending,
                 List.copyOf(events),
-                nextSubscription,
-                nextOutputSubscription,
+                runId,
+                subscribeAfter,
                 runId,
                 nextOutputCursor,
                 approval);
     }
 
     private void applyLoadedSession(LoadedSession loaded) {
+        long generation = loaded.generation();
+        boolean transition = pendingSelectionGeneration != 0 && generation == pendingSelectionGeneration;
+        if (!transition && generation != selectionGeneration) {
+            // A stale load owns no UI subscription yet; it must not detach or cancel the displayed Run.
+            return;
+        }
+        CodingSessionView previousView = state.session().orElse(null);
+        AgentRunId previousRunId = state.currentRunId().orElse(null);
+        boolean sameSession = previousView != null
+                && previousView
+                        .summary()
+                        .sessionId()
+                        .equals(loaded.view().summary().sessionId());
+        if (!transition && sameSession && isStaleSameSelectionSnapshot(previousView, previousRunId, loaded.view())) {
+            requestStaleSnapshotRecovery();
+            return;
+        }
+        long observation = ++nextObservationEpoch;
+        observationEpoch = observation;
         RunEventSubscription previousSubscription = subscription;
         RunOutputSubscription previousOutputSubscription = outputSubscription;
-        boolean sameSession = state.session()
-                .map(value -> value.summary()
-                        .sessionId()
-                        .equals(loaded.view().summary().sessionId()))
-                .orElse(false);
-        subscription = loaded.subscription();
-        outputSubscription = loaded.outputSubscription();
-        outputRunId = loaded.outputRunId();
-        outputCursor = loaded.outputCursor();
+        ObservationPermit previousPermit = subscriptionPermit;
+        subscription = null;
+        outputSubscription = null;
+        subscriptionPermit = null;
+        selectionGeneration = generation;
+        if (transition) {
+            pendingSelectionGeneration = 0;
+            awaitingNewSessionMessage = false;
+            pendingAcknowledgement = null;
+            clearOperationsForPreviousSelection();
+            resetRunObservation(loaded);
+        } else {
+            advanceRunObservation(loaded);
+        }
+        staleSnapshotRecoveryRequested = false;
+        AgentRunId nextOutputRunId = loaded.outputRunId();
+        RunOutputCursor nextOutputCursor = loaded.outputCursor();
+        if (sameSession
+                && Objects.equals(outputRunId, nextOutputRunId)
+                && outputCursor.sequence() > nextOutputCursor.sequence()) {
+            nextOutputCursor = outputCursor;
+        }
+        outputRunId = nextOutputRunId;
+        outputCursor = nextOutputCursor;
         activeInteraction = null;
         interactionHydrationInFlight = null;
         apply(new TerminalUiAction.SessionLoaded(loaded.view(), loaded.resources()));
@@ -1929,21 +2469,326 @@ public final class CodingTerminalController implements AutoCloseable {
         for (AgentRunEvent event : loaded.events()) {
             apply(new TerminalUiAction.RunEventReceived(event));
         }
-        loaded.approval().ifPresent(this::openInteractionSelector);
+        loaded.approval()
+                .filter(prompt -> transition || approvalStillTracked(prompt, generation))
+                .ifPresent(this::openInteractionSelector);
         replacePreviewSubscription(
-                loaded.view().activeRun().map(value -> value.runId()).orElse(null));
-        closeSubscriptionsInBackground(previousSubscription, previousOutputSubscription);
+                loaded.view().activeRun().map(value -> value.runId()).orElse(null), generation);
+        establishSubscriptions(loaded, observation);
+        closeSubscriptionsInBackground(previousSubscription, previousOutputSubscription, previousPermit);
     }
 
-    private void replacePreviewSubscription(AgentRunId runId) {
-        if (Objects.equals(previewRunId, runId) && previewSubscription != null) return;
-        if (previewSubscription != null) previewSubscription.close();
-        previewSubscription = null;
-        previewRunId = runId;
-        if (runId != null) {
-            previewSubscription = previewPublisher.subscribe(
-                    runId, preview -> pump.offer(new TerminalUiAction.ToolOutputPreviewReceived(preview)));
+    private boolean isStaleSameSelectionSnapshot(
+            CodingSessionView previousView, AgentRunId previousRunId, CodingSessionView loadedView) {
+        if (loadedView.summary().revision() < previousView.summary().revision()) return true;
+        Optional<io.haifa.agent.runtime.api.AgentRunSnapshot> previousActive = previousView.activeRun();
+        Optional<io.haifa.agent.runtime.api.AgentRunSnapshot> loadedActive = loadedView.activeRun();
+        if (loadedActive.isPresent()
+                && observedRunId != null
+                && observedRunId.equals(loadedActive.orElseThrow().runId())) {
+            if (observedRunTerminal) return true;
+            if (loadedActive.orElseThrow().version() < observedRunVersion) return true;
         }
+        if (previousRunId != null && previousActive.isPresent() && loadedActive.isPresent()) {
+            io.haifa.agent.runtime.api.AgentRunSnapshot active = loadedActive.orElseThrow();
+            if (active.runId().equals(previousRunId)) {
+                long previousVersion = previousActive.orElseThrow().version();
+                if (observedRunId != null && observedRunId.equals(previousRunId)) {
+                    previousVersion = Math.max(previousVersion, observedRunVersion);
+                }
+                if (active.version() < previousVersion) return true;
+            }
+        }
+        return false;
+    }
+
+    private void resetRunObservation(LoadedSession loaded) {
+        Optional<io.haifa.agent.runtime.api.AgentRunSnapshot> active =
+                loaded.view().activeRun();
+        observedRunId = active.map(value -> value.runId()).orElse(null);
+        observedRunVersion = active.map(value -> value.version()).orElse(-1L);
+        observedRunTerminal = active.map(value -> value.status().isTerminal()).orElse(false);
+        staleSnapshotRecoveryRequested = false;
+        handoffRecoveryForRun = null;
+    }
+
+    private void advanceRunObservation(LoadedSession loaded) {
+        loaded.view().activeRun().ifPresent(active -> {
+            if (!active.runId().equals(observedRunId) || active.version() >= observedRunVersion) {
+                observedRunId = active.runId();
+                observedRunVersion = active.version();
+                observedRunTerminal = active.status().isTerminal();
+            }
+        });
+    }
+
+    private void observeRunLifecycle(AgentRunEvent event) {
+        if (!(event.payload() instanceof RunEventPayloads.RunLifecycle lifecycle)) return;
+        boolean sameRun = event.runId().equals(observedRunId);
+        if (sameRun && lifecycle.version() < observedRunVersion) return;
+        observedRunId = event.runId();
+        observedRunVersion = lifecycle.version();
+        observedRunTerminal = isTerminalStatus(lifecycle.status());
+        staleSnapshotRecoveryRequested = false;
+    }
+
+    private static boolean isTerminalStatus(String status) {
+        try {
+            return io.haifa.agent.core.run.AgentRunStatus.valueOf(status).isTerminal();
+        } catch (IllegalArgumentException exception) {
+            return false;
+        }
+    }
+
+    private void requestStaleSnapshotRecovery() {
+        if (closed || staleSnapshotRecoveryRequested || state.currentRunId().isEmpty()) return;
+        staleSnapshotRecoveryRequested = true;
+        scheduleReconcile();
+    }
+
+    /**
+     * Requests exactly one bounded reconcile when the selected Run settles and the Host may already have advanced a
+     * queued follow-up into the next Run.
+     *
+     * <p>The Host keeps maintaining persisted follow-ups while no UI is attached, and the per-Run event stream of the
+     * settled Run can stay open, so nothing else would ever move the UI onto Run2. This is a once-per-settled-Run
+     * trigger, not a per-delta reload: ordinary deltas still flow through the existing subscription, and a successor
+     * that has not been materialized yet stays visible through its queued draft instead of an unbounded retry loop.
+     */
+    private void requestFollowUpHandoff(AgentRunId settledRunId) {
+        if (closed) return;
+        // Only a queued successor justifies the extra load: without one the settled Run is simply finished and the
+        // ordinary terminal lifecycle already owns what happens next.
+        if (state.pending().stream().noneMatch(value -> value.kind() == PendingMessage.Kind.FOLLOW_UP)) return;
+        if (settledRunId.equals(handoffRecoveryForRun)) return;
+        handoffRecoveryForRun = settledRunId;
+        scheduleReconcile();
+    }
+
+    private boolean approvalStillTracked(CodingApprovalPrompt prompt, long generation) {
+        InteractionView interaction = prompt.interaction();
+        boolean tracked = state.transcript().stream().anyMatch(item -> item.id()
+                .equals("interaction-" + interaction.requestId().value()));
+        if (!tracked) return true;
+        return interactionStillPending(new InteractionHydrationRequest(
+                interaction.runId(), interaction.requestId().value(), generation));
+    }
+
+    private void establishSubscriptions(LoadedSession loaded, long epoch) {
+        AgentRunId runId = loaded.subscribeRunId();
+        if (runId == null) return;
+        long generation = loaded.generation();
+        AgentSessionId sessionId = loaded.view().summary().sessionId();
+        RunEventCursor eventCursor = loaded.subscribeAfter();
+        RunOutputCursor outputAfter = loaded.outputCursor();
+        ObservationPermit permit = admitObservation();
+        if (permit == null) {
+            rejectObservationAdmission();
+            return;
+        }
+        Runnable work = () -> {
+            if (closed) {
+                releaseObservation(permit);
+                return;
+            }
+            RunEventSubscription nextEvent = null;
+            RunOutputSubscription nextOutput = null;
+            try {
+                nextEvent = client.subscribe(
+                        runId,
+                        eventCursor,
+                        event -> pump.offer(new TerminalUiAction.RunEventReceived(event, generation)));
+                nextOutput = client.subscribeOutput(
+                        runId,
+                        outputAfter,
+                        event -> pump.offer(new TerminalUiAction.RunOutputReceived(event, generation)));
+            } catch (RuntimeException exception) {
+                closeSubscriptions(nextEvent, nextOutput);
+                releaseObservation(permit);
+                String code = safeFailureCode(exception);
+                if (!closed) {
+                    enqueueCompletion(
+                            effectCompletions,
+                            () -> completeObservationFailure(epoch, generation, sessionId, runId, code));
+                }
+                return;
+            }
+            RunEventSubscription createdEvent = nextEvent;
+            RunOutputSubscription createdOutput = nextOutput;
+            boolean owned;
+            synchronized (observationLock) {
+                owned = !closed;
+                if (owned) {
+                    ownedObservations.add(createdEvent);
+                    ownedObservations.add(createdOutput);
+                }
+            }
+            if (!owned) {
+                closeSubscriptions(createdEvent, createdOutput);
+                releaseObservation(permit);
+                return;
+            }
+            enqueueCompletion(
+                    effectCompletions,
+                    () -> completeSubscriptions(
+                            epoch, generation, sessionId, runId, createdEvent, createdOutput, permit));
+        };
+        try {
+            maintenanceEffects.execute(work);
+        } catch (RejectedExecutionException exception) {
+            releaseObservation(permit);
+            completeObservationFailure(epoch, generation, sessionId, runId, "TERMINAL_BACKGROUND_UNAVAILABLE");
+        }
+        drainEffectCompletions();
+    }
+
+    private void completeSubscriptions(
+            long epoch,
+            long generation,
+            AgentSessionId sessionId,
+            AgentRunId runId,
+            RunEventSubscription nextEvent,
+            RunOutputSubscription nextOutput,
+            ObservationPermit permit) {
+        boolean ownedEvent;
+        boolean ownedOutput;
+        synchronized (observationLock) {
+            ownedEvent = ownedObservations.remove(nextEvent);
+            ownedOutput = ownedObservations.remove(nextOutput);
+        }
+        if (!ownedEvent && !ownedOutput) {
+            // Teardown already closed this handoff and released its permit.
+            return;
+        }
+        if (epoch != observationEpoch || !isCurrentStreamScope(generation, sessionId, runId)) {
+            closeSubscriptionsInBackground(nextEvent, nextOutput, permit);
+            return;
+        }
+        RunEventSubscription previous = subscription;
+        RunOutputSubscription previousOutput = outputSubscription;
+        ObservationPermit previousPermit = subscriptionPermit;
+        subscription = nextEvent;
+        outputSubscription = nextOutput;
+        subscriptionPermit = permit;
+        closeSubscriptionsInBackground(previous, previousOutput, previousPermit);
+    }
+
+    private void completeObservationFailure(
+            long epoch, long generation, AgentSessionId sessionId, AgentRunId runId, String code) {
+        if (epoch != observationEpoch || !isCurrentStreamScope(generation, sessionId, runId)) return;
+        apply(new TerminalUiAction.RecoverableFailure(code));
+    }
+
+    private void replacePreviewSubscription(AgentRunId runId, long generation) {
+        boolean enabled =
+                connectionOptions.toolOutputPreviewEnabled() && previewPublisher != ToolOutputPreviewPublisher.noop();
+        if (enabled
+                && Objects.equals(previewRunId, runId)
+                && previewSubscription != null
+                && previewGeneration == generation) {
+            return;
+        }
+        ToolOutputPreviewPublisher.ToolOutputPreviewSubscription previous = previewSubscription;
+        ObservationPermit previousPermit = previewPermit;
+        previewSubscription = null;
+        previewPermit = null;
+        previewRunId = enabled ? runId : null;
+        previewGeneration = enabled ? generation : 0L;
+        long epoch = ++nextPreviewEpoch;
+        previewEpoch = epoch;
+        closePreviewInBackground(previous, previousPermit);
+        if (!enabled || runId == null) return;
+        ObservationPermit permit = admitObservation();
+        if (permit == null) {
+            previewRunId = null;
+            previewGeneration = 0L;
+            previewEpoch = 0L;
+            rejectObservationAdmission();
+            return;
+        }
+        Runnable work = () -> {
+            if (closed) {
+                releaseObservation(permit);
+                return;
+            }
+            ToolOutputPreviewPublisher.ToolOutputPreviewSubscription next;
+            try {
+                next = previewPublisher.subscribe(
+                        runId,
+                        preview -> pump.offer(new TerminalUiAction.ToolOutputPreviewReceived(preview, generation)));
+            } catch (RuntimeException exception) {
+                releaseObservation(permit);
+                String code = safeFailureCode(exception);
+                if (!closed) {
+                    enqueueCompletion(effectCompletions, () -> completePreviewFailure(epoch, generation, runId, code));
+                }
+                return;
+            }
+            boolean owned;
+            synchronized (observationLock) {
+                owned = !closed;
+                if (owned) ownedObservations.add(next);
+            }
+            if (!owned) {
+                closePreviewInBackground(next, permit);
+                return;
+            }
+            enqueueCompletion(effectCompletions, () -> completePreview(epoch, next, permit));
+        };
+        try {
+            maintenanceEffects.execute(work);
+        } catch (RejectedExecutionException exception) {
+            releaseObservation(permit);
+            completePreviewFailure(epoch, generation, runId, "TERMINAL_BACKGROUND_UNAVAILABLE");
+        }
+        drainEffectCompletions();
+    }
+
+    private void completePreviewFailure(long epoch, long generation, AgentRunId runId, String code) {
+        if (closed || epoch != previewEpoch || !isCurrentPreviewStream(generation, runId)) return;
+        apply(new TerminalUiAction.RecoverableFailure(code));
+    }
+
+    private void completePreview(
+            long epoch, ToolOutputPreviewPublisher.ToolOutputPreviewSubscription next, ObservationPermit permit) {
+        boolean owned;
+        synchronized (observationLock) {
+            owned = ownedObservations.remove(next);
+        }
+        if (!owned) return;
+        if (closed || epoch != previewEpoch) {
+            closePreviewInBackground(next, permit);
+            return;
+        }
+        previewSubscription = next;
+        previewPermit = permit;
+    }
+
+    private void closePreviewSubscription() {
+        ToolOutputPreviewPublisher.ToolOutputPreviewSubscription previous = previewSubscription;
+        ObservationPermit previousPermit = previewPermit;
+        previewSubscription = null;
+        previewPermit = null;
+        previewRunId = null;
+        previewGeneration = 0L;
+        previewEpoch = 0L;
+        closePreviewInBackground(previous, previousPermit);
+    }
+
+    private void closePreviewInBackground(
+            ToolOutputPreviewPublisher.ToolOutputPreviewSubscription subscription, ObservationPermit permit) {
+        if (subscription == null) {
+            releaseObservation(permit);
+            return;
+        }
+        Runnable cleanup = () -> {
+            try {
+                closeQuietly(subscription);
+            } finally {
+                releaseObservation(permit);
+            }
+        };
+        submitBackgroundCleanup(cleanup);
     }
 
     private void openRestoreSelector() {
@@ -1952,13 +2797,18 @@ public final class CodingTerminalController implements AutoCloseable {
             return;
         }
         AgentSessionId sessionId = state.session().orElseThrow().summary().sessionId();
+        SelectionToken token = currentSelection();
         apply(new TerminalUiAction.StatusChanged("Loading queued messages"));
         submitEffect(
                 () -> {
                     List<CodingQueuedMessage> found = client.restorableMessages(sessionId, 100);
-                    return () -> showRestoreOptions(found);
+                    return () -> {
+                        if (isCurrentSelection(token)) showRestoreOptions(found);
+                    };
                 },
-                code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+                code -> {
+                    if (isCurrentSelection(token)) apply(new TerminalUiAction.RecoverableFailure(code));
+                });
     }
 
     private void showRestoreOptions(List<CodingQueuedMessage> found) {
@@ -1978,6 +2828,22 @@ public final class CodingTerminalController implements AutoCloseable {
 
     private void openInteractionSelector(CodingApprovalPrompt prompt) {
         InteractionView interaction = prompt.interaction();
+        boolean sameSession = state.session()
+                .map(value -> value.summary().sessionId().equals(interaction.sessionId()))
+                .orElse(false);
+        boolean runVisible =
+                state.currentRunId().filter(interaction.runId()::equals).isPresent()
+                        || state.session()
+                                .flatMap(CodingSessionView::activeRun)
+                                .map(value -> value.runId())
+                                .filter(interaction.runId()::equals)
+                                .isPresent()
+                        || state.session()
+                                .flatMap(CodingSessionView::pendingInteraction)
+                                .map(InteractionView::runId)
+                                .filter(interaction.runId()::equals)
+                                .isPresent();
+        if (closed || !sameSession || !runVisible) return;
         activeInteraction = interaction;
         apply(new TerminalUiAction.InteractionPresented(
                 interaction, prompt.allowForSession(), prompt.sessionApprovalUnavailableReason()));
@@ -2002,7 +2868,9 @@ public final class CodingTerminalController implements AutoCloseable {
         List<String> options = new ArrayList<>(interaction.allowedActions().stream()
                 .map(action -> ApprovalDetails.actionLabel(action.value()))
                 .toList());
-        if (prompt.allowForSession()) options.add(ApprovalDetails.SESSION_APPROVAL_LABEL);
+        if (prompt.allowForSession() && connectionOptions.sessionConsentEnabled()) {
+            options.add(ApprovalDetails.SESSION_APPROVAL_LABEL);
+        }
         if (options.isEmpty()) {
             apply(new TerminalUiAction.RecoverableFailure("INTERACTION_ACTIONS_EMPTY"));
             return;
@@ -2133,15 +3001,20 @@ public final class CodingTerminalController implements AutoCloseable {
         activeInteraction = null;
         apply(new TerminalUiAction.SelectorClosed());
         apply(new TerminalUiAction.StatusChanged("Dismissing questions"));
+        SelectionToken token = currentSelection();
         String idempotencyKey = UUID.randomUUID().toString();
         submitControlEffect(
                 () -> {
                     var receipt = client.respond(draft.interaction(), InteractionAction.CANCEL, idempotencyKey);
                     return () -> {
-                        if (receipt != null) apply(new TerminalUiAction.InteractionReceiptReceived(receipt));
+                        if (receipt != null && isCurrentSelection(token)) {
+                            apply(new TerminalUiAction.InteractionReceiptReceived(receipt));
+                        }
                     };
                 },
-                this::handleInteractionResponseFailure);
+                code -> {
+                    if (isCurrentSelection(token)) handleInteractionResponseFailure(code);
+                });
     }
 
     private void submitClarification() {
@@ -2153,15 +3026,20 @@ public final class CodingTerminalController implements AutoCloseable {
         apply(new TerminalUiAction.StatusChanged("Submitting answer"));
         java.util.List<io.haifa.agent.core.content.ContentPart> parts =
                 ClarificationDetails.answerParts(draft.selections(), draft.customAnswers());
+        SelectionToken token = currentSelection();
         String idempotencyKey = UUID.randomUUID().toString();
         submitControlEffect(
                 () -> {
                     var receipt = client.respond(draft.interaction(), InteractionAction.SUBMIT, parts, idempotencyKey);
                     return () -> {
-                        if (receipt != null) apply(new TerminalUiAction.InteractionReceiptReceived(receipt));
+                        if (receipt != null && isCurrentSelection(token)) {
+                            apply(new TerminalUiAction.InteractionReceiptReceived(receipt));
+                        }
                     };
                 },
-                this::handleInteractionResponseFailure);
+                code -> {
+                    if (isCurrentSelection(token)) handleInteractionResponseFailure(code);
+                });
     }
 
     /** The answer draft of one pending clarification; question order and the free-text lane stay separate. */
@@ -2275,6 +3153,10 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void startCodexLogin() {
+        if (!connectionOptions.credentialSetupEnabled()) {
+            apply(new TerminalUiAction.StatusChanged(REMOTE_CREDENTIAL_SETUP_GUIDANCE));
+            return;
+        }
         if (rejectConcurrentLogin()) {
             return;
         }
@@ -2296,6 +3178,10 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void startAntigravityLogin() {
+        if (!connectionOptions.credentialSetupEnabled()) {
+            apply(new TerminalUiAction.StatusChanged(REMOTE_CREDENTIAL_SETUP_GUIDANCE));
+            return;
+        }
         if (rejectConcurrentLogin()) {
             return;
         }
@@ -2391,16 +3277,29 @@ public final class CodingTerminalController implements AutoCloseable {
 
     private void openModelSelector(String argument) {
         Optional<CodingSessionView> current = awaitingNewSessionMessage ? Optional.empty() : state.session();
+        SelectionToken token = currentSelection();
         Optional<RunEventCursor> cursor = state.appliedCursor();
         AgentRunId previousOutputRunId = outputRunId;
         RunOutputCursor previousOutputCursor = outputCursor;
         apply(new TerminalUiAction.StatusChanged("Loading models"));
         submitEffect(
-                () -> loadModels(current, argument, cursor, previousOutputRunId, previousOutputCursor),
-                code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+                () -> {
+                    Runnable completion =
+                            loadModels(current, argument, token, cursor, previousOutputRunId, previousOutputCursor);
+                    return () -> {
+                        if (isCurrentSelection(token)) completion.run();
+                    };
+                },
+                code -> {
+                    if (isCurrentSelection(token)) apply(new TerminalUiAction.RecoverableFailure(code));
+                });
     }
 
     private void startCodexDeviceLogin() {
+        if (!connectionOptions.credentialSetupEnabled()) {
+            apply(new TerminalUiAction.StatusChanged(REMOTE_CREDENTIAL_SETUP_GUIDANCE));
+            return;
+        }
         if (rejectConcurrentLogin()) {
             return;
         }
@@ -2539,6 +3438,10 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void beginApiKeyInput(String input) {
+        if (!connectionOptions.credentialSetupEnabled()) {
+            apply(new TerminalUiAction.StatusChanged(REMOTE_CREDENTIAL_SETUP_GUIDANCE));
+            return;
+        }
         if (rejectConcurrentLogin()) {
             return;
         }
@@ -2643,12 +3546,12 @@ public final class CodingTerminalController implements AutoCloseable {
     public String secureInputPrompt() {
         if ("aliyun-bailian".equalsIgnoreCase(pendingApiKeyProvider)) {
             return switch (bailianStep) {
-                case WORKSPACE_ID -> "Workspace ┃ ";
-                case REGION -> "Region ┃ ";
-                default -> secureInputIsUpdate() ? "New key ┃ " : "API Key ┃ ";
+                case WORKSPACE_ID -> "Workspace \u2503 ";
+                case REGION -> "Region \u2503 ";
+                default -> secureInputIsUpdate() ? "New key \u2503 " : "API Key \u2503 ";
             };
         }
-        return secureInputIsUpdate() ? "New key ┃ " : "API Key ┃ ";
+        return secureInputIsUpdate() ? "New key \u2503 " : "API Key \u2503 ";
     }
 
     public String secureInputPlaceholder() {
@@ -2702,6 +3605,11 @@ public final class CodingTerminalController implements AutoCloseable {
 
     public void submitApiKey(char[] apiKey) {
         Objects.requireNonNull(apiKey, "apiKey must not be null");
+        if (!connectionOptions.credentialSetupEnabled()) {
+            java.util.Arrays.fill(apiKey, '\0');
+            apply(new TerminalUiAction.StatusChanged(REMOTE_CREDENTIAL_SETUP_GUIDANCE));
+            return;
+        }
         String providerId = pendingApiKeyProvider;
         if (providerId == null) {
             java.util.Arrays.fill(apiKey, '\0');
@@ -2820,6 +3728,13 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void saveBailianCredentials() {
+        if (!connectionOptions.credentialSetupEnabled()) {
+            resetBailianState();
+            pendingApiKeyProvider = null;
+            pendingApiKeyIsUpdate = false;
+            apply(new TerminalUiAction.StatusChanged(REMOTE_CREDENTIAL_SETUP_GUIDANCE));
+            return;
+        }
         String providerId = pendingApiKeyProvider;
         char[] key = pendingBailianApiKey != null
                 ? java.util.Arrays.copyOf(pendingBailianApiKey, pendingBailianApiKey.length)
@@ -3102,28 +4017,37 @@ public final class CodingTerminalController implements AutoCloseable {
                 AgentSessionId sessionId = resumeOptions.get(selected).sessionId();
                 apply(new TerminalUiAction.SelectorClosed());
                 apply(new TerminalUiAction.StatusChanged("Opening session"));
+                long generation = beginSelection();
                 submitEffect(
                         () -> {
                             LoadedSession loaded = readSession(
-                                    client.open(sessionId), Optional.empty(), null, RunOutputCursor.BEFORE_FIRST);
+                                    client.open(sessionId),
+                                    generation,
+                                    Optional.empty(),
+                                    null,
+                                    RunOutputCursor.BEFORE_FIRST);
                             return () -> applyLoadedSession(loaded);
                         },
-                        code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+                        code -> completeSelectionFailure(generation, code));
             }
             case "restore" -> {
                 CodingQueuedMessage queued = restoreOptions.get(selected);
+                SelectionToken token = currentSelection();
                 apply(new TerminalUiAction.SelectorClosed());
                 apply(new TerminalUiAction.StatusChanged("Restoring queued message"));
                 submitEffect(
                         () -> {
                             var restored = client.restore(queued.sessionId(), queued.followUpId(), queued.revision());
                             return () -> {
+                                if (!isCurrentSelection(token)) return;
                                 apply(new TerminalUiAction.EditorChanged(
                                         restored.message(), restored.message().length()));
                                 scheduleReconcile();
                             };
                         },
-                        code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+                        code -> {
+                            if (isCurrentSelection(token)) apply(new TerminalUiAction.RecoverableFailure(code));
+                        });
             }
             case "session", "workspace-trust" -> apply(new TerminalUiAction.SelectorClosed());
             case "model-readiness" -> {
@@ -3225,6 +4149,7 @@ public final class CodingTerminalController implements AutoCloseable {
                 apply(new TerminalUiAction.SelectorClosed());
                 if (selected == 0) {
                     CodingSessionView current = requireCurrentSession();
+                    SelectionToken token = currentSelection();
                     apply(new TerminalUiAction.StatusChanged("Archiving session"));
                     submitEffect(
                             () -> {
@@ -3235,21 +4160,28 @@ public final class CodingTerminalController implements AutoCloseable {
                                         reconciled.summary().revision());
                                 LoadedSession loaded = readSession(
                                         client.open(reconciled.summary().sessionId()),
+                                        token.generation(),
                                         Optional.empty(),
                                         null,
                                         RunOutputCursor.BEFORE_FIRST);
                                 return () -> {
+                                    if (!isCurrentSelection(token)) return;
                                     applyLoadedSession(loaded);
                                     apply(new TerminalUiAction.StatusChanged("Session archived"));
                                 };
                             },
-                            code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+                            code -> {
+                                if (isCurrentSelection(token)) {
+                                    apply(new TerminalUiAction.RecoverableFailure(code));
+                                }
+                            });
                 }
             }
             case "delete-session" -> {
                 apply(new TerminalUiAction.SelectorClosed());
                 if (selected == 0) {
                     CodingSessionView current = requireCurrentSession();
+                    SelectionToken token = currentSelection();
                     apply(new TerminalUiAction.StatusChanged("Deleting session"));
                     submitEffect(
                             () -> {
@@ -3259,13 +4191,20 @@ public final class CodingTerminalController implements AutoCloseable {
                                         reconciled.summary().sessionId(),
                                         reconciled.summary().revision());
                                 return () -> {
+                                    if (!isCurrentSelection(token)) return;
                                     detachSubscriptions();
                                     awaitingNewSessionMessage = true;
+                                    selectionGeneration = 0L;
+                                    pendingSelectionGeneration = 0L;
                                     apply(new TerminalUiAction.SessionCleared(
                                             "Session deleted; enter the first message"));
                                 };
                             },
-                            code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+                            code -> {
+                                if (isCurrentSelection(token)) {
+                                    apply(new TerminalUiAction.RecoverableFailure(code));
+                                }
+                            });
                 }
             }
             case "shell-approval" -> {
@@ -3301,7 +4240,8 @@ public final class CodingTerminalController implements AutoCloseable {
                         .filter(value -> selector.kind()
                                 .equals("interaction:" + value.requestId().value()))
                         .orElseThrow();
-                boolean forSession = selected == interaction.allowedActions().size();
+                boolean forSession = connectionOptions.sessionConsentEnabled()
+                        && selected == interaction.allowedActions().size();
                 InteractionAction action = forSession
                         ? InteractionAction.APPROVE
                         : interaction.allowedActions().get(selected);
@@ -3311,6 +4251,7 @@ public final class CodingTerminalController implements AutoCloseable {
                                 ? "Rejecting"
                                 : action.equals(InteractionAction.APPROVE) ? "Approving" : "Submitting response"));
                 activeInteraction = null;
+                SelectionToken token = currentSelection();
                 String idempotencyKey = UUID.randomUUID().toString();
                 submitControlEffect(
                         () -> {
@@ -3318,7 +4259,7 @@ public final class CodingTerminalController implements AutoCloseable {
                                     ? client.allowForSession(interaction, idempotencyKey)
                                     : client.respond(interaction, action, idempotencyKey);
                             return () -> {
-                                if (receipt != null) {
+                                if (receipt != null && isCurrentSelection(token)) {
                                     apply(new TerminalUiAction.InteractionReceiptReceived(receipt));
                                     if (forSession)
                                         apply(new TerminalUiAction.StatusChanged(
@@ -3329,7 +4270,9 @@ public final class CodingTerminalController implements AutoCloseable {
                                 }
                             };
                         },
-                        code -> handleInteractionResponseFailure(code));
+                        code -> {
+                            if (isCurrentSelection(token)) handleInteractionResponseFailure(code);
+                        });
             }
         }
     }
@@ -3657,35 +4600,33 @@ public final class CodingTerminalController implements AutoCloseable {
         if (state.selector().isPresent() || renamingSession) {
             return;
         }
-        if (modelSwitchInProgress) {
+        SelectionToken token = currentSelection();
+        if (isOperationInFlight(modelSwitchesInFlight, token)) {
             return;
         }
         if (modelOptions.isEmpty()) {
-            modelSwitchInProgress = true;
+            long operation = beginOperation(modelSwitchesInFlight, token);
             apply(new TerminalUiAction.StatusChanged("Loading models"));
-            Optional<AgentSessionId> requestSessionId =
-                    state.session().map(s -> s.summary().sessionId());
             boolean requestAwaitingNew = awaitingNewSessionMessage;
             submitEffect(
                     () -> {
                         List<CodingModelOption> loaded = client.models();
                         return () -> {
-                            modelOptions = List.copyOf(loaded);
-                            modelSwitchInProgress = false;
-                            if (state.selector().isPresent()
+                            completeOperation(modelSwitchesInFlight, token, operation);
+                            if (!isCurrentSelection(token)
+                                    || state.selector().isPresent()
                                     || state.currentRunId().isPresent()
                                     || renamingSession
-                                    || !Objects.equals(
-                                            state.session().map(s -> s.summary().sessionId()), requestSessionId)
                                     || awaitingNewSessionMessage != requestAwaitingNew) {
                                 return;
                             }
+                            modelOptions = List.copyOf(loaded);
                             performModelCycle(delta);
                         };
                     },
                     code -> {
-                        modelSwitchInProgress = false;
-                        apply(new TerminalUiAction.RecoverableFailure(code));
+                        completeOperation(modelSwitchesInFlight, token, operation);
+                        if (isCurrentSelection(token)) apply(new TerminalUiAction.RecoverableFailure(code));
                     });
             return;
         }
@@ -3738,24 +4679,30 @@ public final class CodingTerminalController implements AutoCloseable {
         }
         if (awaitingNewSessionMessage || state.session().isEmpty()) {
             pendingNewSessionModelId = option.id();
-            modelSwitchInProgress = false;
             apply(new TerminalUiAction.StatusChanged("Model selected for next session"));
         } else {
             CodingSessionView current = state.session().orElseThrow();
-            modelSwitchInProgress = true;
+            SelectionToken token = currentSelection();
+            if (isOperationInFlight(modelSwitchesInFlight, token)) return;
+            long operation = beginOperation(modelSwitchesInFlight, token);
             apply(new TerminalUiAction.StatusChanged("Changing model"));
             submitEffect(
                     () -> {
-                        Runnable select =
-                                selectModel(current, option.id(), cursor, previousOutputRunId, previousOutputCursor);
+                        Runnable select = selectModel(
+                                current,
+                                option.id(),
+                                token.generation(),
+                                cursor,
+                                previousOutputRunId,
+                                previousOutputCursor);
                         return () -> {
-                            modelSwitchInProgress = false;
-                            select.run();
+                            completeOperation(modelSwitchesInFlight, token, operation);
+                            if (isCurrentSelection(token)) select.run();
                         };
                     },
                     code -> {
-                        modelSwitchInProgress = false;
-                        apply(new TerminalUiAction.RecoverableFailure(code));
+                        completeOperation(modelSwitchesInFlight, token, operation);
+                        if (isCurrentSelection(token)) apply(new TerminalUiAction.RecoverableFailure(code));
                     });
         }
     }
@@ -3779,6 +4726,7 @@ public final class CodingTerminalController implements AutoCloseable {
     private Runnable loadModels(
             Optional<CodingSessionView> current,
             String argument,
+            SelectionToken token,
             Optional<RunEventCursor> cursor,
             AgentRunId previousOutputRunId,
             RunOutputCursor previousOutputCursor) {
@@ -3788,7 +4736,12 @@ public final class CodingTerminalController implements AutoCloseable {
         if (!argument.isBlank()) {
             if (reconciled.isPresent()) {
                 return selectModel(
-                        reconciled.orElseThrow(), argument, cursor, previousOutputRunId, previousOutputCursor);
+                        reconciled.orElseThrow(),
+                        argument,
+                        token.generation(),
+                        cursor,
+                        previousOutputRunId,
+                        previousOutputCursor);
             }
             CodingModelOption selected = options.stream()
                     .filter(option -> option.id().equals(argument))
@@ -3821,6 +4774,7 @@ public final class CodingTerminalController implements AutoCloseable {
     private Runnable selectModel(
             CodingSessionView current,
             String modelId,
+            long generation,
             Optional<RunEventCursor> cursor,
             AgentRunId previousOutputRunId,
             RunOutputCursor previousOutputCursor) {
@@ -3830,7 +4784,11 @@ public final class CodingTerminalController implements AutoCloseable {
                 current.model().revision(),
                 UUID.randomUUID().toString());
         LoadedSession loaded = readSession(
-                client.open(current.summary().sessionId()), cursor, previousOutputRunId, previousOutputCursor);
+                client.open(current.summary().sessionId()),
+                generation,
+                cursor,
+                previousOutputRunId,
+                previousOutputCursor);
         return () -> {
             applyLoadedSession(loaded);
             apply(new TerminalUiAction.StatusChanged("Model changed for future new Runs"));
@@ -3838,34 +4796,60 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void scheduleReconcile() {
-        if (reconcileInFlight || state.session().isEmpty()) return;
-        reconcileInFlight = true;
+        if (state.session().isEmpty()) return;
+        SelectionToken token = currentSelection();
+        if (isOperationInFlight(reconcilesInFlight, token)) return;
+        long operation = beginOperation(reconcilesInFlight, token);
         AgentSessionId sessionId = state.session().orElseThrow().summary().sessionId();
         Optional<RunEventCursor> cursor = state.appliedCursor();
         AgentRunId previousOutputRunId = outputRunId;
         RunOutputCursor previousOutputCursor = outputCursor;
         submitMaintenanceEffect(
                 () -> {
-                    LoadedSession loaded =
-                            readSession(client.reconcile(sessionId), cursor, previousOutputRunId, previousOutputCursor);
+                    LoadedSession loaded = readSession(
+                            client.reconcile(sessionId),
+                            token.generation(),
+                            cursor,
+                            previousOutputRunId,
+                            previousOutputCursor);
                     return () -> {
-                        reconcileInFlight = false;
+                        completeOperation(reconcilesInFlight, token, operation);
+                        if (!isCurrentSelection(token)) return;
                         applyLoadedSession(loaded);
                     };
                 },
                 code -> {
-                    reconcileInFlight = false;
-                    apply(new TerminalUiAction.RecoverableFailure(code));
+                    completeOperation(reconcilesInFlight, token, operation);
+                    if (isCurrentSelection(token)) apply(new TerminalUiAction.RecoverableFailure(code));
                 });
     }
 
     private void apply(TerminalUiAction action) {
+        if (closed) return;
+        if (action instanceof TerminalUiAction.RunEventReceived received) {
+            if (!isCurrentStream(
+                    received.selectionGeneration(),
+                    received.event().runId(),
+                    received.event().sessionId())) {
+                return;
+            }
+            observeRunLifecycle(received.event());
+        }
         if (action instanceof TerminalUiAction.RunOutputReceived received) {
+            if (!isCurrentOutputStream(
+                    received.selectionGeneration(), received.event().runId())) {
+                return;
+            }
             if (!received.event().runId().equals(outputRunId)
                     || received.event().sequence() <= outputCursor.sequence()) {
                 return;
             }
             outputCursor = new RunOutputCursor(received.event().sequence());
+        }
+        if (action instanceof TerminalUiAction.ToolOutputPreviewReceived received
+                && !isCurrentPreviewStream(
+                        received.selectionGeneration(), received.preview().runId())) {
+            return;
         }
         boolean hadActiveRun = state.currentRunId().isPresent();
         boolean hadSelector = state.selector().isPresent();
@@ -3892,6 +4876,9 @@ public final class CodingTerminalController implements AutoCloseable {
         boolean selectorClosedWhileIdle = hadSelector
                 && state.selector().isEmpty()
                 && state.currentRunId().isEmpty();
+        if (action instanceof TerminalUiAction.RunEventReceived received && runBecameIdle) {
+            requestFollowUpHandoff(received.event().runId());
+        }
         if (runBecameIdle || selectorClosedWhileIdle) {
             trySubmitWaitingWhenIdle();
         }
@@ -3928,22 +4915,25 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void schedulePendingCursorAcknowledgement() {
-        if (acknowledgementInFlight
-                || pendingAcknowledgement == null
-                || state.session().isEmpty()) return;
+        SelectionToken token = currentSelection();
+        if (pendingAcknowledgement == null
+                || state.session().isEmpty()
+                || isOperationInFlight(acknowledgementsInFlight, token)) return;
         RunEventCursor requested = pendingAcknowledgement;
         AgentSessionId sessionId = state.session().orElseThrow().summary().sessionId();
-        acknowledgementInFlight = true;
+        long operation = beginOperation(acknowledgementsInFlight, token);
         submitMaintenanceEffect(
                 () -> {
                     RunEventCursor acknowledged = client.acknowledgeCursor(sessionId, requested);
-                    return () -> completeCursorAcknowledgement(requested, acknowledged);
+                    return () -> completeCursorAcknowledgement(token, operation, requested, acknowledged);
                 },
-                ignored -> acknowledgementInFlight = false);
+                ignored -> completeOperation(acknowledgementsInFlight, token, operation));
     }
 
-    private void completeCursorAcknowledgement(RunEventCursor requested, RunEventCursor acknowledged) {
-        acknowledgementInFlight = false;
+    private void completeCursorAcknowledgement(
+            SelectionToken token, long operation, RunEventCursor requested, RunEventCursor acknowledged) {
+        completeOperation(acknowledgementsInFlight, token, operation);
+        if (!isCurrentSelection(token)) return;
         if (acknowledged.runId().equals(requested.runId())
                 && acknowledged.exclusiveSequence().orElse(0L)
                         >= requested.exclusiveSequence().orElse(0L)
@@ -3958,20 +4948,61 @@ public final class CodingTerminalController implements AutoCloseable {
     private void detachSubscriptions() {
         RunEventSubscription previous = subscription;
         RunOutputSubscription previousOutput = outputSubscription;
+        ObservationPermit previousPermit = subscriptionPermit;
         subscription = null;
         outputSubscription = null;
+        subscriptionPermit = null;
         outputRunId = null;
         outputCursor = RunOutputCursor.BEFORE_FIRST;
-        closeSubscriptionsInBackground(previous, previousOutput);
+        pendingAcknowledgement = null;
+        observationEpoch = ++nextObservationEpoch;
+        closePreviewSubscription();
+        closeSubscriptionsInBackground(previous, previousOutput, previousPermit);
     }
 
-    private void closeSubscriptionsInBackground(RunEventSubscription previous, RunOutputSubscription previousOutput) {
-        if (previous == null && previousOutput == null) return;
+    private void closeSubscriptionsInBackground(
+            RunEventSubscription previous, RunOutputSubscription previousOutput, ObservationPermit permit) {
+        if (previous == null && previousOutput == null) {
+            releaseObservation(permit);
+            return;
+        }
+        Runnable cleanup = () -> {
+            try {
+                closeSubscriptions(previous, previousOutput);
+            } finally {
+                releaseObservation(permit);
+            }
+        };
+        submitBackgroundCleanup(cleanup);
+    }
+
+    /**
+     * Queues an external handle close on the owned bounded cleanup lane.
+     *
+     * <p>Every subscription and preview close goes here directly rather than through the maintenance
+     * lane: maintenance work may be discarded by {@code shutdownNow} at controller exit, while this
+     * executor's graceful shutdown drains what is already queued.
+     */
+    private void submitBackgroundCleanup(Runnable cleanup) {
         try {
-            maintenanceEffects.execute(() -> closeSubscriptions(previous, previousOutput));
-        } catch (RejectedExecutionException ignored) {
-            if (previous != null) deferredSubscriptionCloses.add(previous);
-            if (previousOutput != null) deferredSubscriptionCloses.add(previousOutput);
+            cleanupEffects.execute(cleanup);
+        } catch (RejectedExecutionException exception) {
+            // Admission caps live observations at observationCapacity, so the deferred registry is
+            // dimensioned above the maximum possible close tasks and must accept this entry. Never
+            // spawn an unbounded fallback thread or close a blocking handle on the update thread.
+            deferredCleanup.offer(cleanup);
+        }
+    }
+
+    private void drainDeferredCleanup() {
+        Runnable cleanup;
+        while ((cleanup = deferredCleanup.peek()) != null) {
+            try {
+                cleanupEffects.execute(cleanup);
+                deferredCleanup.poll();
+            } catch (RejectedExecutionException exception) {
+                return;
+            }
         }
     }
 
@@ -3982,19 +5013,53 @@ public final class CodingTerminalController implements AutoCloseable {
 
     @Override
     public void close() {
-        closeSubscriptions(subscription, outputSubscription);
+        java.util.List<AutoCloseable> owned;
+        synchronized (observationLock) {
+            closed = true;
+            owned = new java.util.ArrayList<>(ownedObservations);
+            ownedObservations.clear();
+        }
+        selectionGeneration = 0L;
+        pendingSelectionGeneration = 0L;
+        observationEpoch = 0L;
+        previewEpoch = 0L;
+        RunEventSubscription installed = subscription;
+        RunOutputSubscription installedOutput = outputSubscription;
+        ObservationPermit installedPermit = subscriptionPermit;
         subscription = null;
         outputSubscription = null;
-        if (previewSubscription != null) previewSubscription.close();
+        subscriptionPermit = null;
+        ToolOutputPreviewPublisher.ToolOutputPreviewSubscription preview = previewSubscription;
+        ObservationPermit installedPreviewPermit = previewPermit;
         previewSubscription = null;
+        previewPermit = null;
         previewRunId = null;
+        previewGeneration = 0L;
+        closeSubscriptions(installed, installedOutput);
+        releaseObservation(installedPermit);
+        closeQuietly(preview);
+        releaseObservation(installedPreviewPermit);
+        for (AutoCloseable observation : owned) {
+            closeQuietly(observation);
+        }
+        synchronized (observationLock) {
+            liveObservations.clear();
+        }
+        // Move any overflow back onto the cleanup lane so graceful shutdown drains it on the
+        // cleanup worker. Only the bounded remainder that no longer fits the lane runs inline.
+        drainDeferredCleanup();
+        cleanupEffects.shutdown();
+        Runnable pendingCleanup;
+        while ((pendingCleanup = deferredCleanup.poll()) != null) {
+            try {
+                pendingCleanup.run();
+            } catch (RuntimeException ignored) {
+                // Best-effort teardown after the UI loop.
+            }
+        }
         if (ownedControlEffects != null) ownedControlEffects.shutdownNow();
         if (ownedEffects != null) ownedEffects.shutdownNow();
         if (ownedMaintenanceEffects != null) ownedMaintenanceEffects.shutdownNow();
-        AutoCloseable deferred;
-        while ((deferred = deferredSubscriptionCloses.poll()) != null) {
-            closeQuietly(deferred);
-        }
     }
 
     private static void closeQuietly(AutoCloseable closeable) {
@@ -4007,12 +5072,13 @@ public final class CodingTerminalController implements AutoCloseable {
 
     public record LoadedSession(
             CodingSessionView view,
+            long generation,
             List<String> resources,
             io.haifa.agent.application.project.product.coding.CodingSessionHistoryPage history,
             List<PendingMessage> pending,
             List<AgentRunEvent> events,
-            RunEventSubscription subscription,
-            RunOutputSubscription outputSubscription,
+            AgentRunId subscribeRunId,
+            RunEventCursor subscribeAfter,
             AgentRunId outputRunId,
             RunOutputCursor outputCursor,
             Optional<CodingApprovalPrompt> approval) {
@@ -4027,6 +5093,12 @@ public final class CodingTerminalController implements AutoCloseable {
         }
     }
 
+    /** Immutable selection identity captured before any asynchronous work starts. */
+    private record SelectionToken(long generation, AgentSessionId sessionId) {}
+
+    /** Identity of one admitted observable stream; held until its handles are actually closed. */
+    private static final class ObservationPermit {}
+
     private record CompletionContext(String buffer, int start, int end) {
         private CompletionContext {
             Objects.requireNonNull(buffer, "buffer must not be null");
@@ -4036,7 +5108,7 @@ public final class CodingTerminalController implements AutoCloseable {
         }
     }
 
-    private record InteractionHydrationRequest(AgentRunId runId, String requestId) {
+    private record InteractionHydrationRequest(AgentRunId runId, String requestId, long generation) {
         private InteractionHydrationRequest {
             Objects.requireNonNull(runId, "runId must not be null");
             requestId = Objects.requireNonNull(requestId, "requestId must not be null")

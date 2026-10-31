@@ -147,6 +147,42 @@ Tool 专属协议由冻结 Tool Definition 披露，复杂计划与结果复核�
 观察统计、截断标记和可选 Artifact Ref。模型返回空终态时，Runtime 只在同一冻结 Binding 上默认重试
 两次，不切换 Provider/Model，也不会从空响应调度 Tool。
 
+## CA Host mode
+
+`powershell
+haifa-coding host --workspace D:\repos\my-project --bind 127.0.0.1 --port 17861
+`
+
+Host is an explicit foreground mode built from the same CLI distribution and product assembly. It requires durable
+SQLite persistence, loads only explicit --config or the user configuration (never a workspace config overlay), and
+binds only loopback addresses. It exposes the reviewed CA Host JSON-RPC/SSE protocol under /v1/rpc, /v1/events
+and /health. Closing an observation, unsubscribing, or disconnecting a client never cancels a Run; stopping the Host
+is a separate explicit process action.
+
+Parallel edits in one physical workspace require independent manual worktrees. Host does not allocate worktrees,
+detect same-directory write conflicts, or provide writer/reader ownership roles.
+
+## Remote TUI mode
+
+```powershell
+haifa-coding tui --connect http://127.0.0.1:17861            # resumes the last Session of that Host
+haifa-coding tui --connect http://127.0.0.1:17861 --session <SESSION_ID>
+haifa-coding tui --connect http://127.0.0.1:17861 --new      # starts a new Session
+```
+
+The remote TUI is a thin client of one running CA Host and is dispatched before this process opens its own logs,
+configuration, credentials, Runtime or SQLite database. It therefore accepts no `--workspace`, `--config`, `--model`,
+`--approval`, `--timeout`, `--trace`, `-m/--message`, `resume` or `--terminal` options: the Host owns the workspace,
+model configuration, Runtime, persistence and credentials. The shipped launchers pass the `tui` argument vector
+through untouched, without injecting the bundled `--config` and without creating the per-user data directories that
+only the local modes use.
+
+The Host stays authoritative for tool-output preview, session consent and credential setup, so those actions are
+refused up front in this mode; ordinary per-approval approve/reject and authenticated logout remain available.
+An unavailable or protocol-incompatible Host fails fast with a stable `REMOTE_*` code and never falls back to an
+embedded Run. When a Run settles while a queued follow-up has already advanced on the Host, the terminal performs one
+bounded reconcile per settled Run to move onto the successor instead of reloading on every delta. Closing this
+terminal only closes its own client and observations; it never cancels the Host Run.
 ## 构建与运行
 
 ### 本地发行目录（macOS / Linux）

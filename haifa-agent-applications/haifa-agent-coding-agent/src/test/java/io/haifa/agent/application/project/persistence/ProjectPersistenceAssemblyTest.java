@@ -164,6 +164,62 @@ class ProjectPersistenceAssemblyTest {
     }
 
     @Test
+    void duplicateSqliteOwnerFailsBeforeAnotherProductRuntimeCanOpen() {
+        Path database = directory.resolve("owned.db");
+
+        try (ProjectPersistenceAssembly first = openSqlite(database, "first-owner")) {
+            assertThatThrownBy(() -> openSqlite(database, "second-owner"))
+                    .isInstanceOf(CodingDatabaseOwnershipException.class)
+                    .hasMessageStartingWith(CodingDatabaseOwnershipException.CODE);
+            assertThat(first.mode()).isEqualTo(ProjectPersistenceMode.SQLITE);
+        }
+
+        try (ProjectPersistenceAssembly reopened = openSqlite(database, "reopened-owner")) {
+            assertThat(reopened.mode()).isEqualTo(ProjectPersistenceMode.SQLITE);
+        }
+    }
+
+    @Test
+    void independentSqliteFilesCanBeOwnedAtTheSameTime() {
+        Path firstDatabase = directory.resolve("independent-first.db");
+        Path secondDatabase = directory.resolve("independent-second.db");
+
+        try (ProjectPersistenceAssembly first = openSqlite(firstDatabase, "independent-first");
+                ProjectPersistenceAssembly second = openSqlite(secondDatabase, "independent-second")) {
+            assertThat(first.workerId()).isNotEqualTo(second.workerId());
+        }
+    }
+
+    @Test
+    void failedSqliteInitializationReleasesDatabaseOwnership() throws Exception {
+        Path database = directory.resolve("failed-initialization.db");
+        Path invalidTranscript = Files.writeString(directory.resolve("not-a-directory"), "invalid");
+
+        assertThatThrownBy(() -> ProjectPersistenceAssembly.open(
+                        ProjectPersistenceConfiguration.sqliteWithJsonl(database, invalidTranscript, "env://TEST_KEY"),
+                        CLOCK,
+                        new TestIds("failed-init"),
+                        protector()))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        try (ProjectPersistenceAssembly reopened = openSqlite(database, "after-failed-init")) {
+            assertThat(reopened.mode()).isEqualTo(ProjectPersistenceMode.SQLITE);
+        }
+    }
+
+    @Test
+    void databaseOwnershipRejectsAnotherOsProcessUntilTheOwnerExits() throws Exception {
+        Path database = directory.resolve("cross-process-ownership.db");
+        try (ProjectPersistenceAssembly owner = openSqlite(database, "process-owner")) {
+            // OS FileLock exclusion is meaningful only from a separate JVM, so the probe runs as a child process.
+            assertThat(runOwnershipProbe(database))
+                    .isEqualTo(CodingDatabaseOwnershipProcessProbe.OWNERSHIP_CONFLICT_EXIT_CODE);
+        }
+
+        assertThat(runOwnershipProbe(database)).isZero();
+    }
+
+    @Test
     void sqliteWithJsonlProjectsOnlyAfterRuntimeCommitAndClosesWithoutDatabaseLock() throws Exception {
         Path database = directory.resolve("runtime-with-jsonl.db");
         Path transcripts = Files.createDirectory(directory.resolve("transcripts"));
@@ -395,6 +451,90 @@ class ProjectPersistenceAssemblyTest {
             RuntimeCommandResult aborted =
                     coding.abortActiveRun(sessionId, "abort-key").orElseThrow();
             assertThat(aborted.status()).isEqualTo(RuntimeCommandStatus.ACCEPTED);
+        }
+    }
+
+    @Test
+    void exactRunCancellationRejectsAStaleTargetAndNeverCancelsItsSuccessor() {
+        ProductFixture fixture = productFixture();
+        CapturingRuntime runtime = new CapturingRuntime();
+        TestIds ids = new TestIds("exact-cancel");
+        try (ProjectPersistenceAssembly assembly =
+                ProjectPersistenceAssembly.open(ProjectPersistenceConfiguration.memory(), CLOCK, ids, null)) {
+            CodingSessionService coding = fixture.codingService(assembly, runtime, ids);
+            var created = coding.createSession(fixture.projectId, "first task", List.of(), "exact-create");
+            AgentSessionId sessionId = created.summary().sessionId();
+            AgentRunId staleRunId = created.activeRun().orElseThrow().runId();
+            coding.enqueueFollowUp(sessionId, staleRunId, "second task", List.of(), "exact-follow-up");
+
+            runtime.settle(staleRunId);
+            AgentRunId successorRunId =
+                    coding.reconcileSession(sessionId).activeRun().orElseThrow().runId();
+            assertThat(successorRunId).isNotEqualTo(staleRunId);
+
+            assertThatThrownBy(() -> coding.abortActiveRun(sessionId, staleRunId, "exact-stale-abort"))
+                    .isInstanceOf(ProjectProductException.class)
+                    .satisfies(exception -> assertThat(((ProjectProductException) exception).code())
+                            .isEqualTo("ACTIVE_RUN_MISMATCH"));
+            assertThat(runtime.find(successorRunId).orElseThrow().status()).isEqualTo(AgentRunStatus.RUNNING);
+
+            RuntimeCommandResult cancelled = coding.abortActiveRun(sessionId, successorRunId, "exact-abort")
+                    .orElseThrow();
+            assertThat(cancelled.command().runId()).isEqualTo(successorRunId);
+            assertThat(cancelled.status()).isEqualTo(RuntimeCommandStatus.ACCEPTED);
+            assertThat(runtime.find(successorRunId).orElseThrow().status()).isEqualTo(AgentRunStatus.CANCELLED);
+        }
+    }
+
+    @Test
+    void recoveryProjectionExposesTheOriginalActiveRunWithoutReconciling() {
+        ProductFixture fixture = productFixture();
+        CapturingRuntime runtime = new CapturingRuntime();
+        TestIds ids = new TestIds("recovery-projection");
+        try (ProjectPersistenceAssembly assembly =
+                ProjectPersistenceAssembly.open(ProjectPersistenceConfiguration.memory(), CLOCK, ids, null)) {
+            CodingSessionService coding = fixture.codingService(assembly, runtime, ids);
+            var created = coding.createSession(fixture.projectId, "recover this run", List.of(), "recovery-create");
+            AgentRunId original = created.activeRun().orElseThrow().runId();
+
+            var page = coding.listSessionsForRecovery(fixture.projectId, 10);
+
+            assertThat(page.items()).singleElement().satisfies(summary -> assertThat(summary.activeRunId())
+                    .contains(original));
+            assertThat(runtime.startCount()).isEqualTo(1);
+        }
+    }
+
+    @Test
+    void hostListBoundaryReportsPageOneHundredAsTruncated() {
+        ProductFixture fixture = productFixture();
+        CapturingRuntime runtime = new CapturingRuntime();
+        TestIds ids = new TestIds("list-boundary");
+        try (ProjectPersistenceAssembly assembly =
+                ProjectPersistenceAssembly.open(ProjectPersistenceConfiguration.memory(), CLOCK, ids, null)) {
+            for (int index = 0; index < 101; index++) {
+                assembly.codingSessions()
+                        .createActivity(new CodingSessionActivity(
+                                new AgentSessionId("boundary-" + index),
+                                fixture.projectId,
+                                TENANT,
+                                PRINCIPAL,
+                                "session " + index,
+                                io.haifa.agent.core.session.AgentSessionStatus.ACTIVE,
+                                Optional.empty(),
+                                OptionalLong.empty(),
+                                Optional.empty(),
+                                NOW,
+                                NOW.plusMillis(index),
+                                0));
+            }
+            CodingSessionService coding = fixture.codingService(assembly, runtime, ids);
+
+            var page = coding.listSessions(
+                    fixture.projectId, new CodingSessionQuery(Optional.empty(), Optional.empty(), 100));
+
+            assertThat(page.items()).hasSize(100);
+            assertThat(page.hasMore()).isTrue();
         }
     }
 
@@ -852,6 +992,42 @@ class ProjectPersistenceAssemblyTest {
                     .isEqualTo(io.haifa.agent.store.sqlite.SqliteStoreFailure.DATABASE_BUSY);
             statement.execute("ROLLBACK");
             assertThat(assembly.ports().outbox().pending()).isEmpty();
+        }
+    }
+
+    private static ProjectPersistenceAssembly openSqlite(Path database, String idPrefix) {
+        return ProjectPersistenceAssembly.open(
+                ProjectPersistenceConfiguration.sqlite(database, "env://TEST_KEY"),
+                CLOCK,
+                new TestIds(idPrefix),
+                protector());
+    }
+
+    private static int runOwnershipProbe(Path database) throws Exception {
+        String javaExecutable = Path.of(
+                        System.getProperty("java.home"),
+                        "bin",
+                        System.getProperty("os.name", "").toLowerCase().contains("win") ? "java.exe" : "java")
+                .toString();
+        Process probe = new ProcessBuilder(
+                        javaExecutable,
+                        "-cp",
+                        System.getProperty("java.class.path"),
+                        CodingDatabaseOwnershipProcessProbe.class.getName(),
+                        database.toString())
+                .redirectErrorStream(true)
+                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                .start();
+        try {
+            if (!probe.waitFor(10, TimeUnit.SECONDS)) {
+                throw new AssertionError("ownership probe did not exit within its bounded wait");
+            }
+            return probe.exitValue();
+        } finally {
+            if (probe.isAlive()) {
+                probe.destroyForcibly();
+                probe.waitFor(10, TimeUnit.SECONDS);
+            }
         }
     }
 

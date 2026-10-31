@@ -27,6 +27,7 @@ public final class CodingTerminalApplication {
     private final Tui4jTerminalIo terminalIo;
     private final TerminalWorkspaceContext workspace;
     private final ToolOutputPreviewPublisher previewPublisher;
+    private final CodingTerminalConnectionOptions connectionOptions;
 
     public CodingTerminalApplication(
             ProjectId projectId, CodingSessionClient client, Optional<AgentSessionId> resumeSession) {
@@ -101,6 +102,30 @@ public final class CodingTerminalApplication {
             TerminalWorkspaceContext workspace,
             CodingAuthenticationClient authentication,
             ToolOutputPreviewPublisher previewPublisher) {
+        this(
+                projectId,
+                client,
+                startup,
+                terminalIo,
+                workspace,
+                authentication,
+                previewPublisher,
+                CodingTerminalConnectionOptions.embedded());
+    }
+
+    /**
+     * Composition entry for a future CLI worker. Remote v1 supplies {@link CodingTerminalConnectionOptions#remoteV1()}
+     * so the UI refuses Host-owned credential setup and disabled preview/session-consent actions up front.
+     */
+    public CodingTerminalApplication(
+            ProjectId projectId,
+            CodingSessionClient client,
+            CodingTerminalStartup startup,
+            Tui4jTerminalIo terminalIo,
+            TerminalWorkspaceContext workspace,
+            CodingAuthenticationClient authentication,
+            ToolOutputPreviewPublisher previewPublisher,
+            CodingTerminalConnectionOptions connectionOptions) {
         this.projectId = Objects.requireNonNull(projectId, "projectId must not be null");
         this.client = Objects.requireNonNull(client, "client must not be null");
         this.authentication = Objects.requireNonNull(authentication, "authentication must not be null");
@@ -108,6 +133,7 @@ public final class CodingTerminalApplication {
         this.terminalIo = Objects.requireNonNull(terminalIo, "terminalIo must not be null");
         this.workspace = Objects.requireNonNull(workspace, "workspace must not be null");
         this.previewPublisher = Objects.requireNonNull(previewPublisher, "previewPublisher must not be null");
+        this.connectionOptions = Objects.requireNonNull(connectionOptions, "connectionOptions must not be null");
     }
 
     public void run() {
@@ -118,7 +144,8 @@ public final class CodingTerminalApplication {
                 authentication,
                 pump,
                 new TerminalUiReducer(),
-                TerminalUiState.initial(DEFAULT_COLUMNS, DEFAULT_ROWS, workspace));
+                TerminalUiState.initial(DEFAULT_COLUMNS, DEFAULT_ROWS, workspace),
+                connectionOptions);
         controller.attachToolOutputPreviewPublisher(previewPublisher);
         try (controller) {
             controller.start(startup);

@@ -544,10 +544,20 @@ public final class TerminalUiReducer {
                     true,
                     state.themeName(),
                     state.cancelArmed(),
-                    state.waiting());
+                    state.waiting(),
+                    state.sessionRows(),
+                    state.sessionRowSelected());
         }
         if (action instanceof TerminalUiAction.ThemeChanged theme) {
             return state.withThemeName(theme.themeName());
+        }
+        if (action instanceof TerminalUiAction.SessionRowsLoaded rows) {
+            // A sidebar refresh never rewrites the transcript, the selection epoch or the current Run; it only
+            // replaces the bounded row list, so a list poll racing a Run event cannot corrupt the main area.
+            return state.withSessionRows(rows.rows());
+        }
+        if (action instanceof TerminalUiAction.SessionRowMoved moved) {
+            return state.withSessionRowMoved(moved.delta());
         }
         if (action instanceof TerminalUiAction.CancelArmedChanged armed) {
             String newStatus = armed.armed()
@@ -669,7 +679,9 @@ public final class TerminalUiReducer {
                 state.sidebarExplicitlyToggled(),
                 state.themeName(),
                 runSettled ? false : state.cancelArmed(),
-                waiting);
+                waiting,
+                state.sessionRows(),
+                state.sessionRowSelected());
     }
 
     private static Optional<TerminalSelector> selectorAfterSessionLoad(
@@ -1544,6 +1556,8 @@ public final class TerminalUiReducer {
                 sidebarExplicitlyToggled,
                 state.themeName(),
                 cancelArmed,
-                state.waiting());
+                state.waiting(),
+                state.sessionRows(),
+                state.sessionRowSelected());
     }
 }

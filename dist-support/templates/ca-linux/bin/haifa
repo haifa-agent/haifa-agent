@@ -4,6 +4,19 @@ umask 077
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 package_dir=$(CDPATH= cd -- "$script_dir/.." && pwd -P)
+
+set -- "$package_dir"/lib/haifa-agent-cli-*.jar "$@"
+jar=$1
+shift
+test -f "$jar" || { echo 'Missing Coding Agent JAR in lib/' >&2; exit 1; }
+
+# The remote TUI is a thin client: pass its argument vector through untouched. It must not receive the bundled
+# --config (the Host owns the workspace, Runtime and credentials) and it must not create local data directories.
+if [ "${1:-}" = "tui" ]; then
+    exec "$package_dir/jre/bin/java" -Dfile.encoding=UTF-8 -Dsun.stdout.encoding=UTF-8 \
+        -Dsun.stderr.encoding=UTF-8 -Xmx1024m -jar "$jar" "$@"
+fi
+
 : "${HAIFA_DATA_ROOT:=${HOME}/.haifa-agent/coding}"
 mkdir -p "$HAIFA_DATA_ROOT/data/transcripts" "$HAIFA_DATA_ROOT/logs"
 : "${HAIFA_SQLITE_DATABASE_PATH:=$HAIFA_DATA_ROOT/data/runtime.db}"
@@ -11,10 +24,15 @@ mkdir -p "$HAIFA_DATA_ROOT/data/transcripts" "$HAIFA_DATA_ROOT/logs"
 : "${HAIFA_LOG_DIR:=$HAIFA_DATA_ROOT/logs}"
 export HAIFA_DATA_ROOT HAIFA_SQLITE_DATABASE_PATH HAIFA_TRANSCRIPT_ROOT HAIFA_LOG_DIR
 
-set -- "$package_dir"/lib/haifa-agent-cli-*.jar "$@"
-jar=$1
-shift
-test -f "$jar" || { echo 'Missing Coding Agent JAR in lib/' >&2; exit 1; }
+# The host subcommand must stay the first JVM argument, so the bundled configuration is inserted after it and an
+# explicit --config still wins because the parser keeps the last value.
+if [ "${1:-}" = "host" ]; then
+    shift
+    exec "$package_dir/jre/bin/java" -Dfile.encoding=UTF-8 -Dsun.stdout.encoding=UTF-8 \
+        -Dsun.stderr.encoding=UTF-8 -Xmx1024m -jar "$jar" host \
+        --config "$package_dir/haifa-coding.yaml" "$@"
+fi
+
 exec "$package_dir/jre/bin/java" -Dfile.encoding=UTF-8 -Dsun.stdout.encoding=UTF-8 \
     -Dsun.stderr.encoding=UTF-8 -Xmx1024m -jar "$jar" \
     --config "$package_dir/haifa-coding.yaml" "$@"
