@@ -134,6 +134,7 @@ public final class SummaryModelInvoker {
                 callId,
                 requestId,
                 run.id(),
+                run.rootRunId().value(),
                 iteration,
                 physicalCallCount + 1,
                 binding.configuration().model(),

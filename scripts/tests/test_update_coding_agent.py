@@ -1,5 +1,6 @@
 """Focused filesystem/ref/PATH checks; never touches the real installation or registry."""
 import importlib.util
+import io
 from pathlib import Path
 import subprocess
 import tempfile
@@ -173,6 +174,113 @@ class UpdaterTest(unittest.TestCase):
         self.assertTrue(current.is_dir())
         self.assertTrue(unrelated.is_dir())
         self.assertFalse(any(path.exists() for path in stale))
+
+    def cli_jar(self, with_version_entry=True):
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, 'w') as jar:
+            if with_version_entry:
+                jar.writestr(
+                    'META-INF/haifa/coding-agent-version.properties',
+                    'version=0.1.5-SNAPSHOT\n',
+                )
+            jar.writestr('io/haifa/agent/cli/HaifaCliMain.class', b'main')
+        return buffer.getvalue()
+
+    def latest_package(self, jar_bytes=None):
+        archive = self.root / 'latest-package.zip'
+        with zipfile.ZipFile(archive, 'w') as package:
+            for path, data in {
+                'bin/haifa.bat': b'launcher',
+                'bin/install.bat': b'installer',
+                'jre/bin/java.exe': b'jre',
+                'haifa-coding.yaml': b'config',
+                'lib/' + self.jar_name: self.cli_jar() if jar_bytes is None else jar_bytes,
+            }.items():
+                package.writestr(self.folder + '/' + path, data)
+        return archive
+
+    def test_latest_rewrites_only_the_launcher_name_and_version_key(self):
+        with patch.object(updater, 'smoke') as smoke:
+            result = updater.assemble_latest(
+                self.latest_package(), self.install, self.version, 'feat-x-abc123', self.report
+            )
+
+        target = self.install / 'haifa-coding-agent-latest'
+        self.assertEqual(result['mode'], 'latest-install')
+        self.assertEqual(result['channel'], 'latest')
+        self.assertEqual(result['version_label'], 'feat-x-abc123')
+        self.assertEqual((target / 'bin/haifa-latest.bat').read_bytes(), b'launcher')
+        self.assertFalse((target / 'bin/haifa.bat').exists())
+        self.assertEqual((target / 'bin/install.bat').read_bytes(), b'installer')
+        self.assertEqual((target / 'haifa-coding.yaml').read_bytes(), b'config')
+        self.assertEqual((target / 'jre/bin/java.exe').read_bytes(), b'jre')
+        with zipfile.ZipFile(target / 'lib' / self.jar_name) as jar:
+            self.assertEqual(
+                jar.read('META-INF/haifa/coding-agent-version.properties'),
+                b'version=feat-x-abc123\n',
+            )
+            self.assertEqual(jar.read('io/haifa/agent/cli/HaifaCliMain.class'), b'main')
+        self.assertEqual(smoke.call_count, 1)
+        self.assertFalse((self.install / self.folder).exists())
+
+    def test_latest_replaces_the_previous_channel_installation(self):
+        target = self.install / 'haifa-coding-agent-latest'
+        for name in ('lib', 'bin', 'jre'):
+            (target / name).mkdir(parents=True)
+        (target / 'lib' / self.jar_name).write_bytes(b'old jar')
+        (target / 'bin/haifa-latest.bat').write_bytes(b'old launcher')
+
+        with patch.object(updater, 'smoke'):
+            result = updater.assemble_latest(
+                self.latest_package(), self.install, self.version, 'feat-x-abc123', self.report
+            )
+
+        self.assertEqual(result['mode'], 'latest-replace')
+        self.assertEqual((target / 'bin/haifa-latest.bat').read_bytes(), b'launcher')
+        self.assertFalse(list(self.install.glob('.haifa-coding-agent-latest.previous-*')))
+
+    def test_latest_rejects_a_jar_without_the_version_key(self):
+        with self.assertRaisesRegex(ValueError, 'coding-agent-version.properties'):
+            updater.assemble_latest(
+                self.latest_package(self.cli_jar(with_version_entry=False)),
+                self.install,
+                self.version,
+                'feat-x-abc123',
+                self.report,
+            )
+        self.assertFalse((self.install / 'haifa-coding-agent-latest').exists())
+
+    def test_latest_label_uses_the_checkout_name_and_short_sha(self):
+        self.assertEqual(
+            updater.latest_label(Path('/worktrees/feat-opencode-go-login'), 'd67c7516'),
+            'feat-opencode-go-login-d67c75',
+        )
+        with self.assertRaisesRegex(ValueError, 'version label'):
+            updater.latest_label(Path('/worktrees/bad name!'), 'd67c751')
+
+    def test_path_with_addition_keeps_both_channels_runnable(self):
+        install = str(self.install)
+        stable = Path(install) / 'haifa-coding-agent-v0.1.4-SNAPSHOT' / 'bin'
+        latest = Path(install) / 'haifa-coding-agent-latest' / 'bin'
+
+        added = updater.path_with_addition(f'C:\\Tools;{stable}', latest)
+        self.assertEqual(added, f'C:\\Tools;{stable};{latest}')
+        self.assertEqual(updater.path_with_addition(added, latest), added)
+        self.assertEqual(added.count(str(latest)), 1)
+
+    def test_packaged_jar_must_match_the_built_checkout_jar(self):
+        built = self.root / self.jar_name
+        built.write_bytes(b'built jar')
+        archive = self.root / 'package.zip'
+        with zipfile.ZipFile(archive, 'w') as package:
+            package.writestr(self.folder + '/lib/' + self.jar_name, b'built jar')
+
+        updater.verify_packaged_jar(archive, self.folder, built)
+
+        with zipfile.ZipFile(archive, 'w') as package:
+            package.writestr(self.folder + '/lib/' + self.jar_name, b'stale jar')
+        with self.assertRaisesRegex(RuntimeError, 'differs'):
+            updater.verify_packaged_jar(archive, self.folder, built)
 
 if __name__ == '__main__':
     unittest.main()

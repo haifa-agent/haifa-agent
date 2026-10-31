@@ -8,3 +8,4 @@ providers:
   - resource: providers/zhipu/provider.yaml
   - resource: providers/tokenrhythm/provider.yaml
   - resource: providers/google-antigravity/provider.yaml
+  - resource: providers/opencode-go/provider.yaml

@@ -5,6 +5,7 @@ import com.williamcallahan.tui4j.ansi.TextWrapper;
 import com.williamcallahan.tui4j.ansi.Truncate;
 import com.williamcallahan.tui4j.compat.bubbles.textarea.Textarea;
 import com.williamcallahan.tui4j.compat.bubbles.viewport.Viewport;
+import io.haifa.agent.application.coding.terminal.application.CodingAgentVersion;
 import io.haifa.agent.application.coding.terminal.markdown.render.MarkdownRenderer;
 import io.haifa.agent.application.coding.terminal.state.ApprovalDetails;
 import io.haifa.agent.application.coding.terminal.state.PendingMessage;
@@ -450,7 +451,7 @@ final class Tui4jTerminalView {
         }
         lines.add("");
 
-        lines.add(theme.muted("• Haifa Agent v0.1.5-SNAPSHOT"));
+        lines.add(theme.muted("• Haifa Agent v" + CodingAgentVersion.current()));
         lines.add(theme.muted("• " + shortcuts.sidebarToggle() + " toggle"));
 
         while (lines.size() < height) {

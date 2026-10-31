@@ -39,6 +39,10 @@ import io.haifa.agent.auth.localmodel.codex.CodexDeviceLoginOperation;
 import io.haifa.agent.auth.localmodel.codex.CodexExternalLoginMethod;
 import io.haifa.agent.auth.localmodel.codex.CodexLocalCompatibilityRegistrationFactory;
 import io.haifa.agent.auth.localmodel.codex.CodexTokenClient;
+import io.haifa.agent.auth.localmodel.opencode.OpenCodeGoDeviceLoginOperation;
+import io.haifa.agent.auth.localmodel.opencode.OpenCodeGoEndpoints;
+import io.haifa.agent.auth.localmodel.opencode.OpenCodeGoExternalLoginMethod;
+import io.haifa.agent.auth.localmodel.opencode.OpenCodeGoTokenClient;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.id.UuidV7IdentifierGenerator;
 import io.haifa.agent.common.time.SystemTimeProvider;
@@ -271,6 +275,9 @@ final class LocalCodingAgent implements AutoCloseable {
         var antigravityRegistration = AntigravityLocalCompatibilityRegistrationFactory.create(environmentResolver);
         var antigravityProjects = new AntigravityProjectRegistry();
         List<ExternalLoginMethod> authMethods = new ArrayList<>();
+        authMethods.add(new OpenCodeGoExternalLoginMethod(
+                new OpenCodeGoTokenClient(http, json, authClock, Duration.ofSeconds(30), new OpenCodeGoEndpoints()),
+                OpenCodeGoDeviceLoginOperation.Sleeper.system()));
         codexRegistration.ifPresent(registration -> authMethods.add(new CodexExternalLoginMethod(
                 registration,
                 new CodexTokenClient(http, json, authClock, Duration.ofSeconds(30), registration),
@@ -1343,6 +1350,11 @@ final class LocalCodingAgent implements AutoCloseable {
                 && model.reasoningMode() != ModelReasoningMode.DISABLED) {
             // DeepSeek Responses thinking mode requires the previous assistant reasoning_text to be passed back.
             // Retain and replay reasoning for every assistant message, not only tool-call turns.
+            invocationOptions.put("requires_reasoning_continuation", true);
+        }
+        if (OpenAiCompatibleDialects.OPENCODE_GO.equals(model.dialect())
+                && model.reasoningMode() != ModelReasoningMode.DISABLED) {
+            // The Go channel translates the DeepSeek thinking contract, so a tool turn keeps its reasoning.
             invocationOptions.put("requires_reasoning_continuation", true);
         }
         ResolvedModelSnapshot snapshot = ResolvedModelSnapshot.create(

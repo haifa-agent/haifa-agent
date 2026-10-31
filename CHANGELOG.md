@@ -2,6 +2,32 @@
 
 ## Unreleased - 0.1.5-SNAPSHOT
 
+- OpenCode Go now behaves like the channel documents: model requests carry the frozen root-Run
+  affinity as `x-opencode-session` so delegated children share routing and prompt cache, the three
+  bindings declare the reasoning profiles the channel serves (`reasoningMode: ENABLED` maps the
+  DeepSeek thinking contract and keeps tool-turn continuation), the Console usage extension
+  (`usage.cost`, `usage.opencode.tokens.*`) feeds `ModelUsage` instead of being dropped, and the
+  health probe reads the dialect's model-list URI (`/inference/go/v1/models`) instead of appending
+  `/models` to the Chat Completions base.
+
+- The Coding Agent footer version now comes from `META-INF/haifa/coding-agent-version.properties`
+  instead of a hard-coded string, and `scripts/refresh-ca` gained a `latest` channel that publishes
+  `<install-root>\haifa-coding-agent-latest`. That package differs from the versioned one only in
+  `bin\haifa-latest.bat` and the CLI JAR's rewritten version key
+  (`<worktree>-<first six commit characters>`), appends its `bin` to the User PATH so `haifa-latest`
+  runs next to `haifa`, and leaves the versioned installation untouched.
+
+- OpenCode Go is available as a normal subscription connection: the connection center lists it for
+  every user and signs in with the console authorization code (RFC 8628 device grant), so headless
+  Linux hosts need no browser or loopback callback. The packaged catalog adds the reviewed
+  `opencode-go-deepseek-v4-pro`, `opencode-go-deepseek-flash` and `opencode-go-kimi-k3` bindings on the new
+  `opencode-go-openai-chat` dialect, and the device-code failures (`AUTH_DEVICE_CODE_UNAVAILABLE`,
+  `AUTH_DEVICE_CODE_REQUEST_FAILED`, `AUTH_DEVICE_CODE_RESPONSE_INVALID`,
+  `AUTH_DEVICE_CODE_POLL_FAILED`, `AUTH_DEVICE_RESPONSE_TOO_LARGE`) now carry recovery guidance. The
+  OpenCode Go dialect also sends the channel's two documented transport headers, `x-opencode-session`
+  (the run id) and a product `User-Agent`; without the session header the gateway answers HTTP 400
+  `missingsessionid`, which Runtime reported as `MODEL_REQUEST_INVALID`.
+
 - Release packaging is addressed per product and platform (`ca`, `pa`, `sdk` with an optional
   `:windows-x64` / `:linux-x64` suffix); the packager reuses one trimmed JRE per platform (module-set
   aware) and one Web SPA build per delivery mode instead of rebuilding them, and `sha256sums.txt` lists
