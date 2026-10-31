@@ -1145,9 +1145,8 @@ public final class CodingTerminalController implements AutoCloseable {
         sessionRowsInFlight = true;
         submitControlEffect(
                 () -> {
-                    List<TerminalSessionRow> rows = client.list(projectId, TerminalUiState.MAX_SESSION_ROWS).stream()
-                            .map(TerminalSessionRow::from)
-                            .toList();
+                    List<TerminalSessionRow> rows =
+                            TerminalSessionRow.ordered(client.list(projectId, TerminalUiState.MAX_SESSION_ROWS));
                     return () -> {
                         sessionRowsInFlight = false;
                         sessionRowsFetchedAtMillis = System.currentTimeMillis();

@@ -148,6 +148,48 @@ class TerminalSessionRowTest {
     }
 
     @Test
+    void waitingSessionsSortFirstThenActiveThenRecentHistory() {
+        java.util.List<CodingSessionSummary> unordered = List.of(
+                // Deliberately ordered worst-case so a stable input cannot accidentally satisfy the assertion.
+                summary("s-old", "Old history", AgentSessionStatus.ACTIVE, Optional.empty(), 0),
+                summary("s-run", "Live work", AgentSessionStatus.ACTIVE, Optional.of(AgentRunStatus.RUNNING), 0),
+                summary(
+                        "s-wait",
+                        "Needs approval",
+                        AgentSessionStatus.ACTIVE,
+                        Optional.of(AgentRunStatus.WAITING_APPROVAL),
+                        0));
+
+        List<TerminalSessionRow> ordered = TerminalSessionRow.ordered(unordered);
+
+        // A Session blocked on a human is the only actionable row, so it must not be buried by active or idle ones.
+        assertThat(ordered).hasSize(3);
+        assertThat(ordered.get(0).sessionId().value()).isEqualTo("s-wait");
+        assertThat(ordered.get(1).sessionId().value()).isEqualTo("s-run");
+        assertThat(ordered.get(2).sessionId().value()).isEqualTo("s-old");
+    }
+
+    @Test
+    void orderingIsCappedSoTruncationKeepsActionableRows() {
+        java.util.List<CodingSessionSummary> many = new ArrayList<>();
+        // The waiting Session is appended last, so only an order-then-truncate pipeline keeps it in the list.
+        for (int index = 0; index < TerminalUiState.MAX_SESSION_ROWS + 10; index++) {
+            many.add(summary("s-" + index, "Session " + index, AgentSessionStatus.ACTIVE, Optional.empty(), 0));
+        }
+        many.add(summary(
+                "s-wait",
+                "Needs approval",
+                AgentSessionStatus.ACTIVE,
+                Optional.of(AgentRunStatus.WAITING_APPROVAL),
+                0));
+
+        List<TerminalSessionRow> ordered = TerminalSessionRow.ordered(many);
+
+        assertThat(ordered).hasSize(TerminalUiState.MAX_SESSION_ROWS);
+        assertThat(ordered.getFirst().sessionId().value()).isEqualTo("s-wait");
+    }
+
+    @Test
     void emptySidebarHasNoSelectableRow() {
         TerminalUiState state = TerminalUiState.initial(140, 40);
 

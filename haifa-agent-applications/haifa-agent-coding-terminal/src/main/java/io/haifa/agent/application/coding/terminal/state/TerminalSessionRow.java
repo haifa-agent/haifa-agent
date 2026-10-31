@@ -2,6 +2,7 @@ package io.haifa.agent.application.coding.terminal.state;
 
 import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
 import io.haifa.agent.core.session.AgentSessionId;
+import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 
@@ -13,7 +14,12 @@ import java.util.Objects;
  * The status label is derived from the authoritative summary mapping rather than from local UI guesses.
  */
 public record TerminalSessionRow(
-        AgentSessionId sessionId, String displayName, String statusLabel, boolean active, int queuedCount) {
+        AgentSessionId sessionId,
+        String displayName,
+        String statusLabel,
+        boolean active,
+        int queuedCount,
+        java.time.Instant lastActivityAt) {
     /** Upper bound of the rendered name; the sidebar clips to its column width as well. */
     private static final int MAX_NAME = 120;
 
@@ -25,6 +31,7 @@ public record TerminalSessionRow(
         if (displayName.length() > MAX_NAME) displayName = displayName.substring(0, MAX_NAME);
         statusLabel = Objects.requireNonNull(statusLabel, "statusLabel must not be null");
         if (queuedCount < 0) throw new IllegalArgumentException("queuedCount must not be negative");
+        lastActivityAt = Objects.requireNonNull(lastActivityAt, "lastActivityAt must not be null");
     }
 
     /**
@@ -41,7 +48,8 @@ public record TerminalSessionRow(
                 summary.displayName(),
                 statusLabel(summary),
                 summary.activeRunId().isPresent(),
-                summary.queuedCount());
+                summary.queuedCount(),
+                summary.lastActivityAt());
     }
 
     /**
@@ -77,4 +85,32 @@ public record TerminalSessionRow(
         if (queuedCount > 0) text.append(" +").append(queuedCount);
         return text.toString();
     }
+
+    /**
+     * Orders sessions for the sidebar: human-waiting first, then live work, then recent history.
+     *
+     * <p>A Run that waits on a human is the only row that blocks progress, so burying it under active or historical
+     * Sessions would hide the one action the operator has to take. Ties fall back to the most recent activity, which
+     * keeps the list stable without inventing a priority that the Host does not publish. The cap is applied after
+     * ordering so a truncated list keeps the most actionable rows.
+     */
+    public static List<TerminalSessionRow> ordered(List<CodingSessionSummary> summaries) {
+        Objects.requireNonNull(summaries, "summaries must not be null");
+        return summaries.stream()
+                .map(TerminalSessionRow::from)
+                .sorted(java.util.Comparator.comparingInt(TerminalSessionRow::rank)
+                        .thenComparing(TerminalSessionRow::lastActivityAt, java.util.Comparator.reverseOrder()))
+                .limit(MAX_ROWS)
+                .toList();
+    }
+
+    /** Lower rank sorts first; the values only encode the required order. */
+    private static int rank(TerminalSessionRow row) {
+        if (row.awaitingHuman()) return 0;
+        if (row.active()) return 1;
+        return 2;
+    }
+
+    /** Row cap shared with the UI state so the controller cannot request more than the sidebar renders. */
+    private static final int MAX_ROWS = 50;
 }
