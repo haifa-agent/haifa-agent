@@ -26,6 +26,7 @@ CLASSIFICATIONS = {
     "PASS",
     "TEST_FAILURE",
     "COMPILE_FAILURE",
+    "FORMAT_FAILURE",
     "BUILD_CONFIGURATION_FAILURE",
     "OUTER_TIMEOUT_PROCESS_EXIT_UNKNOWN",
     "HOST_RESOURCE_OOM",
@@ -33,6 +34,9 @@ CLASSIFICATIONS = {
     "CANCELLED",
 }
 SENSITIVE_ARGUMENT = re.compile(r"(?i)(api[-_.]?key|token|password|secret|credential)=")
+# Spotless reports a violation as "Run 'mvn spotless:apply' to fix these violations." and otherwise exits
+# non-zero with no compile or test marker, which used to be misreported as a build-configuration failure.
+FORMAT_VIOLATION = re.compile(r"(?i)spotless:apply|to fix these violations|spotless.*violation")
 REACTOR_LINE = re.compile(
     r"^\[INFO\]\s+(.+?)\s+\.{2,}\s+(SUCCESS|FAILURE|SKIPPED)\s+\[\s*([^\]]+)\s*\]\s*$"
 )
@@ -374,6 +378,8 @@ def classify(exit_code: int, output: str, timed_out: bool, cancelled: bool, slep
         result = "PASS"
     elif "compilation failure" in lowered or "compilation error" in lowered:
         result = "COMPILE_FAILURE"
+    elif FORMAT_VIOLATION.search(output):
+        result = "FORMAT_FAILURE"
     elif "there are test failures" in lowered or re.search(
         r"tests run:\s*\d+,\s*failures:\s*[1-9]\d*|tests run:\s*\d+,.+errors:\s*[1-9]\d*",
         lowered,

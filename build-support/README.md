@@ -122,6 +122,29 @@ python ./build-support/scripts/check_commit_authors.py --range origin/dev..HEAD
 规则失配并长期阻塞合并。Git 的作者与提交者字段由客户端自填、可在推送前改写，所以该门禁只做归属卫生，
 不构成安全边界。
 
+## Spotless 与包装脚本调用方式
+
+新写或大改文件后，先在本模块执行 `spotless:apply`，再用入口执行 `spotless:check`。`spotless:check` 只在格式
+已干净时返回 0；直接对它排障会把"格式未整理"误读成"构建配置错误"。
+
+```powershell
+# 1) 先整理受影响模块的格式
+.\mvnw.cmd -o -q -pl :haifa-agent-cli,:haifa-agent-coding-terminal spotless:apply
+
+# 2) 再用入口校验（作为原生 PowerShell 调用，不要套外层 cmd /c）
+.\build-support\scripts\invoke-haifa-maven.ps1 --layer L1 -- `
+  -pl :haifa-agent-cli -pl :haifa-agent-coding-terminal spotless:check
+```
+
+两个已知坑：
+
+- **不要在 `cmd /c` 里套 `invoke-haifa-maven.ps1` 并重定向输出。** 该入口本身由 PowerShell 脚本转调 Python；
+  再嵌一层 `cmd /c ".\build-support\scripts\invoke-haifa-maven.ps1 ... > log 2>&1"` 会挂起直到外层超时，看起来
+  像 Spotless 超时，实际与 Spotless 无关。直接调用 `mvnw.cmd`，或按上面的原生 PowerShell 写法执行。
+- **格式违规是独立分类。** 入口把 Maven 结果写入 `HAIFA_MAVEN_RESULT`，Spotless 违规现在输出
+  `FORMAT_FAILURE`，不再落到容易误解的 `BUILD_CONFIGURATION_FAILURE`。看到该分类就执行 `spotless:apply`，
+  不要按配置问题排查。
+
 ## 只读影响范围建议
 
 `scripts/suggest_maven_scope.py` 读取当前 worktree（含未跟踪文件）与 `HEAD` 的 Git diff，并从 Maven
