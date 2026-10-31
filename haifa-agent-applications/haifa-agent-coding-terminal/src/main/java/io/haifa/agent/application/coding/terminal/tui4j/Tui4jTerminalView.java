@@ -37,6 +37,9 @@ final class Tui4jTerminalView {
     /** Selector kind prefix of a clarification wizard, whose rows carry answer markers instead of plain labels. */
     private static final String CLARIFICATION_SELECTOR_PREFIX = "clarification:";
 
+    /** The question count at the start of a wizard title, so a header cannot supply a second match. */
+    private static final Pattern CLARIFICATION_STEP_COUNT = Pattern.compile("^Clarification · Step \\d+ of (\\d+) · ");
+
     private static final Set<String> SUCCESS_STATUSES = Set.of(
             "ACCEPTED",
             "APPLIED",
@@ -1110,8 +1113,8 @@ final class Tui4jTerminalView {
                 option.append(" [").append(sanitize(detail.badge())).append(']');
             }
             String row = option.toString();
-            if (selected && answersAQuestion) {
-                row = enterAffordance(row, width);
+            if (answersAQuestion) {
+                row = selected ? enterAffordance(row, width) : Truncate.truncate(row, Math.max(8, width - 2), "…");
             }
             lines.add("│ " + (selected ? theme.selected(row) : theme.unselected(row)));
             if (detail != null && !detail.description().isBlank()) {
@@ -1128,12 +1131,27 @@ final class Tui4jTerminalView {
         } else if ("auth-device".equals(selector.kind())) {
             hint = "└─ c copy device code · l copy link · o open page · Enter select · Esc cancel sign-in";
         } else if (answersAQuestion) {
-            hint = "└─ enter select · space mark · escape close (editor preserved)";
+            hint = clarificationHint(selector.title());
         } else {
             hint = "└─ enter select · escape close (editor preserved)";
         }
         lines.add(theme.muted(hint));
         return lines;
+    }
+
+    /**
+     * Keys for a clarification modal. A multi-question wizard advertises ← and →, and the review advertises the way
+     * back to a question. A single question keeps the mark-and-enter hint.
+     */
+    private static String clarificationHint(String title) {
+        if (title.startsWith("Clarification · Review")) {
+            return "└─ ← back · enter edit or send · esc close";
+        }
+        Matcher step = CLARIFICATION_STEP_COUNT.matcher(title);
+        if (step.find() && Integer.parseInt(step.group(1)) > 1) {
+            return "└─ ← previous · → next · enter select · space mark";
+        }
+        return "└─ enter select · space mark · escape close (editor preserved)";
     }
 
     /**

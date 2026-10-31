@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clarification ← → 翻页与提交前预览</title>
+<style>
+  :root {
+    --page: #0c0d10;
+    --ink: #ececee;
+    --dim: #9a9aa3;
+    --line: #2a2c33;
+    --term: #121418;
+    --text: #f4f4f5;
+    --muted: #a1a1aa;
+    --focus: #b06aa6;
+    --pending: #eac35b;
+    --selected-bg: #6a2f63;
+    --selected-fg: #ffffff;
+    --accent: #79c7c5;
+    --editor: #161b22;
+    --border: #3f3f46;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--page); color: var(--ink); }
+  body {
+    font: 15px/1.5 "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif;
+    padding: 28px 24px 64px;
+  }
+  h1 { font-size: 22px; font-weight: 650; letter-spacing: 0; margin: 0 0 8px; }
+  h2 { font-size: 16px; font-weight: 650; margin: 36px 0 8px; }
+  p.lead { margin: 0; max-width: 760px; color: var(--dim); }
+  .section-note { margin: 0 0 14px; max-width: 760px; color: var(--dim); }
+  .frames { display: grid; gap: 18px; max-width: 860px; }
+  figure { margin: 0; }
+  figcaption { margin: 0 0 8px; }
+  figcaption strong { display: block; color: var(--ink); font-weight: 650; }
+  figcaption span { color: var(--dim); }
+  .terminal {
+    width: min(100%, 820px);
+    background: var(--term);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font: 13px/1.45 "JetBrains Mono", "Sarasa Mono SC", "Noto Sans Mono", ui-monospace, monospace;
+    padding: 14px 16px 12px;
+    overflow-x: auto;
+  }
+  .terminal:focus { outline: 1px solid var(--accent); outline-offset: 2px; }
+  .line { white-space: pre; min-height: 1.45em; }
+  .pending { color: var(--pending); }
+  .muted { color: var(--muted); }
+  .focus { color: var(--focus); }
+  .accent { color: var(--accent); }
+  .selected {
+    color: var(--selected-fg);
+    background: var(--selected-bg);
+    font-weight: 700;
+  }
+  .editor {
+    background: var(--editor);
+    min-height: 4.35em;
+    padding: 2px 0;
+  }
+  .live {
+    display: grid;
+    grid-template-columns: minmax(0, 820px) 300px;
+    gap: 18px;
+    align-items: start;
+    max-width: 1140px;
+  }
+  .panel {
+    border: 1px solid var(--line);
+    padding: 14px 14px 12px;
+    position: sticky;
+    top: 12px;
+  }
+  .panel h3 { margin: 0 0 8px; font-size: 14px; }
+  .panel p, .panel li { color: var(--dim); font-size: 13px; }
+  .panel ol { margin: 0; padding-left: 18px; }
+  .panel li { margin: 4px 0; }
+  .now { color: var(--ink); min-height: 3em; }
+  .keys { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  button, .chip {
+    font: inherit;
+    color: var(--ink);
+    background: transparent;
+    border: 1px solid var(--line);
+    padding: 4px 8px;
+    cursor: pointer;
+  }
+  button:hover, .chip:hover, .chip.on { border-color: var(--accent); color: var(--accent); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+  .payload {
+    margin-top: 10px;
+    color: var(--text);
+    font: 12px/1.45 ui-monospace, monospace;
+    white-space: pre-wrap;
+  }
+  .text-entry {
+    width: 100%;
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    outline: none;
+    padding: 0;
+  }
+  @media (max-width: 980px) {
+    .live { grid-template-columns: 1fr; }
+    .panel { position: static; }
+  }
+</style>
+</head>
+<body>
+  <h1>Clarification ← → 翻页与提交前预览</h1>
+  <p class="lead">按当前 Coding Terminal 的 dark 主题和按键画的画面稿。英文文案、勾选符号、底栏提示和「先预览再发送」都与现在的实现一致。← →、空格、回车可以在最下面那一屏里直接试。</p>
+
+  <h2>← → 翻页</h2>
+  <p class="section-note">多个问题不再只能从第一题走到最后一题。←、→ 会换题，已经勾过的答案和高亮行都留着。这一题还没答完也可以按 → 看。</p>
+  <div class="frames" id="nav-frames"></div>
+
+  <h2>提交前预览</h2>
+  <p class="section-note">最后一次确认不会直接发给 Runtime。预览列出每一题将要发送的选项或文字。回车某一行回去改；只有回车 Send answer 才提交。多选的最后一行因此改成 Review answers。</p>
+  <div class="frames" id="review-frames"></div>
+
+  <h2>自己按一遍</h2>
+  <p class="section-note">点一下终端，然后用键盘。← / → 换题，↑ / ↓ 移动，空格打勾，回车确认。也可以点旁边的按钮。</p>
+  <div class="live">
+    <div>
+      <div class="chips" id="scenarios"></div>
+      <div class="terminal" id="live-term" tabindex="0"></div>
+    </div>
+    <aside class="panel">
+      <h3>这一屏在做什么</h3>
+      <p class="now" id="now"></p>
+      <h3>按键</h3>
+      <div class="keys" id="keys"></div>
+      <ol>
+        <li>← → 换题，不丢已选答案，高亮停在离开时的那一行。</li>
+        <li>空格只打勾。单选是 ( ) / (✓)，多选是 [ ] / [✓]。</li>
+        <li>最后一题还没答完时，→ 不会打开预览。</li>
+        <li>预览里回车某一题会回去改；回车 Send answer 才提交。</li>
+        <li>预览里按 ←，回到刚才那一题，而不是回到高亮的那一行。</li>
+      </ol>
+      <div class="payload" id="payload"></div>
+    </aside>
+  </div>
+
+<script>
+const CUSTOM = "Type your own answer";
+const CUSTOM_DESC = "Answer this question with your own text instead of one of the options";
+const DONE = "Done with this question";
+const DONE_DESC = "Mark the answers and open the next question";
+const REVIEW = "Review answers";
+const REVIEW_DESC = "Preview every answer before sending";
+const SEND = "Send answer";
+const SEND_DESC = "Send every marked answer and resume the run";
+const CANCEL = "Cancel";
+const CANCEL_DESC = "Leave the questions unanswered and resume the run";
+const UNANSWERED = "(not answered)";
+const WIDTH = 80;
+
+const STORAGE = {
+  header: "Storage",
+  prompt: "Which storage?",
+  options: [
+    { id: "opt-0-0", label: "Postgres", description: "Runs as a server" },
+    { id: "opt-0-1", label: "SQLite", description: "" }
+  ]
+};
+const LOCATION = {
+  header: "Location",
+  prompt: "Where should it live?",
+  options: [
+    { id: "opt-1-0", label: "In the repository", description: "Follows the repository layout" },
+    { id: "opt-1-1", label: "In the temp folder", description: "" }
+  ]
+};
+
+const SCENES = {
+  single: {
+    label: "两题 · 单选",
+    title: "Delivery plan",
+    questions: [
+      { ...STORAGE, multiple: false, allowCustom: true },
+      { ...LOCATION, multiple: false, allowCustom: true }
+    ]
+  },
+  multi: {
+    label: "两题 · 多选",
+    title: "Delivery plan",
+    questions: [
+      { ...STORAGE, prompt: "Which engines should this service use?", multiple: true, allowCustom: true,
+        options: [
+          { id: "opt-0-0", label: "Postgres", description: "Runs as a server" },
+          { id: "opt-0-1", label: "SQLite", description: "Embedded file database" }
+        ] },
+      { ...LOCATION, multiple: true, allowCustom: true,
+        options: [
+          LOCATION.options[0],
+          { id: "opt-1-1", label: "In the temp folder", description: "Disposable local files" }
+        ] }
+    ]
+  },
+  one: {
+    label: "一题 · 单选",
+    title: "Delivery plan",
+    questions: [{ ...STORAGE, multiple: false, allowCustom: true }]
+  }
+};
+
+function fresh(kind) {
+  const scene = SCENES[kind];
+  const n = scene.questions.length;
+  return {
+    kind,
+    scene,
+    index: 0,
+    focus: Array(n).fill(0),
+    selected: Array.from({ length: n }, () => []),
+    custom: Array(n).fill(""),
+    reviewing: false,
+    row: 0,
+    status: "Awaiting your clarification answer",
+    phase: "selector",
+    text: "",
+    seconds: 19,
+    sent: null
+  };
+}
+
+function marker(multiple, on) {
+  if (multiple) return on ? "[✓]" : "[ ]";
+  return on ? "(✓)" : "( )";
+}
+
+function singleLine(value) {
+  return value.replace(/\s*\n\s*/g, " ").trim();
+}
+
+function clip(value) {
+  const points = Array.from(value);
+  if (points.length <= 160) return value;
+  return points.slice(0, 159).join("") + "…";
+}
+
+function summary(state, index) {
+  const question = state.scene.questions[index];
+  const labels = [];
+  for (const id of state.selected[index]) {
+    const option = question.options.find(item => item.id === id);
+    if (option) labels.push(option.label);
+  }
+  const chosen = labels.join(", ");
+  const free = singleLine(state.custom[index]);
+  if (!chosen && !free) return UNANSWERED;
+  if (!chosen) return clip(free);
+  if (!free) return clip(chosen);
+  return clip(chosen + " · " + free);
+}
+
+function answered(state, index) {
+  return state.selected[index].length > 0 || state.custom[index].trim() !== "";
+}
+
+function canReview(state) {
+  return state.scene.questions.every((_, index) => answered(state, index));
+}
+
+function questionRows(state) {
+  const question = state.scene.questions[state.index];
+  const rows = question.options.map(option => ({
+    label: marker(question.multiple, state.selected[state.index].includes(option.id)) + " " + option.label,
+    description: option.description
+  }));
+  if (question.allowCustom) rows.push({ label: CUSTOM, description: CUSTOM_DESC });
+  if (question.multiple) {
+    const last = state.index === state.scene.questions.length - 1;
+    rows.push({ label: last ? REVIEW : DONE, description: last ? REVIEW_DESC : DONE_DESC });
+  }
+  rows.push({ label: CANCEL, description: CANCEL_DESC });
+  return rows;
+}
+
+function reviewRows(state) {
+  const rows = state.scene.questions.map((question, index) => ({
+    label: question.header + ": " + summary(state, index),
+    description: question.prompt
+  }));
+  rows.push({ label: SEND, description: SEND_DESC });
+  rows.push({ label: CANCEL, description: CANCEL_DESC });
+  return rows;
+}
+
+function activeRows(state) {
+  if (state.phase !== "selector") return [];
+  return state.reviewing ? reviewRows(state) : questionRows(state);
+}
+
+function titleOf(state) {
+  if (state.reviewing) {
+    const count = state.scene.questions.length;
+    return "Clarification · Review · " + count + (count === 1 ? " question" : " questions");
+  }
+  const question = state.scene.questions[state.index];
+  return "Clarification · Step " + (state.index + 1) + " of " + state.scene.questions.length + " · " + question.header;
+}
+
+function hintOf(title) {
+  if (title.startsWith("Clarification · Review")) return "└─ ← back · enter edit or send · esc close";
+  const step = title.match(/^Clarification · Step \d+ of (\d+) · /);
+  if (step && Number(step[1]) > 1) return "└─ ← previous · → next · enter select · space mark";
+  return "└─ enter select · space mark · escape close (editor preserved)";
+}
+
+function truncate(text, max) {
+  if (text.length <= max) return text;
+  if (max <= 1) return "…";
+  return text.slice(0, max - 1) + "…";
+}
+
+function enterAffordance(row) {
+  const badge = " [enter]";
+  const available = Math.max(badge.length + 8, WIDTH - 2);
+  let text = row;
+  if (text.length + badge.length > available) text = truncate(text, Math.max(8, available - badge.length));
+  return text + " ".repeat(Math.max(0, available - text.length - badge.length)) + badge;
+}
+
+function esc(text) {
+  return text.replace(/[&<>]/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[ch]));
+}
+
+function line(html) {
+  return '<div class="line">' + html + "</div>";
+}
+
+function renderTerminal(state, mount, editable) {
+  const card = [
+    line('<span class="pending">Clarification · ' + esc(state.scene.title) + " [pending]</span>"),
+    line('<span class="pending">  The agent needs an answer before it can continue</span>'),
+    line('<span class="muted">  text/plain</span>')
+  ];
+  for (const question of state.scene.questions) {
+    card.push(line('<span class="pending">    ' + esc(question.header + ": " + question.prompt) + "</span>"));
+  }
+  card.push(line(""));
+  const body = [];
+  if (state.phase === "selector") {
+    const rows = activeRows(state);
+    const visible = 4;
+    const start = Math.max(0, Math.min(state.row - Math.floor(visible / 2), rows.length - visible));
+    const end = Math.min(rows.length, start + visible);
+    body.push(line('<span class="focus">┌─ ' + esc(titleOf(state)) + "</span>"));
+    for (let index = start; index < end; index++) {
+      const selected = index === state.row;
+      let row = (selected ? "> " : "  ") + rows[index].label;
+      if (selected) row = enterAffordance(row);
+      else row = truncate(row, Math.max(8, WIDTH - 2));
+      const klass = selected ? "selected" : "muted";
+      body.push(line("│ " + '<span class="' + klass + '">' + esc(row) + "</span>"));
+      if (rows[index].description) {
+        body.push(line('<span class="muted">│      ' + esc(truncate(rows[index].description, Math.max(8, WIDTH - 7))) + "</span>"));
+      }
+    }
+    if (rows.length > visible) {
+      body.push(line('<span class="muted">│ ' + (start + 1) + "-" + end + " of " + rows.length + "</span>"));
+    }
+    body.push(line('<span class="muted">' + esc(hintOf(titleOf(state))) + "</span>"));
+  } else if (state.phase === "text") {
+    const value = editable
+      ? '<input class="text-entry" id="answer" value="' + esc(state.text) + '" autocomplete="off">'
+      : esc(state.text) + "▏";
+    body.push(line('<div class="editor">  ' + value + "</div>"));
+  } else {
+    body.push(line('<div class="editor">  </div>'));
+    body.push(line('<span class="muted">  Normal' + " ".repeat(40) + "enter send</span>"));
+  }
+  const status = "⠋ " + state.status.toUpperCase() + " (" + state.seconds + "s)";
+  body.push(line('<span class="pending">' + esc(status) + "</span>"));
+  mount.innerHTML = card.join("") + body.join("");
+  if (editable && state.phase === "text") {
+    const input = mount.querySelector("#answer");
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+    input.addEventListener("input", () => { state.text = input.value; });
+    input.addEventListener("keydown", event => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        answerText(state);
+        paint();
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        state.phase = "selector";
+        state.status = "Awaiting your clarification answer";
+        paint();
+      }
+    });
+  }
+}
+
+function remember(state) {
+  if (!state.reviewing && state.phase === "selector") state.focus[state.index] = state.row;
+}
+
+function openQuestion(state, row) {
+  state.reviewing = false;
+  state.phase = "selector";
+  const rows = questionRows(state);
+  state.row = Math.min(Math.max(row, 0), rows.length - 1);
+}
+
+function openReview(state) {
+  if (!state.reviewing) remember(state);
+  state.reviewing = true;
+  state.phase = "selector";
+  state.row = 0;
+  state.status = "Review your answers before sending";
+}
+
+function continueAfter(state, reviewAttempt) {
+  if (reviewAttempt && canReview(state)) {
+    openReview(state);
+    return;
+  }
+  if (reviewAttempt) state.status = "Answer every question before the review";
+  openQuestion(state, 0);
+}
+
+function move(state, direction) {
+  if (state.phase !== "selector") return;
+  if (state.reviewing) {
+    if (direction < 0) openQuestion(state, state.focus[state.index]);
+    return;
+  }
+  remember(state);
+  if (direction < 0) {
+    if (state.index === 0) return;
+    state.index -= 1;
+    openQuestion(state, state.focus[state.index]);
+    state.status = "Awaiting your clarification answer";
+    return;
+  }
+  if (state.index < state.scene.questions.length - 1) {
+    state.index += 1;
+    openQuestion(state, state.focus[state.index]);
+    state.status = "Awaiting your clarification answer";
+    return;
+  }
+  if (canReview(state)) openReview(state);
+  else state.status = "Answer every question before the review";
+}
+
+function toggle(state) {
+  if (state.phase !== "selector" || state.reviewing) return;
+  const question = state.scene.questions[state.index];
+  if (state.row >= question.options.length) {
+    if (question.allowCustom && state.row === question.options.length) beginText(state);
+    return;
+  }
+  const id = question.options[state.row].id;
+  const chosen = state.selected[state.index];
+  const existing = chosen.indexOf(id);
+  if (existing >= 0) {
+    chosen.splice(existing, 1);
+    return;
+  }
+  if (!question.multiple) chosen.splice(0, chosen.length);
+  chosen.push(id);
+}
+
+function confirm(state) {
+  if (state.phase !== "selector") return;
+  if (state.reviewing) {
+    const count = state.scene.questions.length;
+    if (state.row < count) {
+      state.index = state.row;
+      openQuestion(state, state.focus[state.index]);
+      state.status = "Awaiting your clarification answer";
+      return;
+    }
+    if (state.row === count) {
+      if (!canReview(state)) {
+        state.status = "Answer every question before the review";
+        return;
+      }
+      submit(state);
+      return;
+    }
+    dismiss(state);
+    return;
+  }
+  const question = state.scene.questions[state.index];
+  const options = question.options.length;
+  if (state.row < options) {
+    const finishing = state.index === state.scene.questions.length - 1;
+    if (question.multiple) {
+      if (!answered(state, state.index)) {
+        state.status = "Select at least one option with Space first";
+        return;
+      }
+      remember(state);
+    } else {
+      remember(state);
+      state.selected[state.index] = [question.options[state.row].id];
+    }
+    if (state.index < state.scene.questions.length - 1) state.index += 1;
+    continueAfter(state, finishing);
+    if (!finishing) state.status = "Awaiting your clarification answer";
+    return;
+  }
+  if (question.allowCustom && state.row === options) {
+    beginText(state);
+    return;
+  }
+  if (question.multiple && state.row === options + (question.allowCustom ? 1 : 0)) {
+    const finishing = state.index === state.scene.questions.length - 1;
+    remember(state);
+    if (!finishing) state.index += 1;
+    continueAfter(state, finishing);
+    if (!finishing) state.status = "Awaiting your clarification answer";
+    return;
+  }
+  dismiss(state);
+}
+
+function beginText(state) {
+  remember(state);
+  state.phase = "text";
+  state.text = state.custom[state.index];
+  state.status = "Type your answer and press Enter";
+}
+
+function answerText(state) {
+  const finishing = state.index === state.scene.questions.length - 1;
+  state.custom[state.index] = state.text.trim();
+  if (!finishing) state.index += 1;
+  continueAfter(state, finishing);
+  if (!finishing && state.phase === "selector" && !state.reviewing) {
+    state.status = "Awaiting your clarification answer";
+  }
+}
+
+function dismiss(state) {
+  state.phase = "dismissed";
+  state.reviewing = false;
+  state.status = "Dismissing questions";
+}
+
+function submit(state) {
+  state.sent = state.scene.questions.map((question, index) =>
+    "selected=" + state.selected[index].join(",") + "\\ncustom=" + state.custom[index]);
+  state.phase = "sent";
+  state.reviewing = false;
+  state.status = "Submitting answer";
+}
+
+function moveRow(state, delta) {
+  if (state.phase !== "selector") return;
+  const rows = activeRows(state);
+  state.row = Math.min(rows.length - 1, Math.max(0, state.row + delta));
+}
+
+function describe(state) {
+  if (state.phase === "sent") return "答案已提交。选择器关掉，Runtime 收到每一题一个 clarification-answer.v1。";
+  if (state.phase === "dismissed") return "Cancel 关掉问题，运行继续，不带答案。";
+  if (state.phase === "text") return "这一行把输入交给编辑区。回车后，这段文字成为这一题的答案。";
+  if (state.reviewing) return "预览。" + state.scene.questions.map(q => q.header).join("、") + " 的已选内容都在列表里。回车第一行会回到那一题；回车 Send answer 才发送。";
+  const question = state.scene.questions[state.index];
+  const where = "第 " + (state.index + 1) + " 题 " + question.header + "。";
+  if (state.status === "Answer every question before the review") return where + " 还有题没答，所以没有打开预览。";
+  if (state.status === "Select at least one option with Space first") return where + " 多选要先用空格打勾，回车本身不打勾。";
+  return where + (question.multiple ? " 空格打勾，最后一行是 " + (state.index === state.scene.questions.length - 1 ? "Review answers。" : "Done with this question。") : " 回车会选中当前行并进入下一题。");
+}
+
+let live = fresh("single");
+let demoToken = 0;
+
+function paint() {
+  renderTerminal(live, document.getElementById("live-term"), true);
+  document.getElementById("now").textContent = describe(live);
+  document.getElementById("payload").textContent = live.sent ? live.sent.join("\n\n") : "";
+  document.querySelectorAll(".chip").forEach(chip => chip.classList.toggle("on", chip.dataset.kind === live.kind));
+}
+
+function press(name, fromUser) {
+  if (fromUser) demoToken++;
+  if (live.phase === "text" && name !== "escape") return;
+  if (name === "up") moveRow(live, -1);
+  else if (name === "down") moveRow(live, 1);
+  else if (name === "left") move(live, -1);
+  else if (name === "right") move(live, 1);
+  else if (name === "space") toggle(live);
+  else if (name === "enter") confirm(live);
+  else if (name === "escape") {
+    if (live.phase === "selector") {
+      live.phase = "closed";
+      live.status = "Awaiting your clarification answer";
+    }
+  } else if (name === "reopen" && live.phase === "closed") {
+    live.phase = "selector";
+  } else if (name === "reset") {
+    const kind = live.kind;
+    live = fresh(kind);
+  }
+  paint();
+  if (live.phase !== "text") document.getElementById("live-term").focus();
+}
+
+function still(id, captionTitle, caption, mutate) {
+  const state = fresh("single");
+  mutate(state);
+  const figure = document.createElement("figure");
+  figure.id = id;
+  const cap = document.createElement("figcaption");
+  cap.innerHTML = "<strong>" + esc(captionTitle) + "</strong><span>" + esc(caption) + "</span>";
+  const term = document.createElement("div");
+  term.className = "terminal";
+  figure.append(cap, term);
+  renderTerminal(state, term, false);
+  return figure;
+}
+
+function mountStills() {
+  const nav = document.getElementById("nav-frames");
+  nav.append(
+    still(
+      "frame-step-1",
+      "第 1 题，高亮停在 SQLite",
+      "底栏写出 ← previous · → next。这一行还没打勾也可以按 → 看下一题。高亮行右侧是 [enter]，避免把单选读成必须先按空格。",
+      state => { state.row = 1; }
+    ),
+    still(
+      "frame-step-2",
+      "按 → 之后的第 2 题",
+      "直接到 Location。第 1 题可以还是空的。再按 ← 会回到刚才的高亮行。",
+      state => { state.index = 1; state.focus[0] = 1; state.row = 0; }
+    ),
+    still(
+      "frame-back",
+      "← 回到第 1 题，勾和焦点都在",
+      "在 SQLite 上回车选中并进入第 2 题，再按 ←。高亮仍是第二行，(✓) 还在，不会跳回 Postgres。",
+      state => { state.selected[0] = ["opt-0-1"]; state.focus[0] = 1; state.row = 1; }
+    )
+  );
+  const review = document.getElementById("review-frames");
+  review.append(
+    still(
+      "frame-review",
+      "两题都选定之后的预览",
+      "Storage 是 SQLite，Location 是 In the temp folder。这时还没有提交。回车第一行会回到 Storage；回车 Send answer 才发送。← 回到刚才那一题。",
+      state => {
+        state.selected[0] = ["opt-0-1"];
+        state.selected[1] = ["opt-1-1"];
+        state.focus[1] = 1;
+        state.index = 1;
+        state.reviewing = true;
+        state.row = 0;
+        state.status = "Review your answers before sending";
+      }
+    )
+  );
+  const multi = fresh("multi");
+  multi.selected[0] = ["opt-0-0", "opt-0-1"];
+  multi.selected[1] = ["opt-1-0", "opt-1-1"];
+  multi.index = 1;
+  multi.row = 3;
+  const figure = document.createElement("figure");
+  figure.id = "frame-multi";
+  const cap = document.createElement("figcaption");
+  cap.innerHTML = "<strong>多选的最后一行是 Review answers</strong><span>空格打勾，回车本身不打勾。最后一题的最后一行打开预览，不再叫 Send answer。一次只显示四行，其余的在列表下方。</span>";
+  const term = document.createElement("div");
+  term.className = "terminal";
+  figure.append(cap, term);
+  renderTerminal(multi, term, false);
+  review.append(figure);
+}
+
+function mountControls() {
+  const scenes = document.getElementById("scenarios");
+  for (const [kind, scene] of Object.entries(SCENES)) {
+    const button = document.createElement("button");
+    button.className = "chip";
+    button.dataset.kind = kind;
+    button.textContent = scene.label;
+    button.addEventListener("click", () => {
+      demoToken++;
+      live = fresh(kind);
+      paint();
+    });
+    scenes.append(button);
+  }
+  const keys = document.getElementById("keys");
+  for (const [name, label] of [
+    ["left", "← 上一题"],
+    ["right", "→ 下一题"],
+    ["up", "↑"],
+    ["down", "↓"],
+    ["space", "Space 打勾"],
+    ["enter", "Enter"],
+    ["escape", "Esc"],
+    ["reopen", "重新打开"],
+    ["reset", "重来"]
+  ]) {
+    const button = document.createElement("button");
+    button.textContent = label;
+    button.addEventListener("click", () => press(name, true));
+    keys.append(button);
+  }
+  const demo = document.createElement("button");
+  demo.textContent = "走一遍到预览";
+  demo.addEventListener("click", async () => {
+    const token = ++demoToken;
+    live = fresh("single");
+    paint();
+    const steps = ["down", "enter", "down", "enter"];
+    for (const step of steps) {
+      await new Promise(resolve => setTimeout(resolve, 650));
+      if (token !== demoToken) return;
+      press(step, false);
+    }
+  });
+  keys.append(demo);
+  document.getElementById("live-term").addEventListener("keydown", event => {
+    const map = {
+      ArrowLeft: "left",
+      ArrowRight: "right",
+      ArrowUp: "up",
+      ArrowDown: "down",
+      " ": "space",
+      Enter: "enter",
+      Escape: "escape"
+    };
+    const name = map[event.key];
+    if (!name || live.phase === "text") return;
+    event.preventDefault();
+    press(name, true);
+  });
+}
+
+mountStills();
+mountControls();
+paint();
+window.__press = name => press(name, true);
+window.__reset = kind => { live = fresh(kind); paint(); };
+setInterval(() => {
+  if (live.phase === "selector" || live.phase === "text") {
+    live.seconds += 1;
+    const node = document.querySelector("#live-term .line:last-child");
+    if (node) node.innerHTML = '<span class="pending">' + esc("⠋ " + live.status.toUpperCase() + " (" + live.seconds + "s)") + "</span>";
+  }
+}, 1000);
+</script>
+</body>
+</html>

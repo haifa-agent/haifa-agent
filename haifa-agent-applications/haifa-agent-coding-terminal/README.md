@@ -521,10 +521,14 @@ fold. While that selector is open it is the only region that advertises keys: th
 strip and the run interrupt hint stay hidden, and one blank row separates the modal from the regions it covers. A
 multi-question clarification is a wizard, so the selector title always states `Step X of Y` with the question header,
 every option shows its own rationale on the line below it, and the focused row right-aligns an `[enter]` marker so an
-unmarked single-choice row cannot read as "press Space first".
+unmarked single-choice row cannot read as "press Space first". ← and → move to the previous or next question
+and keep every answer already marked.
 
 Space only marks an option (multi-choice `[ ]` ↔ `[✓]`, single choice `( )` ↔ `(✓)`, both U+2713) and never submits;
-Enter selects the focused option, confirms the current question, and moves on to the next one. "Type your own answer"
-hands the composer to the free-text lane while the card stays pending. The answer is submitted as one part per question
+Enter selects the focused option, confirms the current question, and moves on to the next one. On a multi-choice
+question the last row is `Review answers`. The last confirmation, and → from the last question once every question
+has an answer, opens a review that lists each question with the options or text that will be sent. Enter on a review
+row returns to that question; Enter on `Send answer` submits. "Type your own answer" hands the composer to the
+free-text lane while the card stays pending. The answer is submitted as one part per question
 with format `clarification-answer.v1`, so the Runtime validates it like any other interaction input. "Cancel" answers
 with the `cancel` action, which resumes the run without an answer instead of cancelling it.

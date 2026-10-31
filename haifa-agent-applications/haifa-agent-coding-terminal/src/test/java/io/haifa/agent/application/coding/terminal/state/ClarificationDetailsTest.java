@@ -37,7 +37,24 @@ class ClarificationDetailsTest {
 
         assertThat(details.selectorTitle(0)).isEqualTo("Clarification · Step 1 of 2 · Storage");
         assertThat(details.selectorTitle(1)).isEqualTo("Clarification · Step 2 of 2 · Location");
+        assertThat(details.reviewTitle()).isEqualTo("Clarification · Review · 2 questions");
         assertThatThrownBy(() -> details.selectorTitle(2)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void summarizesMarkedOptionsAndTypedTextForTheReview() {
+        ClarificationDetails details = twoQuestions();
+
+        assertThat(details.answerSummary(0, List.of("missing", "opt-0-1", "opt-0-0"), ""))
+                .isEqualTo("SQLite, Postgres");
+        assertThat(details.answerSummary(0, List.of(), "  line\nbreak ")).isEqualTo("line break");
+        assertThat(details.answerSummary(0, List.of("opt-0-0"), "mine")).isEqualTo("Postgres · mine");
+        assertThat(details.answerSummary(0, List.of(), "  ")).isEqualTo(ClarificationDetails.UNANSWERED_SUMMARY);
+
+        String summary = details.answerSummary(1, List.of(), "a".repeat(180));
+        assertThat(summary).endsWith("…");
+        assertThat(summary).doesNotContain("a".repeat(180));
+        assertThat(summary.codePointCount(0, summary.length())).isEqualTo(160);
     }
 
     @Test

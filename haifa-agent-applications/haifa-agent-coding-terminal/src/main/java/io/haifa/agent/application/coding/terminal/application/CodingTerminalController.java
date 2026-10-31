@@ -1174,7 +1174,8 @@ public final class CodingTerminalController implements AutoCloseable {
         }
         if (input.kind() == TerminalInput.Kind.SELECT_PREVIOUS
                 || input.kind() == TerminalInput.Kind.SELECT_NEXT
-                || input.kind() == TerminalInput.Kind.NAVIGATE_BACK) {
+                || input.kind() == TerminalInput.Kind.NAVIGATE_BACK
+                || input.kind() == TerminalInput.Kind.NAVIGATE_FORWARD) {
             return;
         }
         submitText(input.text(), input.kind() == TerminalInput.Kind.FOLLOW_UP, routingText);
@@ -2018,6 +2019,7 @@ public final class CodingTerminalController implements AutoCloseable {
         }
 
         ClarificationDraft draft = clarificationDraft;
+        draft.closeReview();
         ClarificationDetails.Question question = draft.current();
         List<String> labels = new ArrayList<>();
         List<TerminalSelectorDetail> details = new ArrayList<>();
@@ -2031,9 +2033,9 @@ public final class CodingTerminalController implements AutoCloseable {
         }
         if (question.multiple()) {
             boolean last = draft.last();
-            labels.add(last ? ClarificationDetails.SUBMIT_LABEL : ClarificationDetails.DONE_LABEL);
+            labels.add(last ? ClarificationDetails.REVIEW_LABEL : ClarificationDetails.DONE_LABEL);
             details.add(TerminalSelectorDetail.plain(
-                    last ? ClarificationDetails.SUBMIT_DESCRIPTION : ClarificationDetails.DONE_DESCRIPTION));
+                    last ? ClarificationDetails.REVIEW_DESCRIPTION : ClarificationDetails.DONE_DESCRIPTION));
         }
         labels.add(ClarificationDetails.CANCEL_LABEL);
         details.add(TerminalSelectorDetail.plain(ClarificationDetails.CANCEL_DESCRIPTION));
@@ -2052,6 +2054,9 @@ public final class CodingTerminalController implements AutoCloseable {
             apply(new TerminalUiAction.RecoverableFailure("CLARIFICATION_NOT_PENDING"));
             return;
         }
+        if (draft.reviewing()) {
+            return;
+        }
         ClarificationDetails.Question question = draft.current();
         int options = question.options().size();
         if (selected < options) {
@@ -2064,28 +2069,35 @@ public final class CodingTerminalController implements AutoCloseable {
         }
     }
 
-    /** Enter confirms the current question; an unanswerable multi-choice entry keeps the selector open. */
+    /** Enter confirms the current question. The last confirmation opens the answer review instead of sending. */
     private void confirmClarificationOption(int selected) {
         ClarificationDraft draft = clarificationDraft;
         if (draft == null) {
             apply(new TerminalUiAction.RecoverableFailure("CLARIFICATION_NOT_PENDING"));
             return;
         }
+        if (draft.reviewing()) {
+            confirmClarificationReview(selected);
+            return;
+        }
         ClarificationDetails.Question question = draft.current();
         int options = question.options().size();
         if (selected < options) {
+            boolean finishing = draft.last();
             if (question.multiple()) {
                 if (!draft.currentAnswered()) {
                     apply(new TerminalUiAction.StatusChanged("Select at least one option with Space first"));
                     openClarificationSelector(selected);
                     return;
                 }
+                draft.rememberFocus(selected);
                 draft.confirm();
             } else {
+                draft.rememberFocus(selected);
                 draft.select(question.options().get(selected).optionId());
                 draft.advance();
             }
-            continueClarification(0);
+            continueClarification(0, finishing);
             return;
         }
         if (question.allowCustom() && selected == options) {
@@ -2093,14 +2105,39 @@ public final class CodingTerminalController implements AutoCloseable {
             return;
         }
         if (question.multiple() && selected == options + (question.allowCustom() ? 1 : 0)) {
+            boolean finishing = draft.last();
+            draft.rememberFocus(selected);
             draft.confirm();
-            continueClarification();
+            continueClarification(0, finishing);
+            return;
+        }
+        dismissClarification();
+    }
+
+    /** Enter on a review row reopens that question; Enter on Send answer submits the draft. */
+    private void confirmClarificationReview(int selected) {
+        ClarificationDraft draft = clarificationDraft;
+        int questions = draft.questionCount();
+        if (selected < questions) {
+            draft.show(selected);
+            openClarificationSelector(draft.focus());
+            return;
+        }
+        if (selected == questions) {
+            if (!draft.canReview()) {
+                apply(new TerminalUiAction.StatusChanged("Answer every question before the review"));
+                return;
+            }
+            submitClarification();
             return;
         }
         dismissClarification();
     }
 
     private void beginClarificationText() {
+        if (clarificationDraft != null && clarificationSelectorOpen()) {
+            clarificationDraft.rememberFocus(state.selector().orElseThrow().selected());
+        }
         awaitingClarificationText = true;
         apply(new TerminalUiAction.SelectorClosed());
         apply(new TerminalUiAction.StatusChanged("Type your answer and press Enter"));
@@ -2108,22 +2145,91 @@ public final class CodingTerminalController implements AutoCloseable {
 
     private void answerClarificationWithText(String text) {
         awaitingClarificationText = false;
+        boolean finishing = clarificationDraft.last();
         clarificationDraft.answerWithText(text);
-        continueClarification();
+        continueClarification(0, finishing);
     }
 
-    private void continueClarification() {
-        continueClarification(0);
-    }
-
-    private void continueClarification(int nextSelection) {
+    /**
+     * Opens the next question, or the review when {@code reviewAttempt} finishes a fully answered draft.
+     */
+    private void continueClarification(int nextSelection, boolean reviewAttempt) {
         ClarificationDraft draft = clarificationDraft;
         if (draft == null) return;
-        if (draft.ready()) {
-            submitClarification();
+        if (reviewAttempt && draft.canReview()) {
+            openClarificationReview();
             return;
         }
+        if (reviewAttempt) {
+            apply(new TerminalUiAction.StatusChanged("Answer every question before the review"));
+        }
         openClarificationSelector(nextSelection);
+    }
+
+    /** Left and right move between questions; right on the last answered question opens the review. */
+    private void moveClarification(int direction) {
+        ClarificationDraft draft = clarificationDraft;
+        if (draft == null || !clarificationSelectorOpen()) {
+            return;
+        }
+        if (draft.reviewing()) {
+            if (direction < 0) {
+                openClarificationSelector(draft.focus());
+            }
+            return;
+        }
+        draft.rememberFocus(state.selector().orElseThrow().selected());
+        if (direction < 0) {
+            if (draft.first()) {
+                return;
+            }
+            draft.retreat();
+            openClarificationSelector(draft.focus());
+            return;
+        }
+        if (!draft.last()) {
+            draft.advance();
+            openClarificationSelector(draft.focus());
+            return;
+        }
+        if (draft.canReview()) {
+            openClarificationReview();
+            return;
+        }
+        apply(new TerminalUiAction.StatusChanged("Answer every question before the review"));
+    }
+
+    private void openClarificationReview() {
+        ClarificationDraft draft = clarificationDraft;
+        if (draft == null) {
+            return;
+        }
+        if (!draft.reviewing()) {
+            state.selector()
+                    .filter(selector -> selector.kind().startsWith("clarification:"))
+                    .ifPresent(selector -> draft.rememberFocus(selector.selected()));
+        }
+        draft.openReview();
+        List<String> labels = new ArrayList<>();
+        List<TerminalSelectorDetail> details = new ArrayList<>();
+        for (int index = 0; index < draft.questionCount(); index++) {
+            ClarificationDetails.Question question = draft.questions().get(index);
+            labels.add(question.header() + ": " + draft.summary(index));
+            details.add(TerminalSelectorDetail.plain(question.prompt()));
+        }
+        labels.add(ClarificationDetails.SUBMIT_LABEL);
+        details.add(TerminalSelectorDetail.plain(ClarificationDetails.SUBMIT_DESCRIPTION));
+        labels.add(ClarificationDetails.CANCEL_LABEL);
+        details.add(TerminalSelectorDetail.plain(ClarificationDetails.CANCEL_DESCRIPTION));
+        apply(new TerminalUiAction.StatusChanged("Review your answers before sending"));
+        apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
+                "clarification:" + draft.interaction().requestId().value(), draft.reviewTitle(), labels, 0, details)));
+    }
+
+    private boolean clarificationSelectorOpen() {
+        return state.selector()
+                .map(selector -> selector.kind().startsWith("clarification:"))
+                .orElse(false);
     }
 
     private void dismissClarification() {
@@ -2170,12 +2276,14 @@ public final class CodingTerminalController implements AutoCloseable {
         private final ClarificationDetails details;
         private final List<List<String>> selected = new ArrayList<>();
         private final List<String> custom = new ArrayList<>();
+        private final int[] focus;
         private int index;
-        private boolean confirmed;
+        private boolean reviewing;
 
         ClarificationDraft(InteractionView interaction, ClarificationDetails details) {
             this.interaction = interaction;
             this.details = details;
+            this.focus = new int[details.questions().size()];
             for (int position = 0; position < details.questions().size(); position++) {
                 selected.add(new ArrayList<>());
                 custom.add("");
@@ -2198,13 +2306,61 @@ public final class CodingTerminalController implements AutoCloseable {
             return details.questions().get(index);
         }
 
+        List<ClarificationDetails.Question> questions() {
+            return details.questions();
+        }
+
+        int questionCount() {
+            return details.questions().size();
+        }
+
         /** The modal title of the current question, including its step within the wizard. */
         String title() {
             return details.selectorTitle(index);
         }
 
+        String reviewTitle() {
+            return details.reviewTitle();
+        }
+
+        String summary(int questionIndex) {
+            return details.answerSummary(questionIndex, selected.get(questionIndex), custom.get(questionIndex));
+        }
+
+        boolean first() {
+            return index == 0;
+        }
+
         boolean last() {
             return index == details.questions().size() - 1;
+        }
+
+        boolean reviewing() {
+            return reviewing;
+        }
+
+        void openReview() {
+            reviewing = true;
+        }
+
+        void closeReview() {
+            reviewing = false;
+        }
+
+        void show(int question) {
+            index = question;
+            reviewing = false;
+        }
+
+        void rememberFocus(int selectedRow) {
+            if (reviewing) {
+                return;
+            }
+            focus[index] = Math.max(0, selectedRow);
+        }
+
+        int focus() {
+            return focus[index];
         }
 
         String marker(String optionId) {
@@ -2232,20 +2388,19 @@ public final class CodingTerminalController implements AutoCloseable {
         void advance() {
             if (!last()) {
                 index++;
-                confirmed = false;
+            }
+        }
+
+        void retreat() {
+            if (index > 0) {
+                index--;
             }
         }
 
         void confirm() {
             if (!last()) {
                 advance();
-                return;
             }
-            confirmed = true;
-        }
-
-        boolean ready() {
-            return complete() && (confirmed || !current().multiple());
         }
 
         void answerWithText(String text) {
@@ -2254,15 +2409,20 @@ public final class CodingTerminalController implements AutoCloseable {
         }
 
         boolean currentAnswered() {
-            return !selected.get(index).isEmpty() || !custom.get(index).isBlank();
+            return answered(index);
         }
 
-        boolean complete() {
-            if (!last()) return false;
+        boolean canReview() {
             for (int position = 0; position < selected.size(); position++) {
-                if (selected.get(position).isEmpty() && custom.get(position).isBlank()) return false;
+                if (!answered(position)) {
+                    return false;
+                }
             }
             return true;
+        }
+
+        private boolean answered(int position) {
+            return !selected.get(position).isEmpty() || !custom.get(position).isBlank();
         }
     }
 
@@ -3050,7 +3210,17 @@ public final class CodingTerminalController implements AutoCloseable {
             return;
         }
         if (input.kind() == TerminalInput.Kind.NAVIGATE_BACK) {
+            if (clarificationSelectorOpen()) {
+                moveClarification(-1);
+                return;
+            }
             navigateSelectorParent();
+            return;
+        }
+        if (input.kind() == TerminalInput.Kind.NAVIGATE_FORWARD) {
+            if (clarificationSelectorOpen()) {
+                moveClarification(1);
+            }
             return;
         }
         if (input.kind() == TerminalInput.Kind.EOF) {

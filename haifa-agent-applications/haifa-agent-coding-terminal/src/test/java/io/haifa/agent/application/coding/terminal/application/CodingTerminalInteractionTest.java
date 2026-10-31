@@ -222,7 +222,12 @@ class CodingTerminalInteractionTest {
         controller.open(SESSION_ID);
 
         assertThat(controller.state().selector().orElseThrow().options())
-                .containsExactly("[ ] Postgres", "[ ] SQLite", "Type your own answer", "Send answer", "Cancel");
+                .containsExactly(
+                        "[ ] Postgres",
+                        "[ ] SQLite",
+                        "Type your own answer",
+                        ClarificationDetails.REVIEW_LABEL,
+                        "Cancel");
 
         controller.accept(input(TerminalInput.Kind.TOGGLE_SELECTION, ""));
         assertThat(controller.state().selector().orElseThrow().options().get(0)).isEqualTo("[\u2713] Postgres");
@@ -246,6 +251,14 @@ class CodingTerminalInteractionTest {
         controller.accept(input(TerminalInput.Kind.SUBMIT, "first line\nsecond line"));
 
         assertThat(client.steeredMessages).isEmpty();
+        assertThat(client.respondedInputs).isEmpty();
+        assertThat(controller.state().selector()).hasValueSatisfying(selector -> {
+            assertThat(selector.title()).isEqualTo("Clarification · Review · 1 question");
+            assertThat(selector.options()).contains("Storage: first line second line");
+        });
+        submitClarificationReview(controller);
+
+        assertThat(client.steeredMessages).isEmpty();
         assertThat(client.respondedInputs).hasSize(1);
         String answer = ((io.haifa.agent.core.content.TextPart)
                         client.respondedInputs.get(0).get(0))
@@ -266,6 +279,11 @@ class CodingTerminalInteractionTest {
         assertThat(controller.state().selector()).isEmpty();
 
         controller.accept(input(TerminalInput.Kind.FOLLOW_UP, "sqlite"));
+
+        assertThat(client.steeredMessages).isEmpty();
+        assertThat(controller.state().selector())
+                .hasValueSatisfying(selector -> assertThat(selector.options()).contains("Storage: sqlite"));
+        submitClarificationReview(controller);
 
         assertThat(client.steeredMessages).isEmpty();
         assertThat(client.respondedInputs).hasSize(1);
@@ -319,6 +337,177 @@ class CodingTerminalInteractionTest {
         assertThat(controller.state().selector().orElseThrow().title())
                 .isEqualTo("Clarification · Step 2 of 2 · Location");
         assertThat(controller.state().status()).isEqualTo("Awaiting your clarification answer");
+    }
+
+    @Test
+    void movesBetweenClarificationQuestionsWithoutDiscardingTheCurrentHighlight() {
+        FakeClient client = new FakeClient(view(Optional.of(multiQuestionClarification())));
+        client.reconciledView = view(Optional.empty());
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.NAVIGATE_BACK, ""));
+
+        assertThat(controller.state().selector()).hasValueSatisfying(selector -> {
+            assertThat(selector.title()).isEqualTo("Clarification · Step 1 of 2 · Storage");
+            assertThat(selector.selected()).isEqualTo(1);
+        });
+
+        controller.accept(input(TerminalInput.Kind.NAVIGATE_FORWARD, ""));
+
+        assertThat(controller.state().selector()).hasValueSatisfying(selector -> {
+            assertThat(selector.title()).isEqualTo("Clarification · Step 2 of 2 · Location");
+            assertThat(selector.options()).startsWith("( ) In the repository", "( ) In the temp folder");
+        });
+        assertThat(client.respondedInputs).isEmpty();
+    }
+
+    @Test
+    void keepsAMarkedAnswerWhenReturningToAPreviousClarificationQuestion() {
+        FakeClient client = new FakeClient(view(Optional.of(multiQuestionClarification())));
+        client.reconciledView = view(Optional.empty());
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+        controller.accept(input(TerminalInput.Kind.NAVIGATE_BACK, ""));
+
+        assertThat(controller.state().selector()).hasValueSatisfying(selector -> {
+            assertThat(selector.title()).isEqualTo("Clarification · Step 1 of 2 · Storage");
+            assertThat(selector.selected()).isEqualTo(1);
+            assertThat(selector.options().get(1)).isEqualTo("(\u2713) SQLite");
+        });
+    }
+
+    @Test
+    void doesNotOpenTheReviewUntilEveryClarificationQuestionIsAnswered() {
+        FakeClient client = new FakeClient(view(Optional.of(multiQuestionClarification())));
+        client.reconciledView = view(Optional.empty());
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+
+        controller.accept(input(TerminalInput.Kind.NAVIGATE_FORWARD, ""));
+        controller.accept(input(TerminalInput.Kind.NAVIGATE_FORWARD, ""));
+
+        assertThat(controller.state().selector().orElseThrow().title())
+                .isEqualTo("Clarification · Step 2 of 2 · Location");
+        assertThat(controller.state().status()).isEqualTo("Answer every question before the review");
+        assertThat(client.respondedInputs).isEmpty();
+    }
+
+    @Test
+    void reviewsEveryAnswerBeforeSubmittingAMultiQuestionClarification() {
+        FakeClient client = new FakeClient(view(Optional.of(multiQuestionClarification())));
+        client.reconciledView = view(Optional.empty());
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+
+        assertThat(client.respondedInputs).isEmpty();
+        assertThat(controller.state().status()).isEqualTo("Review your answers before sending");
+        assertThat(controller.state().selector()).hasValueSatisfying(selector -> {
+            assertThat(selector.title()).isEqualTo("Clarification · Review · 2 questions");
+            assertThat(selector.options())
+                    .startsWith("Storage: Postgres", "Location: In the temp folder", ClarificationDetails.SUBMIT_LABEL);
+            assertThat(selector.details())
+                    .extracting(TerminalSelectorDetail::description)
+                    .startsWith("Which storage?", "Where should it live?");
+        });
+
+        controller.accept(input(TerminalInput.Kind.NAVIGATE_BACK, ""));
+        assertThat(controller.state().selector()).hasValueSatisfying(selector -> {
+            assertThat(selector.title()).isEqualTo("Clarification · Step 2 of 2 · Location");
+            assertThat(selector.selected()).isEqualTo(1);
+            assertThat(selector.options().get(1)).isEqualTo("(\u2713) In the temp folder");
+        });
+
+        controller.accept(input(TerminalInput.Kind.NAVIGATE_FORWARD, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+        assertThat(controller.state().selector().orElseThrow().title())
+                .isEqualTo("Clarification · Step 1 of 2 · Storage");
+
+        controller.accept(input(TerminalInput.Kind.NAVIGATE_FORWARD, ""));
+        controller.accept(input(TerminalInput.Kind.NAVIGATE_FORWARD, ""));
+        submitClarificationReview(controller);
+
+        assertThat(client.respondedActions).containsExactly(InteractionAction.SUBMIT);
+        assertThat(client.respondedInputs).singleElement().satisfies(parts -> {
+            assertThat(((io.haifa.agent.core.content.TextPart) parts.get(0)).text())
+                    .isEqualTo("selected=opt-0-0\ncustom=");
+            assertThat(((io.haifa.agent.core.content.TextPart) parts.get(1)).text())
+                    .isEqualTo("selected=opt-1-1\ncustom=");
+        });
+        assertThat(controller.state().selector()).isEmpty();
+    }
+
+    @Test
+    void previewsASingleChoiceAnswerBeforeSubmitting() {
+        FakeClient client = new FakeClient(view(Optional.of(clarification(false))));
+        client.reconciledView = view(Optional.empty());
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+
+        assertThat(client.respondedInputs).isEmpty();
+        assertThat(controller.state().selector()).hasValueSatisfying(selector -> {
+            assertThat(selector.title()).isEqualTo("Clarification · Review · 1 question");
+            assertThat(selector.options()).startsWith("Storage: Postgres");
+            assertThat(selector.details().get(0).description()).isEqualTo("Which storage?");
+        });
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+        assertThat(controller.state().selector()).hasValueSatisfying(selector -> {
+            assertThat(selector.title()).isEqualTo("Clarification · Step 1 of 1 · Storage");
+            assertThat(selector.options().get(0)).isEqualTo("(\u2713) Postgres");
+        });
+
+        controller.accept(input(TerminalInput.Kind.NAVIGATE_FORWARD, ""));
+        submitClarificationReview(controller);
+
+        assertThat(((io.haifa.agent.core.content.TextPart)
+                                client.respondedInputs.get(0).get(0))
+                        .text())
+                .isEqualTo("selected=opt-0-0\ncustom=");
+    }
+
+    @Test
+    void reviewsMarkedOptionsBeforeSendingAMultiChoiceClarification() {
+        FakeClient client = new FakeClient(view(Optional.of(clarification(true))));
+        client.reconciledView = view(Optional.empty());
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+
+        controller.accept(input(TerminalInput.Kind.TOGGLE_SELECTION, ""));
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.TOGGLE_SELECTION, ""));
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+
+        assertThat(client.respondedInputs).isEmpty();
+        assertThat(controller.state().selector().orElseThrow().options()).startsWith("Storage: Postgres, SQLite");
+
+        submitClarificationReview(controller);
+
+        assertThat(((io.haifa.agent.core.content.TextPart)
+                                client.respondedInputs.get(0).get(0))
+                        .text())
+                .isEqualTo("selected=opt-0-0,opt-0-1\ncustom=");
+    }
+
+    private static void submitClarificationReview(CodingTerminalController controller) {
+        int send = controller.state().selector().orElseThrow().options().indexOf(ClarificationDetails.SUBMIT_LABEL);
+        assertThat(send).isGreaterThanOrEqualTo(0);
+        while (controller.state().selector().orElseThrow().selected() < send) {
+            controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        }
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
     }
 
     @Test
