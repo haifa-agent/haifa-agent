@@ -192,6 +192,9 @@ final class Tui4jCodingTerminalModel implements Model {
             command = completeCopy(copied);
         } else if (message instanceof PollMessage) {
             controller.drainEvents();
+            // Bounded D6 refresh: the controller rate-limits and skips a hidden sidebar, so this stays off the
+            // per-delta path and does not turn every tool event into a session/list call.
+            controller.refreshSessionRows();
             syncComponents();
             command = nextTick();
             if (pollWindowSize && ++windowSizePollTicks >= WINDOW_SIZE_POLL_TICKS) {
@@ -281,6 +284,11 @@ final class Tui4jCodingTerminalModel implements Model {
             return Command.none();
         }
         if (mouse.getAction() == MouseAction.MouseActionPress && mouse.getButton() == MouseButton.MouseButtonLeft) {
+            // A sidebar row owns its click: transcript selection must not swallow it, and selecting a Session must
+            // never look like a transcript drag.
+            if (view.sidebarSessionAt(mouse.row()).isPresent()) {
+                return Command.none();
+            }
             Optional<TerminalTextSelection.Point> point = transcriptPoint(mouse, false);
             if (point.isEmpty()) {
                 clearSelection();
@@ -299,6 +307,15 @@ final class Tui4jCodingTerminalModel implements Model {
         if (mouse.getAction() == MouseAction.MouseActionMotion && selection.selecting()) {
             transcriptPoint(mouse, true).ifPresent(selection::extend);
             return updateSelectionAutoScroll(mouse, region);
+        }
+        if (mouse.getAction() == MouseAction.MouseActionRelease && mouse.getButton() == MouseButton.MouseButtonLeft) {
+            // The press on a sidebar row deliberately started no selection, so the release is the activation point.
+            Optional<io.haifa.agent.core.session.AgentSessionId> sidebarTarget = view.sidebarSessionAt(mouse.row());
+            if (sidebarTarget.isPresent()) {
+                controller.openSidebarRow(sidebarTarget.orElseThrow());
+                syncComponents();
+                return Command.none();
+            }
         }
         if (mouse.getAction() == MouseAction.MouseActionRelease && selection.selecting()) {
             transcriptPoint(mouse, true).ifPresent(selection::finish);

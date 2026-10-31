@@ -127,6 +127,13 @@ public sealed interface TerminalUiAction {
 
     record SidebarToggled() implements TerminalUiAction {}
 
+    /** Bounded {@code session/list} result for the sidebar; never a per-delta full refresh (D6). */
+    record SessionRowsLoaded(java.util.List<io.haifa.agent.application.coding.terminal.state.TerminalSessionRow> rows)
+            implements TerminalUiAction {}
+
+    /** Keyboard movement of the sidebar cursor, kept separate from transcript scrolling. */
+    record SessionRowMoved(int delta) implements TerminalUiAction {}
+
     record ThemeChanged(String themeName) implements TerminalUiAction {}
 
     record CancelArmedChanged(boolean armed) implements TerminalUiAction {}

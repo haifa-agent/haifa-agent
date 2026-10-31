@@ -9,6 +9,7 @@ import io.haifa.agent.application.coding.terminal.state.PendingMessage;
 import io.haifa.agent.application.coding.terminal.state.TerminalRecovery;
 import io.haifa.agent.application.coding.terminal.state.TerminalSelector;
 import io.haifa.agent.application.coding.terminal.state.TerminalSelectorDetail;
+import io.haifa.agent.application.coding.terminal.state.TerminalSessionRow;
 import io.haifa.agent.application.coding.terminal.state.TerminalThemes;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiReducer;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
@@ -174,6 +175,11 @@ public final class CodingTerminalController implements AutoCloseable {
     private static final String REMOTE_SESSION_CONSENT_GUIDANCE =
             "Session approval changes are unavailable in remote mode; approve or reject each request";
     private long cancelArmedAtMillis = 0L;
+    /** Bounded sidebar refresh cadence; well above the event poll so the list never follows tool deltas (D6). */
+    private static final long SESSION_ROWS_POLL_INTERVAL_MILLIS = 2_000L;
+
+    private boolean sessionRowsInFlight;
+    private long sessionRowsFetchedAtMillis;
     private final CodingTerminalConnectionOptions connectionOptions;
     private long nextSelectionGeneration;
     private long selectionGeneration;
@@ -1123,6 +1129,71 @@ public final class CodingTerminalController implements AutoCloseable {
         completeMessageSubmission(executeMessageSubmission(submission));
     }
 
+    /**
+     * Refreshes the sidebar task list at most once per interval.
+     *
+     * <p>D6 freezes the sidebar to bounded {@code session/list} polling without cursor pagination, so this runs on the
+     * periodic tick and is skipped while another refresh is still in flight. It never runs per tool delta, and it never
+     * touches the transcript, the selection generation or the current Run: a stale list only mislabels rows until the
+     * next poll, while a cancelled Run would be unrecoverable.
+     */
+    public void refreshSessionRows() {
+        // The list only exists to fill the sidebar, so a collapsed sidebar must not poll the Host at all.
+        if (!state.sidebarVisible()) return;
+        long now = System.currentTimeMillis();
+        if (sessionRowsInFlight || now - sessionRowsFetchedAtMillis < SESSION_ROWS_POLL_INTERVAL_MILLIS) return;
+        sessionRowsInFlight = true;
+        submitControlEffect(
+                () -> {
+                    List<TerminalSessionRow> rows = client.list(projectId, TerminalUiState.MAX_SESSION_ROWS).stream()
+                            .map(TerminalSessionRow::from)
+                            .toList();
+                    return () -> {
+                        sessionRowsInFlight = false;
+                        sessionRowsFetchedAtMillis = System.currentTimeMillis();
+                        apply(new TerminalUiAction.SessionRowsLoaded(rows));
+                    };
+                },
+                code -> {
+                    sessionRowsInFlight = false;
+                    sessionRowsFetchedAtMillis = System.currentTimeMillis();
+                });
+    }
+
+    /** Moves the sidebar cursor by a bounded delta from the keyboard. */
+    public void moveSessionRow(int delta) {
+        apply(new TerminalUiAction.SessionRowMoved(delta));
+    }
+
+    /**
+     * Opens the Session under the sidebar cursor, or a specific row, without cancelling the current Run.
+     *
+     * <p>Switching only changes what this TUI observes. The previous Session's Run keeps running on the Host: the old
+     * observation subscription is replaced by the load path, and this method never calls {@code cancel}. A failed load
+     * reports the stable error and leaves the current Session installed instead of showing a half-loaded one.
+     */
+    public void openSidebarSelection() {
+        state.selectedSessionRow().ifPresent(row -> openSidebarRow(row.sessionId()));
+    }
+
+    public void openSidebarRow(AgentSessionId sessionId) {
+        Objects.requireNonNull(sessionId, "sessionId must not be null");
+        if (state.session()
+                .map(current -> current.summary().sessionId().equals(sessionId))
+                .orElse(false)) {
+            return;
+        }
+        apply(new TerminalUiAction.StatusChanged("Opening session"));
+        long generation = beginSelection();
+        submitEffect(
+                () -> {
+                    LoadedSession loaded = readSession(
+                            client.open(sessionId), generation, Optional.empty(), null, RunOutputCursor.BEFORE_FIRST);
+                    return () -> applyLoadedSession(loaded);
+                },
+                code -> completeSelectionFailure(generation, code));
+    }
+
     public void drainEvents() {
         try {
             drainEventsGuarded();
@@ -2001,6 +2072,12 @@ public final class CodingTerminalController implements AutoCloseable {
                                 () -> options.add("No active session"));
                 apply(new TerminalUiAction.SelectorOpened(
                         new TerminalSelector("session", "Session & Environment", options, 0)));
+            }
+            case SESSIONS -> {
+                // Reuses the reviewed resume selector instead of a parallel Session navigator, so keyboard-only and
+                // narrow terminals reach the same Session list the sidebar shows.
+                preserveDraft();
+                showResumeOptions(client.list(projectId, TerminalUiState.MAX_SESSION_ROWS));
             }
             case COMMANDS -> openCommandSelector();
             case THEME -> handleThemeCommand(argument);

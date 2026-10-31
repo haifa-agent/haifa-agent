@@ -19,6 +19,7 @@ public enum TerminalCommand {
     TRUST,
     APPROVAL,
     SESSION,
+    SESSIONS,
     COMMANDS,
     THEME,
     MOUSE,
