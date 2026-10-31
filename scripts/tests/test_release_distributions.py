@@ -21,6 +21,11 @@ SPEC.loader.exec_module(MODULE)
 import distribution_contracts as CONTRACTS  # noqa: E402
 
 
+def _after_jar(arguments):
+    """Returns the application arguments that follow the launcher's "-jar <path>" JVM prefix."""
+    return arguments[arguments.index("-jar") + 2 :]
+
+
 class ReleaseDistributionsTest(unittest.TestCase):
     def fixture(self, root):
         def pom(artifact, packaging="jar", modules="", version="0.1.2"):
@@ -368,6 +373,85 @@ class TargetMatrixTest(unittest.TestCase):
             self.assertEqual(actual["args"][-len(options):], options)
             self.assertEqual(actual["root"], environment["HAIFA_DATA_ROOT"])
             self.assertEqual(actual["db"], environment["HAIFA_SQLITE_DATABASE_PATH"])
+
+    @unittest.skipIf(os.name == "nt", "POSIX launcher process contract")
+    def test_linux_template_launcher_passes_tui_through_and_creates_no_data_root(self):
+        # A child process is required to prove the shipped template's argument vector, its exit status and the
+        # absence of the local data root that only the local modes may create.
+        with tempfile.TemporaryDirectory(prefix="ca template tui ") as temporary:
+            root = Path(temporary)
+            package = root / "package"
+            (package / "lib").mkdir(parents=True)
+            (package / "jre/bin").mkdir(parents=True)
+            (package / "bin").mkdir(parents=True)
+            (package / "haifa-coding.yaml").write_text("allowedBindings: []\n", encoding="utf-8")
+            (package / "lib/haifa-agent-cli-0.1.4.jar").write_bytes(b"jar")
+            shutil.copy2(
+                Path(__file__).resolve().parents[2] / "dist-support/templates/ca-linux/bin/haifa",
+                package / "bin/haifa",
+            )
+            java = package / "jre/bin/java"
+            java.write_text(
+                '#!/usr/bin/env python3\nimport json, os, sys\nfrom pathlib import Path\n'
+                'Path(os.environ["CAPTURE_PATH"]).write_text(json.dumps({'
+                '"args": sys.argv[1:], "root": os.environ.get("HAIFA_DATA_ROOT")}))\nsys.exit(23)\n',
+                encoding="utf-8",
+            )
+            java.chmod(0o755)
+            (package / "bin/haifa").chmod(0o755)
+            capture = root / "captured.json"
+            data_root = root / "never created"
+            environment = dict(os.environ, CAPTURE_PATH=str(capture), HAIFA_DATA_ROOT=str(data_root))
+            options = ["tui", "--connect", "http://127.0.0.1:17861", "--session", "a session with spaces"]
+
+            result = subprocess.run(
+                [str(package / "bin/haifa"), *options], env=environment, timeout=10
+            )
+
+            actual = json.loads(capture.read_text())
+            self.assertEqual(result.returncode, 23)
+            self.assertEqual(_after_jar(actual["args"]), options)
+            # The value is inherited from the caller; what matters is that this mode never creates the tree.
+            self.assertFalse(data_root.exists())
+
+    @unittest.skipIf(os.name == "nt", "POSIX launcher process contract")
+    def test_linux_template_launcher_keeps_the_host_subcommand_first(self):
+        # The shipped launcher must not reintroduce the defect where --config preceded the subcommand.
+        with tempfile.TemporaryDirectory(prefix="ca template host ") as temporary:
+            root = Path(temporary)
+            package = root / "package"
+            (package / "lib").mkdir(parents=True)
+            (package / "jre/bin").mkdir(parents=True)
+            (package / "bin").mkdir(parents=True)
+            (package / "haifa-coding.yaml").write_text("allowedBindings: []\n", encoding="utf-8")
+            (package / "lib/haifa-agent-cli-0.1.4.jar").write_bytes(b"jar")
+            shutil.copy2(
+                Path(__file__).resolve().parents[2] / "dist-support/templates/ca-linux/bin/haifa",
+                package / "bin/haifa",
+            )
+            java = package / "jre/bin/java"
+            java.write_text(
+                '#!/usr/bin/env python3\nimport json, os, sys\nfrom pathlib import Path\n'
+                'Path(os.environ["CAPTURE_PATH"]).write_text(json.dumps({"args": sys.argv[1:]}))\n'
+                "sys.exit(0)\n",
+                encoding="utf-8",
+            )
+            java.chmod(0o755)
+            (package / "bin/haifa").chmod(0o755)
+            capture = root / "captured.json"
+            environment = dict(os.environ, CAPTURE_PATH=str(capture), HAIFA_DATA_ROOT=str(root / "data"))
+            options = ["host", "--port", "17999"]
+
+            result = subprocess.run(
+                [str(package / "bin/haifa"), *options], env=environment, timeout=10
+            )
+
+            actual = json.loads(capture.read_text())
+            self.assertEqual(result.returncode, 0)
+            forwarded = _after_jar(actual["args"])
+            self.assertEqual(forwarded[0], "host")
+            self.assertEqual(forwarded[1], "--config")
+            self.assertEqual(forwarded[3:], options[1:])
 
 
 if __name__ == "__main__":

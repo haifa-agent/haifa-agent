@@ -185,6 +185,9 @@ public final class CodingTerminalController implements AutoCloseable {
     private long observedRunVersion = -1L;
     private boolean observedRunTerminal;
     private boolean staleSnapshotRecoveryRequested;
+    /** The settled Run whose single follow-up handoff reconcile was already requested. */
+    private AgentRunId handoffRecoveryForRun;
+
     private volatile boolean closed;
 
     public CodingTerminalController(
@@ -522,14 +525,16 @@ public final class CodingTerminalController implements AutoCloseable {
         boolean sameSession = state.session()
                 .map(value -> value.summary().sessionId().equals(sessionId))
                 .orElse(false);
-        if (!sameSession) return false;
+        // Generation 0 is the unscoped convenience constructor that reducers and direct tests still use; it has no
+        // selection to compare against, so it may pass without a loaded Session. A scoped action always has to match
+        // the selected Session before its events may touch the transcript.
+        if (!sameSession && generation != 0L) return false;
         Optional<AgentRunId> known = state.currentRunId()
                 .or(() -> state.session().flatMap(CodingSessionView::activeRun).map(value -> value.runId()))
                 .or(() -> state.session()
                         .flatMap(CodingSessionView::pendingInteraction)
                         .map(InteractionView::runId));
-        // Generation 0 is the convenience constructor used by older direct tests. It still has to match
-        // the current Session, and it may only pass without a known Run while no Run identity exists.
+        // Without a known Run identity only the unscoped form may pass; a scoped action must match the visible Run.
         return known.map(runId::equals).orElse(generation == 0L);
     }
 
@@ -2419,6 +2424,7 @@ public final class CodingTerminalController implements AutoCloseable {
         observedRunVersion = active.map(value -> value.version()).orElse(-1L);
         observedRunTerminal = active.map(value -> value.status().isTerminal()).orElse(false);
         staleSnapshotRecoveryRequested = false;
+        handoffRecoveryForRun = null;
     }
 
     private void advanceRunObservation(LoadedSession loaded) {
@@ -2452,6 +2458,25 @@ public final class CodingTerminalController implements AutoCloseable {
     private void requestStaleSnapshotRecovery() {
         if (closed || staleSnapshotRecoveryRequested || state.currentRunId().isEmpty()) return;
         staleSnapshotRecoveryRequested = true;
+        scheduleReconcile();
+    }
+
+    /**
+     * Requests exactly one bounded reconcile when the selected Run settles and the Host may already have advanced a
+     * queued follow-up into the next Run.
+     *
+     * <p>The Host keeps maintaining persisted follow-ups while no UI is attached, and the per-Run event stream of the
+     * settled Run can stay open, so nothing else would ever move the UI onto Run2. This is a once-per-settled-Run
+     * trigger, not a per-delta reload: ordinary deltas still flow through the existing subscription, and a successor
+     * that has not been materialized yet stays visible through its queued draft instead of an unbounded retry loop.
+     */
+    private void requestFollowUpHandoff(AgentRunId settledRunId) {
+        if (closed) return;
+        // Only a queued successor justifies the extra load: without one the settled Run is simply finished and the
+        // ordinary terminal lifecycle already owns what happens next.
+        if (state.pending().stream().noneMatch(value -> value.kind() == PendingMessage.Kind.FOLLOW_UP)) return;
+        if (settledRunId.equals(handoffRecoveryForRun)) return;
+        handoffRecoveryForRun = settledRunId;
         scheduleReconcile();
     }
 
@@ -4741,6 +4766,9 @@ public final class CodingTerminalController implements AutoCloseable {
         boolean selectorClosedWhileIdle = hadSelector
                 && state.selector().isEmpty()
                 && state.currentRunId().isEmpty();
+        if (action instanceof TerminalUiAction.RunEventReceived received && runBecameIdle) {
+            requestFollowUpHandoff(received.event().runId());
+        }
         if (runBecameIdle || selectorClosedWhileIdle) {
             trySubmitWaitingWhenIdle();
         }

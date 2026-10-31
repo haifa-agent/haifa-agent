@@ -104,6 +104,16 @@ def write_windows_launcher(output_directory: Path) -> None:
     launcher = """@echo off
 setlocal
 set "HAIFA_DISTRIBUTION_DIR=%~dp0"
+set "HAIFA_JAVA_EXE=java.exe"
+if defined JAVA_HOME if exist "%JAVA_HOME%\\bin\\java.exe" set "HAIFA_JAVA_EXE=%JAVA_HOME%\\bin\\java.exe"
+
+rem The remote TUI is a thin client: pass its argument vector through untouched. It must not receive the bundled
+rem --config (the Host owns the workspace, Runtime and credentials) and it must not create local data directories.
+if /i "%~1"=="tui" (
+    "%HAIFA_JAVA_EXE%" -jar "%HAIFA_DISTRIBUTION_DIR%haifa-agent.jar" %*
+    exit /b %ERRORLEVEL%
+)
+
 if not exist "%HAIFA_DISTRIBUTION_DIR%data\\transcripts" mkdir "%HAIFA_DISTRIBUTION_DIR%data\\transcripts"
 if errorlevel 1 exit /b %ERRORLEVEL%
 if not exist "%HAIFA_DISTRIBUTION_DIR%logs" mkdir "%HAIFA_DISTRIBUTION_DIR%logs"
@@ -111,9 +121,24 @@ if errorlevel 1 exit /b %ERRORLEVEL%
 if not defined HAIFA_SQLITE_DATABASE_PATH set "HAIFA_SQLITE_DATABASE_PATH=%HAIFA_DISTRIBUTION_DIR%data\\runtime.db"
 if not defined HAIFA_TRANSCRIPT_ROOT set "HAIFA_TRANSCRIPT_ROOT=%HAIFA_DISTRIBUTION_DIR%data\\transcripts"
 if not defined HAIFA_LOG_DIR set "HAIFA_LOG_DIR=%HAIFA_DISTRIBUTION_DIR%logs"
-set "HAIFA_JAVA_EXE=java.exe"
-if defined JAVA_HOME if exist "%JAVA_HOME%\\bin\\java.exe" set "HAIFA_JAVA_EXE=%JAVA_HOME%\\bin\\java.exe"
+
+rem The host subcommand must stay the first JVM argument, so the bundled configuration is inserted after it and an
+rem explicit --config still wins because the parser keeps the last value.
+if /i "%~1"=="host" goto :haifa_host
+
 "%HAIFA_JAVA_EXE%" -jar "%HAIFA_DISTRIBUTION_DIR%haifa-agent.jar" --config "%HAIFA_DISTRIBUTION_DIR%haifa-coding.yaml" %*
+exit /b %ERRORLEVEL%
+
+:haifa_host
+set "HAIFA_HOST_ARGS="
+shift
+:haifa_host_args
+if "%~1"=="" goto :haifa_host_run
+set "HAIFA_HOST_ARGS=%HAIFA_HOST_ARGS% "%~1""
+shift
+goto :haifa_host_args
+:haifa_host_run
+call "%HAIFA_JAVA_EXE%" -jar "%HAIFA_DISTRIBUTION_DIR%haifa-agent.jar" host --config "%HAIFA_DISTRIBUTION_DIR%haifa-coding.yaml" %HAIFA_HOST_ARGS%
 exit /b %ERRORLEVEL%
 """
     with (output_directory / "haifa-coding.cmd").open(
@@ -129,6 +154,16 @@ umask 077
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 data_dir="${script_dir}/data"
 log_dir="${script_dir}/logs"
+
+# The remote TUI is a thin client: pass its argument vector through untouched. It must not receive the bundled
+# --config (the Host owns the workspace, Runtime and credentials) and it must not create local data directories.
+if [ "${1:-}" = "tui" ]; then
+    if [ -n "${JAVA_HOME:-}" ] && [ -x "${JAVA_HOME}/bin/java" ]; then
+        exec "${JAVA_HOME}/bin/java" -jar "${script_dir}/haifa-agent.jar" "$@"
+    fi
+    exec java -jar "${script_dir}/haifa-agent.jar" "$@"
+fi
+
 mkdir -p "${data_dir}/transcripts" "${log_dir}"
 : "${HAIFA_SQLITE_DATABASE_PATH:=${data_dir}/runtime.db}"
 : "${HAIFA_TRANSCRIPT_ROOT:=${data_dir}/transcripts}"
@@ -139,6 +174,16 @@ if [ -n "${JAVA_HOME:-}" ] && [ -x "${JAVA_HOME}/bin/java" ]; then
 else
     java_executable=java
 fi
+
+# The host subcommand must stay the first JVM argument, so the bundled configuration is inserted after it and an
+# explicit --config still wins because the parser keeps the last value.
+if [ "${1:-}" = "host" ]; then
+    subcommand=$1
+    shift
+    exec "$java_executable" -jar "${script_dir}/haifa-agent.jar" "$subcommand" \\
+        --config "${script_dir}/haifa-coding.yaml" "$@"
+fi
+
 exec "$java_executable" -jar "${script_dir}/haifa-agent.jar" --config "${script_dir}/haifa-coding.yaml" "$@"
 """
     launcher_file = output_directory / "haifa-coding"
