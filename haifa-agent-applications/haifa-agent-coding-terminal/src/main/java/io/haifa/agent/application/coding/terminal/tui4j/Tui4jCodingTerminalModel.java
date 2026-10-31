@@ -1216,6 +1216,8 @@ final class Tui4jCodingTerminalModel implements Model {
             accept(TerminalInput.Kind.SELECT_NEXT);
         } else if (key.type() == KeyType.KeyLeft) {
             accept(TerminalInput.Kind.NAVIGATE_BACK);
+        } else if (key.type() == KeyType.KeyRight) {
+            accept(TerminalInput.Kind.NAVIGATE_FORWARD);
         } else if (key.type() == KeyType.keyCR) {
             accept(TerminalInput.Kind.SUBMIT);
         } else if (key.type() == KeyType.KeySpace && clarificationSelectorOpen()) {

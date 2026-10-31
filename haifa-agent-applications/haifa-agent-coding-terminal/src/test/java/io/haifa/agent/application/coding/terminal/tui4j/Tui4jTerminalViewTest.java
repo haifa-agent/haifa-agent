@@ -256,7 +256,34 @@ class Tui4jTerminalViewTest {
 
         assertThat(rendered)
                 .containsSubsequence("Step 1 of 2 · Storage", "( ) Postgres", "Runs as a server")
-                .contains("[enter]", "enter select · space mark");
+                .contains("[enter]", "left previous", "right next", "enter select · space mark");
+    }
+
+    @Test
+    void rendersTheClarificationReviewHintWithoutTheQuestionStepKeys() {
+        TerminalUiState state = withSelector(
+                TerminalUiState.initial(80, 30),
+                new TerminalSelector(
+                        "clarification:interaction-1",
+                        "Clarification · Review · 2 questions",
+                        List.of(
+                                "Storage: Postgres",
+                                "Location: " + "in the repository ".repeat(12),
+                                "Send answer",
+                                "Cancel"),
+                        0,
+                        List.of(
+                                TerminalSelectorDetail.plain("Which storage?"),
+                                TerminalSelectorDetail.plain("Where should it live?"),
+                                TerminalSelectorDetail.plain("Send every marked answer and resume the run"),
+                                TerminalSelectorDetail.plain("Leave the questions unanswered"))));
+
+        String rendered = Strip.strip(view.render(state, transcript(state), editor(80), true, false));
+
+        assertThat(rendered)
+                .containsSubsequence("Storage: Postgres", "Which storage?", "Send answer")
+                .contains("left back", "enter edit or send", "…")
+                .doesNotContain("left previous", "space mark", "in the repository ".repeat(12));
     }
 
     @Test
@@ -308,7 +335,7 @@ class Tui4jTerminalViewTest {
                         "hold until run finishes",
                         "please handle the review")
                 .contains("enter select · space mark")
-                .doesNotContain("Send Now enter", "esc interrupt", "again to interrupt");
+                .doesNotContain("left previous", "Send Now enter", "esc interrupt", "again to interrupt");
         assertThat(lines.get(selectorRow - 1)).isBlank();
     }
 

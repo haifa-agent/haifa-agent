@@ -23,6 +23,7 @@ import com.williamcallahan.tui4j.message.EnterKeyModifier;
 import com.williamcallahan.tui4j.message.EnterKeyModifierMessage;
 import com.williamcallahan.tui4j.term.TerminalInfo;
 import io.haifa.agent.application.coding.terminal.application.CodingTerminalController;
+import io.haifa.agent.application.coding.terminal.application.CodingTerminalTestSupport;
 import io.haifa.agent.application.coding.terminal.event.TerminalEventPump;
 import io.haifa.agent.application.coding.terminal.event.TerminalInput;
 import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
@@ -2048,6 +2049,30 @@ class Tui4jCodingTerminalModelTest {
 
         fixture.model.update(key(KeyType.KeyLeft));
         assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("model-provider");
+    }
+
+    @Test
+    void routesClarificationArrowsBetweenQuestions() {
+        var client = new CodingTerminalTestSupport.FakeClient(
+                view(Optional.of(CodingTerminalTestSupport.multiQuestionClarification())));
+        var pump = new TerminalEventPump(64);
+        var controller = new CodingTerminalController(
+                CodingTerminalTestSupport.PROJECT_ID,
+                client,
+                pump,
+                new TerminalUiReducer(),
+                TerminalUiState.initial(80, 24),
+                Runnable::run);
+        controller.open(CodingTerminalTestSupport.SESSION_ID);
+        var model = new Tui4jCodingTerminalModel(controller, pump, System::nanoTime);
+
+        assertThat(controller.state().selector().orElseThrow().title()).contains("Step 1 of 2");
+
+        model.update(key(KeyType.KeyRight));
+        assertThat(controller.state().selector().orElseThrow().title()).contains("Step 2 of 2");
+
+        model.update(key(KeyType.KeyLeft));
+        assertThat(controller.state().selector().orElseThrow().title()).contains("Step 1 of 2");
     }
 
     @Test

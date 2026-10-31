@@ -32,6 +32,16 @@ public record ClarificationDetails(String title, List<Question> questions) {
     public static final String SUBMIT_LABEL = "Send answer";
     public static final String SUBMIT_DESCRIPTION = "Send every marked answer and resume the run";
 
+    /** The last multi-choice row opens the review; sending happens only from that review. */
+    public static final String REVIEW_LABEL = "Review answers";
+
+    public static final String REVIEW_DESCRIPTION = "Preview every answer before sending";
+
+    /** Shown when a review row has neither a marked option nor typed text. */
+    public static final String UNANSWERED_SUMMARY = "(not answered)";
+
+    private static final int ANSWER_SUMMARY_LIMIT = 160;
+
     /** U+2713 CHECK MARK: a narrow, non-emoji glyph, so marked rows keep their column alignment. */
     public static final String MARKER_SELECTED = "[\u2713]";
 
@@ -117,6 +127,62 @@ public record ClarificationDetails(String title, List<Question> questions) {
         }
         return "Clarification · Step " + (index + 1) + " of " + questions.size() + " · "
                 + questions.get(index).header();
+    }
+
+    /**
+     * The selector title of the pre-submit review.
+     *
+     * <p>The review lists every question with the options or text that will be sent. Sending happens from that
+     * screen, so the title is distinct from a question step.
+     */
+    public String reviewTitle() {
+        int count = questions.size();
+        return "Clarification · Review · " + count + (count == 1 ? " question" : " questions");
+    }
+
+    /**
+     * The readable answer of one question: option labels in selection order, then any typed text.
+     *
+     * <p>The review shows this text instead of option identifiers. A line break in typed text becomes a space, matching
+     * the single custom field of the submitted answer.
+     */
+    public String answerSummary(int index, List<String> selectedIds, String custom) {
+        if (index < 0 || index >= questions.size()) {
+            throw new IllegalArgumentException("question index is out of range");
+        }
+        Objects.requireNonNull(selectedIds, "selectedIds must not be null");
+        Objects.requireNonNull(custom, "custom must not be null");
+        Question question = questions.get(index);
+        List<String> labels = new ArrayList<>();
+        for (String id : selectedIds) {
+            for (Option option : question.options()) {
+                if (option.optionId().equals(id)) {
+                    labels.add(option.label());
+                    break;
+                }
+            }
+        }
+        String chosen = String.join(", ", labels);
+        String free = singleLine(custom);
+        String combined;
+        if (chosen.isEmpty() && free.isEmpty()) {
+            combined = UNANSWERED_SUMMARY;
+        } else if (chosen.isEmpty()) {
+            combined = free;
+        } else if (free.isEmpty()) {
+            combined = chosen;
+        } else {
+            combined = chosen + " · " + free;
+        }
+        return clipSummary(combined);
+    }
+
+    private static String clipSummary(String value) {
+        if (value.codePointCount(0, value.length()) <= ANSWER_SUMMARY_LIMIT) {
+            return value;
+        }
+        int end = value.offsetByCodePoints(0, ANSWER_SUMMARY_LIMIT - 1);
+        return value.substring(0, end) + "…";
     }
 
     /**

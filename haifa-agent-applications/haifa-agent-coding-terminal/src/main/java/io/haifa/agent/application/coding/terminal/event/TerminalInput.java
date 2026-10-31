@@ -18,6 +18,7 @@ public record TerminalInput(Kind kind, String text, int cursor) {
         SELECT_NEXT,
         TOGGLE_SELECTION,
         NAVIGATE_BACK,
+        NAVIGATE_FORWARD,
         SELECTOR_FILTER,
         SELECTOR_BACKSPACE,
         INTERRUPT,
