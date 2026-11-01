@@ -28,15 +28,14 @@ public final class Tui4jCodingTerminal {
                                 code)));
         boolean mouseReporting = terminalIo.initialMouseReportingEnabled();
         controller.initializeMouseReporting(mouseReporting);
-        var model =
-                new Tui4jCodingTerminalModel(
-                        controller,
-                        pump,
-                        System::nanoTime,
-                        terminalIo.hostInfo(),
-                        mouseReporting,
-                        TerminalClipboard.system(),
-                        !terminalIo.withoutSignalHandler());
+        var model = new Tui4jCodingTerminalModel(
+                controller,
+                pump,
+                System::nanoTime,
+                terminalIo.hostInfo(),
+                mouseReporting,
+                TerminalClipboard.system(),
+                !terminalIo.withoutSignalHandler());
         terminalIo.run(terminalIo.program(model));
     }
 }

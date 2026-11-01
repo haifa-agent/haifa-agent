@@ -21,7 +21,8 @@ class Tui4jTerminalIoTest {
         // A claimed signal handler turns SIGINT/SIGTERM into one in-app quit message that cancels the active Run,
         // so a killed remote client would cancel work the Host still owns.
         assertThat(Tui4jTerminalIo.system().withoutSignalHandler()).isFalse();
-        assertThat(Tui4jTerminalIo.systemWithoutSignalHandler().withoutSignalHandler()).isTrue();
+        assertThat(Tui4jTerminalIo.systemWithoutSignalHandler().withoutSignalHandler())
+                .isTrue();
     }
 
     @Test

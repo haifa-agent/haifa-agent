@@ -2335,13 +2335,7 @@ class Tui4jCodingTerminalModelTest {
                 TerminalUiState.initial(80, 24),
                 Runnable::run);
         var model = new Tui4jCodingTerminalModel(
-                controller,
-                pump,
-                System::nanoTime,
-                null,
-                true,
-                TerminalClipboard.system(),
-                false);
+                controller, pump, System::nanoTime, null, true, TerminalClipboard.system(), false);
         return new Fixture(controller, pump, model);
     }
 
