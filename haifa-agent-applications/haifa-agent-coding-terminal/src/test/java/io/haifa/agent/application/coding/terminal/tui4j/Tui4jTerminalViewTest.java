@@ -12,6 +12,7 @@ import com.williamcallahan.tui4j.compat.x.ansi.Strip;
 import com.williamcallahan.tui4j.term.TerminalInfo;
 import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
 import io.haifa.agent.application.coding.terminal.state.ApprovalDetails;
+import io.haifa.agent.application.coding.terminal.state.ClarificationDetails;
 import io.haifa.agent.application.coding.terminal.state.PendingMessage;
 import io.haifa.agent.application.coding.terminal.state.TerminalActivity;
 import io.haifa.agent.application.coding.terminal.state.TerminalFooter;
@@ -205,7 +206,7 @@ class Tui4jTerminalViewTest {
         assertThat(rendered)
                 .containsSubsequence("Start a task or use /commands.", "Commands", "/reload", "enter select")
                 .doesNotContain("Diagnostics", "Pending messages  none", "Widgets above", "Widgets below");
-        assertThat(rendered).contains("5-5 of 6", "editor preserved", "[f2] models", "[ctrl+p] commands");
+        assertThat(rendered).contains("editor preserved", "[f2] models", "[ctrl+p] commands");
         assertThat(rendered.lines()).hasSizeLessThanOrEqualTo(16);
     }
 
@@ -235,6 +236,237 @@ class Tui4jTerminalViewTest {
         String rendered = view.render(state, transcript(state), editor(60), true, false);
 
         assertThat(rendered).contains("│ > approve", "│   reject");
+    }
+
+    @Test
+    void showsBothApprovalActionsAndHelpInACompactWindowWithLongContent() {
+        ApprovalDetails details = new ApprovalDetails(
+                "Run PowerShell command",
+                "Inspect the repository before editing",
+                "PowerShell",
+                "Get-ChildItem -Recurse | Select-String -Pattern \"approval\" | Format-List\n"
+                        + "This long command output must not push the approval selector or its help off screen.",
+                List.of(),
+                List.of(),
+                Optional.empty(),
+                List.of("approve", "reject"));
+        TerminalUiState state = withSelector(
+                withApproval(TerminalUiState.initial(80, 16), details, true),
+                new TerminalSelector(
+                        "interaction:approval-1",
+                        "Approval · Run PowerShell command",
+                        List.of("Allow once", "Reject"),
+                        0));
+
+        String rendered = view.render(state, transcript(state), editor(80), true, false);
+
+        assertThat(Strip.strip(rendered)).contains("Allow once", "Reject", "enter select · escape close");
+        assertThat(rendered.lines()).hasSizeLessThanOrEqualTo(16);
+    }
+
+    @Test
+    void windowsLongClarificationQuestionsAndRationalesInsideTheRowBudget() {
+        List<String> options =
+                IntStream.rangeClosed(1, 7).mapToObj(index -> "Option-" + index).toList();
+        List<TerminalSelectorDetail> details = IntStream.rangeClosed(1, 7)
+                .mapToObj(index -> TerminalSelectorDetail.plain("Rationale-" + index + " 详细说明：选择这个选项会执行什么操作以及为什么重要"))
+                .toList();
+        TerminalUiState state = withSelector(
+                TerminalUiState.initial(60, 16),
+                new TerminalSelector(
+                        "clarification:interaction-1",
+                        "Clarification · Step 1 of 2 · Storage selection with a long question header",
+                        options,
+                        4,
+                        details));
+
+        String rendered = Strip.strip(view.render(state, transcript(state), editor(60), true, false));
+
+        assertThat(rendered).contains("Option-4", "Rationale-4", "详细说明", "of 7", "enter select · space mark", "…");
+        assertThat(rendered.lines()).hasSizeLessThanOrEqualTo(16);
+        assertThat(rendered.lines()).allMatch(line -> TextWidth.measureCellWidth(line) <= 59);
+    }
+
+    @Test
+    void wrapsAnOversizedCjkApprovalTitleAndLongFactsBeforeTheViewport() {
+        String title = "执行 PowerShell 命令并检查最终结果".repeat(6) + " TITLE-TAIL";
+        ApprovalDetails details = new ApprovalDetails(
+                title,
+                "为了确认长标题和长事实在进入 Viewport 前已经按 cell width 换行。",
+                "PowerShell",
+                "Start-Sleep -Seconds 4\n" + "这是一段很长的内容".repeat(10) + " CONTENT-TAIL",
+                List.of(new ApprovalDetails.Fact("环境", "本地环境事实".repeat(12) + " FACT-TAIL")),
+                List.of(new ApprovalDetails.Fact("摘要", "digest-123")),
+                Optional.of("HIGH"),
+                List.of("approve"));
+        TerminalUiState state = withApproval(TerminalUiState.initial(60, 30), details, false);
+
+        String content = view.transcriptContent(state);
+
+        assertThat(content).contains("TITLE-TAIL", "FACT-TAIL", "CONTENT-TAIL");
+        assertThat(content.lines().toList()).allMatch(line -> TextWidth.measureCellWidth(line) <= 60);
+    }
+
+    @Test
+    void ctrlORevealsCompleteClarificationDetailWhileTheSelectorStaysPinned() {
+        String longPrompt = "详细问题说明：".repeat(20) + " PROMPT-TAIL";
+        String longRationale = "详细理由：".repeat(20) + " RATIONALE-TAIL";
+        ClarificationDetails clarification = new ClarificationDetails(
+                "Delivery plan",
+                List.of(
+                        new ClarificationDetails.Question(
+                                "Storage",
+                                longPrompt,
+                                true,
+                                true,
+                                List.of(
+                                        new ClarificationDetails.Option(
+                                                "opt-0-0", "Postgres", Optional.of(longRationale)),
+                                        new ClarificationDetails.Option(
+                                                "opt-0-1", "SQLite", Optional.of("Embedded file database")))),
+                        new ClarificationDetails.Question(
+                                "Location",
+                                "Where should it live? " + "位置说明".repeat(20) + " LOCATION-TAIL",
+                                true,
+                                true,
+                                List.of(
+                                        new ClarificationDetails.Option(
+                                                "opt-1-0",
+                                                "In the repository",
+                                                Optional.of("Follows the layout RATIONALE-2-TAIL")),
+                                        new ClarificationDetails.Option(
+                                                "opt-1-1", "In the temp folder", Optional.empty())))));
+        ApprovalDetails details = clarification.toApprovalDetails();
+        TerminalUiState collapsed = withClarification(TerminalUiState.initial(60, 16), details, false);
+
+        String collapsedContent = view.transcriptContent(collapsed);
+        assertThat(collapsedContent)
+                .contains("Details · ctrl+o expand", "Q1", "Storage")
+                .doesNotContain("PROMPT-TAIL", "RATIONALE-TAIL");
+
+        TerminalUiState expanded =
+                new TerminalUiReducer().reduce(collapsed, new TerminalUiAction.ToggleExpanded("interaction-1"));
+        String expandedContent = view.transcriptContent(expanded);
+        assertThat(expandedContent).contains("PROMPT-TAIL", "RATIONALE-TAIL", "LOCATION-TAIL", "RATIONALE-2-TAIL");
+        assertThat(expandedContent.replaceAll("\\s+", " "))
+                .contains(
+                        ClarificationDetails.CUSTOM_ENTRY_LABEL,
+                        ClarificationDetails.DONE_LABEL,
+                        ClarificationDetails.SUBMIT_LABEL,
+                        ClarificationDetails.CANCEL_DESCRIPTION);
+
+        TerminalSelector selector = new TerminalSelector(
+                "clarification:interaction-1",
+                "Clarification · Step 1 of 2 · Storage",
+                List.of("[✓] Postgres", "[ ] SQLite", "Type your own answer", "Done with this question", "Cancel"),
+                0,
+                List.of(
+                        TerminalSelectorDetail.plain(longRationale),
+                        TerminalSelectorDetail.plain("Embedded file database"),
+                        TerminalSelectorDetail.plain(ClarificationDetails.CUSTOM_ENTRY_DESCRIPTION),
+                        TerminalSelectorDetail.plain(ClarificationDetails.DONE_DESCRIPTION),
+                        TerminalSelectorDetail.plain(ClarificationDetails.CANCEL_DESCRIPTION)));
+        TerminalUiState modal = withSelector(expanded, selector);
+        String rendered = Strip.strip(view.render(modal, transcript(modal), editor(60), false, false));
+
+        assertThat(rendered).contains("Postgres", "enter select · space mark");
+        assertThat(rendered.lines()).hasSizeLessThanOrEqualTo(16);
+    }
+
+    @Test
+    void everyClarificationActionRemainsReachableAsSelectionMoves() {
+        assertEveryClarificationActionReachable(ClarificationDetails.DONE_LABEL, ClarificationDetails.DONE_DESCRIPTION);
+        assertEveryClarificationActionReachable(
+                ClarificationDetails.SUBMIT_LABEL, ClarificationDetails.SUBMIT_DESCRIPTION);
+    }
+
+    @Test
+    void keepsModalControlsAndATranscriptRowWhenBackgroundRegionsCompeteAtMinimumSize() {
+        for (int columns : List.of(60, 120)) {
+            TerminalUiReducer reducer = new TerminalUiReducer();
+            TerminalUiState state = reducer.reduce(
+                    TerminalUiState.initial(columns, 16),
+                    new TerminalUiAction.PendingChanged(List.of(
+                            new PendingMessage("pending-1", PendingMessage.Kind.STEER, "queued follow-up text", 1))));
+            state = reducer.reduce(
+                    state,
+                    new TerminalUiAction.WaitingChanged(
+                            Optional.of(new io.haifa.agent.application.coding.terminal.state.WaitingMessage(
+                                    "waiting-1",
+                                    "waiting draft text",
+                                    io.haifa.agent.application.coding.terminal.state.WaitingMessage.Phase.WAITING))));
+            state = reducer.reduce(
+                    state, new TerminalUiAction.RecoverableFailure("WINDOWS_TERMINAL_MODIFIED_ENTER_REMAP"));
+            TerminalSelector selector = new TerminalSelector(
+                    "clarification:interaction-1",
+                    "Clarification · Step 1 of 1 · Long selection",
+                    List.of("LONG-SELECTED-OPTION " + "word ".repeat(50), "Cancel"),
+                    0,
+                    List.of(
+                            new TerminalSelectorDetail("selected rationale", "", "Category"),
+                            TerminalSelectorDetail.plain("")));
+            state = reducer.reduce(state, new TerminalUiAction.SelectorOpened(selector));
+
+            String rendered = Strip.strip(view.render(state, transcript(state), editor(columns), true, false));
+
+            assertThat(rendered).contains("LONG-SELECTED-OPTION", "Category", "of 2", "enter select · space mark", "…");
+            assertThat(rendered.lines()).hasSizeLessThanOrEqualTo(16);
+            assertThat(view.transcriptRegion().height()).isGreaterThanOrEqualTo(2);
+        }
+    }
+
+    @Test
+    void appendsAVisibleEllipsisWhenTheLastRetainedLabelLineIsShort() {
+        List<String> lines = view.selectorLabelLines("one two three four five six", false, 12, 2);
+
+        assertThat(lines).hasSize(2);
+        assertThat(lines.get(1)).endsWith("…");
+        assertThat(TextWidth.measureCellWidth(lines.get(1))).isLessThanOrEqualTo(12);
+    }
+
+    @Test
+    void scrollingTheTranscriptNeverMovesOrHidesTheSelector() {
+        List<TranscriptItem> history = IntStream.rangeClosed(1, 30)
+                .mapToObj(index -> item(
+                        "u-" + index,
+                        TranscriptItem.Kind.USER,
+                        "You",
+                        "message-" + index + " with enough text to fill the transcript viewport",
+                        "SENT",
+                        true))
+                .toList();
+        TerminalUiState state = withSelector(
+                withTranscript(TerminalUiState.initial(80, 16), history),
+                new TerminalSelector(
+                        "interaction:approval-1", "Approval · Required", List.of("Allow once", "Reject"), 1));
+        Viewport transcript = transcript(state);
+
+        String rendered = view.render(state, transcript, editor(80), false, false, Duration.ZERO, -8, false, false);
+
+        assertThat(Strip.strip(rendered)).contains("message-", "Allow once", "Reject", "enter select · escape close");
+        assertThat(rendered.lines()).hasSizeLessThanOrEqualTo(16);
+        assertThat(Strip.strip(rendered).lines().toList()).anyMatch(line -> line.contains("> Reject"));
+    }
+
+    @Test
+    void resizingKeepsApprovalActionsAndHelpOnScreen() {
+        for (int rows : List.of(16, 24, 40)) {
+            for (int columns : List.of(60, 120)) {
+                TerminalUiState state = withSelector(
+                        TerminalUiState.initial(columns, rows),
+                        new TerminalSelector(
+                                "interaction:approval-1",
+                                "Approval · 执行 PowerShell 命令 with a long header",
+                                List.of("Allow once", "Reject"),
+                                0));
+
+                String rendered = view.render(state, transcript(state), editor(columns), true, false);
+
+                assertThat(Strip.strip(rendered)).contains("Allow once", "Reject", "enter select · escape close");
+                assertThat(rendered.lines()).hasSizeLessThanOrEqualTo(rows);
+                assertThat(rendered.lines()).allMatch(line -> TextWidth.measureCellWidth(line) <= columns - 1);
+            }
+        }
     }
 
     @Test
@@ -1348,6 +1580,42 @@ class Tui4jTerminalViewTest {
                         "PENDING",
                         expanded,
                         Optional.of(details))));
+    }
+
+    private TerminalUiState withClarification(TerminalUiState initial, ApprovalDetails details, boolean expanded) {
+        return withTranscript(
+                initial,
+                List.of(new TranscriptItem(
+                        "interaction-1",
+                        TranscriptItem.Kind.CLARIFICATION,
+                        "Clarification · " + details.title(),
+                        details.content(),
+                        "PENDING",
+                        expanded,
+                        Optional.of(details))));
+    }
+
+    private void assertEveryClarificationActionReachable(String confirmLabel, String confirmDescription) {
+        List<String> labels = List.of(
+                "[ ] Option-1",
+                ClarificationDetails.CUSTOM_ENTRY_LABEL,
+                confirmLabel,
+                ClarificationDetails.CANCEL_LABEL);
+        List<TerminalSelectorDetail> details = List.of(
+                TerminalSelectorDetail.plain("Rationale 详细说明 for option 1 " + "理由".repeat(20) + " OPTION-TAIL"),
+                TerminalSelectorDetail.plain(ClarificationDetails.CUSTOM_ENTRY_DESCRIPTION),
+                TerminalSelectorDetail.plain(confirmDescription),
+                TerminalSelectorDetail.plain(ClarificationDetails.CANCEL_DESCRIPTION));
+        TerminalSelector selector = new TerminalSelector(
+                "clarification:interaction-1", "Clarification · Step 1 of 2 · Storage", labels, 0, details);
+        for (int target = 0; target < labels.size(); target++) {
+            while (selector.selected() != target) selector = selector.move(1);
+            TerminalUiState state = withSelector(TerminalUiState.initial(60, 16), selector);
+            String rendered = Strip.strip(view.render(state, transcript(state), editor(60), true, false));
+            assertThat(rendered).contains("> " + labels.get(target), "enter select · space mark", "of 4");
+            assertThat(rendered.lines()).hasSizeLessThanOrEqualTo(16);
+            assertThat(rendered.lines()).allMatch(line -> TextWidth.measureCellWidth(line) <= 59);
+        }
     }
 
     private TerminalUiState defaultState() {

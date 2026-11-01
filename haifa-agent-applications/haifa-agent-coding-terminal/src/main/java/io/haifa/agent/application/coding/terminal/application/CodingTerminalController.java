@@ -3643,10 +3643,25 @@ public final class CodingTerminalController implements AutoCloseable {
         var candidates = state.transcript().stream()
                 .filter(item -> technical ? item.toolDetails().isPresent() : item.toggleable())
                 .toList();
+        if (!technical) {
+            var clarificationItemId = clarificationSelectorItemId();
+            if (clarificationItemId.isPresent()) {
+                var clarification = candidates.stream()
+                        .filter(item -> item.id().equals(clarificationItemId.orElseThrow()))
+                        .findFirst();
+                if (clarification.isPresent()) return clarification;
+            }
+        }
         return candidates.stream()
                 .filter(item -> item.id().equals(activeTranscriptItemId))
                 .findFirst()
                 .or(() -> candidates.stream().reduce((first, second) -> second));
+    }
+
+    private Optional<String> clarificationSelectorItemId() {
+        return state.selector()
+                .filter(selector -> selector.kind().startsWith("clarification:"))
+                .map(selector -> "interaction-" + selector.kind().substring("clarification:".length()));
     }
 
     public void cycleModel(int delta) {
