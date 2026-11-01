@@ -44,6 +44,31 @@ class HaifaCliMainTest {
     }
 
     @Test
+    void hostConfigurationRejectionKeepsItsReasonVisible() {
+        // CodingHostServer.start rejects the resolved configuration with IllegalArgumentException. Reporting that
+        // through the argument path printed "invalid arguments" and hid the reason from operator and log.
+        String reason = HaifaCliMain.hostConfigurationFailure(
+                new IllegalArgumentException("approval must be one of: ask, auto, deny\nsecond line"));
+
+        assertThat(reason).startsWith("HOST_CONFIGURATION_REJECTED: ");
+        assertThat(reason).contains("approval must be one of: ask, auto, deny second line");
+        assertThat(reason).doesNotContain("\n");
+    }
+
+    @Test
+    void hostConfigurationRejectionStaysBoundedAndHasABareForm() {
+        String bounded = HaifaCliMain.hostConfigurationFailure(
+                new IllegalArgumentException("model binding rejected ".repeat(30)));
+
+        assertThat(bounded).startsWith("HOST_CONFIGURATION_REJECTED: ");
+        assertThat(bounded).endsWith("...");
+        assertThat(bounded.length()).isLessThanOrEqualTo("HOST_CONFIGURATION_REJECTED: ".length() + 200 + 3);
+        // Without a message the stable code still names the failure instead of the generic argument wording.
+        assertThat(HaifaCliMain.hostConfigurationFailure(new IllegalArgumentException()))
+                .isEqualTo("HOST_CONFIGURATION_REJECTED");
+    }
+
+    @Test
     void printsOnlyPublicAssistantDeltasAsTheyArrive() {
         AtomicReference<AgentRunOutputListener> listener = new AtomicReference<>();
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();

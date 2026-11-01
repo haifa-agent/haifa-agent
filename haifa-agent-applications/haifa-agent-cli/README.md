@@ -162,6 +162,11 @@ is a separate explicit process action.
 Parallel edits in one physical workspace require independent manual worktrees. Host does not allocate worktrees,
 detect same-directory write conflicts, or provide writer/reader ownership roles.
 
+Startup failures keep their own vocabulary: a rejected command line still prints `Invalid host command: <reason>`,
+while a configuration the Host refuses prints `HOST_CONFIGURATION_REJECTED: <single-line detail>` (secret-redacted,
+bounded to 200 characters) and logs `CLI_HOST_STARTUP_REJECTED` with the same detail. `DATABASE_OWNED_BY_ANOTHER_PROCESS`,
+`HOST_DURABLE_PERSISTENCE_REQUIRED` and `HOST_BIND_*` stay as they were.
+
 ## Remote TUI mode
 
 ```powershell

@@ -20,6 +20,13 @@ import java.util.function.Consumer;
 
 /** Unique executable entry for interactive Terminal and compatible one-shot Coding Agent modes. */
 public final class HaifaCliMain {
+    /** Redacts the bounded Host configuration detail before it reaches the console or the log. */
+    private static final io.haifa.agent.credential.api.SecretRedactor SECRET_REDACTOR =
+            new io.haifa.agent.credential.core.DefaultSecretRedactor();
+
+    /** Upper bound of the printed configuration rejection detail. */
+    private static final int MAX_CONFIGURATION_DETAIL = 200;
+
     private static final java.util.logging.Logger LOGGER =
             java.util.logging.Logger.getLogger(HaifaCliMain.class.getName());
     private final CliTerminalRunner terminalRunner;
@@ -261,6 +268,12 @@ public final class HaifaCliMain {
         });
     }
 
+    private static void logRejected(String code, Exception exception, String detail) {
+        LOGGER.log(java.util.logging.Level.WARNING, "{0} type={1} detail={2}", new Object[] {
+            code, exception.getClass().getName(), detail == null ? "" : detail
+        });
+    }
+
     static AtomicBoolean attachStreamingOutput(Consumer<AgentRunOutputListener> registrar, PrintStream output) {
         return CliActivityOutput.attach(registrar, output, output, false, false).streamed();
     }
@@ -374,34 +387,41 @@ public final class HaifaCliMain {
     }
 
     private int runHost(String[] arguments, PrintStream output, PrintStream error) {
+        CodingHostArguments host;
         try {
-            CodingHostArguments host = CodingHostArguments.parse(arguments, Path.of("."));
-            if (host.help()) {
-                output.println(hostUsage());
-                return 0;
-            }
-            try (CodingHostServer server =
-                    CodingHostServer.start(host.workspace(), host.config(), host.bind(), host.port())) {
-                output.println("CA Host listening on http://" + host.bind() + ":" + server.port());
-                output.println(
-                        "Parallel edits in one physical directory require independent manual worktrees; Host does not create worktrees or detect concurrent write conflicts.");
-                Thread shutdown =
-                        Thread.ofPlatform().name("haifa-coding-host-shutdown").unstarted(server::close);
-                Runtime.getRuntime().addShutdownHook(shutdown);
+            host = CodingHostArguments.parse(arguments, Path.of("."));
+        } catch (IllegalArgumentException exception) {
+            logRejected("CLI_HOST_ARGUMENT_REJECTED", exception);
+            error.println("Invalid host command: " + safeHostArgument(exception));
+            return 1;
+        }
+        if (host.help()) {
+            output.println(hostUsage());
+            return 0;
+        }
+        try (CodingHostServer server =
+                CodingHostServer.start(host.workspace(), host.config(), host.bind(), host.port())) {
+            output.println("CA Host listening on http://" + host.bind() + ":" + server.port());
+            output.println(
+                    "Parallel edits in one physical directory require independent manual worktrees; Host does not create worktrees or detect concurrent write conflicts.");
+            Thread shutdown =
+                    Thread.ofPlatform().name("haifa-coding-host-shutdown").unstarted(server::close);
+            Runtime.getRuntime().addShutdownHook(shutdown);
+            try {
+                server.awaitTermination();
+            } finally {
                 try {
-                    server.awaitTermination();
-                } finally {
-                    try {
-                        Runtime.getRuntime().removeShutdownHook(shutdown);
-                    } catch (IllegalStateException shuttingDown) {
-                        // JVM shutdown is already running the hook.
-                    }
+                    Runtime.getRuntime().removeShutdownHook(shutdown);
+                } catch (IllegalStateException shuttingDown) {
+                    // JVM shutdown is already running the hook.
                 }
             }
             return 0;
         } catch (IllegalArgumentException exception) {
-            logRejected("CLI_HOST_ARGUMENT_REJECTED", exception);
-            error.println("Invalid host command: " + safeHostArgument(exception));
+            // The command line already parsed, so a rejection here comes from the resolved Host configuration.
+            String reason = hostConfigurationFailure(exception);
+            logRejected("CLI_HOST_STARTUP_REJECTED", exception, reason);
+            error.println(reason);
             return 1;
         } catch (RuntimeException exception) {
             logRejected("CLI_HOST_FAILED", exception);
@@ -472,6 +492,26 @@ public final class HaifaCliMain {
             return message;
         }
         return "CA Host failed to start";
+    }
+
+    /**
+     * Names a Host startup rejection that comes from the resolved configuration rather than the command line.
+     *
+     * <p>{@code CodingHostServer.start} validates the loaded configuration, so its {@link IllegalArgumentException}s
+     * are configuration failures. Reporting them through the argument path turned every one of them into
+     * {@code invalid arguments}, which hid the real reason from the operator and from the log. The stable prefix
+     * keeps the console contract greppable, and the bounded single-line detail stays free of secrets and newlines.
+     */
+    static String hostConfigurationFailure(IllegalArgumentException exception) {
+        String message = exception.getMessage();
+        String detail = message == null
+                ? ""
+                : SECRET_REDACTOR.redact(message).replaceAll("\\s+", " ").strip();
+        if (detail.isEmpty()) return "HOST_CONFIGURATION_REJECTED";
+        if (detail.length() > MAX_CONFIGURATION_DETAIL) {
+            detail = detail.substring(0, MAX_CONFIGURATION_DETAIL) + "...";
+        }
+        return "HOST_CONFIGURATION_REJECTED: " + detail;
     }
 
     /**
