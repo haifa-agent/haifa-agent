@@ -17,6 +17,14 @@ import org.junit.jupiter.api.Test;
 
 class Tui4jTerminalIoTest {
     @Test
+    void remoteThinClientCompositionLeavesProcessSignalsToTheJvm() {
+        // A claimed signal handler turns SIGINT/SIGTERM into one in-app quit message that cancels the active Run,
+        // so a killed remote client would cancel work the Host still owns.
+        assertThat(Tui4jTerminalIo.system().withoutSignalHandler()).isFalse();
+        assertThat(Tui4jTerminalIo.systemWithoutSignalHandler().withoutSignalHandler()).isTrue();
+    }
+
+    @Test
     void failsClosedForNonInteractiveAndDumbTerminals() {
         var nonInteractive = new Tui4jTerminalIo(Optional.empty(), Optional.empty(), List.of(), false, false);
         var dumb = new Tui4jTerminalIo(Optional.empty(), Optional.empty(), List.of("TERM=dumb"), false, true);

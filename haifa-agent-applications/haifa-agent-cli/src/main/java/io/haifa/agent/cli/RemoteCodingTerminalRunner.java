@@ -28,7 +28,9 @@ final class RemoteCodingTerminalRunner implements CliRemoteTerminalRunner {
     private final Supplier<Tui4jTerminalIo> terminalIoFactory;
 
     RemoteCodingTerminalRunner() {
-        this(RemoteCodingSessionClient::connect, Tui4jTerminalIo::system);
+        // A thin client must never translate its own exit signal into a Run cancel: the Host owns the Run and only
+        // an explicit cancel request from this client may stop it.
+        this(RemoteCodingSessionClient::connect, Tui4jTerminalIo::systemWithoutSignalHandler);
     }
 
     RemoteCodingTerminalRunner(

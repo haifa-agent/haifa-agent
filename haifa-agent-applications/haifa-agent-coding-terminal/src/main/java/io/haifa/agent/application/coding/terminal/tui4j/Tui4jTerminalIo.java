@@ -58,12 +58,27 @@ public record Tui4jTerminalIo(
     }
 
     public static Tui4jTerminalIo system() {
+        return system(false);
+    }
+
+    /**
+     * Remote thin-client composition. The client must not claim process signals: tui4j turns a claimed
+     * SIGINT/SIGTERM into one in-app quit message that also cancels the active Run, so a killed client would
+     * cancel work the Host still owns. Without a claimed handler an exit signal stops only this process, and
+     * Ctrl+C remains an ordinary key press handled by the interrupt path.
+     */
+    public static Tui4jTerminalIo systemWithoutSignalHandler() {
+        return system(true);
+    }
+
+    private static Tui4jTerminalIo system(boolean withoutSignalHandler) {
         List<String> environment = System.getenv().entrySet().stream()
                 .filter(entry -> SAFE_TERMINAL_ENVIRONMENT.contains(entry.getKey()))
                 .map(entry -> entry.getKey() + "=" + entry.getValue())
                 .sorted()
                 .toList();
-        return new Tui4jTerminalIo(Optional.empty(), Optional.empty(), environment, false, System.console() != null);
+        return new Tui4jTerminalIo(
+                Optional.empty(), Optional.empty(), environment, withoutSignalHandler, System.console() != null);
     }
 
     public static Tui4jTerminalIo streams(InputStream input, OutputStream output, List<String> environment) {

@@ -328,7 +328,9 @@ Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、s
   其他产品错误只显示稳定错误码并保留草稿，不退出进程；
 - Escape：若存在 Waiting，只取消 Waiting；否则是活动 Run 的全局取消键（先 arm 再确认）。
   裸 Escape 不得被当作 EOF；Selector 打开时先关闭 Selector。空闲时 Escape 只关闭 Selector；
-  Ctrl+C 仍先清空非空 Editor，空 Editor 时取消活动 Run；
+  Ctrl+C 仍先清空非空 Editor，空 Editor 时取消活动 Run。嵌入式模式下 Ctrl-C 由 Program 接管的
+  SIGINT 处理器转成同一条中断；远程薄客户端不接管任何进程信号，SIGINT/SIGTERM 只结束客户端进程，
+  绝不取消 Host 拥有的 Run，Ctrl+C 则以按键形式走同一条中断路径；
 - `/resume` 选择并打开真实 Session；顶层 `haifa-coding resume`、`resume --last` 和
   `resume <SESSION_ID>` 复用同一产品客户端与打开流程；
 - `/resume <query>` 搜索 Session，`/rename [name]`（兼容 `/name`）使用 revision 重命名，

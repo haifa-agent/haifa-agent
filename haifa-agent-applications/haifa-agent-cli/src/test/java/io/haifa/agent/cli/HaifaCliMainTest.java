@@ -30,6 +30,22 @@ import org.junit.jupiter.api.Test;
 
 class HaifaCliMainTest {
     @Test
+    void surfacesTheOwnershipReasonCodeThroughWrapperExceptions() {
+        var ownership = new io.haifa.agent.application.project.persistence.CodingDatabaseOwnershipException();
+        var wrapped = new IllegalStateException("assembly failed", ownership);
+
+        assertThat(HaifaCliMain.ownershipFailure(ownership))
+                .hasValueSatisfying(message -> assertThat(message)
+                        .isEqualTo(io.haifa.agent.application.project.persistence.CodingDatabaseOwnershipException.CODE
+                                + ": the Coding Agent database is already owned by another process"));
+        assertThat(HaifaCliMain.ownershipFailure(wrapped))
+                .hasValueSatisfying(message -> assertThat(message)
+                        .startsWith(
+                                io.haifa.agent.application.project.persistence.CodingDatabaseOwnershipException.CODE));
+        assertThat(HaifaCliMain.ownershipFailure(new IllegalStateException("unrelated"))).isEmpty();
+    }
+
+    @Test
     void printsOnlyPublicAssistantDeltasAsTheyArrive() {
         AtomicReference<AgentRunOutputListener> listener = new AtomicReference<>();
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();

@@ -14,6 +14,7 @@ import java.io.PrintStream;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
@@ -236,6 +237,13 @@ public final class HaifaCliMain {
             logRejected("CLI_STATE_REJECTED", exception);
             if (Tui4jCodingTerminal.TUI_UNAVAILABLE.equals(exception.getMessage())) {
                 error.println(Tui4jCodingTerminal.TUI_UNAVAILABLE + ": an interactive terminal is required.");
+                return 1;
+            }
+            Optional<String> ownership = ownershipFailure(exception);
+            if (ownership.isPresent()) {
+                // Fail fast with the stable reason code instead of an unnamed IllegalStateException: the owner is
+                // another live process, and the user needs that fact rather than a retry of the same command.
+                error.println(ownership.orElseThrow());
                 return 1;
             }
             error.println("Unable to run haifa-cli: " + exception.getClass().getSimpleName());
@@ -464,6 +472,22 @@ public final class HaifaCliMain {
             return message;
         }
         return "CA Host failed to start";
+    }
+
+    /**
+     * Stable fail-fast reason when another live process already owns the Coding database.
+     *
+     * <p>Assembly wraps the ownership failure on its way out, so the whole cause chain is inspected; the message
+     * itself starts with {@code CodingDatabaseOwnershipException.CODE} and stays free of paths and secrets.
+     */
+    static Optional<String> ownershipFailure(Throwable failure) {
+        for (Throwable current = failure; current != null; current = current.getCause()) {
+            if (current instanceof io.haifa.agent.application.project.persistence.CodingDatabaseOwnershipException) {
+                return Optional.of(current.getMessage());
+            }
+            if (current.getCause() == current) break;
+        }
+        return Optional.empty();
     }
 
     private static String hostUsage() {

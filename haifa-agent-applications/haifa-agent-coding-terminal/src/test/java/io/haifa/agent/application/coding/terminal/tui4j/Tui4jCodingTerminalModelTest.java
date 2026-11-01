@@ -465,6 +465,24 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
+    void remoteThinClientKeepsCtrlCOnTheKeyInterruptPath() {
+        // A remote thin client claims no process signal, so SIGTERM/SIGINT can only stop the client; the keyboard
+        // must still reach the interrupt path or Ctrl+C would silently stop working there.
+        var thinClient = fixtureWithoutSignalOwnership();
+        var embedded = fixture();
+        var press = key(KeyType.keyETX);
+
+        assertThat(embedded.model.filterMessage(press)).isNull();
+
+        Message forwarded = thinClient.model.filterMessage(press);
+        assertThat(forwarded).isSameAs(press);
+        thinClient.model.update(forwarded);
+
+        assertThat(thinClient.controller.state().exitRequested()).isTrue();
+        assertThat(embedded.controller.state().exitRequested()).isFalse();
+    }
+
+    @Test
     void pressOutsideTheTranscriptRegionClearsTheSelection() {
         var clipboard = new RecordingClipboard(true);
         var fixture = fixtureWithClipboard(clipboard);
@@ -2304,6 +2322,27 @@ class Tui4jCodingTerminalModelTest {
 
     private Fixture fixture() {
         return fixture(System::nanoTime);
+    }
+
+    /** A remote thin client: the Program claims no process signals, so the keyboard owns the interrupt. */
+    private Fixture fixtureWithoutSignalOwnership() {
+        var pump = new TerminalEventPump(64);
+        var controller = new CodingTerminalController(
+                new ProjectId("project-1"),
+                new UnusedClient(),
+                pump,
+                new TerminalUiReducer(),
+                TerminalUiState.initial(80, 24),
+                Runnable::run);
+        var model = new Tui4jCodingTerminalModel(
+                controller,
+                pump,
+                System::nanoTime,
+                null,
+                true,
+                TerminalClipboard.system(),
+                false);
+        return new Fixture(controller, pump, model);
     }
 
     private Fixture activeFixture(UnusedClient client) {

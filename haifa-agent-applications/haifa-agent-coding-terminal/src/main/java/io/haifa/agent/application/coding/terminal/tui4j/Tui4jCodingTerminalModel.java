@@ -60,6 +60,12 @@ final class Tui4jCodingTerminalModel implements Model {
     private final Map<String, String> pastedContent = new LinkedHashMap<>();
     private final LongSupplier monotonicNanos;
     private final boolean pollWindowSize;
+    /**
+     * Whether the owning Program claims process signals. A remote thin client does not, so an exit signal stops
+     * only that client and the keyboard stays the one place that can interrupt the Host's Run.
+     */
+    private final boolean signalHandlerOwnsInterrupt;
+
     private boolean mouseReportingEnabled;
     private final TerminalClipboard clipboard;
     private final TerminalTextSelection selection = new TerminalTextSelection();
@@ -125,9 +131,21 @@ final class Tui4jCodingTerminalModel implements Model {
             TerminalHostInfo hostInfo,
             boolean mouseReportingEnabled,
             TerminalClipboard clipboard) {
+        this(controller, pump, monotonicNanos, hostInfo, mouseReportingEnabled, clipboard, true);
+    }
+
+    Tui4jCodingTerminalModel(
+            CodingTerminalController controller,
+            TerminalEventPump pump,
+            LongSupplier monotonicNanos,
+            TerminalHostInfo hostInfo,
+            boolean mouseReportingEnabled,
+            TerminalClipboard clipboard,
+            boolean signalHandlerOwnsInterrupt) {
         this.controller = controller;
         this.pump = pump;
         this.monotonicNanos = monotonicNanos;
+        this.signalHandlerOwnsInterrupt = signalHandlerOwnsInterrupt;
         this.composer = new ComposerInput(monotonicNanos);
         this.mouseReportingEnabled = mouseReportingEnabled;
         this.clipboard = clipboard;
@@ -1675,11 +1693,14 @@ final class Tui4jCodingTerminalModel implements Model {
      * resize with no change does not make the tui4j renderer clear its line cache and repaint.
      */
     Message filterMessage(Message message) {
-        if (message instanceof KeyPressMessage key
+        if (signalHandlerOwnsInterrupt
+                && message instanceof KeyPressMessage key
                 && key.type() == KeyType.keyETX
                 && !controller.secureInputRequested()) {
             // Ctrl-C is handled through the terminal SIGINT handler below so the
             // signal-driven QuitMessage cannot race the copy and exit the process.
+            // Only a Program that claims signals can rely on that; a remote thin client never
+            // claims them, so there the key itself must keep reaching the interrupt path.
             return null;
         }
         if (message instanceof QuitMessage) {
