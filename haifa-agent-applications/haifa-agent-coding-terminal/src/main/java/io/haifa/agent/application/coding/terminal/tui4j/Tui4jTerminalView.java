@@ -104,6 +104,11 @@ final class Tui4jTerminalView {
     /** Rendered sidebar Session rows and their screen line, rebuilt on every render pass. */
     private final List<SidebarSessionHit> sidebarSessionRows = new ArrayList<>();
 
+    /** Screen rows currently holding the sidebar Session window, rebuilt on every render pass. */
+    private int sidebarSessionsFirstRow = -1;
+
+    private int sidebarSessionsLastRow = -1;
+
     /** One rendered sidebar row mapped to the Session it represents. */
     record SidebarSessionHit(int row, io.haifa.agent.core.session.AgentSessionId sessionId) {}
 
@@ -123,6 +128,13 @@ final class Tui4jTerminalView {
     /** True when the sidebar panel is drawn, which decides both polling and click handling. */
     boolean sidebarRendered() {
         return !sidebarSessionRows.isEmpty();
+    }
+
+    /** True when the screen row lies on the sidebar Session list, which scrolls independently of the transcript. */
+    boolean sidebarSessionsAt(int screenRow) {
+        return sidebarSessionsFirstRow >= 0
+                && screenRow >= sidebarSessionsFirstRow
+                && screenRow <= sidebarSessionsLastRow;
     }
 
     private List<TranscriptHit> transcriptHits = List.of();
@@ -478,22 +490,28 @@ final class Tui4jTerminalView {
         lines.add("");
 
         sidebarSessionRows.clear();
+        sidebarSessionsFirstRow = -1;
+        sidebarSessionsLastRow = -1;
         lines.add(theme.focus("Sessions"));
         if (state.sessionRows().isEmpty()) {
             lines.add(theme.muted("  \u2022 No sessions yet"));
         } else {
-            for (int index = 0; index < state.sessionRows().size(); index++) {
-                if (lines.size() >= height - 4) {
-                    // Bounded truncation, never pagination (D6): the extra rows stay out of the panel.
-                    lines.add(theme.muted("  \u2026 more sessions; use /resume"));
-                    break;
-                }
-                TerminalSessionRow row = state.sessionRows().get(index);
-                boolean selected = index == state.sessionRowSelected();
+            List<TerminalSessionRow> visible = state.visibleSessionRows();
+            int windowStart = state.sessionRowWindowStart();
+            for (int offset = 0; offset < visible.size() && lines.size() < height - 4; offset++) {
+                TerminalSessionRow row = visible.get(offset);
+                boolean selected = windowStart + offset == state.sessionRowSelected();
                 // Record the rendered line so a click maps back to exactly this Session, not a screen guess.
                 sidebarSessionRows.add(new SidebarSessionHit(lines.size(), row.sessionId()));
+                if (sidebarSessionsFirstRow < 0) sidebarSessionsFirstRow = lines.size();
+                sidebarSessionsLastRow = lines.size();
                 String text = clip(row.render(selected), width);
                 lines.add(selected ? theme.strong(text) : theme.muted(text));
+            }
+            int hidden = state.sessionRows().size() - visible.size();
+            if (hidden > 0 && lines.size() < height - 4) {
+                // The window scrolls on its own; this only reports how much stays outside it.
+                lines.add(theme.muted("  \u2026 " + hidden + " more \u00b7 scroll"));
             }
         }
 

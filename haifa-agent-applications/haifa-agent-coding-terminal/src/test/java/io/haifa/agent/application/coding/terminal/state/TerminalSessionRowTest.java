@@ -28,6 +28,16 @@ class TerminalSessionRowTest {
 
     private CodingSessionSummary summary(
             String id, String name, AgentSessionStatus status, Optional<AgentRunStatus> runStatus, int queued) {
+        return summary(id, name, status, runStatus, queued, Instant.parse("2026-10-31T00:00:00Z"));
+    }
+
+    private CodingSessionSummary summary(
+            String id,
+            String name,
+            AgentSessionStatus status,
+            Optional<AgentRunStatus> runStatus,
+            int queued,
+            Instant lastActivityAt) {
         return new CodingSessionSummary(
                 new AgentSessionId(id),
                 project,
@@ -36,7 +46,7 @@ class TerminalSessionRowTest {
                 runStatus.map(ignored -> new AgentRunId("run-" + id)),
                 runStatus,
                 queued,
-                Instant.parse("2026-10-31T00:00:00Z"),
+                lastActivityAt,
                 1L);
     }
 
@@ -148,45 +158,87 @@ class TerminalSessionRowTest {
     }
 
     @Test
-    void waitingSessionsSortFirstThenActiveThenRecentHistory() {
+    void sessionsAreOrderedByLastActivityNewestFirst() {
         java.util.List<CodingSessionSummary> unordered = List.of(
                 // Deliberately ordered worst-case so a stable input cannot accidentally satisfy the assertion.
-                summary("s-old", "Old history", AgentSessionStatus.ACTIVE, Optional.empty(), 0),
-                summary("s-run", "Live work", AgentSessionStatus.ACTIVE, Optional.of(AgentRunStatus.RUNNING), 0),
                 summary(
-                        "s-wait",
+                        "s-old",
+                        "Old history",
+                        AgentSessionStatus.ACTIVE,
+                        Optional.empty(),
+                        0,
+                        Instant.parse("2026-10-29T00:00:00Z")),
+                summary(
+                        "s-mid",
+                        "Live work",
+                        AgentSessionStatus.ACTIVE,
+                        Optional.of(AgentRunStatus.RUNNING),
+                        0,
+                        Instant.parse("2026-10-30T00:00:00Z")),
+                summary(
+                        "s-new",
                         "Needs approval",
                         AgentSessionStatus.ACTIVE,
                         Optional.of(AgentRunStatus.WAITING_APPROVAL),
-                        0));
+                        0,
+                        Instant.parse("2026-10-31T00:00:00Z")));
 
         List<TerminalSessionRow> ordered = TerminalSessionRow.ordered(unordered);
 
-        // A Session blocked on a human is the only actionable row, so it must not be buried by active or idle ones.
+        // The list is the operator's recency view: the Session touched last comes first, whatever its status.
         assertThat(ordered).hasSize(3);
-        assertThat(ordered.get(0).sessionId().value()).isEqualTo("s-wait");
-        assertThat(ordered.get(1).sessionId().value()).isEqualTo("s-run");
+        assertThat(ordered.get(0).sessionId().value()).isEqualTo("s-new");
+        assertThat(ordered.get(1).sessionId().value()).isEqualTo("s-mid");
         assertThat(ordered.get(2).sessionId().value()).isEqualTo("s-old");
     }
 
     @Test
-    void orderingIsCappedSoTruncationKeepsActionableRows() {
+    void orderingIsCappedSoTruncationKeepsTheMostRecentRows() {
         java.util.List<CodingSessionSummary> many = new ArrayList<>();
-        // The waiting Session is appended last, so only an order-then-truncate pipeline keeps it in the list.
+        // The newest Session is appended last, so only an order-then-truncate pipeline keeps it in the list.
         for (int index = 0; index < TerminalUiState.MAX_SESSION_ROWS + 10; index++) {
             many.add(summary("s-" + index, "Session " + index, AgentSessionStatus.ACTIVE, Optional.empty(), 0));
         }
         many.add(summary(
-                "s-wait",
-                "Needs approval",
+                "s-newest",
+                "Touched last",
                 AgentSessionStatus.ACTIVE,
                 Optional.of(AgentRunStatus.WAITING_APPROVAL),
-                0));
+                0,
+                Instant.parse("2026-11-01T00:00:00Z")));
 
         List<TerminalSessionRow> ordered = TerminalSessionRow.ordered(many);
 
         assertThat(ordered).hasSize(TerminalUiState.MAX_SESSION_ROWS);
-        assertThat(ordered.getFirst().sessionId().value()).isEqualTo("s-wait");
+        assertThat(ordered.getFirst().sessionId().value()).isEqualTo("s-newest");
+    }
+
+    @Test
+    void theSidebarWindowShowsFiveRowsAndFollowsTheCursor() {
+        List<TerminalSessionRow> rows = new ArrayList<>();
+        for (int index = 0; index < 8; index++) {
+            rows.add(TerminalSessionRow.from(summary(
+                    "s-" + index,
+                    "Session " + index,
+                    AgentSessionStatus.ACTIVE,
+                    Optional.empty(),
+                    0,
+                    Instant.parse("2026-10-31T00:00:0" + index + "Z"))));
+        }
+
+        TerminalUiState state = TerminalUiState.initial(140, 40).withSessionRows(rows);
+
+        // Default window: the five most recent rows, no scrolling yet.
+        assertThat(state.visibleSessionRows()).hasSize(TerminalUiState.VISIBLE_SESSION_ROWS);
+        assertThat(state.sessionRowWindowStart()).isZero();
+        assertThat(state.visibleSessionRows().getFirst().sessionId().value()).isEqualTo("s-0");
+
+        // Moving the cursor scrolls the list on its own instead of growing the panel.
+        TerminalUiState moved = state.withSessionRowMoved(7);
+        assertThat(moved.sessionRowSelected()).isEqualTo(7);
+        assertThat(moved.sessionRowWindowStart()).isEqualTo(3);
+        assertThat(moved.visibleSessionRows()).hasSize(TerminalUiState.VISIBLE_SESSION_ROWS);
+        assertThat(moved.visibleSessionRows().getLast().sessionId().value()).isEqualTo("s-7");
     }
 
     @Test

@@ -87,28 +87,21 @@ public record TerminalSessionRow(
     }
 
     /**
-     * Orders sessions for the sidebar: human-waiting first, then live work, then recent history.
+     * Orders sessions for the sidebar by last activity, newest first.
      *
-     * <p>A Run that waits on a human is the only row that blocks progress, so burying it under active or historical
-     * Sessions would hide the one action the operator has to take. Ties fall back to the most recent activity, which
-     * keeps the list stable without inventing a priority that the Host does not publish. The cap is applied after
-     * ordering so a truncated list keeps the most actionable rows.
+     * <p>The list is the operator's recency view of the Project: the Session touched last is the one most likely to be
+     * the current task. Status stays visible on every row instead of reordering the list behind the user, so a Run that
+     * waits on a human is still readable in place. The cap is applied after ordering, so truncation keeps the most
+     * recent rows rather than an arbitrary prefix.
      */
     public static List<TerminalSessionRow> ordered(List<CodingSessionSummary> summaries) {
         Objects.requireNonNull(summaries, "summaries must not be null");
         return summaries.stream()
                 .map(TerminalSessionRow::from)
-                .sorted(java.util.Comparator.comparingInt(TerminalSessionRow::rank)
-                        .thenComparing(TerminalSessionRow::lastActivityAt, java.util.Comparator.reverseOrder()))
+                .sorted(java.util.Comparator.comparing(
+                        TerminalSessionRow::lastActivityAt, java.util.Comparator.reverseOrder()))
                 .limit(MAX_ROWS)
                 .toList();
-    }
-
-    /** Lower rank sorts first; the values only encode the required order. */
-    private static int rank(TerminalSessionRow row) {
-        if (row.awaitingHuman()) return 0;
-        if (row.active()) return 1;
-        return 2;
     }
 
     /** Row cap shared with the UI state so the controller cannot request more than the sidebar renders. */

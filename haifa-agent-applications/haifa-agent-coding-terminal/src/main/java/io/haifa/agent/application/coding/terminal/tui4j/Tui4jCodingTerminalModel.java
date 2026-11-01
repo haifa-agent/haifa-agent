@@ -287,6 +287,15 @@ final class Tui4jCodingTerminalModel implements Model {
         }
         Tui4jTerminalView.TranscriptRegion region = view.transcriptRegion();
         if (mouse.isWheel()) {
+            if (view.sidebarSessionsAt(mouse.row())) {
+                // The sidebar Session list scrolls on its own: the wheel moves its window instead of the transcript.
+                if (mouse.getButton() == MouseButton.MouseButtonWheelUp) {
+                    controller.moveSessionRow(-1);
+                } else if (mouse.getButton() == MouseButton.MouseButtonWheelDown) {
+                    controller.moveSessionRow(1);
+                }
+                return Command.none();
+            }
             if (!region.contains(mouse.row(), mouse.column())) {
                 return Command.none();
             }

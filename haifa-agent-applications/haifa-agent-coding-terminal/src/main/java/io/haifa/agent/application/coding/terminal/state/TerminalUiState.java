@@ -128,6 +128,31 @@ public record TerminalUiState(
     /** Hard cap for the sidebar list; v1 truncates instead of paginating (D6). */
     public static final int MAX_SESSION_ROWS = 50;
 
+    /** Rows the sidebar shows at once; the rest stay reachable by scrolling the list. */
+    public static final int VISIBLE_SESSION_ROWS = 5;
+
+    /**
+     * First row of the visible window.
+     *
+     * <p>The window follows the cursor: the sidebar scrolls on its own instead of shrinking the list to the panel
+     * height, and the list keeps showing {@link #VISIBLE_SESSION_ROWS} rows whether the Session sits above or below the
+     * previous window.
+     */
+    public int sessionRowWindowStart() {
+        if (sessionRows.isEmpty()) return 0;
+        int window = Math.min(VISIBLE_SESSION_ROWS, sessionRows.size());
+        int start = sessionRowSelected - window + 1;
+        return Math.max(0, Math.min(start, sessionRows.size() - window));
+    }
+
+    /** The rows the sidebar renders right now, in list order. */
+    public List<TerminalSessionRow> visibleSessionRows() {
+        if (sessionRows.isEmpty()) return List.of();
+        int start = sessionRowWindowStart();
+        int end = Math.min(sessionRows.size(), start + VISIBLE_SESSION_ROWS);
+        return sessionRows.subList(start, end);
+    }
+
     /** Replaces the sidebar rows and keeps the selection inside the new bounds. */
     public TerminalUiState withSessionRows(List<TerminalSessionRow> newRows) {
         List<TerminalSessionRow> bounded = List.copyOf(Objects.requireNonNull(newRows, "newRows must not be null"));
