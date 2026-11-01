@@ -311,7 +311,12 @@ class CodingTerminalInteractionTest {
                         ClarificationDetails.CANCEL_DESCRIPTION);
         assertThat(controller.state().transcript()).singleElement().satisfies(item -> {
             assertThat(item.kind()).isEqualTo(TranscriptItem.Kind.CLARIFICATION);
-            assertThat(item.body()).isEqualTo("Storage: Which storage?\nLocation: Where should it live?");
+            assertThat(item.body())
+                    .contains(
+                            "Q1 · Storage",
+                            "Postgres — Runs as a server",
+                            "Q2 · Location",
+                            "Follows the repository layout");
         });
 
         controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
@@ -366,6 +371,41 @@ class CodingTerminalInteractionTest {
         assertThat(controller.state().selector()).isPresent();
         assertThat(controller.state().transcript()).singleElement().satisfies(item -> assertThat(item.expanded())
                 .isTrue());
+        assertThat(client.respondedActions).isEmpty();
+    }
+
+    @Test
+    void ctrlOPrefersThePendingClarificationEvenWhenAPriorItemWasSelected() {
+        FakeClient client = new FakeClient(view(Optional.of(clarification(false))));
+        var pump = new TerminalEventPump(32);
+        var controller = new CodingTerminalController(
+                PROJECT_ID, client, pump, new TerminalUiReducer(), TerminalUiState.initial(120, 40), Runnable::run);
+        controller.open(SESSION_ID);
+        pump.offer(new TerminalUiAction.RunEventReceived(event(
+                1,
+                new RunEventPayloads.ToolLifecycle("tool-1", "execution_run", "SUCCEEDED", "NONE", "git status", ""))));
+        controller.drainEvents();
+        var tool = controller.state().transcript().stream()
+                .filter(item -> item.kind() == TranscriptItem.Kind.TOOL)
+                .findFirst()
+                .orElseThrow();
+        controller.toggleTranscriptItem(tool.id());
+        assertThat(controller.state().transcript())
+                .filteredOn(item -> item.id().equals(tool.id()))
+                .singleElement()
+                .satisfies(item -> assertThat(item.expanded()).isTrue());
+
+        controller.accept(input(TerminalInput.Kind.TOGGLE_EXPANSION, ""));
+
+        assertThat(controller.state().selector()).isPresent();
+        assertThat(controller.state().transcript())
+                .filteredOn(item -> item.kind() == TranscriptItem.Kind.CLARIFICATION)
+                .singleElement()
+                .satisfies(item -> assertThat(item.expanded()).isTrue());
+        assertThat(controller.state().transcript())
+                .filteredOn(item -> item.id().equals(tool.id()))
+                .singleElement()
+                .satisfies(item -> assertThat(item.expanded()).isTrue());
         assertThat(client.respondedActions).isEmpty();
     }
 

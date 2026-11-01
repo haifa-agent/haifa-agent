@@ -2,6 +2,17 @@
 
 ## Unreleased - 0.1.5-SNAPSHOT
 
+- Coding Agent file mutations (`file_create`, `file_write`, `file_patch`, `file_delete`, `file_move`)
+  now show structured approvals with the intended operation, exact target, and a bounded/redacted preview
+  of the requested content or patch instead of the generic tool coordinate fallback. Patch approval
+  reports the truthful declared-target total while previewing only a bounded head, and reauthentication
+  keeps its distinct title/purpose. Approval and clarification selectors size themselves from real frame
+  rows, so compact windows keep the selected action plus navigation help and normally show both
+  `Allow once` and `Reject`; long CJK labels and rationales wrap within the terminal cell width and
+  overflow is stated explicitly. Clarification cards keep a short collapsed summary while `ctrl+o`
+  exposes the complete bounded question/option/rationale detail, and `PageUp`/`PageDown` scroll the
+  pinned transcript without changing the selector selection or submitting the interaction.
+
 - OpenCode Go now behaves like the channel documents: model requests carry the frozen root-Run
   affinity as `x-opencode-session` so delegated children share routing and prompt cache, the three
   bindings declare the reasoning profiles the channel serves (`reasoningMode: ENABLED` maps the
