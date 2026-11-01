@@ -21,6 +21,11 @@ public record ClarificationDetails(String title, List<Question> questions) {
     /** The answer wire format shared with the Runtime tool. */
     public static final String ANSWER_FORMAT = "clarification-answer.v1";
 
+    /** The transcript card body is also a TranscriptItem body, whose hard bound is 16,384 characters. */
+    private static final int MAX_TRANSCRIPT_DETAIL_LENGTH = 16_000;
+
+    private static final String TRUNCATED_MARKER = "...[truncated]";
+
     public static final String CUSTOM_ENTRY_LABEL = "Type your own answer";
     /** Option rationales the selector renders under its own rows, so every row explains what Enter will do. */
     public static final String CUSTOM_ENTRY_DESCRIPTION =
@@ -186,29 +191,73 @@ public record ClarificationDetails(String title, List<Question> questions) {
     }
 
     /**
-     * The interaction card projection: one line per question and no repeated option list.
-     *
-     * <p>The selector is the only surface that lists options together with their rationale, so the transcript card
-     * never duplicates them. The card therefore stays short enough to read without a fold while the answer draft is
-     * open right below it.
+     * The interaction card projection: a short collapsed summary plus the complete bounded question/option/rationale
+     * detail for the existing Ctrl+O expansion surface. The selector is still the only input surface.
      */
     public ApprovalDetails toApprovalDetails() {
-        StringBuilder content = new StringBuilder();
-        for (Question question : questions) {
-            if (content.length() > 0) {
-                content.append('\n');
-            }
-            content.append(question.header()).append(": ").append(singleLine(question.prompt()));
-        }
         return new ApprovalDetails(
                 title,
                 "The agent needs an answer before it can continue",
                 "text/plain",
-                content.toString(),
-                List.of(),
+                transcriptDetail(),
+                summaryFacts(),
                 List.of(),
                 Optional.empty(),
                 List.of());
+    }
+
+    private List<ApprovalDetails.Fact> summaryFacts() {
+        List<ApprovalDetails.Fact> facts = new ArrayList<>();
+        for (int index = 0; index < questions.size(); index++) {
+            Question question = questions.get(index);
+            String prompt = singleLine(question.prompt());
+            if (prompt.length() > 72) {
+                int end = 71;
+                if (Character.isHighSurrogate(prompt.charAt(end - 1))) end--;
+                prompt = prompt.substring(0, end) + "…";
+            }
+            facts.add(new ApprovalDetails.Fact(
+                    "Q" + (index + 1) + " " + question.header(), prompt.isBlank() ? "(no prompt)" : prompt));
+        }
+        return List.copyOf(facts);
+    }
+
+    private String transcriptDetail() {
+        StringBuilder detail = new StringBuilder();
+        for (int index = 0; index < questions.size(); index++) {
+            Question question = questions.get(index);
+            if (index > 0) detail.append('\n');
+            detail.append("Q")
+                    .append(index + 1)
+                    .append(" · ")
+                    .append(question.header())
+                    .append('\n')
+                    .append(question.prompt().strip())
+                    .append('\n');
+            for (Option option : question.options()) {
+                detail.append("  - ").append(option.label());
+                option.description()
+                        .ifPresent(description -> detail.append(" — ").append(description));
+                detail.append('\n');
+            }
+            detail.append("  Answer mode: ")
+                    .append(question.multiple() ? "multiple choice; Space marks, Enter confirms" : "single choice")
+                    .append('\n');
+            detail.append("  Custom answer: ")
+                    .append(question.allowCustom() ? "available via \"" + CUSTOM_ENTRY_LABEL + "\"" : "not offered")
+                    .append('\n');
+            if (question.multiple()) {
+                detail.append("  Confirm: ")
+                        .append(index == questions.size() - 1 ? SUBMIT_LABEL : DONE_LABEL)
+                        .append('\n');
+            }
+            detail.append("  Cancel: ").append(CANCEL_DESCRIPTION).append('\n');
+        }
+        String value = detail.toString().strip();
+        if (value.length() <= MAX_TRANSCRIPT_DETAIL_LENGTH) return value;
+        int end = MAX_TRANSCRIPT_DETAIL_LENGTH - TRUNCATED_MARKER.length();
+        if (end > 0 && Character.isHighSurrogate(value.charAt(end - 1))) end--;
+        return value.substring(0, end) + TRUNCATED_MARKER;
     }
 
     /**

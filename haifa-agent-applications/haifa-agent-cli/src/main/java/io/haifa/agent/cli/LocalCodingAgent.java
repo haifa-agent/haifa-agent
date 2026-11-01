@@ -56,6 +56,7 @@ import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.core.run.AgentRunType;
 import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.credential.api.SecretRedactor;
 import io.haifa.agent.execution.api.ToolOutputPreviewPublisher;
 import io.haifa.agent.model.anthropic.AnthropicMessagesModel;
 import io.haifa.agent.model.api.AgentChatModel;
@@ -166,6 +167,9 @@ final class LocalCodingAgent implements AutoCloseable {
     private static final int MAX_PURPOSE_LENGTH = 512;
     private static final int MAX_CONTENT_TYPE_LENGTH = 64;
     private static final int MAX_FACT_VALUE_LENGTH = 512;
+    private static final int MAX_APPROVAL_PROMPT_LENGTH = 2_000;
+    private static final Set<String> FILE_MUTATION_TOOLS =
+            Set.of("file_create", "file_write", "file_patch", "file_delete", "file_move");
     private final IdentifierGenerator identifiers;
     private final TimeProvider time;
     private final AgentRuntime runtime;
@@ -682,6 +686,13 @@ final class LocalCodingAgent implements AutoCloseable {
                                     call.arguments().values()));
                         }
                         if (!toolName.equals("execution_run")) {
+                            Optional<ApprovalPrompt> fileMutation = fileMutationApprovalPrompt(
+                                    toolName,
+                                    binding.coordinate().externalForm(),
+                                    call.arguments().values(),
+                                    webPlatform.credentialBroker().redactor(),
+                                    reauthentication);
+                            if (fileMutation.isPresent()) return fileMutation.orElseThrow();
                             return io.haifa.agent.runtime.core.interaction.ToolApprovalPromptFormatter
                                     .defaultFormatter()
                                     .format(binding, call, reauthentication);
@@ -1160,6 +1171,204 @@ final class LocalCodingAgent implements AutoCloseable {
 
     private static String boundedApprovalContent(String value) {
         return boundedApprovalValue(value, MAX_APPROVAL_CONTENT_LENGTH);
+    }
+
+    static Optional<ApprovalPrompt> fileMutationApprovalPrompt(
+            String toolName,
+            String coordinate,
+            Map<String, Object> arguments,
+            SecretRedactor redactor,
+            boolean reauthentication) {
+        if (!FILE_MUTATION_TOOLS.contains(toolName)) return Optional.empty();
+        SecretRedactor safeRedactor = redactor == null ? SecretRedactor.noop() : redactor;
+        String path = safeFileArgument(arguments, "path", safeRedactor);
+        String source = safeFileArgument(arguments, "source", safeRedactor);
+        String destination = safeFileArgument(arguments, "destination", safeRedactor);
+        String content = safeFileBody(arguments.get("content"), safeRedactor);
+        String patch = safeFileBody(arguments.get("patch"), safeRedactor);
+        PatchTargetPreview patchTargets =
+                toolName.equals("file_patch") ? patchTargets(patch) : new PatchTargetPreview(List.of(), 0);
+
+        String title;
+        String defaultPurpose;
+        String contentType;
+        String target;
+        String contentLabel = null;
+        String body = "";
+        switch (toolName) {
+            case "file_create" -> {
+                title = "Create file";
+                defaultPurpose = "The agent requests to create a new file only if the target is absent.";
+                contentType = "File content";
+                target = path;
+                contentLabel = "Requested content";
+                body = content;
+            }
+            case "file_write" -> {
+                title = "Write file";
+                defaultPurpose =
+                        "The agent requests to replace the target file's complete contents; the tool may create it only when absent.";
+                contentType = "File content";
+                target = path;
+                contentLabel = "Requested content";
+                body = content;
+            }
+            case "file_patch" -> {
+                title = "Apply patch";
+                defaultPurpose = "The agent requests to apply this context patch to the declared workspace files.";
+                contentType = "Patch";
+                target = patchTargetSummary(patchTargets);
+                contentLabel = "Requested patch";
+                body = patch;
+            }
+            case "file_delete" -> {
+                title = "Delete file";
+                defaultPurpose =
+                        "The agent requests to delete the target path. No file content is read for this approval.";
+                contentType = "Path";
+                target = path;
+            }
+            case "file_move" -> {
+                title = "Move file";
+                defaultPurpose =
+                        "The agent requests to move the source path to the destination path. No file content is read for this approval.";
+                contentType = "Path";
+                target = source + " → " + destination;
+            }
+            default -> {
+                return Optional.empty();
+            }
+        }
+
+        String effectiveTitle =
+                reauthentication ? "Reauthenticate and " + title.toLowerCase(java.util.Locale.ROOT) : title;
+        String intent = safeFileDescription(arguments.get("description"), safeRedactor, defaultPurpose);
+        String purpose = reauthentication ? "Reauthentication required. " + intent : intent;
+        String requestedSummary = contentLabel == null ? "" : boundedFileSummary(body);
+        StringBuilder presentation = new StringBuilder();
+        presentation.append("Target: ").append(target).append('\n');
+        if (contentLabel != null) {
+            presentation
+                    .append(contentLabel)
+                    .append(" (")
+                    .append(requestedSummary)
+                    .append("):")
+                    .append('\n')
+                    .append(
+                            body.isBlank()
+                                    ? (contentLabel.equals("Requested patch")
+                                            ? "(empty patch content)"
+                                            : "(empty file content)")
+                                    : body);
+        } else {
+            presentation
+                    .append(defaultPurpose)
+                    .append('\n')
+                    .append("This approval covers this single ")
+                    .append(title.toLowerCase(java.util.Locale.ROOT))
+                    .append(" request; the call reports success or failure separately.");
+        }
+
+        List<ApprovalPresentation.Fact> environment = List.of(
+                new ApprovalPresentation.Fact(
+                        "Operation", boundedApprovalValue(effectiveTitle, MAX_CONTENT_TYPE_LENGTH)),
+                new ApprovalPresentation.Fact("Target", nonBlankApprovalFact(target)),
+                new ApprovalPresentation.Fact("Effect", "Local workspace file change after approval"),
+                new ApprovalPresentation.Fact("Scope", "This approval applies to this call only"));
+        List<ApprovalPresentation.Fact> technical = new java.util.ArrayList<>();
+        technical.add(new ApprovalPresentation.Fact("Tool", nonBlankApprovalFact(toolName)));
+        technical.add(new ApprovalPresentation.Fact("Coordinate", nonBlankApprovalFact(coordinate)));
+        if (contentLabel != null) {
+            technical.add(new ApprovalPresentation.Fact(contentLabel, nonBlankApprovalFact(requestedSummary)));
+        }
+        if (reauthentication) {
+            technical.add(new ApprovalPresentation.Fact("Reauthentication", "required"));
+        }
+
+        String preview =
+                contentLabel == null ? "" : "\n" + contentLabel + " preview:\n" + boundedApprovalValue(body, 900);
+        String prompt = boundedApprovalValue(
+                (reauthentication ? "Reauthenticate and approve: " : "")
+                        + defaultPurpose
+                        + "\nOperation: "
+                        + effectiveTitle
+                        + "\nTarget: "
+                        + target
+                        + preview,
+                MAX_APPROVAL_PROMPT_LENGTH);
+        return Optional.of(new ApprovalPrompt(
+                prompt,
+                Optional.of(new ApprovalPresentation(
+                        boundedApprovalValue(effectiveTitle, MAX_APPROVAL_TITLE_LENGTH),
+                        boundedApprovalValue(purpose, MAX_PURPOSE_LENGTH),
+                        boundedApprovalValue(contentType, MAX_CONTENT_TYPE_LENGTH),
+                        boundedApprovalContent(presentation.toString().strip()),
+                        environment,
+                        technical,
+                        Optional.of("Workspace file mutation")))));
+    }
+
+    private static String safeFileArgument(Map<String, Object> arguments, String name, SecretRedactor redactor) {
+        Object value = arguments.get(name);
+        if (!(value instanceof String text) || text.isBlank()) return "<missing>";
+        if (text.length() > 4096) return "<too long>";
+        String safe = safeApprovalText(redactor.redact(text));
+        return safe.indexOf('\n') >= 0 || safe.indexOf('\r') >= 0 || safe.indexOf('\t') >= 0 ? "<invalid>" : safe;
+    }
+
+    private static String safeFileBody(Object value, SecretRedactor redactor) {
+        if (!(value instanceof String text)) return "";
+        return safeApprovalText(redactor.redact(text));
+    }
+
+    private static String safeFileDescription(Object value, SecretRedactor redactor, String fallback) {
+        if (!(value instanceof String text) || text.isBlank()) return fallback;
+        String safe =
+                safeApprovalText(redactor.redact(text)).replaceAll("\\s+", " ").strip();
+        return boundedApprovalValue(safe.isBlank() ? fallback : safe, MAX_PURPOSE_LENGTH);
+    }
+
+    private static String boundedFileSummary(String value) {
+        if (value.isBlank()) return "empty";
+        long lines = value.lines().count();
+        return lines + (lines == 1 ? " line" : " lines") + ", " + value.length() + " characters";
+    }
+
+    private record PatchTargetPreview(List<String> preview, int total) {}
+
+    private static PatchTargetPreview patchTargets(String patch) {
+        List<String> preview = new java.util.ArrayList<>();
+        int total = 0;
+        for (String raw : patch.lines().toList()) {
+            String line = raw.stripTrailing();
+            String target;
+            if (line.startsWith("*** Add File: ")) {
+                target = "Create " + line.substring("*** Add File: ".length());
+            } else if (line.startsWith("*** Update File: ")) {
+                target = "Update " + line.substring("*** Update File: ".length());
+            } else if (line.startsWith("*** Delete File: ")) {
+                target = "Delete " + line.substring("*** Delete File: ".length());
+            } else if (line.startsWith("*** Move to: ")) {
+                target = "Move to " + line.substring("*** Move to: ".length());
+            } else {
+                continue;
+            }
+            total++;
+            if (preview.size() < 16) preview.add(target);
+        }
+        return new PatchTargetPreview(List.copyOf(preview), total);
+    }
+
+    private static String patchTargetSummary(PatchTargetPreview targets) {
+        if (targets.total() == 0) return "targets declared in the patch";
+        if (targets.total() <= 3) return String.join("; ", targets.preview());
+        String head = String.join(
+                "; ", targets.preview().subList(0, Math.min(3, targets.preview().size())));
+        if (targets.total() == targets.preview().size()) {
+            return targets.total() + " declared targets: " + head + "; …";
+        }
+        return targets.total() + " declared targets; first 3: " + head + "; … (" + (targets.total() - 3)
+                + " not shown)";
     }
 
     private static String nonBlankApprovalFact(String value) {

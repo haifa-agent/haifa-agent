@@ -265,7 +265,7 @@ public record TranscriptItem(
     /** Whether ctrl+o expansion toggling applies to the item, independent of its current expanded state. */
     public boolean toggleable() {
         return switch (kind) {
-            case TOOL, EXECUTION, SUMMARY, APPROVAL -> true;
+            case TOOL, EXECUTION, SUMMARY, APPROVAL, CLARIFICATION -> true;
             case RESOURCE -> id.startsWith("delivery-") || id.startsWith("resource-");
             default -> false;
         };

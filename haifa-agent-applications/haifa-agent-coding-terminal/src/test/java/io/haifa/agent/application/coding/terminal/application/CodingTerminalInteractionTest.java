@@ -329,7 +329,12 @@ class CodingTerminalInteractionTest {
                         ClarificationDetails.CANCEL_DESCRIPTION);
         assertThat(controller.state().transcript()).singleElement().satisfies(item -> {
             assertThat(item.kind()).isEqualTo(TranscriptItem.Kind.CLARIFICATION);
-            assertThat(item.body()).isEqualTo("Storage: Which storage?\nLocation: Where should it live?");
+            assertThat(item.body())
+                    .contains(
+                            "Q1 · Storage",
+                            "Postgres — Runs as a server",
+                            "Q2 · Location",
+                            "Follows the repository layout");
         });
 
         controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
@@ -501,6 +506,60 @@ class CodingTerminalInteractionTest {
                 .isEqualTo("selected=opt-0-0,opt-0-1\ncustom=");
     }
 
+    @Test
+    void changingACustomSingleChoiceAnswerReplacesTheOldAnswer() {
+        FakeClient client = new FakeClient(view(Optional.of(clarification(false))));
+        client.reconciledView = view(Optional.empty());
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+
+        // Move to custom answer, type "Redis", and confirm to review
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "Redis"));
+
+        // From review, reopen question 1
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+
+        // Select SQLite (previous option from custom) and submit it
+        controller.accept(input(TerminalInput.Kind.SELECT_PREVIOUS, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+
+        submitClarificationReview(controller);
+
+        assertThat(((io.haifa.agent.core.content.TextPart)
+                                client.respondedInputs.get(0).get(0))
+                        .text())
+                .isEqualTo("selected=opt-0-1\ncustom=");
+    }
+
+    @Test
+    void returningToEditACustomAnswerRestoresItsFullText() {
+        FakeClient client = new FakeClient(view(Optional.of(clarification(false))));
+        client.reconciledView = view(Optional.empty());
+        String answer = "a".repeat(170) + " IMPORTANT-TAIL";
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, answer));
+
+        assertThat(controller.state().selector().orElseThrow().options().getFirst())
+                .doesNotContain("IMPORTANT-TAIL");
+        assertThat(controller.state().selector().orElseThrow().details())
+                .noneMatch(detail -> detail.description().contains("IMPORTANT-TAIL"));
+
+        // Reopen question from review, then enter custom text editing
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+
+        assertThat(controller.state().selector()).isEmpty();
+        assertThat(controller.state().editorBuffer()).isEqualTo(answer);
+    }
+
     private static void submitClarificationReview(CodingTerminalController controller) {
         int send = controller.state().selector().orElseThrow().options().indexOf(ClarificationDetails.SUBMIT_LABEL);
         assertThat(send).isGreaterThanOrEqualTo(0);
@@ -555,6 +614,41 @@ class CodingTerminalInteractionTest {
         assertThat(controller.state().selector()).isPresent();
         assertThat(controller.state().transcript()).singleElement().satisfies(item -> assertThat(item.expanded())
                 .isTrue());
+        assertThat(client.respondedActions).isEmpty();
+    }
+
+    @Test
+    void ctrlOPrefersThePendingClarificationEvenWhenAPriorItemWasSelected() {
+        FakeClient client = new FakeClient(view(Optional.of(clarification(false))));
+        var pump = new TerminalEventPump(32);
+        var controller = new CodingTerminalController(
+                PROJECT_ID, client, pump, new TerminalUiReducer(), TerminalUiState.initial(120, 40), Runnable::run);
+        controller.open(SESSION_ID);
+        pump.offer(new TerminalUiAction.RunEventReceived(event(
+                1,
+                new RunEventPayloads.ToolLifecycle("tool-1", "execution_run", "SUCCEEDED", "NONE", "git status", ""))));
+        controller.drainEvents();
+        var tool = controller.state().transcript().stream()
+                .filter(item -> item.kind() == TranscriptItem.Kind.TOOL)
+                .findFirst()
+                .orElseThrow();
+        controller.toggleTranscriptItem(tool.id());
+        assertThat(controller.state().transcript())
+                .filteredOn(item -> item.id().equals(tool.id()))
+                .singleElement()
+                .satisfies(item -> assertThat(item.expanded()).isTrue());
+
+        controller.accept(input(TerminalInput.Kind.TOGGLE_EXPANSION, ""));
+
+        assertThat(controller.state().selector()).isPresent();
+        assertThat(controller.state().transcript())
+                .filteredOn(item -> item.kind() == TranscriptItem.Kind.CLARIFICATION)
+                .singleElement()
+                .satisfies(item -> assertThat(item.expanded()).isTrue());
+        assertThat(controller.state().transcript())
+                .filteredOn(item -> item.id().equals(tool.id()))
+                .singleElement()
+                .satisfies(item -> assertThat(item.expanded()).isTrue());
         assertThat(client.respondedActions).isEmpty();
     }
 

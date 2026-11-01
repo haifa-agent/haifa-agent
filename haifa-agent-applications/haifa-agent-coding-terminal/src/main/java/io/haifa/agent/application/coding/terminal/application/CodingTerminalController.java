@@ -2141,6 +2141,8 @@ public final class CodingTerminalController implements AutoCloseable {
         awaitingClarificationText = true;
         apply(new TerminalUiAction.SelectorClosed());
         apply(new TerminalUiAction.StatusChanged("Type your answer and press Enter"));
+        String existing = clarificationDraft != null ? clarificationDraft.currentCustom() : "";
+        apply(new TerminalUiAction.EditorChanged(existing, existing.length()));
     }
 
     private void answerClarificationWithText(String text) {
@@ -2368,6 +2370,10 @@ public final class CodingTerminalController implements AutoCloseable {
                     current().multiple(), selected.get(index).contains(optionId));
         }
 
+        String currentCustom() {
+            return custom.get(index);
+        }
+
         void toggle(String optionId) {
             List<String> current = selected.get(index);
             if (current.remove(optionId)) {
@@ -2375,6 +2381,7 @@ public final class CodingTerminalController implements AutoCloseable {
             }
             if (!current().multiple()) {
                 current.clear();
+                custom.set(index, "");
             }
             current.add(optionId);
         }
@@ -2383,6 +2390,7 @@ public final class CodingTerminalController implements AutoCloseable {
             List<String> current = selected.get(index);
             current.clear();
             current.add(optionId);
+            custom.set(index, "");
         }
 
         void advance() {
@@ -2404,7 +2412,11 @@ public final class CodingTerminalController implements AutoCloseable {
         }
 
         void answerWithText(String text) {
-            custom.set(index, text.trim());
+            String trimmed = text.trim();
+            custom.set(index, trimmed);
+            if (!current().multiple() && !trimmed.isEmpty()) {
+                selected.get(index).clear();
+            }
             advance();
         }
 
@@ -3813,10 +3825,25 @@ public final class CodingTerminalController implements AutoCloseable {
         var candidates = state.transcript().stream()
                 .filter(item -> technical ? item.toolDetails().isPresent() : item.toggleable())
                 .toList();
+        if (!technical) {
+            var clarificationItemId = clarificationSelectorItemId();
+            if (clarificationItemId.isPresent()) {
+                var clarification = candidates.stream()
+                        .filter(item -> item.id().equals(clarificationItemId.orElseThrow()))
+                        .findFirst();
+                if (clarification.isPresent()) return clarification;
+            }
+        }
         return candidates.stream()
                 .filter(item -> item.id().equals(activeTranscriptItemId))
                 .findFirst()
                 .or(() -> candidates.stream().reduce((first, second) -> second));
+    }
+
+    private Optional<String> clarificationSelectorItemId() {
+        return state.selector()
+                .filter(selector -> selector.kind().startsWith("clarification:"))
+                .map(selector -> "interaction-" + selector.kind().substring("clarification:".length()));
     }
 
     public void cycleModel(int delta) {
