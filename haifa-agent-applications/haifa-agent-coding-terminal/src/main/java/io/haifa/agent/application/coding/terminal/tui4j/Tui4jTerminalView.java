@@ -39,6 +39,9 @@ final class Tui4jTerminalView {
     /** Cap on wrapped rationale rows per option; a truncated rationale still ends with an explicit ellipsis. */
     private static final int MAX_SELECTOR_DESCRIPTION_LINES = 4;
 
+    /** The question count at the start of a wizard title, so a header cannot supply a second match. */
+    private static final Pattern CLARIFICATION_STEP_COUNT = Pattern.compile("^Clarification · Step \\d+ of (\\d+) · ");
+
     private static final Set<String> SUCCESS_STATUSES = Set.of(
             "ACCEPTED",
             "APPLIED",
@@ -1261,11 +1264,26 @@ final class Tui4jTerminalView {
         } else if ("auth-device".equals(selector.kind())) {
             hint = "└─ c copy device code · l copy link · o open page · Enter select · Esc cancel sign-in";
         } else if (selector.kind().startsWith(CLARIFICATION_SELECTOR_PREFIX)) {
-            hint = "└─ enter select · space mark · escape close (editor preserved)";
+            hint = clarificationHint(selector.title());
         } else {
             hint = "└─ enter select · escape close (editor preserved)";
         }
         return theme.muted(Truncate.truncate(hint, Math.max(8, width - 1), "…"));
+    }
+
+    /**
+     * Keys for a clarification modal. A multi-question wizard advertises ← and →, and the review advertises the way
+     * back to a question. A single question keeps the mark-and-enter hint.
+     */
+    private static String clarificationHint(String title) {
+        if (title.startsWith("Clarification · Review")) {
+            return "└─ ← back · enter edit or send · esc close";
+        }
+        Matcher step = CLARIFICATION_STEP_COUNT.matcher(title);
+        if (step.find() && Integer.parseInt(step.group(1)) > 1) {
+            return "└─ ← previous · → next · enter select · space mark";
+        }
+        return "└─ enter select · space mark · escape close (editor preserved)";
     }
 
     List<String> selectorLabelLines(String label, boolean enterAffordance, int contentWidth, int maximumLines) {

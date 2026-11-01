@@ -2,6 +2,9 @@
 
 ## Unreleased - 0.1.5-SNAPSHOT
 
+- Coding Terminal clarification questions move backward and forward with ← and →, and the marked
+  options or typed text are listed in a review step before `Send answer` submits them.
+
 - Coding Agent file mutations (`file_create`, `file_write`, `file_patch`, `file_delete`, `file_move`)
   now show structured approvals with the intended operation, exact target, and a bounded/redacted preview
   of the requested content or patch instead of the generic tool coordinate fallback. Patch approval

@@ -272,7 +272,7 @@ public final class CodingTerminalTestSupport {
     }
 
     /** Two questions with option rationales, the shape a wizard must walk through. */
-    static InteractionView multiQuestionClarification() {
+    public static InteractionView multiQuestionClarification() {
         return clarification(new ClarificationPresentation(
                 "Delivery plan",
                 List.of(
@@ -407,7 +407,7 @@ public final class CodingTerminalTestSupport {
                 payload);
     }
 
-    static class FakeClient implements CodingSessionClient {
+    public static class FakeClient implements CodingSessionClient {
         CodingSessionView view;
         CodingSessionView reconciledView;
         List<CodingSessionSummary> summaries = List.of();
@@ -446,7 +446,7 @@ public final class CodingTerminalTestSupport {
         RunEventCursor acknowledgedCursor;
         String selectedModelId;
 
-        FakeClient(CodingSessionView view) {
+        public FakeClient(CodingSessionView view) {
             this.view = view;
             this.reconciledView = view;
         }
