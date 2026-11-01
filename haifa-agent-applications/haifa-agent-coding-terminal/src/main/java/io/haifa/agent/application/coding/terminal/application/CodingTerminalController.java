@@ -139,6 +139,8 @@ public final class CodingTerminalController implements AutoCloseable {
     private CodingShellPlan pendingShellPlan;
     private String preservedDraftBuffer;
     private int preservedDraftCursor;
+    private static final int MAX_CACHED_SESSION_DRAFTS = 32;
+    private final Map<AgentSessionId, ComposerDraft> sessionDrafts = new java.util.LinkedHashMap<>(16, 0.75f, true);
     private boolean renamingSession;
     private final Map<SelectionToken, Long> modelSwitchesInFlight = new java.util.HashMap<>();
 
@@ -1405,6 +1407,30 @@ public final class CodingTerminalController implements AutoCloseable {
         }
     }
 
+    /**
+     * Keeps an unsent composer draft with the Session it was typed in and installs the target Session's draft.
+     *
+     * <p>Switching only changes what this TUI observes, so the text being typed belongs to the Session that was
+     * displayed when it was typed: it must not follow the editor into the next Session, and returning must find it
+     * again. Paste placeholders travel as their token text, which the same model keeps expandable. Drafts are local
+     * to this process; text that was never submitted is never sent to the Host.
+     */
+    private void swapComposerDraft(AgentSessionId target, CodingSessionView previous) {
+        if (previous != null) {
+            sessionDrafts.put(
+                    previous.summary().sessionId(), new ComposerDraft(state.editorBuffer(), state.editorCursor()));
+            while (sessionDrafts.size() > MAX_CACHED_SESSION_DRAFTS) {
+                sessionDrafts.remove(sessionDrafts.keySet().iterator().next());
+            }
+        }
+        ComposerDraft restored = sessionDrafts.remove(target);
+        apply(new TerminalUiAction.EditorChanged(
+                restored == null ? "" : restored.buffer(), restored == null ? 0 : restored.cursor()));
+    }
+
+    /** One Session's unsent composer text and cursor. */
+    private record ComposerDraft(String buffer, int cursor) {}
+
     private void acceptGuarded(TerminalInput input, String routingText) {
         if (clarificationDraft != null
                 && state.selector().isEmpty()
@@ -2432,6 +2458,9 @@ public final class CodingTerminalController implements AutoCloseable {
         if (!transition && sameSession && isStaleSameSelectionSnapshot(previousView, previousRunId, loaded.view())) {
             requestStaleSnapshotRecovery();
             return;
+        }
+        if (previousView != null && !sameSession) {
+            swapComposerDraft(loaded.view().summary().sessionId(), previousView);
         }
         long observation = ++nextObservationEpoch;
         observationEpoch = observation;

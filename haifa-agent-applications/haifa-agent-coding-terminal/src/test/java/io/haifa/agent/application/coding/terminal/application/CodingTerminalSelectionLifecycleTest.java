@@ -2,6 +2,7 @@ package io.haifa.agent.application.coding.terminal.application;
 
 import static io.haifa.agent.application.coding.terminal.application.CodingTerminalTestSupport.*;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.application.coding.terminal.event.TerminalEventPump;
 import io.haifa.agent.application.coding.terminal.event.TerminalInput;
@@ -800,6 +801,46 @@ class CodingTerminalSelectionLifecycleTest {
         controller.drainEvents();
         assertThat(subscribed).hasValue(2);
         controller.close();
+    }
+
+    @Test
+    void switchingSessionsKeepsEachDraftWithItsOwnSession() {
+        FakeClient client = new FakeClient(activeView());
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+        controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, "draft for A", 11));
+        AgentSessionId b = new AgentSessionId("session-b");
+        client.viewsBySession.put(SESSION_ID, activeView());
+        client.viewsBySession.put(b, sessionView("session-b", "B"));
+
+        controller.open(b);
+
+        // A's unsent text never follows the editor into B.
+        assertThat(controller.state().editorBuffer()).isEmpty();
+        controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, "draft for B", 11));
+
+        controller.open(SESSION_ID);
+        assertThat(controller.state().editorBuffer()).isEqualTo("draft for A");
+        assertThat(controller.state().editorCursor()).isEqualTo(11);
+
+        controller.open(b);
+        assertThat(controller.state().editorBuffer()).isEqualTo("draft for B");
+    }
+
+    @Test
+    void aFailedSwitchLeavesTheDisplayedDraftUntouched() {
+        FakeClient client = new FakeClient(activeView());
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+        controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, "keep me", 7));
+        AgentSessionId unavailable = new AgentSessionId("session-b");
+        client.openFailures.put(unavailable, new ProjectProductException("SESSION_NOT_FOUND", "Session unavailable"));
+
+        assertThatThrownBy(() -> controller.open(unavailable)).isInstanceOf(ProjectProductException.class);
+
+        assertThat(controller.state().editorBuffer()).isEqualTo("keep me");
+        assertThat(controller.state().session().map(value -> value.summary().sessionId()))
+                .contains(SESSION_ID);
     }
 
     private static CodingSessionView activeSessionView(String sessionId, String runId, String displayName) {

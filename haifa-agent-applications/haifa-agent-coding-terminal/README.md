@@ -159,6 +159,7 @@ Windows ConPTY Gate B。
    - 用户在输入框中编写的草稿内容、光标位置（Cursor），以及因多行/长文本粘贴而生成的占位符映射（`[Pasted #N ~M lines]` -> 原文正文映射 `pastedContent`），受到全局严格保护；
    - 打开命令面板（`Ctrl+P`）、Session 摘要（`<leader>s`）、交互式重命名（`<leader>r`）等辅助弹层时，Controller 自动暂存当前草稿与光标；
    - 弹层完成或被取消（Esc/Ctrl+C）后，完整恢复用户原有的草稿正文与光标位置，不被命令替换为空或 `/command`；
+   - 草稿归属于它被编写时的 Session：通过侧栏行或 `/resume` 切到另一个 Session 时，前一个 Session 的未发文本不会跟随编辑器过去，切回时正文与光标原样恢复；同一进程最多缓存最近 32 个 Session 的草稿，超出后淘汰最先离开的会话；首个 Session 加载前输入的文本不受影响；
    - 即使在输入框临时用于交互式重命名期间，粘贴占位符映射也不会被垃圾回收，草稿恢复后完整保留粘贴映射；
    - 交互式 Session 重命名（`<leader>r` 或 `/rename` 不带参数）：无活动 Session 时提示友好错误；有活动 Session 时在编辑器展示当前 Session 名称供修改，Enter 确认重命名并在后台异步执行，Esc 取消并恢复草稿。
 
