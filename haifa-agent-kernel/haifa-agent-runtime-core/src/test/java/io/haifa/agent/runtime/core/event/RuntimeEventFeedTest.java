@@ -692,6 +692,32 @@ class RuntimeEventFeedTest {
                         .isEqualTo(code));
     }
 
+    @Test
+    void advancesTheCursorPastATailThatTheClientProjectionHides() {
+        InMemoryRuntimeStore store = storeWithRun("run");
+        AgentRunId runId = new AgentRunId("run");
+        RuntimeEvent accepted = store.append(runId, "run.created", Map.of("version", 0L), NOW);
+        store.append(runId, "trace.internal", Map.of("secret", "not-projected"), NOW);
+        store.append(runId, "trace.internal", Map.of("secret", "not-projected"), NOW);
+        RuntimeEventFeed feed = new RuntimeEventFeed(store, new RuntimeClientEventProjector(store));
+
+        var leading = feed.page(runId, RunEventCursor.beforeFirst(runId), 1);
+
+        assertThat(leading.items()).singleElement().satisfies(event -> assertThat(event.eventId())
+                .isEqualTo(accepted.eventId()));
+        assertThat(leading.nextCursor().exclusiveSequence()).hasValue(1L);
+        assertThat(leading.hasMore()).isTrue();
+
+        var tail = feed.page(runId, leading.nextCursor(), 1);
+
+        // Only hidden entries remain, so the page carries no item while its cursor still owns the progress to the
+        // head. A reconnecting client must follow the cursor instead of the last projected event.
+        assertThat(tail.items()).isEmpty();
+        assertThat(tail.nextCursor().exclusiveSequence()).hasValue(3L);
+        assertThat(tail.headCursor().exclusiveSequence()).hasValue(3L);
+        assertThat(tail.hasMore()).isFalse();
+    }
+
     private static final class CountingRuntimeEventAppender implements RuntimeEventAppender {
         private final RuntimeEventAppender delegate;
         private final AtomicInteger reads = new AtomicInteger();
