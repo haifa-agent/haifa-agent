@@ -80,6 +80,9 @@ final class Tui4jCodingTerminalModel implements Model {
     private boolean followTranscript = true;
     private boolean newOutputPending;
     private int pendingTranscriptScrollRows;
+    /** Screen row of the sidebar press currently held, or -1 when no sidebar row is pressed. */
+    private int sidebarPressRow = -1;
+
     private String displayedTranscriptContent = "";
     private long selectionAutoScrollSequence;
     private int selectionAutoScrollDirection;
@@ -314,6 +317,9 @@ final class Tui4jCodingTerminalModel implements Model {
             // A sidebar row owns its click: transcript selection must not swallow it, and selecting a Session must
             // never look like a transcript drag.
             if (view.sidebarSessionAt(mouse.row()).isPresent()) {
+                // Remember the pressed row: some terminal backends report the release without a button, so the
+                // release alone cannot be trusted to name the row that was clicked.
+                sidebarPressRow = mouse.row();
                 return Command.none();
             }
             Optional<TerminalTextSelection.Point> point = transcriptPoint(mouse, false);
@@ -337,9 +343,21 @@ final class Tui4jCodingTerminalModel implements Model {
         }
         if (mouse.getAction() == MouseAction.MouseActionRelease && mouse.getButton() == MouseButton.MouseButtonLeft) {
             // The press on a sidebar row deliberately started no selection, so the release is the activation point.
-            Optional<io.haifa.agent.core.session.AgentSessionId> sidebarTarget = view.sidebarSessionAt(mouse.row());
+            Optional<io.haifa.agent.core.session.AgentSessionId> sidebarTarget =
+                    view.sidebarSessionAt(sidebarPressRow >= 0 ? sidebarPressRow : mouse.row());
+            sidebarPressRow = -1;
             if (sidebarTarget.isPresent()) {
                 controller.openSidebarRow(sidebarTarget.orElseThrow());
+                syncComponents();
+                return Command.none();
+            }
+        }
+        if (mouse.getAction() == MouseAction.MouseActionRelease) {
+            // A release that names no usable button still ends the press; never let the row leak into the next click.
+            Optional<io.haifa.agent.core.session.AgentSessionId> pressedRow = view.sidebarSessionAt(sidebarPressRow);
+            sidebarPressRow = -1;
+            if (pressedRow.isPresent()) {
+                controller.openSidebarRow(pressedRow.orElseThrow());
                 syncComponents();
                 return Command.none();
             }
