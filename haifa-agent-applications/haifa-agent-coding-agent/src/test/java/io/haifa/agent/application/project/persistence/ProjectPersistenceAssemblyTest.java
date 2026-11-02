@@ -487,6 +487,31 @@ class ProjectPersistenceAssemblyTest {
     }
 
     @Test
+    void aCancellationNamingAnotherSessionsRunIsRefusedBeforeRecoveryRuns() {
+        ProductFixture fixture = productFixture();
+        CapturingRuntime runtime = new CapturingRuntime();
+        TestIds ids = new TestIds("cross-session-cancel");
+        try (ProjectPersistenceAssembly assembly =
+                ProjectPersistenceAssembly.open(ProjectPersistenceConfiguration.memory(), CLOCK, ids, null)) {
+            CodingSessionService coding = fixture.codingService(assembly, runtime, ids);
+            var first = coding.createSession(fixture.projectId, "first task", List.of(), "cross-create-first");
+            var second = coding.createSession(fixture.projectId, "second task", List.of(), "cross-create-second");
+            AgentRunId firstRun = first.activeRun().orElseThrow().runId();
+            AgentRunId secondRun = second.activeRun().orElseThrow().runId();
+            // Recovery would settle a live Run, so a refused cancellation must not reach it: waiting behind the
+            // live aggregate is exactly what made one client's bad cancel stall behind another Session's Run.
+            runtime.settleAbandonedOnRecover();
+
+            assertThatThrownBy(() -> coding.abortActiveRun(second.summary().sessionId(), firstRun, "cross-abort"))
+                    .isInstanceOf(ProjectProductException.class)
+                    .satisfies(exception -> assertThat(((ProjectProductException) exception).code())
+                            .isEqualTo("ACTIVE_RUN_MISMATCH"));
+            assertThat(runtime.find(secondRun).orElseThrow().status()).isEqualTo(AgentRunStatus.RUNNING);
+            assertThat(runtime.find(firstRun).orElseThrow().status()).isEqualTo(AgentRunStatus.RUNNING);
+        }
+    }
+
+    @Test
     void recoveryProjectionExposesTheOriginalActiveRunWithoutReconciling() {
         ProductFixture fixture = productFixture();
         CapturingRuntime runtime = new CapturingRuntime();
