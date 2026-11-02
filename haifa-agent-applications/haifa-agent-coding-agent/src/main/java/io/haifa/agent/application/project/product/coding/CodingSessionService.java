@@ -537,7 +537,15 @@ public final class CodingSessionService {
             AgentSessionId sessionId, String idempotencyKey, Optional<AgentRunId> requestedRunId) {
         TrustedProductCaller caller = callers.current();
         ProjectProductSession product = requireProductSession(sessionId, caller);
-        CodingSessionActivity activity = reconcile(requireActivity(sessionId, caller), caller);
+        CodingSessionActivity recorded = requireActivity(sessionId, caller);
+        if (requestedRunId.isPresent()
+                && recorded.activeRunId().filter(requestedRunId.get()::equals).isEmpty()) {
+            // A cancellation that names another Run is refused before any reconciliation: recovery inspects the live
+            // Run's aggregate and dispatch can start the queued successor, so a refused request must never wait on
+            // that work - it would let one client's cancellation block behind another Session's running Run.
+            throw conflict("ACTIVE_RUN_MISMATCH", "Requested Run is not the active Run");
+        }
+        CodingSessionActivity activity = reconcile(recorded, caller);
         if (activity.activeRunId().isEmpty()) {
             if (requestedRunId.isPresent()) {
                 throw conflict("ACTIVE_RUN_MISMATCH", "Requested Run is not the active Run");
