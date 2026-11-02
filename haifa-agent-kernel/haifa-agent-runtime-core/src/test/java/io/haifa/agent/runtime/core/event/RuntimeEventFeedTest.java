@@ -65,6 +65,9 @@ class RuntimeEventFeedTest {
         var second = feed.page(runId, first.nextCursor(), 10);
         assertThat(second.items()).isEmpty();
         assertThat(second.nextCursor()).isEqualTo(second.headCursor());
+        // The last durable entry is hidden, so the empty page still has to park the cursor on that sequence rather
+        // than on the last projected event; a reconnecting client follows the cursor to reach the head.
+        assertThat(second.nextCursor().exclusiveSequence()).hasValue(delta.sequence());
         assertThat(second.hasMore()).isFalse();
     }
 
@@ -690,32 +693,6 @@ class RuntimeEventFeedTest {
         assertThatThrownBy(action::run)
                 .isInstanceOfSatisfying(RuntimeContractException.class, exception -> assertThat(exception.code())
                         .isEqualTo(code));
-    }
-
-    @Test
-    void advancesTheCursorPastATailThatTheClientProjectionHides() {
-        InMemoryRuntimeStore store = storeWithRun("run");
-        AgentRunId runId = new AgentRunId("run");
-        RuntimeEvent accepted = store.append(runId, "run.created", Map.of("version", 0L), NOW);
-        store.append(runId, "trace.internal", Map.of("secret", "not-projected"), NOW);
-        store.append(runId, "trace.internal", Map.of("secret", "not-projected"), NOW);
-        RuntimeEventFeed feed = new RuntimeEventFeed(store, new RuntimeClientEventProjector(store));
-
-        var leading = feed.page(runId, RunEventCursor.beforeFirst(runId), 1);
-
-        assertThat(leading.items()).singleElement().satisfies(event -> assertThat(event.eventId())
-                .isEqualTo(accepted.eventId()));
-        assertThat(leading.nextCursor().exclusiveSequence()).hasValue(1L);
-        assertThat(leading.hasMore()).isTrue();
-
-        var tail = feed.page(runId, leading.nextCursor(), 1);
-
-        // Only hidden entries remain, so the page carries no item while its cursor still owns the progress to the
-        // head. A reconnecting client must follow the cursor instead of the last projected event.
-        assertThat(tail.items()).isEmpty();
-        assertThat(tail.nextCursor().exclusiveSequence()).hasValue(3L);
-        assertThat(tail.headCursor().exclusiveSequence()).hasValue(3L);
-        assertThat(tail.hasMore()).isFalse();
     }
 
     private static final class CountingRuntimeEventAppender implements RuntimeEventAppender {
