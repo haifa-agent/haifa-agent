@@ -13,6 +13,12 @@ CLI 保留 `ask / auto / deny` 兼容入口，并以 `LOW / MEDIUM / HIGH / NEVE
 控制台审批。`NEVER` 会自动执行包括 HIGH 在内的普通命令，但不覆盖可信分类器的硬拒绝、
 Broker/Workspace/Sandbox 边界或 Credential 重认证。当 preflight 证明调用未分派（`NOT_DISPATCHED`）时，Runtime 将该 ToolCall 标记为终态 FAILED 并回传失败事实（`failureCode` 与 `NOT_DISPATCHED`）继续循环，不再创建专用 `execution-recovery` Interaction；模型没有权限申请 Tool，也不能绕过标准策略。
 
+内置文件写工具（`file_create`、`file_write`、`file_patch`、`file_delete`、`file_move`）的审批由 CLI
+装配提供结构化 `ApprovalPresentation`：默认可见正文说明请求的实际动作、意图、精确目标，以及本次调用
+请求的完整文件内容或 patch 的有界、脱敏预览。该展示只消费工具调用参数，不读取文件推断执行前状态，
+也不把请求写成已经成功；凭据样式文本由现有 `SecretRedactor` 脱敏，机器坐标与调用摘要保留在折叠技术细节。
+非文件写工具继续使用中性回退文本。
+
 `haifa-agent-cli` 是 Coding Agent 的最高层生产装配与唯一可执行发行入口。它把同一个 Runtime、
 Project、Workspace、Policy、Tool、Execution、Persistence 与 `CodingSessionService` 交给 tui4j
 Terminal，同时保留兼容的 `-m` one-shot 模式。`haifa-agent-coding-terminal` 只负责 UI，不是第二个

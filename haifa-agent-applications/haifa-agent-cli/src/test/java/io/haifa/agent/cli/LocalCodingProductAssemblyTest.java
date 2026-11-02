@@ -93,6 +93,44 @@ class LocalCodingProductAssemblyTest {
     }
 
     @Test
+    void fileCreateApprovalCarriesStructuredPresentationThroughRealAssembly() throws Exception {
+        Path workspace = Files.createDirectory(root.resolve("file-approval-presentation"));
+        Path file = workspace.resolve("generated.txt");
+        var configuration = CliConfigurationBuilder.from(memoryConfiguration())
+                .approval(ApprovalMode.ASK)
+                .build();
+        var calls = new AtomicInteger();
+        io.haifa.agent.model.api.AgentChatModel model = request -> calls.incrementAndGet() == 1
+                ? toolResponse(
+                        "create-file",
+                        "file_create",
+                        Map.of(
+                                "path", file.toString(),
+                                "content", "hello\n",
+                                "description", "Create a greeting"))
+                : response("done");
+        try (var agent = agent(workspace, configuration, model)) {
+            var client = client(agent);
+            var session = client.create(agent.projectId(), "Create the file", "file-approval-presentation");
+            var run = session.activeRun().orElseThrow().runId();
+            awaitCondition(() -> client.pendingInteraction(run).isPresent(), "file approval");
+            var pending = client.pendingInteraction(run).orElseThrow();
+
+            assertThat(pending.approvalPresentation()).hasValueSatisfying(presentation -> {
+                assertThat(presentation.title()).isEqualTo("Create file");
+                assertThat(presentation.content()).contains("Target: " + file, "Requested content", "hello");
+                assertThat(presentation.environment()).anySatisfy(fact -> assertThat(fact.label() + "=" + fact.value())
+                        .isEqualTo("Target=" + file));
+            });
+
+            client.respond(pending, io.haifa.agent.runtime.api.InteractionAction.REJECT, "reject-file-approval");
+            awaitTerminal(agent, run);
+            assertThat(calls).hasValue(2);
+            assertThat(Files.exists(file)).isFalse();
+        }
+    }
+
+    @Test
     void freezesSiliconFlowDialectAndNativeStreamingForProductAssembly() {
         URI endpoint = URI.create("https://api.siliconflow.cn/v1");
         var model = new CliConfiguration.Model(

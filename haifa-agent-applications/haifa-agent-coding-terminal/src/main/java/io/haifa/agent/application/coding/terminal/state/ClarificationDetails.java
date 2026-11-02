@@ -21,6 +21,11 @@ public record ClarificationDetails(String title, List<Question> questions) {
     /** The answer wire format shared with the Runtime tool. */
     public static final String ANSWER_FORMAT = "clarification-answer.v1";
 
+    /** The transcript card body is also a TranscriptItem body, whose hard bound is 16,384 characters. */
+    private static final int MAX_TRANSCRIPT_DETAIL_LENGTH = 16_000;
+
+    private static final String TRUNCATED_MARKER = "...[truncated]";
+
     public static final String CUSTOM_ENTRY_LABEL = "Type your own answer";
     /** Option rationales the selector renders under its own rows, so every row explains what Enter will do. */
     public static final String CUSTOM_ENTRY_DESCRIPTION =
@@ -31,6 +36,16 @@ public record ClarificationDetails(String title, List<Question> questions) {
 
     public static final String SUBMIT_LABEL = "Send answer";
     public static final String SUBMIT_DESCRIPTION = "Send every marked answer and resume the run";
+
+    /** The last multi-choice row opens the review; sending happens only from that review. */
+    public static final String REVIEW_LABEL = "Review answers";
+
+    public static final String REVIEW_DESCRIPTION = "Preview every answer before sending";
+
+    /** Shown when a review row has neither a marked option nor typed text. */
+    public static final String UNANSWERED_SUMMARY = "(not answered)";
+
+    private static final int ANSWER_SUMMARY_LIMIT = 160;
 
     /** U+2713 CHECK MARK: a narrow, non-emoji glyph, so marked rows keep their column alignment. */
     public static final String MARKER_SELECTED = "[\u2713]";
@@ -120,29 +135,129 @@ public record ClarificationDetails(String title, List<Question> questions) {
     }
 
     /**
-     * The interaction card projection: one line per question and no repeated option list.
+     * The selector title of the pre-submit review.
      *
-     * <p>The selector is the only surface that lists options together with their rationale, so the transcript card
-     * never duplicates them. The card therefore stays short enough to read without a fold while the answer draft is
-     * open right below it.
+     * <p>The review lists every question with the options or text that will be sent. Sending happens from that
+     * screen, so the title is distinct from a question step.
+     */
+    public String reviewTitle() {
+        int count = questions.size();
+        return "Clarification · Review · " + count + (count == 1 ? " question" : " questions");
+    }
+
+    /**
+     * The readable answer of one question: option labels in selection order, then any typed text.
+     *
+     * <p>The review shows this text instead of option identifiers. A line break in typed text becomes a space, matching
+     * the single custom field of the submitted answer.
+     */
+    public String answerSummary(int index, List<String> selectedIds, String custom) {
+        if (index < 0 || index >= questions.size()) {
+            throw new IllegalArgumentException("question index is out of range");
+        }
+        Objects.requireNonNull(selectedIds, "selectedIds must not be null");
+        Objects.requireNonNull(custom, "custom must not be null");
+        Question question = questions.get(index);
+        List<String> labels = new ArrayList<>();
+        for (String id : selectedIds) {
+            for (Option option : question.options()) {
+                if (option.optionId().equals(id)) {
+                    labels.add(option.label());
+                    break;
+                }
+            }
+        }
+        String chosen = String.join(", ", labels);
+        String free = singleLine(custom);
+        String combined;
+        if (chosen.isEmpty() && free.isEmpty()) {
+            combined = UNANSWERED_SUMMARY;
+        } else if (chosen.isEmpty()) {
+            combined = free;
+        } else if (free.isEmpty()) {
+            combined = chosen;
+        } else {
+            combined = chosen + " · " + free;
+        }
+        return clipSummary(combined);
+    }
+
+    private static String clipSummary(String value) {
+        if (value.codePointCount(0, value.length()) <= ANSWER_SUMMARY_LIMIT) {
+            return value;
+        }
+        int end = value.offsetByCodePoints(0, ANSWER_SUMMARY_LIMIT - 1);
+        return value.substring(0, end) + "…";
+    }
+
+    /**
+     * The interaction card projection: a short collapsed summary plus the complete bounded question/option/rationale
+     * detail for the existing Ctrl+O expansion surface. The selector is still the only input surface.
      */
     public ApprovalDetails toApprovalDetails() {
-        StringBuilder content = new StringBuilder();
-        for (Question question : questions) {
-            if (content.length() > 0) {
-                content.append('\n');
-            }
-            content.append(question.header()).append(": ").append(singleLine(question.prompt()));
-        }
         return new ApprovalDetails(
                 title,
                 "The agent needs an answer before it can continue",
                 "text/plain",
-                content.toString(),
-                List.of(),
+                transcriptDetail(),
+                summaryFacts(),
                 List.of(),
                 Optional.empty(),
                 List.of());
+    }
+
+    private List<ApprovalDetails.Fact> summaryFacts() {
+        List<ApprovalDetails.Fact> facts = new ArrayList<>();
+        for (int index = 0; index < questions.size(); index++) {
+            Question question = questions.get(index);
+            String prompt = singleLine(question.prompt());
+            if (prompt.length() > 72) {
+                int end = 71;
+                if (Character.isHighSurrogate(prompt.charAt(end - 1))) end--;
+                prompt = prompt.substring(0, end) + "…";
+            }
+            facts.add(new ApprovalDetails.Fact(
+                    "Q" + (index + 1) + " " + question.header(), prompt.isBlank() ? "(no prompt)" : prompt));
+        }
+        return List.copyOf(facts);
+    }
+
+    private String transcriptDetail() {
+        StringBuilder detail = new StringBuilder();
+        for (int index = 0; index < questions.size(); index++) {
+            Question question = questions.get(index);
+            if (index > 0) detail.append('\n');
+            detail.append("Q")
+                    .append(index + 1)
+                    .append(" · ")
+                    .append(question.header())
+                    .append('\n')
+                    .append(question.prompt().strip())
+                    .append('\n');
+            for (Option option : question.options()) {
+                detail.append("  - ").append(option.label());
+                option.description()
+                        .ifPresent(description -> detail.append(" — ").append(description));
+                detail.append('\n');
+            }
+            detail.append("  Answer mode: ")
+                    .append(question.multiple() ? "multiple choice; Space marks, Enter confirms" : "single choice")
+                    .append('\n');
+            detail.append("  Custom answer: ")
+                    .append(question.allowCustom() ? "available via \"" + CUSTOM_ENTRY_LABEL + "\"" : "not offered")
+                    .append('\n');
+            if (question.multiple()) {
+                detail.append("  Confirm: ")
+                        .append(index == questions.size() - 1 ? SUBMIT_LABEL : DONE_LABEL)
+                        .append('\n');
+            }
+            detail.append("  Cancel: ").append(CANCEL_DESCRIPTION).append('\n');
+        }
+        String value = detail.toString().strip();
+        if (value.length() <= MAX_TRANSCRIPT_DETAIL_LENGTH) return value;
+        int end = MAX_TRANSCRIPT_DETAIL_LENGTH - TRUNCATED_MARKER.length();
+        if (end > 0 && Character.isHighSurrogate(value.charAt(end - 1))) end--;
+        return value.substring(0, end) + TRUNCATED_MARKER;
     }
 
     /**

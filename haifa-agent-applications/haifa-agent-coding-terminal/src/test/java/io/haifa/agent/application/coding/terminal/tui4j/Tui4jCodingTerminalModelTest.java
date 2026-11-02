@@ -23,6 +23,7 @@ import com.williamcallahan.tui4j.message.EnterKeyModifier;
 import com.williamcallahan.tui4j.message.EnterKeyModifierMessage;
 import com.williamcallahan.tui4j.term.TerminalInfo;
 import io.haifa.agent.application.coding.terminal.application.CodingTerminalController;
+import io.haifa.agent.application.coding.terminal.application.CodingTerminalTestSupport;
 import io.haifa.agent.application.coding.terminal.event.TerminalEventPump;
 import io.haifa.agent.application.coding.terminal.event.TerminalInput;
 import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
@@ -1486,6 +1487,64 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
+    void modelResizeReflowsALongTranscriptTailInsteadOfReusingTheOldWidth() {
+        var fixture = fixture();
+        fixture.model.init();
+        fixture.pump.offer(new TerminalUiAction.UserMessageCommitted(
+                "resize-message", "HEAD " + "很长的用户消息内容".repeat(12) + " RESIZE-TAIL"));
+        fixture.update(new WindowSizeMessage(120, 30));
+        String wide = TerminalScreenCells.plainText(fixture.model.view());
+
+        fixture.update(new WindowSizeMessage(60, 24));
+        String narrow = TerminalScreenCells.plainText(fixture.model.view());
+
+        assertThat(wide).isNotEqualTo(narrow).contains("RESIZE-", "TAIL");
+        assertThat(narrow.replaceAll("[\\s│]+", "")).contains("RESIZE-TAIL");
+        assertThat(fixture.controller.state().columns()).isEqualTo(60);
+        assertThat(fixture.controller.state().rows()).isEqualTo(24);
+    }
+
+    @Test
+    void pageKeysScrollThePinnedClarificationWithoutChangingSelectionOrSubmitting() {
+        var fixture = fixture();
+        fixture.model.init();
+        for (int index = 1; index <= 40; index++) {
+            fixture.pump.offer(new TerminalUiAction.UserMessageCommitted(
+                    "message-" + index, "history-" + index + " with enough text to fill the transcript"));
+        }
+        fixture.pump.offer(new TerminalUiAction.SelectorOpened(new TerminalSelector(
+                "clarification:test", "Clarification · Step 1 of 1 · Test", List.of("One", "Two", "Cancel"), 1)));
+        fixture.update(new WindowSizeMessage(80, 24));
+        String bottom = TerminalScreenCells.plainText(fixture.model.view());
+        assertThat(bottom).contains("history-40", "Clarification · Step 1 of 1 · Test");
+
+        fixture.update(key(KeyType.KeyPgUp));
+        String scrolled = TerminalScreenCells.plainText(fixture.model.view());
+
+        assertThat(scrolled).isNotEqualTo(bottom).doesNotContain("history-40");
+        assertThat(scrolled).contains("Clarification · Step 1 of 1 · Test");
+        assertThat(fixture.controller.state().selector().orElseThrow().selected())
+                .isEqualTo(1);
+        assertThat(fixture.controller.state().selector()).isPresent();
+        assertThat(fixture.controller.state().editorBuffer()).isEmpty();
+
+        fixture.update(runes('x'));
+        assertThat(fixture.controller.state().editorBuffer()).isEmpty();
+        assertThat(fixture.controller.state().selector().orElseThrow().selected())
+                .isEqualTo(1);
+
+        fixture.update(key(KeyType.KeyPgDown));
+        String bottomAgain = TerminalScreenCells.plainText(fixture.model.view());
+        fixture.update(wheel(MouseButton.MouseButtonWheelUp));
+        String wheeled = TerminalScreenCells.plainText(fixture.model.view());
+
+        assertThat(wheeled).isNotEqualTo(bottomAgain);
+        assertThat(fixture.controller.state().selector()).isPresent();
+        assertThat(fixture.controller.state().selector().orElseThrow().selected())
+                .isEqualTo(1);
+    }
+
+    @Test
     void pagesThroughTranscriptAndResumesFollowingAtTheBottom() {
         var fixture = fixture();
         fixture.model.init();
@@ -2066,6 +2125,30 @@ class Tui4jCodingTerminalModelTest {
 
         fixture.model.update(key(KeyType.KeyLeft));
         assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("model-provider");
+    }
+
+    @Test
+    void routesClarificationArrowsBetweenQuestions() {
+        var client = new CodingTerminalTestSupport.FakeClient(
+                view(Optional.of(CodingTerminalTestSupport.multiQuestionClarification())));
+        var pump = new TerminalEventPump(64);
+        var controller = new CodingTerminalController(
+                CodingTerminalTestSupport.PROJECT_ID,
+                client,
+                pump,
+                new TerminalUiReducer(),
+                TerminalUiState.initial(80, 24),
+                Runnable::run);
+        controller.open(CodingTerminalTestSupport.SESSION_ID);
+        var model = new Tui4jCodingTerminalModel(controller, pump, System::nanoTime);
+
+        assertThat(controller.state().selector().orElseThrow().title()).contains("Step 1 of 2");
+
+        model.update(key(KeyType.KeyRight));
+        assertThat(controller.state().selector().orElseThrow().title()).contains("Step 2 of 2");
+
+        model.update(key(KeyType.KeyLeft));
+        assertThat(controller.state().selector().orElseThrow().title()).contains("Step 1 of 2");
     }
 
     @Test

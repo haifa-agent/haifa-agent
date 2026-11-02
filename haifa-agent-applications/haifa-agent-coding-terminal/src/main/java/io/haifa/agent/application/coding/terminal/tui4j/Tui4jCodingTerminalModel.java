@@ -1177,6 +1177,16 @@ final class Tui4jCodingTerminalModel implements Model {
     }
 
     private Command selectorKey(KeyPressMessage key) {
+        if (pageScrollableSelectorOpen()) {
+            if (key.type() == KeyType.KeyPgUp) {
+                requestTranscriptScroll(-Math.max(1, transcript.getHeight() - 1));
+                return Command.none();
+            }
+            if (key.type() == KeyType.KeyPgDown) {
+                requestTranscriptScroll(Math.max(1, transcript.getHeight() - 1));
+                return Command.none();
+            }
+        }
         boolean providerSearch = controller
                 .state()
                 .selector()
@@ -1278,6 +1288,8 @@ final class Tui4jCodingTerminalModel implements Model {
             accept(TerminalInput.Kind.SELECT_NEXT);
         } else if (key.type() == KeyType.KeyLeft) {
             accept(TerminalInput.Kind.NAVIGATE_BACK);
+        } else if (key.type() == KeyType.KeyRight) {
+            accept(TerminalInput.Kind.NAVIGATE_FORWARD);
         } else if (key.type() == KeyType.keyCR) {
             accept(TerminalInput.Kind.SUBMIT);
         } else if (key.type() == KeyType.KeySpace && clarificationSelectorOpen()) {
@@ -1295,6 +1307,15 @@ final class Tui4jCodingTerminalModel implements Model {
                 .state()
                 .selector()
                 .map(selector -> selector.kind().startsWith("clarification:"))
+                .orElse(false);
+    }
+
+    private boolean pageScrollableSelectorOpen() {
+        return controller
+                .state()
+                .selector()
+                .map(selector -> selector.kind().startsWith("clarification:")
+                        || selector.kind().startsWith("interaction:"))
                 .orElse(false);
     }
 

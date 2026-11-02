@@ -268,8 +268,17 @@ Phase B 的工作流反馈只投影稳定产品 DTO 和 Runtime 事件：
 - Runtime Checkpoint 继续持久化并推进事件 Cursor，但作为内部恢复事实不投影到 Transcript；
 - Approval 优先从 `InteractionView.approvalPresentation` 渲染结构化展示：动作标题、目的、内容类型与
   正文、环境要点、默认折叠的技术细节和允许动作；缺少结构化展示时回退到 `safePrompt` 文本。
-  `InteractionLifecycle.actionOrReason` 等自由文本不参与 UI 解析。Selector 接管输入期间以及响应回执后，
-  原有 editor buffer/cursor 均保持不变；
+  `InteractionLifecycle.actionOrReason` 等自由文本不参与 UI 解析。内置文件写操作
+  （`file_create` / `file_write` / `file_patch` / `file_delete` / `file_move`）由产品提供结构化展示：
+  默认可见正文说明实际动作、意图、精确目标以及本次调用请求的完整内容或 patch（有界、脱敏），
+  不读取文件推断执行前状态，也不声称写入已经成功；机器坐标和调用摘要留在折叠技术细节中。无法识别的
+  工具仍使用中性回退文本。Selector 接管输入期间以及响应回执后，原有 editor buffer/cursor 均保持不变；
+- Approval 与 Clarification Selector 按真实物理行预算选择可见项，而不是按 `rows()<24` 固定只显示一项。
+  Selector 保留标题、当前选中项、导航/帮助提示，并在选项超出预算时显示明确的 `x-y of N` 范围；
+  compact 窗口在放得下时同时显示 `Allow once` 与 `Reject`。问题标题、选项标签和 rationale 按终端
+  cell width 换行，截断时保留显式省略号；正常屏幕下 Selector 最多占用约一半物理行，保留可用的
+  Transcript 视口。背景 Waiting/Pending/Recovery 区域与弹层竞争最小行数时先收缩背景行。
+  Transcript 滚动只移动上方视口，不会移动或隐藏底部 Selector；
 - `RunInputLifecycle.ACCEPTED` 将 Steer 放入 Pending，`APPLIED` 后移除；持久 Follow-up 与 Steer
   合并展示且按稳定 ID 去重，Alt+Up 仍从产品队列恢复原文；
 - 活动状态区分 `THINKING`（模型交互与处理工具结果）、`WORKING`（工具执行）和
@@ -538,16 +547,23 @@ authoritative Assistant text comes from the persisted Session messages.
 
 ## Clarification input
 
-`ask_clarification` surfaces in the terminal as a compact `Clarification · <title>` transcript card with one line per
-question. The option list and its rationale live in the selector, so the card never repeats them and never needs a
-fold. While that selector is open it is the only region that advertises keys: the composer's `[Send Now]`/`[Cancel]`
-strip and the run interrupt hint stay hidden, and one blank row separates the modal from the regions it covers. A
-multi-question clarification is a wizard, so the selector title always states `Step X of Y` with the question header,
-every option shows its own rationale on the line below it, and the focused row right-aligns an `[enter]` marker so an
-unmarked single-choice row cannot read as "press Space first".
+`ask_clarification` surfaces in the terminal as a compact `Clarification · <title>` transcript card with the question
+headers and a bounded prompt summary. The option list and rationale live in the selector; `ctrl+o` expands the same
+card to the complete bounded question, option, rationale, answer-mode, custom/Done-or-Send and Cancel detail, and the
+transcript viewport scrolls it while the selector stays pinned. `PageUp`/`PageDown` keep working as read-only
+transcript navigation while an approval or clarification selector is open; they neither move the selector selection
+nor submit or close the interaction. While that selector is open it is the only region that advertises keys: the
+composer's `[Send Now]`/`[Cancel]` strip and the run interrupt hint stay hidden, and one blank row separates the modal
+from the regions it covers. A multi-question clarification is a wizard, so the selector title always states
+`Step X of Y` with the question header, every option shows its own rationale on the line below it, and the focused row
+right-aligns an `[enter]` marker so an unmarked single-choice row cannot read as "press Space first". ← and → move
+to the previous or next question and keep every answer already marked.
 
 Space only marks an option (multi-choice `[ ]` ↔ `[✓]`, single choice `( )` ↔ `(✓)`, both U+2713) and never submits;
-Enter selects the focused option, confirms the current question, and moves on to the next one. "Type your own answer"
-hands the composer to the free-text lane while the card stays pending. The answer is submitted as one part per question
+Enter selects the focused option, confirms the current question, and moves on to the next one. On a multi-choice
+question the last row is `Review answers`. The last confirmation, and → from the last question once every question
+has an answer, opens a review that lists each question with the options or text that will be sent. Enter on a review
+row returns to that question; Enter on `Send answer` submits. "Type your own answer" hands the composer to the
+free-text lane while the card stays pending. The answer is submitted as one part per question
 with format `clarification-answer.v1`, so the Runtime validates it like any other interaction input. "Cancel" answers
 with the `cancel` action, which resumes the run without an answer instead of cancelling it.

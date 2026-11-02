@@ -11,6 +11,27 @@
   bounded reconcile per settled Run to move onto the successor. The packaged `haifa.bat` / `haifa` launchers pass the
   `tui` vector through untouched, keep the `host` subcommand ahead of the bundled `--config`, and no longer create the
   per-user data directories for the remote mode.
+
+- The Coding Agent sidebar became a Session task list: rows are Sessions with their authoritative active-Run
+  or Session status plus the queue count, ordered by last activity. The panel renders a five-row window that
+  scrolls on its own (the wheel over the list moves only that list) and reports `… N more · scroll` for the
+  rest. Switching never cancels the Run being left, a click now activates the pressed row on release even when
+  the terminal reports no button, and a composer draft stays with the Session it was typed in.
+
+- Coding Terminal clarification questions move backward and forward with ← and →, and the marked
+  options or typed text are listed in a review step before `Send answer` submits them.
+
+- Coding Agent file mutations (`file_create`, `file_write`, `file_patch`, `file_delete`, `file_move`)
+  now show structured approvals with the intended operation, exact target, and a bounded/redacted preview
+  of the requested content or patch instead of the generic tool coordinate fallback. Patch approval
+  reports the truthful declared-target total while previewing only a bounded head, and reauthentication
+  keeps its distinct title/purpose. Approval and clarification selectors size themselves from real frame
+  rows, so compact windows keep the selected action plus navigation help and normally show both
+  `Allow once` and `Reject`; long CJK labels and rationales wrap within the terminal cell width and
+  overflow is stated explicitly. Clarification cards keep a short collapsed summary while `ctrl+o`
+  exposes the complete bounded question/option/rationale detail, and `PageUp`/`PageDown` scroll the
+  pinned transcript without changing the selector selection or submitting the interaction.
+
 - OpenCode Go now behaves like the channel documents: model requests carry the frozen root-Run
   affinity as `x-opencode-session` so delegated children share routing and prompt cache, the three
   bindings declare the reasoning profiles the channel serves (`reasoningMode: ENABLED` maps the
