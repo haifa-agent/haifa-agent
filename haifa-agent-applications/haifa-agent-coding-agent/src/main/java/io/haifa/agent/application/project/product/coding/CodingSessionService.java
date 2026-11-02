@@ -251,6 +251,30 @@ public final class CodingSessionService {
         return new CodingSessionPage(summaries, next, hasMore);
     }
 
+    /** Non-reconciling read used only to capture recovery candidates before existing recovery semantics run. */
+    public CodingSessionPage listSessionsForRecovery(ProjectId projectId, int limit) {
+        return listSessionsForRecovery(projectId, CodingSessionQuery.firstPage(limit));
+    }
+
+    /** Non-reconciling read with the existing bounded query/cursor projection. */
+    public CodingSessionPage listSessionsForRecovery(ProjectId projectId, CodingSessionQuery query) {
+        Objects.requireNonNull(projectId, "projectId must not be null");
+        Objects.requireNonNull(query, "query must not be null");
+        TrustedProductCaller caller = callers.current();
+        List<CodingSessionActivity> values =
+                codingSessions.listActivities(caller.tenant(), caller.principal(), projectId, query);
+        boolean hasMore = values.size() > query.limit();
+        List<CodingSessionActivity> pageValues = hasMore ? values.subList(0, query.limit()) : values;
+        List<CodingSessionSummary> summaries =
+                pageValues.stream().map(this::summary).toList();
+        Optional<CodingSessionCursor> next = hasMore && !pageValues.isEmpty()
+                ? Optional.of(new CodingSessionCursor(
+                        pageValues.getLast().lastActivityAt(),
+                        pageValues.getLast().sessionId()))
+                : Optional.empty();
+        return new CodingSessionPage(summaries, next, hasMore);
+    }
+
     public CodingSessionView openSession(AgentSessionId sessionId) {
         TrustedProductCaller caller = callers.current();
         ProjectProductSession product = requireProductSession(sessionId, caller);
@@ -495,15 +519,35 @@ public final class CodingSessionService {
     }
 
     public Optional<RuntimeCommandResult> abortActiveRun(AgentSessionId sessionId, String idempotencyKey) {
+        return abortActiveRun(sessionId, idempotencyKey, Optional.empty());
+    }
+
+    /**
+     * Cancels only the requested active Run. A stale target never falls through to the Session's current successor.
+     */
+    public Optional<RuntimeCommandResult> abortActiveRun(
+            AgentSessionId sessionId, AgentRunId requestedRunId, String idempotencyKey) {
+        return abortActiveRun(
+                sessionId,
+                idempotencyKey,
+                Optional.of(Objects.requireNonNull(requestedRunId, "requestedRunId must not be null")));
+    }
+
+    private Optional<RuntimeCommandResult> abortActiveRun(
+            AgentSessionId sessionId, String idempotencyKey, Optional<AgentRunId> requestedRunId) {
         TrustedProductCaller caller = callers.current();
         ProjectProductSession product = requireProductSession(sessionId, caller);
         CodingSessionActivity activity = reconcile(requireActivity(sessionId, caller), caller);
         if (activity.activeRunId().isEmpty()) {
+            if (requestedRunId.isPresent()) {
+                throw conflict("ACTIVE_RUN_MISMATCH", "Requested Run is not the active Run");
+            }
             // Reconciliation may have just settled an abandoned Run, or the Session was already idle; either way
             // the caller's cancellation intent is satisfied and there is no live Run to command.
             return Optional.empty();
         }
-        AgentRunSnapshot active = requireActive(activity, activity.activeRunId().orElseThrow());
+        AgentRunSnapshot active = requireActive(
+                activity, requestedRunId.orElseGet(() -> activity.activeRunId().orElseThrow()));
         String keyDigest = digest(idempotencyKey(idempotencyKey));
         String dispatchKey = dispatchKey(ABORT, callerScope(caller) + "|" + keyDigest);
         CodingCommandBinding binding = codingSessions.reserveCommand(new CodingCommandBinding(

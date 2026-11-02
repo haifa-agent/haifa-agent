@@ -143,6 +143,7 @@ Windows ConPTY Gate B。
    - 分栏竖线连续覆盖会话视口、输入框、输入提示和选择器；编辑器布局与左栏共用同一宽度，长文本按终端单元格换行，不进入右侧栏。侧栏切换或窗口缩放时重新排版，保留草稿和光标；最底部全局状态/快捷键栏保持通栏。
    - 窄屏信息可达性：窄屏用户无需展开侧栏，即可通过 `<leader>s`（`/session`）弹层随时查看同等详尽的环境、Session、Git、模型与资源摘要；
    - 布局自适应与用户显式折叠偏好：首次启动或窗口 Resize 时，终端根据当前列宽（>=100 列）自动计算侧栏展示；一旦用户使用 `<leader>b` 显式折叠或展开侧栏，终端锁定用户的显式偏好（`sidebarExplicitlyToggled`），后续窗口缩放事件不会强行覆盖用户的偏好选择。
+   - 侧栏 Sessions 列表按最后活动时间倒序（最近更新的 Session 在最上），默认显示前 5 条；列表独立滚动——滚轮落在 Sessions 区域内时只移动该列表的选中行与窗口，不滚动 transcript；窗口外的条数以 `… N more · scroll` 提示，点击仍只命中本次渲染的行。
 
 2. **焦点与弹层优先级契约 (Focus & Modal Priority Contract)**：
    - 普通内建工具审批增加 `Allow for this session`：当前 Coding Session 内后续普通工具审批自动通过，退出应用后清除；`/approval reset` 恢复逐次审批。首次批准仅在 Runtime 实际应用后生效，Pending 不激活；工作区授权、权限提升、凭据/输入交互、未知工具和硬性拒绝保持原流程。
@@ -159,6 +160,7 @@ Windows ConPTY Gate B。
    - 用户在输入框中编写的草稿内容、光标位置（Cursor），以及因多行/长文本粘贴而生成的占位符映射（`[Pasted #N ~M lines]` -> 原文正文映射 `pastedContent`），受到全局严格保护；
    - 打开命令面板（`Ctrl+P`）、Session 摘要（`<leader>s`）、交互式重命名（`<leader>r`）等辅助弹层时，Controller 自动暂存当前草稿与光标；
    - 弹层完成或被取消（Esc/Ctrl+C）后，完整恢复用户原有的草稿正文与光标位置，不被命令替换为空或 `/command`；
+   - 草稿归属于它被编写时的 Session：通过侧栏行或 `/resume` 切到另一个 Session 时，前一个 Session 的未发文本不会跟随编辑器过去，切回时正文与光标原样恢复；同一进程最多缓存最近 32 个 Session 的草稿，超出后淘汰最先离开的会话；首个 Session 加载前输入的文本不受影响；
    - 即使在输入框临时用于交互式重命名期间，粘贴占位符映射也不会被垃圾回收，草稿恢复后完整保留粘贴映射；
    - 交互式 Session 重命名（`<leader>r` 或 `/rename` 不带参数）：无活动 Session 时提示友好错误；有活动 Session 时在编辑器展示当前 Session 名称供修改，Enter 确认重命名并在后台异步执行，Esc 取消并恢复草稿。
 
@@ -337,7 +339,9 @@ Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、s
   其他产品错误只显示稳定错误码并保留草稿，不退出进程；
 - Escape：若存在 Waiting，只取消 Waiting；否则是活动 Run 的全局取消键（先 arm 再确认）。
   裸 Escape 不得被当作 EOF；Selector 打开时先关闭 Selector。空闲时 Escape 只关闭 Selector；
-  Ctrl+C 仍先清空非空 Editor，空 Editor 时取消活动 Run；
+  Ctrl+C 仍先清空非空 Editor，空 Editor 时取消活动 Run。嵌入式模式下 Ctrl-C 由 Program 接管的
+  SIGINT 处理器转成同一条中断；远程薄客户端不接管任何进程信号，SIGINT/SIGTERM 只结束客户端进程，
+  绝不取消 Host 拥有的 Run，Ctrl+C 则以按键形式走同一条中断路径；
 - `/resume` 选择并打开真实 Session；顶层 `haifa-coding resume`、`resume --last` 和
   `resume <SESSION_ID>` 复用同一产品客户端与打开流程；
 - `/resume <query>` 搜索 Session，`/rename [name]`（兼容 `/name`）使用 revision 重命名，
@@ -513,6 +517,25 @@ explicit recovery.
 Event replay retains at most the latest 2,000 lifecycle events in one background load so reopening a
 large session cannot allocate an unbounded intermediate list. Durable conversation messages remain
 the authoritative reopened transcript.
+
+## Selection generation and Remote v1 capabilities
+
+Every selection transition allocates a monotonic generation. Snapshot/history/replay loads install the
+view first and subscribe afterwards from the authoritative cursor, so a synchronously replayed
+subscription event is reduced against the newly installed session. Async load, command, approval,
+model, shell, cursor and stream completions carry the captured Session/Run/generation and may only
+update the view they were started for. A->B->A therefore rejects an old A result even when the
+SessionId matches again. A failed transition keeps the previous view and stream usable and can be
+retried; stale subscribe completions close only their own handles and never cancel Runs. Cancel
+always targets the captured active Run through `cancel(sessionId, requestedRunId, key)`.
+
+`CodingTerminalApplication` and `CodingTerminalController` accept an immutable
+`CodingTerminalConnectionOptions` for the composition root. Existing constructors keep
+`embedded()`. Remote v1 supplies `remoteV1()`: Tool preview, session-level consent/reset, and
+credential setup (API key, browser/device sign-in) are refused in the UI with Host-side guidance
+before any secret is collected. Auth status and logout remain available, and ordinary precise
+approve/reject is unchanged. `CodingSessionClient` remains the only product interface; there is no
+capability registry or transport import in this module.
 
 ## Assistant streaming boundary
 

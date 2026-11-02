@@ -64,11 +64,24 @@ public sealed interface TerminalUiAction {
         }
     }
 
-    record RunEventReceived(AgentRunEvent event) implements TerminalUiAction {}
+    record RunEventReceived(AgentRunEvent event, long selectionGeneration) implements TerminalUiAction {
+        /** Unscoped actions remain supported for reducers and direct tests. */
+        public RunEventReceived(AgentRunEvent event) {
+            this(event, 0L);
+        }
+    }
 
-    record RunOutputReceived(AgentRunOutputEvent event) implements TerminalUiAction {}
+    record RunOutputReceived(AgentRunOutputEvent event, long selectionGeneration) implements TerminalUiAction {
+        public RunOutputReceived(AgentRunOutputEvent event) {
+            this(event, 0L);
+        }
+    }
 
-    record ToolOutputPreviewReceived(ToolOutputPreview preview) implements TerminalUiAction {}
+    record ToolOutputPreviewReceived(ToolOutputPreview preview, long selectionGeneration) implements TerminalUiAction {
+        public ToolOutputPreviewReceived(ToolOutputPreview preview) {
+            this(preview, 0L);
+        }
+    }
 
     record InteractionPresented(
             InteractionView interaction, boolean allowForSession, Optional<String> sessionApprovalUnavailableReason)
@@ -113,6 +126,13 @@ public sealed interface TerminalUiAction {
     record ExitRequested() implements TerminalUiAction {}
 
     record SidebarToggled() implements TerminalUiAction {}
+
+    /** Bounded {@code session/list} result for the sidebar; never a per-delta full refresh (D6). */
+    record SessionRowsLoaded(java.util.List<io.haifa.agent.application.coding.terminal.state.TerminalSessionRow> rows)
+            implements TerminalUiAction {}
+
+    /** Keyboard movement of the sidebar cursor, kept separate from transcript scrolling. */
+    record SessionRowMoved(int delta) implements TerminalUiAction {}
 
     record ThemeChanged(String themeName) implements TerminalUiAction {}
 

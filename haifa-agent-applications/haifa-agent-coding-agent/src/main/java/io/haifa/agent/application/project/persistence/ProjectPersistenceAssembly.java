@@ -76,6 +76,7 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
     private final CodingSessionStore codingSessions;
     private final String workerId;
     private final SqliteStoreFoundation sqlite;
+    private final CodingDatabaseOwnership databaseOwnership;
     private final JsonlTranscriptProjector projector;
     private final AuthorizedDirectoryStore authorizedDirectories;
     private final AtomicBoolean closing = new AtomicBoolean();
@@ -87,6 +88,7 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
             CodingSessionStore codingSessions,
             String workerId,
             SqliteStoreFoundation sqlite,
+            CodingDatabaseOwnership databaseOwnership,
             JsonlTranscriptProjector projector,
             AuthorizedDirectoryStore authorizedDirectories) {
         this.mode = mode;
@@ -95,6 +97,7 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
         this.codingSessions = Objects.requireNonNull(codingSessions, "codingSessions must not be null");
         this.workerId = workerId;
         this.sqlite = sqlite;
+        this.databaseOwnership = databaseOwnership;
         this.projector = projector;
         this.authorizedDirectories =
                 Objects.requireNonNull(authorizedDirectories, "authorizedDirectories must not be null");
@@ -121,6 +124,7 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
                     workerId,
                     null,
                     null,
+                    null,
                     new InMemoryAuthorizedDirectoryStore());
         }
         ModelContinuationProtector effectiveProtector = protector;
@@ -138,7 +142,9 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
         SqliteStoreConfiguration sqliteConfiguration = new SqliteStoreConfiguration(
                 database, configuration.busyTimeoutMillis(), configuration.maximumPayloadBytes());
         SqliteStoreFoundation foundation = null;
+        CodingDatabaseOwnership databaseOwnership = null;
         try {
+            databaseOwnership = CodingDatabaseOwnership.acquire(database);
             foundation = SqliteStoreFoundation.initializeWithAdditionalMappers(
                     sqliteConfiguration, clock, ProjectApplicationMappers.all());
             RuntimePersistencePorts ports = foundation.persistencePorts(effectiveProtector);
@@ -163,12 +169,20 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
                     codingSessions,
                     workerId,
                     foundation,
+                    databaseOwnership,
                     projector,
                     new SqliteAuthorizedDirectoryStore(foundation.unitOfWork(), effectiveProtector, clock));
         } catch (RuntimeException | Error exception) {
             if (foundation != null) {
                 try {
                     foundation.close();
+                } catch (RuntimeException closeFailure) {
+                    exception.addSuppressed(closeFailure);
+                }
+            }
+            if (databaseOwnership != null) {
+                try {
+                    databaseOwnership.close();
                 } catch (RuntimeException closeFailure) {
                     exception.addSuppressed(closeFailure);
                 }
@@ -316,6 +330,14 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
         if (sqlite != null) {
             try {
                 sqlite.close();
+            } catch (RuntimeException exception) {
+                if (failure == null) failure = exception;
+                else failure.addSuppressed(exception);
+            }
+        }
+        if (databaseOwnership != null) {
+            try {
+                databaseOwnership.close();
             } catch (RuntimeException exception) {
                 if (failure == null) failure = exception;
                 else failure.addSuppressed(exception);

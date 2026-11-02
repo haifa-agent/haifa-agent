@@ -2,6 +2,22 @@
 
 ## Unreleased - 0.1.5-SNAPSHOT
 
+- The Coding Agent can now run its Terminal as a thin client of one CA Host: `haifa-coding tui --connect
+  http://127.0.0.1:<port> [--session <id> | --new]` resumes that Host's last Session by default and is dispatched
+  before the process opens local logs, configuration, credentials, Runtime or SQLite. Tool-output preview, session
+  consent and credential setup stay on the Host and are refused up front; ordinary per-approval approve/reject and
+  logout remain. An unavailable or incompatible Host fails fast with a stable `REMOTE_*` code instead of falling back
+  to an embedded Run, and when a settled Run has already advanced to a queued follow-up the terminal performs one
+  bounded reconcile per settled Run to move onto the successor. The packaged `haifa.bat` / `haifa` launchers pass the
+  `tui` vector through untouched, keep the `host` subcommand ahead of the bundled `--config`, and no longer create the
+  per-user data directories for the remote mode.
+
+- The Coding Agent sidebar became a Session task list: rows are Sessions with their authoritative active-Run
+  or Session status plus the queue count, ordered by last activity. The panel renders a five-row window that
+  scrolls on its own (the wheel over the list moves only that list) and reports `… N more · scroll` for the
+  rest. Switching never cancels the Run being left, a click now activates the pressed row on release even when
+  the terminal reports no button, and a composer draft stays with the Session it was typed in.
+
 - Coding Terminal clarification questions move backward and forward with ← and →, and the marked
   options or typed text are listed in a review step before `Send answer` submits them.
 

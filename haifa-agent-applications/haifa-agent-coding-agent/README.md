@@ -183,6 +183,15 @@ Scope 中重新解析。标准 `CodingSessionClient` 提供脱敏授权清单与
 `host-guarded` 只提供受控进程启动、cwd、超时、取消、输出与进程树回收，不提供 OS 文件系统隔离。该 Store 不进入
 公共 Runtime/SDK/Execution 或 Personal Assistant。
 
+SQLite persistence now enforces one product-process owner per canonical database path. `ProjectPersistenceAssembly`
+acquires an OS file lock before migrations/open and holds it until store close; a second embedded assembly, or a
+future Host assembly sharing the same persistence entry, fails fast with `DATABASE_OWNED_BY_ANOTHER_PROCESS`.
+This is not a transaction writer lock or UI ownership lease; separate databases and `MEMORY` mode are unaffected.
+`CodingSessionClient.cancel(sessionId, runId, idempotencyKey)` and
+`CodingSessionService.abortActiveRun(sessionId, runId, idempotencyKey)` bind cancellation to the exact requested
+active Run; a stale Run returns `ACTIVE_RUN_MISMATCH` and never cancels its successor. The existing session-level
+cancel remains unchanged, and this package does not implement a Host command or listener.
+
 ## Coding Session 产品闭环
 
 `CodingSessionService` 是 Coding Agent 的产品 façade，提供 Session 创建、稳定分页/搜索、打开、

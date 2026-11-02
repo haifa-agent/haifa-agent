@@ -51,11 +51,35 @@ final class CliConfigurationLoader {
                 arguments,
                 workspace,
                 userConfiguration(),
-                Path.of(".haifa-agent").resolve("config.yaml"));
+                Path.of(".haifa-agent").resolve("config.yaml"),
+                true);
     }
 
     CliConfiguration load(
             CliArguments arguments, Path workspace, Optional<Path> userConfiguration, Path workspaceConfiguration) {
+        return load(arguments, workspace, userConfiguration, workspaceConfiguration, true);
+    }
+
+    /** Host mode trusts only an explicit --config or the existing user configuration, never a workspace overlay. */
+    CliConfiguration loadForHost(CliArguments arguments, Path workspace) {
+        return loadForHost(
+                arguments,
+                workspace,
+                userConfiguration(),
+                Path.of(".haifa-agent").resolve("config.yaml"));
+    }
+
+    CliConfiguration loadForHost(
+            CliArguments arguments, Path workspace, Optional<Path> userConfiguration, Path workspaceConfiguration) {
+        return load(arguments, workspace, userConfiguration, workspaceConfiguration, false);
+    }
+
+    private CliConfiguration load(
+            CliArguments arguments,
+            Path workspace,
+            Optional<Path> userConfiguration,
+            Path workspaceConfiguration,
+            boolean includeWorkspaceConfiguration) {
         Objects.requireNonNull(arguments, "arguments must not be null");
         Objects.requireNonNull(workspace, "workspace must not be null");
         Objects.requireNonNull(userConfiguration, "userConfiguration must not be null");
@@ -68,8 +92,10 @@ final class CliConfigurationLoader {
             values.putAll(read(arguments.config().orElseThrow()));
         } else {
             userConfiguration.filter(Files::isRegularFile).map(this::read).ifPresent(values::putAll);
-            Path local = workspace.resolve(workspaceConfiguration);
-            if (Files.isRegularFile(local)) values.putAll(read(local));
+            if (includeWorkspaceConfiguration) {
+                Path local = workspace.resolve(workspaceConfiguration);
+                if (Files.isRegularFile(local)) values.putAll(read(local));
+            }
         }
         return resolve(values, arguments);
     }

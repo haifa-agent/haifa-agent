@@ -13,6 +13,7 @@ import io.haifa.agent.application.coding.terminal.state.TerminalDurations;
 import io.haifa.agent.application.coding.terminal.state.TerminalRecovery;
 import io.haifa.agent.application.coding.terminal.state.TerminalSelector;
 import io.haifa.agent.application.coding.terminal.state.TerminalSelectorDetail;
+import io.haifa.agent.application.coding.terminal.state.TerminalSessionRow;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
 import io.haifa.agent.application.coding.terminal.state.ToolBodyLines;
 import io.haifa.agent.application.coding.terminal.state.TranscriptItem;
@@ -104,6 +105,43 @@ final class Tui4jTerminalView {
     private final TextWrapper textWrapper = new TextWrapper();
     private final TerminalShortcutProfile shortcuts;
     private TranscriptRegion transcriptRegion = new TranscriptRegion(0, 0, 1, 1);
+
+    /** Rendered sidebar Session rows and their screen line, rebuilt on every render pass. */
+    private final List<SidebarSessionHit> sidebarSessionRows = new ArrayList<>();
+
+    /** Screen rows currently holding the sidebar Session window, rebuilt on every render pass. */
+    private int sidebarSessionsFirstRow = -1;
+
+    private int sidebarSessionsLastRow = -1;
+
+    /** One rendered sidebar row mapped to the Session it represents. */
+    record SidebarSessionHit(int row, io.haifa.agent.core.session.AgentSessionId sessionId) {}
+
+    /**
+     * Resolves a screen row inside the sidebar panel to the Session drawn there.
+     *
+     * <p>Only rows recorded during the last render can match, so a click can never select a Session that is not
+     * currently visible, and the mapping cannot drift from what the user sees.
+     */
+    Optional<io.haifa.agent.core.session.AgentSessionId> sidebarSessionAt(int screenRow) {
+        for (SidebarSessionHit hit : sidebarSessionRows) {
+            if (hit.row() == screenRow) return Optional.of(hit.sessionId());
+        }
+        return Optional.empty();
+    }
+
+    /** True when the sidebar panel is drawn, which decides both polling and click handling. */
+    boolean sidebarRendered() {
+        return !sidebarSessionRows.isEmpty();
+    }
+
+    /** True when the screen row lies on the sidebar Session list, which scrolls independently of the transcript. */
+    boolean sidebarSessionsAt(int screenRow) {
+        return sidebarSessionsFirstRow >= 0
+                && screenRow >= sidebarSessionsFirstRow
+                && screenRow <= sidebarSessionsLastRow;
+    }
+
     private List<TranscriptHit> transcriptHits = List.of();
 
     Tui4jTerminalView() {
@@ -458,6 +496,32 @@ final class Tui4jTerminalView {
             }
         }
         lines.add("");
+
+        sidebarSessionRows.clear();
+        sidebarSessionsFirstRow = -1;
+        sidebarSessionsLastRow = -1;
+        lines.add(theme.focus("Sessions"));
+        if (state.sessionRows().isEmpty()) {
+            lines.add(theme.muted("  \u2022 No sessions yet"));
+        } else {
+            List<TerminalSessionRow> visible = state.visibleSessionRows();
+            int windowStart = state.sessionRowWindowStart();
+            for (int offset = 0; offset < visible.size() && lines.size() < height - 4; offset++) {
+                TerminalSessionRow row = visible.get(offset);
+                boolean selected = windowStart + offset == state.sessionRowSelected();
+                // Record the rendered line so a click maps back to exactly this Session, not a screen guess.
+                sidebarSessionRows.add(new SidebarSessionHit(lines.size(), row.sessionId()));
+                if (sidebarSessionsFirstRow < 0) sidebarSessionsFirstRow = lines.size();
+                sidebarSessionsLastRow = lines.size();
+                String text = clip(row.render(selected), width);
+                lines.add(selected ? theme.strong(text) : theme.muted(text));
+            }
+            int hidden = state.sessionRows().size() - visible.size();
+            if (hidden > 0 && lines.size() < height - 4) {
+                // The window scrolls on its own; this only reports how much stays outside it.
+                lines.add(theme.muted("  \u2026 " + hidden + " more \u00b7 scroll"));
+            }
+        }
 
         lines.add(theme.muted("• Haifa Agent v" + CodingAgentVersion.current()));
         lines.add(theme.muted("• " + shortcuts.sidebarToggle() + " toggle"));

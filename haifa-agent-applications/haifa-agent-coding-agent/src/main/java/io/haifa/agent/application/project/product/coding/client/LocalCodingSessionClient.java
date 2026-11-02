@@ -418,6 +418,12 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
     }
 
     @Override
+    public void cancel(AgentSessionId sessionId, AgentRunId requestedRunId, String idempotencyKey) {
+        requireScoped(sessionId);
+        sessions.abortActiveRun(sessionId, requestedRunId, idempotencyKey);
+    }
+
+    @Override
     public CodingSessionSummary rename(AgentSessionId sessionId, String displayName, long expectedRevision) {
         requireScoped(sessionId);
         return sessions.renameSession(sessionId, displayName, expectedRevision);
