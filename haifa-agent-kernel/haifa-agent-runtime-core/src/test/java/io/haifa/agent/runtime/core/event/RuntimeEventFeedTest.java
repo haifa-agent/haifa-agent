@@ -65,6 +65,9 @@ class RuntimeEventFeedTest {
         var second = feed.page(runId, first.nextCursor(), 10);
         assertThat(second.items()).isEmpty();
         assertThat(second.nextCursor()).isEqualTo(second.headCursor());
+        // The last durable entry is hidden, so the empty page still has to park the cursor on that sequence rather
+        // than on the last projected event; a reconnecting client follows the cursor to reach the head.
+        assertThat(second.nextCursor().exclusiveSequence()).hasValue(delta.sequence());
         assertThat(second.hasMore()).isFalse();
     }
 
