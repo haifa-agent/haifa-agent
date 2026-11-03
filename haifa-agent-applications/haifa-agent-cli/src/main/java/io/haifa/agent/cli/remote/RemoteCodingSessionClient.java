@@ -104,7 +104,7 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
     private volatile boolean closed;
 
     private RemoteCodingSessionClient(URI baseUri) {
-        this.transport = new RemoteRpcTransport(baseUri, json, executor);
+        this.transport = new RemoteRpcTransport(baseUri, json);
         this.codec = new RemoteWireCodec(json);
         this.authentication = new RemoteCodingAuthenticationClient(transport, codec);
     }
