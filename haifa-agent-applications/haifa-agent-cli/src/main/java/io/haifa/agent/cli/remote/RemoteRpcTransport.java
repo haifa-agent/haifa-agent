@@ -20,6 +20,7 @@ import java.util.Objects;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -39,22 +40,28 @@ final class RemoteRpcTransport {
     private final URI rpcUri;
     private final URI eventsUri;
     private final ObjectMapper json;
-    private final ExecutorService executor;
+    /**
+     * I/O worker owned by the transport. It must never be the caller's pool: a blocking {@code send} occupies the
+     * calling thread while HttpClient schedules its own exchange work, so handing HttpClient a single-thread pool the
+     * caller also runs on makes the call wait for a thread that only the call itself could free.
+     */
+    private final ExecutorService ioExecutor;
+
     private final HttpClient http;
     private final AtomicLong requestIdentifiers = new AtomicLong();
     private volatile String clientId;
     private volatile boolean closed;
 
-    RemoteRpcTransport(URI baseUri, ObjectMapper json, ExecutorService executor) {
+    RemoteRpcTransport(URI baseUri, ObjectMapper json) {
         this.baseUri = Objects.requireNonNull(baseUri, "baseUri must not be null");
         this.json = Objects.requireNonNull(json, "json must not be null");
-        this.executor = Objects.requireNonNull(executor, "executor must not be null");
         this.rpcUri = baseUri.resolve("/v1/rpc");
         this.eventsUri = baseUri.resolve("/v1/events");
+        this.ioExecutor = Executors.newVirtualThreadPerTaskExecutor();
         this.http = HttpClient.newBuilder()
                 .connectTimeout(CONNECT_TIMEOUT)
                 .followRedirects(HttpClient.Redirect.NEVER)
-                .executor(executor)
+                .executor(ioExecutor)
                 .build();
     }
 
@@ -64,10 +71,6 @@ final class RemoteRpcTransport {
 
     ObjectMapper json() {
         return json;
-    }
-
-    ExecutorService executor() {
-        return executor;
     }
 
     void clientId(String value) {
@@ -80,6 +83,7 @@ final class RemoteRpcTransport {
 
     void close() {
         closed = true;
+        ioExecutor.shutdownNow();
     }
 
     JsonNode call(String method, Map<String, Object> params, boolean mutation) {
@@ -91,7 +95,7 @@ final class RemoteRpcTransport {
             return;
         }
         try {
-            executor.submit(() -> {
+            ioExecutor.submit(() -> {
                 try {
                     call(method, params, false, BEST_EFFORT_TIMEOUT);
                 } catch (RuntimeException ignored) {
@@ -229,7 +233,7 @@ final class RemoteRpcTransport {
     private byte[] readBody(InputStream stream, boolean mutation, Duration timeout) throws IOException {
         Future<byte[]> task;
         try {
-            task = executor.submit(() -> readBounded(stream));
+            task = ioExecutor.submit(() -> readBounded(stream));
         } catch (RejectedExecutionException exception) {
             closeQuietly(stream);
             throw transportFailure(mutation);
