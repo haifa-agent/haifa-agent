@@ -12,6 +12,23 @@ import org.junit.jupiter.api.Test;
 
 class CodingHostClientsTest {
     @Test
+    void optionalPreviewIsBoundToTheLogicalClientAndDoesNotTransferOnRenewal() {
+        var now = new AtomicReference<>(Instant.EPOCH);
+        var clients = new CodingHostClients(new UuidV7IdentifierGenerator(), now::get, Duration.ofMinutes(1));
+        String enabled = clients.initialize(java.util.Set.of("preview-v1"));
+        String legacy = clients.initialize();
+        clients.require(enabled);
+        clients.requireOptional(enabled, "preview-v1");
+        assertThatThrownBy(() -> clients.requireOptional(legacy, "preview-v1")).isInstanceOf(CodingHostException.class);
+        now.set(Instant.EPOCH.plusSeconds(61));
+        assertThatThrownBy(() -> clients.requireOptional(enabled, "preview-v1"))
+                .isInstanceOf(CodingHostException.class);
+        String renewed = clients.initialize();
+        assertThatThrownBy(() -> clients.requireOptional(renewed, "preview-v1"))
+                .isInstanceOf(CodingHostException.class);
+    }
+
+    @Test
     void authenticatedActivityRenewsTheContextWithInjectedTime() {
         var now = new AtomicReference<>(Instant.EPOCH);
         var clients = new CodingHostClients(new UuidV7IdentifierGenerator(), now::get, Duration.ofMinutes(30));

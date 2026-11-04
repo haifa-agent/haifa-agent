@@ -46,7 +46,39 @@ import java.util.OptionalLong;
 
 /** Explicit allowlist projection from product/Runtime values to the CA Host wire schema. */
 final class CodingHostWire {
+    private static final io.haifa.agent.credential.api.SecretRedactor PREVIEW_REDACTOR =
+            new io.haifa.agent.credential.core.DefaultSecretRedactor();
+
     private CodingHostWire() {}
+
+    static Map<String, Object> preview(
+            io.haifa.agent.execution.api.ToolOutputPreview preview,
+            io.haifa.agent.core.session.AgentSessionId sessionId) {
+        // The execution broker already redacts sensitive values across chunk boundaries.
+        // Normalize display controls before credential-pattern matching, then enforce the UTF-8 wire budget.
+        String safe = preview.text().replaceAll("\\u001B\\[[;?0-9]*[ -/]*[@-~]", "");
+        StringBuilder display = new StringBuilder();
+        safe.codePoints()
+                .filter(c -> c == '\n' || c == '\r' || c == '\t' || !Character.isISOControl(c))
+                .forEach(display::appendCodePoint);
+        var bounded = io.haifa.agent.runtime.api.display.BoundedText.of(
+                PREVIEW_REDACTOR.redact(display.toString()), 4096, 256);
+        return Map.of(
+                "sessionId",
+                sessionId.value(),
+                "runId",
+                preview.runId().value(),
+                "toolCallId",
+                preview.toolCallId().value(),
+                "channel",
+                preview.channel().name(),
+                "text",
+                bounded.text(),
+                "outputTruncated",
+                preview.outputTruncated(),
+                "previewDropped",
+                preview.previewDropped() || bounded.truncated());
+    }
 
     static Map<String, Object> cursor(RunEventCursor cursor) {
         Map<String, Object> value = map();

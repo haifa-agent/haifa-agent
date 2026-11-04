@@ -38,11 +38,95 @@ class RemoteCodingSessionClientTest {
     private static final long NOW = 1_700_000_000_123L;
 
     @Test
+    void negotiatedPreviewDeliversBeforeCompletionAndRejectsForeignTargetsWithoutCommands() throws Exception {
+        for (String mode : List.of("live", "foreign", "disconnected")) {
+            boolean foreign = mode.equals("foreign");
+            var initialized = FakeCodingHost.JSON.valueToTree(FakeCodingHost.initializeResult("client-1", "project-1"));
+            ((com.fasterxml.jackson.databind.node.ObjectNode) initialized)
+                    .putArray("optionalCapabilities")
+                    .add("preview-v1");
+            var frame = map(
+                    "sessionId",
+                    foreign ? "foreign-session" : SESSION.value(),
+                    "runId",
+                    RUN.value(),
+                    "toolCallId",
+                    "tool-1",
+                    "channel",
+                    "STDOUT",
+                    "text",
+                    "running output",
+                    "outputTruncated",
+                    false,
+                    "previewDropped",
+                    false);
+            try (FakeCodingHost host = FakeCodingHost.start(call -> switch (call.method()) {
+                case "initialize" -> FakeCodingHost.Reply.result(initialized);
+                case "run/start" ->
+                    FakeCodingHost.Reply.result(map(
+                            "operation",
+                            "submit-turn",
+                            "sessionId",
+                            SESSION.value(),
+                            "runId",
+                            RUN.value(),
+                            "replayed",
+                            false));
+                case "preview/subscribe" ->
+                    FakeCodingHost.Reply.result(map(
+                            "subscriptionId",
+                            "sub-preview",
+                            "sessionId",
+                            SESSION.value(),
+                            "runId",
+                            RUN.value(),
+                            "type",
+                            "tool-preview"));
+                default -> FakeCodingHost.Reply.error("REMOTE_METHOD_UNSUPPORTED");
+            })) {
+                host.script(
+                        "sub-preview",
+                        List.of("event: tool-preview\ndata: " + FakeCodingHost.JSON.writeValueAsString(frame) + "\n\n"),
+                        mode.equals("disconnected"));
+                try (var client = RemoteCodingSessionClient.connect(host.uri())) {
+                    assertThat(client.info().optionalCapabilities()).containsExactly("preview-v1");
+                    assertThat(client.info().supports("preview")).isFalse();
+                    client.submit(SESSION, "synthetic task", "start-preview");
+                    var received = new LinkedBlockingQueue<io.haifa.agent.execution.api.ToolOutputPreview>();
+                    try (var observation = client.previewPublisher().subscribe(RUN, received::add)) {
+                        if (foreign) {
+                            assertThat(host.awaitUnsubscribe("sub-preview")).isTrue();
+                            assertThat(received).isEmpty();
+                        } else {
+                            var preview = received.poll(5, TimeUnit.SECONDS);
+                            assertThat(preview).isNotNull();
+                            assertThat(preview.text()).isEqualTo("running output");
+                            assertThat(preview.toolCallId().value()).isEqualTo("tool-1");
+                            if (mode.equals("disconnected")) {
+                                var lost = received.poll(5, TimeUnit.SECONDS);
+                                assertThat(lost).isNotNull();
+                                assertThat(lost.previewDropped()).isTrue();
+                                assertThat(lost.text()).isEmpty();
+                            }
+                        }
+                    }
+                    assertThat(host.awaitUnsubscribe("sub-preview")).isTrue();
+                    assertThat(host.calls("run/start")).hasSize(1);
+                    assertThat(host.calls("run/cancel")).isEmpty();
+                }
+            }
+        }
+    }
+
+    @Test
     void oldHostsNeedNoOptionalResponseAndUnrequestedSelectionsAreRejected() throws Exception {
         var initialized = FakeCodingHost.JSON.valueToTree(FakeCodingHost.initializeResult("client-1", "project-1"));
         try (FakeCodingHost host = FakeCodingHost.start(call -> FakeCodingHost.Reply.result(initialized))) {
             try (var client = RemoteCodingSessionClient.connect(host.uri())) {
                 assertThat(client.info().optionalCapabilities()).isEmpty();
+                try (var observation = client.previewPublisher().subscribe(RUN, value -> {})) {
+                    assertThat(host.calls("preview/subscribe")).isEmpty();
+                }
                 assertThat(host.calls("initialize")
                                 .getFirst()
                                 .params()

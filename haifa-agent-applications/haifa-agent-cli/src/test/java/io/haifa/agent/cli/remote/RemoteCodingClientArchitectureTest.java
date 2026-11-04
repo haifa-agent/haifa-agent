@@ -23,7 +23,8 @@ class RemoteCodingClientArchitectureTest {
                 .resideInAnyPackage(
                         "io.haifa.agent.runtime.core..",
                         "io.haifa.agent.application.project.persistence..",
-                        "io.haifa.agent.execution..",
+                        "io.haifa.agent.execution.core..",
+                        "io.haifa.agent.execution.host..",
                         "io.haifa.agent.sandbox..",
                         "io.haifa.agent.credential..",
                         "io.haifa.agent.store..",

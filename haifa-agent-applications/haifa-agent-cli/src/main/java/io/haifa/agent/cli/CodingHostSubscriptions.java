@@ -30,6 +30,7 @@ final class CodingHostSubscriptions {
     static final Duration DEFAULT_ATTACH_TIMEOUT = Duration.ofSeconds(30);
 
     private final CodingSessionClient client;
+    private final io.haifa.agent.execution.api.ToolOutputPreviewPublisher previews;
     private final int maximumSubscriptions;
     private final int queueCapacity;
     private final TimeProvider time;
@@ -66,6 +67,25 @@ final class CodingHostSubscriptions {
             TimeProvider time,
             Duration attachTimeout,
             IdentifierGenerator identifiers) {
+        this(
+                client,
+                maximumSubscriptions,
+                queueCapacity,
+                time,
+                attachTimeout,
+                identifiers,
+                io.haifa.agent.execution.api.ToolOutputPreviewPublisher.noop());
+    }
+
+    CodingHostSubscriptions(
+            CodingSessionClient client,
+            int maximumSubscriptions,
+            int queueCapacity,
+            TimeProvider time,
+            Duration attachTimeout,
+            IdentifierGenerator identifiers,
+            io.haifa.agent.execution.api.ToolOutputPreviewPublisher previews) {
+        this.previews = Objects.requireNonNull(previews, "previews must not be null");
         this.client = Objects.requireNonNull(client, "client must not be null");
         this.time = Objects.requireNonNull(time, "time must not be null");
         this.attachTimeout = Objects.requireNonNull(attachTimeout, "attachTimeout must not be null");
@@ -96,6 +116,34 @@ final class CodingHostSubscriptions {
         } catch (RuntimeException exception) {
             discard(subscription);
             throw exception;
+        }
+    }
+
+    boolean previewAvailable() {
+        return previews != io.haifa.agent.execution.api.ToolOutputPreviewPublisher.noop();
+    }
+
+    String subscribePreview(String clientId, AgentSessionId sessionId, AgentRunId runId) {
+        Subscription subscription = reserve(clientId, sessionId, runId, "tool-preview");
+        CodingHostPreviewStream stream = new CodingHostPreviewStream();
+        try {
+            subscription.install(previews.subscribe(runId, preview -> {
+                if (!runId.equals(preview.runId())) {
+                    discard(subscription);
+                    return;
+                }
+                try {
+                    var safe = stream.accept(preview);
+                    if (safe != null) offer(subscription, CodingHostWire.preview(safe, sessionId));
+                } catch (IllegalStateException overflow) {
+                    // An ambiguous/over-budget fragment drops only observation, never emits an unsafe suffix.
+                    discard(subscription);
+                }
+            }));
+            return subscription.id;
+        } catch (RuntimeException failure) {
+            discard(subscription);
+            throw failure;
         }
     }
 

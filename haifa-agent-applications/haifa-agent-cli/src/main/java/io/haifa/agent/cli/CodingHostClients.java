@@ -18,7 +18,10 @@ final class CodingHostClients {
     private final Duration idleTimeout;
     private final int maximumClients;
     private final Consumer<String> expiredClient;
-    private final Map<String, Instant> clients = new LinkedHashMap<>();
+
+    private record Context(Instant lastSeen, java.util.Set<String> optionalCapabilities) {}
+
+    private final Map<String, Context> clients = new LinkedHashMap<>();
     private boolean closed;
 
     CodingHostClients(IdentifierGenerator identifiers, TimeProvider time, Duration idleTimeout) {
@@ -42,24 +45,35 @@ final class CodingHostClients {
     }
 
     synchronized String initialize() {
+        return initialize(java.util.Set.of());
+    }
+
+    synchronized String initialize(java.util.Set<String> optionalCapabilities) {
         if (closed) throw CodingHostException.conflict("HOST_SHUTTING_DOWN", "Host is shutting down");
         expireIdle();
         if (clients.size() >= maximumClients) {
             throw CodingHostException.conflict("HOST_CLIENT_LIMIT", "Too many active protocol clients");
         }
         String clientId = identifiers.nextValue();
-        clients.put(clientId, time.now());
+        clients.put(clientId, new Context(time.now(), java.util.Set.copyOf(optionalCapabilities)));
         return clientId;
     }
 
     synchronized void require(String clientId) {
         if (closed) throw CodingHostException.conflict("HOST_SHUTTING_DOWN", "Host is shutting down");
         expireIdle();
-        Instant lastSeen = clients.get(clientId);
-        if (lastSeen == null) {
+        Context context = clients.get(clientId);
+        if (context == null) {
             throw CodingHostException.conflict("CLIENT_CONTEXT_REQUIRED", "initialize is required for this client");
         }
-        clients.put(clientId, time.now());
+        clients.put(clientId, new Context(time.now(), context.optionalCapabilities()));
+    }
+
+    synchronized void requireOptional(String clientId, String capability) {
+        require(clientId);
+        if (!clients.get(clientId).optionalCapabilities().contains(capability)) {
+            throw CodingHostException.unsupported("Optional capability was not negotiated");
+        }
     }
 
     synchronized void close() {
@@ -70,7 +84,7 @@ final class CodingHostClients {
     private void expireIdle() {
         Instant floor = time.now().minus(idleTimeout);
         clients.entrySet().removeIf(entry -> {
-            boolean expired = entry.getValue().isBefore(floor);
+            boolean expired = entry.getValue().lastSeen().isBefore(floor);
             if (expired) expiredClient.accept(entry.getKey());
             return expired;
         });

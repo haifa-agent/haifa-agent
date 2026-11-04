@@ -147,11 +147,11 @@ final class CodingHostDispatcher {
                     throw CodingHostException.unsupported("Remote session consent is unavailable");
                 case "events/page" -> eventsPage(safeParams);
                 case "events/subscribe" -> subscribeEvents(clientId, safeParams);
-                case "events/unsubscribe", "output/unsubscribe" ->
+                case "events/unsubscribe", "output/unsubscribe", "preview/unsubscribe" ->
                     Map.of("closed", subscriptions.unsubscribe(clientId, text(safeParams, "subscriptionId")));
                 case "output/page" -> outputPage(safeParams);
                 case "output/subscribe" -> subscribeOutput(clientId, safeParams);
-                case "preview/subscribe" -> throw CodingHostException.unsupported("Tool preview is unavailable");
+                case "preview/subscribe" -> subscribePreview(clientId, safeParams);
                 case "model/list" ->
                     Map.of(
                             "models",
@@ -222,7 +222,11 @@ final class CodingHostDispatcher {
         if (!PROTOCOL_VERSION.equals(version)) {
             throw CodingHostException.conflict("CONTRACT_VERSION_UNSUPPORTED", "Unsupported protocol version");
         }
-        var optional = CodingHostCapabilities.negotiate(params, java.util.Set.of());
+        var optional = CodingHostCapabilities.negotiate(
+                params,
+                subscriptions != null && subscriptions.previewAvailable()
+                        ? java.util.Set.of("preview-v1")
+                        : java.util.Set.of());
         Map<String, Object> capabilities = new LinkedHashMap<>();
         capabilities.put("client-renewal", true);
         capabilities.put("session-list", true);
@@ -468,6 +472,16 @@ final class CodingHostDispatcher {
         long after = optionalLong(params, "afterCursor").orElse(0L);
         String id = subscriptions.subscribeOutput(clientId, sessionId, runId, new RunOutputCursor(after));
         return Map.of("subscriptionId", id, "sessionId", sessionId.value(), "runId", runId.value(), "type", "output");
+    }
+
+    private Map<String, Object> subscribePreview(String clientId, JsonNode params) {
+        if (!subscriptions.previewAvailable()) throw CodingHostException.unsupported("Tool preview is unavailable");
+        AgentSessionId sessionId = session(params);
+        AgentRunId runId = runId(params);
+        requireRunSession(sessionId, runId);
+        String id = subscriptions.subscribePreview(clientId, sessionId, runId);
+        return Map.of(
+                "subscriptionId", id, "sessionId", sessionId.value(), "runId", runId.value(), "type", "tool-preview");
     }
 
     private Map<String, Object> authStatus() {

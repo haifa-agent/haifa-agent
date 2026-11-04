@@ -531,8 +531,9 @@ always targets the captured active Run through `cancel(sessionId, requestedRunId
 
 `CodingTerminalApplication` and `CodingTerminalController` accept an immutable
 `CodingTerminalConnectionOptions` for the composition root. Existing constructors keep
-`embedded()`. Remote v1 supplies `remoteV1()`: Tool preview, session-level consent/reset, and
-credential setup (API key, browser/device sign-in) are refused in the UI with Host-side guidance
+`embedded()`. Remote v1 supplies negotiated connection options: Tool preview is enabled only for mutually supported
+`preview-v1`; session-level consent/reset and credential setup (API key, browser/device sign-in) remain refused
+in the UI with Host-side guidance
 before any secret is collected. Auth status and logout remain available, and ordinary precise
 approve/reject is unchanged. `CodingSessionClient` remains the only product interface; there is no
 capability registry or transport import in this module.
