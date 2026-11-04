@@ -37,12 +37,15 @@ import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.runtime.core.context.ActiveContextSnapshot;
 import io.haifa.agent.runtime.core.context.ActiveContextSnapshots;
 import io.haifa.agent.runtime.core.control.CancellationObservedException;
+import io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException;
+import io.haifa.agent.runtime.core.guard.RuntimeQuotaExceededException;
 import io.haifa.agent.runtime.core.model.FrozenModelBinding;
 import io.haifa.agent.runtime.core.model.ModelMessageProjectionPlan;
 import io.haifa.agent.runtime.core.model.ModelMessageProjectionPlanner;
 import io.haifa.agent.runtime.core.storage.OptimisticLockException;
 import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
+import io.haifa.agent.runtime.core.storage.StorageException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -518,6 +521,8 @@ public final class SemanticCompactionCoordinator {
             prev.semanticSummary().ifPresent(summary -> addSemanticSourceRefs(summary, historicalDurableRefs));
         });
 
+        String evaluationId = ids.nextValue();
+        long initialModelCalls = run.usage().modelCalls();
         String systemPrompt = CompactionPromptRenderer.systemPrompt();
         int physicalCalls = 0;
         int batchStart = 0;
@@ -533,8 +538,7 @@ public final class SemanticCompactionCoordinator {
                         .orElse(List.of());
 
                 if (physicalCalls >= policy.maxCompactionPhysicalCalls()) {
-                    throw new SemanticSummaryValidationException(
-                            "compaction batch plan exceeded maxCompactionPhysicalCalls before the evicted range was complete");
+                    throw new CompactionBudgetExceededException();
                 }
                 String userPrompt = batchStart == 0
                         ? CompactionPromptRenderer.userPromptFromConversationSummary(
@@ -582,49 +586,25 @@ public final class SemanticCompactionCoordinator {
                 projected.toolAliases().values().forEach(id -> historicalDurableRefs.add(id.value()));
                 batchStart = batchEnd;
             }
-        } catch (CancellationObservedException cancelled) {
-            throw cancelled;
+        } catch (CancellationObservedException
+                | RuntimeLimitExceededException
+                | RuntimeQuotaExceededException
+                | StorageException
+                | OptimisticLockException stopped) {
+            throw stopped;
         } catch (Exception ex) {
+            // A model may fail concurrently with a stop or deadline. Hard controls take precedence.
+            invoker.checkControl(run);
             String category = failureCategory(ex);
             String errorCode = validationErrorCode(ex);
             long elapsed = elapsedMillis(startNanos);
-            if (reason == CompactionTriggerReason.ACTIVE_HISTORY_BUDGET) {
-                log.warn(
-                        "Active history budget compaction failed for run {} [category={}, code={}], continuing gracefully without compaction",
-                        run.id().value(),
-                        category,
-                        errorCode);
-                activeBudgetCompactionFailedRuns.add(run.id());
-                Map<String, Object> data = new LinkedHashMap<>();
-                data.put("reason", reason.name());
-                data.put("semanticCompactionReason", reason.name());
-                data.put("tier1PruningBypassedSummary", false);
-                data.put("projectedActiveHistoryTokensBefore", initialEstimatedTokens);
-                data.put("projectedActiveHistoryTokensAfter", initialEstimatedTokens);
-                data.put("omittedToolPayloadTokens", 0L);
-                data.put("omittedToolResultCount", 0);
-                data.put("compactionSummaryCacheHitRate", cacheHitRate);
-                data.put("compactionEvaluationElapsedMillis", elapsed);
-                data.put("failureCategory", category);
-                data.put("validationErrorCode", errorCode);
-                data.put("physicalCalls", physicalCalls);
-                data.put("degraded", true);
-                events.append(run.id(), "session.compaction-failed", data, time.now());
-                return CompactionEvaluationOutcome.failed(reason, initialEstimatedTokens, 0L, 0, cacheHitRate, elapsed);
-            }
-            boolean capabilityGap = ex instanceof CompactionModelCapabilityException;
-            if (capabilityGap) {
-                log.warn(
-                        "Semantic compaction unavailable for run {}: {}. Degrading to deterministic compaction.",
-                        run.id().value(),
-                        ex.getMessage());
-            } else {
-                log.warn("Semantic compaction failed: category={}, code={}", category, errorCode);
-            }
-            // A capability gap is permanent for the session, so degrade unconditionally instead of failing the run:
-            // the deterministic compressor keeps the session usable until the user switches models.
-            boolean degraded = capabilityGap || policy.allowDeterministicDegradedFallback() || overflow;
+            boolean activeBudget = reason == CompactionTriggerReason.ACTIVE_HISTORY_BUDGET;
+            boolean degraded = activeBudget
+                    || ex instanceof CompactionModelCapabilityException
+                    || policy.allowDeterministicDegradedFallback()
+                    || overflow;
             Map<String, Object> data = new LinkedHashMap<>();
+            data.put("evaluationId", evaluationId);
             data.put("reason", reason.name());
             data.put("semanticCompactionReason", reason.name());
             data.put("tier1PruningBypassedSummary", false);
@@ -636,14 +616,48 @@ public final class SemanticCompactionCoordinator {
             data.put("compactionEvaluationElapsedMillis", elapsed);
             data.put("failureCategory", category);
             data.put("validationErrorCode", errorCode);
-            data.put("physicalCalls", physicalCalls);
+            data.put("failureStage", failureStage(ex));
+            data.put("failureCode", failureCode(ex));
+            data.put("physicalCalls", Math.toIntExact(run.usage().modelCalls() - initialModelCalls));
             data.put("degraded", degraded);
             events.append(run.id(), "session.compaction-failed", data, time.now());
-            if (degraded) {
-                log.info("Falling back to deterministic degraded compaction");
-                fallbackToDeterministic(run, previousSummary, sourceToCompact, visible, expectedPreviousVersion);
-                return CompactionEvaluationOutcome.failed(reason, initialEstimatedTokens, 0L, 0, cacheHitRate, elapsed);
+            if (activeBudget) {
+                activeBudgetCompactionFailedRuns.add(run.id());
+                return recoveryOutcome(
+                        run,
+                        evaluationId,
+                        reason,
+                        new SummaryCommit("NO_REDUCTION", Optional.empty(), false),
+                        visible,
+                        resolver,
+                        initialEstimatedTokens,
+                        cacheHitRate,
+                        startNanos);
             }
+            if (degraded) {
+                SummaryCommit commit = fallbackToDeterministic(
+                        run, previousSummary, sourceToCompact, visible, expectedPreviousVersion, evaluationId);
+                return recoveryOutcome(
+                        run,
+                        evaluationId,
+                        reason,
+                        commit,
+                        visible,
+                        resolver,
+                        initialEstimatedTokens,
+                        cacheHitRate,
+                        startNanos);
+            }
+            recoveryOutcome(
+                    run,
+                    evaluationId,
+                    reason,
+                    new SummaryCommit("NO_REDUCTION", Optional.empty(), false),
+                    visible,
+                    resolver,
+                    initialEstimatedTokens,
+                    cacheHitRate,
+                    startNanos);
             throw (ex instanceof RuntimeException re) ? re : new RuntimeException(ex);
         }
 
@@ -652,6 +666,8 @@ public final class SemanticCompactionCoordinator {
 
         return commitSummary(
                 run,
+                evaluationId,
+                resolver,
                 previousSummary,
                 sourceToCompact,
                 visible,
@@ -667,6 +683,7 @@ public final class SemanticCompactionCoordinator {
     }
 
     private static String failureCategory(Exception exception) {
+        if (exception instanceof CompactionBudgetExceededException) return "PLAN_BUDGET";
         if (exception instanceof CompactionModelCapabilityException) return "MODEL_CAPABILITY";
         return exception instanceof SemanticSummaryValidationException ? "VALIDATION" : "MODEL_OR_RUNTIME";
     }
@@ -678,12 +695,39 @@ public final class SemanticCompactionCoordinator {
         return exception instanceof SemanticSummaryValidationException ? "VALIDATION_REJECTED" : "NONE";
     }
 
-    private void fallbackToDeterministic(
+    private static String failureCode(Exception exception) {
+        if (exception instanceof SemanticSummaryValidationException validation)
+            return validation.code().name();
+        if (exception instanceof CompactionBudgetExceededException) return "PHYSICAL_CALL_ALLOWANCE";
+        if (exception instanceof CompactionModelCapabilityException capability) {
+            return capability.missingCapability() + "_UNSUPPORTED";
+        }
+        if (exception instanceof io.haifa.agent.model.api.ModelInvocationException model) {
+            return model.category().name();
+        }
+        return "UNKNOWN";
+    }
+
+    private static String failureStage(Exception exception) {
+        if (exception instanceof CompactionBudgetExceededException) return "PLANNING";
+        if (exception instanceof SemanticSummaryValidationException validation) {
+            return switch (validation.code()) {
+                case JSON_PARSE_ERROR -> "PARSING";
+                case SCHEMA_MAPPING_ERROR -> "MAPPING";
+                case UNEXPECTED_FINISH_REASON, EMPTY_STRUCTURED_OUTPUT -> "GENERATION";
+                default -> "VALIDATION";
+            };
+        }
+        return "GENERATION";
+    }
+
+    private SummaryCommit fallbackToDeterministic(
             AgentRun run,
             Optional<ConversationSummary> previousSummary,
             List<AgentMessage> sourceToCompact,
             List<AgentMessage> visible,
-            long expectedPreviousVersion) {
+            long expectedPreviousVersion,
+            String evaluationId) {
         var request = new io.haifa.agent.context.compression.CompressionRequest(
                 new SummaryId(ids.nextValue()),
                 new SummaryVersion(expectedPreviousVersion + 1),
@@ -800,22 +844,13 @@ public final class SemanticCompactionCoordinator {
                 Optional.empty(),
                 CompactionQuality.DETERMINISTIC_DEGRADED);
 
-        try {
-            summaries.compareAndSetValid(mergedSummary, expectedPreviousVersion);
-            if (activeContexts != null) {
-                activeContexts.invalidate(
-                        mergedSummary.sessionId(), ActiveContextSnapshots.RebuildReason.SUMMARY_CHANGED);
-            }
-        } catch (Exception conflict) {
-            if (activeContexts != null) {
-                activeContexts.invalidate(run.sessionId(), ActiveContextSnapshots.RebuildReason.SUMMARY_CHANGED);
-            }
-            log.info("Deterministic fallback CAS conflict: {}", conflict.getMessage());
-        }
+        return commitCandidate(run, mergedSummary, expectedPreviousVersion, evaluationId);
     }
 
     private CompactionEvaluationOutcome commitSummary(
             AgentRun run,
+            String evaluationId,
+            Function<ToolCallId, ToolCall> resolver,
             Optional<ConversationSummary> previousSummary,
             List<AgentMessage> sourceToCompact,
             List<AgentMessage> visible,
@@ -891,28 +926,10 @@ public final class SemanticCompactionCoordinator {
                 Optional.of(summary),
                 CompactionQuality.SEMANTIC_VALIDATED);
 
-        // Fail-closed check: verify no message covered by the summary has been redacted during compaction
-        if (!summaries.coversValidSource(domainSummary, coveredThrough)) {
-            log.warn(
-                    "Semantic compaction aborted for session {}: source messages were redacted during compaction",
-                    run.sessionId().value());
-            return CompactionEvaluationOutcome.failed(
-                    reason,
-                    initialEstimatedTokens,
-                    projectionPlan.tokensSavedByPruning(),
-                    projectionPlan.prunedToolResults().size(),
-                    cacheHitRate,
-                    elapsedMillis(startNanos));
-        }
-
-        long elapsed = elapsedMillis(startNanos);
-        try {
-            summaries.compareAndSetValid(domainSummary, expectedPreviousVersion);
-            if (activeContexts != null) {
-                activeContexts.invalidate(
-                        domainSummary.sessionId(), ActiveContextSnapshots.RebuildReason.SUMMARY_CHANGED);
-            }
+        SummaryCommit commit = commitCandidate(run, domainSummary, expectedPreviousVersion, evaluationId);
+        if (commit.committed()) {
             Map<String, Object> data = new LinkedHashMap<>();
+            data.put("evaluationId", evaluationId);
             data.put("summaryId", domainSummary.id().value());
             data.put("version", domainSummary.version().value());
             data.put("reason", reason.name());
@@ -923,25 +940,117 @@ public final class SemanticCompactionCoordinator {
             data.put("omittedToolPayloadTokens", 0L);
             data.put("omittedToolResultCount", 0);
             data.put("compactionSummaryCacheHitRate", cacheHitRate);
-            data.put("compactionEvaluationElapsedMillis", elapsed);
+            data.put("compactionEvaluationElapsedMillis", elapsedMillis(startNanos));
             data.put("physicalCalls", physicalCalls);
             data.put("estimatedTokens", estimatedTokens);
             data.put("coveredThrough", domainSummary.coveredThrough().serialize());
             events.append(run.id(), "session.compacted", data, time.now());
-            log.info(
-                    "Committed semantic conversation summary {}@{} for session {}",
-                    domainSummary.id().value(),
-                    domainSummary.version().value(),
-                    run.sessionId().value());
-            return CompactionEvaluationOutcome.compacted(
-                    reason, initialEstimatedTokens, projectedActiveHistoryTokensAfter, 0L, 0, cacheHitRate, elapsed);
-        } catch (OptimisticLockException conflict) {
-            if (activeContexts != null) {
-                activeContexts.invalidate(run.sessionId(), ActiveContextSnapshots.RebuildReason.SUMMARY_CHANGED);
-            }
-            log.warn("CAS conflict when committing summary: {}. Re-evaluating next iteration.", conflict.getMessage());
-            return CompactionEvaluationOutcome.failed(reason, initialEstimatedTokens, 0L, 0, cacheHitRate, elapsed);
         }
+        return recoveryOutcome(
+                run, evaluationId, reason, commit, visible, resolver, initialEstimatedTokens, cacheHitRate, startNanos);
+    }
+
+    private record SummaryCommit(String outcome, Optional<ConversationSummary> selected, boolean committed) {}
+
+    private SummaryCommit commitCandidate(
+            AgentRun run, ConversationSummary candidate, long expectedVersion, String evaluationId) {
+        invoker.checkControl(run);
+        if (!summaries.coversValidSource(candidate, candidate.coveredThrough())) {
+            invalidateSummary(run);
+            return new SummaryCommit("SOURCE_INVALIDATED", Optional.empty(), false);
+        }
+        // Keep only the repository write inside the conflict catch; event/cache errors are not CAS conflicts.
+        ConversationSummary committed;
+        try {
+            invoker.checkControl(run);
+            committed = summaries.compareAndSetValid(candidate, expectedVersion);
+        } catch (OptimisticLockException conflict) {
+            invalidateSummary(run);
+            Optional<ConversationSummary> winner = summaries
+                    .latestSnapshot(run.sessionId())
+                    .latestValid()
+                    .filter(summary -> summary.version().value() > expectedVersion)
+                    .filter(summary -> summaries.coversValidSource(summary, summary.coveredThrough()));
+            invoker.checkControl(run);
+            return new SummaryCommit(winner.isPresent() ? "CONCURRENT_WINNER_SELECTED" : "CAS_CONFLICT", winner, false);
+        } catch (CancellationObservedException
+                | RuntimeLimitExceededException
+                | RuntimeQuotaExceededException stopped) {
+            throw stopped;
+        } catch (RuntimeException storageFailure) {
+            events.append(
+                    run.id(),
+                    "session.compaction-recovery",
+                    Map.of(
+                            "evaluationId",
+                            evaluationId,
+                            "outcome",
+                            "STORAGE_FAILED",
+                            "committed",
+                            false,
+                            "failureStage",
+                            "PERSISTENCE",
+                            "failureCode",
+                            "STORAGE_FAILED"),
+                    time.now());
+            throw storageFailure;
+        }
+        invalidateSummary(run);
+        return new SummaryCommit(
+                candidate.quality() == CompactionQuality.SEMANTIC_VALIDATED
+                        ? "SEMANTIC_COMMITTED"
+                        : "DETERMINISTIC_COMMITTED",
+                Optional.of(committed),
+                true);
+    }
+
+    private void invalidateSummary(AgentRun run) {
+        if (activeContexts != null) {
+            activeContexts.invalidate(run.sessionId(), ActiveContextSnapshots.RebuildReason.SUMMARY_CHANGED);
+        }
+    }
+
+    private CompactionEvaluationOutcome recoveryOutcome(
+            AgentRun run,
+            String evaluationId,
+            CompactionTriggerReason reason,
+            SummaryCommit commit,
+            List<AgentMessage> visible,
+            Function<ToolCallId, ToolCall> resolver,
+            long beforeTokens,
+            double cacheHitRate,
+            long startNanos) {
+        long afterTokens = commit.selected()
+                .map(summary -> (long) summary.estimatedTokens()
+                        + estimateGroups(groupsAfterSummary(visible, Optional.of(summary)), resolver))
+                .orElse(beforeTokens);
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("evaluationId", evaluationId);
+        data.put("reason", reason.name());
+        data.put("outcome", commit.outcome());
+        data.put("committed", commit.committed());
+        data.put("projectedActiveHistoryTokensBefore", beforeTokens);
+        data.put("projectedActiveHistoryTokensAfter", afterTokens);
+        commit.selected().ifPresent(summary -> {
+            data.put("summaryId", summary.id().value());
+            data.put("version", summary.version().value());
+            data.put("quality", summary.quality().name());
+        });
+        if (commit.outcome().equals("SOURCE_INVALIDATED") || commit.outcome().equals("CAS_CONFLICT")) {
+            data.put("failureStage", commit.outcome().equals("CAS_CONFLICT") ? "PERSISTENCE" : "SOURCE_VALIDATION");
+            data.put("failureCode", commit.outcome());
+        }
+        events.append(run.id(), "session.compaction-recovery", data, time.now());
+        return new CompactionEvaluationOutcome(
+                reason,
+                false,
+                beforeTokens,
+                afterTokens,
+                0L,
+                0,
+                cacheHitRate,
+                elapsedMillis(startNanos),
+                commit.committed());
     }
 
     private SemanticConversationSummaryV1 resolveAliases(
