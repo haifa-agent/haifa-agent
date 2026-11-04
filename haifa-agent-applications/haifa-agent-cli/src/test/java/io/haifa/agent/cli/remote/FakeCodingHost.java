@@ -246,6 +246,10 @@ final class FakeCodingHost implements AutoCloseable {
     }
 
     static Map<String, Object> initializeResult(String clientId, String projectId) {
+        return initializeResult(clientId, projectId, false);
+    }
+
+    static Map<String, Object> initializeResult(String clientId, String projectId, boolean renewal) {
         Map<String, Object> capabilities = new LinkedHashMap<>();
         for (String capability : List.of(
                 "session-list",
@@ -268,6 +272,7 @@ final class FakeCodingHost implements AutoCloseable {
                 "logout")) {
             capabilities.put(capability, true);
         }
+        if (renewal) capabilities.put("client-renewal", true);
         capabilities.put("preview", false);
         capabilities.put("session-consent", false);
         capabilities.put("auth-mutation", false);

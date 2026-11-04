@@ -431,6 +431,12 @@ public final class TerminalUiReducer {
         if (action instanceof TerminalUiAction.WaitingChanged waiting) {
             return state.withWaiting(waiting.waiting());
         }
+        if (action instanceof TerminalUiAction.ConnectionRestored restored) {
+            Optional<String> retained = state.recoverableError().filter(code -> !Set.of(
+                            "CLIENT_CONTEXT_REQUIRED", "REMOTE_TRANSPORT_UNAVAILABLE", "REMOTE_STREAM_CLOSED")
+                    .contains(code));
+            return copyWithStatus(state, restored.status(), retained);
+        }
         if (action instanceof TerminalUiAction.StatusChanged status) {
             return copyWithStatus(state, status.status());
         }
@@ -1338,6 +1344,10 @@ public final class TerminalUiReducer {
     }
 
     private static TerminalUiState copyWithStatus(TerminalUiState state, String status) {
+        return copyWithStatus(state, status, state.recoverableError());
+    }
+
+    private static TerminalUiState copyWithStatus(TerminalUiState state, String status, Optional<String> recovery) {
         return copy(
                 state,
                 state.loadedResources(),
@@ -1354,7 +1364,7 @@ public final class TerminalUiReducer {
                 state.currentRunId(),
                 state.appliedCursor(),
                 state.seenEventIds(),
-                state.recoverableError(),
+                recovery,
                 state.exitRequested());
     }
 

@@ -588,3 +588,11 @@ explicit unavailable fallbacks. Terminal performs no local filesystem/Git lookup
 The `/session` environment panel opens immediately and loads composition-owned configuration facts on the
 background effect lane. Remote Hosts report source, workspace-overlay policy and safe approval/tool/model
 summaries; an older Host has an explicit unavailable fallback. Late results never reopen a dismissed panel.
+
+## Remote connection maintenance
+
+Periodic connection checks use the maintenance effect lane and continue with the sidebar hidden or before a
+Session is selected. Healthy checks leave task status unchanged. Context expiry/restart reinitializes and
+reattaches the current Session; unavailable Hosts show safe recovery guidance and are checked again at the
+bounded cadence. Restoring a connection clears connection errors without clearing unrelated unknown-outcome
+warnings. Input, Resize and Runtime events remain responsive while a check is outstanding.

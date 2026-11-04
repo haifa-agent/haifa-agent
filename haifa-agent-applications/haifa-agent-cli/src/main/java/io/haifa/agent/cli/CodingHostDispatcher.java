@@ -87,6 +87,7 @@ final class CodingHostDispatcher {
             if (method.equals("initialize")) return initialize(safeParams);
             if (method.equals("host/ping")) return ping();
             return switch (method) {
+                case "client/renew" -> Map.of("renewed", true);
                 case "session/list" -> listSessions(safeParams);
                 case "session/create" -> createSession(safeParams);
                 case "session/open" -> sessionOpen(safeParams);
@@ -207,6 +208,7 @@ final class CodingHostDispatcher {
             throw CodingHostException.conflict("CONTRACT_VERSION_UNSUPPORTED", "Unsupported protocol version");
         }
         Map<String, Object> capabilities = new LinkedHashMap<>();
+        capabilities.put("client-renewal", true);
         capabilities.put("session-list", true);
         capabilities.put("session-create", true);
         capabilities.put("session-open", true);

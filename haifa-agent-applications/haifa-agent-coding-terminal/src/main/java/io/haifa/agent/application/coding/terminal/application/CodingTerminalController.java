@@ -184,6 +184,10 @@ public final class CodingTerminalController implements AutoCloseable {
     private long sessionRowsFetchedAtMillis;
     private final CodingTerminalConnectionOptions connectionOptions;
     private long configurationSummaryRequest;
+    private boolean connectionCheckInFlight;
+    private boolean connectionUnavailable;
+    private String connectionFailureCode;
+    private long connectionCheckedAtMillis;
     private long nextSelectionGeneration;
     private long selectionGeneration;
     private long pendingSelectionGeneration;
@@ -1130,6 +1134,39 @@ public final class CodingTerminalController implements AutoCloseable {
         }
         PreparedMessageSubmission submission = beginMessageSubmission(text, false);
         completeMessageSubmission(executeMessageSubmission(submission));
+    }
+
+    /** Connection maintenance is independent of sidebar visibility and stays on the maintenance lane. */
+    public void refreshConnection() {
+        refreshConnection(System.currentTimeMillis());
+    }
+
+    void refreshConnection(long nowMillis) {
+        if (closed || connectionCheckInFlight) return;
+        if (nowMillis >= connectionCheckedAtMillis && nowMillis - connectionCheckedAtMillis < 15_000) return;
+        connectionCheckInFlight = true;
+        connectionCheckedAtMillis = nowMillis;
+        submitMaintenanceEffect(
+                () -> {
+                    boolean replaced = client.renewConnection();
+                    return () -> {
+                        connectionCheckInFlight = false;
+                        if (replaced || connectionUnavailable) {
+                            connectionUnavailable = false;
+                            connectionFailureCode = null;
+                            apply(new TerminalUiAction.ConnectionRestored("Host connection restored"));
+                            if (replaced) scheduleReconcile(true);
+                        }
+                    };
+                },
+                code -> {
+                    connectionCheckInFlight = false;
+                    connectionUnavailable = true;
+                    if (!code.equals(connectionFailureCode)) {
+                        connectionFailureCode = code;
+                        apply(new TerminalUiAction.RecoverableFailure(code));
+                    }
+                });
     }
 
     /**
@@ -5075,6 +5112,10 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void scheduleReconcile() {
+        scheduleReconcile(false);
+    }
+
+    private void scheduleReconcile(boolean retainUnknownOutcome) {
         if (state.session().isEmpty()) return;
         SelectionToken token = currentSelection();
         if (isOperationInFlight(reconcilesInFlight, token)) return;
@@ -5094,7 +5135,10 @@ public final class CodingTerminalController implements AutoCloseable {
                     return () -> {
                         completeOperation(reconcilesInFlight, token, operation);
                         if (!isCurrentSelection(token)) return;
+                        Optional<String> unknown = state.recoverableError()
+                                .filter(code -> retainUnknownOutcome && "REMOTE_OUTCOME_UNKNOWN".equals(code));
                         applyLoadedSession(loaded);
+                        unknown.ifPresent(code -> apply(new TerminalUiAction.RecoverableFailure(code)));
                     };
                 },
                 code -> {

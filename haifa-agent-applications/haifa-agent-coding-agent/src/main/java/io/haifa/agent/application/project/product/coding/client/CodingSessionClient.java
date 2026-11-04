@@ -199,6 +199,15 @@ public interface CodingSessionClient {
         return List.of();
     }
 
+    /**
+     * Renews the composition's connection on a background worker. Returns true when transport observations
+     * must be reloaded after reinitialization. This never resubmits a product command or changes Run ownership.
+     * Embedded clients have no transport context to renew.
+     */
+    default boolean renewConnection() {
+        return false;
+    }
+
     default List<String> loadedResources() {
         return List.of("Loaded resources: none");
     }

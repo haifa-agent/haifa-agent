@@ -12,6 +12,21 @@ import org.junit.jupiter.api.Test;
 
 class CodingHostClientsTest {
     @Test
+    void authenticatedActivityRenewsTheContextWithInjectedTime() {
+        var now = new AtomicReference<>(Instant.EPOCH);
+        var clients = new CodingHostClients(new UuidV7IdentifierGenerator(), now::get, Duration.ofMinutes(30));
+        String client = clients.initialize();
+        now.set(Instant.EPOCH.plusSeconds(1200));
+        clients.require(client);
+        now.set(Instant.EPOCH.plusSeconds(1801));
+        clients.require(client);
+        now.set(Instant.EPOCH.plusSeconds(3602));
+        assertThatThrownBy(() -> clients.require(client))
+                .isInstanceOfSatisfying(CodingHostException.class, failure -> assertThat(failure.reasonCode())
+                        .isEqualTo("CLIENT_CONTEXT_REQUIRED"));
+    }
+
+    @Test
     void boundsClientsExpiresTransportContextsAndNeverResurrectsAfterClose() {
         AtomicReference<Instant> now = new AtomicReference<>(Instant.EPOCH);
         AtomicInteger expired = new AtomicInteger();

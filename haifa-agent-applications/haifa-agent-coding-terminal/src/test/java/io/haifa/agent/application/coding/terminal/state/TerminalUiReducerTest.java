@@ -45,6 +45,20 @@ import org.junit.jupiter.api.Test;
 
 class TerminalUiReducerTest {
     @Test
+    void restoringConnectionClearsOnlyConnectionErrors() {
+        var reducer = new TerminalUiReducer();
+        var state = TerminalUiState.initial(120, 40);
+        var disconnected = reducer.reduce(state, new TerminalUiAction.RecoverableFailure("CLIENT_CONTEXT_REQUIRED"));
+        assertThat(reducer.reduce(disconnected, new TerminalUiAction.ConnectionRestored("restored"))
+                        .recoverableError())
+                .isEmpty();
+        var unknown = reducer.reduce(state, new TerminalUiAction.RecoverableFailure("REMOTE_OUTCOME_UNKNOWN"));
+        assertThat(reducer.reduce(unknown, new TerminalUiAction.ConnectionRestored("restored"))
+                        .recoverableError())
+                .contains("REMOTE_OUTCOME_UNKNOWN");
+    }
+
+    @Test
     void hostDestinationSharesTheExistingShellCardBudgetWithoutLosingTheOutputTail() {
         String output = "x".repeat(16_380) + "END!";
         var result = reducer.reduce(

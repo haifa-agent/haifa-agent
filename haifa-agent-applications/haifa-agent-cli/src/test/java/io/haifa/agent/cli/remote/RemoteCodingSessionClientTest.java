@@ -38,6 +38,71 @@ class RemoteCodingSessionClientTest {
     private static final long NOW = 1_700_000_000_123L;
 
     @Test
+    void renewsNewAndOldHostContextsAndReinitializesWithoutReplayingMutations() throws Exception {
+        for (boolean renewal : List.of(false, true)) {
+            var initializations = new java.util.concurrent.atomic.AtomicInteger();
+            var expired = new java.util.concurrent.atomic.AtomicBoolean();
+            try (FakeCodingHost host = FakeCodingHost.start(call -> {
+                        if (call.method().equals("initialize")) {
+                            String id = "client-" + initializations.incrementAndGet();
+                            expired.set(false);
+                            return FakeCodingHost.Reply.result(
+                                    FakeCodingHost.initializeResult(id, "project-1", renewal));
+                        }
+                        if (expired.get()) return FakeCodingHost.Reply.error("CLIENT_CONTEXT_REQUIRED");
+                        return switch (call.method()) {
+                            case "client/renew" -> FakeCodingHost.Reply.result(map("renewed", true));
+                            case "session/list" ->
+                                FakeCodingHost.Reply.result(map("sessions", List.of(), "truncated", false, "limit", 1));
+                            default -> FakeCodingHost.Reply.error("REMOTE_METHOD_UNSUPPORTED");
+                        };
+                    });
+                    var client = RemoteCodingSessionClient.connect(host.uri())) {
+                assertThat(client.renewConnection()).isFalse();
+                expired.set(true);
+                assertThatThrownBy(() -> client.create(PROJECT, "must not replay", "request-1"))
+                        .isInstanceOfSatisfying(ProjectProductException.class, failure -> assertThat(failure.code())
+                                .isEqualTo("CLIENT_CONTEXT_REQUIRED"));
+                assertThat(initializations).hasValue(1);
+                assertThat(client.renewConnection()).isTrue();
+                assertThat(client.info().clientId()).isEqualTo("client-2");
+                assertThat(client.list(PROJECT, 1)).isEmpty();
+                assertThat(host.calls("session/create")).hasSize(1);
+                assertThat(host.calls(renewal ? "client/renew" : "session/list"))
+                        .hasSize(renewal ? 2 : 3);
+                assertThat(initializations).hasValue(2);
+            }
+        }
+    }
+
+    @Test
+    void renewalRejectsAChangedHostProjectAndDoesNotKeepInitializing() throws Exception {
+        var initializations = new java.util.concurrent.atomic.AtomicInteger();
+        try (FakeCodingHost host = FakeCodingHost.start(call -> {
+                    if (call.method().equals("initialize")) {
+                        int attempt = initializations.incrementAndGet();
+                        return FakeCodingHost.Reply.result(FakeCodingHost.initializeResult(
+                                "client-" + attempt, attempt == 1 ? "project-1" : "other-project", true));
+                    }
+                    return FakeCodingHost.Reply.error("CLIENT_CONTEXT_REQUIRED");
+                });
+                var client = RemoteCodingSessionClient.connect(host.uri())) {
+            for (int attempt = 0; attempt < 2; attempt++) {
+                assertThatThrownBy(client::renewConnection)
+                        .isInstanceOfSatisfying(ProjectProductException.class, failure -> assertThat(failure.code())
+                                .isEqualTo("REMOTE_HOST_IDENTITY_CHANGED"));
+            }
+            assertThat(client.projectId()).isEqualTo(PROJECT);
+            assertThat(client.info().clientId()).isEqualTo("client-1");
+            assertThat(initializations).hasValue(2);
+            assertThatThrownBy(() -> client.list(PROJECT, 1))
+                    .isInstanceOfSatisfying(ProjectProductException.class, failure -> assertThat(failure.code())
+                            .isEqualTo("REMOTE_HOST_IDENTITY_CHANGED"));
+            assertThat(host.calls("session/list")).isEmpty();
+        }
+    }
+
+    @Test
     void decodesEventAndOutputWireDirectly() throws Exception {
         RemoteWireCodec codec = new RemoteWireCodec(FakeCodingHost.JSON);
         AgentRunEvent event =
