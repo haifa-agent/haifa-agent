@@ -51,7 +51,10 @@ final class RemoteCodingTerminalRunner implements CliRemoteTerminalRunner {
                     + (info.optionalCapabilities().contains("preview-v1")
                             ? "enabled (Host)"
                             : "unavailable (Host/client compatibility)"));
-            output.println("Session consent and credential setup are unavailable in this remote UI.");
+            output.println(
+                    info.optionalCapabilities().contains("session-consent-v1")
+                            ? "Session consent uses a client lease; credential setup stays on the trusted Host."
+                            : "Session consent and credential setup are unavailable in this remote UI.");
             new CodingTerminalApplication(
                             client.projectId(),
                             client,
@@ -64,7 +67,8 @@ final class RemoteCodingTerminalRunner implements CliRemoteTerminalRunner {
                                     info.workspace()
                                             .map(value -> value.executionDirectory())
                                             .orElse("unavailable (older Host)"),
-                                    info.optionalCapabilities().contains("preview-v1")))
+                                    info.optionalCapabilities().contains("preview-v1"),
+                                    info.optionalCapabilities().contains("session-consent-v1")))
                     .run();
         } catch (ProjectProductException failure) {
             output.println("[" + failure.code() + "] " + failure.getMessage());

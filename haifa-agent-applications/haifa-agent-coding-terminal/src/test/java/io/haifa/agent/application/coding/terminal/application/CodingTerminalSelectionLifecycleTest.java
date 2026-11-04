@@ -30,6 +30,73 @@ import org.junit.jupiter.api.Test;
 
 class CodingTerminalSelectionLifecycleTest {
     @Test
+    void negotiatedConsentOffersSessionApprovalAndLeaseStatusReadDoesNotBlockInput() throws Exception {
+        var blocked = new BlockingCall();
+        var maintenance = new ArrayDeque<Runnable>();
+        var status = new java.util.concurrent.atomic.AtomicReference<>(
+                new io.haifa.agent.application.project.product.coding.client.CodingSessionApprovalStatus(
+                        io.haifa.agent.application.project.product.coding.client.CodingSessionApprovalStatus.State
+                                .ACTIVE,
+                        Optional.of(Instant.EPOCH.plusSeconds(45))));
+        FakeClient client = new FakeClient(activeView(Optional.of(approval()))) {
+            @Override
+            public Optional<CodingApprovalPrompt> prepareApproval(InteractionView interaction) {
+                return Optional.of(new CodingApprovalPrompt(interaction, true));
+            }
+
+            @Override
+            public Optional<io.haifa.agent.application.project.product.coding.client.CodingSessionApprovalStatus>
+                    sessionApprovalStatus(AgentSessionId id) {
+                blocked.block();
+                return Optional.of(status.get());
+            }
+        };
+        var pump = new TerminalEventPump(32);
+        var controller = new CodingTerminalController(
+                PROJECT_ID,
+                client,
+                CodingAuthenticationClient.unavailable(),
+                pump,
+                new TerminalUiReducer(),
+                TerminalUiState.initial(120, 40),
+                CodingTerminalConnectionOptions.remoteV1("/host/workspace", false, true),
+                Runnable::run,
+                Runnable::run,
+                maintenance::add);
+        controller.open(SESSION_ID);
+        while (!maintenance.isEmpty()) maintenance.removeFirst().run();
+        controller.drainEvents();
+        assertThat(controller.state().selector()).hasValueSatisfying(selector -> assertThat(selector.options())
+                .containsExactly("Reject", "Allow once", "Allow for this session"));
+        controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
+        controller.refreshConnection(100_000);
+        var worker = new Thread(maintenance.removeFirst());
+        worker.start();
+        try {
+            assertThat(blocked.awaitStarted()).isTrue();
+            controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, "draft", 5));
+            pump.offer(new TerminalUiAction.TerminalResized(80, 24));
+            controller.drainEvents();
+            assertThat(controller.state().editorBuffer()).isEqualTo("draft");
+            assertThat(controller.state().columns()).isEqualTo(80);
+        } finally {
+            blocked.release();
+            worker.join(2000);
+        }
+        controller.drainEvents();
+        assertThat(controller.state().status()).contains("Session approval active");
+        status.set(new io.haifa.agent.application.project.product.coding.client.CodingSessionApprovalStatus(
+                io.haifa.agent.application.project.product.coding.client.CodingSessionApprovalStatus.State.ASK,
+                Optional.empty()));
+        controller.refreshConnection(120_000);
+        maintenance.removeFirst().run();
+        controller.drainEvents();
+        assertThat(controller.state().status()).contains("expired or revoked");
+        controller.accept(input(TerminalInput.Kind.EXECUTE_COMMAND, "/approval reset"));
+        assertThat(client.resetSessionApprovalCalls).isEqualTo(1);
+    }
+
+    @Test
     void negotiatedRemotePreviewAndLabeledCommandHelpUseIndependentCapabilities() {
         FakeClient client = new FakeClient(activeView());
         RecordingPreviewPublisher preview = new RecordingPreviewPublisher();

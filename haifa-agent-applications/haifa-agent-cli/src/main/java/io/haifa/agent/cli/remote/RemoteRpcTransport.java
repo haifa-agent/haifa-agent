@@ -81,6 +81,14 @@ final class RemoteRpcTransport {
         return clientId;
     }
 
+    void releaseContext() {
+        try {
+            call("client/close", Map.of(), false, BEST_EFFORT_TIMEOUT);
+        } catch (RuntimeException ignored) {
+            /* Lost connections expire their consent lease. */
+        }
+    }
+
     void close() {
         closed = true;
         ioExecutor.shutdownNow();

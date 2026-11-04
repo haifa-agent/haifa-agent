@@ -2,6 +2,9 @@
 
 ## Unreleased - 0.1.5-SNAPSHOT
 
+- Remote Coding Terminal supports explicitly negotiated Session consent with a client-bound lease.
+  Lost renewal, reset, cancellation, reconnect and Host restart cannot silently preserve or transfer consent.
+
 - Align semantic-summary schema and instructions with the accepted v1 version.
 
 - Freeze source/representation boundaries and add a repeatable context-history scale baseline,

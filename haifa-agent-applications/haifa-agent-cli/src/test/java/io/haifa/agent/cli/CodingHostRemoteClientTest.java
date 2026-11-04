@@ -48,6 +48,65 @@ import org.junit.jupiter.api.io.TempDir;
 /** Real loopback Host + accepted RemoteCodingSessionClient assembly over the existing product/SQLite runtime. */
 @Tag("slow")
 class CodingHostRemoteClientTest {
+    @Test
+    void leasedRemoteConsentAppliesOnlyForItsClientAndResetRestoresAsking() throws Exception {
+        Path workspace = Files.createDirectory(directory.resolve("leased-consent"));
+        Path target = workspace.resolve("output.txt");
+        AtomicInteger calls = new AtomicInteger();
+        AgentChatModel model = request -> {
+            int stage = calls.incrementAndGet();
+            return stage <= 3
+                    ? CodingHostTestFixture.toolResponse(
+                            "write-" + stage,
+                            "file_write",
+                            java.util.Map.of("path", target.toString(), "content", "stage-" + stage))
+                    : CodingHostTestFixture.response("consent-done");
+        };
+        try (var agent = CodingHostTestFixture.openAgent(
+                        workspace,
+                        CodingHostTestFixture.sqliteConfiguration(
+                                directory.resolve("leased-consent.db"), ApprovalMode.ASK),
+                        model);
+                var host = CodingHostServer.start(agent, "127.0.0.1", 0);
+                var owner = RemoteCodingSessionClient.connect(endpoint(host));
+                var other = RemoteCodingSessionClient.connect(endpoint(host))) {
+            var created = owner.create(owner.projectId(), "synthetic consent", "create-consent");
+            var session = created.summary().sessionId();
+            var run = created.activeRun().orElseThrow().runId();
+            var pendingEvents = new java.util.concurrent.LinkedBlockingQueue<String>();
+            var completed = new CountDownLatch(1);
+            try (var events = owner.subscribe(run, RunEventCursor.beforeFirst(run), event -> {
+                if (event.payload() instanceof RunEventPayloads.InteractionLifecycle value
+                        && value.state().equals("PENDING")) pendingEvents.add(value.requestId());
+                countIfTerminal(event, completed);
+            })) {
+                assertThat(pendingEvents.poll(5, TimeUnit.SECONDS)).isNotNull();
+                var first = owner.pendingInteraction(run).orElseThrow();
+                assertThat(owner.prepareApproval(first))
+                        .hasValueSatisfying(
+                                prompt -> assertThat(prompt.allowForSession()).isTrue());
+                owner.allowForSession(first, "grant-consent");
+                assertThat(pendingEvents.poll(5, TimeUnit.SECONDS)).isNotNull();
+                var second = other.pendingInteraction(run).orElseThrow();
+                assertThat(other.prepareApproval(second)).isPresent();
+                assertThat(other.sessionApprovalStatus(session).orElseThrow().state())
+                        .isEqualTo(
+                                io.haifa.agent.application.project.product.coding.client.CodingSessionApprovalStatus
+                                        .State.ASK);
+                assertThat(owner.prepareApproval(second)).isEmpty();
+                assertThat(pendingEvents.poll(5, TimeUnit.SECONDS)).isNotNull();
+                var third = owner.pendingInteraction(run).orElseThrow();
+                other.resetSessionApproval(session);
+                assertThat(owner.prepareApproval(third)).isPresent();
+                owner.respond(third, InteractionAction.APPROVE, "once-after-reset");
+                assertThat(completed.await(5, TimeUnit.SECONDS)).isTrue();
+            }
+            assertThat(owner.findRun(run).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(Files.readString(target)).isEqualTo("stage-3");
+            assertThat(calls).hasValue(4);
+        }
+    }
+
     private static final Duration TIMEOUT = Duration.ofSeconds(20);
 
     @TempDir
@@ -68,7 +127,8 @@ class CodingHostRemoteClientTest {
                 var host = CodingHostServer.start(agent, "127.0.0.1", 0);
                 var client = RemoteCodingSessionClient.connect(endpoint(host))) {
             try {
-                assertThat(client.info().optionalCapabilities()).containsExactly("preview-v1");
+                assertThat(client.info().optionalCapabilities())
+                        .containsExactlyInAnyOrder("preview-v1", "session-consent-v1");
                 var view = client.create(client.projectId(), "synthetic preview task", "preview-create");
                 var run = view.activeRun().orElseThrow().runId();
                 assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
@@ -336,7 +396,7 @@ class CodingHostRemoteClientTest {
                 assertThat(pending.requester()).isNotNull();
                 assertThat(pending.consequences()).isNotNull();
                 assertThat(client.prepareApproval(pending).orElseThrow().allowForSession())
-                        .isFalse();
+                        .isTrue();
 
                 InteractionResponseReceipt receipt =
                         client.respond(pending, InteractionAction.REJECT, "reject-remote-approval");

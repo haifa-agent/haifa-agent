@@ -70,7 +70,7 @@ import java.util.function.Supplier;
  */
 public final class RemoteCodingSessionClient implements CodingSessionClient, AutoCloseable {
     private static final String PROTOCOL_VERSION = "1";
-    private static final Set<String> OPTIONAL_CAPABILITIES = Set.of("preview-v1");
+    private static final Set<String> OPTIONAL_CAPABILITIES = Set.of("preview-v1", "session-consent-v1");
     private static final Set<String> REQUIRED_CAPABILITIES = Set.of(
             "session-list",
             "session-create",
@@ -587,6 +587,10 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
             params.put("inputs", encodeInputs(parts));
         }
         JsonNode result = transport.call("interaction/respond", params, true);
+        return interactionReceipt(result, interaction);
+    }
+
+    private InteractionResponseReceipt interactionReceipt(JsonNode result, InteractionView interaction) {
         return decode(() -> {
             RemoteWireCodec.requireObject(result, "interaction receipt");
             InteractionResponseReceipt receipt = new InteractionResponseReceipt(
@@ -637,17 +641,69 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
                 decode(() -> codec.interaction(RemoteWireCodec.requiredObject(result, "interaction")));
         requireRunIdentity(pending.runId(), interaction.runId());
         remember(pending.sessionId(), pending.runId());
-        return Optional.of(new CodingApprovalPrompt(pending, false, Optional.of("REMOTE_SESSION_CONSENT_UNSUPPORTED")));
+        if (!pending.sessionId().equals(interaction.sessionId())) throw RemoteRpcTransport.protocolIncompatible();
+        boolean enabled = info.optionalCapabilities().contains("session-consent-v1");
+        boolean allowed = enabled && decode(() -> RemoteWireCodec.requiredBoolean(result, "allowForSession"));
+        String reason = enabled
+                ? decode(() -> RemoteWireCodec.optionalTextValue(result, "sessionApprovalUnavailableReason")
+                        .orElse(""))
+                : "REMOTE_SESSION_CONSENT_UNSUPPORTED";
+        return Optional.of(
+                new CodingApprovalPrompt(pending, allowed, reason.isBlank() ? Optional.empty() : Optional.of(reason)));
     }
 
     @Override
     public InteractionResponseReceipt allowForSession(InteractionView interaction, String idempotencyKey) {
-        throw new UnsupportedOperationException("Remote session consent is unavailable");
+        requireSessionConsent();
+        JsonNode result = transport.call(
+                "approval/allowForSession",
+                RemoteRpcTransport.params(
+                        "sessionId",
+                        interaction.sessionId().value(),
+                        "runId",
+                        interaction.runId().value(),
+                        "interactionId",
+                        interaction.requestId().value(),
+                        "revision",
+                        interaction.revision(),
+                        "idempotencyKey",
+                        idempotencyKey),
+                true);
+        return interactionReceipt(result, interaction);
     }
 
     @Override
     public void resetSessionApproval(AgentSessionId sessionId) {
-        throw new UnsupportedOperationException("Remote session consent is unavailable");
+        requireSessionConsent();
+        JsonNode result = transport.call(
+                "approval/resetSession", RemoteRpcTransport.params("sessionId", requireSessionId(sessionId)), true);
+        if (!decode(() -> RemoteWireCodec.requiredBoolean(result, "reset")))
+            throw RemoteRpcTransport.protocolIncompatible();
+    }
+
+    private void requireSessionConsent() {
+        requireUsable();
+        if (!info.optionalCapabilities().contains("session-consent-v1"))
+            throw new UnsupportedOperationException("Remote session consent is unavailable");
+    }
+
+    @Override
+    public Optional<io.haifa.agent.application.project.product.coding.client.CodingSessionApprovalStatus>
+            sessionApprovalStatus(AgentSessionId sessionId) {
+        requireUsable();
+        if (!info.optionalCapabilities().contains("session-consent-v1")) return Optional.empty();
+        JsonNode value = transport.call(
+                "approval/status", RemoteRpcTransport.params("sessionId", requireSessionId(sessionId)), false);
+        return decode(() -> {
+            var state =
+                    io.haifa.agent.application.project.product.coding.client.CodingSessionApprovalStatus.State.valueOf(
+                            RemoteWireCodec.requiredText(value, "state"));
+            Optional<java.time.Instant> expiry = value.hasNonNull("expiresAt")
+                    ? Optional.of(RemoteWireCodec.epoch(value.get("expiresAt"), "expiresAt"))
+                    : Optional.empty();
+            return Optional.of(new io.haifa.agent.application.project.product.coding.client.CodingSessionApprovalStatus(
+                    state, expiry));
+        });
     }
 
     @Override
@@ -1207,8 +1263,12 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
         for (RemoteSseSubscription subscription : owned) {
             subscription.close();
         }
-        transport.close();
-        executor.shutdownNow();
+        try {
+            if (info != null && info.optionalCapabilities().contains("session-consent-v1")) transport.releaseContext();
+        } finally {
+            transport.close();
+            executor.shutdownNow();
+        }
     }
 
     private void requireUsable() {

@@ -20,7 +20,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 
 /** Process-local consent owned by one project client; Runtime still validates every exact approval. */
-final class CodingSessionApprovals {
+public final class CodingSessionApprovals {
     /**
      * Session consent follows the product's built-in Tool catalog instead of a second hand-written list, so a Tool
      * the project registers later is covered without editing this class. Attaching another workspace widens the
@@ -29,10 +29,17 @@ final class CodingSessionApprovals {
     private static final Set<String> ORDINARY_TOOLS = ordinaryToolNames();
 
     private final AgentRuntime runtime;
+    private final java.util.function.BooleanSupplier consentValid;
     private final ConcurrentHashMap<AgentSessionId, Consent> consents = new ConcurrentHashMap<>();
 
-    CodingSessionApprovals(AgentRuntime runtime) {
+    public CodingSessionApprovals(AgentRuntime runtime) {
+        this(runtime, () -> true);
+    }
+
+    /** The owner supplies a nonblocking lifetime guard; revoked/expired owners must never become valid again. */
+    public CodingSessionApprovals(AgentRuntime runtime, java.util.function.BooleanSupplier consentValid) {
         this.runtime = runtime;
+        this.consentValid = java.util.Objects.requireNonNull(consentValid);
     }
 
     static Set<String> ordinaryToolNames() {
@@ -42,31 +49,38 @@ final class CodingSessionApprovals {
         return Set.copyOf(names);
     }
 
-    Optional<CodingApprovalPrompt> prepare(
+    public Optional<CodingApprovalPrompt> prepare(
             AgentRunId runId, Function<InteractionView, InteractionResponseSubmission> submit) {
         return runtime.pendingInteraction(runId).flatMap(interaction -> {
             boolean ordinary = ordinary(interaction);
             Consent consent = consents.get(interaction.sessionId());
+            if (consent != null && !consentValid.getAsBoolean()) {
+                consents.remove(interaction.sessionId(), consent);
+                consent = null;
+            }
             if (ordinary && consent != null) {
-                synchronized (consent) {
-                    if (consents.get(interaction.sessionId()) == consent) {
+                consent.lock.lock();
+                try {
+                    if (consents.get(interaction.sessionId()) == consent && consentValid.getAsBoolean()) {
                         if (!consent.active) {
                             // Replaying the exact idempotent submission reads its latest application state;
                             // the Runtime's duplicate path never schedules execution a second time.
-                            InteractionResponseReceipt receipt;
                             try {
-                                receipt = runtime.respond(consent.submission);
+                                refreshInitial(consent);
                             } catch (RuntimeException staleConsent) {
                                 consents.remove(interaction.sessionId(), consent);
                                 return Optional.of(new CodingApprovalPrompt(interaction, true));
                             }
-                            consent.active = applied(receipt, consent.submission);
                         }
-                        if (consent.active) {
+                        if (consent.active && consentValid.getAsBoolean()) {
                             try {
                                 if (consent.automatic == null
                                         || !consent.automatic.requestId().equals(interaction.requestId())) {
                                     consent.automatic = submit.apply(interaction);
+                                }
+                                if (!consentValid.getAsBoolean()) {
+                                    consents.remove(interaction.sessionId(), consent);
+                                    return Optional.of(new CodingApprovalPrompt(interaction, true));
                                 }
                                 InteractionResponseReceipt receipt = runtime.respond(consent.automatic);
                                 if (!matches(receipt, consent.automatic)
@@ -82,6 +96,8 @@ final class CodingSessionApprovals {
                             }
                         }
                     }
+                } finally {
+                    consent.lock.unlock();
                 }
             }
             return Optional.of(
@@ -95,30 +111,66 @@ final class CodingSessionApprovals {
         });
     }
 
-    InteractionResponseReceipt approve(InteractionView pending, InteractionResponseSubmission submission) {
-        if (!ordinary(pending) || !submission.action().equals(InteractionAction.APPROVE)) {
+    public InteractionResponseReceipt approve(InteractionView pending, InteractionResponseSubmission submission) {
+        if (!consentValid.getAsBoolean()) throw new IllegalStateException("Session consent owner expired");
+        if (!ordinary(pending)
+                || !submission.action().equals(InteractionAction.APPROVE)
+                || !pending.requestId().equals(submission.requestId())
+                || !pending.runId().equals(submission.runId())
+                || pending.revision() != submission.expectedRevision()) {
             throw new IllegalArgumentException("Session approval is unavailable for this interaction");
         }
         Consent consent = new Consent(submission);
-        synchronized (consent) {
+        consent.lock.lock();
+        try {
             consents.put(pending.sessionId(), consent);
             try {
                 InteractionResponseReceipt receipt = runtime.respond(submission);
-                consent.active = applied(receipt, submission);
+                consent.active = consentValid.getAsBoolean() && applied(receipt, submission);
                 return receipt;
             } catch (RuntimeException failure) {
                 consents.remove(pending.sessionId(), consent);
                 throw failure;
             }
+        } finally {
+            consent.lock.unlock();
         }
     }
 
-    void reset(AgentSessionId sessionId) {
+    public void reset(AgentSessionId sessionId) {
         Consent consent = consents.get(sessionId);
-        if (consent != null)
-            synchronized (consent) {
+        if (consent != null) {
+            consent.lock.lock();
+            try {
                 consents.remove(sessionId, consent);
+            } finally {
+                consent.lock.unlock();
             }
+        }
+    }
+
+    public CodingSessionApprovalStatus.State state(AgentSessionId sessionId) {
+        Consent consent = consents.get(sessionId);
+        if (consent == null || !consentValid.getAsBoolean()) return CodingSessionApprovalStatus.State.ASK;
+        consent.lock.lock();
+        try {
+            if (consents.get(sessionId) != consent || !consentValid.getAsBoolean())
+                return CodingSessionApprovalStatus.State.ASK;
+            if (!consent.active) refreshInitial(consent);
+            if (!consentValid.getAsBoolean()) return CodingSessionApprovalStatus.State.ASK;
+            return consent.active
+                    ? CodingSessionApprovalStatus.State.ACTIVE
+                    : CodingSessionApprovalStatus.State.PENDING;
+        } catch (RuntimeException failure) {
+            consents.remove(sessionId, consent);
+            return CodingSessionApprovalStatus.State.ASK;
+        } finally {
+            consent.lock.unlock();
+        }
+    }
+
+    private void refreshInitial(Consent consent) {
+        consent.active = applied(runtime.respond(consent.submission), consent.submission);
     }
 
     private boolean ordinary(InteractionView interaction) {
@@ -167,7 +219,8 @@ final class CodingSessionApprovals {
     private static final class Consent {
         final InteractionResponseSubmission submission;
         InteractionResponseSubmission automatic;
-        boolean active;
+        volatile boolean active;
+        final java.util.concurrent.locks.ReentrantLock lock = new java.util.concurrent.locks.ReentrantLock();
 
         Consent(InteractionResponseSubmission submission) {
             this.submission = submission;

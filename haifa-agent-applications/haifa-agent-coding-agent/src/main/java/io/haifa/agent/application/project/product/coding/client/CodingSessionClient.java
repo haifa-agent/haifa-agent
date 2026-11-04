@@ -122,6 +122,11 @@ public interface CodingSessionClient {
         throw new UnsupportedOperationException("Session approval is unavailable");
     }
 
+    /** Optional, bounded status read; callers run it off the UI thread like other product queries. */
+    default Optional<CodingSessionApprovalStatus> sessionApprovalStatus(AgentSessionId sessionId) {
+        return Optional.empty();
+    }
+
     void cancel(AgentSessionId sessionId, String idempotencyKey);
 
     /**
