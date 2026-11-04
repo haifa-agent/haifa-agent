@@ -65,7 +65,13 @@ public final class ModelMessageAssembler {
             int toolCallBatchCount,
             boolean snapshotFactsReused) {}
 
-    record AssemblyResult(List<ModelMessage> messages, AssemblyMetrics metrics) {
+    record AssemblyResult(
+            List<ModelMessage> messages,
+            AssemblyMetrics metrics,
+            Map<String, Long> sources,
+            ModelMessageProjectionPlan projection,
+            long sourceOccurrences,
+            long repeatedSourceOccurrences) {
         AssemblyResult {
             messages = List.copyOf(messages);
             Objects.requireNonNull(metrics, "metrics must not be null");
@@ -146,7 +152,12 @@ public final class ModelMessageAssembler {
         long startedAt = System.nanoTime();
         List<ModelMessage> messages = new ArrayList<>();
         Set<ModelMessage> priorModelAssistants = Collections.newSetFromMap(new IdentityHashMap<>());
-        context.prompts().forEach(prompt -> messages.add(ModelMessage.text(ModelMessageRole.SYSTEM, prompt.text())));
+        Map<ModelMessage, String> origins = new IdentityHashMap<>();
+        context.prompts().forEach(prompt -> {
+            ModelMessage message = ModelMessage.text(ModelMessageRole.SYSTEM, prompt.text());
+            messages.add(message);
+            origins.put(message, "fixedInstructions");
+        });
         Map<AgentRunId, Map<io.haifa.agent.core.tool.ToolCallId, ToolCall>> toolCallsByRun = new HashMap<>();
         List<AgentMessage> contextMessages = context.items().stream()
                 .filter(item -> item.content() instanceof MessageGroupContextContent)
@@ -178,16 +189,24 @@ public final class ModelMessageAssembler {
                         snapshot.continuationsByMessage().size()))
                 .orElseGet(() -> loadContinuations(runId, context));
         for (ContextItem item : context.items()) {
+            int firstMapped = messages.size();
             if (item.content() instanceof MessageGroupContextContent group) {
-                group.messages()
-                        .forEach(message -> messages.addAll(mapMessage(
-                                runId,
-                                message,
-                                toolCallsByRun,
-                                continuations,
-                                model,
-                                priorModelAssistants,
-                                projectionPlan)));
+                for (AgentMessage message : group.messages()) {
+                    List<ModelMessage> mapped = mapMessage(
+                            runId, message, toolCallsByRun, continuations, model, priorModelAssistants, projectionPlan);
+                    String source;
+                    if (!message.runId().orElse(runId).equals(runId)) {
+                        source = message.role() == MessageRole.TOOL ? "priorRunTool" : "priorRunMessages";
+                    } else {
+                        source = switch (message.role()) {
+                            case USER -> "currentRunUser";
+                            case TOOL -> "currentRunTool";
+                            default -> "currentRunAssistant";
+                        };
+                    }
+                    mapped.forEach(value -> origins.put(value, source));
+                    messages.addAll(mapped);
+                }
             } else if (item.content() instanceof TextContextContent text) {
                 messages.add(ModelMessage.text(mapRole(text.role()), text.text()));
             } else if (item.content() instanceof MemoryReferenceContent memory) {
@@ -198,6 +217,12 @@ public final class ModelMessageAssembler {
                 messages.add(ModelMessage.text(ModelMessageRole.SYSTEM, renderSummary(summary)));
             } else {
                 throw unsupported(item);
+            }
+            if (!(item.content() instanceof MessageGroupContextContent)) {
+                String source = item.content() instanceof ConversationSummaryContent
+                        ? "summary"
+                        : item.content() instanceof MemoryReferenceContent ? "memory" : "runtimeState";
+                for (int i = firstMapped; i < messages.size(); i++) origins.put(messages.get(i), source);
             }
         }
         if (messages.isEmpty()) {
@@ -213,7 +238,15 @@ public final class ModelMessageAssembler {
                         continuations.batchCount(),
                         continuations.recordCount(),
                         reusable.isPresent() ? 0 : toolCallsByRun.size(),
-                        reusable.isPresent()));
+                        reusable.isPresent()),
+                ModelInputAccounting.sources(assembled, origins),
+                projectionPlan,
+                contextMessages.size(),
+                contextMessages.size()
+                        - contextMessages.stream()
+                                .map(AgentMessage::id)
+                                .distinct()
+                                .count());
     }
 
     private ContinuationIndex loadContinuations(AgentRunId currentRunId, AgentContext context) {

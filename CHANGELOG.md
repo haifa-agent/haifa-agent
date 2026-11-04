@@ -2,6 +2,9 @@
 
 ## Unreleased - 0.1.5-SNAPSHOT
 
+- Model requests now expose optional aggregate input composition for ordinary, summary and regeneration calls,
+  separating visible estimates from unknown Provider overhead without recording request bodies.
+
 - Remote Coding peers can negotiate optional v1 extensions while preserving old-client capability behavior;
   completion and command help distinguish unavailable credential setup from supported Host operations.
 

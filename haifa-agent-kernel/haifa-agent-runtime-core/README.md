@@ -1,5 +1,20 @@
 # Haifa Agent Runtime Core
 
+## Model input accounting
+
+`model.input-accounted` is optional aggregate evidence for each physical ordinary, summary or regeneration
+attempt, including calls before Context Build. `sourceEstimatedTokens` classifies the actual assembled visible
+content; tool/response schemas and protocol estimates are separate additive components. Raw and Tier 1 history
+estimates are stage measurements, not additional input. Repeated selected message identities are counted, not
+silently removed. Protocol rewrites whose source cannot be retained use `protocolProjection`.
+`modelBoundVisibleEstimatedTokens` excludes unknown Provider formatting, options, media and protected
+continuation costs. Those appear in `unknownComponents`; this estimate is neither Provider usage nor the
+existing hard-admission budget. Protected reasoning is only counted by presence, never read or hashed.
+Diagnostics contain no Prompt, arguments, output, endpoint or credentials and do not affect request assembly.
+The frozen boolean option `haifa.runtime.input_accounting_enabled` defaults to true, can disable this event,
+and is removed from Provider options. Diagnostic persistence is best effort. Existing lifecycle events and
+Run usage remain authoritative for physical admission and completion.
+
 `ToolCallViewProjector` 为 Tool 参数投影提供顶层 `completeFields`：字段内容或名称发生截断、脱敏，
 以及嵌套节点超出预算时，均不认证该字段。展示预算和原始 Tool 参数保持各自语义；结果展示可能经过派生处理，
 因此不认证完整字段，避免调用方把结果展示误认为原始值。
