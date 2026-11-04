@@ -2,6 +2,7 @@ package io.haifa.agent.runtime.core.compaction;
 
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
+import io.haifa.agent.context.budget.HeuristicTokenEstimator;
 import io.haifa.agent.context.compression.CompressionPolicy;
 import io.haifa.agent.context.compression.SemanticConversationSummaryV1;
 import io.haifa.agent.context.compression.SemanticSummarySchema;
@@ -77,23 +78,10 @@ public final class SummaryModelInvoker {
 
         long remainingWallMillis = checkControl(run);
 
-        // 3. Guard check: the frozen snapshot must be able to return the structured summary at all
-        if (!binding.configuration().model().capabilities().contains(ModelCapability.STRUCTURED_OUTPUT)) {
-            throw new CompactionModelCapabilityException(
-                    binding.configuration().model().modelId().value(), ModelCapability.STRUCTURED_OUTPUT);
-        }
+        requireStructuredOutput(binding);
 
-        // 4. Guard check: model call limit
-        if (run.usage().modelCalls() >= run.limits().maxModelCalls()) {
-            throw new RuntimeLimitExceededException(
-                    "modelCalls", run.limits().maxModelCalls(), run.usage().modelCalls());
-        }
-
-        if (run.budget().maxModelCalls() > 0
-                && run.usage().modelCalls() >= run.budget().maxModelCalls()) {
-            throw new RuntimeLimitExceededException(
-                    "modelCalls", run.budget().maxModelCalls(), run.usage().modelCalls());
-        }
+        remainingRunCalls(run);
+        requireInputFits(binding, systemPrompt, userPrompt);
 
         // 5. Hard cap check: physical calls per compaction session
         if (physicalCallCount >= policy.maxCompactionPhysicalCalls()) {
@@ -119,9 +107,7 @@ public final class SummaryModelInvoker {
                 ModelMessage.text(ModelMessageRole.SYSTEM, systemPrompt),
                 ModelMessage.text(ModelMessageRole.USER, userPrompt));
 
-        int maxOutput = Math.min(
-                DEFAULT_MAX_SUMMARY_OUTPUT_TOKENS,
-                binding.configuration().model().maxOutputTokens());
+        int maxOutput = summaryOutputTokens(binding);
         Duration timeout = Duration.ofMillis(Math.min(run.limits().maxIdleTimeMillis(), remainingWallMillis));
 
         AgentChatRequest request = new AgentChatRequest(
@@ -199,6 +185,50 @@ public final class SummaryModelInvoker {
                     List.of("SCHEMA_MAPPING_ERROR"));
         }
     }
+
+    static void requireStructuredOutput(FrozenModelBinding binding) {
+        if (!binding.configuration().model().capabilities().contains(ModelCapability.STRUCTURED_OUTPUT)) {
+            throw new CompactionModelCapabilityException(
+                    binding.configuration().model().modelId().value(), ModelCapability.STRUCTURED_OUTPUT);
+        }
+    }
+
+    static int summaryOutputTokens(FrozenModelBinding binding) {
+        return Math.min(
+                DEFAULT_MAX_SUMMARY_OUTPUT_TOKENS,
+                binding.configuration().model().maxOutputTokens());
+    }
+
+    static long inputBudget(FrozenModelBinding binding) {
+        long window = binding.configuration().model().contextWindow();
+        long margin = Math.min(16_384L, Math.max(256L, window / 20L));
+        return Math.max(0L, window - summaryOutputTokens(binding) - margin);
+    }
+
+    static long estimatedInput(String systemPrompt, String userPrompt) {
+        return (long) HeuristicTokenEstimator.tokens(systemPrompt)
+                + HeuristicTokenEstimator.tokens(userPrompt)
+                + HeuristicTokenEstimator.tokens(SemanticSummarySchema.jsonSchema())
+                + 24L;
+    }
+
+    static void requireInputFits(FrozenModelBinding binding, String systemPrompt, String userPrompt) {
+        if (estimatedInput(systemPrompt, userPrompt) > inputBudget(binding)) {
+            throw new CompactionBudgetExceededException(CompactionBudgetExceededException.Code.SUMMARY_INPUT_BUDGET);
+        }
+    }
+
+    long remainingRunCalls(AgentRun run) {
+        checkControl(run);
+        long remaining = run.limits().maxModelCalls() - run.usage().modelCalls();
+        if (run.budget().maxModelCalls() > 0) {
+            remaining = Math.min(
+                    remaining, run.budget().maxModelCalls() - run.usage().modelCalls());
+        }
+        if (remaining <= 0) throw RuntimeLimitExceededException.forRunLimits(run);
+        return remaining;
+    }
+
     /** Observes hard controls without treating the last admitted call as a new admission. */
     long checkControl(AgentRun run) {
         RunControlSignal signal = controls.signal(run.id());
