@@ -128,6 +128,8 @@ class OpenCodeGoOpenAiChatTest {
         assertThat(usage.costKnown()).isTrue();
         assertThat(usage.costMinorUnits()).isEqualTo(4);
         assertThat(usage.cacheHitTokens()).isEqualTo(8000);
+        assertThat(usage.inputTokensKnown()).isFalse();
+        assertThat(usage.cacheWriteTokens()).isEmpty();
         assertThat(usage.reasoningTokens()).isEqualTo(120);
     }
 
