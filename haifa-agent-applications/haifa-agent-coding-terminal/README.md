@@ -575,3 +575,10 @@ revision conflicts, capacity limits, payload bounds and expired contexts explain
 `CLIENT_CONTEXT_REQUIRED` calls for reconnecting and reopening the Session, not rerunning its task;
 `REMOTE_OUTCOME_UNKNOWN` warns that the Host may still be executing and requires inspecting the authoritative
 outcome before any resend. Unknown codes use a bounded fallback. Arbitrary Host exception text stays suppressed.
+
+## Remote execution location
+
+The remote composition supplies display-only Host workspace/Git context to the existing sidebar, footer and
+Session summary. Shell confirmation/results and export cards identify the Host execution location; export
+logical paths remain intact. Narrow displays keep the Host label, while non-Git workspaces and old Hosts have
+explicit unavailable fallbacks. Terminal performs no local filesystem/Git lookup for these facts.

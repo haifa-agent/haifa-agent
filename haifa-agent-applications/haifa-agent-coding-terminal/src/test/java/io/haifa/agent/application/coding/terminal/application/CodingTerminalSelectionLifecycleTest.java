@@ -30,6 +30,47 @@ import org.junit.jupiter.api.Test;
 
 class CodingTerminalSelectionLifecycleTest {
     @Test
+    void remoteShellConfirmationAndExportIdentifyTheHostDestination() {
+        FakeClient client = new FakeClient(sessionView("session-1", "Idle")) {
+            @Override
+            public io.haifa.agent.application.project.product.coding.CodingSessionExportResult export(
+                    AgentSessionId id, String path) {
+                return new io.haifa.agent.application.project.product.coding.CodingSessionExportResult(path, 2, "1");
+            }
+        };
+        var controller = new CodingTerminalController(
+                PROJECT_ID,
+                client,
+                CodingAuthenticationClient.unavailable(),
+                new TerminalEventPump(32),
+                new TerminalUiReducer(),
+                TerminalUiState.initial(
+                        80,
+                        24,
+                        new io.haifa.agent.application.coding.terminal.state.TerminalWorkspaceContext(
+                                "Host: /host/project", "main", "Host: /host/checkout", "feat/task")),
+                CodingTerminalConnectionOptions.remoteV1("/host/checkout"),
+                Runnable::run);
+        controller.open(SESSION_ID);
+        controller.accept(input(TerminalInput.Kind.EXECUTE_COMMAND, "/session"));
+        assertThat(controller.state().selector()).hasValueSatisfying(selector -> assertThat(selector.options())
+                .contains(
+                        "Directory: Host: /host/project",
+                        "Worktree: Host: /host/checkout",
+                        "Worktree branch: feat/task",
+                        "Host workspace: /host/checkout"));
+        controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
+        client.shellState = io.haifa.agent.application.project.product.coding.CodingShellPlan.State.APPROVAL_REQUIRED;
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "! echo safe"));
+        assertThat(controller.state().selector())
+                .hasValueSatisfying(selector -> assertThat(selector.title()).contains("Host:", "/host/checkout"));
+        controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
+        controller.accept(input(TerminalInput.Kind.EXECUTE_COMMAND, "/export review.md"));
+        assertThat(controller.state().transcript()).anySatisfy(item -> assertThat(item.body())
+                .contains("review.md", "Destination: Host workspace: /host/checkout"));
+    }
+
+    @Test
     void staleSelectionResultsNeverReplaceTheNewestDisplayedSession() {
         FakeClient client = new FakeClient(sessionView("session-b", "B"));
         AgentSessionId a = new AgentSessionId("session-a");

@@ -39,6 +39,8 @@ final class CodingHostDispatcher {
     private static final String PROTOCOL_VERSION = "1";
 
     private final CodingHostHistory history = new CodingHostHistory();
+
+    private final java.util.function.Supplier<Map<String, String>> workspaceContext;
     private final ProjectId projectId;
     private final CodingSessionClient client;
     private final CodingSessionService sessions;
@@ -55,6 +57,19 @@ final class CodingHostDispatcher {
             CodingRunOutcomeProjectionService outcomes,
             CodingAuthenticationClient authentication,
             CodingHostSubscriptions subscriptions) {
+        this(projectId, client, sessions, runtime, outcomes, authentication, subscriptions, Map::of);
+    }
+
+    CodingHostDispatcher(
+            ProjectId projectId,
+            CodingSessionClient client,
+            CodingSessionService sessions,
+            AgentRuntime runtime,
+            CodingRunOutcomeProjectionService outcomes,
+            CodingAuthenticationClient authentication,
+            CodingHostSubscriptions subscriptions,
+            java.util.function.Supplier<Map<String, String>> workspaceContext) {
+        this.workspaceContext = workspaceContext;
         this.projectId = projectId;
         this.client = client;
         this.sessions = sessions;
@@ -222,6 +237,8 @@ final class CodingHostDispatcher {
                 projectId.value(),
                 "operator",
                 Map.of("principalType", "local-user"),
+                "workspaceContext",
+                workspaceContext.get(),
                 "capabilities",
                 capabilities,
                 "unsupported",

@@ -82,7 +82,8 @@ final class CodingHostServer implements AutoCloseable {
                 local.runtime(),
                 local.outcomes(),
                 agent.authentication(),
-                subscriptions);
+                subscriptions,
+                () -> CodingHostWorkspace.summary(local.workspaceRoot()));
         this.server = HttpServer.create(new InetSocketAddress(bind, port), 16);
         this.executor = Executors.newVirtualThreadPerTaskExecutor();
         try {

@@ -99,3 +99,14 @@ the RPC envelope. Host state RPCs do not fetch transcript history; the TUI loads
 separately. Other oversized responses retain
 the request ID and return `PAYLOAD_TOO_LARGE`. Existing clients can continue requesting recent history without
 a cursor; updated clients can page backwards.
+
+## Remote workspace context
+
+A remote TUI displays Host-authored workspace and Git facts from the optional v1 `initialize.workspaceContext`
+metadata. Sidebar, footer and `/session` label the Host location; linked worktrees retain both project and
+worktree branches. Shell confirmation and results identify the Host execution root, and export completion
+retains the logical output path alongside its Host destination. No path or Git state is resolved on the client.
+
+Git facts are a display snapshot taken when the client connects. Non-Git/detached workspaces and older Hosts
+have explicit unavailable fallbacks. Metadata is bounded and strips terminal control characters; it grants no
+filesystem access and is not used to select a command directory or authorize an operation.

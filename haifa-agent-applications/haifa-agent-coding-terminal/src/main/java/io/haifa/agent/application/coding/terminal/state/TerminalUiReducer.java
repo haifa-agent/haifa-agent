@@ -223,7 +223,8 @@ public final class TerminalUiReducer {
                     "export-" + items.size(),
                     TranscriptItem.Kind.RESOURCE,
                     "Session export",
-                    exported.logicalPath() + " · " + exported.messageCount() + " messages",
+                    exported.logicalPath() + " · " + exported.messageCount() + " messages"
+                            + (exported.destination().isBlank() ? "" : "\nDestination: " + exported.destination()),
                     "EXPORTED",
                     false));
             return copyWithTranscript(state, List.copyOf(items));
