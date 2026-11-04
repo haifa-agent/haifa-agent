@@ -96,5 +96,6 @@ final class HistoryTextWindow {
         } else if (value instanceof String s) text(s);
         else if (value instanceof Number || value instanceof Boolean) text(value.toString());
         else if (value == null) text("null");
+        else incomplete = true;
     }
 }

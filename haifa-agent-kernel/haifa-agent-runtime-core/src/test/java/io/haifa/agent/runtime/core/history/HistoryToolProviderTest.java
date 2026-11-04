@@ -249,6 +249,13 @@ class HistoryToolProviderTest {
     }
 
     @Test
+    void unsupportedStructuredValuesAreUnavailableInsteadOfFalseSearchCompletion() {
+        var source = tool(run, "unsupported", Map.of("body", Set.of("preserved-value")), false);
+        var result = invoke("history_search", Map.of("messageId", source.id().value(), "keyword", "preserved-value"));
+        assertThat(result.structuredData()).containsEntry("status", "UNAVAILABLE");
+    }
+
+    @Test
     void returnsResumableSearchForBothRowWindowAndLargeSourceSuffix() {
         message(run, "not relevant", MessageVisibility.USER_VISIBLE);
         message(run, "a".repeat(4094) + "needle", MessageVisibility.USER_VISIBLE);
