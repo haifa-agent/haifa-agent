@@ -1218,6 +1218,39 @@ class ModelMessageAssemblerTest {
                         .isEqualTo(io.haifa.agent.runtime.core.model.continuation.ModelContinuationFailure.MISSING));
     }
 
+    @Test
+    void accountingKeepsCurrentAndPriorSourcesAndCountsRepeatedOccurrences() {
+        var session = new AgentSessionId("accounting-session");
+        AgentMessage old = message(
+                "old",
+                session,
+                new AgentRunId("prior"),
+                MessageRole.USER,
+                1,
+                List.of(new TextPart("old evidence", "plain")));
+        AgentMessage current = message(
+                "current", session, RUN_ID, MessageRole.USER, 2, List.of(new TextPart("current request", "plain")));
+        var context = new AgentContext(
+                List.of(prompt()),
+                List.of(item(
+                        "history",
+                        ContextItemType.MESSAGE,
+                        new MessageGroupContextContent(List.of(old, current, current)))),
+                List.of(),
+                budget(),
+                20);
+        var assembly = new ModelMessageAssembler(new InMemoryRuntimeStore()).assembleWithMetrics(RUN_ID, context, null);
+        assertThat(assembly.sources()).containsEntry("priorRunMessages", 4L).containsEntry("currentRunUser", 10L);
+        assertThat(assembly.sourceOccurrences()).isEqualTo(3);
+        assertThat(assembly.repeatedSourceOccurrences()).isEqualTo(1);
+        assertThat(assembly.sources().values().stream()
+                        .mapToLong(Long::longValue)
+                        .sum())
+                .isEqualTo(assembly.messages().stream()
+                        .mapToLong(ModelInputAccounting::visibleTokens)
+                        .sum());
+    }
+
     private static AgentMessage message(
             String id,
             AgentSessionId sessionId,

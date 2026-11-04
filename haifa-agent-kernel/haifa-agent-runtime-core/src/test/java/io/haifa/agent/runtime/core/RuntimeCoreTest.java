@@ -3390,6 +3390,79 @@ class RuntimeCoreTest {
         }
     }
 
+    @Test
+    void inputAccountingObservesSummaryAndOrdinaryCallsWithoutChangingRequests() {
+        List<List<io.haifa.agent.model.api.AgentChatRequest>> captured = new java.util.ArrayList<>();
+        for (boolean enabled : List.of(true, false)) {
+            List<io.haifa.agent.model.api.AgentChatRequest> requests = new java.util.ArrayList<>();
+            Fixture fixture = fixture(
+                    request -> {
+                        requests.add(request);
+                        return response(finalDecision("done"));
+                    },
+                    builder -> builder.compressionPolicy(io.haifa.agent.context.compression.CompressionPolicy.defaults()
+                                    .withActiveHistoryBudgetTokens(1000)
+                                    .withTailTokenBounds(5, 50))
+                            .profiles((id, overrides) -> new ResolvedProfile(
+                                    id,
+                                    "1.0.0",
+                                    AgentRunType.CHAT,
+                                    new AgentRunBudget(100_000, 100_000, 100_000, 4, 10, 0, "USD", 0),
+                                    new AgentRunLimits(10, 0, 1, 60_000, 60_000),
+                                    DefaultResolvedModelSnapshots.deepSeekV4Pro(),
+                                    Map.of(),
+                                    Map.of(
+                                            io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions
+                                                    .INPUT_ACCOUNTING_ENABLED,
+                                            enabled))));
+            var accepted = fixture.runtime.start(request("accounting"));
+            var run = fixture.store.find(accepted.runId()).orElseThrow();
+            fixture.store.appendSessionMessage(new SessionMessageDraft(
+                    new AgentMessageId("old-user"),
+                    run.sessionId(),
+                    Optional.of(run.id()),
+                    Optional.empty(),
+                    MessageRole.USER,
+                    MessageStatus.COMPLETED,
+                    MessageVisibility.USER_VISIBLE,
+                    List.of(new TextPart("x".repeat(3300), "plain")),
+                    Map.of(),
+                    Instant.parse("2026-07-21T00:00:00Z")));
+            fixture.store.appendSessionMessage(new SessionMessageDraft(
+                    new AgentMessageId("tail"),
+                    run.sessionId(),
+                    Optional.of(run.id()),
+                    Optional.empty(),
+                    MessageRole.USER,
+                    MessageStatus.COMPLETED,
+                    MessageVisibility.USER_VISIBLE,
+                    List.of(new TextPart("continue", "plain")),
+                    Map.of(),
+                    Instant.parse("2026-07-21T00:00:00Z")));
+            fixture.scheduler.runAll();
+            assertThat(fixture.store.find(run.id()).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(requests.size()).isEqualTo(3);
+            var diagnostics = fixture.store.eventsFor(run.id()).stream()
+                    .filter(event -> event.type().equals("model.input-accounted"))
+                    .toList();
+            assertThat(diagnostics.size()).isEqualTo(enabled ? 3 : 0);
+            if (enabled)
+                assertThat(diagnostics)
+                        .extracting(event -> event.data().get("callKind"))
+                        .containsExactly("SUMMARY", "SUMMARY_REGENERATION", "ORDINARY");
+            captured.add(requests);
+        }
+        for (int i = 0; i < 3; i++) {
+            var on = captured.getFirst().get(i);
+            var off = captured.getLast().get(i);
+            assertThat(on.messages().equals(off.messages())).isTrue();
+            assertThat(on.tools().equals(off.tools())).isTrue();
+            assertThat(on.options().equals(off.options())).isTrue();
+            assertThat(on.maxOutputTokens()).isEqualTo(off.maxOutputTokens());
+            assertThat(on.timeout()).isEqualTo(off.timeout());
+        }
+    }
+
     private static ResolvedModelSnapshot constrainedContextModel() {
         ResolvedModelSnapshot defaults = DefaultResolvedModelSnapshots.deepSeekV4Pro();
         return ResolvedModelSnapshot.create(

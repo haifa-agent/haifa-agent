@@ -275,6 +275,20 @@ public final class FrozenModelInvoker {
                 Duration.ofMillis(Math.max(1, run.limits().maxIdleTimeMillis())),
                 RuntimeControlOptions.providerOptions(binding.configuration().modelRequestOptions()),
                 binding.configuration().structuredOutput());
+        ModelInputAccounting.record(
+                events,
+                time,
+                binding,
+                request,
+                "ORDINARY",
+                messageAssembly.sources(),
+                Map.of(
+                        "rawActiveHistoryEstimatedTokens",
+                                messageAssembly.projection().rawActiveTokens(),
+                        "projectedActiveHistoryEstimatedTokens",
+                                messageAssembly.projection().projectedActiveTokens(),
+                        "sourceOccurrences", messageAssembly.sourceOccurrences(),
+                        "repeatedSourceOccurrences", messageAssembly.repeatedSourceOccurrences()));
         Instant startedAt = time.now();
         appendLifecycle(
                 binding,

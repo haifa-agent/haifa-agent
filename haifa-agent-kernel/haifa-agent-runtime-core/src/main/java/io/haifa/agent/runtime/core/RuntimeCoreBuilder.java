@@ -663,7 +663,8 @@ public final class RuntimeCoreBuilder {
         RunInputApplier runInputApplier =
                 new RunInputApplier(configuredRunInputs, state, events, outbox, unitOfWork, ids, time);
         var compactionTriggerEvaluator = new CompactionTriggerEvaluator(effectiveCompressionPolicy);
-        var summaryModelInvoker = new SummaryModelInvoker(transitions, controls, ids, time, effectiveCompressionPolicy);
+        var summaryModelInvoker =
+                new SummaryModelInvoker(transitions, controls, ids, time, effectiveCompressionPolicy, events);
         var compactionCoordinator = new SemanticCompactionCoordinator(
                 state,
                 summaries,

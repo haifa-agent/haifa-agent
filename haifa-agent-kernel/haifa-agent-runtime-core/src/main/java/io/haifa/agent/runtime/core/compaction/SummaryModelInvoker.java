@@ -51,6 +51,7 @@ public final class SummaryModelInvoker {
     private final IdentifierGenerator ids;
     private final TimeProvider time;
     private final CompressionPolicy policy;
+    private final io.haifa.agent.runtime.core.storage.RuntimeEventAppender events;
 
     public SummaryModelInvoker(
             RunTransitionCoordinator transitions,
@@ -58,6 +59,17 @@ public final class SummaryModelInvoker {
             IdentifierGenerator ids,
             TimeProvider time,
             CompressionPolicy policy) {
+        this(transitions, controls, ids, time, policy, null);
+    }
+
+    public SummaryModelInvoker(
+            RunTransitionCoordinator transitions,
+            RunControlRegistry controls,
+            IdentifierGenerator ids,
+            TimeProvider time,
+            CompressionPolicy policy,
+            io.haifa.agent.runtime.core.storage.RuntimeEventAppender events) {
+        this.events = events;
         this.transitions = Objects.requireNonNull(transitions, "transitions must not be null");
         this.controls = Objects.requireNonNull(controls, "controls must not be null");
         this.ids = Objects.requireNonNull(ids, "ids must not be null");
@@ -124,6 +136,15 @@ public final class SummaryModelInvoker {
                 timeout,
                 options,
                 Optional.of(structuredRequirement));
+
+        io.haifa.agent.runtime.core.model.ModelInputAccounting.record(
+                events,
+                time,
+                binding,
+                request,
+                isRepair ? "SUMMARY_REGENERATION" : "SUMMARY",
+                io.haifa.agent.runtime.core.model.ModelInputAccounting.summarySources(request),
+                Map.of());
 
         // 8. Invoke outside of DB transaction
         AgentChatResponse response = binding.chatModel().invoke(request);
