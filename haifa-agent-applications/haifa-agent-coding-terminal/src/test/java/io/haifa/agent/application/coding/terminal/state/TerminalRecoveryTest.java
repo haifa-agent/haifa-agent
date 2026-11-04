@@ -54,6 +54,7 @@ class TerminalRecoveryTest {
     @Test
     void remoteFailuresGiveSpecificRecoveryActionsWithoutReplayingCommands() {
         assertThat(TerminalRecovery.fromCode("SESSION_NOT_FOUND").action()).contains("unavailable", "/resume");
+        assertThat(TerminalRecovery.fromCode("SESSION_REVISION_STALE").action()).contains("changed", "/resume");
         assertThat(TerminalRecovery.fromCode("SESSION_REVISION_CONFLICT").action())
                 .contains("changed", "/resume");
         assertThat(TerminalRecovery.fromCode("INTERACTION_REVISION_CONFLICT").action())

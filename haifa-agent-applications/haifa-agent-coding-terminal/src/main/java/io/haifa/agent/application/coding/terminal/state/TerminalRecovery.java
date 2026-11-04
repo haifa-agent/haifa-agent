@@ -20,6 +20,10 @@ public record TerminalRecovery(Category category, String code, String action) {
                     "The Session is unavailable; use /resume to choose an available session."),
             entry(
                     Category.USER_ACTION_REQUIRED,
+                    "SESSION_REVISION_STALE",
+                    "The Session changed in another operation; reopen it with /resume and review its current state before submitting again."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
                     "SESSION_REVISION_CONFLICT",
                     "The Session changed in another operation; reopen it with /resume and review its current state before submitting again."),
             entry(
