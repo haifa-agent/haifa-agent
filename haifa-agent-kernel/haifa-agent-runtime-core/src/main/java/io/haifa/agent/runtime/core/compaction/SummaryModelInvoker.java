@@ -23,6 +23,7 @@ import io.haifa.agent.runtime.core.control.CancellationObservedException;
 import io.haifa.agent.runtime.core.control.RunControlRegistry;
 import io.haifa.agent.runtime.core.control.RunControlSignal;
 import io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException;
+import io.haifa.agent.runtime.core.guard.RuntimeQuotaExceededException;
 import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.model.FrozenModelBinding;
 import java.time.Duration;
@@ -74,19 +75,7 @@ public final class SummaryModelInvoker {
         Objects.requireNonNull(binding, "binding must not be null");
         Objects.requireNonNull(run, "run must not be null");
 
-        // 1. Guard check: wall time limit
-        Instant now = time.now();
-        if (run.activeElapsedMillis(now) > run.limits().maxWallTimeMillis()) {
-            throw new RuntimeLimitExceededException(
-                    "wallTimeMillis", run.limits().maxWallTimeMillis(), run.activeElapsedMillis(now));
-        }
-
-        // 2. Guard check: cancellation
-        RunControlSignal signal = controls.signal(run.id());
-        if (signal == RunControlSignal.CANCEL || signal == RunControlSignal.TIMEOUT) {
-            throw new CancellationObservedException(controls.directive(run.id()));
-        }
-        if (signal.stopsExecution()) throw new CancellationObservedException(signal);
+        long remainingWallMillis = checkControl(run);
 
         // 3. Guard check: the frozen snapshot must be able to return the structured summary at all
         if (!binding.configuration().model().capabilities().contains(ModelCapability.STRUCTURED_OUTPUT)) {
@@ -100,10 +89,15 @@ public final class SummaryModelInvoker {
                     "modelCalls", run.limits().maxModelCalls(), run.usage().modelCalls());
         }
 
+        if (run.budget().maxModelCalls() > 0
+                && run.usage().modelCalls() >= run.budget().maxModelCalls()) {
+            throw new RuntimeLimitExceededException(
+                    "modelCalls", run.budget().maxModelCalls(), run.usage().modelCalls());
+        }
+
         // 5. Hard cap check: physical calls per compaction session
         if (physicalCallCount >= policy.maxCompactionPhysicalCalls()) {
-            throw new IllegalStateException(
-                    "Compaction physical call limit (" + policy.maxCompactionPhysicalCalls() + ") reached");
+            throw new CompactionBudgetExceededException();
         }
 
         // 6. Account for the physical model call in Run usage
@@ -128,7 +122,7 @@ public final class SummaryModelInvoker {
         int maxOutput = Math.min(
                 DEFAULT_MAX_SUMMARY_OUTPUT_TOKENS,
                 binding.configuration().model().maxOutputTokens());
-        Duration timeout = Duration.ofMillis(Math.max(1, run.limits().maxIdleTimeMillis()));
+        Duration timeout = Duration.ofMillis(Math.min(run.limits().maxIdleTimeMillis(), remainingWallMillis));
 
         AgentChatRequest request = new AgentChatRequest(
                 callId,
@@ -163,9 +157,13 @@ public final class SummaryModelInvoker {
                             0));
         }
 
+        // An admitted response is accounted before observing a stop; this does not admit another call.
+        checkControl(run);
+
         // 10. Enforce fail-closed check on finish reason
         if (response.finishReason() != ModelFinishReason.STOP) {
             throw new SemanticSummaryValidationException(
+                    SemanticSummaryValidationException.Code.UNEXPECTED_FINISH_REASON,
                     "Model compaction response did not finish with STOP (finishReason=" + response.finishReason() + ")",
                     List.of("UNEXPECTED_FINISH_REASON"));
         }
@@ -179,21 +177,47 @@ public final class SummaryModelInvoker {
                 outputMap = SimpleJsonParser.parseObject(response.content());
             } catch (Exception ignored) {
                 throw new SemanticSummaryValidationException(
-                        "Failed to parse JSON structured output from model response", List.of("JSON_PARSE_ERROR"));
+                        SemanticSummaryValidationException.Code.JSON_PARSE_ERROR,
+                        "Failed to parse JSON structured output from model response",
+                        List.of("JSON_PARSE_ERROR"));
             }
         }
 
         if (outputMap == null || outputMap.isEmpty()) {
             throw new SemanticSummaryValidationException(
-                    "Model returned empty response for compaction request", List.of("EMPTY_STRUCTURED_OUTPUT"));
+                    SemanticSummaryValidationException.Code.EMPTY_STRUCTURED_OUTPUT,
+                    "Model returned empty response for compaction request",
+                    List.of("EMPTY_STRUCTURED_OUTPUT"));
         }
 
         try {
             return SemanticConversationSummaryV1.fromMap(outputMap);
         } catch (Exception ignored) {
             throw new SemanticSummaryValidationException(
+                    SemanticSummaryValidationException.Code.SCHEMA_MAPPING_ERROR,
                     "Failed to map structured output to SemanticConversationSummaryV1",
                     List.of("SCHEMA_MAPPING_ERROR"));
         }
+    }
+    /** Observes hard controls without treating the last admitted call as a new admission. */
+    long checkControl(AgentRun run) {
+        RunControlSignal signal = controls.signal(run.id());
+        if (signal == RunControlSignal.CANCEL || signal == RunControlSignal.TIMEOUT) {
+            throw new CancellationObservedException(controls.directive(run.id()));
+        }
+        if (signal.stopsExecution()) throw new CancellationObservedException(signal);
+        Instant now = time.now();
+        long elapsed = run.activeElapsedMillis(now);
+        if (elapsed >= run.limits().maxWallTimeMillis()) {
+            throw new RuntimeLimitExceededException(
+                    "wallTimeMillis", run.limits().maxWallTimeMillis(), elapsed);
+        }
+        if (run.quotaPolicy().isExceededBy(run.usage())) {
+            throw RuntimeQuotaExceededException.forRunQuota(run);
+        }
+        if (run.budget().isExceededBy(run.usage())) {
+            throw RuntimeLimitExceededException.forRunBudget(run);
+        }
+        return run.limits().maxWallTimeMillis() - elapsed;
     }
 }

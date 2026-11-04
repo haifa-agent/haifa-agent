@@ -70,7 +70,9 @@ public final class SemanticSummaryValidator {
         for (SemanticDecisionItem decision : summary.decisions()) {
             for (String ref : decision.sourceRefs()) {
                 if (!validAliases.contains(ref)) {
-                    throw new SemanticSummaryValidationException("unknown sourceRef '" + ref + "' in decisions");
+                    throw new SemanticSummaryValidationException(
+                            SemanticSummaryValidationException.Code.SOURCE_REFERENCE,
+                            "unknown sourceRef '" + ref + "' in decisions");
                 }
             }
             scanText(decision.statement(), "decision.statement");
@@ -81,10 +83,12 @@ public final class SemanticSummaryValidator {
         for (SemanticSummaryItem completed : summary.progress().completed()) {
             if (completed.confidence() == SemanticConfidence.INFERRED) {
                 throw new SemanticSummaryValidationException(
+                        SemanticSummaryValidationException.Code.SOURCE_REFERENCE,
                         "completed item '" + completed.stableItemId() + "' cannot have INFERRED confidence");
             }
             if (completed.sourceRefs().isEmpty()) {
                 throw new SemanticSummaryValidationException(
+                        SemanticSummaryValidationException.Code.SOURCE_REFERENCE,
                         "completed item '" + completed.stableItemId() + "' must cite supporting sourceRefs");
             }
         }
@@ -137,16 +141,19 @@ public final class SemanticSummaryValidator {
                         .anyMatch(d -> d.sourceRefs().stream().anyMatch(currentEvidenceRefs::contains));
                 if (!resolvedInDecisions) {
                     throw new SemanticSummaryValidationException(
+                            SemanticSummaryValidationException.Code.CARRY_FORWARD,
                             "mandatory carry-forward item '" + carryId + "' was dropped without resolution");
                 }
             } else {
                 // Category continuity: ensure item did not jump to an incompatible category
                 if (carryId.startsWith("C-") && !constraintIds.contains(carryId)) {
                     throw new SemanticSummaryValidationException(
+                            SemanticSummaryValidationException.Code.CARRY_FORWARD,
                             "constraint item '" + carryId + "' cannot transition to another category");
                 }
                 if (carryId.startsWith("Q-") && !questionIds.contains(carryId)) {
                     throw new SemanticSummaryValidationException(
+                            SemanticSummaryValidationException.Code.CARRY_FORWARD,
                             "unresolved question '" + carryId + "' cannot transition to another category");
                 }
                 if (carryId.startsWith("PA-")
@@ -154,6 +161,7 @@ public final class SemanticSummaryValidator {
                         && !completedIds.contains(carryId)
                         && !blockedIds.contains(carryId)) {
                     throw new SemanticSummaryValidationException(
+                            SemanticSummaryValidationException.Code.CARRY_FORWARD,
                             "active progress item '" + carryId + "' cannot transition to another category");
                 }
                 if (carryId.startsWith("PB-")
@@ -161,14 +169,17 @@ public final class SemanticSummaryValidator {
                         && !activeIds.contains(carryId)
                         && !completedIds.contains(carryId)) {
                     throw new SemanticSummaryValidationException(
+                            SemanticSummaryValidationException.Code.CARRY_FORWARD,
                             "blocked progress item '" + carryId + "' cannot transition to another category");
                 }
                 if (!preserved.text().equals(carry.text())) {
                     throw new SemanticSummaryValidationException(
+                            SemanticSummaryValidationException.Code.CARRY_FORWARD,
                             "mandatory carry-forward item '" + carryId + "' changed its text");
                 }
                 if (!preserved.sourceRefs().containsAll(carry.sourceRefs())) {
                     throw new SemanticSummaryValidationException(
+                            SemanticSummaryValidationException.Code.CARRY_FORWARD,
                             "mandatory carry-forward item '" + carryId + "' dropped supporting sourceRefs");
                 }
             }
@@ -195,7 +206,8 @@ public final class SemanticSummaryValidator {
         Set<String> ids = new HashSet<>();
         java.util.function.Consumer<String> add = id -> {
             if (!ids.add(id)) {
-                throw new SemanticSummaryValidationException("duplicate stableItemId '" + id + "'");
+                throw new SemanticSummaryValidationException(
+                        SemanticSummaryValidationException.Code.STABLE_ID, "duplicate stableItemId '" + id + "'");
             }
         };
         summary.goals().forEach(i -> add.accept(i.stableItemId()));
@@ -224,6 +236,7 @@ public final class SemanticSummaryValidator {
             for (String ref : item.sourceRefs()) {
                 if (!validAliases.contains(ref)) {
                     throw new SemanticSummaryValidationException(
+                            SemanticSummaryValidationException.Code.SOURCE_REFERENCE,
                             "unknown sourceRef '" + ref + "' in section '" + section + "'");
                 }
             }
@@ -233,7 +246,9 @@ public final class SemanticSummaryValidator {
 
     private static void scanText(String text, String field) {
         if (text != null && FORBIDDEN_CONTENT.matcher(text).find()) {
-            throw new SemanticSummaryValidationException("forbidden or sensitive pattern detected in " + field);
+            throw new SemanticSummaryValidationException(
+                    SemanticSummaryValidationException.Code.SAFETY,
+                    "forbidden or sensitive pattern detected in " + field);
         }
     }
 }

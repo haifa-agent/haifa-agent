@@ -1,5 +1,7 @@
 package io.haifa.agent.runtime.core.compaction;
 
+import static io.haifa.agent.runtime.core.compaction.CompactionTestSupport.consumeModelCalls;
+import static io.haifa.agent.runtime.core.compaction.CompactionTestSupport.createRun;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -7,8 +9,10 @@ import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.context.compression.CompactionQuality;
 import io.haifa.agent.context.compression.CompressionPolicy;
+import io.haifa.agent.context.compression.ConversationSummary;
+import io.haifa.agent.context.compression.ConversationSummaryRepository;
 import io.haifa.agent.context.compression.DeterministicContextCompressor;
-import io.haifa.agent.core.agent.AgentDefinitionId;
+import io.haifa.agent.context.compression.SummaryId;
 import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.message.AgentMessageId;
 import io.haifa.agent.core.message.MessageRole;
@@ -16,33 +20,35 @@ import io.haifa.agent.core.message.MessageStatus;
 import io.haifa.agent.core.message.MessageVisibility;
 import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.core.run.AgentRunId;
-import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.core.run.AgentRunUsageDelta;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelFinishReason;
 import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
-import io.haifa.agent.runtime.api.AgentRunRequest;
-import io.haifa.agent.runtime.api.RuntimeOverrides;
-import io.haifa.agent.runtime.core.DefaultAgentRuntime;
-import io.haifa.agent.runtime.core.RuntimeCoreBuilder;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeConfigurationSnapshot;
 import io.haifa.agent.runtime.core.control.CancellationObservedException;
 import io.haifa.agent.runtime.core.control.RunControlRegistry;
-import io.haifa.agent.runtime.core.execution.ManualExecutionScheduler;
+import io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException;
+import io.haifa.agent.runtime.core.guard.RuntimeQuotaExceededException;
 import io.haifa.agent.runtime.core.lifecycle.RunAwaiter;
 import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.model.FrozenModelBinding;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
-import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
+import io.haifa.agent.runtime.core.storage.OptimisticLockException;
+import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
+import io.haifa.agent.runtime.core.storage.StorageException;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 
@@ -129,6 +135,8 @@ class SemanticCompactionFailureTest {
                 .satisfies(event -> assertThat(event.data())
                         .containsEntry("failureCategory", "VALIDATION")
                         .containsEntry("validationErrorCode", "VALIDATION_REJECTED")
+                        .containsEntry("failureStage", "PARSING")
+                        .containsEntry("failureCode", "JSON_PARSE_ERROR")
                         .doesNotContainValue("not-valid-json"));
     }
 
@@ -194,46 +202,446 @@ class SemanticCompactionFailureTest {
                         .containsEntry("degraded", true));
     }
 
+    @Test
+    void deterministicRecoveryReportsTheActualRepositoryOutcome() {
+        for (String fault :
+                List.of("COMMITTED", "WINNER", "CONFLICT", "STORAGE", "REDACTED", "STOP", "STORAGE_EVENT")) {
+            deterministicRecoveryReportsTheActualRepositoryOutcome(fault);
+        }
+    }
+
+    private void deterministicRecoveryReportsTheActualRepositoryOutcome(String fault) {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentRun run = createRun(store);
+        AtomicInteger ids = new AtomicInteger();
+        IdentifierGenerator generator = () -> "recovery-" + ids.incrementAndGet();
+        AtomicInteger writes = new AtomicInteger();
+        AtomicInteger snapshots = new AtomicInteger();
+        IllegalStateException storageFailure = new IllegalStateException("private storage detail");
+        RunControlRegistry controls = new RunControlRegistry();
+        ConversationSummaryRepository repository = (ConversationSummaryRepository) Proxy.newProxyInstance(
+                getClass().getClassLoader(),
+                new Class<?>[] {ConversationSummaryRepository.class},
+                (proxy, method, args) -> {
+                    if (method.getName().equals("latestSnapshot")) snapshots.incrementAndGet();
+                    if (method.getName().equals("coversValidSource") && fault.equals("REDACTED")) return false;
+                    if (method.getName().equals("coversValidSource") && fault.equals("STOP"))
+                        controls.requestCancel(run.id());
+                    if (method.getName().equals("compareAndSetValid")) {
+                        writes.incrementAndGet();
+                        if (fault.startsWith("STORAGE")) throw storageFailure;
+                        if (fault.equals("WINNER")) {
+                            ConversationSummary candidate = (ConversationSummary) args[0];
+                            store.compareAndSetValid(withId(candidate, "winning-summary"), (long) args[1]);
+                        }
+                        if (fault.equals("WINNER") || fault.equals("CONFLICT")) {
+                            throw new OptimisticLockException("private conflict detail");
+                        }
+                    }
+                    try {
+                        return method.invoke(store, args);
+                    } catch (InvocationTargetException ex) {
+                        throw ex.getCause();
+                    }
+                });
+        CompressionPolicy policy =
+                CompressionPolicy.defaults().withDegradedFallback(true).withTailTokenBounds(5, 50);
+        RuntimeEventAppender appender = (RuntimeEventAppender) Proxy.newProxyInstance(
+                getClass().getClassLoader(), new Class<?>[] {RuntimeEventAppender.class}, (proxy, method, args) -> {
+                    if (fault.equals("STORAGE_EVENT")
+                            && method.getName().equals("append")
+                            && args[1].equals("session.compaction-recovery")) {
+                        throw new StorageException("secondary diagnostic store failure");
+                    }
+                    try {
+                        return method.invoke(store, args);
+                    } catch (InvocationTargetException ex) {
+                        throw ex.getCause();
+                    }
+                });
+        SemanticCompactionCoordinator coordinator =
+                coordinator(store, repository, generator, controls, policy, () -> NOW, appender);
+        appendTurn(store, run, "u1", "a1", "first objective", "first evidence");
+        appendTurn(store, run, "u2", "a2", "second objective", "second evidence");
+        if (fault.equals("STOP")) {
+            assertThatThrownBy(
+                            () -> coordinator.forceCompactOnOverflow(run, 1, binding(store, run, request -> failure())))
+                    .isInstanceOf(CancellationObservedException.class);
+            assertThat(writes).hasValue(0);
+            assertThat(store.latestValid(run.sessionId())).isEmpty();
+            assertThat(store.eventsFor(run.id())).noneMatch(e -> e.type().equals("session.compaction-recovery"));
+            return;
+        }
+        if (fault.equals("STORAGE_EVENT")) {
+            assertThatThrownBy(
+                            () -> coordinator.forceCompactOnOverflow(run, 1, binding(store, run, request -> failure())))
+                    .isSameAs(storageFailure);
+            assertThat(writes).hasValue(1);
+            assertThat(store.latestValid(run.sessionId())).isEmpty();
+            assertThat(store.eventsFor(run.id())).noneMatch(e -> e.type().equals("session.compaction-recovery"));
+            return;
+        }
+        if (fault.equals("STORAGE")) {
+            assertThatThrownBy(
+                            () -> coordinator.forceCompactOnOverflow(run, 1, binding(store, run, request -> failure())))
+                    .isSameAs(storageFailure);
+        } else {
+            CompactionEvaluationOutcome outcome =
+                    coordinator.forceCompactOnOverflow(run, 1, binding(store, run, request -> failure()));
+            assertThat(outcome.compacted()).isEqualTo(fault.equals("COMMITTED"));
+        }
+        String expected =
+                switch (fault) {
+                    case "COMMITTED" -> "DETERMINISTIC_COMMITTED";
+                    case "WINNER" -> "CONCURRENT_WINNER_SELECTED";
+                    case "CONFLICT" -> "CAS_CONFLICT";
+                    case "REDACTED" -> "SOURCE_INVALIDATED";
+                    default -> "STORAGE_FAILED";
+                };
+        var events = store.eventsFor(run.id());
+        var failed = events.stream()
+                .filter(e -> e.type().equals("session.compaction-failed"))
+                .findFirst()
+                .orElseThrow();
+        var recovered = events.stream()
+                .filter(e -> e.type().equals("session.compaction-recovery"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(recovered.data())
+                .containsEntry("outcome", expected)
+                .containsEntry("committed", fault.equals("COMMITTED"))
+                .containsEntry("evaluationId", failed.data().get("evaluationId"))
+                .doesNotContainValue("private conflict detail")
+                .doesNotContainValue("private storage detail");
+        assertThat(writes).hasValue(fault.equals("REDACTED") ? 0 : 1);
+        assertThat(snapshots).hasValue(fault.equals("WINNER") || fault.equals("CONFLICT") ? 2 : 1);
+        if (fault.equals("WINNER")) assertThat(recovered.data()).containsEntry("summaryId", "winning-summary");
+        if (fault.equals("COMMITTED") || fault.equals("WINNER")) {
+            ConversationSummary selected = store.latestValid(run.sessionId()).orElseThrow();
+            assertThat(recovered.data())
+                    .containsEntry("summaryId", selected.id().value())
+                    .containsEntry("version", selected.version().value())
+                    .containsEntry("quality", "DETERMINISTIC_DEGRADED");
+        } else assertThat(store.latestValid(run.sessionId())).isEmpty();
+    }
+
+    @Test
+    void generationAndMappingFailuresEmitOnlyTheirStableCodes() {
+        for (String kind : List.of("MAPPING", "EMPTY", "FINISH")) {
+            InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+            AgentRun run = createRun(store);
+            AtomicInteger ids = new AtomicInteger();
+            SemanticCompactionCoordinator coordinator = coordinator(
+                    store,
+                    () -> "classification-" + ids.incrementAndGet(),
+                    new RunControlRegistry(),
+                    CompressionPolicy.defaults().withTailTokenBounds(5, 50));
+            appendTurn(store, run, "u1", "a1", "one", "evidence one");
+            appendTurn(store, run, "u2", "a2", "two", "evidence two");
+            AgentChatResponse invalid = new AgentChatResponse(
+                    "response",
+                    "model",
+                    "",
+                    List.of(),
+                    kind.equals("FINISH") ? ModelFinishReason.LENGTH : ModelFinishReason.STOP,
+                    ModelUsage.unpriced(1, 1),
+                    "",
+                    Map.of(),
+                    Optional.empty(),
+                    kind.equals("MAPPING") ? Optional.of(Map.of("schemaVersion", "v1")) : Optional.empty());
+            coordinator.forceCompactOnOverflow(run, 1, binding(store, run, request -> invalid));
+            String expectedCode =
+                    switch (kind) {
+                        case "MAPPING" -> "SCHEMA_MAPPING_ERROR";
+                        case "EMPTY" -> "EMPTY_STRUCTURED_OUTPUT";
+                        default -> "UNEXPECTED_FINISH_REASON";
+                    };
+            assertThat(store.eventsFor(run.id()))
+                    .filteredOn(e -> e.type().equals("session.compaction-failed"))
+                    .singleElement()
+                    .satisfies(e -> assertThat(e.data())
+                            .containsEntry("failureCategory", "VALIDATION")
+                            .containsEntry("failureStage", kind.equals("MAPPING") ? "MAPPING" : "GENERATION")
+                            .containsEntry("failureCode", expectedCode));
+        }
+    }
+
+    @Test
+    void separateEvaluationsInOneRunHaveDistinctCorrelationIds() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentRun run = createRun(store);
+        AtomicInteger ids = new AtomicInteger();
+        SemanticCompactionCoordinator coordinator = coordinator(
+                store,
+                () -> "id-" + ids.incrementAndGet(),
+                new RunControlRegistry(),
+                CompressionPolicy.defaults().withDegradedFallback(true).withTailTokenBounds(5, 50));
+        appendTurn(store, run, "u1", "a1", "one", "evidence one");
+        appendTurn(store, run, "u2", "a2", "two", "evidence two");
+        coordinator.forceCompactOnOverflow(run, 1, binding(store, run, request -> failure()));
+        appendTurn(store, run, "u3", "a3", "three", "evidence three");
+        coordinator.forceCompactOnOverflow(run, 1, binding(store, run, request -> failure()));
+        var failures = store.eventsFor(run.id()).stream()
+                .filter(e -> e.type().equals("session.compaction-failed"))
+                .toList();
+        assertThat(failures).hasSize(2);
+        assertThat(failures.get(0).data().get("evaluationId"))
+                .isNotEqualTo(failures.get(1).data().get("evaluationId"));
+    }
+
+    @Test
+    void runCallLimitEscapesBothTargetAndOverflowFallback() {
+        for (boolean target : List.of(false, true)) {
+            runCallLimitEscapesBothTargetAndOverflowFallback(target);
+        }
+    }
+
+    private void runCallLimitEscapesBothTargetAndOverflowFallback(boolean target) {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentRun run = createRun(store);
+        consumeModelCalls(store, run, run.limits().maxModelCalls());
+        AtomicInteger ids = new AtomicInteger();
+        CompressionPolicy policy = CompressionPolicy.defaults()
+                .withDegradedFallback(true)
+                .withActiveHistoryBudgetTokens(10)
+                .withTailTokenBounds(5, 10);
+        SemanticCompactionCoordinator coordinator =
+                coordinator(store, () -> "hard-" + ids.incrementAndGet(), new RunControlRegistry(), policy);
+        appendTurn(store, run, "u1", "a1", "one", "evidence one");
+        appendTurn(store, run, "u2", "a2", "two", "evidence two");
+        FrozenModelBinding binding = binding(store, run, request -> failure());
+        assertThatThrownBy(() -> {
+                    if (target) coordinator.evaluateAndCompactIfNeeded(run, 1, binding);
+                    else coordinator.forceCompactOnOverflow(run, 1, binding);
+                })
+                .isInstanceOf(RuntimeLimitExceededException.class)
+                .hasFieldOrPropertyWithValue("resource", "modelCalls");
+        assertThat(store.latestValid(run.sessionId())).isEmpty();
+        assertThat(store.eventsFor(run.id())).noneMatch(e -> e.type().equals("session.compaction-failed"));
+    }
+
+    @Test
+    void observedStopAfterAResponsePreventsSummaryCommit() {
+        for (boolean deadline : List.of(false, true)) {
+            observedStopAfterAResponsePreventsSummaryCommit(deadline);
+        }
+    }
+
+    private void observedStopAfterAResponsePreventsSummaryCommit(boolean deadline) {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentRun run = createRun(store);
+        AtomicReference<Instant> clock = new AtomicReference<>(NOW);
+        RunControlRegistry controls = new RunControlRegistry();
+        AtomicInteger ids = new AtomicInteger();
+        SemanticCompactionCoordinator coordinator = coordinator(
+                store,
+                store,
+                () -> "stop-" + ids.incrementAndGet(),
+                controls,
+                CompressionPolicy.defaults().withDegradedFallback(true).withTailTokenBounds(5, 50),
+                clock::get);
+        appendTurn(store, run, "u1", "a1", "one", "evidence one");
+        appendTurn(store, run, "u2", "a2", "two", "evidence two");
+        assertThatThrownBy(() -> coordinator.forceCompactOnOverflow(run, 1, binding(store, run, request -> {
+                    if (deadline) clock.set(NOW.plusMillis(run.limits().maxWallTimeMillis()));
+                    else controls.requestCancel(run.id());
+                    return validSummaryResponse();
+                })))
+                .isInstanceOf(deadline ? RuntimeLimitExceededException.class : CancellationObservedException.class);
+        assertThat(store.latestValid(run.sessionId())).isEmpty();
+        assertThat(run.usage().inputTokens()).isEqualTo(10);
+        assertThat(store.eventsFor(run.id())).noneMatch(e -> e.type().equals("session.compaction-failed"));
+    }
+
+    @Test
+    void lastAdmittedSummaryCallCanCommit() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentRun run = createRun(store);
+        consumeModelCalls(store, run, run.limits().maxModelCalls() - 1);
+        AtomicInteger ids = new AtomicInteger();
+        SemanticCompactionCoordinator coordinator = coordinator(
+                store,
+                () -> "last-" + ids.incrementAndGet(),
+                new RunControlRegistry(),
+                CompressionPolicy.defaults().withTailTokenBounds(5, 50));
+        appendTurn(store, run, "u1", "a1", "one", "evidence one");
+        appendTurn(store, run, "u2", "a2", "two", "evidence two");
+        assertThat(coordinator
+                        .forceCompactOnOverflow(run, 1, binding(store, run, request -> validSummaryResponse()))
+                        .compacted())
+                .isTrue();
+        assertThat(store.latestValid(run.sessionId()))
+                .hasValueSatisfying(s -> assertThat(s.quality()).isEqualTo(CompactionQuality.SEMANTIC_VALIDATED));
+    }
+
+    @Test
+    void exhaustedBatchAllowanceIsAPlanningFailureNotInvalidModelContent() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentRun run = createRun(store);
+        AtomicInteger ids = new AtomicInteger();
+        SemanticCompactionCoordinator coordinator = coordinator(
+                store,
+                () -> "batch-" + ids.incrementAndGet(),
+                new RunControlRegistry(),
+                CompressionPolicy.defaults().withTailTokenBounds(5, 10));
+        for (int i = 0; i < 70; i++) appendTurn(store, run, "u-" + i, "a-" + i, "objective " + i, "evidence " + i);
+        coordinator.forceCompactOnOverflow(run, 1, binding(store, run, request -> validSummaryResponse()));
+        assertThat(store.eventsFor(run.id()))
+                .filteredOn(e -> e.type().equals("session.compaction-failed"))
+                .singleElement()
+                .satisfies(e -> assertThat(e.data())
+                        .containsEntry("failureCategory", "PLAN_BUDGET")
+                        .containsEntry("validationErrorCode", "NONE")
+                        .containsEntry("failureStage", "PLANNING")
+                        .containsEntry("failureCode", "PHYSICAL_CALL_ALLOWANCE")
+                        .containsEntry("physicalCalls", 3));
+    }
+
+    @Test
+    void cumulativeRunQuotaIsNotConvertedToCompactionFallback() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentRun run = createRun(store);
+        CompactionTestSupport.recordUsage(
+                store, run, new AgentRunUsageDelta(run.budget().maxInputTokens() + 1, 0, 0, 0, 0, 0, 0, 0));
+        AtomicInteger ids = new AtomicInteger();
+        SemanticCompactionCoordinator coordinator = coordinator(
+                store,
+                () -> "quota-" + ids.incrementAndGet(),
+                new RunControlRegistry(),
+                CompressionPolicy.defaults().withDegradedFallback(true).withTailTokenBounds(5, 50));
+        appendTurn(store, run, "u1", "a1", "one", "evidence one");
+        appendTurn(store, run, "u2", "a2", "two", "evidence two");
+        assertThatThrownBy(() -> coordinator.forceCompactOnOverflow(run, 1, binding(store, run, request -> failure())))
+                .isInstanceOf(RuntimeQuotaExceededException.class)
+                .hasFieldOrPropertyWithValue("resource", "inputTokens");
+        assertThat(run.usage().modelCalls()).isZero();
+        assertThat(store.latestValid(run.sessionId())).isEmpty();
+        assertThat(store.eventsFor(run.id())).noneMatch(e -> e.type().equals("session.compaction-failed"));
+    }
+
+    @Test
+    void typedStorageFailureDuringGenerationIsNotConvertedToFallback() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentRun run = createRun(store);
+        AtomicInteger ids = new AtomicInteger();
+        SemanticCompactionCoordinator coordinator = coordinator(
+                store,
+                () -> "storage-" + ids.incrementAndGet(),
+                new RunControlRegistry(),
+                CompressionPolicy.defaults().withDegradedFallback(true).withTailTokenBounds(5, 50));
+        appendTurn(store, run, "u1", "a1", "one", "evidence one");
+        appendTurn(store, run, "u2", "a2", "two", "evidence two");
+        StorageException storageFailure = new StorageException("private accounting store failure");
+        assertThatThrownBy(() -> coordinator.forceCompactOnOverflow(run, 1, binding(store, run, request -> {
+                    throw storageFailure;
+                })))
+                .isSameAs(storageFailure);
+        assertThat(store.latestValid(run.sessionId())).isEmpty();
+        assertThat(store.eventsFor(run.id())).noneMatch(e -> e.type().equals("session.compaction-failed"));
+    }
+
+    private static ConversationSummary withId(ConversationSummary s, String id) {
+        return new ConversationSummary(
+                new SummaryId(id),
+                s.version(),
+                s.sessionId(),
+                s.coveredFrom(),
+                s.coveredThrough(),
+                s.sourceMessageIds(),
+                s.coveredSourceCount(),
+                s.sourceHash(),
+                s.facts(),
+                s.decisions(),
+                s.openItems(),
+                s.toolOutcomeReferences(),
+                s.estimatedTokens(),
+                s.createdAt(),
+                s.policyVersion(),
+                s.compressorVersion(),
+                s.securityLabels(),
+                s.valid(),
+                s.semanticSummary(),
+                s.quality());
+    }
+
+    private static AgentChatResponse validSummaryResponse() {
+        return new AgentChatResponse(
+                "summary",
+                "model",
+                "",
+                List.of(),
+                ModelFinishReason.STOP,
+                ModelUsage.unpriced(10, 10),
+                "",
+                Map.of(),
+                Optional.empty(),
+                Optional.of(Map.of(
+                        "schemaVersion",
+                        "v1",
+                        "language",
+                        "en",
+                        "goals",
+                        List.of(Map.of(
+                                "stableItemId",
+                                "g1",
+                                "text",
+                                "Keep the objective",
+                                "sourceRefs",
+                                List.of("m001"),
+                                "confidence",
+                                "OBSERVED")),
+                        "constraints",
+                        List.of(),
+                        "progress",
+                        Map.of("completed", List.of(), "active", List.of(), "blocked", List.of()),
+                        "decisions",
+                        List.of(),
+                        "nextSteps",
+                        List.of(),
+                        "criticalContext",
+                        List.of(),
+                        "unresolvedQuestions",
+                        List.of())));
+    }
+
     private static SemanticCompactionCoordinator coordinator(
             InMemoryRuntimeStore store,
             IdentifierGenerator ids,
             RunControlRegistry controls,
             CompressionPolicy policy) {
-        TimeProvider time = () -> NOW;
+        return coordinator(store, store, ids, controls, policy, () -> NOW);
+    }
+
+    private static SemanticCompactionCoordinator coordinator(
+            InMemoryRuntimeStore store,
+            ConversationSummaryRepository summaries,
+            IdentifierGenerator ids,
+            RunControlRegistry controls,
+            CompressionPolicy policy,
+            TimeProvider time) {
+        return coordinator(store, summaries, ids, controls, policy, time, store);
+    }
+
+    private static SemanticCompactionCoordinator coordinator(
+            InMemoryRuntimeStore store,
+            ConversationSummaryRepository summaries,
+            IdentifierGenerator ids,
+            RunControlRegistry controls,
+            CompressionPolicy policy,
+            TimeProvider time,
+            RuntimeEventAppender events) {
         RunTransitionCoordinator transitions =
                 new RunTransitionCoordinator(store, store, store, store, ids, time, new RunAwaiter(), store);
         return new SemanticCompactionCoordinator(
                 store,
-                store,
+                summaries,
                 new SummaryModelInvoker(transitions, controls, ids, time, policy),
                 new CompactionTriggerEvaluator(policy),
                 policy,
                 new DeterministicContextCompressor(),
                 ids,
                 time,
-                store);
-    }
-
-    private static AgentRun createRun(InMemoryRuntimeStore store) {
-        AtomicInteger ids = new AtomicInteger();
-        DefaultAgentRuntime runtime = new RuntimeCoreBuilder()
-                .registerChatModel("openai-compatible", "1.0.0", request -> response())
-                .persistence(RuntimePersistencePorts.inMemory(store))
-                .scheduler(new ManualExecutionScheduler())
-                .identifierGenerator(() -> "run-" + ids.incrementAndGet())
-                .timeProvider(() -> NOW)
-                .build();
-        var accepted = runtime.start(new AgentRunRequest(
-                "compaction-failure",
-                new AgentDefinitionId("compaction-failure-agent"),
-                Optional.empty(),
-                "default",
-                new AgentSessionId("compaction-failure-session"),
-                Optional.empty(),
-                "initial user turn",
-                List.of(),
-                RuntimeOverrides.NONE));
-        return store.find(accepted.runId()).orElseThrow();
+                events);
     }
 
     private static void appendTurn(

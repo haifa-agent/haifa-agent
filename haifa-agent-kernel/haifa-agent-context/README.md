@@ -21,3 +21,8 @@ tool schemas, and recursively structured Tool arguments/results. Its version is 
 `PromptLayer.SKILL` 是低于 Identity、Safety、Policy、Tool Protocol 和 Runtime Instructions 的最弱可移除
 指令层。Context 不依赖 Skill API；Runtime/Application Adapter 只在 Skill 已冻结并受控激活后把内容映射为
 现有 `PromptComponent`。
+
+`SemanticSummaryValidationException.code()` classifies structural, provenance, stable-identity,
+carry-forward and safety failures at their owning rule. Its messages and `validationErrors()` may contain
+source details and are not safe telemetry; Runtime emits only bounded codes. Existing constructors remain
+available with the structural default, without changing validation or reconciliation rules.

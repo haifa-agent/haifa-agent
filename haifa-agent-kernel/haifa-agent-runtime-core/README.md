@@ -429,3 +429,28 @@ describes creation/admission, while the Child's typed `RunLifecycle` status `RUN
 预算百分比按精确整数向下取整并限制在 0–100，包括 `Long.MAX_VALUE` 的工具额度；
 大额度的乘法不会溢出为零或触发虚假的 `BUDGET_THRESHOLD` 收敛通知。
 真实的 50/25/10 百分比阈值和既有模型消息角色保持不变。
+
+## Conversation compaction outcomes
+
+Compaction failures retain the existing `failureCategory` / `validationErrorCode` fields and add safe
+`failureStage` / `failureCode` classifications. Parsing, schema mapping, provenance, carry-forward,
+safety and physical evaluation-allowance failures are distinguishable without storing exception or model text.
+The local physical-call allowance is a `PLAN_BUDGET` failure; Run hard limits and typed persistence failures
+propagate instead of entering ordinary compaction degradation.
+
+`evaluationId` associates a semantic attempt with its `session.compaction-recovery` result. A failed semantic
+attempt may be followed by `DETERMINISTIC_COMMITTED`; `degraded` alone does not prove a summary was written.
+Recovery reports the selected summary identity/version/quality, distinguishes a concurrent valid winner from
+this evaluation's own commit, and reports `CAS_CONFLICT`, `SOURCE_INVALIDATED`, `STORAGE_FAILED` or
+`NO_REDUCTION` when appropriate. CAS conflict recovery performs one fresh snapshot read and never retries
+writes in a loop. If an unavailable store also rejects the failure event, the original summary-write
+failure is preserved and that diagnostic event may be absent. Successful deterministic commits now report `compacted=true`; selecting another writer's
+summary does not claim this evaluation committed. Before/after history token estimates remain estimates of
+the captured source and selected summary/tail, not subsequent Provider-reported request usage.
+
+Every summary call observes Run controls and remaining active wall time. Its timeout is capped by that
+remaining time and the existing idle limit; zero remaining time is never admitted. Usage from a returned
+response is recorded before observing a subsequent stop, and controls are checked again before summary
+commit. The last admitted model call may commit a valid result at the call-count limit, but cannot admit
+another repair. This does not change Core terminal accounting or promise immediate remote cancellation.
+Batch sizes, repair counts and default deterministic-degradation eligibility are unchanged.
