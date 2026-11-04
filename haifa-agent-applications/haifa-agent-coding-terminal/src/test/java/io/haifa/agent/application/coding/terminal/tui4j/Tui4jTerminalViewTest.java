@@ -52,6 +52,24 @@ class Tui4jTerminalViewTest {
     }
 
     @Test
+    void narrowRemoteFooterIdentifiesTheHostWhenGitMetadataIsUnavailable() {
+        var state = TerminalUiState.initial(
+                80,
+                24,
+                new io.haifa.agent.application.coding.terminal.state.TerminalWorkspaceContext(
+                        "Host: /host/workspace", "unavailable (non-Git or detached)", "", ""));
+        String rendered = Strip.strip(view.render(state, transcript(state), editor(80), true, false));
+        assertThat(rendered).contains("Host:", "/host/workspace");
+        var fallback = TerminalUiState.initial(
+                80,
+                24,
+                new io.haifa.agent.application.coding.terminal.state.TerminalWorkspaceContext(
+                        "Host workspace unavailable (older Host)", "Git metadata unavailable", "", ""));
+        assertThat(Strip.strip(view.render(fallback, transcript(fallback), editor(80), true, false)))
+                .contains("Host workspace unavailable");
+    }
+
+    @Test
     void dismissedApprovalShowsTheCommandThatRestoresItsOptions() {
         var state = withTranscript(
                 defaultState(),

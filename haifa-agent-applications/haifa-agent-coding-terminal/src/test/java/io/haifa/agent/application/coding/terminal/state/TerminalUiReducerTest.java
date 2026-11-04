@@ -45,6 +45,18 @@ import org.junit.jupiter.api.Test;
 
 class TerminalUiReducerTest {
     @Test
+    void hostDestinationSharesTheExistingShellCardBudgetWithoutLosingTheOutputTail() {
+        String output = "x".repeat(16_380) + "END!";
+        var result = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.ShellCompleted("! echo safe", output, "EXITED", "Host workspace: /host/checkout"));
+        assertThat(result.transcript()).singleElement().satisfies(item -> assertThat(item.body())
+                .contains("Destination: Host workspace: /host/checkout", "output truncated; showing tail")
+                .endsWith("END!")
+                .hasSizeLessThanOrEqualTo(16_384));
+    }
+
+    @Test
     void resolvedUnhydratedApprovalsDoNotLeaveLoadingCards() {
         for (String status :
                 java.util.List.of("RESPONDED", "APPLIED", "REJECTED", "CANCELLED", "INVALIDATED", "EXPIRED")) {

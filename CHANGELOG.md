@@ -8,6 +8,9 @@
 - Coding Host Session state reads now defer history; separate history pages have a serialized byte budget and
   an exclusive continuation for older messages. Oversized responses preserve the JSON-RPC request ID.
 
+- Remote Coding Terminal now shows Host workspace/Git context and identifies Host-side Shell/export destinations,
+  with explicit non-Git and older-Host fallbacks and no client-side filesystem discovery.
+
 - The Coding Agent can now run its Terminal as a thin client of one CA Host: `haifa-coding tui --connect
   http://127.0.0.1:<port> [--session <id> | --new]` resumes that Host's last Session by default and is dispatched
   before the process opens local logs, configuration, credentials, Runtime or SQLite. Tool-output preview, session

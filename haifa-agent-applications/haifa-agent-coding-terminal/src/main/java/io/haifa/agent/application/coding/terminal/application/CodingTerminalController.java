@@ -1846,6 +1846,32 @@ public final class CodingTerminalController implements AutoCloseable {
                 });
     }
 
+    private List<String> workspaceSummaryOptions() {
+        List<String> options = new ArrayList<>();
+        if (!state.footer().project().isBlank()) {
+            options.add("Directory: " + state.footer().project());
+        }
+        if (!state.footer().gitBranch().isBlank()) {
+            options.add("Git branch: " + state.footer().gitBranch());
+        }
+        if (!state.footer().worktree().isBlank()) {
+            options.add("Worktree: " + state.footer().worktree());
+            options.add("Worktree branch: "
+                    + (state.footer().worktreeBranch().isBlank()
+                            ? "unavailable"
+                            : state.footer().worktreeBranch()));
+        }
+        if (!executionDestination().isBlank()) options.add(executionDestination());
+        return List.copyOf(options);
+    }
+
+    private String executionDestination() {
+        return connectionOptions
+                .executionLocation()
+                .map(value -> "Host workspace: " + value)
+                .orElse("");
+    }
+
     private void completeShellPlan(CodingShellPlan plan) {
         if (plan.state() == CodingShellPlan.State.DENIED) {
             apply(new TerminalUiAction.RecoverableFailure(plan.reasonCode()));
@@ -1855,7 +1881,18 @@ public final class CodingTerminalController implements AutoCloseable {
             pendingShellPlan = plan;
             apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
                     "shell-approval",
-                    "Run governed shell command?",
+                    connectionOptions
+                            .executionLocation()
+                            .map(location -> "Run command on Host: "
+                                    + location.codePoints()
+                                            .limit(96)
+                                            .collect(
+                                                    StringBuilder::new,
+                                                    StringBuilder::appendCodePoint,
+                                                    StringBuilder::append)
+                                            .toString()
+                                    + (location.codePointCount(0, location.length()) > 96 ? "…" : ""))
+                            .orElse("Run governed shell command?"),
                     List.of("Approve once: " + plan.safeCommand(), "Deny"),
                     1)));
             return;
@@ -1881,7 +1918,7 @@ public final class CodingTerminalController implements AutoCloseable {
     private void completeShell(CodingShellPlan plan, CodingShellResult result) {
         String prefix = plan.includeInContext() ? "!" : "!!";
         apply(new TerminalUiAction.ShellCompleted(
-                prefix + plan.safeCommand(), result.safeSummary(), result.processState()));
+                prefix + plan.safeCommand(), result.safeSummary(), result.processState(), executionDestination()));
         apply(new TerminalUiAction.StatusChanged(
                 result.includedInContext()
                         ? "Shell result added to Session context"
@@ -2051,7 +2088,7 @@ public final class CodingTerminalController implements AutoCloseable {
                             return () -> {
                                 if (!isCurrentSelection(token)) return;
                                 apply(new TerminalUiAction.ExportCompleted(
-                                        exported.logicalPath(), exported.messageCount()));
+                                        exported.logicalPath(), exported.messageCount(), executionDestination()));
                                 apply(new TerminalUiAction.StatusChanged("Session exported"));
                             };
                         },
@@ -2076,14 +2113,7 @@ public final class CodingTerminalController implements AutoCloseable {
                                     options.add("Session: " + value.summary().displayName());
                                     options.add(
                                             "ID: " + value.summary().sessionId().value());
-                                    if (!state.footer().project().isBlank()) {
-                                        options.add(
-                                                "Directory: " + state.footer().project());
-                                    }
-                                    if (!state.footer().gitBranch().isBlank()) {
-                                        options.add(
-                                                "Git branch: " + state.footer().gitBranch());
-                                    }
+                                    options.addAll(workspaceSummaryOptions());
                                     if (!state.footer().model().isBlank()) {
                                         options.add("Model: " + state.footer().model()
                                                 + (state.footer().provider().isBlank()
@@ -2095,7 +2125,10 @@ public final class CodingTerminalController implements AutoCloseable {
                                     }
                                     options.add("Profile: " + value.productProfileRef());
                                 },
-                                () -> options.add("No active session"));
+                                () -> {
+                                    options.add("No active session");
+                                    options.addAll(workspaceSummaryOptions());
+                                });
                 apply(new TerminalUiAction.SelectorOpened(
                         new TerminalSelector("session", "Session & Environment", options, 0)));
             }

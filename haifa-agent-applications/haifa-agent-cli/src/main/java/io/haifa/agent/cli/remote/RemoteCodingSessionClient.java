@@ -141,6 +141,13 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
         return authentication;
     }
 
+    private static String workspaceText(JsonNode workspace, String field) {
+        JsonNode value = workspace.get(field);
+        if (value == null || value.isNull()) return "";
+        if (!value.isTextual()) throw RemoteRpcTransport.protocolIncompatible();
+        return value.textValue();
+    }
+
     private void initialize(String clientName, String clientVersion) {
         Map<String, Object> clientInfo = new LinkedHashMap<>();
         clientInfo.put("name", clientName);
@@ -189,8 +196,21 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
             for (JsonNode item : RemoteWireCodec.requiredArray(result, "unsupported")) {
                 unsupported.add(RemoteWireCodec.requiredTextValue(item, "unsupported"));
             }
+            JsonNode workspace = result.get("workspaceContext");
+            Optional<RemoteCodingWorkspaceInfo> workspaceInfo = Optional.empty();
+            if (workspace != null && !workspace.isNull()) {
+                RemoteWireCodec.requireObject(workspace, "workspace context");
+                if (!workspace.isEmpty()) {
+                    workspaceInfo = Optional.of(new RemoteCodingWorkspaceInfo(
+                            RemoteWireCodec.requiredText(workspace, "workingDirectory"),
+                            workspaceText(workspace, "gitBranch"),
+                            workspaceText(workspace, "worktree"),
+                            workspaceText(workspace, "worktreeBranch"),
+                            RemoteWireCodec.requiredText(workspace, "executionDirectory")));
+                }
+            }
             this.info = new RemoteCodingClientInfo(
-                    version, hostName, hostProject, clientId, principalType, supported, unsupported);
+                    version, hostName, hostProject, clientId, principalType, supported, unsupported, workspaceInfo);
             this.projectId = hostProject;
             transport.clientId(clientId);
             return null;

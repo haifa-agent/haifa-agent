@@ -930,6 +930,10 @@ final class LocalCodingAgent implements AutoCloseable {
         return accepted;
     }
 
+    Path workspaceRoot() {
+        return workspaceProvisioning.scope().allowedDirectories().getFirst().realPath();
+    }
+
     AgentRuntime runtime() {
         return runtime;
     }

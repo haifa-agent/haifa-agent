@@ -1,5 +1,7 @@
 package io.haifa.agent.application.coding.terminal.application;
 
+import java.util.Optional;
+
 /**
  * Immutable UI-layer capability input supplied by the composition root.
  *
@@ -11,14 +13,24 @@ public final class CodingTerminalConnectionOptions {
     private static final CodingTerminalConnectionOptions EMBEDDED =
             new CodingTerminalConnectionOptions(true, true, true);
     private static final CodingTerminalConnectionOptions REMOTE_V1 =
-            new CodingTerminalConnectionOptions(false, false, false);
+            new CodingTerminalConnectionOptions(false, false, false, Optional.of("unavailable (older Host)"));
 
+    private final Optional<String> executionLocation;
     private final boolean toolOutputPreviewEnabled;
     private final boolean sessionConsentEnabled;
     private final boolean credentialSetupEnabled;
 
     private CodingTerminalConnectionOptions(
             boolean toolOutputPreviewEnabled, boolean sessionConsentEnabled, boolean credentialSetupEnabled) {
+        this(toolOutputPreviewEnabled, sessionConsentEnabled, credentialSetupEnabled, Optional.empty());
+    }
+
+    private CodingTerminalConnectionOptions(
+            boolean toolOutputPreviewEnabled,
+            boolean sessionConsentEnabled,
+            boolean credentialSetupEnabled,
+            Optional<String> executionLocation) {
+        this.executionLocation = executionLocation;
         this.toolOutputPreviewEnabled = toolOutputPreviewEnabled;
         this.sessionConsentEnabled = sessionConsentEnabled;
         this.credentialSetupEnabled = credentialSetupEnabled;
@@ -35,6 +47,19 @@ public final class CodingTerminalConnectionOptions {
      */
     public static CodingTerminalConnectionOptions remoteV1() {
         return REMOTE_V1;
+    }
+
+    /** Remote display-only execution root, supplied by the Host; never resolved by the terminal. */
+    public static CodingTerminalConnectionOptions remoteV1(String executionLocation) {
+        if (executionLocation == null || executionLocation.isBlank()) return REMOTE_V1;
+        if (executionLocation.length() > 4096 || executionLocation.codePoints().anyMatch(Character::isISOControl)) {
+            throw new IllegalArgumentException("Invalid execution location display value");
+        }
+        return new CodingTerminalConnectionOptions(false, false, false, Optional.of(executionLocation));
+    }
+
+    public Optional<String> executionLocation() {
+        return executionLocation;
     }
 
     /** Whether the transient Tool output preview stream may be subscribed. */

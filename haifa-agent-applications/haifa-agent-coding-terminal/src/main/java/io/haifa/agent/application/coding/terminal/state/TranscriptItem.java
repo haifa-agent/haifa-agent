@@ -17,11 +17,13 @@ public record TranscriptItem(
         Optional<String> toolName,
         Optional<ToolDetails> toolDetails,
         Optional<String> sourceRunId) {
+    static final int MAXIMUM_BODY_CHARACTERS = 16_384;
+
     public TranscriptItem {
         id = text(id, "id", 256);
         kind = Objects.requireNonNull(kind, "kind must not be null");
         title = text(title, "title", 256);
-        body = bounded(body, "body", 16_384);
+        body = bounded(body, "body", MAXIMUM_BODY_CHARACTERS);
         status = text(status, "status", 64);
         approvalDetails = Objects.requireNonNull(approvalDetails, "approvalDetails must not be null");
         startedAtEpochMillis = Objects.requireNonNull(startedAtEpochMillis, "startedAtEpochMillis must not be null");

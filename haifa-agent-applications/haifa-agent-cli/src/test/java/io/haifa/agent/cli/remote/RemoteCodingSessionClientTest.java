@@ -122,6 +122,40 @@ class RemoteCodingSessionClientTest {
     }
 
     @Test
+    void decodesOptionalHostWorkspaceMetadataAndRejectsMalformedDisplayFields() throws Exception {
+        for (boolean malformed : List.of(false, true)) {
+            try (FakeCodingHost host = FakeCodingHost.start(call -> {
+                Map<String, Object> init = FakeCodingHost.initializeResult("client-1", "project-1");
+                init.put(
+                        "workspaceContext",
+                        map(
+                                "workingDirectory",
+                                "/host/project",
+                                "gitBranch",
+                                malformed ? 7 : "main",
+                                "worktree",
+                                "/host/checkout",
+                                "worktreeBranch",
+                                "feat/task",
+                                "executionDirectory",
+                                "/host/checkout"));
+                return FakeCodingHost.Reply.result(init);
+            })) {
+                if (malformed) {
+                    assertThatThrownBy(() -> RemoteCodingSessionClient.connect(host.uri()))
+                            .isInstanceOfSatisfying(ProjectProductException.class, error -> assertThat(error.code())
+                                    .isEqualTo("REMOTE_PROTOCOL_INCOMPATIBLE"));
+                } else
+                    try (var client = RemoteCodingSessionClient.connect(host.uri())) {
+                        assertThat(client.info().workspace())
+                                .contains(new RemoteCodingWorkspaceInfo(
+                                        "/host/project", "main", "/host/checkout", "feat/task", "/host/checkout"));
+                    }
+            }
+        }
+    }
+
+    @Test
     void connectsWithProtocolContextAndSendsClientHeaderForSubsequentCommands() throws Exception {
         try (FakeCodingHost host = FakeCodingHost.start(call -> switch (call.method()) {
             case "initialize" -> FakeCodingHost.Reply.result(FakeCodingHost.initializeResult("client-1", "project-1"));
@@ -132,6 +166,7 @@ class RemoteCodingSessionClientTest {
             try (RemoteCodingSessionClient client = RemoteCodingSessionClient.connect(host.uri())) {
                 assertThat(client.projectId()).isEqualTo(PROJECT);
                 assertThat(client.info().protocolVersion()).isEqualTo("1");
+                assertThat(client.info().workspace()).isEmpty();
                 assertThat(client.info().hostName()).isEqualTo("ca-host");
                 assertThat(client.info().clientId()).isEqualTo("client-1");
                 assertThat(client.info().supports("event-stream")).isTrue();

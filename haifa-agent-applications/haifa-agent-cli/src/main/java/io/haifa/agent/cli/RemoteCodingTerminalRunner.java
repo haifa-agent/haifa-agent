@@ -19,8 +19,8 @@ import java.util.function.Supplier;
  * Highest-layer assembly for the remote TUI: a thin client of one running CA Host.
  *
  * <p>Nothing here reads the client's Git repository, credentials, model configuration or database: the Host owns
- * the workspace, Runtime, persistence and credentials. The workspace line is therefore empty unless the Host
- * publishes it, and the terminal runs with {@link CodingTerminalConnectionOptions#remoteV1()} so preview,
+ * the workspace, Runtime, persistence and credentials. Workspace display facts come only from the Host
+ * handshake, and the terminal runs with {@link CodingTerminalConnectionOptions#remoteV1()} so preview,
  * session consent and credential setup are refused up front instead of failing mid-interaction.
  */
 final class RemoteCodingTerminalRunner implements CliRemoteTerminalRunner {
@@ -54,16 +54,31 @@ final class RemoteCodingTerminalRunner implements CliRemoteTerminalRunner {
                             client,
                             startup,
                             terminalIo,
-                            // The client owns no workspace, so the UI shows an empty workspace line rather than
-                            // reading this process's Git state or configuration.
-                            TerminalWorkspaceContext.empty(),
+                            workspaceContext(info),
                             client.authentication(),
                             ToolOutputPreviewPublisher.noop(),
-                            CodingTerminalConnectionOptions.remoteV1())
+                            CodingTerminalConnectionOptions.remoteV1(info.workspace()
+                                    .map(value -> value.executionDirectory())
+                                    .orElse("unavailable (older Host)")))
                     .run();
         } catch (ProjectProductException failure) {
             output.println("[" + failure.code() + "] " + failure.getMessage());
             throw failure;
         }
+    }
+
+    static TerminalWorkspaceContext workspaceContext(RemoteCodingClientInfo info) {
+        return info.workspace()
+                .map(value -> new TerminalWorkspaceContext(
+                        "Host: " + value.workingDirectory(),
+                        value.gitBranch().isBlank() ? "unavailable (non-Git or detached)" : value.gitBranch(),
+                        value.worktree().isBlank() ? "" : "Host: " + value.worktree(),
+                        value.worktree().isBlank()
+                                ? ""
+                                : value.worktreeBranch().isBlank()
+                                        ? "unavailable (detached or unreadable)"
+                                        : value.worktreeBranch()))
+                .orElseGet(() -> new TerminalWorkspaceContext(
+                        "Host workspace unavailable (older Host)", "Git metadata unavailable", "", ""));
     }
 }

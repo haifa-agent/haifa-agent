@@ -70,6 +70,8 @@ class CodingHostRemoteClientTest {
                 var client = RemoteCodingSessionClient.connect(endpoint(server))) {
             assertThat(client.projectId()).isEqualTo(agent.projectId());
             assertThat(client.info().protocolVersion()).isEqualTo("1");
+            assertThat(client.info().workspace()).hasValueSatisfying(context -> assertThat(context.executionDirectory())
+                    .isEqualTo(workspace.toAbsolutePath().normalize().toString()));
             assertThat(client.info().principalType()).isEqualTo("local-user");
             assertThat(client.info().clientId()).isNotBlank();
             assertThat(client.info().supports("run-start")).isTrue();

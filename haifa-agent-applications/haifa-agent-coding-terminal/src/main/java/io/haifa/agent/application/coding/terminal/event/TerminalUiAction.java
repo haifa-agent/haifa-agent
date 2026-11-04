@@ -25,9 +25,18 @@ public sealed interface TerminalUiAction {
 
     record ContextChanged(String indicator) implements TerminalUiAction {}
 
-    record ShellCompleted(String command, String summary, String processState) implements TerminalUiAction {}
+    record ShellCompleted(String command, String summary, String processState, String destination)
+            implements TerminalUiAction {
+        public ShellCompleted(String command, String summary, String processState) {
+            this(command, summary, processState, "");
+        }
+    }
 
-    record ExportCompleted(String logicalPath, int messageCount) implements TerminalUiAction {}
+    record ExportCompleted(String logicalPath, int messageCount, String destination) implements TerminalUiAction {
+        public ExportCompleted(String logicalPath, int messageCount) {
+            this(logicalPath, messageCount, "");
+        }
+    }
 
     record DeviceLoginInstructionsPresented(String verificationUri, String userCode) implements TerminalUiAction {}
 

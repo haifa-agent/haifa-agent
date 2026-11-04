@@ -2,6 +2,7 @@ package io.haifa.agent.cli.remote;
 
 import io.haifa.agent.project.domain.ProjectId;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 /** Safe, immutable protocol context exposed by one initialized remote Coding Host connection. */
@@ -12,7 +13,8 @@ public record RemoteCodingClientInfo(
         String clientId,
         String principalType,
         Set<String> capabilities,
-        Set<String> unsupported) {
+        Set<String> unsupported,
+        Optional<RemoteCodingWorkspaceInfo> workspace) {
 
     public RemoteCodingClientInfo {
         protocolVersion = requireText(protocolVersion, "protocolVersion");
@@ -22,6 +24,26 @@ public record RemoteCodingClientInfo(
         principalType = requireText(principalType, "principalType");
         capabilities = Set.copyOf(Objects.requireNonNull(capabilities, "capabilities must not be null"));
         unsupported = Set.copyOf(Objects.requireNonNull(unsupported, "unsupported must not be null"));
+        workspace = Objects.requireNonNull(workspace, "workspace must not be null");
+    }
+
+    public RemoteCodingClientInfo(
+            String protocolVersion,
+            String hostName,
+            ProjectId projectId,
+            String clientId,
+            String principalType,
+            Set<String> capabilities,
+            Set<String> unsupported) {
+        this(
+                protocolVersion,
+                hostName,
+                projectId,
+                clientId,
+                principalType,
+                capabilities,
+                unsupported,
+                Optional.empty());
     }
 
     public boolean supports(String capability) {
