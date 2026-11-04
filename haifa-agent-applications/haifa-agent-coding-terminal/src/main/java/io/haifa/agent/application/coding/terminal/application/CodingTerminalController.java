@@ -2131,6 +2131,14 @@ public final class CodingTerminalController implements AutoCloseable {
                                 });
                 apply(new TerminalUiAction.SelectorOpened(
                         new TerminalSelector("session", "Session & Environment", options, 0)));
+                long generation = selectionGeneration;
+                submitEffect(
+                        () -> {
+                            List<String> summary = List.copyOf(client.configurationSummary());
+                            return () -> completeConfigurationSummary(generation, summary);
+                        },
+                        code -> completeConfigurationSummary(
+                                generation, List.of("Host configuration information unavailable")));
             }
             case SESSIONS -> {
                 // Reuses the reviewed resume selector instead of a parallel Session navigator, so keyboard-only and
@@ -2352,6 +2360,16 @@ public final class CodingTerminalController implements AutoCloseable {
                 code -> {
                     if (isCurrentSelection(token)) apply(new TerminalUiAction.RecoverableFailure(code));
                 });
+    }
+
+    private void completeConfigurationSummary(long generation, List<String> summary) {
+        if (generation != selectionGeneration) return;
+        state.selector().filter(selector -> selector.kind().equals("session")).ifPresent(selector -> {
+            List<String> options = new ArrayList<>(selector.options());
+            summary.stream().filter(value -> !options.contains(value)).forEach(options::add);
+            apply(new TerminalUiAction.SelectorOpened(
+                    new TerminalSelector("session", selector.title(), options, selector.selected())));
+        });
     }
 
     private void workspaceTrust(String argument) {

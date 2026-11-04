@@ -66,9 +66,18 @@ class CodingHostRemoteClientTest {
         CliConfiguration configuration =
                 imageModelConfiguration(CodingHostTestFixture.sqliteConfiguration(directory.resolve("remote.db")));
         try (var agent = CodingHostTestFixture.openAgent(workspace, configuration, model);
-                CodingHostServer server = CodingHostServer.start(agent, "127.0.0.1", 0);
+                CodingHostServer server = CodingHostServer.start(
+                        agent,
+                        "127.0.0.1",
+                        0,
+                        new CodingHostConfiguration(configuration, CodingHostConfiguration.Source.EXPLICIT_CONFIG)
+                                .summary());
                 var client = RemoteCodingSessionClient.connect(endpoint(server))) {
             assertThat(client.projectId()).isEqualTo(agent.projectId());
+            assertThat(client.configurationSummary())
+                    .contains(
+                            "Host config source: explicit --config file",
+                            "Workspace config overlay: ignored; use explicit --config for a trusted file");
             assertThat(client.info().protocolVersion()).isEqualTo("1");
             assertThat(client.info().workspace()).hasValueSatisfying(context -> assertThat(context.executionDirectory())
                     .isEqualTo(workspace.toAbsolutePath().normalize().toString()));

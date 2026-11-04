@@ -156,6 +156,29 @@ class RemoteCodingSessionClientTest {
     }
 
     @Test
+    void configurationSummarySupportsNewAndOlderHosts() throws Exception {
+        for (boolean available : List.of(true, false)) {
+            try (FakeCodingHost host = FakeCodingHost.start(call -> switch (call.method()) {
+                        case "initialize" ->
+                            FakeCodingHost.Reply.result(FakeCodingHost.initializeResult("client-1", "project-1"));
+                        case "host/configuration" ->
+                            available
+                                    ? FakeCodingHost.Reply.result(
+                                            map("summary", List.of("Host approval mode for new Runs: ASK")))
+                                    : FakeCodingHost.Reply.error("REMOTE_METHOD_UNSUPPORTED");
+                        default -> FakeCodingHost.Reply.error("REMOTE_METHOD_UNSUPPORTED");
+                    });
+                    var client = RemoteCodingSessionClient.connect(host.uri())) {
+                assertThat(client.configurationSummary())
+                        .containsExactly(
+                                available
+                                        ? "Host approval mode for new Runs: ASK"
+                                        : "Host config source: unavailable (older Host)");
+            }
+        }
+    }
+
+    @Test
     void connectsWithProtocolContextAndSendsClientHeaderForSubsequentCommands() throws Exception {
         try (FakeCodingHost host = FakeCodingHost.start(call -> switch (call.method()) {
             case "initialize" -> FakeCodingHost.Reply.result(FakeCodingHost.initializeResult("client-1", "project-1"));

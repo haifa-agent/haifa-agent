@@ -117,6 +117,39 @@ class CodingTerminalSelectionLifecycleTest {
     }
 
     @Test
+    void sessionConfigurationLoadsInBackgroundWithoutReopeningAClosedSelector() {
+        FakeClient client = new FakeClient(activeView()) {
+            @Override
+            public List<String> configurationSummary() {
+                return List.of("Host config source: explicit --config file", "Workspace config overlay: ignored");
+            }
+        };
+        ArrayDeque<Runnable> effects = new ArrayDeque<>();
+        var pump = new TerminalEventPump(32);
+        var controller = new CodingTerminalController(
+                PROJECT_ID, client, pump, new TerminalUiReducer(), TerminalUiState.initial(120, 40), effects::addLast);
+        controller.open(SESSION_ID);
+        effects.clear();
+        controller.accept(input(TerminalInput.Kind.EXECUTE_COMMAND, "/session"));
+        assertThat(controller.state().selector()).hasValueSatisfying(selector -> assertThat(selector.options())
+                .doesNotContain("Workspace config overlay: ignored"));
+        assertThat(effects).hasSize(1);
+        pump.offer(new TerminalUiAction.TerminalResized(80, 24));
+        controller.drainEvents();
+        assertThat(controller.state().columns()).isEqualTo(80);
+        effects.removeFirst().run();
+        controller.drainEvents();
+        assertThat(controller.state().selector()).hasValueSatisfying(selector -> assertThat(selector.options())
+                .contains("Host config source: explicit --config file", "Workspace config overlay: ignored"));
+        controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
+        controller.accept(input(TerminalInput.Kind.EXECUTE_COMMAND, "/session"));
+        controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
+        effects.removeFirst().run();
+        controller.drainEvents();
+        assertThat(controller.state().selector()).isEmpty();
+    }
+
+    @Test
     void staleSelectionResultsNeverReplaceTheNewestDisplayedSession() {
         FakeClient client = new FakeClient(sessionView("session-b", "B"));
         AgentSessionId a = new AgentSessionId("session-a");

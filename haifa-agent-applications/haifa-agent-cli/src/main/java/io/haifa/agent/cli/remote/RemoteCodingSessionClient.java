@@ -925,6 +925,27 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
     }
 
     @Override
+    public List<String> configurationSummary() {
+        requireUsable();
+        try {
+            List<String> summary =
+                    decode(() -> textList(transport.call("host/configuration", Map.of(), false), "summary"));
+            if (summary.size() > 8
+                    || summary.stream()
+                            .anyMatch(value ->
+                                    value.length() > 256 || value.codePoints().anyMatch(Character::isISOControl))) {
+                throw RemoteRpcTransport.protocolIncompatible();
+            }
+            return summary;
+        } catch (ProjectProductException failure) {
+            if (failure.code().equals("REMOTE_METHOD_UNSUPPORTED")) {
+                return List.of("Host config source: unavailable (older Host)");
+            }
+            throw failure;
+        }
+    }
+
+    @Override
     public List<String> loadedResources() {
         requireUsable();
         return decode(() -> textList(transport.call("resources/loaded", Map.of(), false), "resources"));

@@ -402,6 +402,7 @@ public final class HaifaCliMain {
         try (CodingHostServer server =
                 CodingHostServer.start(host.workspace(), host.config(), host.bind(), host.port())) {
             output.println("CA Host listening on http://" + host.bind() + ":" + server.port());
+            server.configurationSummary().forEach(output::println);
             output.println(
                     "Parallel edits in one physical directory require independent manual worktrees; Host does not create worktrees or detect concurrent write conflicts.");
             Thread shutdown =

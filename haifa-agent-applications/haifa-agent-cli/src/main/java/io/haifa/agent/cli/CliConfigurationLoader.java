@@ -74,6 +74,20 @@ final class CliConfigurationLoader {
         return load(arguments, workspace, userConfiguration, workspaceConfiguration, false);
     }
 
+    CodingHostConfiguration loadHostConfiguration(CliArguments arguments, Path workspace) {
+        return loadHostConfiguration(arguments, workspace, userConfiguration());
+    }
+
+    CodingHostConfiguration loadHostConfiguration(CliArguments arguments, Path workspace, Optional<Path> userConfig) {
+        CliConfiguration resolved = loadForHost(arguments, workspace, userConfig, Path.of(".haifa-agent/config.yaml"));
+        CodingHostConfiguration.Source source = arguments.config().isPresent()
+                ? CodingHostConfiguration.Source.EXPLICIT_CONFIG
+                : userConfig.filter(Files::isRegularFile).isPresent()
+                        ? CodingHostConfiguration.Source.USER_CONFIG
+                        : CodingHostConfiguration.Source.DEFAULTS;
+        return new CodingHostConfiguration(resolved, source);
+    }
+
     private CliConfiguration load(
             CliArguments arguments,
             Path workspace,

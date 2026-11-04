@@ -40,6 +40,7 @@ final class CodingHostServer implements AutoCloseable {
     private static final int COMMAND_PERMITS = 8;
     private static final int CONTROL_PERMITS = 4;
 
+    private final List<String> configurationSummary;
     private final StandaloneCodingAgent agent;
     private final CodingSessionClient client;
     private final ProjectId projectId;
@@ -56,7 +57,9 @@ final class CodingHostServer implements AutoCloseable {
     private final AtomicBoolean closed = new AtomicBoolean();
     private final Map<String, Object> recoveryReport;
 
-    private CodingHostServer(StandaloneCodingAgent agent, InetAddress bind, int port) throws IOException {
+    private CodingHostServer(StandaloneCodingAgent agent, InetAddress bind, int port, List<String> configurationSummary)
+            throws IOException {
+        this.configurationSummary = List.copyOf(configurationSummary);
         this.agent = Objects.requireNonNull(agent, "agent must not be null");
         this.client = agent.client();
         this.projectId = agent.projectId();
@@ -119,7 +122,8 @@ final class CodingHostServer implements AutoCloseable {
                 false,
                 false,
                 false);
-        CliConfiguration configuration = new CliConfigurationLoader().loadForHost(cli, workspace);
+        CodingHostConfiguration resolved = new CliConfigurationLoader().loadHostConfiguration(cli, workspace);
+        CliConfiguration configuration = resolved.configuration();
         if (configuration.persistence().mode()
                 == io.haifa.agent.application.project.persistence.ProjectPersistenceMode.MEMORY) {
             throw new IllegalStateException("HOST_DURABLE_PERSISTENCE_REQUIRED: Host requires SQLITE persistence");
@@ -131,12 +135,34 @@ final class CodingHostServer implements AutoCloseable {
         } catch (io.haifa.agent.application.project.persistence.CodingDatabaseOwnershipException exception) {
             throw new IllegalStateException(exception.getMessage(), exception);
         }
-        return start(agent, bind, port);
+        return start(agent, bind, port, resolved.summary());
     }
 
     static CodingHostServer start(StandaloneCodingAgent agent, String bind, int port) {
+        return start(
+                agent,
+                bind,
+                port,
+                List.of(
+                        "Host config source: programmatic product assembly",
+                        "Workspace config overlay: not loaded by the Host CLI"));
+    }
+
+    List<String> configurationSummary() {
+        return configurationSummary;
+    }
+
+    private Map<String, Object> configurationSummary(JsonNode params) {
+        if (params != null && !params.isNull() && !params.isObject()) {
+            throw CodingHostException.invalidParams("params must be an object");
+        }
+        return Map.of("summary", configurationSummary);
+    }
+
+    static CodingHostServer start(
+            StandaloneCodingAgent agent, String bind, int port, List<String> configurationSummary) {
         try {
-            return new CodingHostServer(agent, loopback(bind), port);
+            return new CodingHostServer(agent, loopback(bind), port, configurationSummary);
         } catch (IOException exception) {
             agent.close();
             throw new IllegalStateException("CA Host listener failed to start", exception);
@@ -255,7 +281,12 @@ final class CodingHostServer implements AutoCloseable {
                             return;
                         }
                         clients.require(clientId);
-                        writeResult(exchange, id, dispatcher.dispatch(clientId, method, request.get("params")));
+                        writeResult(
+                                exchange,
+                                id,
+                                method.equals("host/configuration")
+                                        ? configurationSummary(request.get("params"))
+                                        : dispatcher.dispatch(clientId, method, request.get("params")));
                     }
                 }
             } catch (CodingHostException exception) {
