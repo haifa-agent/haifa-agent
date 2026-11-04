@@ -13,6 +13,9 @@
 - Model requests now expose optional aggregate input composition for ordinary, summary and regeneration calls,
   separating visible estimates from unknown Provider overhead without recording request bodies.
 
+- Remote Coding Terminal streams bounded tool stdout/stderr previews before completion when both peers
+  negotiate preview support. Slow/disconnected preview observers do not stop or replay the Run.
+
 - Remote Coding peers can negotiate optional v1 extensions while preserving old-client capability behavior;
   completion and command help distinguish unavailable credential setup from supported Host operations.
 

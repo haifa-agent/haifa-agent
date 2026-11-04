@@ -20,6 +20,27 @@ import org.junit.jupiter.api.Test;
 class CodingHostWireTest {
 
     @Test
+    void previewIsDisplaySafeAndHasAnIndependentUtf8Budget() {
+        var preview = new io.haifa.agent.execution.api.ToolOutputPreview(
+                new io.haifa.agent.core.run.AgentRunId("run-preview"),
+                new io.haifa.agent.core.tool.ToolCallId("tool-preview"),
+                io.haifa.agent.execution.api.ExecutionOutputChannel.STDERR,
+                "\u001b[31mpassword=synthetic-value \u0000" + "界".repeat(2000),
+                true,
+                false);
+        var wire = CodingHostWire.preview(preview, new io.haifa.agent.core.session.AgentSessionId("session-preview"));
+        assertThat(wire)
+                .containsEntry("channel", "STDERR")
+                .containsEntry("outputTruncated", true)
+                .containsEntry("previewDropped", true)
+                .containsEntry("toolCallId", "tool-preview");
+        String text = (String) wire.get("text");
+        assertThat(text).doesNotContain("synthetic-value", "\u001b", "\u0000");
+        assertThat(text.getBytes(java.nio.charset.StandardCharsets.UTF_8).length)
+                .isLessThanOrEqualTo(4096);
+    }
+
+    @Test
     void compactionThroughKeepsTheActualCursorValue() {
         CodingCompactionResult result =
                 new CodingCompactionResult(Optional.of("summary-ref"), 3L, 12, 456, new MessageCursor(42L));

@@ -54,6 +54,49 @@ class CodingHostRemoteClientTest {
     Path directory;
 
     @Test
+    void realHostForwardsTransientPreviewWhileRunIsStillActive() throws Exception {
+        Path workspace = Files.createDirectory(directory.resolve("preview-assembly"));
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        AgentChatModel model = request -> {
+            started.countDown();
+            CodingHostTestFixture.await(release);
+            return CodingHostTestFixture.response("preview-finished");
+        };
+        try (var agent = CodingHostTestFixture.openAgent(
+                        workspace, CodingHostTestFixture.sqliteConfiguration(directory.resolve("preview.db")), model);
+                var host = CodingHostServer.start(agent, "127.0.0.1", 0);
+                var client = RemoteCodingSessionClient.connect(endpoint(host))) {
+            try {
+                assertThat(client.info().optionalCapabilities()).containsExactly("preview-v1");
+                var view = client.create(client.projectId(), "synthetic preview task", "preview-create");
+                var run = view.activeRun().orElseThrow().runId();
+                assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+                var received =
+                        new java.util.concurrent.LinkedBlockingQueue<io.haifa.agent.execution.api.ToolOutputPreview>();
+                try (var observation = client.previewPublisher().subscribe(run, received::add)) {
+                    try (var output = agent.toolOutputPreviewPublisher()
+                            .open(run, new io.haifa.agent.core.tool.ToolCallId("preview-call"))) {
+                        output.onOutput(new io.haifa.agent.execution.api.ProcessOutputChunk(
+                                io.haifa.agent.execution.api.ExecutionOutputChannel.STDOUT,
+                                "progress before completion".getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                                false,
+                                false));
+                    }
+                    assertThat(received.poll(5, TimeUnit.SECONDS))
+                            .isNotNull()
+                            .extracting(io.haifa.agent.execution.api.ToolOutputPreview::text)
+                            .isEqualTo("progress before completion");
+                    assertThat(client.findRun(run).orElseThrow().status()).isEqualTo(AgentRunStatus.RUNNING);
+                }
+                assertThat(client.findRun(run).orElseThrow().status()).isEqualTo(AgentRunStatus.RUNNING);
+            } finally {
+                release.countDown();
+            }
+        }
+    }
+
+    @Test
     void hostAndRemoteClientShareSessionRunModelsCompactionAndReplay() throws Exception {
         Path workspace = Files.createDirectory(directory.resolve("remote-assembly"));
         CountDownLatch modelStarted = new CountDownLatch(1);

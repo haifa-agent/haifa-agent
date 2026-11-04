@@ -70,7 +70,8 @@ final class CodingHostServer implements AutoCloseable {
                 CodingHostSubscriptions.DEFAULT_QUEUE_CAPACITY,
                 local.time(),
                 CodingHostSubscriptions.DEFAULT_ATTACH_TIMEOUT,
-                local.identifiers());
+                local.identifiers(),
+                agent.toolOutputPreviewPublisher());
         this.clients = new CodingHostClients(
                 local.identifiers(),
                 local.time(),
@@ -269,7 +270,10 @@ final class CodingHostServer implements AutoCloseable {
                     if (result instanceof Map<?, ?> values) {
                         values.forEach((key, value) -> initialized.put(String.valueOf(key), value));
                     }
-                    initialized.put("clientId", clients.initialize());
+                    @SuppressWarnings("unchecked")
+                    java.util.Set<String> optional = (java.util.Set<String>)
+                            initialized.getOrDefault("optionalCapabilities", java.util.Set.of());
+                    initialized.put("clientId", clients.initialize(optional));
                     writeResult(exchange, id, initialized);
                 } else {
                     if (method.equals("host/ping")) {
@@ -281,6 +285,7 @@ final class CodingHostServer implements AutoCloseable {
                             return;
                         }
                         clients.require(clientId);
+                        if (method.equals("preview/subscribe")) clients.requireOptional(clientId, "preview-v1");
                         writeResult(
                                 exchange,
                                 id,

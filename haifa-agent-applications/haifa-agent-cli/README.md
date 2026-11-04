@@ -188,8 +188,9 @@ model configuration, Runtime, persistence and credentials. The shipped launchers
 through untouched, without injecting the bundled `--config` and without creating the per-user data directories that
 only the local modes use.
 
-The Host stays authoritative for tool-output preview, session consent and credential setup, so those actions are
-refused up front in this mode; ordinary per-approval approve/reject and authenticated logout remain available.
+The Host stays authoritative for tool-output preview; new peers stream it only after explicit optional capability
+negotiation. Session consent and credential setup remain refused up front; ordinary per-approval approve/reject
+and authenticated logout remain available.
 An unavailable or protocol-incompatible Host fails fast with a stable `REMOTE_*` code and never falls back to an
 embedded Run. When a Run settles while a queued follow-up has already advanced on the Host, the terminal performs one
 bounded reconcile per settled Run to move onto the successor instead of reloading on every delta. Closing this
@@ -950,6 +951,23 @@ store. Their behavior has no executed long-command failure evidence comparable t
 extensions in an array with the same name. An absent response field from an older Host means no extensions.
 Legacy `preview`, `session-consent` and `auth-mutation` booleans remain false for compatibility with old v1
 clients; new features must not flip those legacy bits. Unknown offers are ignored; malformed offers or an
-unrequested Host selection fail the handshake. The current composition offers no unfinished feature.
+unrequested Host selection fail the handshake. The new composition offers `preview-v1`; the Host selects it only when its existing execution preview publisher is available.
 Remote completion excludes credential setup; `/commands` and `/help` explain its unavailability and label
 supported Host-side actions. Pending approval/reopen, trust, reload and export remain available.
+
+
+### Remote tool-output preview
+
+New peers explicitly negotiate `preview-v1` through `initialize.optionalCapabilities`; old v1 capability bits
+and Session `previewAvailable` fields retain their legacy false values. `preview/subscribe` requires the
+negotiated logical client context plus an exact Session/Run pair, and returns a `tool-preview` SSE subscription;
+`preview/unsubscribe` closes only that observation. Existing client/subscription limits, attach expiry and
+queue capacity apply. Each safe frame is bounded to 4096 UTF-8 bytes and preserves ToolCallId/channel and
+separate execution-truncation/preview-loss flags. The execution broker's cross-chunk sensitive-value redaction
+remains upstream; Host display projection additionally filters controls and credential patterns.
+
+The remote adapter consumes the public execution preview API only; it does not construct execution brokers,
+providers or persistence. Preview is transient and has no cursor, replay or history persistence. Queue overflow,
+disconnect and slow observers drop their observation without cancelling/replaying the Run. The terminal retains
+its existing bounded per-tool display tail; completed tool results remain authoritative. Older peers continue
+without preview, and session consent/remote credential mutation remain disabled.

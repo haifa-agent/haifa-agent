@@ -8,7 +8,6 @@ import io.haifa.agent.application.coding.terminal.tui4j.Tui4jTerminalIo;
 import io.haifa.agent.application.project.product.ProjectProductException;
 import io.haifa.agent.cli.remote.RemoteCodingClientInfo;
 import io.haifa.agent.cli.remote.RemoteCodingSessionClient;
-import io.haifa.agent.execution.api.ToolOutputPreviewPublisher;
 import java.io.PrintStream;
 import java.net.URI;
 import java.util.Objects;
@@ -20,8 +19,8 @@ import java.util.function.Supplier;
  *
  * <p>Nothing here reads the client's Git repository, credentials, model configuration or database: the Host owns
  * the workspace, Runtime, persistence and credentials. Workspace display facts come only from the Host
- * handshake, and the terminal runs with {@link CodingTerminalConnectionOptions#remoteV1()} so preview,
- * session consent and credential setup are refused up front instead of failing mid-interaction.
+ * handshake. The terminal receives negotiated preview support; session consent and credential setup
+ * remain independently disabled before any secret is collected.
  */
 final class RemoteCodingTerminalRunner implements CliRemoteTerminalRunner {
     private final Function<URI, RemoteCodingSessionClient> connector;
@@ -48,7 +47,11 @@ final class RemoteCodingTerminalRunner implements CliRemoteTerminalRunner {
             output.println("Remote CA Host connected: " + endpoint);
             output.println("Host: " + info.hostName() + "  Project: "
                     + info.projectId().value());
-            output.println("Preview, session consent and credential setup are owned by the Host and unavailable here.");
+            output.println("Tool output preview: "
+                    + (info.optionalCapabilities().contains("preview-v1")
+                            ? "enabled (Host)"
+                            : "unavailable (Host/client compatibility)"));
+            output.println("Session consent and credential setup are unavailable in this remote UI.");
             new CodingTerminalApplication(
                             client.projectId(),
                             client,
@@ -56,7 +59,7 @@ final class RemoteCodingTerminalRunner implements CliRemoteTerminalRunner {
                             terminalIo,
                             workspaceContext(info),
                             client.authentication(),
-                            ToolOutputPreviewPublisher.noop(),
+                            client.previewPublisher(),
                             CodingTerminalConnectionOptions.remoteV1(
                                     info.workspace()
                                             .map(value -> value.executionDirectory())

@@ -22,6 +22,54 @@ import org.junit.jupiter.api.Test;
 
 class CodingHostSubscriptionsTest {
     @Test
+    void previewOverflowAndDetachCloseOnlyTheirObservation() throws Exception {
+        var run = new AgentRunId("run-preview");
+        var session = new AgentSessionId("session-preview");
+        var closes = new AtomicInteger();
+        var receiver =
+                new AtomicReference<java.util.function.Consumer<io.haifa.agent.execution.api.ToolOutputPreview>>();
+        var publisher = new io.haifa.agent.execution.api.ToolOutputPreviewPublisher() {
+            public ToolOutputPreviewSubscription subscribe(
+                    AgentRunId id,
+                    java.util.function.Consumer<io.haifa.agent.execution.api.ToolOutputPreview> consumer) {
+                receiver.set(consumer);
+                return closes::incrementAndGet;
+            }
+
+            public ToolOutputPreviewSink open(AgentRunId id, io.haifa.agent.core.tool.ToolCallId tool) {
+                throw new AssertionError("Observation must not open execution output");
+            }
+        };
+        var subscriptions = new CodingHostSubscriptions(
+                eventClient(new AtomicInteger()),
+                1,
+                1,
+                () -> Instant.EPOCH,
+                Duration.ofSeconds(30),
+                new io.haifa.agent.common.id.UuidV7IdentifierGenerator(),
+                publisher);
+        var preview = new io.haifa.agent.execution.api.ToolOutputPreview(
+                run,
+                new io.haifa.agent.core.tool.ToolCallId("call-preview"),
+                io.haifa.agent.execution.api.ExecutionOutputChannel.STDOUT,
+                "chunk",
+                false,
+                false);
+        String first = subscriptions.subscribePreview("client-preview", session, run);
+        var attached = subscriptions.attach("client-preview", first);
+        receiver.get().accept(preview);
+        assertThat(attached.poll(1, java.util.concurrent.TimeUnit.SECONDS)).containsEntry("text", "chunk");
+        receiver.get().accept(preview);
+        receiver.get().accept(preview);
+        assertThat(attached.closed()).isTrue();
+        assertThat(closes).hasValue(1);
+        String second = subscriptions.subscribePreview("client-preview", session, run);
+        assertThat(subscriptions.unsubscribe("other-client", second)).isFalse();
+        assertThat(subscriptions.unsubscribe("client-preview", second)).isTrue();
+        assertThat(closes).hasValue(2);
+    }
+
+    @Test
     void overflowDuringSubscribeClosesTheReturnedHandleExactlyOnce() {
         AgentRunId runId = new AgentRunId("run-subscription");
         AgentSessionId sessionId = new AgentSessionId("session-subscription");
@@ -52,13 +100,7 @@ class CodingHostSubscriptionsTest {
         AgentRunId runId = new AgentRunId("run-subscription-2");
         AgentSessionId sessionId = new AgentSessionId("session-subscription-2");
         AtomicInteger closes = new AtomicInteger();
-        CodingSessionClient client = (CodingSessionClient) Proxy.newProxyInstance(
-                CodingSessionClient.class.getClassLoader(),
-                new Class<?>[] {CodingSessionClient.class},
-                (proxy, method, arguments) -> {
-                    if (method.getName().equals("subscribe")) return subscription(closes);
-                    throw new UnsupportedOperationException(method.getName());
-                });
+        CodingSessionClient client = eventClient(closes);
         CodingHostSubscriptions subscriptions = new CodingHostSubscriptions(client, 4, 2);
         String id = subscriptions.subscribeEvents("client-1", sessionId, runId, RunEventCursor.beforeFirst(runId));
 
@@ -76,13 +118,7 @@ class CodingHostSubscriptionsTest {
         AgentRunId runId = new AgentRunId("run-expiry");
         AgentSessionId sessionId = new AgentSessionId("session-expiry");
         AtomicInteger closes = new AtomicInteger();
-        CodingSessionClient client = (CodingSessionClient) Proxy.newProxyInstance(
-                CodingSessionClient.class.getClassLoader(),
-                new Class<?>[] {CodingSessionClient.class},
-                (proxy, method, arguments) -> {
-                    if (method.getName().equals("subscribe")) return subscription(closes);
-                    throw new UnsupportedOperationException(method.getName());
-                });
+        CodingSessionClient client = eventClient(closes);
         AtomicReference<Instant> now = new AtomicReference<>(Instant.EPOCH);
         CodingHostSubscriptions subscriptions = new CodingHostSubscriptions(
                 client,
@@ -113,6 +149,16 @@ class CodingHostSubscriptionsTest {
                 closes.incrementAndGet();
             }
         };
+    }
+
+    private static CodingSessionClient eventClient(AtomicInteger closes) {
+        return (CodingSessionClient) Proxy.newProxyInstance(
+                CodingSessionClient.class.getClassLoader(),
+                new Class<?>[] {CodingSessionClient.class},
+                (proxy, method, arguments) -> {
+                    if (method.getName().equals("subscribe")) return subscription(closes);
+                    throw new AssertionError("Unexpected product operation: " + method.getName());
+                });
     }
 
     private static AgentRunEvent event(AgentRunId runId, AgentSessionId sessionId, long sequence) {

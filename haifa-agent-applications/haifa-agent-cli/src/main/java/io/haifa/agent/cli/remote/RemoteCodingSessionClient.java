@@ -70,7 +70,7 @@ import java.util.function.Supplier;
  */
 public final class RemoteCodingSessionClient implements CodingSessionClient, AutoCloseable {
     private static final String PROTOCOL_VERSION = "1";
-    private static final Set<String> OPTIONAL_CAPABILITIES = Set.of();
+    private static final Set<String> OPTIONAL_CAPABILITIES = Set.of("preview-v1");
     private static final Set<String> REQUIRED_CAPABILITIES = Set.of(
             "session-list",
             "session-create",
@@ -968,6 +968,86 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
         return subscription;
     }
 
+    /** Observation-only adapter over the negotiated transient preview lane. */
+    public io.haifa.agent.execution.api.ToolOutputPreviewPublisher previewPublisher() {
+        return new io.haifa.agent.execution.api.ToolOutputPreviewPublisher() {
+            @Override
+            public ToolOutputPreviewSubscription subscribe(
+                    AgentRunId runId,
+                    java.util.function.Consumer<io.haifa.agent.execution.api.ToolOutputPreview> consumer) {
+                Objects.requireNonNull(consumer, "consumer must not be null");
+                requireUsable();
+                if (!info.optionalCapabilities().contains("preview-v1")) return () -> {};
+                AgentSessionId sessionId = sessionForRun(runId);
+                String contextId = transport.clientId();
+                JsonNode ack = transport.call(
+                        "preview/subscribe",
+                        RemoteRpcTransport.params("sessionId", sessionId.value(), "runId", runId.value()),
+                        false);
+                String id = decode(() -> subscriptionId(ack, sessionId, runId, "tool-preview"));
+                var last = new java.util.concurrent.atomic.AtomicReference<
+                        io.haifa.agent.execution.api.ToolOutputPreview>();
+                RemoteSseSubscription subscription = new RemoteSseSubscription(
+                        transport,
+                        executor,
+                        id,
+                        sessionId,
+                        runId,
+                        "tool-preview",
+                        node -> {
+                            var preview = decode(() -> previewNode(node, sessionId, runId));
+                            last.set(preview);
+                            try {
+                                consumer.accept(preview);
+                            } catch (RuntimeException ignored) {
+                                // Preview observers cannot change authoritative Run state.
+                            }
+                        },
+                        failure -> {
+                            var previous = last.get();
+                            if (previous == null) return;
+                            try {
+                                consumer.accept(new io.haifa.agent.execution.api.ToolOutputPreview(
+                                        runId, previous.toolCallId(), previous.channel(), "", false, true));
+                            } catch (RuntimeException ignored) {
+                                // Preview observers cannot change authoritative Run state.
+                            }
+                        },
+                        RemoteCodingSessionClient.this::retire);
+                install(subscription, contextId);
+                return subscription::close;
+            }
+
+            @Override
+            public ToolOutputPreviewSink open(AgentRunId runId, io.haifa.agent.core.tool.ToolCallId toolCallId) {
+                throw new UnsupportedOperationException("Remote preview publisher is observation-only");
+            }
+        };
+    }
+
+    private io.haifa.agent.execution.api.ToolOutputPreview previewNode(
+            JsonNode node, AgentSessionId sessionId, AgentRunId runId) {
+        if (!sessionId.value().equals(RemoteWireCodec.requiredText(node, "sessionId"))
+                || !runId.value().equals(RemoteWireCodec.requiredText(node, "runId"))) {
+            throw new ProjectProductException(
+                    "REMOTE_EVENT_TARGET_MISMATCH", "Preview target differs from subscription");
+        }
+        JsonNode text = node.get("text");
+        if (text == null
+                || !text.isTextual()
+                || text.textValue().getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 4096) {
+            throw RemoteRpcTransport.protocolIncompatible();
+        }
+        return new io.haifa.agent.execution.api.ToolOutputPreview(
+                runId,
+                new io.haifa.agent.core.tool.ToolCallId(RemoteWireCodec.requiredText(node, "toolCallId")),
+                io.haifa.agent.execution.api.ExecutionOutputChannel.valueOf(
+                        RemoteWireCodec.requiredText(node, "channel")),
+                text.textValue(),
+                RemoteWireCodec.requiredBoolean(node, "outputTruncated"),
+                RemoteWireCodec.requiredBoolean(node, "previewDropped"));
+    }
+
     private void install(RemoteSseSubscription subscription, String contextId) {
         synchronized (lifecycleLock) {
             if (closed) {
@@ -1199,7 +1279,12 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
         if (closed) {
             return;
         }
-        String method = "output".equals(subscription.type()) ? "output/unsubscribe" : "events/unsubscribe";
+        String method =
+                switch (subscription.type()) {
+                    case "output" -> "output/unsubscribe";
+                    case "tool-preview" -> "preview/unsubscribe";
+                    default -> "events/unsubscribe";
+                };
         transport.callBestEffort(method, RemoteRpcTransport.params("subscriptionId", subscription.subscriptionId()));
     }
 

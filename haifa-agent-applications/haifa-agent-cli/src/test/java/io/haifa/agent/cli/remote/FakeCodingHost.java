@@ -133,7 +133,9 @@ final class FakeCodingHost implements AutoCloseable {
             JsonNode params = request == null ? null : request.get("params");
             String clientId = exchange.getRequestHeaders().getFirst("X-CA-Client-ID");
             calls.add(new RpcCall(method, params, clientId, request));
-            if (method.equals("events/unsubscribe") || method.equals("output/unsubscribe")) {
+            if (method.equals("events/unsubscribe")
+                    || method.equals("output/unsubscribe")
+                    || method.equals("preview/unsubscribe")) {
                 JsonNode subscriptionId = params == null ? null : params.get("subscriptionId");
                 if (subscriptionId != null && subscriptionId.isTextual()) {
                     CountDownLatch latch = unsubscribeLatches.get(subscriptionId.textValue());
