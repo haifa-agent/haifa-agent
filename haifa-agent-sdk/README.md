@@ -388,6 +388,17 @@ A Child keeps its slot while waiting for approval and until its terminal Run and
 have settled. Releasing a slot wakes waiting parents across all participating Agents. Cancelling a
 parent waiting for admission creates no Child. Closing one Agent does not close the shared capacity.
 
+## Optional Run working sets
+
+`HaifaAgentBuilder.enableRunWorkingSet()` (or `enableRunWorkingSet(2048)`) enables bounded selection
+and its required built-in history readers. It defaults off; explicit frozen Profile values take precedence,
+and Tool allowlists remain authoritative. Current original USER input, latest Steer, required sources and
+current execution links are retained. Prior sparse history is quoted data with source/version references.
+A lightweight handoff uses existing facts and never adds a per-Run summary call or Store.
+In-use read results survive later Tool calls until summary commit or safe reselection. The working-set
+target is a soft objective; required evidence and bounded cache deferral may exceed it while hard budgets
+still apply. See the Runtime Core README for frozen controls, retention, cache predictions and adapter limits.
+
 ## Optional historical retrieval
 
 `HaifaAgentBuilder.enableHistoryRetrieval()` contributes `history_search` and `history_read` through the existing

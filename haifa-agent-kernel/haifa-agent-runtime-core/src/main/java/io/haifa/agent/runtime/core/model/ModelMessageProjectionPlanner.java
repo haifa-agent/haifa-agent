@@ -35,8 +35,8 @@ import java.util.function.Function;
 public final class ModelMessageProjectionPlanner {
 
     public static final String PRUNED_PAYLOAD_NOTICE =
-            "\n[Historical large pure-read payload pruned; rerun the tool to inspect current state, "
-                    + "which may differ from the historical bytes.]";
+            "\n[Historical payload omitted. Use authorized history_search/history_read for the saved version; "
+                    + "if no reader is available, historical content is unavailable. A fresh execution is not historical recovery.]";
 
     public static final int PROTECTED_TAIL_GROUPS = 2;
     public static final int BATCH_STEP = 2;
@@ -71,6 +71,11 @@ public final class ModelMessageProjectionPlanner {
      */
     public ModelMessageProjectionPlan plan(
             List<AgentMessage> messages, Function<ToolCallId, ToolCall> toolCallResolver) {
+        return plan(messages, toolCallResolver, Set.of());
+    }
+
+    public ModelMessageProjectionPlan plan(
+            List<AgentMessage> messages, Function<ToolCallId, ToolCall> toolCallResolver, Set<ToolCallId> inUse) {
         if (messages.isEmpty()) {
             return ModelMessageProjectionPlan.EMPTY;
         }
@@ -78,7 +83,8 @@ public final class ModelMessageProjectionPlanner {
         OperationToolBindings bindings = new OperationToolBindings(runs, state);
         List<AtomicToolGroup> qualifyingGroups = new ArrayList<>();
         for (AtomicToolGroup group : identifyCompletedToolGroups(messages)) {
-            if (isEligibleGroup(group, toolCallResolver, bindings)) {
+            if (group.toolCallIds().stream().noneMatch(inUse::contains)
+                    && isEligibleGroup(group, toolCallResolver, bindings)) {
                 qualifyingGroups.add(group);
             }
         }
@@ -172,7 +178,7 @@ public final class ModelMessageProjectionPlanner {
                     if (call != null && call.result().isPresent()) {
                         ToolResult result = call.result().get();
                         if (prunedToolResults.contains(call.id())) {
-                            total += HeuristicTokenEstimator.tokens(result.summary() + PRUNED_PAYLOAD_NOTICE);
+                            total += HeuristicTokenEstimator.tokens(result.summary() + omissionNotice(call));
                         } else {
                             total += HeuristicTokenEstimator.tokens(result.summary());
                             total += HeuristicTokenEstimator.tokens(result.structuredData());
@@ -186,6 +192,11 @@ public final class ModelMessageProjectionPlanner {
             }
         }
         return total;
+    }
+
+    public static String omissionNotice(ToolCall call) {
+        return PRUNED_PAYLOAD_NOTICE + " [runId=" + call.runId().value() + "; toolCallId="
+                + call.id().value() + "]";
     }
 
     private record AtomicToolGroup(List<ToolCallId> toolCallIds) {}

@@ -24,6 +24,70 @@ import org.junit.jupiter.api.io.TempDir;
 
 class RunMessagePagingTest {
     @Test
+    void requiredHistoryIndexIsBackfilledOnUpgradeAndSurvivesReopen(@TempDir Path directory) throws Exception {
+        AgentRunId runId;
+        var config = SqliteTestSupport.configuration(directory);
+        try (var foundation = SqliteStoreFoundation.initialize(config, SqliteTestSupport.CLOCK)) {
+            runId = SqliteAggregateTestData.prepareRun(foundation).id();
+            var messages = foundation.messages();
+            messages.appendSessionMessage(draft(
+                    "constraint",
+                    runId,
+                    MessageRole.USER,
+                    MessageVisibility.USER_VISIBLE,
+                    "Project constraint: preserve old evidence"));
+            messages.appendSessionMessage(
+                    draft("ordinary", runId, MessageRole.USER, MessageVisibility.USER_VISIBLE, "unrelated"));
+            var image = draft("media", runId, MessageRole.USER, MessageVisibility.USER_VISIBLE, "reference image");
+            messages.appendSessionMessage(new SessionMessageDraft(
+                    image.id(),
+                    image.sessionId(),
+                    image.runId(),
+                    Optional.empty(),
+                    image.role(),
+                    image.status(),
+                    image.visibility(),
+                    List.of(new io.haifa.agent.core.content.ImageUrlContentPart(
+                            java.net.URI.create("https://example.test/source.png"))),
+                    Map.of(),
+                    image.createdAt()));
+            var imported =
+                    draft("imported", runId, MessageRole.USER, MessageVisibility.USER_VISIBLE, "imported original");
+            messages.appendSessionMessage(new SessionMessageDraft(
+                    imported.id(),
+                    imported.sessionId(),
+                    Optional.empty(),
+                    Optional.empty(),
+                    imported.role(),
+                    imported.status(),
+                    imported.visibility(),
+                    imported.contents(),
+                    Map.of(),
+                    imported.createdAt()));
+            assertThat(messages.requiredHistory(new AgentSessionId("session"), 0, 100, 8))
+                    .extracting(m -> m.id().value())
+                    .containsExactly("constraint", "media", "imported");
+        }
+        // Recreate the prior schema over the same authoritative rows, then exercise the actual upgrade.
+        try (var connection = java.sql.DriverManager.getConnection("jdbc:sqlite:" + config.databasePath());
+                var statement = connection.createStatement()) {
+            statement.execute("DROP INDEX idx_message_required_history");
+            statement.execute("ALTER TABLE session_message DROP COLUMN history_requires_retention");
+            statement.execute("DELETE FROM schema_migration WHERE version = 16");
+        }
+        try (var foundation = SqliteStoreFoundation.initialize(config, SqliteTestSupport.CLOCK)) {
+            var messages = foundation.messages();
+            assertThat(messages.requiredHistory(new AgentSessionId("session"), 0, 100, 8))
+                    .extracting(m -> m.id().value())
+                    .containsExactly("constraint", "media", "imported");
+            messages.redactMessage(new AgentMessageId("media"));
+            assertThat(messages.requiredHistory(new AgentSessionId("session"), 0, 100, 8))
+                    .extracting(m -> m.id().value())
+                    .containsExactly("constraint", "imported");
+        }
+    }
+
+    @Test
     void initiatingInputKeepsItsIdentityAfterRedactionAndReopen(@TempDir Path directory) {
         AgentRunId runId;
         try (var foundation =
@@ -36,13 +100,19 @@ class RunMessagePagingTest {
                     draft("later", runId, MessageRole.USER, MessageVisibility.USER_VISIBLE, "later input"));
             assertThat(messages.initiatingUserMessage(runId).orElseThrow().id().value())
                     .isEqualTo("original");
+            assertThat(messages.latestUserMessage(runId).orElseThrow().id().value())
+                    .isEqualTo("later");
             messages.redactMessage(new AgentMessageId("original"));
+            messages.redactMessage(new AgentMessageId("later"));
         }
         try (var reopened =
                 SqliteStoreFoundation.initialize(SqliteTestSupport.configuration(directory), SqliteTestSupport.CLOCK)) {
             var original = reopened.messages().initiatingUserMessage(runId).orElseThrow();
             assertThat(original.id().value()).isEqualTo("original");
             assertThat(original.status()).isEqualTo(MessageStatus.REDACTED);
+            var latest = reopened.messages().latestUserMessage(runId).orElseThrow();
+            assertThat(latest.id().value()).isEqualTo("later");
+            assertThat(latest.status()).isEqualTo(MessageStatus.REDACTED);
         }
     }
 

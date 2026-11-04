@@ -519,20 +519,26 @@ public final class RuntimeCoreBuilder {
                 new ModelMessageProjectionPlanner(runs, state, new FrozenBindingToolResultQualifier());
         var history = new io.haifa.agent.runtime.core.history.HistoryToolProvider(persistence, access);
         history.watchRedactions();
+        var sessionMessageSource = new SessionMessageSource(
+                state, summaries, compressor, effectiveCompressionPolicy, ids, time, activeContexts);
+        var workingSets = new io.haifa.agent.runtime.core.loop.RunWorkingSetSource(
+                persistence, history, sessionMessageSource, time);
+        sessionMessageSource.workingSets(workingSets);
         FrozenModelInvoker models = new FrozenModelInvoker(
-                state,
-                chatModels,
-                ids,
-                modelOutput,
-                controls,
-                events,
-                time,
-                modelImageResolver,
-                modelAudioResolver,
-                activeContexts,
-                definitionResolver,
-                projectionPlanner,
-                history);
+                        state,
+                        chatModels,
+                        ids,
+                        modelOutput,
+                        controls,
+                        events,
+                        time,
+                        modelImageResolver,
+                        modelAudioResolver,
+                        activeContexts,
+                        definitionResolver,
+                        projectionPlanner,
+                        history)
+                .workingSets(workingSets);
         RunAwaiter awaiter = new RunAwaiter();
         RunTransitionCoordinator transitions = new RunTransitionCoordinator(
                 runs, state, events, outbox, ids, time, awaiter, unitOfWork, configuredRunInputs);
@@ -660,8 +666,7 @@ public final class RuntimeCoreBuilder {
                 outbox);
         ResumeCoordinator resumeCoordinator = new ResumeCoordinator(
                 interactions, checkpointsRepository, transitions, state, access, toolInvoker, skillContentLoader);
-        var sessionMessageSource = new SessionMessageSource(
-                state, summaries, compressor, effectiveCompressionPolicy, ids, time, activeContexts);
+
         var memoryContextSource = new MemoryContextSource(configuredMemoryRetriever, state);
         RunInputApplier runInputApplier =
                 new RunInputApplier(configuredRunInputs, state, events, outbox, unitOfWork, ids, time);
@@ -669,18 +674,19 @@ public final class RuntimeCoreBuilder {
         var summaryModelInvoker =
                 new SummaryModelInvoker(transitions, controls, ids, time, effectiveCompressionPolicy, events);
         var compactionCoordinator = new SemanticCompactionCoordinator(
-                state,
-                summaries,
-                summaryModelInvoker,
-                compactionTriggerEvaluator,
-                effectiveCompressionPolicy,
-                compressor,
-                ids,
-                time,
-                events,
-                projectionPlanner,
-                activeContexts,
-                history);
+                        state,
+                        summaries,
+                        summaryModelInvoker,
+                        compactionTriggerEvaluator,
+                        effectiveCompressionPolicy,
+                        compressor,
+                        ids,
+                        time,
+                        events,
+                        projectionPlanner,
+                        activeContexts,
+                        history)
+                .workingSets(workingSets);
         AgentLoop loop = new DefaultAgentLoop(
                 controls,
                 List.of(new BudgetGuard(), new IterationGuard()),

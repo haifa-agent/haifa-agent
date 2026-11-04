@@ -8,6 +8,10 @@
 - A trusted-local auth command repairs model credentials while Coding Host keeps its Runtime/SQLite ownership.
   Remote connection guidance shows the Host/account command and /account refreshes the repaired connection.
 
+- Add opt-in Run working sets with bounded history selection, lightweight handoff, protected in-use evidence
+  and conservative cache deferral. Keep required sources, Run hard limits and existing summary coverage rules;
+  SQLite V16 backfills an index over existing source records without adding another history body store.
+
 - Remote Coding Terminal supports explicitly negotiated Session consent with a client-bound lease.
   Lost renewal, reset, cancellation, reconnect and Host restart cannot silently preserve or transfer consent.
 

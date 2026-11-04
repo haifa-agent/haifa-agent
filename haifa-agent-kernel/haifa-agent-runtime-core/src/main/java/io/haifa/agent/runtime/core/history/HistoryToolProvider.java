@@ -91,6 +91,104 @@ public final class HistoryToolProvider implements ToolProvider {
         ports.unitOfWork().executeReadOnly(() -> authorize(run, run.id()));
     }
 
+    public AgentRun authorizedRun(AgentRun current, AgentRunId source) {
+        return ports.unitOfWork().executeReadOnly(() -> authorize(current, source));
+    }
+
+    public Optional<io.haifa.agent.context.item.HistoricalExcerptContent> excerpt(
+            AgentRun current, AgentMessage message, int length) {
+        return ports.unitOfWork().executeReadOnly(() -> {
+            try {
+                Source value = source(current, message.runId().orElseThrow(Unavailable::new), message.id(), "");
+                if (message.contents().stream()
+                        .anyMatch(part -> !(part instanceof TextPart)
+                                && !(part instanceof ToolResultPart)
+                                && !(part instanceof io.haifa.agent.core.content.ToolCallPart)))
+                    return Optional.empty();
+                value = materialize(value);
+                var window = value.window(0, length, 1);
+                if (window.incomplete() || window.value().isBlank()) return Optional.empty();
+                return Optional.of(new io.haifa.agent.context.item.HistoricalExcerptContent(
+                        value.runId(),
+                        message.id(),
+                        value.version(),
+                        value.calls().size() == 1
+                                ? Optional.of(value.calls().getFirst().id())
+                                : Optional.empty(),
+                        0,
+                        length,
+                        window.value()));
+            } catch (Unavailable unavailable) {
+                return Optional.empty();
+            }
+        });
+    }
+
+    public Optional<io.haifa.agent.context.item.HistoricalExcerptContent> refresh(
+            AgentRunId current, io.haifa.agent.context.item.HistoricalExcerptContent excerpt) {
+        return ports.unitOfWork().executeReadOnly(() -> {
+            try {
+                var run = ports.runs().find(current).orElseThrow(Unavailable::new);
+                var value = source(
+                        run,
+                        excerpt.runId(),
+                        excerpt.messageId(),
+                        excerpt.toolCallId().map(ToolCallId::value).orElse(""));
+                if (!value.version().equals(excerpt.version())) return Optional.empty();
+                var window = materialize(value).window(excerpt.offset(), excerpt.length(), 1);
+                if (window.incomplete()) return Optional.empty();
+                return Optional.of(new io.haifa.agent.context.item.HistoricalExcerptContent(
+                        excerpt.runId(),
+                        excerpt.messageId(),
+                        excerpt.version(),
+                        excerpt.toolCallId(),
+                        excerpt.offset(),
+                        excerpt.length(),
+                        window.value()));
+            } catch (Unavailable unavailable) {
+                return Optional.empty();
+            }
+        });
+    }
+
+    public boolean validPlan(AgentRunId current, AgentRunId owner, String revision) {
+        return ports.unitOfWork().executeReadOnly(() -> {
+            var run = ports.runs().find(current).orElseThrow(Unavailable::new);
+            authorize(run, owner);
+            return ports.state()
+                    .plan(owner)
+                    .filter(plan -> Long.toString(plan.revision()).equals(revision))
+                    .isPresent();
+        });
+    }
+
+    public boolean validSummary(AgentRunId current, String id, long version) {
+        return ports.unitOfWork().executeReadOnly(() -> {
+            var run = ports.runs().find(current).orElseThrow(Unavailable::new);
+            authorize(run, run.id());
+            var summary = ports.conversationSummaries()
+                    .latestValid(run.sessionId())
+                    .filter(value ->
+                            value.id().value().equals(id) && value.version().value() == version);
+            if (summary.isEmpty()
+                    || summary.get().sourceMessageIds().isEmpty()
+                    || summary.get().sourceMessageIds().size() > 64) return false;
+            var owners = new HashSet<AgentRunId>();
+            for (var source : summary.get().sourceMessageIds()) {
+                var message = ports.state().message(source).orElseThrow(Unavailable::new);
+                if (!message.sessionId().equals(run.sessionId()) || message.status() == MessageStatus.REDACTED)
+                    return false;
+                owners.add(message.runId().orElseThrow(Unavailable::new));
+            }
+            try {
+                owners.forEach(owner -> authorize(run, owner));
+                return true;
+            } catch (Unavailable denied) {
+                return false;
+            }
+        });
+    }
+
     private AgentRun authorize(AgentRun current, AgentRunId id) {
         AgentRun source = ports.runs()
                 .findVisible(id, current.tenant(), current.principal())
@@ -375,6 +473,16 @@ public final class HistoryToolProvider implements ToolProvider {
         if (call == null
                 || !(call.toolName().equals("history_read") || call.toolName().equals("history_search"))) return call;
         return sanitize(ports.runs().find(current).orElseThrow(Unavailable::new), call);
+    }
+
+    public boolean unavailableRead(ToolCall call) {
+        return call != null
+                && (call.toolName().equals("history_search") || call.toolName().equals("history_read"))
+                && owned(call)
+                && call.result()
+                        .map(result ->
+                                "UNAVAILABLE".equals(result.structuredData().get("status")))
+                        .orElse(false);
     }
 
     private boolean owned(ToolCall call) {

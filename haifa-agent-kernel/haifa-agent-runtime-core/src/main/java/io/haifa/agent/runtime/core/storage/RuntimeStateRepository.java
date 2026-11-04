@@ -36,6 +36,13 @@ public interface RuntimeStateRepository
                 .min(java.util.Comparator.comparingLong(AgentMessage::sequence));
     }
 
+    /** Latest USER identity in this Run, including redaction so callers cannot revive a superseded goal. */
+    default Optional<AgentMessage> latestUserMessage(AgentRunId runId) {
+        return messages(runId).stream()
+                .filter(message -> message.role() == io.haifa.agent.core.message.MessageRole.USER)
+                .max(java.util.Comparator.comparingLong(AgentMessage::sequence));
+    }
+
     List<AgentStep> steps(AgentRunId runId);
 
     List<ToolCall> toolCalls(AgentRunId runId);

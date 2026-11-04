@@ -16,6 +16,58 @@ public final class RuntimeControlOptions {
     public static final String MAX_REASONING_DURATION_MILLIS = PREFIX + "max_reasoning_duration_millis";
     public static final String INPUT_ACCOUNTING_ENABLED = PREFIX + "input_accounting_enabled";
 
+    public static final String WORKING_SET = PREFIX + "working_set";
+    public static final String WORKING_SET_TARGET = PREFIX + "working_set_target_tokens";
+    public static final String WORKING_SET_RETENTION = PREFIX + "working_set_retention_tokens";
+    public static final String WORKING_SET_CACHE = PREFIX + "working_set_cache_contract";
+
+    public static boolean workingSetEnabled(Map<String, Object> options) {
+        Object value = options.get(WORKING_SET);
+        if (value == null) return false;
+        if (!(value instanceof Boolean enabled)) throw new IllegalArgumentException("working set must be boolean");
+        return enabled;
+    }
+
+    public static long workingSetTarget(Map<String, Object> options) {
+        return bounded(options, WORKING_SET_TARGET, 2048, 128, 65536);
+    }
+
+    public static long workingSetRetention(Map<String, Object> options) {
+        return bounded(options, WORKING_SET_RETENTION, 20000, 128, 131072);
+    }
+
+    private static long bounded(Map<String, Object> options, String key, long fallback, long min, long max) {
+        Object value = options.get(key);
+        if (value == null) return fallback;
+        if (!(value instanceof Number n)
+                || n.doubleValue() != n.longValue()
+                || n.longValue() < min
+                || n.longValue() > max) throw new IllegalArgumentException("invalid working set bound");
+        return ((Number) value).longValue();
+    }
+
+    private static void validateWorkingSet(Map<String, Object> options) {
+        workingSetEnabled(options);
+        workingSetTarget(options);
+        workingSetRetention(options);
+        Object contract = options.get(WORKING_SET_CACHE);
+        if (contract != null) {
+            if (!(contract instanceof Map<?, ?> map)
+                    || !map.keySet()
+                            .equals(java.util.Set.of("modelConfigurationDigest", "source", "date", "ttlMillis")))
+                throw new IllegalArgumentException("cache contract requires exact binding, evidence and TTL");
+            // Reuse the existing price-evidence validator; no price assumptions are introduced here.
+            var evidence = new LinkedHashMap<String, Object>();
+            for (var key : java.util.List.of("modelConfigurationDigest", "source", "date"))
+                evidence.put(key, map.get(key));
+            evidence.put("uncached", 1);
+            evidence.put("cacheRead", 1);
+            evidence.put("cacheWrite", 1);
+            inputPriceRatios(Map.of(INPUT_PRICE_RATIOS, evidence));
+            bounded(Map.of("ttl", map.get("ttlMillis")), "ttl", 1, 1, 3600000);
+        }
+    }
+
     public static final String INPUT_PRICE_RATIOS = PREFIX + "input_price_ratios";
 
     private RuntimeControlOptions() {}
@@ -101,6 +153,7 @@ public final class RuntimeControlOptions {
         maxReasoningBytes(options);
         inputAccountingEnabled(options);
         inputPriceRatios(options);
+        validateWorkingSet(options);
         OptionalLong duration = maxReasoningDurationMillis(options);
         if (duration.isPresent() && duration.getAsLong() > limits.maxWallTimeMillis()) {
             throw new IllegalArgumentException(
@@ -125,6 +178,7 @@ public final class RuntimeControlOptions {
         maxReasoningBytes(options);
         inputAccountingEnabled(options);
         inputPriceRatios(options);
+        validateWorkingSet(options);
         maxReasoningDurationMillis(options);
     }
 
@@ -147,7 +201,11 @@ public final class RuntimeControlOptions {
                 || key.equals(MAX_REASONING_BYTES)
                 || key.equals(MAX_REASONING_DURATION_MILLIS)
                 || key.equals(INPUT_ACCOUNTING_ENABLED)
-                || key.equals(INPUT_PRICE_RATIOS);
+                || key.equals(INPUT_PRICE_RATIOS)
+                || key.equals(WORKING_SET)
+                || key.equals(WORKING_SET_TARGET)
+                || key.equals(WORKING_SET_RETENTION)
+                || key.equals(WORKING_SET_CACHE);
     }
 
     private static OptionalLong positiveLong(Map<String, Object> options, String key) {

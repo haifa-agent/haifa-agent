@@ -97,6 +97,7 @@ public final class HaifaAgentBuilder {
     private CompressionPolicy compressionPolicy;
     private PlanAuthoringSpec planAuthoringSpec;
     private boolean historyRetrieval;
+    private Integer workingSetTarget;
     private Supplier<? extends ExecutorService> executionExecutorFactory;
 
     HaifaAgentBuilder() {}
@@ -426,6 +427,28 @@ public final class HaifaAgentBuilder {
         return this;
     }
 
+    /** Enables bounded Run selection and its required historical readers. Disabled by default. */
+    public HaifaAgentBuilder enableRunWorkingSet() {
+        return enableRunWorkingSet(2048);
+    }
+
+    public HaifaAgentBuilder enableRunWorkingSet(int targetTokens) {
+        if (targetTokens < 128 || targetTokens > 65536)
+            throw new IllegalArgumentException("invalid working set target");
+        workingSetTarget = targetTokens;
+        historyRetrieval = true;
+        return this;
+    }
+
+    private Map<String, Object> workingSetOptions(Map<String, Object> original) {
+        if (workingSetTarget == null) return original;
+        var options = new LinkedHashMap<>(original);
+        options.putIfAbsent(io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.WORKING_SET, true);
+        options.putIfAbsent(
+                io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.WORKING_SET_TARGET, workingSetTarget);
+        return Map.copyOf(options);
+    }
+
     public HaifaAgent build() {
         ProductProfile effectiveProfile = Objects.requireNonNull(profile, "a Product Profile must be configured");
         ModelContribution model = requireComponent(this.model, "MODEL_REQUIRED", "a Model must be configured");
@@ -534,7 +557,8 @@ public final class HaifaAgentBuilder {
                                     effectiveProfile.budget(),
                                     effectiveProfile.limits(),
                                     resolveModelSnapshot(model, effectiveProfile, id),
-                                    Map.of());
+                                    Map.of(),
+                                    workingSetOptions(Map.of()));
                         }
                         var baseSnapshot = Optional.ofNullable(model.snapshots().get(selected.modelId()))
                                 .orElseThrow(() -> new IllegalArgumentException(
@@ -550,7 +574,7 @@ public final class HaifaAgentBuilder {
                                 selected.limits(),
                                 snapshot,
                                 Map.of(),
-                                selected.modelRequestOptions(),
+                                workingSetOptions(selected.modelRequestOptions()),
                                 selected.allowedTools(),
                                 selected.truncatedOutputPolicy());
                     });

@@ -137,7 +137,7 @@ public final class ModelInputAccounting {
     }
 
     /** A visible fixed-prefix identity, not a claim about Provider cache reuse or protected state. */
-    static Map<String, Object> prefix(AgentChatRequest request) {
+    public static Map<String, Object> prefix(AgentChatRequest request) {
         var fixed = request.messages().stream()
                 .takeWhile(message -> message.role() == io.haifa.agent.model.api.ModelMessageRole.SYSTEM
                         || message.role() == io.haifa.agent.model.api.ModelMessageRole.DEVELOPER)
@@ -156,16 +156,53 @@ public final class ModelInputAccounting {
             result.put("visibleFixedPrefixIdentity", "UNKNOWN");
             return Map.copyOf(result);
         }
+        result.put(
+                "visibleFixedPrefixIdentity",
+                prefixKey(
+                        request.model().configurationDigest(),
+                        fixed.stream()
+                                .map(message -> Map.of("role", message.role().name(), "text", message.content()))
+                                .toList(),
+                        request.tools(),
+                        request.structuredOutput()
+                                .map(schema -> schema.jsonSchema())
+                                .orElse(Map.of())));
+        result.put(
+                "visibleFixedPrefixEstimatedTokens",
+                fixed.stream().mapToLong(ModelInputAccounting::visibleTokens).sum()
+                        + request.tools().stream()
+                                .mapToLong(new HeuristicTokenEstimator()::estimate)
+                                .sum());
+        return Map.copyOf(result);
+    }
+
+    public static String expectedPrefix(
+            FrozenModelBinding binding,
+            List<io.haifa.agent.context.prompt.PromptComponent> prompts,
+            List<io.haifa.agent.model.api.ModelToolSpecification> tools) {
+        return prefixKey(
+                binding.configuration().model().configurationDigest(),
+                prompts.stream()
+                        .map(prompt -> Map.of("role", "SYSTEM", "text", prompt.text()))
+                        .toList(),
+                tools,
+                binding.configuration()
+                        .structuredOutput()
+                        .map(schema -> schema.jsonSchema())
+                        .orElse(Map.of()));
+    }
+
+    private static String prefixKey(
+            String model,
+            List<Map<String, String>> instructions,
+            List<io.haifa.agent.model.api.ModelToolSpecification> tools,
+            Map<String, Object> responseSchema) {
         Map<String, Object> identity = new LinkedHashMap<>();
-        identity.put("model", request.model().configurationDigest());
-        identity.put(
-                "instructions",
-                fixed.stream()
-                        .map(message -> Map.of("role", message.role().name(), "text", message.content()))
-                        .toList());
+        identity.put("model", model);
+        identity.put("instructions", instructions);
         identity.put(
                 "tools",
-                request.tools().stream()
+                tools.stream()
                         .map(tool -> Map.of(
                                 "name",
                                 tool.name(),
@@ -178,20 +215,9 @@ public final class ModelInputAccounting {
                                 "strict",
                                 tool.strict()))
                         .toList());
-        identity.put(
-                "responseSchema",
-                request.structuredOutput().map(schema -> schema.jsonSchema()).orElse(Map.of()));
-        result.put(
-                "visibleFixedPrefixIdentity",
-                io.haifa.agent.tool.api.ToolArgumentsDigest.sha256(
-                        new io.haifa.agent.core.tool.ToolArguments("model-prefix", "1", identity)));
-        result.put(
-                "visibleFixedPrefixEstimatedTokens",
-                fixed.stream().mapToLong(ModelInputAccounting::visibleTokens).sum()
-                        + request.tools().stream()
-                                .mapToLong(new HeuristicTokenEstimator()::estimate)
-                                .sum());
-        return Map.copyOf(result);
+        identity.put("responseSchema", responseSchema);
+        return io.haifa.agent.tool.api.ToolArgumentsDigest.sha256(
+                new io.haifa.agent.core.tool.ToolArguments("model-prefix", "1", identity));
     }
 
     /** Exactly one response aggregate per physical call; streaming usage deltas never enter this path. */

@@ -3547,6 +3547,393 @@ class RuntimeCoreTest {
     }
 
     @Test
+    void runWorkingSetKeepsScaleOracleWithBoundedReadsAndNoSummaryCalls() {
+        for (String objective :
+                List.of("What was the decision?", "Continue proving bounded reads", "New task: draft unrelated UI")) {
+            Long firstEstimate = null;
+            for (int scale : List.of(1, 10, 100)) {
+                var captured = new ArrayList<AgentChatRequest>();
+                var rowsRead = new AtomicInteger();
+                var fixture = workingSetFixture(
+                        call -> {
+                            captured.add(call);
+                            return response(finalDecision("complete"));
+                        },
+                        Map.of(),
+                        () -> ContextLifecycleHistoryFixture.NOW,
+                        rowsRead);
+                var original =
+                        ContextLifecycleHistoryFixture.append(fixture.store, ContextLifecycleHistoryFixture.N * scale);
+                var accepted = fixture.runtime.start(workingSetRequest("scale", objective));
+                var owner = fixture.store.find(accepted.runId()).orElseThrow();
+                ContextLifecycleHistoryFixture.registerOwner(fixture.store, owner);
+                fixture.scheduler.runAll();
+                assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                        .isEqualTo(AgentRunStatus.COMPLETED);
+                assertThat(captured).hasSize(1);
+                var input = captured.getFirst();
+                assertThat(input.structuredOutput()).isEmpty();
+                assertThat(input.messages().stream().anyMatch(m -> m.content().equals(objective)))
+                        .isTrue();
+                assertThat(input.messages().stream()
+                                .anyMatch(m -> m.content().contains(ContextLifecycleHistoryFixture.CONSTRAINT)))
+                        .isTrue();
+                if (!objective.startsWith("New task"))
+                    assertThat(input.messages().stream()
+                                    .anyMatch(m -> m.content().contains(ContextLifecycleHistoryFixture.DECISION)))
+                            .isTrue();
+                assertThat(input.messages().stream().anyMatch(m -> m.content().contains("unrelated output")))
+                        .isFalse();
+                assertThat(input.messages().stream()
+                                .anyMatch(m -> m.role() == ModelMessageRole.TOOL
+                                        || m.reasoning().isPresent()))
+                        .isFalse();
+                assertThat(fixture.store.latestVersion(owner.sessionId())).isZero();
+                assertThat(original.stream().allMatch(m -> fixture.store
+                                .message(m.id())
+                                .orElseThrow()
+                                .equals(m)))
+                        .isTrue();
+                assertThat(rowsRead.get()).isLessThanOrEqualTo(256);
+                var event = fixture.store.eventsFor(accepted.runId()).stream()
+                        .filter(e -> e.type().equals("model.input-accounted"))
+                        .findFirst()
+                        .orElseThrow();
+                long estimate = ((Number) event.data().get("modelBoundVisibleEstimatedTokens")).longValue();
+                if (firstEstimate == null) firstEstimate = estimate;
+                assertThat(estimate).isLessThanOrEqualTo(firstEstimate + 128);
+                assertThat(event.data().get("workingSetDecision")).isEqualTo("CACHE_COST_UNAVAILABLE");
+            }
+        }
+    }
+
+    @Test
+    void sparseHistoricalAssistantWithContinuationIsQuotedDataAndKeepsTheOriginalRequest() {
+        var captured = new ArrayList<AgentChatRequest>();
+        var fixture = workingSetFixture(
+                call -> {
+                    captured.add(call);
+                    return response(finalDecision("formatted"));
+                },
+                Map.of(),
+                () -> ContextLifecycleHistoryFixture.NOW,
+                new AtomicInteger());
+        ContextLifecycleHistoryFixture.append(fixture.store, 100, true);
+        String objective = "Use the previous format [history:baseline-assistant-0]";
+        var accepted = fixture.runtime.start(workingSetRequest("format", objective));
+        ContextLifecycleHistoryFixture.registerOwner(
+                fixture.store, fixture.store.find(accepted.runId()).orElseThrow());
+        fixture.scheduler.runAll();
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(captured).hasSize(1);
+        assertThat(captured.getFirst().messages().stream()
+                        .anyMatch(m -> m.content().contains("NAME | RESULT | SOURCE")))
+                .isTrue();
+        assertThat(captured.getFirst().messages().stream()
+                        .anyMatch(
+                                m -> m.reasoning().isPresent() || !m.toolCalls().isEmpty()))
+                .isFalse();
+        assertThat(captured.getFirst().messages().stream()
+                        .filter(m -> m.content().equals(objective))
+                        .count())
+                .isEqualTo(1);
+        assertThat(captured.getFirst().messages().stream()
+                        .filter(m -> m.content().contains("NAME | RESULT | SOURCE"))
+                        .allMatch(m -> m.role() == ModelMessageRole.USER))
+                .isTrue();
+    }
+
+    @Test
+    void unreadableHistoricalSourceAndConstraintOutsideCandidateWindowsRemainPinned() {
+        var captured = new ArrayList<AgentChatRequest>();
+        var fixture = workingSetFixture(
+                call -> {
+                    captured.add(call);
+                    return response(finalDecision("done"));
+                },
+                Map.of(),
+                () -> ContextLifecycleHistoryFixture.NOW,
+                new AtomicInteger());
+        ContextLifecycleHistoryFixture.append(fixture.store, 32);
+        fixture.store.appendSessionMessage(new SessionMessageDraft(
+                new AgentMessageId("image-source"),
+                ContextLifecycleHistoryFixture.SESSION,
+                Optional.of(ContextLifecycleHistoryFixture.PRIOR),
+                Optional.empty(),
+                MessageRole.USER,
+                MessageStatus.COMPLETED,
+                MessageVisibility.USER_VISIBLE,
+                List.of(
+                        new TextPart("reference diagram", "plain"),
+                        new io.haifa.agent.core.content.ImageUrlContentPart(
+                                java.net.URI.create("https://example.test/diagram.png"))),
+                Map.of(),
+                ContextLifecycleHistoryFixture.NOW));
+        fixture.store.appendSessionMessage(new SessionMessageDraft(
+                new AgentMessageId("late-constraint"),
+                ContextLifecycleHistoryFixture.SESSION,
+                Optional.of(ContextLifecycleHistoryFixture.PRIOR),
+                Optional.empty(),
+                MessageRole.USER,
+                MessageStatus.COMPLETED,
+                MessageVisibility.USER_VISIBLE,
+                List.of(new TextPart("Project constraint: retain the original format", "plain")),
+                Map.of(),
+                ContextLifecycleHistoryFixture.NOW));
+        for (int i = 0; i < 80; i++)
+            fixture.store.appendSessionMessage(new SessionMessageDraft(
+                    new AgentMessageId("padding-" + i),
+                    ContextLifecycleHistoryFixture.SESSION,
+                    Optional.of(ContextLifecycleHistoryFixture.PRIOR),
+                    Optional.empty(),
+                    MessageRole.USER,
+                    MessageStatus.COMPLETED,
+                    MessageVisibility.USER_VISIBLE,
+                    List.of(new TextPart("unrelated noise", "plain")),
+                    Map.of(),
+                    ContextLifecycleHistoryFixture.NOW));
+        var next = fixture.runtime.start(workingSetRequest("media", "New task: independent request", "media-profile"));
+        ContextLifecycleHistoryFixture.registerOwner(
+                fixture.store, fixture.store.find(next.runId()).orElseThrow());
+        fixture.scheduler.runAll();
+        assertThat(fixture.runtime.find(next.runId()).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(captured.getFirst().messages().stream()
+                        .anyMatch(m -> !m.images().isEmpty()))
+                .isTrue();
+        assertThat(captured.getFirst().messages().stream()
+                        .anyMatch(m -> m.content().equals("Project constraint: retain the original format")))
+                .isTrue();
+        assertThat(fixture.store.latestVersion(ContextLifecycleHistoryFixture.SESSION))
+                .isZero();
+    }
+
+    @Test
+    void boundedCacheDeferRunsThroughTheRuntimeAndExitsOnCallsTtlPrefixAndGoal() {
+        for (String exit : List.of("calls", "ttl", "prefix", "goal", "retention")) {
+            var now = new java.util.concurrent.atomic.AtomicReference<>(ContextLifecycleHistoryFixture.NOW);
+            var digest = DefaultResolvedModelSnapshots.deepSeekV4Pro().configurationDigest();
+            var options = new java.util.LinkedHashMap<String, Object>();
+            options.put(
+                    RuntimeControlOptions.INPUT_PRICE_RATIOS,
+                    Map.of(
+                            "modelConfigurationDigest",
+                            digest,
+                            "source",
+                            "https://example.test/cache",
+                            "date",
+                            "2026-11-04",
+                            "uncached",
+                            1,
+                            "cacheRead",
+                            .1,
+                            "cacheWrite",
+                            1.25));
+            options.put(
+                    RuntimeControlOptions.WORKING_SET_CACHE,
+                    Map.of(
+                            "modelConfigurationDigest",
+                            digest,
+                            "source",
+                            "https://example.test/cache",
+                            "date",
+                            "2026-11-04",
+                            "ttlMillis",
+                            60000));
+            if (exit.equals("retention")) options.put(RuntimeControlOptions.WORKING_SET_RETENTION, 512);
+            var fixture = workingSetFixture(
+                    ignored -> response(finalDecision("done")), options, now::get, new AtomicInteger());
+            var seed = fixture.runtime.start(
+                    workingSetRequest("seed", "Task context: " + "retain prior facts. ".repeat(700), "seed-profile"));
+            fixture.scheduler.runAll();
+            assertThat(fixture.runtime.find(seed.runId()).orElseThrow().status())
+                    .isEqualTo(AgentRunStatus.COMPLETED);
+            if (exit.equals("ttl")) now.set(now.get().plusSeconds(61));
+            for (int call = 0; call < (exit.equals("calls") ? 3 : 1); call++) {
+                var next = fixture.runtime.start(workingSetRequest(
+                        "next-" + call,
+                        exit.equals("goal") ? "New task: independent request" : "Continue the task",
+                        exit.equals("prefix") ? "changed-prefix" : "profile"));
+                fixture.scheduler.runAll();
+                assertThat(fixture.runtime.find(next.runId()).orElseThrow().status())
+                        .isEqualTo(AgentRunStatus.COMPLETED);
+                var event = fixture.store.eventsFor(next.runId()).stream()
+                        .filter(e -> e.type().equals("model.input-accounted"))
+                        .findFirst()
+                        .orElseThrow()
+                        .data();
+                String reason = (String) event.get("workingSetDecision");
+                if (exit.equals("calls") && call < 2) {
+                    assertThat(reason).isEqualTo("BOUNDED_CACHE_DEFER");
+                    assertThat(event.get("workingSetTargetException")).isEqualTo(true);
+                } else {
+                    assertThat(reason).isNotEqualTo("BOUNDED_CACHE_DEFER");
+                    assertThat(event.get("workingSetTargetException")).isEqualTo(false);
+                    if (exit.equals("calls")) assertThat(reason).isEqualTo("DEFERRED_CALL_LIMIT");
+                }
+                assertThat(fixture.store.latestVersion(ContextLifecycleHistoryFixture.SESSION))
+                        .isZero();
+            }
+        }
+    }
+
+    @Test
+    void newTaskDoesNotCarryOldPendingPlanAndContinueDoesNotCompleteIt() {
+        for (String objective : List.of("Continue the task", "New task: independent request")) {
+            var captured = new ArrayList<AgentChatRequest>();
+            var fixture = workingSetFixture(
+                    call -> {
+                        captured.add(call);
+                        return response(finalDecision("done"));
+                    },
+                    Map.of(),
+                    () -> ContextLifecycleHistoryFixture.NOW,
+                    new AtomicInteger());
+            ContextLifecycleHistoryFixture.append(fixture.store, 16);
+            var next = fixture.runtime.start(workingSetRequest("handoff", objective));
+            ContextLifecycleHistoryFixture.registerOwner(
+                    fixture.store, fixture.store.find(next.runId()).orElseThrow());
+            var plan = new AgentPlan(
+                    new io.haifa.agent.core.plan.AgentPlanId("old-plan"),
+                    ContextLifecycleHistoryFixture.PRIOR,
+                    "prior goal",
+                    List.of(new TodoItem(
+                            new io.haifa.agent.core.plan.TodoItemId("pending"),
+                            "old unresolved action",
+                            "not executed",
+                            TodoPriority.HIGH,
+                            List.of())),
+                    ContextLifecycleHistoryFixture.NOW);
+            fixture.store.savePlan(plan);
+            fixture.scheduler.runAll();
+            assertThat(fixture.runtime.find(next.runId()).orElseThrow().status())
+                    .isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(captured.getFirst().messages().stream()
+                            .anyMatch(m -> m.content().contains("old unresolved action")))
+                    .isEqualTo(objective.startsWith("Continue"));
+            assertThat(fixture.store.plan(ContextLifecycleHistoryFixture.PRIOR).orElseThrow())
+                    .isEqualTo(plan);
+            assertThat(fixture.store
+                            .plan(ContextLifecycleHistoryFixture.PRIOR)
+                            .orElseThrow()
+                            .items()
+                            .getFirst()
+                            .status())
+                    .isEqualTo(io.haifa.agent.core.plan.TodoStatus.PENDING);
+        }
+    }
+
+    private static Map<String, Object> withOption(Map<String, Object> values, String key, Object value) {
+        var copy = new java.util.LinkedHashMap<>(values);
+        copy.put(key, value);
+        return copy;
+    }
+
+    private static AgentRunRequest workingSetRequest(String key, String objective) {
+        return workingSetRequest(key, objective, request(key).productProfileId());
+    }
+
+    private static AgentRunRequest workingSetRequest(String key, String objective, String profile) {
+        var request = request(key);
+        return new AgentRunRequest(
+                key,
+                request.agentDefinitionId(),
+                request.requestedDefinitionVersion(),
+                profile,
+                request.sessionId(),
+                request.project(),
+                objective,
+                List.of(),
+                RuntimeOverrides.NONE);
+    }
+
+    private static Fixture workingSetFixture(
+            AgentChatModel model, Map<String, Object> additional, TimeProvider clock, AtomicInteger rows) {
+        return fixture(
+                model,
+                (builder, store) -> {
+                    var state = (io.haifa.agent.runtime.core.storage.RuntimeStateRepository)
+                            java.lang.reflect.Proxy.newProxyInstance(
+                                    io.haifa.agent.runtime.core.storage.RuntimeStateRepository.class.getClassLoader(),
+                                    new Class<?>[] {io.haifa.agent.runtime.core.storage.RuntimeStateRepository.class},
+                                    (proxy, method, arguments) -> {
+                                        if (method.getName().equals("toolCalls")
+                                                && arguments[0].equals(ContextLifecycleHistoryFixture.PRIOR))
+                                            throw new AssertionError("unbounded Tool lookup in selected path");
+                                        try {
+                                            Object value = method.invoke(store, arguments);
+                                            if (method.getName().equals("messagesAfter"))
+                                                rows.addAndGet(((List<?>) value).size());
+                                            if (method.getName().equals("recentMessages"))
+                                                rows.addAndGet(
+                                                        ((io.haifa.agent.runtime.core.storage.RecentMessageWindow)
+                                                                        value)
+                                                                .messages()
+                                                                .size());
+                                            return value;
+                                        } catch (java.lang.reflect.InvocationTargetException error) {
+                                            throw error.getCause();
+                                        }
+                                    });
+                    var original = RuntimePersistencePorts.inMemory(store);
+                    var ports = new RuntimePersistencePorts(
+                            original.sessions(),
+                            original.runs(),
+                            original.attempts(),
+                            original.checkpoints(),
+                            state,
+                            original.events(),
+                            original.outbox(),
+                            original.idempotency(),
+                            original.unitOfWork(),
+                            original.toolJournal(),
+                            original.interactions(),
+                            original.runInputs(),
+                            original.conversationSummaries(),
+                            original.toolResultAssets(),
+                            original.messageRedactions());
+                    var history = new io.haifa.agent.runtime.core.history.HistoryToolProvider(ports);
+                    var catalogBuilder = new io.haifa.agent.tool.core.ToolCatalogBuilder();
+                    for (var definition : history.definitions())
+                        catalogBuilder.register(
+                                new io.haifa.agent.tool.api.ToolAlias(
+                                        definition.name().value()),
+                                definition,
+                                "history",
+                                history);
+                    var catalog = catalogBuilder.freeze();
+                    var options = new java.util.LinkedHashMap<String, Object>(additional);
+                    options.put(RuntimeControlOptions.WORKING_SET, true);
+                    options.putIfAbsent(RuntimeControlOptions.WORKING_SET_TARGET, 2048);
+                    return builder.persistence(ports)
+                            .toolPlatform(
+                                    catalog,
+                                    new io.haifa.agent.tool.core.DefaultToolInvoker(catalog),
+                                    new io.haifa.agent.tool.core.JsonSchema202012Validator())
+                            .publicToolPolicy((run, binding, call) -> {
+                                throw new AssertionError("unexpected dispatch");
+                            })
+                            .profiles((id, overrides) -> new ResolvedProfile(
+                                    id,
+                                    "1",
+                                    AgentRunType.CHAT,
+                                    new AgentRunBudget(1000000, 1000000, 1000000, 32, 64, 8, "USD", 1000000),
+                                    new AgentRunLimits(50, 4, 1, 300000, 60000),
+                                    id.equals("media-profile")
+                                            ? ContextLifecycleHistoryFixture.urlImageModel()
+                                            : DefaultResolvedModelSnapshots.deepSeekV4Pro(),
+                                    Map.of(),
+                                    id.equals("seed-profile")
+                                            ? withOption(options, RuntimeControlOptions.WORKING_SET_TARGET, 16384)
+                                            : id.equals("changed-prefix")
+                                                    ? withOption(options, "temperature", 0.5)
+                                                    : options))
+                            .compressionPolicy(CompressionPolicy.defaults().withActiveHistoryBudgetTokens(16384));
+                },
+                clock);
+    }
+
+    @Test
     void contextLifecycleBaselineKeepsFixedEvidenceAcrossN10N100NAndThreeFollowups() {
         for (String objective :
                 List.of("What was the decision?", "Continue proving bounded reads", "Start an unrelated task")) {
@@ -3676,6 +4063,13 @@ class RuntimeCoreTest {
 
     private static Fixture fixture(
             AgentChatModel model, java.util.function.UnaryOperator<RuntimeCoreBuilder> customizer, TimeProvider time) {
+        return fixture(model, (builder, store) -> customizer.apply(builder), time);
+    }
+
+    private static Fixture fixture(
+            AgentChatModel model,
+            java.util.function.BiFunction<RuntimeCoreBuilder, InMemoryRuntimeStore, RuntimeCoreBuilder> customizer,
+            TimeProvider time) {
         ManualExecutionScheduler scheduler = new ManualExecutionScheduler();
         InMemoryRuntimeStore store = new InMemoryRuntimeStore();
         InMemoryInteractionPort interactions = new InMemoryInteractionPort();
@@ -3690,7 +4084,7 @@ class RuntimeCoreTest {
                 .runInputs(runInputs)
                 .identifierGenerator(ids)
                 .timeProvider(time);
-        DefaultAgentRuntime runtime = customizer.apply(builder).build();
+        DefaultAgentRuntime runtime = customizer.apply(builder, store).build();
         return new Fixture(runtime, scheduler, store, interactions, journal, runInputs);
     }
 

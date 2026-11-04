@@ -35,7 +35,43 @@ final class ContextLifecycleHistoryFixture {
 
     private ContextLifecycleHistoryFixture() {}
 
+    static io.haifa.agent.model.api.ResolvedModelSnapshot urlImageModel() {
+        io.haifa.agent.model.api.ResolvedModelSnapshot text = DefaultResolvedModelSnapshots.deepSeekV4Pro();
+        EnumSet<io.haifa.agent.model.api.ModelCapability> capabilities = EnumSet.copyOf(text.capabilities());
+        capabilities.add(io.haifa.agent.model.api.ModelCapability.IMAGE_URL_INPUT);
+        io.haifa.agent.model.api.ResolvedModelSnapshot base = io.haifa.agent.model.api.ResolvedModelSnapshot.create(
+                text.providerId(),
+                text.providerVersion(),
+                text.modelId(),
+                text.modelVersion(),
+                text.providerModelId(),
+                text.adapterType(),
+                text.adapterVersion(),
+                text.apiStyle(),
+                text.dialect(),
+                text.endpoint(),
+                text.credentialRef(),
+                text.nativeStreaming(),
+                capabilities,
+                text.contextWindow(),
+                8_192,
+                Map.of(),
+                Map.of());
+        return base.withEffectiveParameters(new io.haifa.agent.model.api.EffectiveModelParameters(
+                base.modelId(),
+                "2.0",
+                "sha256:" + "a".repeat(64),
+                io.haifa.agent.model.api.ModelReasoningPolicy.disabled(),
+                4096,
+                Optional.of(io.haifa.agent.model.api.ImageInputProfile.standard(
+                        Set.of(io.haifa.agent.model.api.ModelImageSource.URL), false))));
+    }
+
     static List<AgentMessage> append(InMemoryRuntimeStore store, int turns) {
+        return append(store, turns, false);
+    }
+
+    static List<AgentMessage> append(InMemoryRuntimeStore store, int turns, boolean visibleAssistantText) {
         List<AgentMessage> original = new ArrayList<>();
         original.add(store.appendSessionMessage(
                 draft("constraint", MessageRole.USER, List.of(new TextPart(CONSTRAINT, "plain")))));
@@ -75,7 +111,11 @@ final class ContextLifecycleHistoryFixture {
             var assistant = draft(
                     "assistant-" + i,
                     MessageRole.ASSISTANT,
-                    List.of(new ToolCallPart(callId, correlation, "file_read", "1.0.0")));
+                    visibleAssistantText && i == 0
+                            ? List.of(
+                                    new TextPart("Format example: NAME | RESULT | SOURCE", "plain"),
+                                    new ToolCallPart(callId, correlation, "file_read", "1.0.0"))
+                            : List.of(new ToolCallPart(callId, correlation, "file_read", "1.0.0")));
             if (i == 0) {
                 var model = DefaultResolvedModelSnapshots.deepSeekV4Pro();
                 var reasoning = SensitiveModelReasoning.of("synthetic protected continuation");
@@ -102,6 +142,26 @@ final class ContextLifecycleHistoryFixture {
                     List.of(new ToolResultPart(callId, correlation, "unrelated fixture")))));
         }
         return List.copyOf(original);
+    }
+
+    static void registerOwner(InMemoryRuntimeStore store, io.haifa.agent.core.run.AgentRun owner) {
+        store.insert(io.haifa.agent.core.run.AgentRun.createRoot(
+                PRIOR,
+                new io.haifa.agent.core.run.AgentRunSpec(
+                        SESSION,
+                        owner.project().orElse(null),
+                        owner.tenant(),
+                        owner.principal(),
+                        owner.agentDefinitionId(),
+                        owner.agentDefinitionVersion(),
+                        owner.productProfileId(),
+                        owner.productProfileVersion(),
+                        owner.runType(),
+                        "Historical fixture",
+                        owner.budget(),
+                        owner.limits(),
+                        owner.configurationSnapshot()),
+                NOW));
     }
 
     static io.haifa.agent.model.api.AgentChatResponse summary(io.haifa.agent.model.api.AgentChatRequest request) {

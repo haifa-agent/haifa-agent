@@ -319,3 +319,12 @@ Runtime history tools reuse the existing Session cursor, Run/Tool identities and
 codec without a migration or second body store. Closing and reopening the Store with the same continuation
 protector preserves history versions and character offsets. Changing a workspace file does not change the stored
 historical representation. This reopen scenario is covered by `SqliteRuntimeRecoveryTest` under `slow-tests`.
+
+
+Run working sets add V16: a rebuildable classification bit and partial Session/sequence index on existing
+`session_message` rows for project constraints, imported messages and parts without a historical
+reader. Upgrade backfills existing records; append classifies new records in the same transaction.
+The bounded `requiredHistory` query does not decode every Session message. Redacted records leave the
+partial index. No body store or summary state is added. Latest USER lookup is a narrow Run/sequence query,
+including tombstones so a withdrawn Steer cannot revive an older goal. Store reopen rebuilds selection from
+frozen configuration and existing execution facts; temporary selection/cache windows are not persisted.
