@@ -16,6 +16,17 @@ import org.junit.jupiter.api.Test;
 
 class CodingSessionApprovalsTest {
     @Test
+    void invalidatedOrUnrelatedInitialReceiptClearsPendingConsent() {
+        for (boolean unrelated : List.of(false, true)) {
+            var f = new Fixture();
+            f.approvals.approve(f.pending, submission(f.pending));
+            f.mismatchedReceipt = unrelated;
+            if (!unrelated) f.states.put(f.pending.requestId(), InteractionState.INVALIDATED);
+            assertThat(f.approvals.state(f.pending.sessionId())).isEqualTo(CodingSessionApprovalStatus.State.ASK);
+        }
+    }
+
+    @Test
     void statusConfirmsOnlyTheInitialSubmissionWithoutApprovingAnotherTool() {
         var f = new Fixture();
         var first = f.pending;

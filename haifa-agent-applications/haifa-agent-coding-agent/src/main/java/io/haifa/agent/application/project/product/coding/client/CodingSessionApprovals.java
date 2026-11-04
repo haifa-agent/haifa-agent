@@ -170,7 +170,13 @@ public final class CodingSessionApprovals {
     }
 
     private void refreshInitial(Consent consent) {
-        consent.active = applied(runtime.respond(consent.submission), consent.submission);
+        InteractionResponseReceipt receipt = runtime.respond(consent.submission);
+        if (!matches(receipt, consent.submission)
+                || (receipt.interactionState() != InteractionState.APPLIED
+                        && receipt.interactionState() != InteractionState.RESPONDED)) {
+            throw new IllegalStateException("Initial Session approval is unavailable");
+        }
+        consent.active = applied(receipt, consent.submission);
     }
 
     private boolean ordinary(InteractionView interaction) {
