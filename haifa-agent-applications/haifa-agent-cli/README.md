@@ -1020,6 +1020,7 @@ haifa auth logout --connection model-auth://deepseek/default
 
 API keys are read with console echo disabled; no key argument, environment-key import, redirected-stdin fallback
 or remote secret collection is added. Empty input cancels; validation/cancel failures keep the existing credential.
+Replacing an API key preserves its saved provider attributes, including Bailian workspace and region.
 Browser/device modes use the same registered compatibility drivers and availability as embedded login. One-time
 instructions appear only on this local console, without Runtime/file logging. Unsupported methods fail with a stable
 safe code; no untrusted failure detail is printed.

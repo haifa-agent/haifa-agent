@@ -85,7 +85,10 @@ final class CodingAuthCommand {
                     return 130;
                 }
                 try {
-                    connection = client.saveApiKey(provider, secret);
+                    connection = client.saveApiKey(
+                            provider,
+                            secret,
+                            client.providerAttributes(provider).orElse(Map.of()));
                 } finally {
                     Arrays.fill(secret, '\0');
                 }
