@@ -300,7 +300,11 @@ final class CodingHostDispatcher {
                 "optionalCapabilities",
                 optional,
                 "unsupported",
-                List.of("preview", "session-consent", "credential-write", "credential-login"));
+                List.of("preview", "session-consent", "credential-write", "credential-login"),
+                "localManagementCommand",
+                authentication == null
+                        ? ""
+                        : authentication.localManagementCommand().orElse(""));
     }
 
     private Map<String, Object> ping() {
@@ -539,13 +543,17 @@ final class CodingHostDispatcher {
     }
 
     private Map<String, Object> authStatus() {
-        return CodingHostWire.authStatus(
+        Map<String, Object> result = CodingHostWire.authStatus(
                 authentication.connectionRequired(),
                 authentication.apiKeyProviderId(),
                 authentication.apiKeyConnectionSupported(),
                 authentication.providers(),
                 authentication.connections(),
                 true);
+        result.put(
+                "localManagementCommand",
+                authentication.localManagementCommand().orElse(""));
+        return result;
     }
 
     private AgentSessionId session(JsonNode params) {

@@ -109,6 +109,7 @@ if defined JAVA_HOME if exist "%JAVA_HOME%\\bin\\java.exe" set "HAIFA_JAVA_EXE=%
 
 rem The remote TUI is a thin client: pass its argument vector through untouched. It must not receive the bundled
 rem --config (the Host owns the workspace, Runtime and credentials) and it must not create local data directories.
+if /i "%~1"=="auth" goto :haifa_auth
 if /i "%~1"=="tui" (
     "%HAIFA_JAVA_EXE%" -jar "%HAIFA_DISTRIBUTION_DIR%haifa-agent.jar" %*
     exit /b %ERRORLEVEL%
@@ -140,6 +141,10 @@ goto :haifa_host_args
 :haifa_host_run
 call "%HAIFA_JAVA_EXE%" -jar "%HAIFA_DISTRIBUTION_DIR%haifa-agent.jar" host --config "%HAIFA_DISTRIBUTION_DIR%haifa-coding.yaml" %HAIFA_HOST_ARGS%
 exit /b %ERRORLEVEL%
+
+:haifa_auth
+"%HAIFA_JAVA_EXE%" -jar "%HAIFA_DISTRIBUTION_DIR%haifa-agent.jar" %*
+exit /b %ERRORLEVEL%
 """
     with (output_directory / "haifa-coding.cmd").open(
         "w", encoding="utf-8", newline="\r\n"
@@ -157,6 +162,13 @@ log_dir="${script_dir}/logs"
 
 # The remote TUI is a thin client: pass its argument vector through untouched. It must not receive the bundled
 # --config (the Host owns the workspace, Runtime and credentials) and it must not create local data directories.
+if [ "${1:-}" = "auth" ]; then
+    if [ -n "${JAVA_HOME:-}" ] && [ -x "${JAVA_HOME}/bin/java" ]; then
+        exec "${JAVA_HOME}/bin/java" -jar "${script_dir}/haifa-agent.jar" "$@"
+    fi
+    exec java -jar "${script_dir}/haifa-agent.jar" "$@"
+fi
+
 if [ "${1:-}" = "tui" ]; then
     if [ -n "${JAVA_HOME:-}" ] && [ -x "${JAVA_HOME}/bin/java" ]; then
         exec "${JAVA_HOME}/bin/java" -jar "${script_dir}/haifa-agent.jar" "$@"

@@ -19,6 +19,7 @@ public final class CodingTerminalConnectionOptions {
     private final boolean toolOutputPreviewEnabled;
     private final boolean sessionConsentEnabled;
     private final boolean credentialSetupEnabled;
+    private final Optional<String> credentialSetupInstructions;
 
     private CodingTerminalConnectionOptions(
             boolean toolOutputPreviewEnabled, boolean sessionConsentEnabled, boolean credentialSetupEnabled) {
@@ -30,6 +31,21 @@ public final class CodingTerminalConnectionOptions {
             boolean sessionConsentEnabled,
             boolean credentialSetupEnabled,
             Optional<String> executionLocation) {
+        this(
+                toolOutputPreviewEnabled,
+                sessionConsentEnabled,
+                credentialSetupEnabled,
+                executionLocation,
+                Optional.empty());
+    }
+
+    private CodingTerminalConnectionOptions(
+            boolean toolOutputPreviewEnabled,
+            boolean sessionConsentEnabled,
+            boolean credentialSetupEnabled,
+            Optional<String> executionLocation,
+            Optional<String> instructions) {
+        this.credentialSetupInstructions = instructions;
         this.executionLocation = executionLocation;
         this.toolOutputPreviewEnabled = toolOutputPreviewEnabled;
         this.sessionConsentEnabled = sessionConsentEnabled;
@@ -69,6 +85,25 @@ public final class CodingTerminalConnectionOptions {
             throw new IllegalArgumentException("Invalid execution location display value");
         }
         return new CodingTerminalConnectionOptions(previewEnabled, consentEnabled, false, Optional.of(location));
+    }
+
+    /** Display instructions supplied at composition time, never a locally executable action. */
+    public CodingTerminalConnectionOptions withCredentialSetupInstructions(String instructions) {
+        if (instructions == null
+                || instructions.isBlank()
+                || instructions.length() > 2048
+                || instructions.codePoints().anyMatch(cp -> Character.isISOControl(cp) && cp != '\n'))
+            throw new IllegalArgumentException("Invalid local credential instructions");
+        return new CodingTerminalConnectionOptions(
+                toolOutputPreviewEnabled,
+                sessionConsentEnabled,
+                credentialSetupEnabled,
+                executionLocation,
+                Optional.of(instructions));
+    }
+
+    public Optional<String> credentialSetupInstructions() {
+        return credentialSetupInstructions;
     }
 
     public Optional<String> unavailableReason(String command) {

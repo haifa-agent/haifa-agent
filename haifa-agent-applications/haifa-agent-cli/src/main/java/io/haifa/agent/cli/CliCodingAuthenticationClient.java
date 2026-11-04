@@ -50,6 +50,30 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient,
     private final ModelCatalogManifest catalog;
     private final CodingAuthenticationMapper mapper;
     private final AtomicReference<ExternalLoginAttemptId> activeLogin = new AtomicReference<>();
+    private Optional<String> localManagementStore = Optional.empty();
+
+    CliCodingAuthenticationClient withLocalManagementStore(String storeMode) {
+        if (!List.of("file", "windows").contains(storeMode))
+            throw new IllegalArgumentException("Invalid auth store mode");
+        localManagementStore = Optional.of(storeMode);
+        return this;
+    }
+
+    @Override
+    public Optional<String> localManagementCommand() {
+        if (localManagementStore.isEmpty() || !selectedCredentialReference.startsWith("model-auth://"))
+            return Optional.empty();
+        var reference = io.haifa.agent.auth.localmodel.LocalModelAuthReference.parse(selectedCredentialReference);
+        if (!reference.slot().equals("default")) return Optional.empty();
+        String method =
+                switch (reference.providerId()) {
+                    case "openai-codex", "opencode-go" -> "device";
+                    case "google-antigravity" -> "browser";
+                    default -> "api-key";
+                };
+        return Optional.of("haifa auth connect --provider " + reference.providerId() + " --method " + method
+                + " --store " + localManagementStore.orElseThrow());
+    }
 
     CliCodingAuthenticationClient(
             LocalModelAuthenticationService authentication,

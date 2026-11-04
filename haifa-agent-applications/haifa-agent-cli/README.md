@@ -999,3 +999,46 @@ Lease expiry/revocation leaves already-dispatched tools and Runs alone and retur
 that Session after the cancel command is accepted. Status distinguishes ASK, PENDING application and ACTIVE with a
 UTC epoch-millisecond expiry. UI status reads run on the existing maintenance lane, and changes are shown without
 blocking input. Consent is neither a credential nor an authentication identity, and no new durable store is added.
+
+### Local credential repair while Host is running
+
+Use the shipped `haifa auth` command on the **Host machine, as the same OS user**. The local-development
+distribution calls the same entry `haifa-coding auth`. This entry assembles only the existing authentication
+service/store and registered login methods. It does not load Coding workspace configuration, start a model,
+open Runtime/SQLite, or create Runtime data/log directories. The launchers pass `auth` arguments through before
+injecting their bundled `--config` and data variables.
+
+```text
+haifa auth status
+haifa auth connect --provider deepseek --method api-key
+haifa auth connect --provider openai-codex --method device
+haifa auth connect --provider openai-codex --method browser
+haifa auth connect --provider google-antigravity --method browser
+haifa auth connect --provider opencode-go --method device
+haifa auth logout --connection model-auth://deepseek/default
+```
+
+API keys are read with console echo disabled; no key argument, environment-key import, redirected-stdin fallback
+or remote secret collection is added. Empty input cancels; validation/cancel failures keep the existing credential.
+Browser/device modes use the same registered compatibility drivers and availability as embedded login. One-time
+instructions appear only on this local console, without Runtime/file logging. Unsupported methods fail with a stable
+safe code; no untrusted failure detail is printed.
+
+Windows uses Credential Manager. An already configured headless Linux Host uses the existing explicit
+`HAIFA_CODING_AUTH_STORE=file` opt-in; manage that same store with `--store file`, for example:
+
+```text
+haifa auth connect --provider deepseek --method api-key --store file
+haifa auth status --store file
+```
+
+There is no automatic plaintext fallback on other platforms. Commands target the provider's supported `default`
+slot; environment/OS references and custom slots are not silently rewritten. Use the same store selector and OS user
+as Host, rather than updating an unrelated local account. Host's model credential resolver rereads the shared store,
+so a successful local replacement can be used by the next model call without another database owner.
+
+A new Host advertises a bounded display-only local management command for its configured, locally writable default
+credential. Legacy credential-write/login capability flags remain false. Remote `/connect` shows a dismissible detail
+panel containing Host/project, account scope, the runnable local command and refresh steps; it never collects a secret.
+After local repair, reopen `/account` in that remote TUI to read fresh Host connection status, then retry deliberately.
+Credential repair never replays a failed Run or uncertain tool automatically. `/logout` remains an explicit action.

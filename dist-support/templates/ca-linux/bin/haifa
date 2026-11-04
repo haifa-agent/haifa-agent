@@ -12,6 +12,11 @@ test -f "$jar" || { echo 'Missing Coding Agent JAR in lib/' >&2; exit 1; }
 
 # The remote TUI is a thin client: pass its argument vector through untouched. It must not receive the bundled
 # --config (the Host owns the workspace, Runtime and credentials) and it must not create local data directories.
+if [ "${1:-}" = "auth" ]; then
+    exec "$package_dir/jre/bin/java" -Dfile.encoding=UTF-8 -Dsun.stdout.encoding=UTF-8 \
+        -Dsun.stderr.encoding=UTF-8 -Xmx1024m -jar "$jar" "$@"
+fi
+
 if [ "${1:-}" = "tui" ]; then
     exec "$package_dir/jre/bin/java" -Dfile.encoding=UTF-8 -Dsun.stdout.encoding=UTF-8 \
         -Dsun.stderr.encoding=UTF-8 -Xmx1024m -jar "$jar" "$@"

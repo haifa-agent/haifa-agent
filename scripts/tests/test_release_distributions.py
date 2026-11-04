@@ -402,17 +402,19 @@ class TargetMatrixTest(unittest.TestCase):
             capture = root / "captured.json"
             data_root = root / "never created"
             environment = dict(os.environ, CAPTURE_PATH=str(capture), HAIFA_DATA_ROOT=str(data_root))
-            options = ["tui", "--connect", "http://127.0.0.1:17861", "--session", "a session with spaces"]
+            for options in [
+                ["tui", "--connect", "http://127.0.0.1:17861", "--session", "a session with spaces"],
+                ["auth", "status", "--store", "file"],
+            ]:
+                with self.subTest(options=options):
+                    result = subprocess.run(
+                        [str(package / "bin/haifa"), *options], env=environment, timeout=10
+                    )
+                    actual = json.loads(capture.read_text())
+                    self.assertEqual(result.returncode, 23)
+                    self.assertEqual(_after_jar(actual["args"]), options)
+                    self.assertFalse(data_root.exists())
 
-            result = subprocess.run(
-                [str(package / "bin/haifa"), *options], env=environment, timeout=10
-            )
-
-            actual = json.loads(capture.read_text())
-            self.assertEqual(result.returncode, 23)
-            self.assertEqual(_after_jar(actual["args"]), options)
-            # The value is inherited from the caller; what matters is that this mode never creates the tree.
-            self.assertFalse(data_root.exists())
 
     @unittest.skipIf(os.name == "nt", "POSIX launcher process contract")
     def test_linux_template_launcher_keeps_the_host_subcommand_first(self):

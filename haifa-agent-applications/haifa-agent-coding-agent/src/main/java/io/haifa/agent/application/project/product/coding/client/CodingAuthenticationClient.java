@@ -6,6 +6,11 @@ import java.util.function.Consumer;
 
 /** Product authentication use cases. Implementations live in the highest application assembly. */
 public interface CodingAuthenticationClient {
+    /** Optional runnable instruction for the Host's trusted-local credential manager; never contains a secret. */
+    default java.util.Optional<String> localManagementCommand() {
+        return java.util.Optional.empty();
+    }
+
     default boolean connectionRequired() {
         return false;
     }

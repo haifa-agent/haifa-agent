@@ -20,29 +20,10 @@ import io.haifa.agent.application.project.product.coding.prompt.CodingAgentPromp
 import io.haifa.agent.application.project.skill.ProjectSkillPlatform;
 import io.haifa.agent.application.project.tool.ProjectToolCatalog;
 import io.haifa.agent.application.project.tool.ProjectToolExecutor;
-import io.haifa.agent.auth.localmodel.ExternalLoginAttemptId;
-import io.haifa.agent.auth.localmodel.ExternalLoginCoordinator;
-import io.haifa.agent.auth.localmodel.ExternalLoginMethod;
-import io.haifa.agent.auth.localmodel.ExternalLoginRegistry;
-import io.haifa.agent.auth.localmodel.FileLocalModelAuthStore;
 import io.haifa.agent.auth.localmodel.LocalModelAuthReference;
 import io.haifa.agent.auth.localmodel.LocalModelAuthStore;
 import io.haifa.agent.auth.localmodel.LocalModelAuthenticationService;
-import io.haifa.agent.auth.localmodel.LocalModelCredentialResolver;
 import io.haifa.agent.auth.localmodel.StoredApiKeyCredential;
-import io.haifa.agent.auth.localmodel.WindowsLocalModelAuthStore;
-import io.haifa.agent.auth.localmodel.antigravity.AntigravityExternalLoginMethod;
-import io.haifa.agent.auth.localmodel.antigravity.AntigravityLocalCompatibilityRegistrationFactory;
-import io.haifa.agent.auth.localmodel.antigravity.AntigravityProjectRegistry;
-import io.haifa.agent.auth.localmodel.antigravity.AntigravityTokenClient;
-import io.haifa.agent.auth.localmodel.codex.CodexDeviceLoginOperation;
-import io.haifa.agent.auth.localmodel.codex.CodexExternalLoginMethod;
-import io.haifa.agent.auth.localmodel.codex.CodexLocalCompatibilityRegistrationFactory;
-import io.haifa.agent.auth.localmodel.codex.CodexTokenClient;
-import io.haifa.agent.auth.localmodel.opencode.OpenCodeGoDeviceLoginOperation;
-import io.haifa.agent.auth.localmodel.opencode.OpenCodeGoEndpoints;
-import io.haifa.agent.auth.localmodel.opencode.OpenCodeGoExternalLoginMethod;
-import io.haifa.agent.auth.localmodel.opencode.OpenCodeGoTokenClient;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.id.UuidV7IdentifierGenerator;
 import io.haifa.agent.common.time.SystemTimeProvider;
@@ -132,7 +113,6 @@ import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
 import io.haifa.agent.skill.api.SkillAlias;
 import io.haifa.agent.tool.core.DefaultToolInvoker;
 import io.haifa.agent.tool.core.JsonSchema202012Validator;
-import java.awt.Desktop;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.net.URI;
@@ -152,7 +132,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -273,60 +252,20 @@ final class LocalCodingAgent implements AutoCloseable {
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
         var json = new ObjectMapper();
-        Clock authClock = Clock.systemUTC();
-        var authStore = authenticationStore(json, System.getProperty("os.name", ""), environmentResolver);
-        var codexRegistration = CodexLocalCompatibilityRegistrationFactory.create(environmentResolver);
-        var antigravityRegistration = AntigravityLocalCompatibilityRegistrationFactory.create(environmentResolver);
-        var antigravityProjects = new AntigravityProjectRegistry();
-        List<ExternalLoginMethod> authMethods = new ArrayList<>();
-        authMethods.add(new OpenCodeGoExternalLoginMethod(
-                new OpenCodeGoTokenClient(http, json, authClock, Duration.ofSeconds(30), new OpenCodeGoEndpoints()),
-                OpenCodeGoDeviceLoginOperation.Sleeper.system()));
-        codexRegistration.ifPresent(registration -> authMethods.add(new CodexExternalLoginMethod(
-                registration,
-                new CodexTokenClient(http, json, authClock, Duration.ofSeconds(30), registration),
-                http,
-                json,
-                SecureRandom::new,
-                Duration.ofMinutes(5),
-                CodexDeviceLoginOperation.Sleeper.system())));
-        antigravityRegistration.ifPresent(registration -> authMethods.add(new AntigravityExternalLoginMethod(
-                registration,
-                new AntigravityTokenClient(http, json, authClock, Duration.ofSeconds(30), registration),
-                http,
-                json,
-                SecureRandom::new,
-                Duration.ofMinutes(5),
-                projection -> antigravityProjects.record(
-                        new CredentialRef("model-auth://google-antigravity/default"), projection))));
-        var authRegistry = new ExternalLoginRegistry(authMethods);
-        var credentials = new LocalModelCredentialResolver(
-                environmentResolver, authStore, authRegistry, authClock, Duration.ofMinutes(5));
-        var authIdentifiers = new UuidV7IdentifierGenerator();
-        var authCoordinator = authMethods.isEmpty()
-                ? Optional.<ExternalLoginCoordinator>empty()
-                : Optional.of(new ExternalLoginCoordinator(
-                        authRegistry,
-                        authStore,
-                        () -> new ExternalLoginAttemptId(authIdentifiers.nextValue()),
-                        authClock,
-                        Executors.newFixedThreadPool(2, runnable -> {
-                            Thread thread = new Thread(runnable, "haifa-local-model-auth");
-                            thread.setDaemon(true);
-                            return thread;
-                        }),
-                        LocalCodingAgent::openBrowser,
-                        8));
-        var authenticationService =
-                new LocalModelAuthenticationService(authStore, authCoordinator, credentials, environmentResolver);
+        var auth = CliLocalModelAuth.open(http, json, environmentResolver);
+        var authStore = auth.store();
+        var authenticationService = auth.service();
+        var credentials = auth.credentials();
+        var antigravityProjects = auth.projects();
         var authentication = new CliCodingAuthenticationClient(
-                authenticationService,
-                configuration.model().credentialRef(),
-                configuration.model().providerId(),
-                configuration.availableModels().stream()
-                        .map(CliConfiguration.Model::credentialRef)
-                        .toList(),
-                antigravityRegistration.isPresent());
+                        authenticationService,
+                        configuration.model().credentialRef(),
+                        configuration.model().providerId(),
+                        configuration.availableModels().stream()
+                                .map(CliConfiguration.Model::credentialRef)
+                                .toList(),
+                        auth.antigravityAvailable())
+                .withLocalManagementStore(auth.storeMode());
         var chat = new OpenAiCompatibleChatModel(
                 "openai-compatible",
                 "1.0.0",
@@ -375,15 +314,7 @@ final class LocalCodingAgent implements AutoCloseable {
 
     static LocalModelAuthStore authenticationStore(
             ObjectMapper json, String osName, Function<String, String> environment) {
-        String configured = environment.apply("HAIFA_CODING_AUTH_STORE");
-        if (configured == null || configured.isBlank() || "windows".equalsIgnoreCase(configured.trim())) {
-            return WindowsLocalModelAuthStore.defaultStore(json);
-        }
-        if ("file".equalsIgnoreCase(configured.trim()) && "Linux".equalsIgnoreCase(osName)) {
-            return FileLocalModelAuthStore.defaultStore(json);
-        }
-        throw new IllegalArgumentException(
-                "HAIFA_CODING_AUTH_STORE=file is supported only on explicitly configured headless Linux hosts");
+        return CliLocalModelAuth.store(json, osName, environment);
     }
 
     static boolean allowInsecureLoopback(CliConfiguration configuration, String optIn) {
@@ -1413,16 +1344,6 @@ final class LocalCodingAgent implements AutoCloseable {
         if (text.length() > 4096) return "<too long>";
         String safe = safeApprovalText(text);
         return safe.indexOf('\n') >= 0 || safe.indexOf('\r') >= 0 || safe.indexOf('\t') >= 0 ? "<invalid>" : safe;
-    }
-
-    private static boolean openBrowser(URI uri) {
-        if (!Desktop.isDesktopSupported() || !Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) return false;
-        try {
-            Desktop.getDesktop().browse(uri);
-            return true;
-        } catch (IOException | SecurityException exception) {
-            return false;
-        }
     }
 
     @Override

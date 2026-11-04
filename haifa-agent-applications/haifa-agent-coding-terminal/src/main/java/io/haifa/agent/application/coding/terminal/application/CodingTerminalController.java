@@ -916,7 +916,7 @@ public final class CodingTerminalController implements AutoCloseable {
     private void offerAuthenticationOnboarding() {
         if (state.selector().isEmpty() && authentication.connectionRequired()) {
             if (!connectionOptions.credentialSetupEnabled()) {
-                apply(new TerminalUiAction.StatusChanged(REMOTE_CREDENTIAL_SETUP_GUIDANCE));
+                showRemoteCredentialGuidance();
                 return;
             }
             apply(new TerminalUiAction.StatusChanged("No model is connected yet; choose a provider"));
@@ -926,7 +926,7 @@ public final class CodingTerminalController implements AutoCloseable {
 
     private void openConnectionCenter(String argument) {
         if (!connectionOptions.credentialSetupEnabled()) {
-            apply(new TerminalUiAction.StatusChanged(REMOTE_CREDENTIAL_SETUP_GUIDANCE));
+            showRemoteCredentialGuidance();
             return;
         }
         String normalized = argument == null ? "" : argument.strip();
@@ -1102,7 +1102,7 @@ public final class CodingTerminalController implements AutoCloseable {
     private void startAuthenticationMethod(
             CodingAuthenticationProviderView provider, CodingAuthenticationMethodView method) {
         if (!connectionOptions.credentialSetupEnabled()) {
-            apply(new TerminalUiAction.StatusChanged(REMOTE_CREDENTIAL_SETUP_GUIDANCE));
+            showRemoteCredentialGuidance();
             return;
         }
         if (!method.available()) {
@@ -1132,6 +1132,20 @@ public final class CodingTerminalController implements AutoCloseable {
                     AgentSessionId,
                     io.haifa.agent.application.project.product.coding.client.CodingSessionApprovalStatus.State>
             approvalStates = new java.util.HashMap<>();
+
+    private void showRemoteCredentialGuidance() {
+        apply(new TerminalUiAction.StatusChanged(REMOTE_CREDENTIAL_SETUP_GUIDANCE));
+        connectionOptions
+                .credentialSetupInstructions()
+                .ifPresent(instructions -> apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
+                        "remote-auth-guidance",
+                        "Authenticate locally on the Host",
+                        List.of("Local repair instructions", "Close"),
+                        0,
+                        List.of(
+                                TerminalSelectorDetail.plain(instructions),
+                                TerminalSelectorDetail.plain("Close these instructions"))))));
+    }
 
     private void openForResume(AgentSessionId sessionId, Optional<String> prompt) {
         openSynchronously(sessionId);
@@ -3651,7 +3665,7 @@ public final class CodingTerminalController implements AutoCloseable {
 
     private void startCodexLogin() {
         if (!connectionOptions.credentialSetupEnabled()) {
-            apply(new TerminalUiAction.StatusChanged(REMOTE_CREDENTIAL_SETUP_GUIDANCE));
+            showRemoteCredentialGuidance();
             return;
         }
         if (rejectConcurrentLogin()) {
@@ -3676,7 +3690,7 @@ public final class CodingTerminalController implements AutoCloseable {
 
     private void startAntigravityLogin() {
         if (!connectionOptions.credentialSetupEnabled()) {
-            apply(new TerminalUiAction.StatusChanged(REMOTE_CREDENTIAL_SETUP_GUIDANCE));
+            showRemoteCredentialGuidance();
             return;
         }
         if (rejectConcurrentLogin()) {
@@ -3794,7 +3808,7 @@ public final class CodingTerminalController implements AutoCloseable {
 
     private void startCodexDeviceLogin() {
         if (!connectionOptions.credentialSetupEnabled()) {
-            apply(new TerminalUiAction.StatusChanged(REMOTE_CREDENTIAL_SETUP_GUIDANCE));
+            showRemoteCredentialGuidance();
             return;
         }
         if (rejectConcurrentLogin()) {
@@ -3936,7 +3950,7 @@ public final class CodingTerminalController implements AutoCloseable {
 
     private void beginApiKeyInput(String input) {
         if (!connectionOptions.credentialSetupEnabled()) {
-            apply(new TerminalUiAction.StatusChanged(REMOTE_CREDENTIAL_SETUP_GUIDANCE));
+            showRemoteCredentialGuidance();
             return;
         }
         if (rejectConcurrentLogin()) {
@@ -4104,7 +4118,7 @@ public final class CodingTerminalController implements AutoCloseable {
         Objects.requireNonNull(apiKey, "apiKey must not be null");
         if (!connectionOptions.credentialSetupEnabled()) {
             java.util.Arrays.fill(apiKey, '\0');
-            apply(new TerminalUiAction.StatusChanged(REMOTE_CREDENTIAL_SETUP_GUIDANCE));
+            showRemoteCredentialGuidance();
             return;
         }
         String providerId = pendingApiKeyProvider;
@@ -4229,7 +4243,7 @@ public final class CodingTerminalController implements AutoCloseable {
             resetBailianState();
             pendingApiKeyProvider = null;
             pendingApiKeyIsUpdate = false;
-            apply(new TerminalUiAction.StatusChanged(REMOTE_CREDENTIAL_SETUP_GUIDANCE));
+            showRemoteCredentialGuidance();
             return;
         }
         String providerId = pendingApiKeyProvider;
@@ -4740,6 +4754,7 @@ public final class CodingTerminalController implements AutoCloseable {
                             code -> apply(new TerminalUiAction.RecoverableFailure(code)));
                 }
             }
+            case "remote-auth-guidance" -> apply(new TerminalUiAction.SelectorClosed());
             case "active-exit" -> {
                 apply(new TerminalUiAction.SelectorClosed());
                 if (selected == 0) apply(new TerminalUiAction.ExitRequested());

@@ -64,11 +64,26 @@ final class RemoteCodingTerminalRunner implements CliRemoteTerminalRunner {
                             client.authentication(),
                             client.previewPublisher(),
                             CodingTerminalConnectionOptions.remoteV1(
-                                    info.workspace()
-                                            .map(value -> value.executionDirectory())
-                                            .orElse("unavailable (older Host)"),
-                                    info.optionalCapabilities().contains("preview-v1"),
-                                    info.optionalCapabilities().contains("session-consent-v1")))
+                                            info.workspace()
+                                                    .map(value -> value.executionDirectory())
+                                                    .orElse("unavailable (older Host)"),
+                                            info.optionalCapabilities().contains("preview-v1"),
+                                            info.optionalCapabilities().contains("session-consent-v1"))
+                                    .withCredentialSetupInstructions(
+                                            client.authentication()
+                                                    .localManagementCommand()
+                                                    .map(
+                                                            command -> "Host: " + endpoint + "\nProject: "
+                                                                    + info.projectId()
+                                                                            .value()
+                                                                    + "\nAccount: default slot for the provider named below"
+                                                                    + "\nRun on the Host as its same OS user:\n"
+                                                                    + command
+                                                                    + "\nFor a local-development distribution use haifa-coding instead of haifa."
+                                                                    + "\nThen reopen /account in this UI to refresh status; retry deliberately.")
+                                                    .orElse(
+                                                            "This Host does not advertise a locally managed default credential. "
+                                                                    + "Inspect /account and the Host's configured credential source; remote secret entry stays unavailable.")))
                     .run();
         } catch (ProjectProductException failure) {
             output.println("[" + failure.code() + "] " + failure.getMessage());

@@ -18,10 +18,20 @@ public final class RemoteCodingAuthenticationClient implements CodingAuthenticat
 
     private final RemoteRpcTransport transport;
     private final RemoteWireCodec codec;
+    private final Supplier<java.util.Optional<String>> localManagementCommand;
 
-    RemoteCodingAuthenticationClient(RemoteRpcTransport transport, RemoteWireCodec codec) {
+    RemoteCodingAuthenticationClient(
+            RemoteRpcTransport transport,
+            RemoteWireCodec codec,
+            Supplier<java.util.Optional<String>> localManagementCommand) {
         this.transport = Objects.requireNonNull(transport, "transport must not be null");
         this.codec = Objects.requireNonNull(codec, "codec must not be null");
+        this.localManagementCommand = Objects.requireNonNull(localManagementCommand);
+    }
+
+    @Override
+    public java.util.Optional<String> localManagementCommand() {
+        return localManagementCommand.get();
     }
 
     private JsonNode status() {

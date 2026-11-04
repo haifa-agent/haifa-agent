@@ -47,6 +47,12 @@ public final class HaifaCliMain {
     }
 
     public static void main(String[] arguments) {
+        // Local credential management must never initialize Runtime logging/configuration or its SQLite owner.
+        if (arguments.length > 0 && "auth".equals(arguments[0])) {
+            int result = new HaifaCliMain().run(arguments, System.out, System.err);
+            if (result != 0) System.exit(result);
+            return;
+        }
         // The remote TUI is a thin client. Dispatch it before file logging, local configuration, credentials,
         // Runtime or database assembly so a remote session never creates local state.
         if (CodingTuiArguments.isRemoteCommand(arguments)) {
@@ -108,6 +114,9 @@ public final class HaifaCliMain {
     }
 
     int run(String[] arguments, PrintStream output, PrintStream error) {
+        if (arguments.length > 0 && "auth".equals(arguments[0]))
+            return new CodingAuthCommand()
+                    .run(java.util.Arrays.copyOfRange(arguments, 1, arguments.length), output, error);
         if (arguments.length > 0 && "host".equals(arguments[0])) {
             return runHost(java.util.Arrays.copyOfRange(arguments, 1, arguments.length), output, error);
         }
