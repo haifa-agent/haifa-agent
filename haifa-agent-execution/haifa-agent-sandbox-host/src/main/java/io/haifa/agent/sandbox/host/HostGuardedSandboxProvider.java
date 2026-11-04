@@ -198,6 +198,8 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
         private final SandboxProfile profile;
         private final io.haifa.agent.project.workspace.WorkspaceId workspaceId;
         private final Path root;
+        private final java.util.concurrent.locks.ReentrantLock operationLock =
+                new java.util.concurrent.locks.ReentrantLock();
         private volatile Process current;
         private volatile boolean cancelRequested;
         private volatile boolean closed;
@@ -219,189 +221,198 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
         }
 
         @Override
-        public synchronized SandboxProcessResult execute(SandboxExecution execution) {
+        public SandboxProcessResult execute(SandboxExecution execution) {
             return execute(execution, ExecutionOutputObserver.noop());
         }
 
         @Override
-        public synchronized SandboxProcessResult execute(SandboxExecution execution, ExecutionOutputObserver observer) {
-            Objects.requireNonNull(observer, "observer must not be null");
-            if (closed) throw failure("SESSION_CLOSED", "sandbox session is closed");
-            if (!execution.workingDirectory().workspaceId().equals(workspaceId)) {
-                throw failure("WORKSPACE_MISMATCH", "working directory belongs to another workspace");
-            }
-            validateCommand(execution);
-            Path cwd = resolveDirectory(execution.workingDirectory());
-            Path scratch =
-                    execution.scratchSpace().isPresent() ? createScratchDirectory(execution.scratchSpace()) : null;
-            Map<String, String> environment;
+        public SandboxProcessResult execute(SandboxExecution execution, ExecutionOutputObserver observer) {
+            operationLock.lock();
             try {
-                environment = validateEnvironment(execution.environment(), execution.scratchSpace(), scratch);
-            } catch (RuntimeException exception) {
-                cleanupScratchDirectory(scratch);
-                throw exception;
-            }
-            Instant started = time.now();
-            SandboxProcessResult result;
-            try {
-                ProcessBuilder builder = new ProcessBuilder(launchCommand(execution));
-                builder.directory(cwd.toFile());
-                builder.redirectInput(ProcessBuilder.Redirect.PIPE);
-                builder.environment().clear();
-                builder.environment().putAll(environment);
-                Process process = builder.start();
-                current = process;
-                observer.onStarted(new io.haifa.agent.execution.api.ExecutionProcessIdentity(process.pid()));
-                try (var standardInput = process.getOutputStream()) {
-                    standardInput.write(execution.input().bytes());
+                Objects.requireNonNull(observer, "observer must not be null");
+                if (closed) throw failure("SESSION_CLOSED", "sandbox session is closed");
+                if (!execution.workingDirectory().workspaceId().equals(workspaceId)) {
+                    throw failure("WORKSPACE_MISMATCH", "working directory belongs to another workspace");
                 }
-                var outputLimitExceeded = new java.util.concurrent.atomic.AtomicBoolean();
-                Set<ProcessHandle> observedDescendants = ConcurrentHashMap.newKeySet();
-                var stdout = CompletableFuture.supplyAsync(
-                        () -> read(
-                                process.getInputStream(),
-                                execution.limits().maxStdoutBytes(),
-                                io.haifa.agent.execution.api.ExecutionOutputChannel.STDOUT,
-                                observer,
-                                execution.limits().outputOverflowPolicy(),
-                                outputLimitExceeded),
-                        OUTPUT_READERS);
-                var stderr = CompletableFuture.supplyAsync(
-                        () -> read(
-                                process.getErrorStream(),
-                                execution.limits().maxStderrBytes(),
-                                io.haifa.agent.execution.api.ExecutionOutputChannel.STDERR,
-                                observer,
-                                execution.limits().outputOverflowPolicy(),
-                                outputLimitExceeded),
-                        OUTPUT_READERS);
-                WaitOutcome outcome = waitFor(
-                        process,
-                        execution.limits().timeout(),
-                        execution.limits().maxProcesses(),
-                        outputLimitExceeded,
-                        observedDescendants);
-                SandboxProcessStatus status;
-                boolean treeTerminated = true;
-                Integer exitCode = null;
-                if (outcome == WaitOutcome.CANCELLED) {
-                    treeTerminated = terminateTree(process);
-                } else if (outcome == WaitOutcome.FINISHED) {
-                    exitCode = process.exitValue();
-                } else {
-                    treeTerminated = terminateTree(process);
+                validateCommand(execution);
+                Path cwd = resolveDirectory(execution.workingDirectory());
+                Path scratch =
+                        execution.scratchSpace().isPresent() ? createScratchDirectory(execution.scratchSpace()) : null;
+                Map<String, String> environment;
+                try {
+                    environment = validateEnvironment(execution.environment(), execution.scratchSpace(), scratch);
+                } catch (RuntimeException exception) {
+                    cleanupScratchDirectory(scratch);
+                    throw exception;
                 }
-                status = settledStatus(outcome, treeTerminated);
-                awaitOutputDrain(CompletableFuture.allOf(stdout, stderr), process, observedDescendants);
-                BoundedBytes out = stdout.getNow(BoundedBytes.incomplete());
-                BoundedBytes err = stderr.getNow(BoundedBytes.incomplete());
-                if (outputLimitExceeded.get()
-                        && execution.limits().outputOverflowPolicy()
-                                == io.haifa.agent.execution.api.ExecutionOutputOverflowPolicy.TERMINATE
-                        && status == SandboxProcessStatus.EXITED) {
-                    status = SandboxProcessStatus.OUTPUT_LIMIT_EXCEEDED;
-                    exitCode = null;
+                Instant started = time.now();
+                SandboxProcessResult result;
+                try {
+                    ProcessBuilder builder = new ProcessBuilder(launchCommand(execution));
+                    builder.directory(cwd.toFile());
+                    builder.redirectInput(ProcessBuilder.Redirect.PIPE);
+                    builder.environment().clear();
+                    builder.environment().putAll(environment);
+                    Process process = builder.start();
+                    current = process;
+                    observer.onStarted(new io.haifa.agent.execution.api.ExecutionProcessIdentity(process.pid()));
+                    try (var standardInput = process.getOutputStream()) {
+                        standardInput.write(execution.input().bytes());
+                    }
+                    var outputLimitExceeded = new java.util.concurrent.atomic.AtomicBoolean();
+                    Set<ProcessHandle> observedDescendants = ConcurrentHashMap.newKeySet();
+                    var stdout = CompletableFuture.supplyAsync(
+                            () -> read(
+                                    process.getInputStream(),
+                                    execution.limits().maxStdoutBytes(),
+                                    io.haifa.agent.execution.api.ExecutionOutputChannel.STDOUT,
+                                    observer,
+                                    execution.limits().outputOverflowPolicy(),
+                                    outputLimitExceeded),
+                            OUTPUT_READERS);
+                    var stderr = CompletableFuture.supplyAsync(
+                            () -> read(
+                                    process.getErrorStream(),
+                                    execution.limits().maxStderrBytes(),
+                                    io.haifa.agent.execution.api.ExecutionOutputChannel.STDERR,
+                                    observer,
+                                    execution.limits().outputOverflowPolicy(),
+                                    outputLimitExceeded),
+                            OUTPUT_READERS);
+                    WaitOutcome outcome = waitFor(
+                            process,
+                            execution.limits().timeout(),
+                            execution.limits().maxProcesses(),
+                            outputLimitExceeded,
+                            observedDescendants);
+                    SandboxProcessStatus status;
+                    boolean treeTerminated = true;
+                    Integer exitCode = null;
+                    if (outcome == WaitOutcome.CANCELLED) {
+                        treeTerminated = terminateTree(process);
+                    } else if (outcome == WaitOutcome.FINISHED) {
+                        exitCode = process.exitValue();
+                    } else {
+                        treeTerminated = terminateTree(process);
+                    }
+                    status = settledStatus(outcome, treeTerminated);
+                    awaitOutputDrain(CompletableFuture.allOf(stdout, stderr), process, observedDescendants);
+                    BoundedBytes out = stdout.getNow(BoundedBytes.incomplete());
+                    BoundedBytes err = stderr.getNow(BoundedBytes.incomplete());
+                    if (outputLimitExceeded.get()
+                            && execution.limits().outputOverflowPolicy()
+                                    == io.haifa.agent.execution.api.ExecutionOutputOverflowPolicy.TERMINATE
+                            && status == SandboxProcessStatus.EXITED) {
+                        status = SandboxProcessStatus.OUTPUT_LIMIT_EXCEEDED;
+                        exitCode = null;
+                    }
+                    Instant ended = time.now();
+                    result = new SandboxProcessResult(
+                            status,
+                            exitCode,
+                            out.bytes(),
+                            err.bytes(),
+                            started,
+                            ended,
+                            out.truncated(),
+                            err.truncated(),
+                            treeTerminated,
+                            safeObservedProcesses(process),
+                            scratch != null,
+                            false,
+                            settlementFailureCode(outcome, treeTerminated),
+                            !out.complete() || !err.complete());
+                } catch (HostSandboxException exception) {
+                    cleanupScratchDirectory(scratch);
+                    throw exception;
+                } catch (Exception exception) {
+                    if (exception instanceof InterruptedException) {
+                        Thread.currentThread().interrupt();
+                    }
+                    boolean treeTerminated = current == null || terminateTree(current);
+                    result = new SandboxProcessResult(
+                            SandboxProcessStatus.UNKNOWN,
+                            null,
+                            new byte[0],
+                            new byte[0],
+                            started,
+                            time.now(),
+                            false,
+                            false,
+                            treeTerminated,
+                            current == null ? 0 : safeObservedProcesses(current),
+                            scratch != null,
+                            false,
+                            null,
+                            true);
+                } finally {
+                    current = null;
+                    cancelRequested = false;
                 }
-                Instant ended = time.now();
-                result = new SandboxProcessResult(
-                        status,
-                        exitCode,
-                        out.bytes(),
-                        err.bytes(),
-                        started,
-                        ended,
-                        out.truncated(),
-                        err.truncated(),
-                        treeTerminated,
-                        safeObservedProcesses(process),
-                        scratch != null,
-                        false,
-                        settlementFailureCode(outcome, treeTerminated),
-                        !out.complete() || !err.complete());
-            } catch (HostSandboxException exception) {
-                cleanupScratchDirectory(scratch);
-                throw exception;
-            } catch (Exception exception) {
-                if (exception instanceof InterruptedException) {
-                    Thread.currentThread().interrupt();
+                boolean cleaned = cleanupScratchDirectory(scratch);
+                if (!cleaned) {
+                    result = new SandboxProcessResult(
+                            SandboxProcessStatus.UNKNOWN,
+                            result.exitCode(),
+                            result.stdout(),
+                            result.stderr(),
+                            result.startedAt(),
+                            result.endedAt(),
+                            result.stdoutTruncated(),
+                            result.stderrTruncated(),
+                            result.processTreeTerminated(),
+                            result.observedProcessCount(),
+                            scratch != null,
+                            true,
+                            result.failureCode(),
+                            result.outputIncomplete());
                 }
-                boolean treeTerminated = current == null || terminateTree(current);
-                result = new SandboxProcessResult(
-                        SandboxProcessStatus.UNKNOWN,
-                        null,
-                        new byte[0],
-                        new byte[0],
-                        started,
-                        time.now(),
-                        false,
-                        false,
-                        treeTerminated,
-                        current == null ? 0 : safeObservedProcesses(current),
-                        scratch != null,
-                        false,
-                        null,
-                        true);
+                return result;
             } finally {
-                current = null;
-                cancelRequested = false;
+                operationLock.unlock();
             }
-            boolean cleaned = cleanupScratchDirectory(scratch);
-            if (!cleaned) {
-                result = new SandboxProcessResult(
-                        SandboxProcessStatus.UNKNOWN,
-                        result.exitCode(),
-                        result.stdout(),
-                        result.stderr(),
-                        result.startedAt(),
-                        result.endedAt(),
-                        result.stdoutTruncated(),
-                        result.stderrTruncated(),
-                        result.processTreeTerminated(),
-                        result.observedProcessCount(),
-                        scratch != null,
-                        true,
-                        result.failureCode(),
-                        result.outputIncomplete());
-            }
-            return result;
         }
 
         @Override
-        public synchronized io.haifa.agent.sandbox.api.SandboxManagedProcess openManagedProcess(
-                SandboxExecution execution) {
-            if (closed) throw failure("SESSION_CLOSED", "sandbox session is closed");
-            if (current != null && current.isAlive()) {
-                throw failure("SESSION_BUSY", "sandbox session already has a live process");
-            }
-            if (!execution.workingDirectory().workspaceId().equals(workspaceId)) {
-                throw failure("WORKSPACE_MISMATCH", "working directory belongs to another workspace");
-            }
-            if (execution.command().mode() != ExecutionCommandMode.DIRECT) {
-                throw failure("MANAGED_SHELL_DENIED", "managed process sessions require a direct command");
-            }
-            validateCommand(execution);
-            Path cwd = resolveDirectory(execution.workingDirectory());
-            Path scratch =
-                    execution.scratchSpace().isPresent() ? createScratchDirectory(execution.scratchSpace()) : null;
-            Map<String, String> environment;
+        public io.haifa.agent.sandbox.api.SandboxManagedProcess openManagedProcess(SandboxExecution execution) {
+            operationLock.lock();
             try {
-                environment = validateEnvironment(execution.environment(), execution.scratchSpace(), scratch);
-            } catch (RuntimeException exception) {
-                cleanupScratchDirectory(scratch);
-                throw exception;
-            }
-            try {
-                ProcessBuilder builder = new ProcessBuilder(launchCommand(execution));
-                builder.directory(cwd.toFile());
-                builder.redirectInput(ProcessBuilder.Redirect.PIPE);
-                builder.environment().clear();
-                builder.environment().putAll(environment);
-                Process process = builder.start();
-                current = process;
-                return new Managed(process, execution, time.now(), scratch);
-            } catch (IOException exception) {
-                cleanupScratchDirectory(scratch);
-                throw failure("PROCESS_START_FAILED", "managed process could not be started");
+                if (closed) throw failure("SESSION_CLOSED", "sandbox session is closed");
+                if (current != null && current.isAlive()) {
+                    throw failure("SESSION_BUSY", "sandbox session already has a live process");
+                }
+                if (!execution.workingDirectory().workspaceId().equals(workspaceId)) {
+                    throw failure("WORKSPACE_MISMATCH", "working directory belongs to another workspace");
+                }
+                if (execution.command().mode() != ExecutionCommandMode.DIRECT) {
+                    throw failure("MANAGED_SHELL_DENIED", "managed process sessions require a direct command");
+                }
+                validateCommand(execution);
+                Path cwd = resolveDirectory(execution.workingDirectory());
+                Path scratch =
+                        execution.scratchSpace().isPresent() ? createScratchDirectory(execution.scratchSpace()) : null;
+                Map<String, String> environment;
+                try {
+                    environment = validateEnvironment(execution.environment(), execution.scratchSpace(), scratch);
+                } catch (RuntimeException exception) {
+                    cleanupScratchDirectory(scratch);
+                    throw exception;
+                }
+                try {
+                    ProcessBuilder builder = new ProcessBuilder(launchCommand(execution));
+                    builder.directory(cwd.toFile());
+                    builder.redirectInput(ProcessBuilder.Redirect.PIPE);
+                    builder.environment().clear();
+                    builder.environment().putAll(environment);
+                    Process process = builder.start();
+                    current = process;
+                    return new Managed(process, execution, time.now(), scratch);
+                } catch (IOException exception) {
+                    cleanupScratchDirectory(scratch);
+                    throw failure("PROCESS_START_FAILED", "managed process could not be started");
+                }
+            } finally {
+                operationLock.unlock();
             }
         }
 
