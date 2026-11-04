@@ -596,3 +596,8 @@ Session is selected. Healthy checks leave task status unchanged. Context expiry/
 reattaches the current Session; unavailable Hosts show safe recovery guidance and are checked again at the
 bounded cadence. Restoring a connection clears connection errors without clearing unrelated unknown-outcome
 warnings. Input, Resize and Runtime events remain responsive while a check is outstanding.
+
+Manual Shell commands return a stable execution ID on capable Hosts. `/shell` lists retained Session receipts,
+`/shell ID` reads an outcome after reconnecting, and `/shell cancel ID` explicitly requests cancellation.
+Closing a TUI only stops observation. The current Host retains at most 128 receipts for 30 minutes after
+completion; these receipts do not survive a Host restart. Admission, status and cancellation run off the UI thread.
