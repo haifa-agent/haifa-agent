@@ -892,3 +892,10 @@ Search，除真实模型 Endpoint 外不需要外部信息服务。
 当前硬门禁是 Run 正常完成、独立 Oracle 通过、受保护文件和批次边界未变化、真实模型证据完整且无敏感
 信息泄漏。耗时、Token、模型调用数、工具调用数和失败工具结果作为二级趋势指标记录，用于后续比较模型与
 Prompt 效率；现阶段除“失败后恢复”专用用例外，不因单次效率波动判失败。
+
+## Remote Host workspace display
+
+The optional `initialize.workspaceContext` is a bounded display snapshot of the Host's initial authorized
+workspace and Git/worktree metadata. Remote TUI composition maps it into existing environment surfaces and
+labels Shell/export destinations; it never resolves the client's current directory or Git metadata.
+Older Hosts and non-Git/detached checkouts use explicit unavailable fallbacks.
