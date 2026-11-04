@@ -871,7 +871,7 @@ class HostSandboxIT {
         assertThat(scratchRoot).isDirectory().isEmptyDirectory();
     }
 
-    private Fixture fixture(Path workspaceRoot, String workspaceValue) {
+    static Fixture fixture(Path workspaceRoot, String workspaceValue) {
         var workspaces = new InMemoryWorkspaceStore();
         var locations = new HostWorkspaceLocationStore();
         WorkspaceId workspaceId = new WorkspaceId(workspaceValue);
@@ -883,7 +883,7 @@ class HostSandboxIT {
         return new Fixture(workspaceId, workspaces, locations);
     }
 
-    private static void copySleepClass(Path target) throws Exception {
+    static void copySleepClass(Path target) throws Exception {
         copyProcessClass(target, SleepProcess.class);
     }
 
@@ -954,6 +954,5 @@ class HostSandboxIT {
                 + "touch \"$GOCACHE/probe\"; printf scratch-ok";
     }
 
-    private record Fixture(
-            WorkspaceId workspaceId, InMemoryWorkspaceStore workspaces, HostWorkspaceLocationStore locations) {}
+    record Fixture(WorkspaceId workspaceId, InMemoryWorkspaceStore workspaces, HostWorkspaceLocationStore locations) {}
 }

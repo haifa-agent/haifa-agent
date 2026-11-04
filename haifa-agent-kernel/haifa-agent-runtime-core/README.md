@@ -479,3 +479,11 @@ and charged to the actual request budget; an oversized mandatory input still fai
 one original record, including redacted identities so later USER inputs cannot silently replace it. Imported
 transcripts without a Run USER retain compatibility. Deterministic summaries remain explicitly lossy and
 `DETERMINISTIC_DEGRADED`; their fact limit and text truncation are unchanged, and source records remain stored.
+
+## Java 21 transition scheduling
+
+Run transitions retain their per-Run reentrant lock across the existing Unit of Work, including terminal output,
+input settlement and after-commit observation. The lock uses `ReentrantLock`: a transition waiting for a storage
+writer can unmount from its virtual-thread carrier, allowing the writer's owner to resume even on low-core hosts.
+Core lifecycle rules and transaction boundaries remain authoritative; increasing scheduler parallelism or SQLite
+writer timeouts is not required for progress.

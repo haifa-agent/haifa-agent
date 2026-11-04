@@ -2,6 +2,10 @@
 
 ## Unreleased - 0.1.5-SNAPSHOT
 
+- Run transitions and Host sandbox executions no longer pin Java 21 virtual-thread carriers while waiting
+  for the SQLite writer or a process, allowing concurrent Sessions and precise cancellation to progress
+  on low-core Coding Hosts.
+
 - Conversation compaction now reports correlated semantic and recovery outcomes, preserves Run hard-limit
   and cancellation signals, and caps summary-call timeouts by remaining active Run time. Deterministic
   commits, concurrent winners and storage failures are reported distinctly without exposing response text.
