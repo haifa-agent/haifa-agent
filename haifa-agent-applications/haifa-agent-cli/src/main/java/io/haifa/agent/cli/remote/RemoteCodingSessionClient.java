@@ -70,6 +70,7 @@ import java.util.function.Supplier;
  */
 public final class RemoteCodingSessionClient implements CodingSessionClient, AutoCloseable {
     private static final String PROTOCOL_VERSION = "1";
+    private static final Set<String> OPTIONAL_CAPABILITIES = Set.of();
     private static final Set<String> REQUIRED_CAPABILITIES = Set.of(
             "session-list",
             "session-create",
@@ -162,6 +163,7 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("protocolVersion", PROTOCOL_VERSION);
         params.put("clientInfo", clientInfo);
+        params.put("optionalCapabilities", OPTIONAL_CAPABILITIES);
         JsonNode result = transport.call("initialize", params, false);
         decode(() -> {
             RemoteWireCodec.requireObject(result, "initialize result");
@@ -203,6 +205,18 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
                     throw RemoteRpcTransport.protocolIncompatible();
                 }
             }
+            Set<String> optional = new LinkedHashSet<>();
+            JsonNode selected = result.get("optionalCapabilities");
+            if (selected != null) {
+                if (!selected.isArray() || selected.size() > OPTIONAL_CAPABILITIES.size()) {
+                    throw RemoteRpcTransport.protocolIncompatible();
+                }
+                for (JsonNode item : selected) {
+                    if (!item.isTextual()
+                            || !OPTIONAL_CAPABILITIES.contains(item.textValue())
+                            || !optional.add(item.textValue())) throw RemoteRpcTransport.protocolIncompatible();
+                }
+            }
             Set<String> unsupported = new LinkedHashSet<>();
             for (JsonNode item : RemoteWireCodec.requiredArray(result, "unsupported")) {
                 unsupported.add(RemoteWireCodec.requiredTextValue(item, "unsupported"));
@@ -223,7 +237,15 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
             synchronized (lifecycleLock) {
                 if (closed) throw RemoteRpcTransport.unavailable();
                 this.info = new RemoteCodingClientInfo(
-                        version, hostName, hostProject, clientId, principalType, supported, unsupported, workspaceInfo);
+                        version,
+                        hostName,
+                        hostProject,
+                        clientId,
+                        principalType,
+                        supported,
+                        unsupported,
+                        workspaceInfo,
+                        optional);
                 this.projectId = hostProject;
                 transport.clientId(clientId);
             }

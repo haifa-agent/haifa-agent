@@ -57,9 +57,11 @@ final class RemoteCodingTerminalRunner implements CliRemoteTerminalRunner {
                             workspaceContext(info),
                             client.authentication(),
                             ToolOutputPreviewPublisher.noop(),
-                            CodingTerminalConnectionOptions.remoteV1(info.workspace()
-                                    .map(value -> value.executionDirectory())
-                                    .orElse("unavailable (older Host)")))
+                            CodingTerminalConnectionOptions.remoteV1(
+                                    info.workspace()
+                                            .map(value -> value.executionDirectory())
+                                            .orElse("unavailable (older Host)"),
+                                    info.optionalCapabilities().contains("preview-v1")))
                     .run();
         } catch (ProjectProductException failure) {
             output.println("[" + failure.code() + "] " + failure.getMessage());

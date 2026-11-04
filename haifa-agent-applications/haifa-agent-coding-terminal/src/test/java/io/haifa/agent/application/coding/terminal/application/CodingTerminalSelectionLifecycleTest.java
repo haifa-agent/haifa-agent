@@ -30,6 +30,32 @@ import org.junit.jupiter.api.Test;
 
 class CodingTerminalSelectionLifecycleTest {
     @Test
+    void negotiatedRemotePreviewAndLabeledCommandHelpUseIndependentCapabilities() {
+        FakeClient client = new FakeClient(activeView());
+        RecordingPreviewPublisher preview = new RecordingPreviewPublisher();
+        var controller = new CodingTerminalController(
+                PROJECT_ID,
+                client,
+                CodingAuthenticationClient.unavailable(),
+                new TerminalEventPump(32),
+                new TerminalUiReducer(),
+                TerminalUiState.initial(120, 40),
+                CodingTerminalConnectionOptions.remoteV1("/host/workspace", true),
+                Runnable::run);
+        controller.attachToolOutputPreviewPublisher(preview);
+        controller.open(SESSION_ID);
+        assertThat(preview.subscribeCalls).isEqualTo(1);
+        controller.openCommandSelector();
+        assertThat(controller.state().selector()).hasValueSatisfying(selector -> {
+            assertThat(selector.options().getFirst()).startsWith("/connect · unavailable:");
+            assertThat(selector.options()).contains("/trust · Host", "/reload · Host", "/export · Host");
+        });
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+        assertThat(controller.secureInputRequested()).isFalse();
+        assertThat(controller.state().status()).contains("Host application");
+    }
+
+    @Test
     void failedConnectionChecksPreserveUnknownOutcomesWithoutAnActiveSession() {
         var checks = new java.util.concurrent.atomic.AtomicInteger();
         FakeClient client = new FakeClient(activeView()) {

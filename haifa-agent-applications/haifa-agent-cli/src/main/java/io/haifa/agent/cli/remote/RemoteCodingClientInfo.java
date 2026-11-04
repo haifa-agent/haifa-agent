@@ -14,7 +14,8 @@ public record RemoteCodingClientInfo(
         String principalType,
         Set<String> capabilities,
         Set<String> unsupported,
-        Optional<RemoteCodingWorkspaceInfo> workspace) {
+        Optional<RemoteCodingWorkspaceInfo> workspace,
+        Set<String> optionalCapabilities) {
 
     public RemoteCodingClientInfo {
         protocolVersion = requireText(protocolVersion, "protocolVersion");
@@ -25,6 +26,29 @@ public record RemoteCodingClientInfo(
         capabilities = Set.copyOf(Objects.requireNonNull(capabilities, "capabilities must not be null"));
         unsupported = Set.copyOf(Objects.requireNonNull(unsupported, "unsupported must not be null"));
         workspace = Objects.requireNonNull(workspace, "workspace must not be null");
+        optionalCapabilities =
+                Set.copyOf(Objects.requireNonNull(optionalCapabilities, "optionalCapabilities must not be null"));
+    }
+
+    public RemoteCodingClientInfo(
+            String protocolVersion,
+            String hostName,
+            ProjectId projectId,
+            String clientId,
+            String principalType,
+            Set<String> capabilities,
+            Set<String> unsupported,
+            Optional<RemoteCodingWorkspaceInfo> workspace) {
+        this(
+                protocolVersion,
+                hostName,
+                projectId,
+                clientId,
+                principalType,
+                capabilities,
+                unsupported,
+                workspace,
+                Set.of());
     }
 
     public RemoteCodingClientInfo(
