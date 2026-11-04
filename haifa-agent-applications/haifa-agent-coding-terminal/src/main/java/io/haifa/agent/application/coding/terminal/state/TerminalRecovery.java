@@ -41,11 +41,11 @@ public record TerminalRecovery(Category category, String code, String action) {
             entry(
                     Category.USER_ACTION_REQUIRED,
                     "PAYLOAD_TOO_LARGE",
-                    "The request or response exceeds the Host byte limit; reduce the input or load a smaller history page before retrying."),
+                    "The request or response exceeds the Host byte limit; reduce the input or load a smaller history page. If this followed a command, inspect its outcome before resending."),
             entry(
                     Category.USER_ACTION_REQUIRED,
                     "REMOTE_PAYLOAD_TOO_LARGE",
-                    "The request or response exceeds the remote byte limit; reduce the input or load a smaller history page before retrying."),
+                    "The request or response exceeds the remote byte limit; reduce the input or load a smaller history page. If this followed a command, inspect its outcome before resending."),
             entry(
                     Category.USER_ACTION_REQUIRED,
                     "CLIENT_CONTEXT_REQUIRED",

@@ -62,7 +62,8 @@ class TerminalRecoveryTest {
         assertThat(TerminalRecovery.fromCode("REVISION_CONFLICT").action()).contains("refresh", "review");
         assertThat(TerminalRecovery.fromCode("HOST_BUSY").action()).contains("capacity", "wait");
         for (String code : java.util.List.of("PAYLOAD_TOO_LARGE", "REMOTE_PAYLOAD_TOO_LARGE")) {
-            assertThat(TerminalRecovery.fromCode(code).action()).contains("byte limit", "smaller history page");
+            assertThat(TerminalRecovery.fromCode(code).action())
+                    .contains("byte limit", "smaller history page", "inspect its outcome before resending");
         }
         assertThat(TerminalRecovery.fromCode("CLIENT_CONTEXT_REQUIRED").action())
                 .contains("expired", "tui --connect", "Do not rerun");
