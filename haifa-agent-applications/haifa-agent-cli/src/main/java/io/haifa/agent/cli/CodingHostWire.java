@@ -55,14 +55,14 @@ final class CodingHostWire {
             io.haifa.agent.execution.api.ToolOutputPreview preview,
             io.haifa.agent.core.session.AgentSessionId sessionId) {
         // The execution broker already redacts sensitive values across chunk boundaries.
-        // Apply display controls/pattern redaction and a final UTF-8 wire budget before transport.
-        String safe = PREVIEW_REDACTOR.redact(preview.text());
-        safe = safe.replaceAll("\\u001B\\[[;?0-9]*[ -/]*[@-~]", "");
+        // Normalize display controls before credential-pattern matching, then enforce the UTF-8 wire budget.
+        String safe = preview.text().replaceAll("\\u001B\\[[;?0-9]*[ -/]*[@-~]", "");
         StringBuilder display = new StringBuilder();
         safe.codePoints()
                 .filter(c -> c == '\n' || c == '\r' || c == '\t' || !Character.isISOControl(c))
                 .forEach(display::appendCodePoint);
-        var bounded = io.haifa.agent.runtime.api.display.BoundedText.of(display.toString(), 4096, 256);
+        var bounded = io.haifa.agent.runtime.api.display.BoundedText.of(
+                PREVIEW_REDACTOR.redact(display.toString()), 4096, 256);
         return Map.of(
                 "sessionId",
                 sessionId.value(),

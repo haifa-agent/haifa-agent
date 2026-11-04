@@ -20,6 +20,27 @@ import org.junit.jupiter.api.Test;
 class CodingHostWireTest {
 
     @Test
+    void normalizesColoredAndControlSplitCredentialsBeforePatternRedaction() {
+        for (String text : java.util.List.of(
+                "Bearer \u001b[32msynthetic-color-token\u001b[0m",
+                "api_\u0000key=\u001b[31msynthetic-key-value\u001b[0m")) {
+            var preview = new io.haifa.agent.execution.api.ToolOutputPreview(
+                    new io.haifa.agent.core.run.AgentRunId("run-safe-order"),
+                    new io.haifa.agent.core.tool.ToolCallId("call-safe-order"),
+                    io.haifa.agent.execution.api.ExecutionOutputChannel.STDOUT,
+                    text,
+                    false,
+                    false);
+            String safe = (String) CodingHostWire.preview(
+                            preview, new io.haifa.agent.core.session.AgentSessionId("session-safe-order"))
+                    .get("text");
+            assertThat(safe)
+                    .contains("[REDACTED]")
+                    .doesNotContain("synthetic-color-token", "synthetic-key-value", "\u001b", "\u0000");
+        }
+    }
+
+    @Test
     void previewIsDisplaySafeAndHasAnIndependentUtf8Budget() {
         var preview = new io.haifa.agent.execution.api.ToolOutputPreview(
                 new io.haifa.agent.core.run.AgentRunId("run-preview"),
