@@ -278,6 +278,12 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
     }
 
     @Override
+    public CodingSessionHistoryPage history(AgentSessionId sessionId, int limit, long beforeSequence) {
+        return history.map(service -> service.before(sessionId, beforeSequence, limit))
+                .orElseGet(() -> CodingSessionHistoryPage.empty(sessionId));
+    }
+
+    @Override
     public List<CodingModelOption> models() {
         return sessions.availableModels();
     }

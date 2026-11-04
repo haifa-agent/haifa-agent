@@ -85,3 +85,17 @@ column/value lines. Rendering follows terminal cell widths, supports the four bu
 keeps structure readable without color. Streaming and Resize preserve the original Markdown stored
 in the Session. See the [Terminal module guide](../../haifa-agent-applications/haifa-agent-coding-terminal/README.md)
 for rendering boundaries and the internal startup fallback.
+
+## Host history bounds
+
+Host protocol v1 Session create/open/reconcile responses defer transcript loading (`historyDeferred: true`);
+the legacy `history` slot is empty. Read `session/history` separately with `sessionId`, `limit` (1–100) and an
+optional exclusive `beforeSequence`. Responses contain `earlierHistoryAvailable` and `nextBeforeSequence`
+(or null at the beginning). Feed that continuation into the next request to retrieve older pages.
+
+Each history page is bounded to 512 KiB of serialized UTF-8 JSON, including JSON escaping and page metadata;
+the Host retains the newest complete message-sequence groups and leaves room below its 1 MiB response cap for
+the RPC envelope. Host state RPCs do not fetch transcript history; the TUI loads its bounded history page
+separately. Other oversized responses retain
+the request ID and return `PAYLOAD_TOO_LARGE`. Existing clients can continue requesting recent history without
+a cursor; updated clients can page backwards.

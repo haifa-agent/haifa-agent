@@ -335,6 +335,25 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
     }
 
     @Override
+    public CodingSessionHistoryPage history(AgentSessionId sessionId, int limit, long beforeSequence) {
+        requireUsable();
+        if (beforeSequence < 1) throw new IllegalArgumentException("beforeSequence must be positive");
+        JsonNode result = transport.call(
+                "session/history",
+                RemoteRpcTransport.params(
+                        "sessionId", requireSessionId(sessionId), "limit", limit, "beforeSequence", beforeSequence),
+                false);
+        CodingSessionHistoryPage page = decode(() -> codec.historyPage(result));
+        requireSessionIdentity(page.sessionId(), sessionId);
+        if (page.items().stream().anyMatch(item -> item.sequence() >= beforeSequence)
+                || (page.nextBeforeSequence().isPresent()
+                        && page.nextBeforeSequence().getAsLong() >= beforeSequence)) {
+            throw RemoteRpcTransport.protocolIncompatible();
+        }
+        return page;
+    }
+
+    @Override
     public List<CodingModelOption> models() {
         requireUsable();
         return decode(() -> codec.models(transport.call("model/list", Map.of(), false)));

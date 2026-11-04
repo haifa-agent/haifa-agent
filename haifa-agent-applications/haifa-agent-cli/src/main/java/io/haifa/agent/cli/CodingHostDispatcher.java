@@ -38,6 +38,7 @@ import java.util.OptionalLong;
 final class CodingHostDispatcher {
     private static final String PROTOCOL_VERSION = "1";
 
+    private final CodingHostHistory history = new CodingHostHistory();
     private final ProjectId projectId;
     private final CodingSessionClient client;
     private final CodingSessionService sessions;
@@ -75,8 +76,7 @@ final class CodingHostDispatcher {
                 case "session/create" -> createSession(safeParams);
                 case "session/open" -> sessionOpen(safeParams);
                 case "session/reconcile" -> sessionView(client.reconcile(session(safeParams)));
-                case "session/history" ->
-                    CodingHostWire.history(client.history(session(safeParams), limit(safeParams, 100, 200)));
+                case "session/history" -> historyPage(safeParams);
                 case "session/rename" ->
                     CodingHostWire.summary(client.rename(
                             session(safeParams),
@@ -266,7 +266,21 @@ final class CodingHostDispatcher {
     }
 
     private Map<String, Object> sessionView(CodingSessionView view) {
-        return CodingHostWire.sessionView(view, client.history(view.summary().sessionId(), 100));
+        Map<String, Object> result = CodingHostWire.sessionView(
+                view,
+                io.haifa.agent.application.project.product.coding.CodingSessionHistoryPage.empty(
+                        view.summary().sessionId()));
+        result.put("historyDeferred", true);
+        return result;
+    }
+
+    private Map<String, Object> historyPage(JsonNode params) {
+        int requested = limit(params, 100, 100);
+        OptionalLong before = optionalLong(params, "beforeSequence");
+        return history.page(
+                before.isPresent()
+                        ? client.history(session(params), requested, before.getAsLong())
+                        : client.history(session(params), requested));
     }
 
     private Map<String, Object> steer(JsonNode params) {

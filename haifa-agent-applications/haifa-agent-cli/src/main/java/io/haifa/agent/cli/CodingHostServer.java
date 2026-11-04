@@ -398,14 +398,7 @@ final class CodingHostServer implements AutoCloseable {
     private void write(HttpExchange exchange, int status, ObjectNode response) throws IOException {
         byte[] payload = json.writeValueAsBytes(response);
         if (payload.length > MAX_RESPONSE_BYTES) {
-            response = json.createObjectNode();
-            response.put("jsonrpc", "2.0");
-            response.putNull("id");
-            ObjectNode error = response.putObject("error");
-            error.put("code", -32000);
-            error.put("message", "Response is too large");
-            error.putObject("data").put("reasonCode", "PAYLOAD_TOO_LARGE");
-            payload = json.writeValueAsBytes(response);
+            payload = json.writeValueAsBytes(oversizedResponse(json, response));
             status = 200;
         }
         exchange.getResponseHeaders().set("Content-Type", "application/json");
@@ -413,6 +406,18 @@ final class CodingHostServer implements AutoCloseable {
         try (OutputStream output = exchange.getResponseBody()) {
             output.write(payload);
         }
+    }
+
+    static ObjectNode oversizedResponse(ObjectMapper json, ObjectNode original) {
+        ObjectNode response = json.createObjectNode();
+        response.put("jsonrpc", "2.0");
+        JsonNode requestId = original.get("id");
+        response.set("id", requestId == null ? json.nullNode() : requestId);
+        ObjectNode error = response.putObject("error");
+        error.put("code", -32000);
+        error.put("message", "Response is too large");
+        error.putObject("data").put("reasonCode", "PAYLOAD_TOO_LARGE");
+        return response;
     }
 
     private static int statusFor(CodingHostException exception) {
