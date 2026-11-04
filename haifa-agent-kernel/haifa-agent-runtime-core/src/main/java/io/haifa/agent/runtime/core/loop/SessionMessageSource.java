@@ -294,7 +294,7 @@ public final class SessionMessageSource {
         if (!original.sessionId().equals(run.sessionId()) || !visibleToContext(original)) {
             throw new OptimisticLockException("initiating Run input is no longer visible");
         }
-        // The selected cursor is the consumed-input boundary of this assembly. Never pull future input into it.
+        // The initiating USER is consumed at Run admission. Do not read beyond this assembly's selected input cursor.
         if (original.cursor().compareTo(selection.through()) > 0) return selection;
         boolean present = selection.items().stream()
                 .filter(item -> item.content() instanceof MessageGroupContextContent)
