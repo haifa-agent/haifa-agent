@@ -2,6 +2,8 @@ package io.haifa.agent.runtime.core.compaction;
 
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
+import io.haifa.agent.context.api.ContextBuildException;
+import io.haifa.agent.context.api.ContextBuildFailure;
 import io.haifa.agent.context.budget.HeuristicTokenEstimator;
 import io.haifa.agent.context.compression.CarryForwardReconciler;
 import io.haifa.agent.context.compression.CompactionPromptRenderer;
@@ -31,7 +33,6 @@ import io.haifa.agent.core.message.MessageRole;
 import io.haifa.agent.core.message.MessageStatus;
 import io.haifa.agent.core.message.MessageVisibility;
 import io.haifa.agent.core.run.AgentRun;
-import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.runtime.core.context.ActiveContextSnapshot;
@@ -50,7 +51,6 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.HexFormat;
@@ -88,14 +88,7 @@ public final class SemanticCompactionCoordinator {
     private final RuntimeEventAppender events;
     private final ModelMessageProjectionPlanner projectionPlanner;
     private final ActiveContextSnapshots activeContexts;
-    private static final int MAX_FAILED_RUNS_CACHE = 1024;
-    private final Set<AgentRunId> activeBudgetCompactionFailedRuns = Collections.synchronizedSet(
-            Collections.newSetFromMap(new LinkedHashMap<AgentRunId, Boolean>(16, 0.75f, true) {
-                @Override
-                protected boolean removeEldestEntry(Map.Entry<AgentRunId, Boolean> eldest) {
-                    return size() > MAX_FAILED_RUNS_CACHE;
-                }
-            }));
+    private final CompactionFailureBackoff failureBackoff;
 
     public SemanticCompactionCoordinator(
             RuntimeStateRepository state,
@@ -170,6 +163,7 @@ public final class SemanticCompactionCoordinator {
         this.events = Objects.requireNonNull(events, "events must not be null");
         this.projectionPlanner = Objects.requireNonNull(projectionPlanner, "projectionPlanner must not be null");
         this.activeContexts = activeContexts;
+        this.failureBackoff = new CompactionFailureBackoff(time, 60_000L, 1024);
     }
 
     /**
@@ -251,14 +245,6 @@ public final class SemanticCompactionCoordinator {
             return CompactionEvaluationOutcome.untriggered(currentTokens, elapsedMillis(startNanos));
         }
 
-        if (decision.reason() == CompactionTriggerReason.ACTIVE_HISTORY_BUDGET
-                && activeBudgetCompactionFailedRuns.contains(run.id())) {
-            log.info(
-                    "Skipping active history budget compaction for run {} because a previous attempt failed in this run",
-                    run.id().value());
-            return CompactionEvaluationOutcome.untriggered(currentTokens, elapsedMillis(startNanos));
-        }
-
         long softLimit = decision.budgetBreakdown().softLimitTokens();
         long prevTokens =
                 previousSummary.map(ConversationSummary::estimatedTokens).orElse(0);
@@ -301,12 +287,22 @@ public final class SemanticCompactionCoordinator {
                     elapsed);
         }
 
+        boolean targetPressure = decision.reason() == CompactionTriggerReason.ACTIVE_HISTORY_BUDGET;
+        if (targetPressure
+                && failureBackoff.contains(
+                        CompactionFailureBackoff.Scope.of(run, binding, policy, expectedPreviousVersion),
+                        activeMessages)) {
+            invoker.checkControl(run);
+            requireWithinRetention(afterTokens, decision.budgetBreakdown());
+            return CompactionEvaluationOutcome.untriggered(afterTokens, elapsedMillis(startNanos));
+        }
+
         log.info(
                 "Triggering semantic compaction for session {} reason: {}, activeBudget={}",
                 run.sessionId().value(),
                 decision.reason(),
                 softLimit);
-        return compactSession(
+        CompactionEvaluationOutcome outcome = compactSession(
                 run,
                 iteration,
                 binding,
@@ -321,6 +317,32 @@ public final class SemanticCompactionCoordinator {
                 currentTokens,
                 decision.budgetBreakdown().resolvedRetainedTailTokens(),
                 startNanos);
+        if (targetPressure) {
+            Optional<ConversationSummary> selected = summaries.latestValid(run.sessionId());
+            List<AgentMessage> remaining = groupsAfterSummary(visible, selected).stream()
+                    .flatMap(List::stream)
+                    .toList();
+            long selectedTokens =
+                    selected.map(ConversationSummary::estimatedTokens).orElse(0)
+                            + projectionPlanner.plan(remaining, resolver).projectedActiveTokens();
+            requireWithinRetention(selectedTokens, decision.budgetBreakdown());
+        }
+        return outcome;
+    }
+
+    static long retentionLimit(ContextBudgetBreakdown budget) {
+        long target = budget.softLimitTokens();
+        long extra = target / 5L;
+        long limit = target > Long.MAX_VALUE - extra ? Long.MAX_VALUE : target + extra;
+        return Math.min(budget.availableSessionTokens(), limit);
+    }
+
+    static void requireWithinRetention(long historyTokens, ContextBudgetBreakdown budget) {
+        if (historyTokens > retentionLimit(budget)) {
+            throw new ContextBuildException(
+                    ContextBuildFailure.REQUIRED_CONTEXT_TOO_LARGE,
+                    "Active history exceeds its bounded recovery allowance");
+        }
     }
 
     private CompactionEvaluationOutcome compactTruncatedWindow(
@@ -627,8 +649,12 @@ public final class SemanticCompactionCoordinator {
             if (activeBudget
                     || (ex instanceof CompactionBudgetExceededException
                             && !policy.allowDeterministicDegradedFallback())) {
-                if (activeBudget) activeBudgetCompactionFailedRuns.add(run.id());
-                return recoveryOutcome(
+                if (activeBudget && recoverableFailure(ex) && !(ex instanceof CompactionBudgetExceededException)) {
+                    failureBackoff.record(
+                            CompactionFailureBackoff.Scope.of(run, binding, policy, expectedPreviousVersion),
+                            sourceToCompact);
+                }
+                CompactionEvaluationOutcome recovery = recoveryOutcome(
                         run,
                         evaluationId,
                         reason,
@@ -638,6 +664,12 @@ public final class SemanticCompactionCoordinator {
                         initialEstimatedTokens,
                         cacheHitRate,
                         startNanos);
+                if (activeBudget && !recoverableFailure(ex)) {
+                    throw new ContextBuildException(
+                            ContextBuildFailure.REQUIRED_CONTEXT_TOO_LARGE,
+                            "Compaction failed without an eligible bounded recovery");
+                }
+                return recovery;
             }
             if (degraded) {
                 SummaryCommit commit = fallbackToDeterministic(
@@ -685,6 +717,24 @@ public final class SemanticCompactionCoordinator {
                 retainedTailTokens,
                 cacheHitRate,
                 startNanos);
+    }
+
+    private static boolean recoverableFailure(Exception failure) {
+        if (failure instanceof SemanticSummaryValidationException) return true;
+        if (failure instanceof io.haifa.agent.model.api.ModelInvocationException model) {
+            return switch (model.category()) {
+                case RATE_LIMITED,
+                        TIMEOUT,
+                        PROVIDER_UNAVAILABLE,
+                        SERVER_ERROR,
+                        TRANSPORT_ERROR,
+                        EMPTY_RESPONSE,
+                        PARTIAL_RESPONSE,
+                        MALFORMED_RESPONSE -> true;
+                default -> false;
+            };
+        }
+        return failure instanceof CompactionBudgetExceededException;
     }
 
     private static String failureCategory(Exception exception) {

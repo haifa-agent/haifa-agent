@@ -174,6 +174,11 @@ class ActiveContextBudgetCalibrationTest {
         assertThat(outcome.tier1PruningBypassedSummary()).isTrue();
         assertThat(outcome.omittedToolResultCount()).isGreaterThan(0);
         assertThat(outcome.omittedToolPayloadTokens()).isGreaterThan(20_000L);
+        assertThat(coordinator.evaluateAndCompactIfNeeded(run, 2, binding).tier1PruningBypassedSummary())
+                .isTrue();
+        assertThat(store.eventsFor(run.id()).stream()
+                        .anyMatch(event -> event.type().equals("session.compaction-failed")))
+                .isFalse();
         assertThat(llmCalls.get()).isZero();
     }
 

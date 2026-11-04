@@ -259,7 +259,8 @@ public final class SessionMessageSource {
         }
         MetricsCollector metrics = new MetricsCollector();
         long startedAt = System.nanoTime();
-        Selection selection = currentSelection(run.sessionId(), sessionTokenBudget, metrics);
+        Selection selection =
+                retainInitiatingInput(run, currentSelection(run.sessionId(), sessionTokenBudget, metrics));
         return new MeasuredSelection(selection, metrics.finish(startedAt));
     }
 
@@ -276,14 +277,48 @@ public final class SessionMessageSource {
         Objects.requireNonNull(run, "run must not be null");
         MetricsCollector metrics = new MetricsCollector();
         long startedAt = System.nanoTime();
-        Selection selection =
-                compactSelection(run.sessionId(), forcedRebuildAttempt, sessionTokenBudget, false, metrics);
+        Selection selection = retainInitiatingInput(
+                run, compactSelection(run.sessionId(), forcedRebuildAttempt, sessionTokenBudget, false, metrics));
         return new MeasuredSelection(selection, metrics.finish(startedAt));
     }
 
     /** Explicit deterministic compaction for the single linear Session path. */
     public Selection compact(AgentSessionId sessionId) {
         return compactSelection(sessionId, 1, Long.MAX_VALUE, true, new MetricsCollector());
+    }
+
+    private Selection retainInitiatingInput(AgentRun run, Selection selection) {
+        Optional<AgentMessage> initiating = messages.initiatingUserMessage(run.id());
+        if (initiating.isEmpty()) return selection; // Compatibility with imported transcripts lacking a Run input.
+        AgentMessage original = initiating.orElseThrow();
+        if (!original.sessionId().equals(run.sessionId()) || !visibleToContext(original)) {
+            throw new OptimisticLockException("initiating Run input is no longer visible");
+        }
+        // The selected cursor is the consumed-input boundary of this assembly. Never pull future input into it.
+        if (original.cursor().compareTo(selection.through()) > 0) return selection;
+        boolean present = selection.items().stream()
+                .filter(item -> item.content() instanceof MessageGroupContextContent)
+                .map(item -> (MessageGroupContextContent) item.content())
+                .flatMap(group -> group.messages().stream())
+                .anyMatch(message -> message.id().equals(original.id()));
+        if (present) return selection;
+        ContextItem pinned = groupItem(List.of(original), true, new HashMap<>());
+        List<ContextItem> items = new ArrayList<>(selection.items());
+        int index = !items.isEmpty() && items.getFirst().type() == ContextItemType.CONVERSATION_SUMMARY ? 1 : 0;
+        items.add(index, pinned);
+        return new Selection(
+                items,
+                selection.through(),
+                selection.summary(),
+                selection.policyVersion(),
+                selection.compressorVersion(),
+                selection.windowGeneration(),
+                selection.compactionCount(),
+                selection.compacted(),
+                selection.compactionReason(),
+                selection.compactionElapsedMillis(),
+                Math.addExact(selection.estimatedSessionTokens(), pinned.estimatedTokens()),
+                selection.sessionTokenBudget());
     }
 
     private Selection currentSelection(AgentSessionId sessionId, long sessionTokenBudget, MetricsCollector metrics) {

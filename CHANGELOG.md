@@ -11,6 +11,9 @@
 
 - Manual Shell commands now expose bounded Host admission, retained outcomes and explicit `/shell` recovery/cancellation.
 
+- Configured active-history compaction now bounds failure continuation and briefly backs off unchanged
+  failed prefixes across Runs. Context assembly preserves the initiating user input after summarization.
+
 - Remote Coding Terminal now renews its Host context independently of the sidebar and reattaches after
   expiry/restart without replaying commands or cancelling Runs.
 

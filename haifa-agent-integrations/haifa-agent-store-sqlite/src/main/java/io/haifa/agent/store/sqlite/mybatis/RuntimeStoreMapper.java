@@ -48,6 +48,8 @@ public interface RuntimeStoreMapper {
 
     List<SessionMessageRow> messagesForRun(@Param("runId") String runId);
 
+    SessionMessageRow initiatingUserMessage(@Param("runId") String runId);
+
     List<SessionMessageRow> runMessagesAfter(
             @Param("runId") String runId,
             @Param("after") long after,

@@ -125,6 +125,12 @@ public final class SqliteSessionMessageRepository
                 .toList());
     }
 
+    public Optional<AgentMessage> initiatingUserMessage(AgentRunId runId) {
+        return read(() -> Optional.ofNullable(
+                        unitOfWork.mapper(RuntimeStoreMapper.class).initiatingUserMessage(runId.value()))
+                .map(this::fromRow));
+    }
+
     @Override
     public List<AgentMessage> runMessagesAfter(AgentRunId runId, long after, long head, int limit) {
         requireLimit(limit);

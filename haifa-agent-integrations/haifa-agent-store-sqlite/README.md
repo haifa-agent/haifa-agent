@@ -1,5 +1,9 @@
 # Haifa Agent SQLite Runtime Store
 
+Runtime 原始请求保留通过既有 `session_message` 的 Run/USER 关联按 sequence 读取首条记录，
+SQL `LIMIT 1` 不加载完整 transcript。Redaction 后仍返回原身份及 REDACTED 状态，由组装路径拒绝，
+不静默换成后续 USER；Store 关闭重开后语义一致，没有新增表或正文副本。
+
 Runtime command 幂等结果按同一 payload codec 的往返表示比较，避免 JSON 将小整数 `Long` 读回 `Integer`
 时误判内容冲突。真实参数数值、命令身份或结果不同仍拒绝；重开 Store 后保留原取消期限的语义。
 

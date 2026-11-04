@@ -24,6 +24,29 @@ import org.junit.jupiter.api.io.TempDir;
 
 class RunMessagePagingTest {
     @Test
+    void initiatingInputKeepsItsIdentityAfterRedactionAndReopen(@TempDir Path directory) {
+        AgentRunId runId;
+        try (var foundation =
+                SqliteStoreFoundation.initialize(SqliteTestSupport.configuration(directory), SqliteTestSupport.CLOCK)) {
+            runId = SqliteAggregateTestData.prepareRun(foundation).id();
+            var messages = foundation.messages();
+            messages.appendSessionMessage(
+                    draft("original", runId, MessageRole.USER, MessageVisibility.USER_VISIBLE, "original input"));
+            messages.appendSessionMessage(
+                    draft("later", runId, MessageRole.USER, MessageVisibility.USER_VISIBLE, "later input"));
+            assertThat(messages.initiatingUserMessage(runId).orElseThrow().id().value())
+                    .isEqualTo("original");
+            messages.redactMessage(new AgentMessageId("original"));
+        }
+        try (var reopened =
+                SqliteStoreFoundation.initialize(SqliteTestSupport.configuration(directory), SqliteTestSupport.CLOCK)) {
+            var original = reopened.messages().initiatingUserMessage(runId).orElseThrow();
+            assertThat(original.id().value()).isEqualTo("original");
+            assertThat(original.status()).isEqualTo(MessageStatus.REDACTED);
+        }
+    }
+
+    @Test
     void preservesOptionalModelCallIdentityThroughCloseAndReopen(@TempDir Path directory) {
         var protector = new AesGcmModelContinuationProtector(
                 new SecretKeySpec(new byte[32], "AES"), new java.security.SecureRandom());
