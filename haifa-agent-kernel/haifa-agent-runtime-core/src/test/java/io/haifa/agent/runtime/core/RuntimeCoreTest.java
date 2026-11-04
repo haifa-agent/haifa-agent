@@ -629,7 +629,7 @@ class RuntimeCoreTest {
                 "default",
                 new AgentSessionId("todo-budget-session"),
                 Optional.empty(),
-                sessionText,
+                "task",
                 List.of(),
                 RuntimeOverrides.NONE));
         var run = fixture.store.find(accepted.runId()).orElseThrow();
@@ -643,6 +643,18 @@ class RuntimeCoreTest {
                         "keep the bounded context regression covered",
                         TodoPriority.HIGH,
                         List.of())),
+                Instant.parse("2026-07-21T00:00:00Z")));
+        // Keep the initiating input small; older history remains the reducible part of this budget fixture.
+        fixture.store.appendSessionMessage(new SessionMessageDraft(
+                new AgentMessageId("todo-budget-history"),
+                run.sessionId(),
+                Optional.of(run.id()),
+                Optional.empty(),
+                MessageRole.USER,
+                MessageStatus.COMPLETED,
+                MessageVisibility.AGENT_VISIBLE,
+                List.of(new TextPart(sessionText, "plain")),
+                Map.of(),
                 Instant.parse("2026-07-21T00:00:00Z")));
         fixture.store.appendSessionMessage(new SessionMessageDraft(
                 new AgentMessageId("todo-budget-follow-up"),

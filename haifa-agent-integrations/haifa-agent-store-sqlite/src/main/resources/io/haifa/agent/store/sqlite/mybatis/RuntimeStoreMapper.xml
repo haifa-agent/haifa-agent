@@ -389,6 +389,11 @@
         WHERE run_id = #{runId} ORDER BY sequence ASC
     </select>
 
+    <select id="initiatingUserMessage" resultMap="sessionMessageRow">
+        SELECT <include refid="messageColumns"/> FROM session_message
+        WHERE run_id = #{runId} AND role = 'USER' ORDER BY sequence ASC LIMIT 1
+    </select>
+
     <!-- Same predicate for bounded pages, head and rank; filtering happens before LIMIT. -->
     <sql id="projectableRunMessage">
         ((status = 'COMPLETED' AND

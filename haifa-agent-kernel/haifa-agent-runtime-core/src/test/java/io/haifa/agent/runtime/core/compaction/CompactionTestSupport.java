@@ -24,7 +24,10 @@ final class CompactionTestSupport {
     private static final Instant NOW = Instant.parse("2026-07-21T00:00:00Z");
 
     static AgentRun createRun(InMemoryRuntimeStore store) {
-        AtomicInteger ids = new AtomicInteger();
+        return createRun(store, new AtomicInteger());
+    }
+
+    static AgentRun createRun(InMemoryRuntimeStore store, AtomicInteger ids) {
         DefaultAgentRuntime runtime = new RuntimeCoreBuilder()
                 .registerChatModel("openai-compatible", "1.0.0", request -> response())
                 .persistence(RuntimePersistencePorts.inMemory(store))

@@ -7,12 +7,15 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
+import io.haifa.agent.context.api.ContextBuildException;
 import io.haifa.agent.context.compression.CompactionQuality;
 import io.haifa.agent.context.compression.CompressionPolicy;
 import io.haifa.agent.context.compression.ConversationSummary;
 import io.haifa.agent.context.compression.ConversationSummaryRepository;
 import io.haifa.agent.context.compression.DeterministicContextCompressor;
 import io.haifa.agent.context.compression.SummaryId;
+import io.haifa.agent.context.item.MessageGroupContextContent;
+import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.message.AgentMessageId;
 import io.haifa.agent.core.message.MessageRole;
@@ -20,25 +23,35 @@ import io.haifa.agent.core.message.MessageStatus;
 import io.haifa.agent.core.message.MessageVisibility;
 import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.run.AgentRunUsageDelta;
+import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelFinishReason;
+import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
+import io.haifa.agent.runtime.api.AgentRunRequest;
+import io.haifa.agent.runtime.api.RuntimeOverrides;
+import io.haifa.agent.runtime.core.RuntimeCoreBuilder;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeConfigurationSnapshot;
+import io.haifa.agent.runtime.core.context.ActiveContextSnapshots;
 import io.haifa.agent.runtime.core.control.CancellationObservedException;
 import io.haifa.agent.runtime.core.control.RunControlRegistry;
+import io.haifa.agent.runtime.core.execution.ManualExecutionScheduler;
 import io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException;
 import io.haifa.agent.runtime.core.guard.RuntimeQuotaExceededException;
 import io.haifa.agent.runtime.core.lifecycle.RunAwaiter;
 import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
+import io.haifa.agent.runtime.core.loop.SessionMessageSource;
 import io.haifa.agent.runtime.core.model.FrozenModelBinding;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.storage.OptimisticLockException;
 import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
+import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
 import io.haifa.agent.runtime.core.storage.StorageException;
 import java.lang.reflect.InvocationTargetException;
@@ -721,6 +734,323 @@ class SemanticCompactionFailureTest {
                 .isInstanceOf(OptimisticLockException.class);
         assertThat(calls).hasValue(1);
         assertThat(store.latestVersion(run.sessionId())).isZero();
+    }
+
+    @Test
+    void targetFailureBacksOffAcrossRunsAndExpiresButForceStillEvaluates() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentRun run = createRun(store);
+        AtomicInteger ids = new AtomicInteger();
+        AtomicReference<Instant> now = new AtomicReference<>(NOW);
+        CompressionPolicy policy =
+                CompressionPolicy.defaults().withActiveHistoryBudgetTokens(1000).withTailTokenBounds(5, 50);
+        SemanticCompactionCoordinator coordinator = coordinator(
+                store, store, () -> "backoff-" + ids.incrementAndGet(), new RunControlRegistry(), policy, now::get);
+        appendTurn(store, run, "u1", "a1", "u", "x".repeat(3300));
+        appendTurn(store, run, "u2", "a2", "u", "a");
+        AtomicInteger calls = new AtomicInteger();
+        FrozenModelBinding binding = bindingWithContextWindow(
+                store,
+                run,
+                request -> {
+                    calls.incrementAndGet();
+                    return invalidJsonResponse();
+                },
+                100_000);
+        coordinator.evaluateAndCompactIfNeeded(run, 1, binding);
+        assertThat(calls).hasValue(2);
+        AgentRun next = CompactionTestSupport.createRun(store, new AtomicInteger(1000));
+        coordinator.evaluateAndCompactIfNeeded(next, 1, binding);
+        assertThat(calls).hasValue(2);
+        assertThat(store.latestValid(run.sessionId())).isEmpty();
+        now.set(NOW.plusSeconds(60));
+        coordinator.evaluateAndCompactIfNeeded(next, 2, binding);
+        assertThat(calls).hasValue(4);
+        // Recreating the owner on the same authoritative Store intentionally loses transient backoff.
+        coordinator(store, store, () -> "reopened-" + ids.incrementAndGet(), new RunControlRegistry(), policy, now::get)
+                .evaluateAndCompactIfNeeded(next, 3, binding);
+        assertThat(calls).hasValue(6);
+        coordinator.forceCompactOnOverflow(next, 3, binding);
+        assertThat(calls).hasValue(8);
+        assertThat(store.latestValid(run.sessionId())).hasValueSatisfying(summary -> assertThat(summary.quality())
+                .isEqualTo(CompactionQuality.DETERMINISTIC_DEGRADED));
+    }
+
+    @Test
+    void failedRecoveryChecksTheExactRetentionBoundaryBeforeContinuation() {
+        for (int historyTokens : List.of(1200, 1201)) {
+            InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+            AgentRun run = createRun(store);
+            AtomicInteger ids = new AtomicInteger();
+            CompressionPolicy policy = CompressionPolicy.defaults()
+                    .withActiveHistoryBudgetTokens(1000)
+                    .withTailTokenBounds(5, 50);
+            SemanticCompactionCoordinator coordinator =
+                    coordinator(store, () -> "bound-" + ids.incrementAndGet(), new RunControlRegistry(), policy);
+            // Initial input contributes six tokens; the other three one-character messages contribute one each.
+            String evidence = "x".repeat((historyTokens - 9) * 3);
+            appendTurn(store, run, "u1", "a1", "u", evidence);
+            appendTurn(store, run, "u2", "a2", "u", "a");
+            var source =
+                    store.messagesAfter(run.sessionId(), io.haifa.agent.core.message.MessageCursor.BEFORE_FIRST, 10);
+            var projection =
+                    new io.haifa.agent.runtime.core.model.ModelMessageProjectionPlanner(store).plan(source, id -> null);
+            assertThat(projection.projectedActiveTokens()).isEqualTo(historyTokens);
+            FrozenModelBinding binding =
+                    bindingWithContextWindow(store, run, request -> invalidJsonResponse(), 100_000);
+            if (historyTokens == 1200) {
+                coordinator.evaluateAndCompactIfNeeded(run, 1, binding);
+            } else {
+                assertThatThrownBy(() -> coordinator.evaluateAndCompactIfNeeded(run, 1, binding))
+                        .isInstanceOf(ContextBuildException.class);
+            }
+            assertThat(store.latestValid(run.sessionId())).isEmpty();
+            assertThat(store.message(new AgentMessageId("a1")).orElseThrow().contents())
+                    .containsExactly(new TextPart(evidence, "plain"));
+        }
+    }
+
+    @Test
+    void runtimeKeepsOriginalInputAfterSemanticCommitAndAfterBoundedFailure() {
+        for (String recovery : List.of("semantic", "bounded", "forced", "oversized")) {
+            boolean successfulSummary = recovery.equals("semantic") || recovery.equals("oversized");
+            InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+            AtomicInteger ids = new AtomicInteger();
+            var scheduler = new ManualExecutionScheduler();
+            List<AgentChatRequest> ordinary = new ArrayList<>();
+            AtomicInteger summaries = new AtomicInteger();
+            int window = io.haifa.agent.runtime.core.bootstrap.DefaultResolvedModelSnapshots.deepSeekV4Pro()
+                    .contextWindow();
+            String original =
+                    "ORIGINAL_RUN_REQUEST_PROBE " + "q".repeat(recovery.equals("oversized") ? window * 3 : 3100);
+            AgentChatModel model = request -> {
+                if (request.structuredOutput().isPresent()) {
+                    summaries.incrementAndGet();
+                    return successfulSummary ? validSummaryResponse() : invalidJsonResponse();
+                }
+                ordinary.add(request);
+                return new AgentChatResponse(
+                        "final",
+                        "model",
+                        "done",
+                        List.of(),
+                        ModelFinishReason.STOP,
+                        ModelUsage.unpriced(10, 10),
+                        "",
+                        Map.of());
+            };
+            var runtime = new RuntimeCoreBuilder()
+                    .persistence(RuntimePersistencePorts.inMemory(store))
+                    .scheduler(scheduler)
+                    .identifierGenerator(() -> "wired-" + ids.incrementAndGet())
+                    .timeProvider(() -> NOW)
+                    .compressionPolicy(CompressionPolicy.defaults()
+                            .withActiveHistoryBudgetTokens(1000)
+                            .withTailTokenBounds(5, 50))
+                    .registerChatModel("openai-compatible", "1.0.0", model)
+                    .build();
+            var accepted = runtime.start(new AgentRunRequest(
+                    "wired-compaction",
+                    new AgentDefinitionId("compaction-failure-agent"),
+                    Optional.empty(),
+                    "default",
+                    new AgentSessionId("wired-session"),
+                    Optional.empty(),
+                    original,
+                    List.of(),
+                    RuntimeOverrides.NONE));
+            AgentRun run = store.find(accepted.runId()).orElseThrow();
+            var originalMessage = store.initiatingUserMessage(run.id()).orElseThrow();
+            appendTurn(store, run, "u1", "a1", "later user input", "answer");
+            appendTurn(store, run, "u2", "a2", "newest user input", "answer");
+            if (recovery.equals("forced")) {
+                coordinator(
+                                store,
+                                () -> "forced-" + ids.incrementAndGet(),
+                                new RunControlRegistry(),
+                                CompressionPolicy.defaults()
+                                        .withDegradedFallback(true)
+                                        .withTailTokenBounds(5, 50))
+                        .forceCompactOnOverflow(run, 1, binding(store, run, model));
+            }
+            scheduler.runAll();
+            if (recovery.equals("oversized")) {
+                assertThat(ordinary.size()).isZero();
+                assertThat(store.find(run.id()).orElseThrow().status()).isEqualTo(AgentRunStatus.FAILED);
+                continue;
+            }
+            assertThat(ordinary.size()).isEqualTo(1);
+            assertThat(ordinary.getFirst().runId()).isEqualTo(run.id());
+            assertThat(ordinary.getFirst().messages().stream()
+                            .filter(message -> message.role() == ModelMessageRole.USER
+                                    && message.content().equals(original))
+                            .count())
+                    .isEqualTo(1);
+            assertThat(store.find(run.id()).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(summaries).hasValue(successfulSummary ? 1 : 2);
+            if (!recovery.equals("bounded")) {
+                ConversationSummary selected =
+                        store.latestValid(run.sessionId()).orElseThrow();
+                assertThat(selected.coveredThrough().compareTo(originalMessage.cursor()))
+                        .isGreaterThanOrEqualTo(0);
+                var compressor = new DeterministicContextCompressor();
+                var policy = CompressionPolicy.defaults();
+                var source = new SessionMessageSource(
+                        store,
+                        store,
+                        compressor,
+                        policy,
+                        () -> "unused",
+                        () -> NOW,
+                        new ActiveContextSnapshots(store, store, policy, compressor));
+                var selection = source.select(run);
+                assertThat(selection.summary()).contains(selected);
+                assertThat(selection.items().stream()
+                                .filter(item -> item.content() instanceof MessageGroupContextContent)
+                                .flatMap(item -> ((MessageGroupContextContent) item.content()).messages().stream())
+                                .filter(message -> message.id().equals(originalMessage.id()))
+                                .count())
+                        .isEqualTo(1);
+                if (successfulSummary) {
+                    assertThat(ordinary.getFirst().messages().stream()
+                                    .anyMatch(message -> message.content().contains("Keep the objective")))
+                            .isTrue();
+                } else {
+                    assertThat(selected.quality()).isEqualTo(CompactionQuality.DETERMINISTIC_DEGRADED);
+                }
+            } else {
+                assertThat(store.latestValid(run.sessionId())).isEmpty();
+            }
+        }
+    }
+
+    @Test
+    void deterministicRecoveryRemainsLossyAndDoesNotRemoveOriginalEvidence() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentRun run = createRun(store);
+        AtomicInteger ids = new AtomicInteger();
+        CompressionPolicy policy =
+                CompressionPolicy.defaults().withDegradedFallback(true).withTailTokenBounds(5, 50);
+        assertThat(CompressionPolicy.defaults().allowDeterministicDegradedFallback())
+                .isFalse();
+        String longEvidence = "x".repeat(241) + "REQUIRED_AFTER_240";
+        store.appendSessionMessage(draft("long-evidence", run, MessageRole.USER, longEvidence));
+        for (int n = 1; n <= 33; n++) {
+            store.appendSessionMessage(
+                    draft("evidence-" + n, run, MessageRole.ASSISTANT, n == 33 ? "REQUIRED_ITEM_33" : "fact " + n));
+        }
+        store.appendSessionMessage(draft("retained-user", run, MessageRole.USER, "next request"));
+        SemanticCompactionCoordinator coordinator =
+                coordinator(store, () -> "lossy-" + ids.incrementAndGet(), new RunControlRegistry(), policy);
+        coordinator.forceCompactOnOverflow(run, 1, binding(store, run, request -> invalidJsonResponse()));
+        ConversationSummary summary = store.latestValid(run.sessionId()).orElseThrow();
+        assertThat(summary.quality()).isEqualTo(CompactionQuality.DETERMINISTIC_DEGRADED);
+        assertThat(summary.facts().size()).isEqualTo(32);
+        assertThat(summary.facts().stream()
+                        .anyMatch(fact -> fact.contains("REQUIRED_AFTER_240") || fact.contains("REQUIRED_ITEM_33")))
+                .isFalse();
+        assertThat(store.message(new AgentMessageId("long-evidence"))
+                        .orElseThrow()
+                        .contents())
+                .containsExactly(new TextPart(longEvidence, "plain"));
+        assertThat(store.message(new AgentMessageId("evidence-33"))
+                        .orElseThrow()
+                        .contents())
+                .containsExactly(new TextPart("REQUIRED_ITEM_33", "plain"));
+    }
+
+    @Test
+    void aLargePriorSummaryCannotBypassRetentionWithOnlyOneNewInputGroup() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AtomicInteger ids = new AtomicInteger();
+        AgentRun previous = CompactionTestSupport.createRun(store, ids);
+        var source = store.initiatingUserMessage(previous.id()).orElseThrow();
+        var policy = CompressionPolicy.defaults().withActiveHistoryBudgetTokens(1000);
+        var compressor = new DeterministicContextCompressor();
+        var seed = compressor
+                .compress(new io.haifa.agent.context.compression.CompressionRequest(
+                        new SummaryId("prior-summary"),
+                        new io.haifa.agent.context.compression.SummaryVersion(1),
+                        previous.sessionId(),
+                        List.of(source),
+                        32,
+                        NOW,
+                        policy.version()))
+                .summary();
+        store.compareAndSet(
+                new ConversationSummary(
+                        seed.id(),
+                        seed.version(),
+                        seed.sessionId(),
+                        seed.coveredFrom(),
+                        seed.coveredThrough(),
+                        seed.sourceMessageIds(),
+                        seed.sourceHash(),
+                        List.of("x".repeat(4500)),
+                        List.of(),
+                        List.of(),
+                        List.of(),
+                        1500,
+                        NOW,
+                        seed.policyVersion(),
+                        seed.compressorVersion(),
+                        seed.securityLabels(),
+                        true),
+                0);
+        AgentRun next = CompactionTestSupport.createRun(store, ids);
+        SemanticCompactionCoordinator coordinator =
+                coordinator(store, () -> "unused-" + ids.incrementAndGet(), new RunControlRegistry(), policy);
+        AtomicInteger calls = new AtomicInteger();
+        assertThatThrownBy(() -> coordinator.evaluateAndCompactIfNeeded(
+                        next,
+                        1,
+                        bindingWithContextWindow(
+                                store,
+                                next,
+                                request -> {
+                                    calls.incrementAndGet();
+                                    return validSummaryResponse();
+                                },
+                                100_000)))
+                .isInstanceOf(ContextBuildException.class);
+        assertThat(calls).hasValue(0);
+        assertThat(store.latestVersion(next.sessionId())).isEqualTo(1);
+    }
+
+    @Test
+    void nonRecoverableNormalizedModelFailureRetainsItsCategoryWithoutRetryOrDegradation() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentRun run = createRun(store);
+        AtomicInteger ids = new AtomicInteger();
+        CompressionPolicy policy =
+                CompressionPolicy.defaults().withActiveHistoryBudgetTokens(1000).withTailTokenBounds(5, 50);
+        SemanticCompactionCoordinator coordinator =
+                coordinator(store, () -> "auth-" + ids.incrementAndGet(), new RunControlRegistry(), policy);
+        appendTurn(store, run, "u1", "a1", "u", "x".repeat(3300));
+        appendTurn(store, run, "u2", "a2", "u", "a");
+        var failure = new io.haifa.agent.model.api.ModelInvocationException(
+                io.haifa.agent.model.api.ModelErrorCategory.AUTHENTICATION_FAILED,
+                false,
+                401,
+                "authentication",
+                new io.haifa.agent.model.api.ModelCallId("normalized-auth-call"),
+                "Authentication failed",
+                null);
+        AtomicInteger calls = new AtomicInteger();
+        assertThatThrownBy(() -> coordinator.evaluateAndCompactIfNeeded(
+                        run,
+                        1,
+                        bindingWithContextWindow(
+                                store,
+                                run,
+                                request -> {
+                                    calls.incrementAndGet();
+                                    throw failure;
+                                },
+                                100_000)))
+                .isSameAs(failure);
+        assertThat(calls).hasValue(1);
+        assertThat(store.latestValid(run.sessionId())).isEmpty();
     }
 
     private static CompressionPolicy physicalCalls(int maximum) {

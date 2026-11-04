@@ -121,6 +121,11 @@ public final class SqliteRuntimeStateRepository implements RuntimeStateRepositor
     }
 
     @Override
+    public Optional<AgentMessage> initiatingUserMessage(AgentRunId runId) {
+        return messages.initiatingUserMessage(runId);
+    }
+
+    @Override
     public List<AgentStep> steps(AgentRunId runId) {
         return loop.steps(runId);
     }

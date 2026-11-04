@@ -461,3 +461,21 @@ Empty, malformed, schema-invalid or semantically invalid outputs may regenerate 
 same physical-call allowance and reserving calls needed by later batches. Feedback contains only a stable
 validation code and authorized source, never the rejected output. Non-STOP responses do not regenerate.
 The default physical-call ceiling and explicit deterministic-degradation configuration are unchanged.
+
+For configured active-history targets, recoverable failures may continue only while projected summary plus
+history is at most `min(availableSessionTokens, T + floor(T / 5))`, where `T` is the existing resolved history
+target. The complete assembled request still passes its independent hard input check. Exceeding this temporary
+allowance after recovery fails closes the Run instead of waiting for model-window overflow. Without an active
+target configuration, the existing capacity behavior is retained.
+An unchanged failed prefix backs off across Runs for 60 seconds in a transient, 1,024-entry cache scoped by
+Session, owner, frozen configuration/model digests, policy and summary version. Tail appends do not reset the
+prefix. Source invalidation, expiry and version changes permit a new bounded evaluation; explicit force and
+capacity recovery bypass this cache. Only classified recoverable failures enter it; planning failures do not.
+The cache may be lost when reopening Runtime and is never a source of conversation facts.
+
+Context assembly retains the initiating Run USER message by authoritative Run/message identity and selected
+cursor, even after its range is summarized. It is included once, with its original role/content/provenance,
+and charged to the actual request budget; an oversized mandatory input still fails. Built-in stores look up
+one original record, including redacted identities so later USER inputs cannot silently replace it. Imported
+transcripts without a Run USER retain compatibility. Deterministic summaries remain explicitly lossy and
+`DETERMINISTIC_DEGRADED`; their fact limit and text truncation are unchanged, and source records remain stored.

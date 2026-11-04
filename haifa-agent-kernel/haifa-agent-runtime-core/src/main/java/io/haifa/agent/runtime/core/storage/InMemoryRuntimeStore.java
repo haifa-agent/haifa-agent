@@ -713,6 +713,13 @@ public final class InMemoryRuntimeStore
     }
 
     @Override
+    public synchronized Optional<AgentMessage> initiatingUserMessage(AgentRunId runId) {
+        return messages.getOrDefault(runId, List.of()).stream()
+                .filter(message -> message.role() == io.haifa.agent.core.message.MessageRole.USER)
+                .min(java.util.Comparator.comparingLong(AgentMessage::sequence));
+    }
+
+    @Override
     public synchronized List<AgentStep> steps(AgentRunId runId) {
         return List.copyOf(steps.getOrDefault(runId, List.of()));
     }

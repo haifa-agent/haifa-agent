@@ -1,6 +1,7 @@
 package io.haifa.agent.runtime.core.compaction;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
@@ -1550,7 +1551,7 @@ class SemanticCompactionCoordinatorTest {
 
         CompressionPolicy policy = CompressionPolicy.defaults()
                 .withSemanticCompactionEnabled(true)
-                .withActiveHistoryBudgetTokens(10L)
+                .withActiveHistoryBudgetTokens(125L)
                 .withTailTokenBounds(5, 10)
                 .withDegradedFallback(false);
 
@@ -1574,7 +1575,14 @@ class SemanticCompactionCoordinatorTest {
         AtomicInteger callCount = new AtomicInteger();
         AgentChatModel failingModel = request -> {
             callCount.incrementAndGet();
-            throw new RuntimeException("Simulated LLM failure during active budget compaction");
+            throw new io.haifa.agent.model.api.ModelInvocationException(
+                    io.haifa.agent.model.api.ModelErrorCategory.TIMEOUT,
+                    true,
+                    0,
+                    "timeout",
+                    request.callId(),
+                    "Simulated LLM failure during active budget compaction",
+                    null);
         };
 
         FrozenModelBinding binding = createBinding(store, run, failingModel);
@@ -2017,11 +2025,10 @@ class SemanticCompactionCoordinatorTest {
             throw new RuntimeException("Provider connection failed with secret: " + sensitiveToken);
         };
 
-        CompactionEvaluationOutcome outcome =
-                coordinator.evaluateAndCompactIfNeeded(run, 1, createBinding(store, run, failingModel));
-
-        assertThat(outcome.compacted()).isFalse();
-        assertThat(outcome.semanticCompactionReason()).isEqualTo("ACTIVE_HISTORY_BUDGET");
+        assertThatThrownBy(
+                        () -> coordinator.evaluateAndCompactIfNeeded(run, 1, createBinding(store, run, failingModel)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Compaction failed without an eligible bounded recovery");
 
         var failEvents = store.eventsFor(run.id()).stream()
                 .filter(e -> "session.compaction-failed".equals(e.type()))
