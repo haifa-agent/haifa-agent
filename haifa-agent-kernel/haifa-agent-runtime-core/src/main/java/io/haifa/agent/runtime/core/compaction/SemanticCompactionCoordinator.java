@@ -978,21 +978,25 @@ public final class SemanticCompactionCoordinator {
                 | RuntimeQuotaExceededException stopped) {
             throw stopped;
         } catch (RuntimeException storageFailure) {
-            events.append(
-                    run.id(),
-                    "session.compaction-recovery",
-                    Map.of(
-                            "evaluationId",
-                            evaluationId,
-                            "outcome",
-                            "STORAGE_FAILED",
-                            "committed",
-                            false,
-                            "failureStage",
-                            "PERSISTENCE",
-                            "failureCode",
-                            "STORAGE_FAILED"),
-                    time.now());
+            try {
+                events.append(
+                        run.id(),
+                        "session.compaction-recovery",
+                        Map.of(
+                                "evaluationId",
+                                evaluationId,
+                                "outcome",
+                                "STORAGE_FAILED",
+                                "committed",
+                                false,
+                                "failureStage",
+                                "PERSISTENCE",
+                                "failureCode",
+                                "STORAGE_FAILED"),
+                        time.now());
+            } catch (RuntimeException reportingFailure) {
+                // The same unavailable store may reject diagnostics too. Preserve the authoritative write failure.
+            }
             throw storageFailure;
         }
         invalidateSummary(run);

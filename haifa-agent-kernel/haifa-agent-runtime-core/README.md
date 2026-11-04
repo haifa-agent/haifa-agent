@@ -443,7 +443,8 @@ attempt may be followed by `DETERMINISTIC_COMMITTED`; `degraded` alone does not 
 Recovery reports the selected summary identity/version/quality, distinguishes a concurrent valid winner from
 this evaluation's own commit, and reports `CAS_CONFLICT`, `SOURCE_INVALIDATED`, `STORAGE_FAILED` or
 `NO_REDUCTION` when appropriate. CAS conflict recovery performs one fresh snapshot read and never retries
-writes in a loop. Successful deterministic commits now report `compacted=true`; selecting another writer's
+writes in a loop. If an unavailable store also rejects the failure event, the original summary-write
+failure is preserved and that diagnostic event may be absent. Successful deterministic commits now report `compacted=true`; selecting another writer's
 summary does not claim this evaluation committed. Before/after history token estimates remain estimates of
 the captured source and selected summary/tail, not subsequent Provider-reported request usage.
 

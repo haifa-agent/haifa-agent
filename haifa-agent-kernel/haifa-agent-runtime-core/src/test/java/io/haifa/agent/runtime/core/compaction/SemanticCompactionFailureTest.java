@@ -37,6 +37,7 @@ import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.model.FrozenModelBinding;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.storage.OptimisticLockException;
+import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
 import io.haifa.agent.runtime.core.storage.StorageException;
 import java.lang.reflect.InvocationTargetException;
@@ -203,7 +204,8 @@ class SemanticCompactionFailureTest {
 
     @Test
     void deterministicRecoveryReportsTheActualRepositoryOutcome() {
-        for (String fault : List.of("COMMITTED", "WINNER", "CONFLICT", "STORAGE", "REDACTED", "STOP")) {
+        for (String fault :
+                List.of("COMMITTED", "WINNER", "CONFLICT", "STORAGE", "REDACTED", "STOP", "STORAGE_EVENT")) {
             deterministicRecoveryReportsTheActualRepositoryOutcome(fault);
         }
     }
@@ -227,7 +229,7 @@ class SemanticCompactionFailureTest {
                         controls.requestCancel(run.id());
                     if (method.getName().equals("compareAndSetValid")) {
                         writes.incrementAndGet();
-                        if (fault.equals("STORAGE")) throw storageFailure;
+                        if (fault.startsWith("STORAGE")) throw storageFailure;
                         if (fault.equals("WINNER")) {
                             ConversationSummary candidate = (ConversationSummary) args[0];
                             store.compareAndSetValid(withId(candidate, "winning-summary"), (long) args[1]);
@@ -244,8 +246,21 @@ class SemanticCompactionFailureTest {
                 });
         CompressionPolicy policy =
                 CompressionPolicy.defaults().withDegradedFallback(true).withTailTokenBounds(5, 50);
+        RuntimeEventAppender appender = (RuntimeEventAppender) Proxy.newProxyInstance(
+                getClass().getClassLoader(), new Class<?>[] {RuntimeEventAppender.class}, (proxy, method, args) -> {
+                    if (fault.equals("STORAGE_EVENT")
+                            && method.getName().equals("append")
+                            && args[1].equals("session.compaction-recovery")) {
+                        throw new StorageException("secondary diagnostic store failure");
+                    }
+                    try {
+                        return method.invoke(store, args);
+                    } catch (InvocationTargetException ex) {
+                        throw ex.getCause();
+                    }
+                });
         SemanticCompactionCoordinator coordinator =
-                coordinator(store, repository, generator, controls, policy, () -> NOW);
+                coordinator(store, repository, generator, controls, policy, () -> NOW, appender);
         appendTurn(store, run, "u1", "a1", "first objective", "first evidence");
         appendTurn(store, run, "u2", "a2", "second objective", "second evidence");
         if (fault.equals("STOP")) {
@@ -253,6 +268,15 @@ class SemanticCompactionFailureTest {
                             () -> coordinator.forceCompactOnOverflow(run, 1, binding(store, run, request -> failure())))
                     .isInstanceOf(CancellationObservedException.class);
             assertThat(writes).hasValue(0);
+            assertThat(store.latestValid(run.sessionId())).isEmpty();
+            assertThat(store.eventsFor(run.id())).noneMatch(e -> e.type().equals("session.compaction-recovery"));
+            return;
+        }
+        if (fault.equals("STORAGE_EVENT")) {
+            assertThatThrownBy(
+                            () -> coordinator.forceCompactOnOverflow(run, 1, binding(store, run, request -> failure())))
+                    .isSameAs(storageFailure);
+            assertThat(writes).hasValue(1);
             assertThat(store.latestValid(run.sessionId())).isEmpty();
             assertThat(store.eventsFor(run.id())).noneMatch(e -> e.type().equals("session.compaction-recovery"));
             return;
@@ -595,6 +619,17 @@ class SemanticCompactionFailureTest {
             RunControlRegistry controls,
             CompressionPolicy policy,
             TimeProvider time) {
+        return coordinator(store, summaries, ids, controls, policy, time, store);
+    }
+
+    private static SemanticCompactionCoordinator coordinator(
+            InMemoryRuntimeStore store,
+            ConversationSummaryRepository summaries,
+            IdentifierGenerator ids,
+            RunControlRegistry controls,
+            CompressionPolicy policy,
+            TimeProvider time,
+            RuntimeEventAppender events) {
         RunTransitionCoordinator transitions =
                 new RunTransitionCoordinator(store, store, store, store, ids, time, new RunAwaiter(), store);
         return new SemanticCompactionCoordinator(
@@ -606,7 +641,7 @@ class SemanticCompactionFailureTest {
                 new DeterministicContextCompressor(),
                 ids,
                 time,
-                store);
+                events);
     }
 
     private static void appendTurn(
