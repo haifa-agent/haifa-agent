@@ -114,7 +114,7 @@ filesystem access and is not used to select a command directory or authorize an 
 ## Host configuration provenance
 
 Host startup prints the configuration source (explicit file, user `~/.haifa-agent/config.yaml`, or built-in
-defaults), the ignored workspace-overlay policy, effective approval mode for new Runs, and configured tool/model
+defaults), the ignored workspace-overlay policy, effective approval mode/threshold for new Runs, and configured tool/model
 counts. The remote `/session` panel loads the same safe summary in the background through `host/configuration`;
 older Hosts show an explicit unavailable fallback. Configuration contents, file paths and credentials are absent.
 

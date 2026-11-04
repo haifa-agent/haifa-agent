@@ -164,7 +164,7 @@ class RemoteCodingSessionClientTest {
                         case "host/configuration" ->
                             available
                                     ? FakeCodingHost.Reply.result(
-                                            map("summary", List.of("Host approval mode for new Runs: ASK")))
+                                            map("summary", List.of("Host approval for new Runs: ASK; threshold: LOW")))
                                     : FakeCodingHost.Reply.error("REMOTE_METHOD_UNSUPPORTED");
                         default -> FakeCodingHost.Reply.error("REMOTE_METHOD_UNSUPPORTED");
                     });
@@ -172,7 +172,7 @@ class RemoteCodingSessionClientTest {
                 assertThat(client.configurationSummary())
                         .containsExactly(
                                 available
-                                        ? "Host approval mode for new Runs: ASK"
+                                        ? "Host approval for new Runs: ASK; threshold: LOW"
                                         : "Host config source: unavailable (older Host)");
             }
         }

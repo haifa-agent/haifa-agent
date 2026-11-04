@@ -19,7 +19,8 @@ record CodingHostConfiguration(CliConfiguration configuration, Source source) {
         return List.of(
                 "Host config source: " + source.label,
                 "Workspace config overlay: ignored; use explicit --config for a trusted file",
-                "Host approval mode for new Runs: " + configuration.approval().name(),
+                "Host approval for new Runs: " + configuration.approval().name() + "; threshold: "
+                        + configuration.approvalThreshold().name(),
                 "Configured built-in tools: " + configuration.enabledTools().size(),
                 "Configured models: " + configuration.availableModels().size());
     }

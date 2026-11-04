@@ -32,6 +32,10 @@ class CliHostConfigurationTest {
         assertThat(explicitResolved.source()).isEqualTo(CodingHostConfiguration.Source.EXPLICIT_CONFIG);
         assertThat(explicitResolved.toString()).isEqualTo("CodingHostConfiguration[source=EXPLICIT_CONFIG]");
         assertThat(explicitResolved.configuration().approval()).isEqualTo(ApprovalMode.DENY);
+        Path threshold = Files.writeString(directory.resolve("threshold.yaml"), "approval:\n  threshold: high\n");
+        var thresholdResolved = loader.loadHostConfiguration(
+                CliArguments.parse(new String[] {"--config", threshold.toString()}), workspace, Optional.of(user));
+        assertThat(String.join("\n", thresholdResolved.summary())).contains("ASK; threshold: HIGH");
         assertThat(String.join("\n", explicitResolved.summary()))
                 .contains(
                         "explicit --config",
