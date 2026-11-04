@@ -61,6 +61,31 @@ public final class CodingTerminalTestSupport {
 
     private CodingTerminalTestSupport() {}
 
+    static final class BlockingCall {
+        private final java.util.concurrent.CountDownLatch started = new java.util.concurrent.CountDownLatch(1);
+        private final java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+
+        void block() {
+            started.countDown();
+            try {
+                if (!release.await(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("Test did not release client call");
+                }
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(interrupted);
+            }
+        }
+
+        boolean awaitStarted() throws InterruptedException {
+            return started.await(5, java.util.concurrent.TimeUnit.SECONDS);
+        }
+
+        void release() {
+            release.countDown();
+        }
+    }
+
     static CodingTerminalController controller(CodingSessionClient client, CodingAuthenticationClient authentication) {
         return new CodingTerminalController(
                 PROJECT_ID,

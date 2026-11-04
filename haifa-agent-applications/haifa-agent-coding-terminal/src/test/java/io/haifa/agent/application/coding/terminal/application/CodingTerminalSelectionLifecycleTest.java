@@ -30,11 +30,23 @@ import org.junit.jupiter.api.Test;
 
 class CodingTerminalSelectionLifecycleTest {
     @Test
-    void remoteShellConfirmationAndExportIdentifyTheHostDestination() {
-        FakeClient client = new FakeClient(sessionView("session-1", "Idle")) {
+    void remoteShellConfirmationAndExportIdentifyTheHostDestinationWithoutBlockingInput() throws Exception {
+        var shellCall = new BlockingCall();
+        var exportCall = new BlockingCall();
+        var effects = new ArrayDeque<Runnable>();
+        var pump = new TerminalEventPump(32);
+        FakeClient client = new FakeClient(activeView()) {
+            @Override
+            public io.haifa.agent.application.project.product.coding.CodingShellPlan planShell(
+                    AgentSessionId id, String command, boolean includeInContext) {
+                shellCall.block();
+                return super.planShell(id, command, includeInContext);
+            }
+
             @Override
             public io.haifa.agent.application.project.product.coding.CodingSessionExportResult export(
                     AgentSessionId id, String path) {
+                exportCall.block();
                 return new io.haifa.agent.application.project.product.coding.CodingSessionExportResult(path, 2, "1");
             }
         };
@@ -42,7 +54,7 @@ class CodingTerminalSelectionLifecycleTest {
                 PROJECT_ID,
                 client,
                 CodingAuthenticationClient.unavailable(),
-                new TerminalEventPump(32),
+                pump,
                 new TerminalUiReducer(),
                 TerminalUiState.initial(
                         80,
@@ -50,6 +62,8 @@ class CodingTerminalSelectionLifecycleTest {
                         new io.haifa.agent.application.coding.terminal.state.TerminalWorkspaceContext(
                                 "Host: /host/project", "main", "Host: /host/checkout", "feat/task")),
                 CodingTerminalConnectionOptions.remoteV1("/host/checkout"),
+                Runnable::run,
+                effects::add,
                 Runnable::run);
         controller.accept(input(TerminalInput.Kind.EXECUTE_COMMAND, "/session"));
         assertThat(controller.state().selector()).hasValueSatisfying(selector -> assertThat(selector.options())
@@ -65,13 +79,41 @@ class CodingTerminalSelectionLifecycleTest {
                         "Host workspace: /host/checkout"));
         controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
         client.shellState = io.haifa.agent.application.project.product.coding.CodingShellPlan.State.APPROVAL_REQUIRED;
-        controller.accept(input(TerminalInput.Kind.SUBMIT, "! echo safe"));
-        assertThat(controller.state().selector())
-                .hasValueSatisfying(selector -> assertThat(selector.title()).contains("Host:", "/host/checkout"));
-        controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
-        controller.accept(input(TerminalInput.Kind.EXECUTE_COMMAND, "/export review.md"));
-        assertThat(controller.state().transcript()).anySatisfy(item -> assertThat(item.body())
-                .contains("review.md", "Destination: Host workspace: /host/checkout"));
+        for (int operation = 0; operation < 2; operation++) {
+            boolean shell = operation == 0;
+            BlockingCall call = shell ? shellCall : exportCall;
+            controller.accept(input(
+                    shell ? TerminalInput.Kind.SUBMIT : TerminalInput.Kind.EXECUTE_COMMAND,
+                    shell ? "! echo safe" : "/export review.md"));
+            assertThat(controller.state().status()).isEqualTo(shell ? "Checking shell command" : "Exporting session");
+            var worker = new Thread(effects.removeLast());
+            worker.start();
+            try {
+                assertThat(call.awaitStarted()).isTrue();
+                controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, "next task", 9));
+                pump.offer(new TerminalUiAction.TerminalResized(90 + operation, 25));
+                client.emit(
+                        event(operation + 1, new RunEventPayloads.AssistantTextDelta("generation-1", "still live")));
+                controller.drainEvents();
+                controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
+                assertThat(controller.state().columns()).isEqualTo(90 + operation);
+                assertThat(controller.state().editorBuffer()).isEqualTo("next task");
+                assertThat(controller.state().transcript())
+                        .anyMatch(item -> item.body().contains("still live"));
+            } finally {
+                call.release();
+                worker.join(5_000);
+            }
+            controller.drainEvents();
+            if (shell) {
+                assertThat(controller.state().selector()).hasValueSatisfying(selector -> assertThat(selector.title())
+                        .contains("Host:", "/host/checkout"));
+                controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
+            } else {
+                assertThat(controller.state().transcript()).anySatisfy(item -> assertThat(item.body())
+                        .contains("review.md", "Destination: Host workspace: /host/checkout"));
+            }
+        }
     }
 
     @Test
