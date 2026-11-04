@@ -79,12 +79,16 @@ final class CliConfigurationLoader {
     }
 
     CodingHostConfiguration loadHostConfiguration(CliArguments arguments, Path workspace, Optional<Path> userConfig) {
-        CliConfiguration resolved = loadForHost(arguments, workspace, userConfig, Path.of(".haifa-agent/config.yaml"));
+        Objects.requireNonNull(workspace, "workspace must not be null");
+        Optional<Path> selected =
+                arguments.config().isPresent() ? arguments.config() : userConfig.filter(Files::isRegularFile);
         CodingHostConfiguration.Source source = arguments.config().isPresent()
                 ? CodingHostConfiguration.Source.EXPLICIT_CONFIG
-                : userConfig.filter(Files::isRegularFile).isPresent()
+                : selected.isPresent()
                         ? CodingHostConfiguration.Source.USER_CONFIG
                         : CodingHostConfiguration.Source.DEFAULTS;
+        // Bind provenance to the same selected input that is read; never recheck file presence afterwards.
+        CliConfiguration resolved = resolve(selected.map(this::read).orElseGet(Map::of), arguments);
         return new CodingHostConfiguration(resolved, source);
     }
 
