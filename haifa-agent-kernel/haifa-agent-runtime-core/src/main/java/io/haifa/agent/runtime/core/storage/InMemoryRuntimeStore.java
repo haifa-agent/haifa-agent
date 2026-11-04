@@ -716,7 +716,7 @@ public final class InMemoryRuntimeStore
     public synchronized Optional<AgentMessage> initiatingUserMessage(AgentRunId runId) {
         return messages.getOrDefault(runId, List.of()).stream()
                 .filter(message -> message.role() == io.haifa.agent.core.message.MessageRole.USER)
-                .min(java.util.Comparator.comparingLong(AgentMessage::sequence));
+                .findFirst();
     }
 
     @Override

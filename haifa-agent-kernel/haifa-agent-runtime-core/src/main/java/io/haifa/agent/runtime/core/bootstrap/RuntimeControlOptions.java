@@ -14,8 +14,17 @@ public final class RuntimeControlOptions {
     public static final String FINALIZE_AFTER_TOOL_CALLS = PREFIX + "finalize_after_tool_calls";
     public static final String MAX_REASONING_BYTES = PREFIX + "max_reasoning_bytes";
     public static final String MAX_REASONING_DURATION_MILLIS = PREFIX + "max_reasoning_duration_millis";
+    public static final String INPUT_ACCOUNTING_ENABLED = PREFIX + "input_accounting_enabled";
 
     private RuntimeControlOptions() {}
+
+    public static boolean inputAccountingEnabled(Map<String, Object> options) {
+        Object value = options.get(INPUT_ACCOUNTING_ENABLED);
+        if (value == null) return true;
+        if (!(value instanceof Boolean enabled))
+            throw new IllegalArgumentException(INPUT_ACCOUNTING_ENABLED + " must be boolean");
+        return enabled;
+    }
 
     public static OptionalInt finalizeAfterToolCalls(Map<String, Object> options) {
         Objects.requireNonNull(options, "options must not be null");
@@ -54,6 +63,7 @@ public final class RuntimeControlOptions {
                     FINALIZE_AFTER_TOOL_CALLS + " must be lower than the hard Tool-call limit");
         }
         maxReasoningBytes(options);
+        inputAccountingEnabled(options);
         OptionalLong duration = maxReasoningDurationMillis(options);
         if (duration.isPresent() && duration.getAsLong() > limits.maxWallTimeMillis()) {
             throw new IllegalArgumentException(
@@ -76,6 +86,7 @@ public final class RuntimeControlOptions {
                     FINALIZE_AFTER_TOOL_CALLS + " must be lower than the hard Tool-call budget");
         }
         maxReasoningBytes(options);
+        inputAccountingEnabled(options);
         maxReasoningDurationMillis(options);
     }
 
@@ -96,7 +107,8 @@ public final class RuntimeControlOptions {
     private static boolean supported(String key) {
         return key.equals(FINALIZE_AFTER_TOOL_CALLS)
                 || key.equals(MAX_REASONING_BYTES)
-                || key.equals(MAX_REASONING_DURATION_MILLIS);
+                || key.equals(MAX_REASONING_DURATION_MILLIS)
+                || key.equals(INPUT_ACCOUNTING_ENABLED);
     }
 
     private static OptionalLong positiveLong(Map<String, Object> options, String key) {
