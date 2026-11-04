@@ -47,6 +47,7 @@ final class CodingHostServer implements AutoCloseable {
     private final CodingHostDispatcher dispatcher;
     private final CodingHostSubscriptions subscriptions;
     private final CodingHostClients clients;
+    private final CodingHostApprovals approvals;
     private final CodingHostMaintenance maintenance;
     private final HttpServer server;
     private final ExecutorService executor;
@@ -64,6 +65,7 @@ final class CodingHostServer implements AutoCloseable {
         this.client = agent.client();
         this.projectId = agent.projectId();
         LocalCodingAgent local = agent.localAgent();
+        this.approvals = new CodingHostApprovals(local.runtime(), local.identifiers(), local.time());
         this.subscriptions = new CodingHostSubscriptions(
                 client,
                 CodingHostSubscriptions.DEFAULT_MAXIMUM_SUBSCRIPTIONS,
@@ -77,7 +79,10 @@ final class CodingHostServer implements AutoCloseable {
                 local.time(),
                 Duration.ofMinutes(30),
                 CodingHostClients.DEFAULT_MAXIMUM_CLIENTS,
-                subscriptions::closeClient);
+                clientId -> {
+                    subscriptions.closeClient(clientId);
+                    approvals.closeClient(clientId);
+                });
         this.maintenance = new CodingHostMaintenance(projectId, local.codingSessions(), client);
         this.dispatcher = new CodingHostDispatcher(
                 projectId,
@@ -87,7 +92,8 @@ final class CodingHostServer implements AutoCloseable {
                 local.outcomes(),
                 agent.authentication(),
                 subscriptions,
-                () -> CodingHostWorkspace.summary(local.workspaceRoot()));
+                () -> CodingHostWorkspace.summary(local.workspaceRoot()),
+                approvals);
         this.server = HttpServer.create(new InetSocketAddress(bind, port), 16);
         this.executor = Executors.newVirtualThreadPerTaskExecutor();
         try {
@@ -104,6 +110,7 @@ final class CodingHostServer implements AutoCloseable {
             executor.shutdownNow();
             subscriptions.closeAll();
             clients.close();
+            approvals.close();
             throw exception;
         }
     }
@@ -274,6 +281,8 @@ final class CodingHostServer implements AutoCloseable {
                     java.util.Set<String> optional = (java.util.Set<String>)
                             initialized.getOrDefault("optionalCapabilities", java.util.Set.of());
                     initialized.put("clientId", clients.initialize(optional));
+                    if (optional.contains(CodingHostApprovals.CAPABILITY))
+                        approvals.initialize((String) initialized.get("clientId"));
                     writeResult(exchange, id, initialized);
                 } else {
                     if (method.equals("host/ping")) {
@@ -286,6 +295,13 @@ final class CodingHostServer implements AutoCloseable {
                         }
                         clients.require(clientId);
                         if (method.equals("preview/subscribe")) clients.requireOptional(clientId, "preview-v1");
+                        if (method.equals("approval/allowForSession")
+                                || method.equals("approval/resetSession")
+                                || method.equals("approval/status")
+                                || method.equals("client/close"))
+                            clients.requireOptional(clientId, CodingHostApprovals.CAPABILITY);
+                        if (method.equals("client/renew")) approvals.renew(clientId);
+                        if (method.equals("client/close")) clients.remove(clientId);
                         writeResult(
                                 exchange,
                                 id,
@@ -468,7 +484,8 @@ final class CodingHostServer implements AutoCloseable {
                 || method.equals("shell/cancel")
                 || method.equals("run/cancel")
                 || method.equals("interaction/respond")
-                || method.equals("approval/prepare")
+                || method.startsWith("approval/")
+                || method.equals("client/close")
                 || method.startsWith("auth/");
     }
 
@@ -550,6 +567,7 @@ final class CodingHostServer implements AutoCloseable {
                 maintenance.close();
                 subscriptions.closeAll();
                 clients.close();
+                approvals.close();
             } finally {
                 executor.shutdownNow();
                 try {

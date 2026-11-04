@@ -32,6 +32,57 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 
 class RemoteCodingSessionClientTest {
+    @Test
+    void negotiatedSessionConsentUsesExactMutationStatusResetAndCloseWithoutLegacyBits() throws Exception {
+        var initialized = new LinkedHashMap<>(FakeCodingHost.initializeResult("client-1", "project-1"));
+        initialized.put("optionalCapabilities", List.of("session-consent-v1"));
+        try (FakeCodingHost host = FakeCodingHost.start(call -> switch (call.method()) {
+            case "initialize" -> FakeCodingHost.Reply.result(initialized);
+            case "approval/prepare" ->
+                FakeCodingHost.Reply.result(map("interaction", interaction(), "allowForSession", true));
+            case "approval/allowForSession" -> {
+                assertThat(call.params().path("interactionId").asText()).isEqualTo("interaction-1");
+                assertThat(call.params().path("revision").asLong()).isEqualTo(4);
+                assertThat(call.params().path("sessionId").asText()).isEqualTo(SESSION.value());
+                yield FakeCodingHost.Reply.result(map(
+                        "responseId",
+                        "response-1",
+                        "requestId",
+                        "interaction-1",
+                        "runId",
+                        RUN.value(),
+                        "status",
+                        "NEWLY_ACCEPTED",
+                        "interactionState",
+                        "APPLIED",
+                        "revision",
+                        5,
+                        "runVersion",
+                        6));
+            }
+            case "approval/status" -> FakeCodingHost.Reply.result(map("state", "ACTIVE", "expiresAt", NOW));
+            case "approval/resetSession" -> FakeCodingHost.Reply.result(map("reset", true));
+            case "client/close" -> FakeCodingHost.Reply.result(map("closed", true));
+            default -> FakeCodingHost.Reply.error("REMOTE_METHOD_UNSUPPORTED");
+        })) {
+            try (var client = RemoteCodingSessionClient.connect(host.uri())) {
+                InteractionView pending = new RemoteWireCodec(FakeCodingHost.JSON)
+                        .interaction(FakeCodingHost.JSON.valueToTree(interaction()));
+                assertThat(client.prepareApproval(pending))
+                        .hasValueSatisfying(
+                                prompt -> assertThat(prompt.allowForSession()).isTrue());
+                assertThat(client.allowForSession(pending, "grant").interactionState())
+                        .isEqualTo(io.haifa.agent.runtime.api.InteractionState.APPLIED);
+                assertThat(client.sessionApprovalStatus(SESSION))
+                        .hasValueSatisfying(
+                                status -> assertThat(status.expiresAt()).contains(java.time.Instant.ofEpochMilli(NOW)));
+                client.resetSessionApproval(SESSION);
+            }
+            assertThat(host.calls().stream().map(FakeCodingHost.RpcCall::method))
+                    .contains("approval/allowForSession", "approval/status", "approval/resetSession", "client/close");
+        }
+    }
+
     private static final ProjectId PROJECT = new ProjectId("project-1");
     private static final AgentSessionId SESSION = new AgentSessionId("session-1");
     private static final AgentRunId RUN = new AgentRunId("run-1");

@@ -56,13 +56,19 @@ public final class CodingTerminalConnectionOptions {
 
     /** Only implemented, explicitly negotiated preview support may enable this observation lane. */
     public static CodingTerminalConnectionOptions remoteV1(String executionLocation, boolean previewEnabled) {
+        return remoteV1(executionLocation, previewEnabled, false);
+    }
+
+    /** Independent negotiated consent support; credential setup remains local to the trusted Host. */
+    public static CodingTerminalConnectionOptions remoteV1(
+            String executionLocation, boolean previewEnabled, boolean consentEnabled) {
         String location = executionLocation == null || executionLocation.isBlank()
                 ? "unavailable (older Host)"
                 : executionLocation;
         if (location.length() > 4096 || location.codePoints().anyMatch(Character::isISOControl)) {
             throw new IllegalArgumentException("Invalid execution location display value");
         }
-        return new CodingTerminalConnectionOptions(previewEnabled, false, false, Optional.of(location));
+        return new CodingTerminalConnectionOptions(previewEnabled, consentEnabled, false, Optional.of(location));
     }
 
     public Optional<String> unavailableReason(String command) {

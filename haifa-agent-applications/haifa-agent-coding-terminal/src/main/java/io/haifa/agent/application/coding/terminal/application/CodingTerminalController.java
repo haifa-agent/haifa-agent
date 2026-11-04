@@ -1128,6 +1128,11 @@ public final class CodingTerminalController implements AutoCloseable {
         }
     }
 
+    private final java.util.Map<
+                    AgentSessionId,
+                    io.haifa.agent.application.project.product.coding.client.CodingSessionApprovalStatus.State>
+            approvalStates = new java.util.HashMap<>();
+
     private void openForResume(AgentSessionId sessionId, Optional<String> prompt) {
         openSynchronously(sessionId);
         if (prompt.isEmpty()) return;
@@ -1152,10 +1157,37 @@ public final class CodingTerminalController implements AutoCloseable {
         if (nowMillis >= connectionCheckedAtMillis && nowMillis - connectionCheckedAtMillis < 15_000) return;
         connectionCheckInFlight = true;
         connectionCheckedAtMillis = nowMillis;
+        Optional<AgentSessionId> consentSession = connectionOptions.sessionConsentEnabled()
+                ? state.session().map(value -> value.summary().sessionId())
+                : Optional.empty();
         submitMaintenanceEffect(
                 () -> {
                     boolean replaced = client.renewConnection();
+                    var consent = consentSession.flatMap(client::sessionApprovalStatus);
                     return () -> {
+                        consent.ifPresent(value -> {
+                            AgentSessionId id = consentSession.orElseThrow();
+                            var previous = approvalStates.get(id);
+                            approvalStates.clear();
+                            approvalStates.put(id, value.state());
+                            if (state.session()
+                                            .map(session -> session.summary().sessionId())
+                                            .filter(id::equals)
+                                            .isPresent()
+                                    && value.state() != previous
+                                    && (previous != null
+                                            || value.state()
+                                                    != io.haifa.agent.application.project.product.coding.client
+                                                            .CodingSessionApprovalStatus.State.ASK)) {
+                                apply(new TerminalUiAction.StatusChanged(
+                                        switch (value.state()) {
+                                            case ACTIVE ->
+                                                "Session approval active · client lease; /approval reset to revoke";
+                                            case PENDING -> "Session approval requested · awaiting application";
+                                            case ASK -> "Session approval expired or revoked · ask each time";
+                                        }));
+                            }
+                        });
                         connectionCheckInFlight = false;
                         if (replaced || connectionUnavailable) {
                             connectionUnavailable = false;
@@ -4746,6 +4778,15 @@ public final class CodingTerminalController implements AutoCloseable {
                             return () -> {
                                 if (receipt != null && isCurrentSelection(token)) {
                                     apply(new TerminalUiAction.InteractionReceiptReceived(receipt));
+                                    if (forSession)
+                                        approvalStates.put(
+                                                interaction.sessionId(),
+                                                receipt.interactionState()
+                                                                == io.haifa.agent.runtime.api.InteractionState.APPLIED
+                                                        ? io.haifa.agent.application.project.product.coding.client
+                                                                .CodingSessionApprovalStatus.State.ACTIVE
+                                                        : io.haifa.agent.application.project.product.coding.client
+                                                                .CodingSessionApprovalStatus.State.PENDING);
                                     if (forSession)
                                         apply(new TerminalUiAction.StatusChanged(
                                                 receipt.interactionState()

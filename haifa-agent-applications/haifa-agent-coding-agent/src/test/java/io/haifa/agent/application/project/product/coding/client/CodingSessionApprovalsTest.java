@@ -16,6 +16,74 @@ import org.junit.jupiter.api.Test;
 
 class CodingSessionApprovalsTest {
     @Test
+    void invalidatedOrUnrelatedInitialReceiptClearsPendingConsent() {
+        for (boolean unrelated : List.of(false, true)) {
+            var f = new Fixture();
+            f.approvals.approve(f.pending, submission(f.pending));
+            f.mismatchedReceipt = unrelated;
+            if (!unrelated) f.states.put(f.pending.requestId(), InteractionState.INVALIDATED);
+            assertThat(f.approvals.state(f.pending.sessionId())).isEqualTo(CodingSessionApprovalStatus.State.ASK);
+        }
+    }
+
+    @Test
+    void statusConfirmsOnlyTheInitialSubmissionWithoutApprovingAnotherTool() {
+        var f = new Fixture();
+        var first = f.pending;
+        f.approvals.approve(first, submission(first));
+        assertThat(f.approvals.state(first.sessionId())).isEqualTo(CodingSessionApprovalStatus.State.PENDING);
+        f.states.put(first.requestId(), InteractionState.APPLIED);
+        f.next("session-1", "next", "file_write", Map.of());
+        assertThat(f.approvals.state(first.sessionId())).isEqualTo(CodingSessionApprovalStatus.State.ACTIVE);
+        assertThat(f.submissions).allMatch(submission -> submission.requestId().equals(first.requestId()));
+    }
+
+    @Test
+    void revokedOwnerCannotActivatePendingConsentOrApproveAnotherTool() {
+        var f = new Fixture();
+        var valid = new java.util.concurrent.atomic.AtomicBoolean(true);
+        var approvals = new CodingSessionApprovals(f.runtime, valid::get);
+        approvals.approve(f.pending, submission(f.pending));
+        assertThat(approvals.state(f.pending.sessionId())).isEqualTo(CodingSessionApprovalStatus.State.PENDING);
+        f.states.put(f.pending.requestId(), InteractionState.APPLIED);
+        valid.set(false);
+        f.next("session-1", "run-next", "file_write", Map.of());
+        int before = f.submissions.size();
+        assertThat(approvals.prepare(f.pending.runId(), CodingSessionApprovalsTest::submission))
+                .isPresent();
+        assertThat(f.submissions).hasSize(before);
+        assertThat(approvals.state(f.pending.sessionId())).isEqualTo(CodingSessionApprovalStatus.State.ASK);
+        assertThatThrownBy(() -> approvals.approve(f.pending, submission(f.pending)))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void revocationDuringAutomaticSubmissionPreparationFallsBackWithoutResponding() {
+        var f = new Fixture();
+        var valid = new java.util.concurrent.atomic.AtomicBoolean(true);
+        var approvals = new CodingSessionApprovals(f.runtime, valid::get);
+        f.states.put(f.pending.requestId(), InteractionState.APPLIED);
+        approvals.approve(f.pending, submission(f.pending));
+        assertThat(approvals.state(f.pending.sessionId())).isEqualTo(CodingSessionApprovalStatus.State.ACTIVE);
+        f.next("session-1", "run-next", "file_write", Map.of());
+        assertThat(approvals.prepare(f.pending.runId(), pending -> {
+                    valid.set(false);
+                    return submission(pending);
+                }))
+                .isPresent();
+        assertThat(f.submissions).hasSize(1);
+    }
+
+    @Test
+    void consentSubmissionMustMatchThePendingInteraction() {
+        var f = new Fixture();
+        var previous = submission(f.pending);
+        f.next("session-1", "run-next", "file_write", Map.of());
+        assertThatThrownBy(() -> f.approvals.approve(f.pending, previous)).isInstanceOf(IllegalArgumentException.class);
+        assertThat(f.submissions).isEmpty();
+    }
+
+    @Test
     void contentOnlyTruncationDoesNotInvalidateACompleteWriteTarget() {
         var f = new Fixture();
         f.states.put(f.pending.requestId(), InteractionState.APPLIED);

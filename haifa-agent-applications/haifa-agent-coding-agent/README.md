@@ -22,6 +22,9 @@ approval has reached Runtime `APPLIED`. Subsequent ordinary approvals are submit
 Runtime API; no policy, workspace boundary or explicit denial is overridden. `/approval reset` returns the Session
 to asking each time. A new Session or app/client instance does not inherit consent.
 
+The same product approval component supports a nonblocking owner-lifetime guard for Host client leases.
+An expired or revoked owner cannot activate or reuse consent; Runtime remains the exact-approval authority.
+
 Workspace attachment, permission elevation, input/credential interactions, unknown tools and incomplete target
 projections remain explicit. Consent is not persisted and is not a project-wide permission rule.
 

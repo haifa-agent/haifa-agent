@@ -81,6 +81,11 @@ final class CodingHostClients {
         clients.clear();
     }
 
+    synchronized void remove(String clientId) {
+        clients.remove(clientId);
+        expiredClient.accept(clientId);
+    }
+
     private void expireIdle() {
         Instant floor = time.now().minus(idleTimeout);
         clients.entrySet().removeIf(entry -> {

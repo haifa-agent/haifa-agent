@@ -48,6 +48,7 @@ final class CodingHostDispatcher {
     private final CodingRunOutcomeProjectionService outcomes;
     private final CodingAuthenticationClient authentication;
     private final CodingHostSubscriptions subscriptions;
+    private final CodingHostApprovals approvals;
 
     CodingHostDispatcher(
             ProjectId projectId,
@@ -69,6 +70,19 @@ final class CodingHostDispatcher {
             CodingAuthenticationClient authentication,
             CodingHostSubscriptions subscriptions,
             java.util.function.Supplier<Map<String, String>> workspaceContext) {
+        this(projectId, client, sessions, runtime, outcomes, authentication, subscriptions, workspaceContext, null);
+    }
+
+    CodingHostDispatcher(
+            ProjectId projectId,
+            CodingSessionClient client,
+            CodingSessionService sessions,
+            AgentRuntime runtime,
+            CodingRunOutcomeProjectionService outcomes,
+            CodingAuthenticationClient authentication,
+            CodingHostSubscriptions subscriptions,
+            java.util.function.Supplier<Map<String, String>> workspaceContext,
+            CodingHostApprovals approvals) {
         this.workspaceContext = workspaceContext;
         this.projectId = projectId;
         this.client = client;
@@ -77,6 +91,7 @@ final class CodingHostDispatcher {
         this.outcomes = outcomes;
         this.authentication = authentication;
         this.subscriptions = subscriptions;
+        this.approvals = approvals;
     }
 
     Object dispatch(String clientId, String method, JsonNode params) {
@@ -88,6 +103,7 @@ final class CodingHostDispatcher {
             if (method.equals("host/ping")) return ping();
             return switch (method) {
                 case "client/renew" -> Map.of("renewed", true);
+                case "client/close" -> Map.of("closed", true);
                 case "session/list" -> listSessions(safeParams);
                 case "session/create" -> createSession(safeParams);
                 case "session/open" -> sessionOpen(safeParams);
@@ -142,9 +158,27 @@ final class CodingHostDispatcher {
                             .map(CodingHostWire::interaction)
                             .orElse(null);
                 case "interaction/respond" -> respond(safeParams);
-                case "approval/prepare" -> approvalPrepare(safeParams);
-                case "approval/allowForSession", "approval/resetSession" ->
-                    throw CodingHostException.unsupported("Remote session consent is unavailable");
+                case "approval/prepare" -> approvalPrepare(clientId, safeParams);
+                case "approval/allowForSession" ->
+                    receipt(approvals.grant(clientId, pending(safeParams), text(safeParams, "idempotencyKey")));
+                case "approval/resetSession" -> {
+                    sessions.requireSessionInProject(session(safeParams), projectId);
+                    approvals.reset(session(safeParams));
+                    yield Map.of("reset", true);
+                }
+                case "approval/status" -> {
+                    AgentSessionId sessionId = session(safeParams);
+                    sessions.requireSessionInProject(sessionId, projectId);
+                    var status = approvals.status(clientId, sessionId);
+                    Map<String, Object> value = new LinkedHashMap<>();
+                    value.put("state", status.state().name());
+                    value.put(
+                            "expiresAt",
+                            status.expiresAt()
+                                    .map(java.time.Instant::toEpochMilli)
+                                    .orElse(null));
+                    yield value;
+                }
                 case "events/page" -> eventsPage(safeParams);
                 case "events/subscribe" -> subscribeEvents(clientId, safeParams);
                 case "events/unsubscribe", "output/unsubscribe", "preview/unsubscribe" ->
@@ -222,11 +256,10 @@ final class CodingHostDispatcher {
         if (!PROTOCOL_VERSION.equals(version)) {
             throw CodingHostException.conflict("CONTRACT_VERSION_UNSUPPORTED", "Unsupported protocol version");
         }
-        var optional = CodingHostCapabilities.negotiate(
-                params,
-                subscriptions != null && subscriptions.previewAvailable()
-                        ? java.util.Set.of("preview-v1")
-                        : java.util.Set.of());
+        var available = new java.util.HashSet<String>();
+        if (subscriptions != null && subscriptions.previewAvailable()) available.add("preview-v1");
+        if (approvals != null) available.add(CodingHostApprovals.CAPABILITY);
+        var optional = CodingHostCapabilities.negotiate(params, available);
         Map<String, Object> capabilities = new LinkedHashMap<>();
         capabilities.put("client-renewal", true);
         capabilities.put("session-list", true);
@@ -365,6 +398,7 @@ final class CodingHostDispatcher {
         requireHostSession(sessionId);
         RuntimeCommandResult result = sessions.abortActiveRun(sessionId, runId(params), text(params, "idempotencyKey"))
                 .orElseThrow(() -> CodingHostException.conflict("ACTIVE_RUN_MISMATCH", "No active Run"));
+        if (approvals != null) approvals.reset(sessionId);
         Map<String, Object> value = new LinkedHashMap<>();
         value.put("commandId", result.command().commandId().value());
         value.put("runId", result.command().runId().value());
@@ -394,6 +428,15 @@ final class CodingHostDispatcher {
     }
 
     private Map<String, Object> respond(JsonNode params) {
+        InteractionView pending = pending(params);
+        InteractionAction action = new InteractionAction(text(params, "action"));
+        String key = text(params, "idempotencyKey");
+        List<ContentPart> inputs = inputs(params.get("inputs"));
+        return receipt(
+                inputs.isEmpty() ? client.respond(pending, action, key) : client.respond(pending, action, inputs, key));
+    }
+
+    private InteractionView pending(JsonNode params) {
         AgentRunId runId = runId(params);
         AgentSessionId sessionId = session(params);
         String interactionId = text(params, "interactionId");
@@ -406,11 +449,10 @@ final class CodingHostDispatcher {
                 || pending.revision() != revision) {
             throw CodingHostException.conflict("INTERACTION_REVISION_CONFLICT", "Interaction identity is stale");
         }
-        InteractionAction action = new InteractionAction(text(params, "action"));
-        String key = text(params, "idempotencyKey");
-        List<ContentPart> inputs = inputs(params.get("inputs"));
-        InteractionResponseReceipt receipt =
-                inputs.isEmpty() ? client.respond(pending, action, key) : client.respond(pending, action, inputs, key);
+        return pending;
+    }
+
+    private Map<String, Object> receipt(InteractionResponseReceipt receipt) {
         Map<String, Object> value = new LinkedHashMap<>();
         value.put("responseId", receipt.responseId().value());
         value.put("requestId", receipt.requestId().value());
@@ -422,10 +464,22 @@ final class CodingHostDispatcher {
         return value;
     }
 
-    private Map<String, Object> approvalPrepare(JsonNode params) {
+    private Map<String, Object> approvalPrepare(String clientId, JsonNode params) {
         return client.pendingInteraction(runId(params))
-                .map(interaction -> Map.<String, Object>of(
-                        "interaction", CodingHostWire.interaction(interaction), "allowForSession", false))
+                .flatMap(interaction -> {
+                    if (approvals == null)
+                        return Optional.of(
+                                new io.haifa.agent.application.project.product.coding.client.CodingApprovalPrompt(
+                                        interaction, false));
+                    return approvals.prepare(clientId, interaction);
+                })
+                .map(prompt -> Map.<String, Object>of(
+                        "interaction",
+                        CodingHostWire.interaction(prompt.interaction()),
+                        "allowForSession",
+                        prompt.allowForSession(),
+                        "sessionApprovalUnavailableReason",
+                        prompt.sessionApprovalUnavailableReason().orElse("")))
                 .orElse(null);
     }
 

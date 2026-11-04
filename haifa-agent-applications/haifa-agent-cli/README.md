@@ -189,7 +189,8 @@ through untouched, without injecting the bundled `--config` and without creating
 only the local modes use.
 
 The Host stays authoritative for tool-output preview; new peers stream it only after explicit optional capability
-negotiation. Session consent and credential setup remain refused up front; ordinary per-approval approve/reject
+negotiation. Session consent is enabled only for negotiated `session-consent-v1`; credential setup stays local to
+the trusted Host. Ordinary per-approval approve/reject
 and authenticated logout remain available.
 An unavailable or protocol-incompatible Host fails fast with a stable `REMOTE_*` code and never falls back to an
 embedded Run. When a Run settles while a queued follow-up has already advanced on the Host, the terminal performs one
@@ -951,7 +952,7 @@ store. Their behavior has no executed long-command failure evidence comparable t
 extensions in an array with the same name. An absent response field from an older Host means no extensions.
 Legacy `preview`, `session-consent` and `auth-mutation` booleans remain false for compatibility with old v1
 clients; new features must not flip those legacy bits. Unknown offers are ignored; malformed offers or an
-unrequested Host selection fail the handshake. The new composition offers `preview-v1`; the Host selects it only when its existing execution preview publisher is available.
+unrequested Host selection fail the handshake. The composition offers independent `preview-v1` and `session-consent-v1` extensions; preview is selected only when its existing execution publisher is available.
 Remote completion excludes credential setup; `/commands` and `/help` explain its unavailability and label
 supported Host-side actions. Pending approval/reopen, trust, reload and export remain available.
 
@@ -970,7 +971,7 @@ The remote adapter consumes the public execution preview API only; it does not c
 providers or persistence. Preview is transient and has no cursor, replay or history persistence. Queue overflow,
 disconnect and slow observers drop their observation without cancelling/replaying the Run. The terminal retains
 its existing bounded per-tool display tail; completed tool results remain authoritative. Older peers continue
-without preview, and session consent/remote credential mutation remain disabled.
+without preview or session consent; remote credential mutation remains disabled for all peers.
 
 
 Preview normalization/redaction keeps subscription-local state per ToolCallId and output channel, including ANSI
@@ -979,3 +980,22 @@ per key are retained; empty keys are released. An unknown source gap, over-budge
 sequence drops only the observation. Ordinary complete progress is not held until tool completion. The fragment
 redactor shares the existing credential patterns rather than maintaining a second regex list. Remaining ambiguous
 text is never persisted or flushed unsafely when the subscriber disconnects.
+
+### Client-bound remote Session consent
+
+Peers explicitly selecting `session-consent-v1` may use `approval/allowForSession`, `approval/resetSession`,
+`approval/status` and `client/close`. The original v1 capability bits remain false. Ordinary approval eligibility,
+exact identity/revision checks and initial Runtime APPLIED confirmation reuse the existing Coding approval component.
+Workspace expansion, elevation, unknown tools, incomplete targets, hard denies and credential input remain explicit.
+
+Each initialized client has an independent transient 45-second consent lease. The existing TUI maintenance effect
+renews it with `client/renew` every 15 seconds, independently of sidebar visibility. Public health pings, polling
+and another client's traffic do not renew consent. Every automatic approval checks the lease; maintenance is not
+required for expiry. A late renewal replaces the expired lease without restoring consent. Reconnect and Host
+restart never inherit it. Graceful client close revokes its lease; a killed/disconnected client expires naturally.
+Lease expiry/revocation leaves already-dispatched tools and Runs alone and returns future requests to ASK.
+
+`/approval reset` deliberately revokes the Session's consent across all clients; exact Run cancellation also resets
+that Session after the cancel command is accepted. Status distinguishes ASK, PENDING application and ACTIVE with a
+UTC epoch-millisecond expiry. UI status reads run on the existing maintenance lane, and changes are shown without
+blocking input. Consent is neither a credential nor an authentication identity, and no new durable store is added.
