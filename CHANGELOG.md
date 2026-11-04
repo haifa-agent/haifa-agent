@@ -6,6 +6,9 @@
   and cancellation signals, and caps summary-call timeouts by remaining active Run time. Deterministic
   commits, concurrent winners and storage failures are reported distinctly without exposing response text.
 
+- Remote Coding Terminal now renews its Host context independently of the sidebar and reattaches after
+  expiry/restart without replaying commands or cancelling Runs.
+
 - Remote Coding Terminal errors now explain Session/revision conflicts, Host capacity, payload limits and
   expired connections using safe client-owned guidance. Unknown outcomes explicitly warn against blind resends.
 

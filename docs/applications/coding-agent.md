@@ -127,3 +127,16 @@ haifa-coding host --workspace D:/projects/example --config D:/projects/example/.
 The explicit file replaces the implicit user/workspace files, matching embedded explicit-config precedence;
 normal environment/CLI overrides still apply. The selected file must supply the Host's required durable SQLite
 configuration. Choosing a repository file is an explicit trust decision; default Host policy is unchanged.
+
+## Remote context lifetime and recovery
+
+An active remote Terminal renews its logical client context independently of sidebar polling. Checks run at
+15-second intervals in the background, with at most one outstanding check. Hosts advertising `client-renewal`
+provide authenticated `client/renew`; older v1 Hosts renew through a bounded Session-list read. Public
+`host/ping` does not renew a context.
+
+After expiry or Host restart, a check makes one reinitialize attempt, then the Terminal reloads and reattaches
+the selected Session. The project identity must still match. Unreachable Hosts are checked again without a
+busy retry loop. This recovery never automatically resends a mutation, restarts a task, grants session consent
+or translates stopping observation into cancelling a Run. If recovery cannot complete, use `tui --connect`
+again to explicitly reconnect.

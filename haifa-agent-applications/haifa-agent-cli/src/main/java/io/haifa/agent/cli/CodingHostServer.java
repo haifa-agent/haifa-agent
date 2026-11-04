@@ -457,7 +457,8 @@ final class CodingHostServer implements AutoCloseable {
     }
 
     private static boolean controlMethod(String method) {
-        return method.equals("run/cancel")
+        return method.equals("client/renew")
+                || method.equals("run/cancel")
                 || method.equals("interaction/respond")
                 || method.equals("approval/prepare")
                 || method.startsWith("auth/");

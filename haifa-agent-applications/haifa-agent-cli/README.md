@@ -907,3 +907,13 @@ workspace-overlay policy, effective approval mode/threshold for new Runs and con
 The Host ignores implicit repository overlays. Use `host --config <trusted-file>` to select a trusted repository
 file explicitly; it replaces implicit user/workspace inputs and must include durable SQLite configuration.
 The summary exposes neither file contents nor credential values. Older Hosts show an unavailable fallback.
+
+## Remote client context renewal
+
+The optional `client-renewal` capability provides authenticated `client/renew`; public `host/ping` remains
+health-only. The remote Terminal checks its connection every 15 seconds on the background maintenance lane,
+independently of sidebar visibility. Older v1 Hosts use a bounded authenticated `session/list` read instead.
+An expired context or restarted Host triggers one reinitialization attempt per check and closes old transport
+observations; the Terminal then reloads the selected Session and reattaches through the existing cursor path.
+No product mutation is retried, no Run is cancelled and no session consent is granted by connection renewal.
+A different project at the same endpoint is refused until an explicit new connection.
