@@ -461,7 +461,7 @@ public final class CodingTerminalController implements AutoCloseable {
         this.ownedControlEffects = ownsEffects ? (ExecutorService) controlEffects : null;
         this.ownedEffects = ownsEffects ? (ExecutorService) effects : null;
         this.ownedMaintenanceEffects = ownsEffects ? (ExecutorService) maintenanceEffects : null;
-        this.completions = new TerminalCompletionProvider(client::logicalPaths);
+        this.completions = new TerminalCompletionProvider(client::logicalPaths, connectionOptions);
     }
 
     private static ExecutorService newEffectExecutor(String threadName) {
@@ -4359,8 +4359,13 @@ public final class CodingTerminalController implements AutoCloseable {
 
     public void openCommandSelector() {
         preserveDraft();
-        apply(new TerminalUiAction.SelectorOpened(
-                new TerminalSelector("command-palette", "Commands", TerminalCompletionProvider.COMMANDS, 0)));
+        apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
+                "command-palette",
+                "Commands",
+                TerminalCompletionProvider.COMMANDS.stream()
+                        .map(connectionOptions::commandLabel)
+                        .toList(),
+                0)));
     }
 
     private void openCompletionSelector(String buffer, int cursor) {
@@ -4400,6 +4405,11 @@ public final class CodingTerminalController implements AutoCloseable {
         if (requestId != 0 && requestId != activeCompletionRequestId) return;
         if (!state.editorBuffer().equals(requestedContext.buffer())) return;
         if (options.isEmpty()) {
+            if ("/connect".startsWith(word) && word.startsWith("/")) {
+                connectionOptions
+                        .unavailableReason("/connect")
+                        .ifPresent(reason -> apply(new TerminalUiAction.StatusChanged(reason)));
+            }
             if (state.selector()
                     .filter(value -> "completion".equals(value.kind()))
                     .isPresent()) {
@@ -4464,7 +4474,7 @@ public final class CodingTerminalController implements AutoCloseable {
         int selected = selector.selected();
         switch (selector.kind()) {
             case "command-palette" -> {
-                String selectedCommand = selector.options().get(selected);
+                String selectedCommand = selector.options().get(selected).split(" · ", 2)[0];
                 apply(new TerminalUiAction.SelectorClosed());
                 restorePreservedDraft();
                 executeNonDraftCommand(selectedCommand);
