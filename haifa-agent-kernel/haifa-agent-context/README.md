@@ -1,5 +1,25 @@
 # Haifa Agent Context
 
+## Source and representation boundaries
+
+`ContextProvenance` carries source kind, source ID, source version and content hash. The source
+identity and an excerpt's hash are different facts: equal projected text does not merge different
+versions. A reference is not an authorization grant. `ContextItem` keeps representation (`ContextContent`),
+priority, retention and security beside provenance; it does not create another message store.
+
+Message identity is the persisted `AgentMessageId` within its Session/Run and cursor boundary.
+A Tool occurrence uses `ToolCallId` and its owning Run; a Provider correlation ID alone is insufficient.
+An `ArtifactRef` includes its persisted version. A current workspace file path is not a historical
+version, and a missing saved version cannot be reconstructed by rereading the current file.
+
+Run-local assembly remains bounded by the selected input cursor, frozen configuration/model,
+policy/compressor versions and the selected valid summary version. Selecting source items does
+not advance `ConversationSummary.coveredThrough`; only a valid summary commit changes coverage.
+Read operations and derived projections must not mutate original messages or business state.
+The current Runtime still assembles continuous history with protocol-safe Tool pairs. Sparse
+cross-Run retrieval is not implemented here: future non-contiguous excerpts must enter as
+low-authority data with source identity and without protected continuation or assistant/tool replay.
+
 Pure Java context intermediate representation, prompt layering, single-call token budgeting,
 deterministic selection, derived-asset text references, and redacted context tracing.
 Conversation summaries remain rebuildable compression products. The default compression policy uses

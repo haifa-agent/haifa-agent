@@ -3475,6 +3475,109 @@ class RuntimeCoreTest {
         }
     }
 
+    @Test
+    void contextLifecycleBaselineKeepsFixedEvidenceAcrossN10N100NAndThreeFollowups() {
+        for (String objective :
+                List.of("What was the decision?", "Continue proving bounded reads", "Start an unrelated task")) {
+            for (int scale : List.of(1, 10, 100)) {
+                var result = contextLifecycleBaseline(ContextLifecycleHistoryFixture.N * scale, objective);
+                assertThat(result.initialRows()).isEqualTo(3L + 3L * ContextLifecycleHistoryFixture.N * scale);
+                assertThat(result.needsCompaction()).isEqualTo(scale == 100);
+                assertThat(result.historyRowsRead()).isLessThanOrEqualTo(4352L);
+                assertThat(result.ordinaryCalls()).isEqualTo(scale == 100 ? 0L : 1L);
+                assertThat(result.summaryCalls()).isLessThanOrEqualTo(3L);
+                assertThat(result.status()).isEqualTo(scale == 100 ? "FAILED" : "COMPLETED");
+                assertThat(result.failureCode()).isEqualTo(scale == 100 ? "RUNTIME_EXECUTION_FAILED" : "NONE");
+                assertThat(result.initialHistoryEstimatedTokens()).isPositive();
+                assertThat(result.sourceTokens().isEmpty()).isEqualTo(scale == 100);
+            }
+        }
+    }
+
+    record ContextLifecycleBaseline(
+            long initialRows,
+            long initialHistoryEstimatedTokens,
+            boolean needsCompaction,
+            long historyRowsRead,
+            long candidateScans,
+            long ordinaryCalls,
+            long summaryCalls,
+            String status,
+            String failureCode,
+            Map<String, Object> sourceTokens) {}
+
+    /** Concrete MS1 experiment, also callable by an external aggregate-only baseline reporter. */
+    static ContextLifecycleBaseline contextLifecycleBaseline(int turns, String objective) {
+        var policy = io.haifa.agent.context.compression.CompressionPolicy.defaults()
+                .withActiveHistoryBudgetTokens(96_000)
+                .withTailTokenBounds(1000, 4000);
+        var requests = new java.util.ArrayList<io.haifa.agent.model.api.AgentChatRequest>();
+        Fixture fixture = fixture(
+                call -> {
+                    requests.add(call);
+                    if (call.structuredOutput().isPresent()) return ContextLifecycleHistoryFixture.summary(call);
+                    return response(finalDecision("baseline completed"));
+                },
+                builder -> builder.compressionPolicy(policy));
+        var original = ContextLifecycleHistoryFixture.append(fixture.store, turns);
+        var callsById = fixture.store.toolCalls(ContextLifecycleHistoryFixture.PRIOR).stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        io.haifa.agent.core.tool.ToolCall::id, java.util.function.Function.identity()));
+        long rawHistory = new io.haifa.agent.runtime.core.model.ModelMessageProjectionPlanner(fixture.store)
+                .plan(original, callsById::get)
+                .rawActiveTokens();
+        var before = new io.haifa.agent.runtime.core.context.ActiveContextSnapshots(
+                        fixture.store,
+                        fixture.store,
+                        policy,
+                        new io.haifa.agent.context.compression.DeterministicContextCompressor())
+                .current(ContextLifecycleHistoryFixture.SESSION);
+        assertThat(fixture.store
+                        .latestSnapshot(ContextLifecycleHistoryFixture.SESSION)
+                        .latestVersion())
+                .isZero();
+        var runRequest = new AgentRunRequest(
+                "baseline",
+                new AgentDefinitionId("test-agent"),
+                Optional.empty(),
+                "test-profile",
+                ContextLifecycleHistoryFixture.SESSION,
+                Optional.empty(),
+                objective,
+                List.of(),
+                RuntimeOverrides.NONE);
+        var accepted = fixture.runtime.start(runRequest);
+        fixture.scheduler.runAll();
+        assertThat(original.stream().allMatch(message -> fixture.store
+                        .message(message.id())
+                        .orElseThrow()
+                        .equals(message)))
+                .isTrue();
+        var inputEvents = fixture.store.eventsFor(accepted.runId()).stream()
+                .filter(event -> event.type().equals("model.input-accounted"))
+                .toList();
+        var ordinary = inputEvents.stream()
+                .filter(event -> event.data().get("callKind").equals("ORDINARY"))
+                .toList();
+        return new ContextLifecycleBaseline(
+                original.size(),
+                rawHistory,
+                before.status()
+                        == io.haifa.agent.runtime.core.context.ActiveContextSnapshots.AccessStatus.NEEDS_COMPACTION,
+                before.metrics().historyRowsRead(),
+                before.metrics().atomicGroupCandidateScans(),
+                ordinary.size(),
+                inputEvents.size() - ordinary.size(),
+                fixture.store.find(accepted.runId()).orElseThrow().status().name(),
+                fixture.store
+                        .find(accepted.runId())
+                        .orElseThrow()
+                        .error()
+                        .map(error -> error.code().wireCode())
+                        .orElse("NONE"),
+                ordinary.isEmpty() ? Map.of() : ordinary.getLast().data());
+    }
+
     private static ResolvedModelSnapshot constrainedContextModel() {
         ResolvedModelSnapshot defaults = DefaultResolvedModelSnapshots.deepSeekV4Pro();
         return ResolvedModelSnapshot.create(
