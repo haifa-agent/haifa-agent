@@ -2027,7 +2027,7 @@ class SemanticCompactionCoordinatorTest {
 
         assertThatThrownBy(
                         () -> coordinator.evaluateAndCompactIfNeeded(run, 1, createBinding(store, run, failingModel)))
-                .isInstanceOf(io.haifa.agent.context.api.ContextBuildException.class)
+                .isInstanceOf(IllegalStateException.class)
                 .hasMessage("Compaction failed without an eligible bounded recovery");
 
         var failEvents = store.eventsFor(run.id()).stream()

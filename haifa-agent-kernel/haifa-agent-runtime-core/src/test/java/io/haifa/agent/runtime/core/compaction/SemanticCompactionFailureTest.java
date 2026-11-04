@@ -1017,6 +1017,42 @@ class SemanticCompactionFailureTest {
         assertThat(store.latestVersion(next.sessionId())).isEqualTo(1);
     }
 
+    @Test
+    void nonRecoverableNormalizedModelFailureRetainsItsCategoryWithoutRetryOrDegradation() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentRun run = createRun(store);
+        AtomicInteger ids = new AtomicInteger();
+        CompressionPolicy policy =
+                CompressionPolicy.defaults().withActiveHistoryBudgetTokens(1000).withTailTokenBounds(5, 50);
+        SemanticCompactionCoordinator coordinator =
+                coordinator(store, () -> "auth-" + ids.incrementAndGet(), new RunControlRegistry(), policy);
+        appendTurn(store, run, "u1", "a1", "u", "x".repeat(3300));
+        appendTurn(store, run, "u2", "a2", "u", "a");
+        var failure = new io.haifa.agent.model.api.ModelInvocationException(
+                io.haifa.agent.model.api.ModelErrorCategory.AUTHENTICATION_FAILED,
+                false,
+                401,
+                "authentication",
+                new io.haifa.agent.model.api.ModelCallId("normalized-auth-call"),
+                "Authentication failed",
+                null);
+        AtomicInteger calls = new AtomicInteger();
+        assertThatThrownBy(() -> coordinator.evaluateAndCompactIfNeeded(
+                        run,
+                        1,
+                        bindingWithContextWindow(
+                                store,
+                                run,
+                                request -> {
+                                    calls.incrementAndGet();
+                                    throw failure;
+                                },
+                                100_000)))
+                .isSameAs(failure);
+        assertThat(calls).hasValue(1);
+        assertThat(store.latestValid(run.sessionId())).isEmpty();
+    }
+
     private static CompressionPolicy physicalCalls(int maximum) {
         CompressionPolicy p = CompressionPolicy.defaults();
         return new CompressionPolicy(

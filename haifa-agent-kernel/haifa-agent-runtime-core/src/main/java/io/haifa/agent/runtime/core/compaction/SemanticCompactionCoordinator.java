@@ -674,9 +674,9 @@ public final class SemanticCompactionCoordinator {
                         cacheHitRate,
                         startNanos);
                 if (activeBudget && !recoverableFailure(ex)) {
-                    throw new ContextBuildException(
-                            ContextBuildFailure.REQUIRED_CONTEXT_TOO_LARGE,
-                            "Compaction failed without an eligible bounded recovery");
+                    if (ex instanceof io.haifa.agent.model.api.ModelInvocationException model) throw model;
+                    if (ex instanceof CompactionModelCapabilityException capability) throw capability;
+                    throw new IllegalStateException("Compaction failed without an eligible bounded recovery");
                 }
                 return recovery;
             }
