@@ -43,8 +43,8 @@ final class CliShellExecutions implements AutoCloseable {
         if (entries.values().stream().filter(e -> !e.done.isDone()).count() >= MAX_ACTIVE) {
             throw new ProjectProductException("SHELL_BUSY", "Too many active Shell commands");
         }
-        makeRoom();
         Work work = prepare.get();
+        makeRoom();
         Entry entry = new Entry(id, work.sessionId(), time.now().toEpochMilli());
         entries.put(id, entry);
         workers.execute(() -> {
@@ -105,9 +105,9 @@ final class CliShellExecutions implements AutoCloseable {
         prune();
         Entry entry = entries.get(id);
         if (entry == null) {
-            makeRoom();
             Work work = pending.get();
             if (!work.sessionId().equals(session)) throw unavailable();
+            makeRoom();
             entry = new Entry(id, session, time.now().toEpochMilli());
             entry.result = new CodingShellResult(
                     "CANCELLED", Optional.empty(), "Shell cancelled before dispatch", Optional.empty(), false, false);

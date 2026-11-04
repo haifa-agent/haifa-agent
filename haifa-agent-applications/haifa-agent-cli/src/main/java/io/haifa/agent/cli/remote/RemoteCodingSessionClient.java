@@ -746,7 +746,11 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
                     Thread.currentThread().interrupt();
                     throw new ProjectProductException("SHELL_OUTCOME_UNKNOWN", "Shell may still be running: " + token);
                 }
-                receipt = shellExecution(receipt.sessionId(), token);
+                try {
+                    receipt = shellExecution(receipt.sessionId(), token);
+                } catch (ProjectProductException observationFailure) {
+                    throw new ProjectProductException("SHELL_OUTCOME_UNKNOWN", "Shell may still be running: " + token);
+                }
             }
             return receipt.result()
                     .orElseThrow(() -> new ProjectProductException(

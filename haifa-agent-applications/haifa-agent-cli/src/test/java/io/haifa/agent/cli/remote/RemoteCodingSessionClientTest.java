@@ -38,6 +38,40 @@ class RemoteCodingSessionClientTest {
     private static final long NOW = 1_700_000_000_123L;
 
     @Test
+    void statusFailureAfterShellAdmissionRemainsAnUnknownExecutionOutcome() throws Exception {
+        var initialized = FakeCodingHost.JSON.valueToTree(FakeCodingHost.initializeResult("client-1", "project-1"));
+        ((com.fasterxml.jackson.databind.node.ObjectNode) initialized.path("capabilities"))
+                .put("shell-operations", true);
+        try (FakeCodingHost host = FakeCodingHost.start(call -> switch (call.method()) {
+                    case "initialize" -> FakeCodingHost.Reply.result(initialized);
+                    case "shell/start" ->
+                        FakeCodingHost.Reply.result(map(
+                                "executionId",
+                                "accepted",
+                                "sessionId",
+                                SESSION.value(),
+                                "acceptedAtMillis",
+                                NOW,
+                                "state",
+                                "RUNNING",
+                                "cancellationRequested",
+                                false,
+                                "result",
+                                null,
+                                "errorCode",
+                                null));
+                    case "shell/get" -> FakeCodingHost.Reply.dropped();
+                    default -> FakeCodingHost.Reply.error("REMOTE_METHOD_UNSUPPORTED");
+                });
+                var client = RemoteCodingSessionClient.connect(host.uri())) {
+            assertThatThrownBy(() -> client.executeShell("accepted", true))
+                    .satisfies(thrown -> assertProductCode(thrown, "SHELL_OUTCOME_UNKNOWN"));
+            assertThat(host.calls("shell/start")).hasSize(1);
+            assertThat(host.calls("shell/cancel")).isEmpty();
+        }
+    }
+
+    @Test
     void recoversLostShellAcknowledgmentByKnownTokenWithoutReplayingStart() throws Exception {
         var initialized = FakeCodingHost.JSON.valueToTree(FakeCodingHost.initializeResult("client-1", "project-1"));
         ((com.fasterxml.jackson.databind.node.ObjectNode) initialized.path("capabilities"))

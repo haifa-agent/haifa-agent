@@ -34,6 +34,113 @@ class CodingTerminalShellRecoveryTest {
     }
 
     @Test
+    void concurrentShellsKeepEveryObservationUntilItsOwnCompletion() {
+        var completed = new java.util.HashSet<String>();
+        var next = new java.util.concurrent.atomic.AtomicInteger();
+        FakeClient client = new FakeClient(view(Optional.empty())) {
+            private CodingShellExecution execution(String id) {
+                return new CodingShellExecution(
+                        id,
+                        SESSION_ID,
+                        0,
+                        completed.contains(id)
+                                ? CodingShellExecution.State.COMPLETED
+                                : CodingShellExecution.State.RUNNING,
+                        false,
+                        completed.contains(id) ? receipt(false, true).result() : Optional.empty(),
+                        Optional.empty());
+            }
+
+            @Override
+            public boolean recoverableShell() {
+                return true;
+            }
+
+            @Override
+            public io.haifa.agent.application.project.product.coding.CodingShellPlan planShell(
+                    AgentSessionId session, String command, boolean include) {
+                return new io.haifa.agent.application.project.product.coding.CodingShellPlan(
+                        "shell-" + next.incrementAndGet(),
+                        session,
+                        command,
+                        include,
+                        io.haifa.agent.application.project.product.coding.CodingShellPlan.State.READY,
+                        "TEST_POLICY");
+            }
+
+            @Override
+            public CodingShellExecution startShell(String id, boolean approved) {
+                return execution(id);
+            }
+
+            @Override
+            public List<CodingShellExecution> shellExecutions(AgentSessionId session) {
+                return List.of(execution("shell-1"), execution("shell-2"));
+            }
+
+            @Override
+            public CodingShellExecution shellExecution(AgentSessionId session, String id) {
+                return execution(id);
+            }
+        };
+        try (var controller = controller(client)) {
+            controller.open(SESSION_ID);
+            controller.accept(input(TerminalInput.Kind.SUBMIT, "!!echo first"));
+            controller.drainEvents();
+            controller.accept(input(TerminalInput.Kind.SUBMIT, "!!echo second"));
+            controller.drainEvents();
+            completed.add("shell-2");
+            controller.refreshConnection(1000);
+            controller.drainEvents();
+            assertThat(controller.state().transcript()).anySatisfy(item -> {
+                assertThat(item.id()).isEqualTo("shell-shell-2");
+                assertThat(item.title()).isEqualTo("!!echo second");
+            });
+            completed.add("shell-1");
+            controller.refreshConnection(2000);
+            controller.drainEvents();
+            assertThat(controller.state().transcript()).anySatisfy(item -> {
+                assertThat(item.id()).isEqualTo("shell-shell-1");
+                assertThat(item.title()).isEqualTo("!!echo first");
+            });
+        }
+    }
+
+    @Test
+    void slowReceiptQueriesKeepTheNextUiFrameResponsive() throws Exception {
+        BlockingCall query = new BlockingCall();
+        FakeClient client = new FakeClient(view(Optional.empty())) {
+            @Override
+            public CodingShellExecution shellExecution(AgentSessionId session, String id) {
+                query.block();
+                return receipt(false, true);
+            }
+        };
+        var effects = new ArrayDeque<Runnable>();
+        var pump = new TerminalEventPump(32);
+        var controller = new CodingTerminalController(
+                PROJECT_ID, client, pump, new TerminalUiReducer(), TerminalUiState.initial(120, 40), effects::add);
+        controller.open(SESSION_ID);
+        controller.accept(input(TerminalInput.Kind.EXECUTE_COMMAND, "/shell shell-token"));
+        Thread worker = new Thread(effects.remove());
+        worker.start();
+        try {
+            assertThat(query.awaitStarted()).isTrue();
+            assertThat(controller.state().status()).isEqualTo("Checking Shell executions");
+            controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
+            controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, "next task", 9));
+            pump.offer(new TerminalUiAction.TerminalResized(95, 28));
+            controller.drainEvents();
+            assertThat(controller.state().columns()).isEqualTo(95);
+            assertThat(controller.state().editorBuffer()).isEqualTo("next task");
+        } finally {
+            query.release();
+            worker.join(5000);
+            controller.close();
+        }
+    }
+
+    @Test
     void shellAdmissionAndCancellationStayOffUiAndCancellationUsesControlLane() throws Exception {
         BlockingCall admission = new BlockingCall();
         BlockingCall cancellation = new BlockingCall();

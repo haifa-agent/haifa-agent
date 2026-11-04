@@ -7,6 +7,15 @@ import org.junit.jupiter.api.Test;
 class TerminalRecoveryTest {
 
     @Test
+    void shellReceiptsDistinguishUnknownOutcomesFromUnavailableReceiptsAndAdmissionCapacity() {
+        assertThat(TerminalRecovery.fromCode("SHELL_OUTCOME_UNKNOWN").action())
+                .contains("/shell", "Do not blindly resend");
+        assertThat(TerminalRecovery.fromCode("SHELL_EXECUTION_UNAVAILABLE").action())
+                .contains("expired", "does not prove");
+        assertThat(TerminalRecovery.fromCode("SHELL_BUSY").action()).contains("eight active", "/shell");
+    }
+
+    @Test
     void modelPaymentRequiredMapsToUserActionRequiredWithStrictPrompt() {
         TerminalRecovery recovery = TerminalRecovery.fromCode("MODEL_PAYMENT_REQUIRED");
 

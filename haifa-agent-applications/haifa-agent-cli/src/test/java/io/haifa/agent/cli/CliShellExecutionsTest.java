@@ -130,6 +130,16 @@ class CliShellExecutionsTest {
                 executions.await(id);
             }
             assertThat(executions.list(SESSION)).hasSize(128);
+            var retained = executions.list(SESSION);
+            assertThatThrownBy(() -> executions.start("missing", () -> {
+                        throw new IllegalStateException("missing");
+                    }))
+                    .isInstanceOf(IllegalStateException.class);
+            assertThatThrownBy(() -> executions.cancel(SESSION, "missing", () -> {
+                        throw new IllegalStateException("missing");
+                    }))
+                    .isInstanceOf(IllegalStateException.class);
+            assertThat(executions.list(SESSION)).isEqualTo(retained);
         } finally {
             release.countDown();
         }

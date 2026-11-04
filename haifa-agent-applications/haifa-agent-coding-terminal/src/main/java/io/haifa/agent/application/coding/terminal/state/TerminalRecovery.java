@@ -6,6 +6,18 @@ import java.util.Objects;
 /** Actionable presentation for stable product/terminal failure codes. */
 public record TerminalRecovery(Category category, String code, String action) {
     private static final Map<String, TerminalRecovery> KNOWN = Map.ofEntries(
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "SHELL_OUTCOME_UNKNOWN",
+                    "Shell may still be active on the Host; use /shell to query its receipt. Do not blindly resend it."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "SHELL_EXECUTION_UNAVAILABLE",
+                    "The Shell receipt is unavailable or expired (Host restart, 30-minute retention or capacity eviction). This does not prove the command did not run; inspect its effects before deciding what to do next."),
+            entry(
+                    Category.RETRYABLE,
+                    "SHELL_BUSY",
+                    "The Host already has eight active Shell commands; use /shell to inspect them or cancel a specific execution."),
             entry(Category.RETRYABLE, "EVENT_OUT_OF_ORDER", "Reconcile the session, then retry the last action."),
             entry(Category.RETRYABLE, "EVENT_RUN_MISMATCH", "Reconcile the session, then retry the last action."),
             entry(Category.RETRYABLE, "ACTIVE_RUN_SETTLED", "The session changed while submitting; retry the message."),

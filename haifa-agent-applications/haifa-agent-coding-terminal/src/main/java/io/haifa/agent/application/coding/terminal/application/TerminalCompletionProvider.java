@@ -44,10 +44,7 @@ public final class TerminalCompletionProvider {
         Objects.requireNonNull(word, "word must not be null");
         Objects.requireNonNull(availableLogicalPaths, "availableLogicalPaths must not be null");
         if (word.startsWith("/")) {
-            return COMMANDS.stream()
-                    .filter(value -> value.startsWith(word))
-                    .limit(MAX_CANDIDATES)
-                    .toList();
+            return COMMANDS.stream().filter(value -> value.startsWith(word)).toList();
         }
         if (word.startsWith("@")) {
             return availableLogicalPaths.stream()

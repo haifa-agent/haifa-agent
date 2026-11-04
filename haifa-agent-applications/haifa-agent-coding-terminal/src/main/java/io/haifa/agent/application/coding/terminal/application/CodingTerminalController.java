@@ -138,7 +138,8 @@ public final class CodingTerminalController implements AutoCloseable {
     private long lastAuthenticationCountdownSecond = -1;
     private CompletionContext completionContext;
     private CodingShellPlan pendingShellPlan;
-    private final Map<AgentSessionId, String> observedShells = new java.util.HashMap<>();
+    private final Map<AgentSessionId, java.util.Set<String>> observedShells = new java.util.HashMap<>();
+    private final Map<String, String> shellLabels = new java.util.LinkedHashMap<>();
     private boolean shellPollInFlight;
     private long shellPolledAtMillis;
     private String preservedDraftBuffer;
@@ -1142,11 +1143,11 @@ public final class CodingTerminalController implements AutoCloseable {
 
     /** Connection maintenance is independent of sidebar visibility and stays on the maintenance lane. */
     public void refreshConnection() {
-        refreshShell();
         refreshConnection(System.currentTimeMillis());
     }
 
     void refreshConnection(long nowMillis) {
+        refreshShell(nowMillis);
         if (closed || connectionCheckInFlight) return;
         if (nowMillis >= connectionCheckedAtMillis && nowMillis - connectionCheckedAtMillis < 15_000) return;
         connectionCheckInFlight = true;
@@ -1953,7 +1954,10 @@ public final class CodingTerminalController implements AutoCloseable {
     private void scheduleShellExecution(CodingShellPlan plan, boolean approved) {
         SelectionToken token = currentSelection();
         if (client.recoverableShell()) {
-            observedShells.put(plan.sessionId(), plan.token());
+            observeShell(plan.sessionId(), plan.token());
+            shellLabels.put(plan.token(), (plan.includeInContext() ? "!" : "!!") + plan.safeCommand());
+            if (shellLabels.size() > 128)
+                shellLabels.remove(shellLabels.keySet().iterator().next());
             apply(new TerminalUiAction.StatusChanged("Starting Shell " + plan.token()
                     + "; closing the TUI does not cancel it. /shell to recover; /shell cancel " + plan.token()
                     + " to cancel"));
@@ -1965,10 +1969,14 @@ public final class CodingTerminalController implements AutoCloseable {
                         };
                     },
                     code -> {
+                        stopObservingShell(plan.sessionId(), plan.token());
                         if (isCurrentSelection(token)) {
-                            apply(new TerminalUiAction.StatusChanged(
-                                    "Shell " + plan.token() + " may still be active on Host; /shell " + plan.token()
-                                            + " queries it without replay"));
+                            if ("REMOTE_OUTCOME_UNKNOWN".equals(code)) {
+                                showShellUnknown(plan.token());
+                                apply(new TerminalUiAction.StatusChanged(
+                                        "Shell " + plan.token() + " may still be active on Host; /shell " + plan.token()
+                                                + " queries it without replay"));
+                            } else apply(new TerminalUiAction.RecoverableFailure(code));
                         }
                     });
             return;
@@ -1986,40 +1994,78 @@ public final class CodingTerminalController implements AutoCloseable {
                 });
     }
 
-    private void refreshShell() {
+    private void showShellUnknown(String id) {
+        apply(new TerminalUiAction.ShellCompleted(
+                shellLabels.getOrDefault(id, "Shell " + id),
+                "Shell " + id + " may still be active on the Host. /shell " + id
+                        + " queries its outcome without replay. Do not blindly resend it.",
+                "UNKNOWN",
+                executionDestination(),
+                id));
+    }
+
+    private void observeShell(AgentSessionId session, String id) {
+        observedShells
+                .computeIfAbsent(session, ignored -> new java.util.LinkedHashSet<>())
+                .add(id);
+    }
+
+    private void stopObservingShell(AgentSessionId session, String id) {
+        var ids = observedShells.get(session);
+        if (ids != null && ids.remove(id) && ids.isEmpty()) observedShells.remove(session);
+    }
+
+    private void refreshShell(long now) {
         if (closed || shellPollInFlight || state.session().isEmpty()) return;
         AgentSessionId session = state.session().orElseThrow().summary().sessionId();
-        String id = observedShells.get(session);
-        long now = System.currentTimeMillis();
-        if (id == null || now - shellPolledAtMillis < 1000) return;
+        var ids = observedShells.get(session);
+        if (ids == null || ids.isEmpty() || now - shellPolledAtMillis < 1000) return;
+        var requested = java.util.Set.copyOf(ids);
         shellPolledAtMillis = now;
         shellPollInFlight = true;
         SelectionToken selection = currentSelection();
         submitMaintenanceEffect(
                 () -> {
-                    CodingShellExecution receipt = client.shellExecution(session, id);
+                    var retained = client.shellExecutions(session);
+                    List<CodingShellExecution> receipts = new ArrayList<>();
+                    for (var receipt : retained) {
+                        if (!requested.contains(receipt.executionId())) continue;
+                        receipts.add(
+                                receipt.state() == CodingShellExecution.State.RUNNING
+                                        ? receipt
+                                        : client.shellExecution(session, receipt.executionId()));
+                    }
                     return () -> {
                         shellPollInFlight = false;
-                        if (isCurrentSelection(selection)) showShell(receipt);
+                        if (!isCurrentSelection(selection)) return;
+                        for (String id : requested) {
+                            if (receipts.stream()
+                                    .noneMatch(receipt -> receipt.executionId().equals(id))) {
+                                stopObservingShell(session, id);
+                                apply(new TerminalUiAction.RecoverableFailure("SHELL_EXECUTION_UNAVAILABLE"));
+                            }
+                        }
+                        receipts.forEach(this::showShell);
                     };
                 },
                 code -> {
                     shellPollInFlight = false;
-                    observedShells.remove(session, id);
+                    requested.forEach(id -> stopObservingShell(session, id));
                     if (isCurrentSelection(selection))
                         apply(new TerminalUiAction.StatusChanged(
-                                "Shell " + id + " may still be active; /shell " + id + " to query (" + code + ")"));
+                                "Shell commands may still be active; /shell to query retained receipts (" + code
+                                        + ")"));
                 });
     }
 
     private void showShell(CodingShellExecution receipt) {
         if (receipt.state() == CodingShellExecution.State.RUNNING) {
-            observedShells.put(receipt.sessionId(), receipt.executionId());
+            observeShell(receipt.sessionId(), receipt.executionId());
             apply(new TerminalUiAction.StatusChanged("Shell " + receipt.executionId()
                     + (receipt.cancellationRequested() ? " cancelling on Host" : " running on Host")
                     + "; /shell cancel " + receipt.executionId() + " to cancel"));
         } else {
-            observedShells.remove(receipt.sessionId(), receipt.executionId());
+            stopObservingShell(receipt.sessionId(), receipt.executionId());
             String summary = receipt.result()
                     .map(CodingShellResult::safeSummary)
                     .orElse("Shell outcome unknown; do not replay the command. "
@@ -2027,7 +2073,11 @@ public final class CodingTerminalController implements AutoCloseable {
             String process =
                     receipt.result().map(CodingShellResult::processState).orElse("UNKNOWN");
             apply(new TerminalUiAction.ShellCompleted(
-                    "Shell " + receipt.executionId(), summary, process, executionDestination(), receipt.executionId()));
+                    shellLabels.getOrDefault(receipt.executionId(), "Shell " + receipt.executionId()),
+                    summary,
+                    process,
+                    executionDestination(),
+                    receipt.executionId()));
             apply(new TerminalUiAction.StatusChanged("Shell " + receipt.executionId() + ": " + process));
         }
     }
