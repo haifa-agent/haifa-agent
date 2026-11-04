@@ -108,13 +108,14 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
     private volatile RemoteCodingClientInfo info;
     private volatile ProjectId projectId;
     private volatile boolean closed;
+    private volatile Optional<String> localManagementCommand = Optional.empty();
 
     private RemoteCodingSessionClient(URI baseUri, String clientName, String clientVersion) {
         this.clientName = clientName;
         this.clientVersion = clientVersion;
         this.transport = new RemoteRpcTransport(baseUri, json);
         this.codec = new RemoteWireCodec(json);
-        this.authentication = new RemoteCodingAuthenticationClient(transport, codec);
+        this.authentication = new RemoteCodingAuthenticationClient(transport, codec, () -> localManagementCommand);
     }
 
     /** Connects to one loopback CA Host and initializes protocol 1. */
@@ -206,6 +207,11 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
                 }
             }
             Set<String> optional = new LinkedHashSet<>();
+            Optional<String> command = RemoteWireCodec.optionalTextValue(result, "localManagementCommand");
+            if (command.filter(
+                            value -> value.length() > 512 || value.codePoints().anyMatch(Character::isISOControl))
+                    .isPresent()) throw RemoteRpcTransport.protocolIncompatible();
+            localManagementCommand = command;
             JsonNode selected = result.get("optionalCapabilities");
             if (selected != null) {
                 if (!selected.isArray() || selected.size() > OPTIONAL_CAPABILITIES.size()) {

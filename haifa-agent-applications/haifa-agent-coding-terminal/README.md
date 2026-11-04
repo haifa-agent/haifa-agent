@@ -533,7 +533,8 @@ always targets the captured active Run through `cancel(sessionId, requestedRunId
 `CodingTerminalConnectionOptions` for the composition root. Existing constructors keep
 `embedded()`. Remote v1 supplies negotiated connection options: Tool preview is enabled only for mutually supported
 `preview-v1`; session-level consent/reset is independently enabled only for negotiated `session-consent-v1`.
-Credential setup (API key, browser/device sign-in) remains refused in the UI with Host-side guidance
+Credential setup (API key, browser/device sign-in) remains refused in the remote UI. New Host composition supplies
+a dismissible detail panel with the trusted-local auth command, Host/account scope and /account refresh steps
 before any secret is collected. Auth status and logout remain available, and ordinary precise
 approve/reject is unchanged. `CodingSessionClient` remains the only product interface; there is no
 capability registry or transport import in this module.

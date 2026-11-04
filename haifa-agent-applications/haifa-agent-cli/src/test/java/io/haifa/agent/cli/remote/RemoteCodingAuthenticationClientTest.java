@@ -11,6 +11,25 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class RemoteCodingAuthenticationClientTest {
+    @Test
+    void initializationCarriesBoundedLocalInstructionsWithoutCredentialRpcOrRemoteMutation() throws Exception {
+        String command = "haifa auth connect --provider deepseek --method api-key --store file";
+        var initialization = new LinkedHashMap<>(FakeCodingHost.initializeResult("client-1", "project-1"));
+        initialization.put("localManagementCommand", command);
+        try (FakeCodingHost host = FakeCodingHost.start(call -> FakeCodingHost.Reply.result(initialization));
+                var client = RemoteCodingSessionClient.connect(host.uri())) {
+            assertThat(client.authentication().localManagementCommand()).contains(command);
+            assertThat(host.calls()).hasSize(1);
+            assertThat(client.authentication().apiKeyConnectionSupported()).isFalse();
+        }
+        for (Object malformed : List.of(List.of("not-text"), "x".repeat(513), "bad\ncommand")) {
+            initialization.put("localManagementCommand", malformed);
+            try (FakeCodingHost host = FakeCodingHost.start(call -> FakeCodingHost.Reply.result(initialization))) {
+                assertThatThrownBy(() -> RemoteCodingSessionClient.connect(host.uri()))
+                        .isInstanceOf(ProjectProductException.class);
+            }
+        }
+    }
 
     @Test
     void exposesSafeStatusReadAndLogoutOnly() throws Exception {

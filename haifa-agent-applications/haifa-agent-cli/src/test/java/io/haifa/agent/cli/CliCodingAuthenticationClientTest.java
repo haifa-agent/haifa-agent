@@ -9,7 +9,6 @@ import io.haifa.agent.auth.localmodel.ExternalLoginAttemptId;
 import io.haifa.agent.auth.localmodel.ExternalLoginAttemptState;
 import io.haifa.agent.auth.localmodel.ExternalLoginCoordinator;
 import io.haifa.agent.auth.localmodel.ExternalLoginRegistry;
-import io.haifa.agent.auth.localmodel.InMemoryWindowsCredentialManagerClient;
 import io.haifa.agent.auth.localmodel.LocalModelAuthenticationService;
 import io.haifa.agent.auth.localmodel.WindowsLocalModelAuthStore;
 import io.haifa.agent.auth.localmodel.opencode.OpenCodeGoEndpoints;
@@ -21,11 +20,32 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class CliCodingAuthenticationClientTest {
+    @Test
+    void localManagementCommandTargetsOnlyTheConfiguredDefaultCredentialAndStore() {
+        var store = createStore();
+        assertThat(client(store, "model-auth://deepseek/default", "deepseek", Map.of())
+                        .withLocalManagementStore("file")
+                        .localManagementCommand())
+                .contains("haifa auth connect --provider deepseek --method api-key --store file");
+        assertThat(client(store, "model-auth://openai-codex/default", "openai-codex", Map.of())
+                        .withLocalManagementStore("windows")
+                        .localManagementCommand())
+                .contains("haifa auth connect --provider openai-codex --method device --store windows");
+        assertThat(client(store, "model-auth://deepseek/custom", "deepseek", Map.of())
+                        .withLocalManagementStore("file")
+                        .localManagementCommand())
+                .isEmpty();
+        assertThat(client(store, "env://TEST_API_KEY", "deepseek", Map.of())
+                        .withLocalManagementStore("file")
+                        .localManagementCommand())
+                .isEmpty();
+    }
+
     @TempDir
     Path temp;
 
     private WindowsLocalModelAuthStore createStore() {
-        return new WindowsLocalModelAuthStore(new InMemoryWindowsCredentialManagerClient(), new ObjectMapper());
+        return CliAuthenticationTestFixture.store();
     }
 
     @Test
@@ -314,14 +334,7 @@ class CliCodingAuthenticationClientTest {
             String providerId,
             Map<String, String> environment,
             java.util.List<String> availableCredentialReferences) {
-        var service = new LocalModelAuthenticationService(
-                store,
-                java.util.Optional.empty(),
-                reference -> {
-                    throw new AssertionError("credential resolution is not expected");
-                },
-                environment::get);
-        return new CliCodingAuthenticationClient(
-                service, credentialReference, providerId, availableCredentialReferences);
+        return CliAuthenticationTestFixture.client(
+                store, credentialReference, providerId, environment, availableCredentialReferences);
     }
 }

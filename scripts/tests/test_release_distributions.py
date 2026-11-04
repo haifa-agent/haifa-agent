@@ -286,6 +286,33 @@ class CodingAgentLinuxPackageTest(unittest.TestCase):
             self.assertNotIn(stale, "\n".join(lines))
 
 
+    @unittest.skipIf(os.name == "nt", "POSIX launcher process contract")
+    def test_linux_launcher_preserves_arguments_data_overrides_and_exit_code(self):
+        # A child process is necessary to test shell quoting, exported paths and exec exit status.
+        with tempfile.TemporaryDirectory(prefix="ca launcher ") as temporary:
+            root = Path(temporary)
+            jre = self.fixture(root, "linux-x64")
+            archive = MODULE.package_ca(root, root / "work", root / "output", "0.1.4", jre, "linux-x64")
+            with tarfile.open(archive) as bundle:
+                bundle.extractall(root / "extracted", filter="data")
+            package = root / "extracted/haifa-coding-agent-v0.1.4"
+            java = package / "jre/bin/java"
+            java.write_text(
+                '#!/usr/bin/env python3\nimport json, os, sys\nfrom pathlib import Path\n'
+                'Path(os.environ["CAPTURE_PATH"]).write_text(json.dumps({'
+                '"args": sys.argv[1:], "root": os.environ["HAIFA_DATA_ROOT"], '
+                '"db": os.environ["HAIFA_SQLITE_DATABASE_PATH"]}))\nsys.exit(17)\n', encoding="utf-8")
+            capture = root / "captured.json"
+            environment = dict(os.environ, CAPTURE_PATH=str(capture), HAIFA_DATA_ROOT=str(root / "private data"),
+                               HAIFA_SQLITE_DATABASE_PATH=str(root / "custom db.sqlite"))
+            options = ["--workspace", "a path with spaces", "--message", "literal $HOME;$(ignored)"]
+            result = subprocess.run([str(package / "bin/haifa"), *options], env=environment, timeout=10)
+            actual = json.loads(capture.read_text())
+            self.assertEqual(result.returncode, 17)
+            self.assertEqual(actual["args"][-len(options):], options)
+            self.assertEqual(actual["root"], environment["HAIFA_DATA_ROOT"])
+            self.assertEqual(actual["db"], environment["HAIFA_SQLITE_DATABASE_PATH"])
+
 class TargetMatrixTest(unittest.TestCase):
     def host(self, system, machine):
         return (
@@ -348,33 +375,6 @@ class TargetMatrixTest(unittest.TestCase):
         self.assertEqual(error.exception.code, 2)
 
     @unittest.skipIf(os.name == "nt", "POSIX launcher process contract")
-    def test_linux_launcher_preserves_arguments_data_overrides_and_exit_code(self):
-        # A child process is necessary to test shell quoting, exported paths and exec exit status.
-        with tempfile.TemporaryDirectory(prefix="ca launcher ") as temporary:
-            root = Path(temporary)
-            jre = self.fixture(root, "linux-x64")
-            archive = MODULE.package_ca(root, root / "work", root / "output", "0.1.4", jre, "linux-x64")
-            with tarfile.open(archive) as bundle:
-                bundle.extractall(root / "extracted", filter="data")
-            package = root / "extracted/haifa-coding-agent-v0.1.4"
-            java = package / "jre/bin/java"
-            java.write_text(
-                '#!/usr/bin/env python3\nimport json, os, sys\nfrom pathlib import Path\n'
-                'Path(os.environ["CAPTURE_PATH"]).write_text(json.dumps({'
-                '"args": sys.argv[1:], "root": os.environ["HAIFA_DATA_ROOT"], '
-                '"db": os.environ["HAIFA_SQLITE_DATABASE_PATH"]}))\nsys.exit(17)\n', encoding="utf-8")
-            capture = root / "captured.json"
-            environment = dict(os.environ, CAPTURE_PATH=str(capture), HAIFA_DATA_ROOT=str(root / "private data"),
-                               HAIFA_SQLITE_DATABASE_PATH=str(root / "custom db.sqlite"))
-            options = ["--workspace", "a path with spaces", "--message", "literal $HOME;$(ignored)"]
-            result = subprocess.run([str(package / "bin/haifa"), *options], env=environment, timeout=10)
-            actual = json.loads(capture.read_text())
-            self.assertEqual(result.returncode, 17)
-            self.assertEqual(actual["args"][-len(options):], options)
-            self.assertEqual(actual["root"], environment["HAIFA_DATA_ROOT"])
-            self.assertEqual(actual["db"], environment["HAIFA_SQLITE_DATABASE_PATH"])
-
-    @unittest.skipIf(os.name == "nt", "POSIX launcher process contract")
     def test_linux_template_launcher_passes_tui_through_and_creates_no_data_root(self):
         # A child process is required to prove the shipped template's argument vector, its exit status and the
         # absence of the local data root that only the local modes may create.
@@ -402,17 +402,19 @@ class TargetMatrixTest(unittest.TestCase):
             capture = root / "captured.json"
             data_root = root / "never created"
             environment = dict(os.environ, CAPTURE_PATH=str(capture), HAIFA_DATA_ROOT=str(data_root))
-            options = ["tui", "--connect", "http://127.0.0.1:17861", "--session", "a session with spaces"]
+            for options in [
+                ["tui", "--connect", "http://127.0.0.1:17861", "--session", "a session with spaces"],
+                ["auth", "status", "--store", "file"],
+            ]:
+                with self.subTest(options=options):
+                    result = subprocess.run(
+                        [str(package / "bin/haifa"), *options], env=environment, timeout=10
+                    )
+                    actual = json.loads(capture.read_text())
+                    self.assertEqual(result.returncode, 23)
+                    self.assertEqual(_after_jar(actual["args"]), options)
+                    self.assertFalse(data_root.exists())
 
-            result = subprocess.run(
-                [str(package / "bin/haifa"), *options], env=environment, timeout=10
-            )
-
-            actual = json.loads(capture.read_text())
-            self.assertEqual(result.returncode, 23)
-            self.assertEqual(_after_jar(actual["args"]), options)
-            # The value is inherited from the caller; what matters is that this mode never creates the tree.
-            self.assertFalse(data_root.exists())
 
     @unittest.skipIf(os.name == "nt", "POSIX launcher process contract")
     def test_linux_template_launcher_keeps_the_host_subcommand_first(self):

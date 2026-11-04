@@ -14,6 +14,9 @@ Session 调和在发现活动 Run 的执行者已丢失（不再被当前进程�
 `STARTING / WAITING_USER / EXCHANGING / STORING` 登录阶段；具体 OAuth Attempt、Provider HTTP 和凭据存储
 仍留在最高层装配与共享 Local Model Auth Integration 中。
 
+The optional authentication `localManagementCommand` is a display-only instruction owned by the product assembly;
+it grants no remote credential-write/login permission.
+
 ## Session approval
 
 Terminal users can choose **Allow for this session** for ordinary built-in tool approvals. The local product

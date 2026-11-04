@@ -2,6 +2,9 @@
 
 ## Unreleased - 0.1.5-SNAPSHOT
 
+- A trusted-local auth command repairs model credentials while Coding Host keeps its Runtime/SQLite ownership.
+  Remote connection guidance shows the Host/account command and /account refreshes the repaired connection.
+
 - Remote Coding Terminal supports explicitly negotiated Session consent with a client-bound lease.
   Lost renewal, reset, cancellation, reconnect and Host restart cannot silently preserve or transfer consent.
 

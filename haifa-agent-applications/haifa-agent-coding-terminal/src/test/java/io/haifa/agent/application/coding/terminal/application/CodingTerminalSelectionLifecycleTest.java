@@ -30,6 +30,37 @@ import org.junit.jupiter.api.Test;
 
 class CodingTerminalSelectionLifecycleTest {
     @Test
+    void remoteConnectShowsCompleteLocalInstructionsWithoutCollectingSecretsAndCanBeDismissed() {
+        var client = new FakeClient(activeView());
+        var pump = new TerminalEventPump(32);
+        String instructions = "Host: http://127.0.0.1:17871\nAccount: deepseek/default\n"
+                + "haifa auth connect --provider deepseek --method api-key --store file\nThen reopen /account";
+        var controller = new CodingTerminalController(
+                PROJECT_ID,
+                client,
+                CodingAuthenticationClient.unavailable(),
+                pump,
+                new TerminalUiReducer(),
+                TerminalUiState.initial(120, 40),
+                CodingTerminalConnectionOptions.remoteV1("/host/workspace", true, true)
+                        .withCredentialSetupInstructions(instructions),
+                Runnable::run);
+        controller.open(SESSION_ID);
+        controller.accept(input(TerminalInput.Kind.EXECUTE_COMMAND, "/connect api deepseek"));
+        assertThat(controller.secureInputRequested()).isFalse();
+        assertThat(controller.state().selector()).hasValueSatisfying(selector -> {
+            assertThat(selector.kind()).isEqualTo("remote-auth-guidance");
+            assertThat(selector.detail(0)).hasValueSatisfying(detail -> assertThat(detail.description())
+                    .isEqualTo(instructions));
+        });
+        pump.offer(new TerminalUiAction.TerminalResized(80, 24));
+        controller.drainEvents();
+        controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
+        assertThat(controller.state().selector()).isEmpty();
+        assertThat(controller.state().columns()).isEqualTo(80);
+    }
+
+    @Test
     void negotiatedConsentOffersSessionApprovalAndLeaseStatusReadDoesNotBlockInput() throws Exception {
         var blocked = new BlockingCall();
         var maintenance = new ArrayDeque<Runnable>();

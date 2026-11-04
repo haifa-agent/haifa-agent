@@ -71,6 +71,8 @@ class PackageLocalCodingAgentTest(unittest.TestCase):
         posix_tui = posix.index('[ "${1:-}" = "tui" ]')
         self.assertLess(windows_tui, windows.index('haifa-agent.jar" --config'))
         self.assertLess(windows_tui, windows.index('mkdir "%HAIFA_DISTRIBUTION_DIR%data'))
+        self.assertLess(windows.index('if /i "%~1"=="auth"'), windows.index('mkdir "%HAIFA_DISTRIBUTION_DIR%data'))
+
         self.assertLess(posix_tui, posix.index('haifa-agent.jar" --config'))
         self.assertLess(posix_tui, posix.index("mkdir -p"))
 
@@ -110,19 +112,22 @@ class PackageLocalCodingAgentTest(unittest.TestCase):
             )
             fake_java.chmod(0o755)
             environment = dict(os.environ, CAPTURE_PATH=str(capture), JAVA_HOME=str(root))
-            options = ["tui", "--connect", "http://127.0.0.1:17861", "--new"]
+            for options in [
+                ["tui", "--connect", "http://127.0.0.1:17861", "--new"],
+                ["auth", "connect", "--provider", "deepseek", "--store", "file"],
+            ]:
+                with self.subTest(options=options):
+                    result = subprocess.run(
+                        [str(root / "haifa-coding"), *options], env=environment, timeout=10
+                    )
+                    actual = json.loads(capture.read_text())
+                    self.assertEqual(result.returncode, 0)
+                    self.assertEqual(actual["args"][:2], ["-jar", str(root / "haifa-agent.jar")])
+                    self.assertEqual(actual["args"][2:], options)
+                    self.assertIsNone(actual["db"])
+                    self.assertFalse((root / "data").exists())
+                    self.assertFalse((root / "logs").exists())
 
-            result = subprocess.run(
-                [str(root / "haifa-coding"), *options], env=environment, timeout=10
-            )
-
-            actual = json.loads(capture.read_text())
-            self.assertEqual(result.returncode, 0)
-            self.assertEqual(actual["args"][:2], ["-jar", str(root / "haifa-agent.jar")])
-            self.assertEqual(actual["args"][2:], options)
-            self.assertIsNone(actual["db"])
-            self.assertFalse((root / "data").exists())
-            self.assertFalse((root / "logs").exists())
 
 
 if __name__ == "__main__":

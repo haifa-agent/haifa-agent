@@ -26,6 +26,7 @@ if not defined JAR_FILE (
 
 rem The remote TUI is a thin client: pass its argument vector through untouched. It must not receive the bundled
 rem --config (the Host owns the workspace, Runtime and credentials) and it must not create local data directories.
+if /i "%~1"=="auth" goto :haifa_auth
 if /i "%~1"=="tui" (
     "%JAVA_EXE%" %JAVA_OPTS% -jar "%JAR_FILE%" %*
     exit /b %ERRORLEVEL%
@@ -69,4 +70,8 @@ if exist "%HAIFA_CONFIG%" (
 ) else (
     call "%JAVA_EXE%" %JAVA_OPTS% -jar "%JAR_FILE%" host %HAIFA_HOST_ARGS%
 )
+exit /b %ERRORLEVEL%
+
+:haifa_auth
+"%JAVA_EXE%" %JAVA_OPTS% -jar "%JAR_FILE%" %*
 exit /b %ERRORLEVEL%
