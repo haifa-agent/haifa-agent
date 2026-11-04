@@ -1,5 +1,7 @@
 package io.haifa.agent.cli.remote;
 
+import io.haifa.agent.application.project.product.coding.CodingShellExecution;
+
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -344,6 +346,19 @@ final class RemoteWireCodec {
                 requiredBoolean(node, "includeInContext"),
                 enumValue(CodingShellPlan.State.class, requiredText(node, "state"), "state"),
                 requiredText(node, "reasonCode"));
+    }
+
+    CodingShellExecution shellExecution(JsonNode node) {
+        requireObject(node, "shell execution");
+        JsonNode result = node.get("result");
+        return new CodingShellExecution(
+                requiredText(node, "executionId"), new AgentSessionId(requiredText(node, "sessionId")),
+                requiredLong(node, "acceptedAtMillis"),
+                enumValue(CodingShellExecution.State.class,
+                        requiredText(node, "state"), "state"),
+                requiredBoolean(node, "cancellationRequested"),
+                result == null || result.isNull() ? Optional.empty() : Optional.of(shellResult(result)),
+                optionalRawText(node, "errorCode"));
     }
 
     CodingShellResult shellResult(JsonNode node) {

@@ -38,6 +38,37 @@ class RemoteCodingSessionClientTest {
     private static final long NOW = 1_700_000_000_123L;
 
     @Test
+    void recoversLostShellAcknowledgmentByKnownTokenWithoutReplayingStart() throws Exception {
+        var initialized = FakeCodingHost.JSON.valueToTree(FakeCodingHost.initializeResult("client-1", "project-1"));
+        ((com.fasterxml.jackson.databind.node.ObjectNode) initialized.path("capabilities"))
+                .put("shell-operations", true);
+        var receipt = map("executionId", "known-plan", "sessionId", SESSION.value(), "acceptedAtMillis", NOW,
+                "state", "COMPLETED", "cancellationRequested", false,
+                "result", map("processState", "EXITED", "exitCode", 0, "safeSummary", "late result",
+                        "outputReference", null, "truncated", false, "includedInContext", false), "errorCode", null);
+        try (FakeCodingHost host = FakeCodingHost.start(call -> switch (call.method()) {
+            case "initialize" -> FakeCodingHost.Reply.result(initialized);
+            case "shell/start" -> FakeCodingHost.Reply.dropped();
+            case "shell/get" -> FakeCodingHost.Reply.result(receipt);
+            default -> FakeCodingHost.Reply.error("REMOTE_METHOD_UNSUPPORTED");
+        })) {
+            try (var original = RemoteCodingSessionClient.connect(host.uri())) {
+                assertThat(original.recoverableShell()).isTrue();
+                assertThatThrownBy(() -> original.startShell("known-plan", true))
+                        .satisfies(thrown -> assertProductCode(thrown, "REMOTE_OUTCOME_UNKNOWN"));
+            }
+            try (var reattached = RemoteCodingSessionClient.connect(host.uri())) {
+                assertThat(reattached.shellExecution(SESSION, "known-plan").result()).get()
+                        .extracting(io.haifa.agent.application.project.product.coding.CodingShellResult::safeSummary)
+                        .isEqualTo("late result");
+            }
+            assertThat(host.calls("shell/start")).hasSize(1);
+            assertThat(host.calls("shell/execute")).isEmpty();
+            assertThat(host.calls("shell/cancel")).isEmpty();
+        }
+    }
+
+    @Test
     void renewsNewAndOldHostContextsAndReinitializesWithoutReplayingMutations() throws Exception {
         for (boolean renewal : List.of(false, true)) {
             var initializations = new java.util.concurrent.atomic.AtomicInteger();

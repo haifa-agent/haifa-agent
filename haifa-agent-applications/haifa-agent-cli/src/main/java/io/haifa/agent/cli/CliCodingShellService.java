@@ -1,5 +1,7 @@
 package io.haifa.agent.cli;
 
+import io.haifa.agent.application.project.product.coding.CodingShellExecution;
+
 import io.haifa.agent.application.project.policy.CodingAgentPolicyAssembly;
 import io.haifa.agent.application.project.product.coding.CodingSessionService;
 import io.haifa.agent.application.project.product.coding.CodingShellPlan;
@@ -54,6 +56,7 @@ final class CliCodingShellService implements CodingShellService {
     private final WorkspaceId workspaceId;
     private final Duration timeout;
     private final String profileDigest;
+    private final CliShellExecutions executions;
     private final Map<String, Pending> pending = new ConcurrentHashMap<>();
 
     CliCodingShellService(
@@ -75,6 +78,7 @@ final class CliCodingShellService implements CodingShellService {
         this.persistence = persistence;
         this.ids = ids;
         this.time = time;
+        this.executions = new CliShellExecutions(time);
         this.tenant = tenant;
         this.principal = principal;
         this.projectId = projectId;
@@ -129,14 +133,55 @@ final class CliCodingShellService implements CodingShellService {
 
     @Override
     public CodingShellResult execute(String token, boolean approved) {
-        Pending value = Optional.ofNullable(pending.remove(token))
+        start(token, approved);
+        return executions.await(token);
+    }
+
+    @Override
+    public boolean recoverable() { return true; }
+
+    @Override
+    public CodingShellExecution start(String token, boolean approved) {
+        return executions.start(token, () -> {
+            Pending value = take(token);
+            if (value.decision().effect() == PolicyEffect.DENY) throw new SecurityException("POLICY_DENIED");
+            if (value.decision().effect() == PolicyEffect.ASK && !approved) {
+                throw new SecurityException("APPROVAL_REQUIRED");
+            }
+            return new CliShellExecutions.Work(value.sessionId(), cancellation -> execute(value, cancellation));
+        });
+    }
+
+    @Override
+    public CodingShellExecution execution(
+            AgentSessionId sessionId, String id) { return executions.get(sessionId, id); }
+
+    @Override
+    public List<CodingShellExecution> executions(
+            AgentSessionId sessionId) { return executions.list(sessionId); }
+
+    @Override
+    public CodingShellExecution cancel(
+            AgentSessionId sessionId, String id) {
+        return executions.cancel(sessionId, id, () -> {
+            Pending value = pending.get(id);
+            if (value == null || !value.sessionId().equals(sessionId)) {
+                throw new IllegalStateException("Shell request is unavailable");
+            }
+            pending.remove(id);
+            return new CliShellExecutions.Work(sessionId, ignored -> { throw new IllegalStateException(); });
+        });
+    }
+
+    private Pending take(String token) {
+        return Optional.ofNullable(pending.remove(token))
                 .orElseThrow(() -> new IllegalStateException("Shell request is unavailable"));
-        if (value.decision().effect() == PolicyEffect.DENY) {
-            throw new SecurityException("POLICY_DENIED");
-        }
-        if (value.decision().effect() == PolicyEffect.ASK && !approved) {
-            throw new SecurityException("APPROVAL_REQUIRED");
-        }
+    }
+
+    @Override
+    public void close() { executions.close(); pending.clear(); }
+
+    private CodingShellResult execute(Pending value, io.haifa.agent.tool.api.ToolCancellation cancellation) {
         var result = operations.executeUserInitiated(
                 value.auditRunId(),
                 tenant,
@@ -145,7 +190,8 @@ final class CliCodingShellService implements CodingShellService {
                 value.command(),
                 ".",
                 timeout,
-                "terminal-shell-" + value.token());
+                "terminal-shell-" + value.token(),
+                cancellation);
         String processState = String.valueOf(result.structuredData().getOrDefault("processState", "UNKNOWN"));
         Optional<Integer> exitCode = Optional.ofNullable(result.structuredData().get("exitCode"))
                 .filter(Number.class::isInstance)

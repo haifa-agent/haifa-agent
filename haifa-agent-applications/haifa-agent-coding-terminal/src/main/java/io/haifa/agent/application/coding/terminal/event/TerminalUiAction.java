@@ -25,8 +25,11 @@ public sealed interface TerminalUiAction {
 
     record ContextChanged(String indicator) implements TerminalUiAction {}
 
-    record ShellCompleted(String command, String summary, String processState, String destination)
+    record ShellCompleted(String command, String summary, String processState, String destination, String executionId)
             implements TerminalUiAction {
+        public ShellCompleted(String command, String summary, String processState, String destination) {
+            this(command, summary, processState, destination, "");
+        }
         public ShellCompleted(String command, String summary, String processState) {
             this(command, summary, processState, "");
         }

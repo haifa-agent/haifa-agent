@@ -1,5 +1,7 @@
 package io.haifa.agent.application.project.product.coding.client;
 
+import io.haifa.agent.application.project.product.coding.CodingShellExecution;
+
 import io.haifa.agent.application.project.product.ProjectProductException;
 import io.haifa.agent.application.project.product.coding.CodingCompactionResult;
 import io.haifa.agent.application.project.product.coding.CodingModelOption;
@@ -464,6 +466,36 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
     public CodingShellResult executeShell(String token, boolean approved) {
         return shell.orElseThrow(() -> new UnsupportedOperationException("Shell execution is unavailable"))
                 .execute(token, approved);
+    }
+
+    @Override
+    public boolean recoverableShell() { return shell.map(CodingShellService::recoverable).orElse(false); }
+
+    @Override
+    public CodingShellExecution startShell(
+            String token, boolean approved) {
+        return shell.orElseThrow().start(token, approved);
+    }
+
+    @Override
+    public CodingShellExecution shellExecution(
+            AgentSessionId sessionId, String executionId) {
+        requireScoped(sessionId);
+        return shell.orElseThrow().execution(sessionId, executionId);
+    }
+
+    @Override
+    public List<CodingShellExecution> shellExecutions(
+            AgentSessionId sessionId) {
+        requireScoped(sessionId);
+        return shell.orElseThrow().executions(sessionId);
+    }
+
+    @Override
+    public CodingShellExecution cancelShell(
+            AgentSessionId sessionId, String executionId) {
+        requireScoped(sessionId);
+        return shell.orElseThrow().cancel(sessionId, executionId);
     }
 
     @Override

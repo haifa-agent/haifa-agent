@@ -10,6 +10,7 @@ public enum TerminalCommand {
     RELOAD,
     COMPACT,
     EXPORT,
+    SHELL,
     CONNECT,
     LOGIN_REMOVED,
     LOGOUT,

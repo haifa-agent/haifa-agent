@@ -1,5 +1,7 @@
 package io.haifa.agent.application.project.product.coding.client;
 
+import io.haifa.agent.application.project.product.coding.CodingShellExecution;
+
 import io.haifa.agent.application.project.product.coding.CodingCompactionResult;
 import io.haifa.agent.application.project.product.coding.CodingModelOption;
 import io.haifa.agent.application.project.product.coding.CodingModelSelection;
@@ -156,6 +158,28 @@ public interface CodingSessionClient {
     }
 
     default void discardShell(String token) {}
+
+    default boolean recoverableShell() { return false; }
+
+    default CodingShellExecution startShell(
+            String token, boolean approved) {
+        throw new UnsupportedOperationException("Recoverable shell execution is unavailable");
+    }
+
+    default CodingShellExecution shellExecution(
+            AgentSessionId sessionId, String executionId) {
+        throw new UnsupportedOperationException("Recoverable shell execution is unavailable");
+    }
+
+    default List<CodingShellExecution> shellExecutions(
+            AgentSessionId sessionId) {
+        throw new UnsupportedOperationException("Recoverable shell execution is unavailable");
+    }
+
+    default CodingShellExecution cancelShell(
+            AgentSessionId sessionId, String executionId) {
+        throw new UnsupportedOperationException("Recoverable shell execution is unavailable");
+    }
 
     default CodingSessionExportResult export(AgentSessionId sessionId, String logicalDestination) {
         throw new UnsupportedOperationException("Session export is unavailable");

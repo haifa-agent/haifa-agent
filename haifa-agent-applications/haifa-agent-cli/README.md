@@ -924,3 +924,21 @@ Remote SSE line framing uses the UTF-8 reader directly with per-stream CR/LF sta
 PushbackReader around an idle stream can pin Java 21 virtual-thread carriers; on low-core hosts, two idle
 observations then prevent concurrent RPC work from progressing. The line reader supports LF, CR and CRLF
 within the existing line/frame bounds and allows idle observations to unmount from their carriers.
+
+## Recoverable manual Shell commands
+
+Manual Shell executions use the plan token as a stable execution ID. On capable Hosts, `shell/start`
+returns admission without waiting for the process; `shell/get` reads a single outcome and `shell/list`
+returns Session-scoped metadata without output bodies. `/shell` lists receipts, `/shell ID` recovers output,
+and `/shell cancel ID` explicitly requests cancellation through the existing execution broker. Closing
+a TUI, interrupting observation or losing an RPC response never cancels or resends the command.
+
+Receipts belong to the current Host process: at most eight commands run concurrently, with 128 retained
+receipts and a 30-minute retention period after completion; active commands do not expire. Evicted receipts
+return unavailable and consumed tokens cannot dispatch again. Host restart is not durable Shell recovery.
+Cancellation is a request until the broker reports the actual process outcome. Host shutdown requests
+Shell cancellation before closing persistence. Normal asynchronous Agent Runs retain their existing lifecycle.
+Old clients/Hosts keep the synchronous Shell endpoint; new clients detect optional `shell-operations`.
+
+Compaction and export remain on their existing APIs: this change adds no speculative generic operation
+store. Their behavior has no executed long-command failure evidence comparable to manual Shell.

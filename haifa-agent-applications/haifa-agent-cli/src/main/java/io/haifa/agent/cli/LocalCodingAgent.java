@@ -1430,6 +1430,12 @@ final class LocalCodingAgent implements AutoCloseable {
         if (!closed.compareAndSet(false, true)) return;
         RuntimeException failure = awaitTerminalAttempts();
         try {
+            shell.ifPresent(CodingShellService::close);
+        } catch (RuntimeException exception) {
+            if (failure == null) failure = exception;
+            else failure.addSuppressed(exception);
+        }
+        try {
             if (authentication instanceof AutoCloseable closeable) closeable.close();
         } catch (RuntimeException exception) {
             if (failure == null) failure = exception;

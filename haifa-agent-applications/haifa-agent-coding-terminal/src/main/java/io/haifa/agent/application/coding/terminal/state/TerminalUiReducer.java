@@ -208,8 +208,10 @@ public final class TerminalUiReducer {
         }
         if (action instanceof TerminalUiAction.ShellCompleted shell) {
             List<TranscriptItem> items = new ArrayList<>(state.transcript());
+            String id = shell.executionId().isEmpty() ? "shell-" + items.size() : "shell-" + shell.executionId();
+            items.removeIf(item -> item.id().equals(id));
             items.add(new TranscriptItem(
-                    "shell-" + items.size(),
+                    id,
                     TranscriptItem.Kind.EXECUTION,
                     shell.command(),
                     withDestination(shell.summary(), shell.destination()),

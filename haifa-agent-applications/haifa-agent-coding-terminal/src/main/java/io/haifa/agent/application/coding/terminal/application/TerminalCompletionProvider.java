@@ -20,6 +20,7 @@ public final class TerminalCompletionProvider {
             "/reload",
             "/rename",
             "/export",
+            "/shell",
             "/archive",
             "/delete",
             "/commands",
