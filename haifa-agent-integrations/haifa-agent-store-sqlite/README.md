@@ -312,3 +312,10 @@ thread. Runtime's per-Run locking lets the contender unmount on Java 21, so the 
 slot on low-core hosts. Writer queue fairness, transaction scope, interruption handling and timeout configuration
 are unchanged. A single-carrier child-JVM regression exercises the real SQLite Unit of Work and all three Runtime
 transition paths that acquire the writer under the per-Run lock.
+
+## Historical retrieval persistence
+
+Runtime history tools reuse the existing Session cursor, Run/Tool identities and immutable Tool-result asset
+codec without a migration or second body store. Closing and reopening the Store with the same continuation
+protector preserves history versions and character offsets. Changing a workspace file does not change the stored
+historical representation. This reopen scenario is covered by `SqliteRuntimeRecoveryTest` under `slow-tests`.

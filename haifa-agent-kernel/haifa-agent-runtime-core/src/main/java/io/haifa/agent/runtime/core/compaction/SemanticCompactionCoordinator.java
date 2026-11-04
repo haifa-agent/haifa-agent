@@ -89,6 +89,7 @@ public final class SemanticCompactionCoordinator {
     private final ModelMessageProjectionPlanner projectionPlanner;
     private final ActiveContextSnapshots activeContexts;
     private final CompactionFailureBackoff failureBackoff;
+    private final io.haifa.agent.runtime.core.history.HistoryToolProvider history;
 
     public SemanticCompactionCoordinator(
             RuntimeStateRepository state,
@@ -151,6 +152,35 @@ public final class SemanticCompactionCoordinator {
             RuntimeEventAppender events,
             ModelMessageProjectionPlanner projectionPlanner,
             ActiveContextSnapshots activeContexts) {
+        this(
+                state,
+                summaries,
+                invoker,
+                triggerEvaluator,
+                policy,
+                deterministicCompressor,
+                ids,
+                time,
+                events,
+                projectionPlanner,
+                activeContexts,
+                null);
+    }
+
+    public SemanticCompactionCoordinator(
+            RuntimeStateRepository state,
+            ConversationSummaryRepository summaries,
+            SummaryModelInvoker invoker,
+            CompactionTriggerEvaluator triggerEvaluator,
+            CompressionPolicy policy,
+            ContextCompressor deterministicCompressor,
+            IdentifierGenerator ids,
+            TimeProvider time,
+            RuntimeEventAppender events,
+            ModelMessageProjectionPlanner projectionPlanner,
+            ActiveContextSnapshots activeContexts,
+            io.haifa.agent.runtime.core.history.HistoryToolProvider history) {
+        this.history = history;
         this.state = Objects.requireNonNull(state, "state must not be null");
         this.summaries = Objects.requireNonNull(summaries, "summaries must not be null");
         this.invoker = Objects.requireNonNull(invoker, "invoker must not be null");
@@ -176,6 +206,7 @@ public final class SemanticCompactionCoordinator {
 
     private CompactionEvaluationOutcome evaluateAndCompactIfNeeded(
             AgentRun run, int iteration, FrozenModelBinding binding, int boundedPageCount) {
+        if (history != null) history.requireCurrentScope(run);
         long startNanos = System.nanoTime();
         if (!policy.semanticCompactionEnabled()) {
             return CompactionEvaluationOutcome.NONE;
@@ -398,6 +429,7 @@ public final class SemanticCompactionCoordinator {
 
     private CompactionEvaluationOutcome forceCompactOnOverflow(
             AgentRun run, int iteration, FrozenModelBinding binding, int boundedPageCount) {
+        if (history != null) history.requireCurrentScope(run);
         long startNanos = System.nanoTime();
         if (!policy.semanticCompactionEnabled()) {
             return CompactionEvaluationOutcome.NONE;
@@ -1512,7 +1544,7 @@ public final class SemanticCompactionCoordinator {
     private Function<ToolCallId, ToolCall> toolCallResolver(
             AgentRun run, ActiveContextSnapshot activeSnapshot, List<AgentMessage> visible) {
         if (activeSnapshot != null) {
-            return activeSnapshot.toolCalls()::get;
+            return id -> safeHistoryCall(run, activeSnapshot.toolCalls().get(id));
         }
         Map<io.haifa.agent.core.run.AgentRunId, Map<ToolCallId, ToolCall>> toolCallsByRun = new HashMap<>();
         return callId -> {
@@ -1523,10 +1555,14 @@ public final class SemanticCompactionCoordinator {
                         toolCallsByRun.computeIfAbsent(messageRunId, rId -> state.toolCalls(rId).stream()
                                 .collect(Collectors.toMap(ToolCall::id, Function.identity(), (a, b) -> a)));
                 ToolCall call = runCalls.get(callId);
-                if (call != null) return call;
+                if (call != null) return safeHistoryCall(run, call);
             }
             return null;
         };
+    }
+
+    private ToolCall safeHistoryCall(AgentRun run, ToolCall call) {
+        return history == null ? call : history.sanitize(run, call);
     }
 
     private long estimateGroups(List<List<AgentMessage>> groups) {

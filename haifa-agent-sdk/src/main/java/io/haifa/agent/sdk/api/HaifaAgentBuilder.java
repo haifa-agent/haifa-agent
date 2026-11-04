@@ -96,6 +96,7 @@ public final class HaifaAgentBuilder {
     private boolean starterDefaultInstructionsInUse;
     private CompressionPolicy compressionPolicy;
     private PlanAuthoringSpec planAuthoringSpec;
+    private boolean historyRetrieval;
     private Supplier<? extends ExecutorService> executionExecutorFactory;
 
     HaifaAgentBuilder() {}
@@ -419,6 +420,12 @@ public final class HaifaAgentBuilder {
         return this;
     }
 
+    /** Opts into bounded, authorized history_search/history_read tools; disabled by default. */
+    public HaifaAgentBuilder enableHistoryRetrieval() {
+        historyRetrieval = true;
+        return this;
+    }
+
     public HaifaAgent build() {
         ProductProfile effectiveProfile = Objects.requireNonNull(profile, "a Product Profile must be configured");
         ModelContribution model = requireComponent(this.model, "MODEL_REQUIRED", "a Model must be configured");
@@ -439,7 +446,18 @@ public final class HaifaAgentBuilder {
             effectiveJavaTools.add(new PlanAuthoringTool(
                     planAuthoringSpec, persistence.runtimePersistence().state(), ids, time));
         }
-        ToolAssembly.Prepared prepared = ToolAssembly.prepare(this.toolPlatform, effectiveJavaTools, toolRegistrations);
+        var effectiveRegistrations = new ArrayList<>(toolRegistrations);
+        if (historyRetrieval) {
+            var history = new io.haifa.agent.runtime.core.history.HistoryToolProvider(persistence.runtimePersistence());
+            for (var definition : history.definitions())
+                effectiveRegistrations.add(new io.haifa.agent.sdk.contribution.ToolRegistration(
+                        new io.haifa.agent.tool.api.ToolAlias(definition.name().value()),
+                        definition,
+                        "runtime-history:" + definition.name().value(),
+                        history));
+        }
+        ToolAssembly.Prepared prepared =
+                ToolAssembly.prepare(this.toolPlatform, effectiveJavaTools, effectiveRegistrations);
         ToolPlatformContribution tool = prepared.platform();
         Set<String> allowedTools = new LinkedHashSet<>(effectiveProfile.allowedTools());
         allowedTools.addAll(prepared.contributedAliases());

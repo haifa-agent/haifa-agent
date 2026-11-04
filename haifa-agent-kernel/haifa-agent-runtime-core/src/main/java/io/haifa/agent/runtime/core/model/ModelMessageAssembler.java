@@ -89,6 +89,7 @@ public final class ModelMessageAssembler {
     private final ModelAudioResolver audios;
     private final ModelMessageProjectionPlanner planner;
     private final ActiveContextSnapshots activeContexts;
+    private final java.util.function.BiFunction<AgentRunId, ToolCall, ToolCall> historyResults;
 
     public ModelMessageAssembler(RuntimeStateRepository state) {
         this(
@@ -120,6 +121,17 @@ public final class ModelMessageAssembler {
             ModelAudioResolver audios,
             ModelMessageProjectionPlanner planner,
             ActiveContextSnapshots activeContexts) {
+        this(state, images, audios, planner, activeContexts, (run, call) -> call);
+    }
+
+    public ModelMessageAssembler(
+            RuntimeStateRepository state,
+            ModelImageResolver images,
+            ModelAudioResolver audios,
+            ModelMessageProjectionPlanner planner,
+            ActiveContextSnapshots activeContexts,
+            java.util.function.BiFunction<AgentRunId, ToolCall, ToolCall> historyResults) {
+        this.historyResults = Objects.requireNonNull(historyResults);
         this.state = Objects.requireNonNull(state, "state must not be null");
         this.images = Objects.requireNonNull(images, "images must not be null");
         this.audios = Objects.requireNonNull(audios, "audios must not be null");
@@ -169,11 +181,11 @@ public final class ModelMessageAssembler {
                 : activeContexts.cached(sessionId).filter(snapshot -> snapshot.containsAll(contextMessages));
         reusable.ifPresent(snapshot -> snapshot.toolCalls().values().forEach(call -> toolCallsByRun
                 .computeIfAbsent(call.runId(), ignored -> new HashMap<>())
-                .put(call.id(), call)));
+                .put(call.id(), historyResults.apply(runId, call))));
         Function<io.haifa.agent.core.tool.ToolCallId, ToolCall> toolCallResolver = callId -> {
             for (AgentMessage message : contextMessages) {
                 ToolCall call = toolCallsByRun
-                        .computeIfAbsent(message.runId().orElse(runId), this::toolCallsById)
+                        .computeIfAbsent(message.runId().orElse(runId), origin -> sanitizedCalls(runId, origin))
                         .get(callId);
                 if (call != null) {
                     return call;
@@ -395,7 +407,7 @@ public final class ModelMessageAssembler {
             ModelMessageProjectionPlan projectionPlan) {
         AgentRunId messageRunId = message.runId().orElse(currentRunId);
         Map<io.haifa.agent.core.tool.ToolCallId, ToolCall> authoritativeCalls =
-                toolCallsByRun.computeIfAbsent(messageRunId, this::toolCallsById);
+                toolCallsByRun.computeIfAbsent(messageRunId, origin -> sanitizedCalls(currentRunId, origin));
         List<ToolCallPart> calls = message.contents().stream()
                 .filter(ToolCallPart.class::isInstance)
                 .map(ToolCallPart.class::cast)
@@ -499,6 +511,11 @@ public final class ModelMessageAssembler {
             }
         }
         return List.of(ModelMessage.text(mapRole(message.role()), text));
+    }
+
+    private Map<io.haifa.agent.core.tool.ToolCallId, ToolCall> sanitizedCalls(AgentRunId current, AgentRunId origin) {
+        return toolCallsById(origin).values().stream()
+                .collect(Collectors.toMap(ToolCall::id, call -> historyResults.apply(current, call)));
     }
 
     private Map<io.haifa.agent.core.tool.ToolCallId, ToolCall> toolCallsById(AgentRunId runId) {

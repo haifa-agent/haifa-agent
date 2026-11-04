@@ -533,3 +533,23 @@ input settlement and after-commit observation. The lock uses `ReentrantLock`: a 
 writer can unmount from its virtual-thread carrier, allowing the writer's owner to resume even on low-core hosts.
 Core lifecycle rules and transaction boundaries remain authoritative; increasing scheduler parallelism or SQLite
 writer timeouts is not required for progress.
+
+## Historical data retrieval
+
+`HistoryToolProvider` implements bounded `history_search`/`history_read` over existing message cursors,
+Run visibility, Tool occurrences and immutable Tool-result assets. SDK registration is explicit and off by
+default; see the SDK README for arguments and limits. Search/read execute in the existing read-only Unit of Work
+and never advance summary coverage, redispatch Tools or read current workspace files. Reads use persisted
+Run/message/occurrence versions, and all results carry an untrusted-data label.
+
+Only completed visible USER/ASSISTANT/TOOL text and safe Tool-result data are projected. Hidden/internal/admin
+messages, metadata and continuation lanes are excluded. Existing redaction is applied; protected or credential
+field names are omitted from structured results. Results are revalidated for model assembly, semantic-summary
+source projection and public Tool views. Redacting a source propagates to dependent retrieval messages through
+existing redaction notifications and summary invalidation. This is a paged scan on redaction, not a new dependency
+Store. The current hosting `RunAccessValidator` is used in addition to owner/Session/Project checks.
+
+Keyword scans bound rows and source windows, with explicit continuation across both. Existing Store codecs still
+load a selected persisted message/result object; this does not provide byte-range disk I/O or a full-text index.
+Unsupported oversized/deep structured representations fail unavailable instead of claiming a complete search.
+No Run-aware selection, Tier 1 retention change or terminal automatic maintenance is enabled here.

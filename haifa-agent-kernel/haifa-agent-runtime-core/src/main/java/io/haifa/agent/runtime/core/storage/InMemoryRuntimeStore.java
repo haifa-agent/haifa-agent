@@ -623,10 +623,14 @@ public final class InMemoryRuntimeStore
     public synchronized List<AgentMessage> messagesAfter(
             io.haifa.agent.core.session.AgentSessionId sessionId, MessageCursor cursor, int limit) {
         if (limit < 1) throw new IllegalArgumentException("limit must be positive");
-        return sessionMessages.getOrDefault(sessionId, List.of()).stream()
-                .filter(message -> message.sequence() > cursor.value())
-                .limit(limit)
-                .toList();
+        var stream = sessionMessages.getOrDefault(sessionId, List.of());
+        int low = 0, high = stream.size();
+        while (low < high) {
+            int middle = low + (high - low) / 2;
+            if (stream.get(middle).sequence() <= cursor.value()) low = middle + 1;
+            else high = middle;
+        }
+        return List.copyOf(stream.subList(low, (int) Math.min(stream.size(), (long) low + limit)));
     }
 
     @Override
