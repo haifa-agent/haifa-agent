@@ -50,6 +50,41 @@ class RemoteCodingSessionClientTest {
     }
 
     @Test
+    void requestsOlderHistoryAndDecodesItsContinuation() throws Exception {
+        try (FakeCodingHost host = FakeCodingHost.start(call -> switch (call.method()) {
+                    case "initialize" ->
+                        FakeCodingHost.Reply.result(FakeCodingHost.initializeResult("client-1", "project-1"));
+                    case "session/history" ->
+                        FakeCodingHost.Reply.result(map(
+                                "sessionId",
+                                SESSION.value(),
+                                "items",
+                                List.of(),
+                                "earlierHistoryAvailable",
+                                true,
+                                "nextBeforeSequence",
+                                40));
+                    default -> FakeCodingHost.Reply.error("REMOTE_METHOD_UNSUPPORTED");
+                });
+                var client = RemoteCodingSessionClient.connect(host.uri())) {
+            var page = client.history(SESSION, 20, 100);
+            assertThat(page.nextBeforeSequence()).hasValue(40);
+            assertThat(host.calls("session/history")
+                            .getFirst()
+                            .params()
+                            .path("beforeSequence")
+                            .asLong())
+                    .isEqualTo(100);
+            assertThat(host.calls("session/history")
+                            .getFirst()
+                            .params()
+                            .path("limit")
+                            .asInt())
+                    .isEqualTo(20);
+        }
+    }
+
+    @Test
     void connectsWithProtocolContextAndSendsClientHeaderForSubsequentCommands() throws Exception {
         try (FakeCodingHost host = FakeCodingHost.start(call -> switch (call.method()) {
             case "initialize" -> FakeCodingHost.Reply.result(FakeCodingHost.initializeResult("client-1", "project-1"));

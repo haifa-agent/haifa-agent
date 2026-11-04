@@ -89,6 +89,55 @@ class CodingSessionHistoryServiceTest {
     }
 
     @Test
+    void continuesBeforeTheReturnedSequenceWithoutRepeatingMessages() {
+        for (int i = 1; i <= 5; i++) {
+            append(
+                    "paged-" + i,
+                    new AgentRunId("run-" + i),
+                    MessageRole.USER,
+                    MessageVisibility.USER_VISIBLE,
+                    "message " + i);
+        }
+        var history = service(runId -> Optional.empty());
+        var latest = history.recent(SESSION_ID, 2);
+        var older = history.before(SESSION_ID, latest.nextBeforeSequence().orElseThrow(), 2);
+        var first = history.before(SESSION_ID, older.nextBeforeSequence().orElseThrow(), 2);
+        assertThat(latest.items()).extracting(CodingSessionHistoryItem::body).containsExactly("message 4", "message 5");
+        assertThat(older.items()).extracting(CodingSessionHistoryItem::body).containsExactly("message 2", "message 3");
+        assertThat(first.items()).extracting(CodingSessionHistoryItem::body).containsExactly("message 1");
+        assertThat(first.nextBeforeSequence()).isEmpty();
+        assertThat(first.earlierHistoryAvailable()).isFalse();
+        assertThat(authorizations).hasValue(3);
+        assertThat(history.before(SESSION_ID, 1, 2).items()).isEmpty();
+        assertThatThrownBy(() -> history.before(SESSION_ID, 0, 2)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void emptyVisibleScanWindowStillAdvancesItsContinuation() {
+        append(
+                "old-visible",
+                new AgentRunId("old-run"),
+                MessageRole.USER,
+                MessageVisibility.USER_VISIBLE,
+                "old message");
+        for (int i = 0; i < 2100; i++) {
+            append(
+                    "internal-" + i,
+                    new AgentRunId("internal-run"),
+                    MessageRole.RUNTIME,
+                    MessageVisibility.INTERNAL,
+                    "internal");
+        }
+        var history = service(runId -> Optional.empty());
+        var recent = history.recent(SESSION_ID, 2);
+        assertThat(recent.items()).isEmpty();
+        assertThat(recent.nextBeforeSequence()).isPresent();
+        var older = history.before(SESSION_ID, recent.nextBeforeSequence().orElseThrow(), 2);
+        assertThat(older.items()).extracting(CodingSessionHistoryItem::body).containsExactly("old message");
+        assertThat(older.nextBeforeSequence()).isEmpty();
+    }
+
+    @Test
     void validatesTheProductHistoryLimitBeforeReading() {
         assertThatThrownBy(() -> service(runId -> Optional.empty()).recent(SESSION_ID, 101))
                 .isInstanceOf(IllegalArgumentException.class)

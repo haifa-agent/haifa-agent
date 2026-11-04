@@ -130,10 +130,16 @@ final class RemoteWireCodec {
         for (JsonNode item : requiredArray(node, "items")) {
             items.add(historyItem(item));
         }
+        boolean earlier = requiredBoolean(node, "earlierHistoryAvailable");
+        JsonNode next = node.get("nextBeforeSequence");
+        if (next == null) {
+            return new CodingSessionHistoryPage(new AgentSessionId(requiredText(node, "sessionId")), items, earlier);
+        }
         return new CodingSessionHistoryPage(
                 new AgentSessionId(requiredText(node, "sessionId")),
                 items,
-                requiredBoolean(node, "earlierHistoryAvailable"));
+                earlier,
+                next.isNull() ? OptionalLong.empty() : OptionalLong.of(positiveLong(next, "nextBeforeSequence")));
     }
 
     private CodingSessionHistoryItem historyItem(JsonNode node) {

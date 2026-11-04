@@ -65,6 +65,11 @@ public interface CodingSessionClient {
         return CodingSessionHistoryPage.empty(sessionId);
     }
 
+    /** Retrieves an older page strictly before a previously returned history continuation sequence. */
+    default CodingSessionHistoryPage history(AgentSessionId sessionId, int limit, long beforeSequence) {
+        throw new UnsupportedOperationException("Older history paging is unavailable");
+    }
+
     default List<CodingModelOption> models() {
         return List.of();
     }

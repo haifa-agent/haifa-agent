@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
@@ -65,6 +66,16 @@ public final class CodingSessionHistoryService {
     }
 
     public CodingSessionHistoryPage recent(AgentSessionId sessionId, int limit) {
+        return page(sessionId, limit, OptionalLong.empty());
+    }
+
+    /** Reads history strictly before a message sequence, preserving the same authorization and redaction. */
+    public CodingSessionHistoryPage before(AgentSessionId sessionId, long beforeSequence, int limit) {
+        if (beforeSequence < 1) throw new IllegalArgumentException("beforeSequence must be positive");
+        return page(sessionId, limit, OptionalLong.of(beforeSequence));
+    }
+
+    private CodingSessionHistoryPage page(AgentSessionId sessionId, int limit, OptionalLong beforeSequence) {
         Objects.requireNonNull(sessionId, "sessionId must not be null");
         if (limit < 1 || limit > MAXIMUM_ITEMS) {
             throw new IllegalArgumentException("history limit must be between 1 and " + MAXIMUM_ITEMS);
@@ -74,13 +85,19 @@ public final class CodingSessionHistoryService {
         if (latest.isEmpty()) return CodingSessionHistoryPage.empty(sessionId);
 
         List<AgentMessage> visible = new ArrayList<>();
-        MessageCursor cursor = latest.orElseThrow();
+        MessageCursor cursor = new MessageCursor(
+                beforeSequence.isPresent()
+                        ? Math.min(latest.orElseThrow().value(), beforeSequence.getAsLong() - 1)
+                        : latest.orElseThrow().value());
         int scanned = 0;
         boolean earlier = false;
         while (cursor.value() > 0 && visible.size() < limit && scanned < MAXIMUM_SCANNED_MESSAGES) {
             int batchSize = Math.min(READ_BATCH_SIZE, MAXIMUM_SCANNED_MESSAGES - scanned);
             RecentMessageWindow window = messages.recentMessages(sessionId, cursor, batchSize);
-            if (window.messages().isEmpty()) break;
+            if (window.messages().isEmpty()) {
+                cursor = MessageCursor.BEFORE_FIRST;
+                break;
+            }
             scanned += window.messages().size();
             window.messages().stream()
                     .filter(CodingSessionHistoryService::isVisibleConversationMessage)
@@ -96,11 +113,14 @@ public final class CodingSessionHistoryService {
         if (cursor.value() > 0) earlier = true;
 
         List<CodingSessionHistoryItem> projected = project(visible);
-        if (projected.size() > limit) {
-            projected = projected.subList(projected.size() - limit, projected.size());
-            earlier = true;
-        }
-        return new CodingSessionHistoryPage(sessionId, projected, earlier);
+        // Keep a synthesized failure beside its source message: continuation is at message-sequence boundaries.
+        OptionalLong next = earlier
+                ? OptionalLong.of(
+                        projected.isEmpty()
+                                ? cursor.value() + 1
+                                : projected.getFirst().sequence())
+                : OptionalLong.empty();
+        return new CodingSessionHistoryPage(sessionId, projected, earlier, next);
     }
 
     private List<CodingSessionHistoryItem> project(List<AgentMessage> source) {

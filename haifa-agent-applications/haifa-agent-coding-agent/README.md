@@ -321,3 +321,11 @@ Coding base prompt 1.8.5 将任务进展和方法选择交给主模型，并要�
 转成最多三个问题的澄清交互，因此产品从不把它当作普通工具执行；`ProjectToolExecutor` 对真的被分发的调用直接报错，
 让这一拦截可被验证。`CodingSessionClient.respond(interaction, action, inputs, key)` 承载提交的答案，无法传输输入的
 实现会对非空载荷报错而不是静默丢弃。
+
+## History continuation
+
+`CodingSessionClient.history(sessionId, limit)` returns recent safe history; `nextBeforeSequence`, when present,
+is the exclusive cursor for `history(sessionId, limit, nextBeforeSequence)`. The local implementation uses the
+same authorization and redaction for both reads, scans at most 2,000 source records per page, and returns a
+continuation even for a scan window containing no visible items. `limit` bounds source messages (1–100); a
+synthesized failure stays with its source message. History remains a display projection, not a recovery source.

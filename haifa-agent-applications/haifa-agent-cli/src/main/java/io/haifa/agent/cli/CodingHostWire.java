@@ -194,6 +194,11 @@ final class CodingHostWire {
         }
         value.put("items", items);
         value.put("earlierHistoryAvailable", page.earlierHistoryAvailable());
+        value.put(
+                "nextBeforeSequence",
+                page.nextBeforeSequence().isPresent()
+                        ? page.nextBeforeSequence().getAsLong()
+                        : null);
         return value;
     }
 
