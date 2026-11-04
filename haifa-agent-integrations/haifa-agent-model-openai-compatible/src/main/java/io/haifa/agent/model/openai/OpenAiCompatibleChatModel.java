@@ -924,6 +924,29 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
             var writes = details.hasNonNull("cache_write_tokens")
                     ? java.util.OptionalLong.of(nonNegativeLong(request, details, "cache_write_tokens", false))
                     : java.util.OptionalLong.empty();
+            boolean inclusive = ("openai".equals(request.model().providerId().value())
+                            && io.haifa.agent.model.api.ModelApiBindingDefinition.STANDARD_DIALECT.equals(
+                                    request.model().dialect()))
+                    || ("deepseek".equals(request.model().providerId().value())
+                            && OpenAiCompatibleBindingRegistry.isAdmitted(
+                                    request.model().providerId().value(),
+                                    request.model().providerModelId(),
+                                    request.model().apiStyle(),
+                                    request.model().dialect()));
+            if (!inclusive) {
+                return new ModelUsage(
+                        nonNegativeLong(request, usage, "prompt_tokens", true),
+                        nonNegativeLong(request, usage, "completion_tokens", true),
+                        cacheHitTokens,
+                        nonNegativeLong(request, usage, "prompt_cache_miss_tokens", false),
+                        reasoningTokens,
+                        costMinorUnits.isPresent(),
+                        costMinorUnits.orElse(0),
+                        writes,
+                        false,
+                        readKnown,
+                        usage.hasNonNull("prompt_cache_miss_tokens"));
+            }
             return ModelUsage.inclusiveInput(
                     java.util.OptionalLong.of(nonNegativeLong(request, usage, "prompt_tokens", true)),
                     nonNegativeLong(request, usage, "completion_tokens", true),
