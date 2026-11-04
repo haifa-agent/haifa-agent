@@ -23,6 +23,7 @@ class TerminalCompletionProviderTest {
                         "/reload",
                         "/rename",
                         "/export",
+                        "/shell",
                         "/archive",
                         "/delete",
                         "/commands",

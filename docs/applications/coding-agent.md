@@ -144,3 +144,18 @@ again to explicitly reconnect.
 Remote stream readers support low-core Java 21 hosts: idle event/output SSE subscriptions do not pin the
 virtual-thread carriers needed by approvals and other RPCs. Stream framing accepts LF, CR and CRLF under
 the existing payload bounds.
+
+## Recoverable manual Shell commands
+
+Manual Shell executions use the plan token as a stable execution ID. On capable Hosts, `shell/start`
+returns admission without waiting for the process; `shell/get` reads a single outcome and `shell/list`
+returns Session-scoped metadata without output bodies. `/shell` lists receipts, `/shell ID` recovers output,
+and `/shell cancel ID` explicitly requests cancellation through the existing execution broker. Closing
+a TUI, interrupting observation or losing an RPC response never cancels or resends the command.
+
+Receipts belong to the current Host process: at most eight commands run concurrently, with 128 retained
+receipts and a 30-minute retention period after completion; active commands do not expire. Evicted receipts
+return unavailable and consumed tokens cannot dispatch again. Host restart is not durable Shell recovery.
+Cancellation is a request until the broker reports the actual process outcome. Host shutdown requests
+Shell cancellation before closing persistence. Normal asynchronous Agent Runs retain their existing lifecycle.
+Old clients/Hosts keep the synchronous Shell endpoint; new clients detect optional `shell-operations`.

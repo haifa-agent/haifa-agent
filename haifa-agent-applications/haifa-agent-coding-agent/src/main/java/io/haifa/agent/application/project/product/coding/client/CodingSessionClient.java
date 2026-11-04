@@ -10,6 +10,7 @@ import io.haifa.agent.application.project.product.coding.CodingSessionExportResu
 import io.haifa.agent.application.project.product.coding.CodingSessionHistoryPage;
 import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
+import io.haifa.agent.application.project.product.coding.CodingShellExecution;
 import io.haifa.agent.application.project.product.coding.CodingShellPlan;
 import io.haifa.agent.application.project.product.coding.CodingShellResult;
 import io.haifa.agent.application.project.product.coding.CodingWorkspaceView;
@@ -156,6 +157,26 @@ public interface CodingSessionClient {
     }
 
     default void discardShell(String token) {}
+
+    default boolean recoverableShell() {
+        return false;
+    }
+
+    default CodingShellExecution startShell(String token, boolean approved) {
+        throw new UnsupportedOperationException("Recoverable shell execution is unavailable");
+    }
+
+    default CodingShellExecution shellExecution(AgentSessionId sessionId, String executionId) {
+        throw new UnsupportedOperationException("Recoverable shell execution is unavailable");
+    }
+
+    default List<CodingShellExecution> shellExecutions(AgentSessionId sessionId) {
+        throw new UnsupportedOperationException("Recoverable shell execution is unavailable");
+    }
+
+    default CodingShellExecution cancelShell(AgentSessionId sessionId, String executionId) {
+        throw new UnsupportedOperationException("Recoverable shell execution is unavailable");
+    }
 
     default CodingSessionExportResult export(AgentSessionId sessionId, String logicalDestination) {
         throw new UnsupportedOperationException("Session export is unavailable");

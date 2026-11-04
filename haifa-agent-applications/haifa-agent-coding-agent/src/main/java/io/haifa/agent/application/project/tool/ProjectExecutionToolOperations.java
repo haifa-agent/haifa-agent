@@ -533,6 +533,21 @@ public final class ProjectExecutionToolOperations {
             String workdir,
             Duration timeout,
             String idempotencyKey) {
+        return executeUserInitiated(
+                auditRunId, tenant, principal, access, command, workdir, timeout, idempotencyKey, () -> false);
+    }
+
+    public ToolResult executeUserInitiated(
+            AgentRunId auditRunId,
+            TenantRef tenant,
+            PrincipalRef principal,
+            RunWorkspaceAccess access,
+            String command,
+            String workdir,
+            Duration timeout,
+            String idempotencyKey,
+            ToolCancellation cancellation) {
+        Objects.requireNonNull(cancellation, "cancellation must not be null");
         Objects.requireNonNull(auditRunId, "auditRunId must not be null");
         Objects.requireNonNull(tenant, "tenant must not be null");
         Objects.requireNonNull(principal, "principal must not be null");
@@ -568,7 +583,7 @@ public final class ProjectExecutionToolOperations {
                 ExecutionRequest.digestWithScratch(PolicyDigest.sha256Fields(List.of(command, workdir)), scratchSpace),
                 scratchSpace);
         try (var preview = ToolOutputPreviewPublisher.noopSink()) {
-            return executeRequest(request, () -> false, ToolInvocationObserver.noop(), command, "UNKNOWN", preview);
+            return executeRequest(request, cancellation, ToolInvocationObserver.noop(), command, "UNKNOWN", preview);
         }
     }
 

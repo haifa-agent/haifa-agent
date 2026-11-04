@@ -162,6 +162,23 @@ class CodingHostRemoteClientTest {
             assertThat(compaction.through().value()).isPositive();
             assertThat(compaction.sourceMessageCount()).isGreaterThanOrEqualTo(0);
 
+            assertThat(client.recoverableShell()).isTrue();
+            var plan = client.planShell(sessionId, "echo receipt-output", false);
+            var shellResult = client.executeShell(plan.token(), true);
+            assertThat(shellResult.processState()).isEqualTo("EXITED");
+            assertThat(shellResult.exitCode()).contains(0);
+            try (var reattached = RemoteCodingSessionClient.connect(endpoint(server))) {
+                assertThat(reattached.shellExecutions(sessionId)).anySatisfy(receipt -> {
+                    assertThat(receipt.executionId()).isEqualTo(plan.token());
+                    assertThat(receipt.result()).isEmpty(); // List is bounded metadata; get fetches output.
+                });
+                assertThat(reattached.shellExecution(sessionId, plan.token()).result())
+                        .contains(shellResult);
+                assertThat(reattached.startShell(plan.token(), true).result()).contains(shellResult);
+                assertThat(reattached.cancelShell(sessionId, plan.token()).cancellationRequested())
+                        .isFalse();
+            }
+
             assertThat(client.authentication().apiKeyConnectionSupported()).isFalse();
             assertThat(client.authentication().codexConnectionSupported()).isFalse();
             assertThat(client.authentication().antigravityConnectionSupported()).isFalse();
