@@ -140,3 +140,7 @@ the selected Session. The project identity must still match. Unreachable Hosts a
 busy retry loop. This recovery never automatically resends a mutation, restarts a task, grants session consent
 or translates stopping observation into cancelling a Run. If recovery cannot complete, use `tui --connect`
 again to explicitly reconnect.
+
+Remote stream readers support low-core Java 21 hosts: idle event/output SSE subscriptions do not pin the
+virtual-thread carriers needed by approvals and other RPCs. Stream framing accepts LF, CR and CRLF under
+the existing payload bounds.
