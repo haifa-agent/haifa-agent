@@ -61,7 +61,7 @@ class HistoryToolProviderTest {
                 .persistence(ports)
                 .callers(() -> caller)
                 .scheduler(scheduler)
-                .accessValidator((caller, scope, projectRef) -> {
+                .accessValidator((requestCaller, scope, projectRef) -> {
                     if (deniedScope.get()) throw new SecurityException("scope revoked");
                 })
                 .identifierGenerator(() -> "id-" + ids.incrementAndGet())
