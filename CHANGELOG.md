@@ -6,6 +6,9 @@
   and cancellation signals, and caps summary-call timeouts by remaining active Run time. Deterministic
   commits, concurrent winners and storage failures are reported distinctly without exposing response text.
 
+- Conversation compaction now rejects impossible batch plans before dispatch, checks every summary input
+  against the frozen model budget, and permits one safe regeneration without consuming later batches' calls.
+
 - Manual Shell commands now expose bounded Host admission, retained outcomes and explicit `/shell` recovery/cancellation.
 
 - Remote Coding Terminal now renews its Host context independently of the sidebar and reattaches after

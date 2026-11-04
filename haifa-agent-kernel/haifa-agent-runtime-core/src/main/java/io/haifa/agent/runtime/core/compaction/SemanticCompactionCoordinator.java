@@ -459,10 +459,7 @@ public final class SemanticCompactionCoordinator {
             return CompactionEvaluationOutcome.untriggered(initialEstimatedTokens, elapsedMillis(startNanos));
         }
 
-        long contextWindow = binding.configuration().model().contextWindow();
-        long outputReserve = binding.configuration().model().maxOutputTokens();
-        int safetyMargin = Math.min(16_384, Math.max(256, (int) (contextWindow / 20)));
-        long available = Math.max(1000L, contextWindow - outputReserve - safetyMargin);
+        long available = SummaryModelInvoker.inputBudget(binding);
 
         // Retained-tail selection must measure the authoritative payloads the tail will actually send, not the short
         // reference/summary metadata. Source-summary prompt sizing (nextBatchEnd) stays on its own projected estimate.
@@ -528,55 +525,61 @@ public final class SemanticCompactionCoordinator {
         int batchStart = 0;
         try {
             while (batchStart < safeSplit) {
+                int remaining = (int)
+                        Math.min(policy.maxCompactionPhysicalCalls() - physicalCalls, invoker.remainingRunCalls(run));
+                SummaryModelInvoker.requireStructuredOutput(binding);
+                if (minimumBatchCalls(activeGroups, batchStart, safeSplit, available, remaining) > remaining) {
+                    throw new CompactionBudgetExceededException();
+                }
                 int batchEnd = nextBatchEnd(activeGroups, batchStart, safeSplit, available);
-                List<AgentMessage> batchSource = activeGroups.subList(batchStart, batchEnd).stream()
-                        .flatMap(List::stream)
-                        .toList();
-                ProjectedCompactionSource projected = CompactionSourceProjector.project(batchSource);
                 List<SemanticSummaryItem> carryForward = workingSemantic
                         .map(SemanticConversationSummaryV1::mandatoryCarryForwardItems)
                         .orElse(List.of());
-
-                if (physicalCalls >= policy.maxCompactionPhysicalCalls()) {
-                    throw new CompactionBudgetExceededException();
+                List<AgentMessage> batchSource;
+                ProjectedCompactionSource projected;
+                String userPrompt;
+                while (true) {
+                    batchSource = activeGroups.subList(batchStart, batchEnd).stream()
+                            .flatMap(List::stream)
+                            .toList();
+                    projected = CompactionSourceProjector.project(batchSource);
+                    userPrompt = batchStart == 0
+                            ? CompactionPromptRenderer.userPromptFromConversationSummary(
+                                    previousSummary, carryForward, projected)
+                            : CompactionPromptRenderer.userPrompt(workingSemantic, carryForward, projected);
+                    if (SummaryModelInvoker.estimatedInput(systemPrompt, userPrompt) <= available) break;
+                    batchEnd = smallerBatchEnd(activeGroups, batchStart, batchEnd);
                 }
-                String userPrompt = batchStart == 0
-                        ? CompactionPromptRenderer.userPromptFromConversationSummary(
-                                previousSummary, carryForward, projected)
-                        : CompactionPromptRenderer.userPrompt(workingSemantic, carryForward, projected);
-                SemanticConversationSummaryV1 candidate = prepareCandidate(
-                        invoker.invoke(binding, run, iteration, systemPrompt, userPrompt, physicalCalls++, false),
-                        carryForward,
-                        projected);
-                try {
-                    SemanticSummaryValidator.validate(
-                            candidate, projected, carryForward, historicalDurableRefs, workingSemantic);
-                } catch (SemanticSummaryValidationException validationEx) {
-                    if (physicalCalls >= policy.maxCompactionPhysicalCalls()) {
-                        throw validationEx;
+                int mandatoryLaterCalls = minimumBatchCalls(activeGroups, batchEnd, safeSplit, available, remaining);
+                if (mandatoryLaterCalls + 1 > remaining) throw new CompactionBudgetExceededException();
+                SemanticConversationSummaryV1 candidate;
+                boolean correcting = false;
+                while (true) {
+                    ensureSourcesCurrent(sourceToCompact);
+                    try {
+                        candidate = prepareCandidate(
+                                invoker.invoke(
+                                        binding, run, iteration, systemPrompt, userPrompt, physicalCalls++, correcting),
+                                carryForward,
+                                projected);
+                        SemanticSummaryValidator.validate(
+                                candidate, projected, carryForward, historicalDurableRefs, workingSemantic);
+                        break;
+                    } catch (SemanticSummaryValidationException invalid) {
+                        if (correcting
+                                || invalid.code() == SemanticSummaryValidationException.Code.UNEXPECTED_FINISH_REASON)
+                            throw invalid;
+                        int left = (int) Math.min(
+                                policy.maxCompactionPhysicalCalls() - physicalCalls, invoker.remainingRunCalls(run));
+                        if (left <= mandatoryLaterCalls) throw invalid;
+                        // Only a stable owning-rule code is fed back, never exception text or the invalid candidate.
+                        userPrompt = "The previous summary output failed validation ["
+                                + invalid.code().name() + "]"
+                                + ". Regenerate valid JSON from the authorized source; preserve all required evidence.\n\n"
+                                + userPrompt;
+                        SummaryModelInvoker.requireInputFits(binding, systemPrompt, userPrompt);
+                        correcting = true;
                     }
-                    log.info(
-                            "Compaction validation failed [errorCount={}]. Attempting repair call.",
-                            validationEx.validationErrors().size());
-                    String repairPrompt = batchStart == 0
-                            ? CompactionPromptRenderer.repairPromptFromConversationSummary(
-                                    candidate,
-                                    validationEx.validationErrors(),
-                                    previousSummary,
-                                    carryForward,
-                                    projected)
-                            : CompactionPromptRenderer.repairPrompt(
-                                    candidate,
-                                    validationEx.validationErrors(),
-                                    workingSemantic,
-                                    carryForward,
-                                    projected);
-                    candidate = prepareCandidate(
-                            invoker.invoke(binding, run, iteration, systemPrompt, repairPrompt, physicalCalls++, true),
-                            carryForward,
-                            projected);
-                    SemanticSummaryValidator.validate(
-                            candidate, projected, carryForward, historicalDurableRefs, workingSemantic);
                 }
                 // Keep the complete, validated semantic state only in memory until every batch succeeds.
                 workingSemantic =
@@ -621,8 +624,10 @@ public final class SemanticCompactionCoordinator {
             data.put("physicalCalls", Math.toIntExact(run.usage().modelCalls() - initialModelCalls));
             data.put("degraded", degraded);
             events.append(run.id(), "session.compaction-failed", data, time.now());
-            if (activeBudget) {
-                activeBudgetCompactionFailedRuns.add(run.id());
+            if (activeBudget
+                    || (ex instanceof CompactionBudgetExceededException
+                            && !policy.allowDeterministicDegradedFallback())) {
+                if (activeBudget) activeBudgetCompactionFailedRuns.add(run.id());
                 return recoveryOutcome(
                         run,
                         evaluationId,
@@ -698,7 +703,8 @@ public final class SemanticCompactionCoordinator {
     private static String failureCode(Exception exception) {
         if (exception instanceof SemanticSummaryValidationException validation)
             return validation.code().name();
-        if (exception instanceof CompactionBudgetExceededException) return "PHYSICAL_CALL_ALLOWANCE";
+        if (exception instanceof CompactionBudgetExceededException budget)
+            return budget.code().name();
         if (exception instanceof CompactionModelCapabilityException capability) {
             return capability.missingCapability() + "_UNSUPPORTED";
         }
@@ -1266,17 +1272,42 @@ public final class SemanticCompactionCoordinator {
         return new SemanticDecisionItem(id, item.statement(), item.rationale(), item.status(), item.sourceRefs());
     }
 
+    private void ensureSourcesCurrent(List<AgentMessage> source) {
+        for (AgentMessage message : source) {
+            if (state.message(message.id()).filter(this::visibleToContext).isEmpty()) {
+                throw new OptimisticLockException("compaction source is no longer visible");
+            }
+        }
+    }
+
+    private int minimumBatchCalls(List<List<AgentMessage>> groups, int start, int split, long available, int cap) {
+        int calls = 0;
+        while (start < split && calls <= cap) {
+            start = nextBatchEnd(groups, start, split, available);
+            calls++;
+        }
+        return calls;
+    }
+
+    private int smallerBatchEnd(List<List<AgentMessage>> groups, int start, int end) {
+        for (int index = end - 1; index > start; index--) {
+            if (isTurnAnchor(groups.get(index))) return index;
+        }
+        throw new CompactionBudgetExceededException(CompactionBudgetExceededException.Code.SUMMARY_INPUT_BUDGET);
+    }
+
     private int nextBatchEnd(List<List<AgentMessage>> activeGroups, int start, int split, long availableTokens) {
         if (start < 0 || start >= split) {
             throw new IllegalArgumentException("batch start must be within the compaction range");
         }
         int maxBatchGroups = 40;
-        long maxBatchTokens = Math.max(1L, (availableTokens * 3) / 5);
+        long maxBatchTokens = Math.max(1L, (availableTokens / 5) * 3 + (availableTokens % 5) * 3 / 5);
 
         long accumulatedTokens = 0L;
         int boundedIndex = start;
         for (int i = start; i < split; i++) {
-            long gTokens = estimateGroup(activeGroups.get(i));
+            long gTokens = HeuristicTokenEstimator.tokens(
+                    CompactionSourceProjector.project(activeGroups.get(i)).safeConversationText());
             if (i > start && (i - start >= maxBatchGroups || accumulatedTokens + gTokens > maxBatchTokens)) {
                 break;
             }

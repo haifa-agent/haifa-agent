@@ -453,4 +453,11 @@ remaining time and the existing idle limit; zero remaining time is never admitte
 response is recorded before observing a subsequent stop, and controls are checked again before summary
 commit. The last admitted model call may commit a valid result at the call-count limit, but cannot admit
 another repair. This does not change Core terminal accounting or promise immediate remote cancellation.
-Batch sizes, repair counts and default deterministic-degradation eligibility are unchanged.
+Before dispatch, compaction plans whole-turn batches against the remaining evaluation and Run call allowances.
+Each rendered summary request includes its previous valid summary, source, schema, output reserve and safety
+margin in the input admission check; batches shrink only at turn boundaries. An impossible plan leaves the
+summary and coverage unchanged unless deterministic degradation was explicitly enabled.
+Empty, malformed, schema-invalid or semantically invalid outputs may regenerate once per batch, sharing the
+same physical-call allowance and reserving calls needed by later batches. Feedback contains only a stable
+validation code and authorized source, never the rejected output. Non-STOP responses do not regenerate.
+The default physical-call ceiling and explicit deterministic-degradation configuration are unchanged.

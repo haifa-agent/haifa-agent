@@ -282,7 +282,8 @@ class SemanticCompactionCoordinatorTest {
 
         // Assert: 2 calls made (first failed validation, second repaired)
         assertThat(callCount.get()).isEqualTo(2);
-        assertThat(userPrompts.get(1)).contains("The previous summary output failed validation");
+        assertThat(userPrompts.get(1).contains("The previous summary output failed validation"))
+                .isTrue();
 
         var latestOpt = store.latestValid(session);
         assertThat(latestOpt).isPresent();
