@@ -2,6 +2,9 @@
 
 ## Unreleased - 0.1.5-SNAPSHOT
 
+- Remote Coding Terminal errors now explain Session/revision conflicts, Host capacity, payload limits and
+  expired connections using safe client-owned guidance. Unknown outcomes explicitly warn against blind resends.
+
 - The Coding Agent can now run its Terminal as a thin client of one CA Host: `haifa-coding tui --connect
   http://127.0.0.1:<port> [--session <id> | --new]` resumes that Host's last Session by default and is dispatched
   before the process opens local logs, configuration, credentials, Runtime or SQLite. Tool-output preview, session
