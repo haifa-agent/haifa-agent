@@ -116,6 +116,7 @@ public final class ModelInputAccounting {
         try {
             Map<String, Object> data = new LinkedHashMap<>(estimate(request, sources));
             data.putAll(selection);
+            data.putAll(prefix(request));
             data.put("callKind", kind);
             data.put("modelCallId", request.callId().value());
             data.put("modelRequestId", request.requestId().value());
@@ -132,6 +133,111 @@ public final class ModelInputAccounting {
             events.append(request.runId(), "model.input-accounted", data, time.now());
         } catch (RuntimeException diagnosticUnavailable) {
             // Optional diagnostics never alter request admission, content, or recovery.
+        }
+    }
+
+    /** A visible fixed-prefix identity, not a claim about Provider cache reuse or protected state. */
+    static Map<String, Object> prefix(AgentChatRequest request) {
+        var fixed = request.messages().stream()
+                .takeWhile(message -> message.role() == io.haifa.agent.model.api.ModelMessageRole.SYSTEM
+                        || message.role() == io.haifa.agent.model.api.ModelMessageRole.DEVELOPER)
+                .toList();
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("prefixIdentityVersion", "visible-fixed-prefix-v1");
+        result.put("previousReusableRequestStartedAt", "UNKNOWN");
+        result.put("expectedCacheReadTokens", "UNKNOWN");
+        result.put("expectedCacheWriteTokens", "UNKNOWN");
+        result.put("expectedUncachedTailTokens", "UNKNOWN");
+        result.put("cacheConfiguration", "BINDING_DEPENDENT_UNVERIFIED");
+        if (fixed.stream()
+                .anyMatch(message -> message.reasoning().isPresent()
+                        || !message.images().isEmpty()
+                        || !message.audios().isEmpty())) {
+            result.put("visibleFixedPrefixIdentity", "UNKNOWN");
+            return Map.copyOf(result);
+        }
+        Map<String, Object> identity = new LinkedHashMap<>();
+        identity.put("model", request.model().configurationDigest());
+        identity.put(
+                "instructions",
+                fixed.stream()
+                        .map(message -> Map.of("role", message.role().name(), "text", message.content()))
+                        .toList());
+        identity.put(
+                "tools",
+                request.tools().stream()
+                        .map(tool -> Map.of(
+                                "name",
+                                tool.name(),
+                                "version",
+                                tool.version(),
+                                "description",
+                                tool.description(),
+                                "schema",
+                                tool.inputJsonSchema(),
+                                "strict",
+                                tool.strict()))
+                        .toList());
+        identity.put(
+                "responseSchema",
+                request.structuredOutput().map(schema -> schema.jsonSchema()).orElse(Map.of()));
+        result.put(
+                "visibleFixedPrefixIdentity",
+                io.haifa.agent.tool.api.ToolArgumentsDigest.sha256(
+                        new io.haifa.agent.core.tool.ToolArguments("model-prefix", "1", identity)));
+        result.put(
+                "visibleFixedPrefixEstimatedTokens",
+                fixed.stream().mapToLong(ModelInputAccounting::visibleTokens).sum()
+                        + request.tools().stream()
+                                .mapToLong(new HeuristicTokenEstimator()::estimate)
+                                .sum());
+        return Map.copyOf(result);
+    }
+
+    /** Exactly one response aggregate per physical call; streaming usage deltas never enter this path. */
+    public static void recordUsage(
+            RuntimeEventAppender events,
+            TimeProvider time,
+            FrozenModelBinding binding,
+            AgentChatRequest request,
+            String kind,
+            io.haifa.agent.model.api.ModelUsage usage) {
+        if (events == null
+                || usage == null
+                || !RuntimeControlOptions.inputAccountingEnabled(
+                        binding.configuration().modelRequestOptions())) return;
+        try {
+            Map<String, Object> data = new LinkedHashMap<>();
+            data.put("modelCallId", request.callId().value());
+            data.put("modelRequestId", request.requestId().value());
+            data.put("callKind", kind);
+            data.put("attempt", request.attempt());
+            data.put("inputTokens", usage.inputTokensKnown() ? usage.inputTokens() : "UNKNOWN");
+            data.put("cacheReadTokens", usage.cacheHitTokensKnown() ? usage.cacheHitTokens() : "UNKNOWN");
+            data.put("uncachedInputTokens", usage.cacheMissTokensKnown() ? usage.cacheMissTokens() : "UNKNOWN");
+            data.put(
+                    "cacheWriteTokens",
+                    usage.cacheWriteTokens().isPresent()
+                            ? usage.cacheWriteTokens().getAsLong()
+                            : "UNKNOWN");
+            data.put("outputTokens", usage.outputTokens());
+            data.put("providerCostMinorUnits", usage.costKnown() ? usage.costMinorUnits() : "UNAVAILABLE");
+            data.put("costWeightedInput", "UNAVAILABLE");
+            RuntimeControlOptions.inputPriceRatios(binding.configuration().modelRequestOptions())
+                    .filter(prices -> prices.get("modelConfigurationDigest")
+                            .equals(request.model().configurationDigest()))
+                    .ifPresent(prices -> usage.costWeightedInput(
+                                    (java.math.BigDecimal) prices.get("uncached"),
+                                    (java.math.BigDecimal) prices.get("cacheRead"),
+                                    (java.math.BigDecimal) prices.get("cacheWrite"))
+                            .ifPresent(weighted -> {
+                                data.put("costWeightedInput", weighted.toPlainString());
+                                data.put("priceSource", prices.get("source"));
+                                data.put("priceDate", prices.get("date"));
+                            }));
+            events.append(request.runId(), "model.usage-accounted", data, time.now());
+        } catch (RuntimeException diagnosticUnavailable) {
+            // Price evidence and optional diagnostics cannot affect execution or authoritative Run usage.
         }
     }
 

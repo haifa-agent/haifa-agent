@@ -1,5 +1,21 @@
 # Haifa Agent Runtime Core
 
+`model.usage-accounted` records one returned usage aggregate per physical ordinary/summary/repair
+call, independently of streaming usage updates. Missing input lanes are `UNKNOWN`; cost-weighted
+input defaults to `UNAVAILABLE`. Frozen `haifa.runtime.input_price_ratios` may provide exact
+`modelConfigurationDigest`, public `source`, ISO `date`, and nonnegative numeric `uncached`,
+`cacheRead`, `cacheWrite` relative prices; it is never forwarded to a Provider. Mixed write TTLs
+need an applicable aggregate ratio; do not supply a guessed single price. These diagnostics do not
+change authoritative Run usage or budgets.
+
+Request evidence includes a canonical visible fixed-instruction/tool prefix identity and start time.
+It never hashes protected reasoning, and is not the full Provider wire prefix. Reuse predictions,
+previous reusable request time and unverified cache configuration remain explicitly unknown.
+TTL and identity agreement are prediction inputs only; response usage is the actual cache evidence.
+`previousSummaryInputShare` is the accurate name for the old `compactionSummaryCacheHitRate`; the
+old event/trace field and record accessor remain as compatibility aliases. Provider usage, active
+snapshot reuse and summary rendering metrics are separate.
+
 ## Model input accounting
 
 `model.input-accounted` is optional aggregate evidence for each physical ordinary, summary or regeneration

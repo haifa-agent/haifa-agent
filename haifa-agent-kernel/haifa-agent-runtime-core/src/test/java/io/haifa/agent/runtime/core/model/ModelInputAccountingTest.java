@@ -38,6 +38,29 @@ class ModelInputAccountingTest {
     }
 
     @Test
+    void exactPriceEvidenceIsValidatedAndNeverForwarded() {
+        var prices = Map.<String, Object>of(
+                "modelConfigurationDigest",
+                "model-digest",
+                "source",
+                "https://example.test/prices",
+                "date",
+                "2026-11-04",
+                "uncached",
+                1,
+                "cacheRead",
+                0.1,
+                "cacheWrite",
+                1.25);
+        var options = Map.<String, Object>of(RuntimeControlOptions.INPUT_PRICE_RATIOS, prices);
+        assertThat(RuntimeControlOptions.inputPriceRatios(options)).isPresent();
+        assertThat(RuntimeControlOptions.providerOptions(options)).isEmpty();
+        assertThatThrownBy(() -> RuntimeControlOptions.inputPriceRatios(
+                        Map.of(RuntimeControlOptions.INPUT_PRICE_RATIOS, Map.of("cacheRead", 0))))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void diagnosticsControlsAreFrozenRuntimeOptionsAndNeverReachTheProvider() {
         assertThat(RuntimeControlOptions.inputAccountingEnabled(Map.of())).isTrue();
         assertThat(RuntimeControlOptions.inputAccountingEnabled(

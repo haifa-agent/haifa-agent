@@ -346,6 +346,7 @@ public final class FrozenModelInvoker {
                 }
                 return ModelStreamControl.CONTINUE;
             });
+            ModelInputAccounting.recordUsage(events, time, binding, request, "ORDINARY", response.usage());
             RunControlSignal completedSignal = controls.signal(run.id());
             if (completedSignal.stopsExecution()) {
                 if (completedSignal == RunControlSignal.CANCEL || completedSignal == RunControlSignal.TIMEOUT) {

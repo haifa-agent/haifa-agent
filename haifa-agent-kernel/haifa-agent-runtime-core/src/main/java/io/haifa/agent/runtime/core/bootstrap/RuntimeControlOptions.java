@@ -16,7 +16,43 @@ public final class RuntimeControlOptions {
     public static final String MAX_REASONING_DURATION_MILLIS = PREFIX + "max_reasoning_duration_millis";
     public static final String INPUT_ACCOUNTING_ENABLED = PREFIX + "input_accounting_enabled";
 
+    public static final String INPUT_PRICE_RATIOS = PREFIX + "input_price_ratios";
+
     private RuntimeControlOptions() {}
+
+    /** Caller-supplied, frozen price evidence; never a Provider option or a guessed default. */
+    public static java.util.Optional<Map<String, Object>> inputPriceRatios(Map<String, Object> options) {
+        Object configured = options.get(INPUT_PRICE_RATIOS);
+        if (configured == null) return java.util.Optional.empty();
+        if (!(configured instanceof Map<?, ?> map)
+                || !map.keySet()
+                        .equals(java.util.Set.of(
+                                "modelConfigurationDigest", "source", "date", "uncached", "cacheRead", "cacheWrite")))
+            throw new IllegalArgumentException("input price ratios require exact model, source, date and three ratios");
+        Map<String, Object> result = new LinkedHashMap<>();
+        for (String key : java.util.List.of("modelConfigurationDigest", "source", "date")) {
+            if (!(map.get(key) instanceof String value) || value.isBlank() || value.length() > 512)
+                throw new IllegalArgumentException("invalid input price evidence");
+            result.put(key, value);
+        }
+        java.time.LocalDate.parse((String) result.get("date"));
+        var priceSource = java.net.URI.create((String) result.get("source"));
+        if (!"https".equals(priceSource.getScheme())
+                || priceSource.getHost() == null
+                || priceSource.getUserInfo() != null
+                || priceSource.getQuery() != null
+                || priceSource.getFragment() != null)
+            throw new IllegalArgumentException("input price source must be a public HTTPS page");
+        for (String key : java.util.List.of("uncached", "cacheRead", "cacheWrite")) {
+            if (!(map.get(key) instanceof Number number))
+                throw new IllegalArgumentException("invalid input price ratio");
+            var value = new java.math.BigDecimal(number.toString());
+            if (value.signum() < 0 || value.precision() > 20 || Math.abs(value.scale()) > 12)
+                throw new IllegalArgumentException("invalid input price ratio");
+            result.put(key, value);
+        }
+        return java.util.Optional.of(Map.copyOf(result));
+    }
 
     public static boolean inputAccountingEnabled(Map<String, Object> options) {
         Object value = options.get(INPUT_ACCOUNTING_ENABLED);
@@ -64,6 +100,7 @@ public final class RuntimeControlOptions {
         }
         maxReasoningBytes(options);
         inputAccountingEnabled(options);
+        inputPriceRatios(options);
         OptionalLong duration = maxReasoningDurationMillis(options);
         if (duration.isPresent() && duration.getAsLong() > limits.maxWallTimeMillis()) {
             throw new IllegalArgumentException(
@@ -87,6 +124,7 @@ public final class RuntimeControlOptions {
         }
         maxReasoningBytes(options);
         inputAccountingEnabled(options);
+        inputPriceRatios(options);
         maxReasoningDurationMillis(options);
     }
 
@@ -108,7 +146,8 @@ public final class RuntimeControlOptions {
         return key.equals(FINALIZE_AFTER_TOOL_CALLS)
                 || key.equals(MAX_REASONING_BYTES)
                 || key.equals(MAX_REASONING_DURATION_MILLIS)
-                || key.equals(INPUT_ACCOUNTING_ENABLED);
+                || key.equals(INPUT_ACCOUNTING_ENABLED)
+                || key.equals(INPUT_PRICE_RATIOS);
     }
 
     private static OptionalLong positiveLong(Map<String, Object> options, String key) {

@@ -1,5 +1,14 @@
 # Haifa Agent OpenAI-Compatible Model Adapter
 
+## Input accounting
+
+Verified OpenAI and admitted direct DeepSeek Chat totals, and Responses totals, include cache reads and writes.
+Other Chat gateways retain reported lanes with an unknown total until their billing relation is verified. `cache_write_tokens`, when
+reported in input/prompt token details, is retained separately; absence remains unknown. Direct
+DeepSeek hit/miss and Console fields retain their distinct field-presence semantics. An explicit
+zero takes precedence over another fallback field. Usage is not summed across streaming snapshots.
+No cache enablement, retention settings or price defaults are introduced.
+
 ## Profile factory
 
 `OpenAiCompatibleModelProfileFactory` derives a versioned binding profile from an already resolved snapshot. It
