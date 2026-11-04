@@ -971,3 +971,11 @@ providers or persistence. Preview is transient and has no cursor, replay or hist
 disconnect and slow observers drop their observation without cancelling/replaying the Run. The terminal retains
 its existing bounded per-tool display tail; completed tool results remain authoritative. Older peers continue
 without preview, and session consent/remote credential mutation remain disabled.
+
+
+Preview normalization/redaction keeps subscription-local state per ToolCallId and output channel, including ANSI
+sequences and credential patterns split across frames. Up to 64 pending stream keys and 4096 pending characters
+per key are retained; empty keys are released. An unknown source gap, over-budget credential fragment or control
+sequence drops only the observation. Ordinary complete progress is not held until tool completion. The fragment
+redactor shares the existing credential patterns rather than maintaining a second regex list. Remaining ambiguous
+text is never persisted or flushed unsafely when the subscriber disconnects.

@@ -125,13 +125,20 @@ final class CodingHostSubscriptions {
 
     String subscribePreview(String clientId, AgentSessionId sessionId, AgentRunId runId) {
         Subscription subscription = reserve(clientId, sessionId, runId, "tool-preview");
+        CodingHostPreviewStream stream = new CodingHostPreviewStream();
         try {
             subscription.install(previews.subscribe(runId, preview -> {
                 if (!runId.equals(preview.runId())) {
                     discard(subscription);
                     return;
                 }
-                offer(subscription, CodingHostWire.preview(preview, sessionId));
+                try {
+                    var safe = stream.accept(preview);
+                    if (safe != null) offer(subscription, CodingHostWire.preview(safe, sessionId));
+                } catch (IllegalStateException overflow) {
+                    // An ambiguous/over-budget fragment drops only observation, never emits an unsafe suffix.
+                    discard(subscription);
+                }
             }));
             return subscription.id;
         } catch (RuntimeException failure) {

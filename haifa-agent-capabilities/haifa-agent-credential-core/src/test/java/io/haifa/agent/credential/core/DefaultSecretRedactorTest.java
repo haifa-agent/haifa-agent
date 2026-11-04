@@ -7,6 +7,48 @@ import org.junit.jupiter.api.Test;
 
 class DefaultSecretRedactorTest {
     @Test
+    void fragmentBoundariesNeverExposeCredentialPatternsOrKnownSecrets() {
+        var redactor = new DefaultSecretRedactor(List.of("known-token"));
+        for (String source : List.of(
+                "before Bearer synthetic-fragment-value after",
+                "Basic synthetic-basic-value",
+                "token synthetic-access-value",
+                "Authorization: Bearer\nsynthetic-line-value",
+                "client_secret=synthetic-client-value",
+                "api_key=synthetic-key-value",
+                "password=synthetic-pass-value",
+                "https://user:synthetic-password@example.test/path",
+                "prefix known-token")) {
+            String expected = redactor.redact(source + " ;\n");
+            for (int split = 0; split <= source.length(); split++) {
+                var stream = redactor.openStream(4096);
+                String visible = stream.accept(source.substring(0, split))
+                        + stream.accept(source.substring(split))
+                        + stream.accept(" ;\n");
+                assertThat(visible).isEqualTo(expected);
+            }
+            var stream = redactor.openStream(4096);
+            StringBuilder visible = new StringBuilder();
+            source.codePoints().forEach(cp -> visible.append(stream.accept(new String(Character.toChars(cp)))));
+            visible.append(stream.accept(" ;\n"));
+            assertThat(visible.toString()).isEqualTo(expected);
+        }
+    }
+
+    @Test
+    void fragmentStreamsForwardOrdinaryProgressAndFailClosedAtTheCarryLimit() {
+        var redactor = new DefaultSecretRedactor();
+        assertThat(redactor.openStream(32).accept("progress before completion"))
+                .isEqualTo("progress before completion");
+        var stream = redactor.openStream(32);
+        assertThat(stream.accept("Bearer ")).isEmpty();
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> stream.accept("x".repeat(40)))
+                .isInstanceOf(IllegalStateException.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> stream.accept("suffix"))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
     void redactsKnownSecretsAndCommonAuthorizationPatterns() {
         var redactor = new DefaultSecretRedactor(List.of("exact-secret"));
 

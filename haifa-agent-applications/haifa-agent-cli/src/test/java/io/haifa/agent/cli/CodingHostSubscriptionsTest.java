@@ -22,24 +22,44 @@ import org.junit.jupiter.api.Test;
 
 class CodingHostSubscriptionsTest {
     @Test
+    void previewRedactsCredentialsSplitAcrossSourceFrames() throws Exception {
+        var run = new AgentRunId("run-split");
+        var session = new AgentSessionId("session-split");
+        var publisher = new RecordingPreviewPublisher();
+        var subscriptions = new CodingHostSubscriptions(
+                eventClient(new AtomicInteger()),
+                1,
+                8,
+                () -> Instant.EPOCH,
+                Duration.ofSeconds(30),
+                new io.haifa.agent.common.id.UuidV7IdentifierGenerator(),
+                publisher);
+        String id = subscriptions.subscribePreview("client-split", session, run);
+        var attached = subscriptions.attach("client-split", id);
+        var tool = new io.haifa.agent.core.tool.ToolCallId("call-split");
+        for (String text : java.util.List.of("Bearer ", "synthetic-split-value ")) {
+            publisher
+                    .receiver
+                    .get()
+                    .accept(new io.haifa.agent.execution.api.ToolOutputPreview(
+                            run, tool, io.haifa.agent.execution.api.ExecutionOutputChannel.STDOUT, text, false, false));
+        }
+        var first = attached.poll(1, java.util.concurrent.TimeUnit.SECONDS);
+        assertThat(first).isNotNull();
+        var second = attached.poll(0, java.util.concurrent.TimeUnit.SECONDS);
+        String visible = first.get("text").toString()
+                + (second == null ? "" : second.get("text").toString());
+        assertThat(visible).contains("[REDACTED]").doesNotContain("synthetic-split-value");
+        subscriptions.closeAll();
+    }
+
+    @Test
     void previewOverflowAndDetachCloseOnlyTheirObservation() throws Exception {
         var run = new AgentRunId("run-preview");
         var session = new AgentSessionId("session-preview");
-        var closes = new AtomicInteger();
-        var receiver =
-                new AtomicReference<java.util.function.Consumer<io.haifa.agent.execution.api.ToolOutputPreview>>();
-        var publisher = new io.haifa.agent.execution.api.ToolOutputPreviewPublisher() {
-            public ToolOutputPreviewSubscription subscribe(
-                    AgentRunId id,
-                    java.util.function.Consumer<io.haifa.agent.execution.api.ToolOutputPreview> consumer) {
-                receiver.set(consumer);
-                return closes::incrementAndGet;
-            }
-
-            public ToolOutputPreviewSink open(AgentRunId id, io.haifa.agent.core.tool.ToolCallId tool) {
-                throw new AssertionError("Observation must not open execution output");
-            }
-        };
+        var publisher = new RecordingPreviewPublisher();
+        var closes = publisher.closes;
+        var receiver = publisher.receiver;
         var subscriptions = new CodingHostSubscriptions(
                 eventClient(new AtomicInteger()),
                 1,
@@ -149,6 +169,23 @@ class CodingHostSubscriptionsTest {
                 closes.incrementAndGet();
             }
         };
+    }
+
+    private static final class RecordingPreviewPublisher
+            implements io.haifa.agent.execution.api.ToolOutputPreviewPublisher {
+        final AtomicInteger closes = new AtomicInteger();
+        final AtomicReference<java.util.function.Consumer<io.haifa.agent.execution.api.ToolOutputPreview>> receiver =
+                new AtomicReference<>();
+
+        public ToolOutputPreviewSubscription subscribe(
+                AgentRunId id, java.util.function.Consumer<io.haifa.agent.execution.api.ToolOutputPreview> consumer) {
+            receiver.set(consumer);
+            return closes::incrementAndGet;
+        }
+
+        public ToolOutputPreviewSink open(AgentRunId id, io.haifa.agent.core.tool.ToolCallId tool) {
+            throw new AssertionError("Observation must not open execution output");
+        }
     }
 
     private static CodingSessionClient eventClient(AtomicInteger closes) {
