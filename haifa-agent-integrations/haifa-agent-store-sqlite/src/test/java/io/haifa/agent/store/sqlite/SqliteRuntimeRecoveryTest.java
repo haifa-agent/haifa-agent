@@ -6,6 +6,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.agent.AgentDefinitionId;
+import io.haifa.agent.core.content.ToolResultPart;
+import io.haifa.agent.core.message.AgentMessageId;
+import io.haifa.agent.core.message.MessageRole;
+import io.haifa.agent.core.message.MessageStatus;
+import io.haifa.agent.core.message.MessageVisibility;
 import io.haifa.agent.core.reference.InteractionRequestRef;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
@@ -16,7 +21,12 @@ import io.haifa.agent.core.run.StructuredOutputRequirement;
 import io.haifa.agent.core.session.AgentSession;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.session.SessionScope;
+import io.haifa.agent.core.step.AgentStepId;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
+import io.haifa.agent.core.tool.RuntimeIdempotencyKey;
+import io.haifa.agent.core.tool.ToolArguments;
+import io.haifa.agent.core.tool.ToolCall;
+import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.credential.api.CredentialBroker;
 import io.haifa.agent.credential.api.CredentialRequirement;
@@ -57,6 +67,7 @@ import io.haifa.agent.runtime.core.storage.ExecutionAttemptRepository;
 import io.haifa.agent.runtime.core.storage.OutboxMessage;
 import io.haifa.agent.runtime.core.storage.RuntimeOutboxPublisher;
 import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
+import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
 import io.haifa.agent.runtime.core.tool.ToolJournalState;
 import io.haifa.agent.tool.api.SemanticVersion;
 import io.haifa.agent.tool.api.ToolAlias;
@@ -1175,6 +1186,125 @@ class SqliteRuntimeRecoveryTest {
                 }
             }
         }
+    }
+
+    @Test
+    void historyAssetVersionAndReadOffsetSurviveStoreReopen(@TempDir Path directory) throws Exception {
+        Map<String, Object> reference;
+        AgentRunId runId;
+        var configuration =
+                new SqliteStoreConfiguration(directory.resolve("runtime.db").toAbsolutePath(), 1250, 65536);
+        try (var foundation = SqliteStoreFoundation.initialize(configuration, SqliteTestSupport.CLOCK)) {
+            var instance = runtime(foundation, model(finalResponse("unused")), "history", new TestIds("history"));
+            var ports = instance.ports();
+            runId = instance.runtime.start(request("history-version")).runId();
+            var run = ports.runs().find(runId).orElseThrow();
+            ports.state()
+                    .appendStep(new io.haifa.agent.core.step.AgentStep(
+                            new AgentStepId("history-step"),
+                            runId,
+                            null,
+                            null,
+                            new io.haifa.agent.core.step.AgentStepType("tool"),
+                            1,
+                            NOW));
+            var id = new ToolCallId("history-source");
+            var correlation = new ProviderToolCallCorrelationId("history-source-correlation");
+            var call = new ToolCall(
+                    id,
+                    runId,
+                    new AgentStepId("history-step"),
+                    correlation,
+                    new RuntimeIdempotencyKey("history-source-key"),
+                    "file_read",
+                    "1",
+                    new ToolArguments("file", "1", Map.of("path", "historic.txt")),
+                    NOW);
+            call.beginValidation();
+            call.beginPolicyCheck();
+            call.start(NOW);
+            ports.state().appendToolCall(call);
+            var original = new ToolResult(
+                    true, "old", Map.of("body", "historical-v1" + "x".repeat(20000)), List.of(), List.of(), false);
+            var asset = ports.toolResultAssets().put(id, original);
+            call.complete(new ToolResult(true, "preview", Map.of(), List.of(asset), List.of(), true), NOW);
+            ports.state().appendToolCall(call);
+            var message = ports.state()
+                    .appendSessionMessage(new SessionMessageDraft(
+                            new AgentMessageId("history-message"),
+                            run.sessionId(),
+                            Optional.of(run.id()),
+                            Optional.empty(),
+                            MessageRole.TOOL,
+                            MessageStatus.COMPLETED,
+                            MessageVisibility.AGENT_VISIBLE,
+                            List.of(new ToolResultPart(id, correlation, "preview")),
+                            Map.of(),
+                            NOW));
+            var history = new io.haifa.agent.runtime.core.history.HistoryToolProvider(ports);
+            var found = historyInvoke(history, run, "history_search", Map.of("path", "historic.txt"));
+            @SuppressWarnings("unchecked")
+            var entries = (List<Map<String, Object>>) found.structuredData().get("entries");
+            assertThat(entries)
+                    .extracting(entry -> entry.get("messageId"))
+                    .containsExactly(message.id().value());
+            reference = new java.util.HashMap<>();
+            for (String key : List.of("runId", "messageId", "toolCallId", "version"))
+                reference.put(key, entries.getFirst().get(key));
+            reference.put("length", 5);
+            var first = historyInvoke(history, run, "history_read", reference);
+            assertThat(first.structuredData())
+                    .containsEntry("content", "old\nb")
+                    .containsEntry("truncated", true);
+            reference.put("offset", first.structuredData().get("nextOffset"));
+        }
+        java.nio.file.Files.writeString(
+                directory.resolve("historic.txt"), "current-v2", java.nio.charset.StandardCharsets.UTF_8);
+        try (var reopened = SqliteStoreFoundation.initialize(configuration, SqliteTestSupport.CLOCK)) {
+            var ports = reopened.persistencePorts(protector());
+            var run = ports.runs().find(runId).orElseThrow();
+            var history = new io.haifa.agent.runtime.core.history.HistoryToolProvider(ports);
+            var next = historyInvoke(history, run, "history_read", reference);
+            assertThat(next.structuredData()).containsEntry("content", "ody: ");
+            reference.put("offset", 0);
+            reference.put("length", 40);
+            assertThat(((String) historyInvoke(history, run, "history_read", reference)
+                                    .structuredData()
+                                    .get("content"))
+                            .contains("historical-v1"))
+                    .isTrue();
+            assertThat(ports.state().toolCalls(runId)).hasSize(1);
+        }
+    }
+
+    private static ToolResult historyInvoke(
+            io.haifa.agent.runtime.core.history.HistoryToolProvider history,
+            AgentRun run,
+            String name,
+            Map<String, Object> args) {
+        var builder = new io.haifa.agent.tool.core.ToolCatalogBuilder();
+        for (var definition : history.definitions())
+            builder.register(
+                    new io.haifa.agent.tool.api.ToolAlias(definition.name().value()), definition, "history", history);
+        var binding = builder.freeze()
+                .findByAlias(new io.haifa.agent.tool.api.ToolAlias(name))
+                .orElseThrow();
+        return history.invoke(new io.haifa.agent.tool.api.ToolInvocationRequest(
+                binding,
+                new ToolCallId("history-read"),
+                run.id(),
+                Optional.of(run.sessionId()),
+                run.tenant(),
+                run.principal(),
+                new ToolArguments(
+                        binding.definition().inputSchema().id(),
+                        binding.definition().inputSchema().version(),
+                        args),
+                NOW.plusSeconds(10),
+                Optional.empty(),
+                () -> false,
+                Map.of(),
+                io.haifa.agent.tool.api.ToolInvocationObserver.noop()));
     }
 
     private RuntimeInstance runtime(

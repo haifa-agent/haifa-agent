@@ -28,6 +28,15 @@ public final class RunMessageProjector {
     private RunMessageProjector() {}
 
     public static RunMessagePage page(RuntimeStateRepository state, AgentRunId runId, long after, int limit) {
+        return page(state, runId, after, limit, java.util.function.UnaryOperator.identity());
+    }
+
+    public static RunMessagePage page(
+            RuntimeStateRepository state,
+            AgentRunId runId,
+            long after,
+            int limit,
+            java.util.function.UnaryOperator<ToolCall> historyResults) {
         long head = state.runMessageHead(runId).orElse(0);
         if (after > head) throw new IllegalArgumentException("message cursor is ahead of the Run");
         List<AgentMessage> window = state.runMessagesAfter(runId, after, head, limit + 1);
@@ -42,8 +51,9 @@ public final class RunMessageProjector {
                                 ? java.util.stream.Stream.of(result.toolCallId())
                                 : java.util.stream.Stream.empty())
                 .collect(Collectors.toSet());
-        Map<ToolCallId, ToolCall> calls =
-                state.toolCallsByIds(ids).stream().collect(Collectors.toMap(ToolCall::id, call -> call));
+        Map<ToolCallId, ToolCall> calls = state.toolCallsByIds(ids).stream()
+                .map(historyResults)
+                .collect(Collectors.toMap(ToolCall::id, call -> call));
         List<RunMessageView> views = new ArrayList<>();
         for (AgentMessage message : messages) {
             try {

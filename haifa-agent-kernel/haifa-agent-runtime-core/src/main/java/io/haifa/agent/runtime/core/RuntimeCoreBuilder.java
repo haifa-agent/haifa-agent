@@ -517,6 +517,8 @@ public final class RuntimeCoreBuilder {
         // each planning operation, so concurrent Runs never mutate shared planning state.
         ModelMessageProjectionPlanner projectionPlanner =
                 new ModelMessageProjectionPlanner(runs, state, new FrozenBindingToolResultQualifier());
+        var history = new io.haifa.agent.runtime.core.history.HistoryToolProvider(persistence, access);
+        history.watchRedactions();
         FrozenModelInvoker models = new FrozenModelInvoker(
                 state,
                 chatModels,
@@ -529,7 +531,8 @@ public final class RuntimeCoreBuilder {
                 modelAudioResolver,
                 activeContexts,
                 definitionResolver,
-                projectionPlanner);
+                projectionPlanner,
+                history);
         RunAwaiter awaiter = new RunAwaiter();
         RunTransitionCoordinator transitions = new RunTransitionCoordinator(
                 runs, state, events, outbox, ids, time, awaiter, unitOfWork, configuredRunInputs);
@@ -676,7 +679,8 @@ public final class RuntimeCoreBuilder {
                 time,
                 events,
                 projectionPlanner,
-                activeContexts);
+                activeContexts,
+                history);
         AgentLoop loop = new DefaultAgentLoop(
                 controls,
                 List.of(new BudgetGuard(), new IterationGuard()),
@@ -713,33 +717,34 @@ public final class RuntimeCoreBuilder {
                 failureDiagnostics);
         if (childRuns != null) childRuns.bind(attemptExecutor);
         return new DefaultAgentRuntime(
-                callers,
-                bootstrapper,
-                runs,
-                attempts,
-                state,
-                events,
-                outbox,
-                idempotency,
-                unitOfWork,
-                transitions,
-                controlService,
-                interactions,
-                configuredDelegations,
-                attemptExecutor,
-                toolRecovery,
-                runtimeScheduler,
-                ids,
-                time,
-                awaiter,
-                resumeCoordinator,
-                modelOutput,
-                configuredOwnership,
-                approvalVerification,
-                configuredRunInputs,
-                eventFeed,
-                eventSubscriptions,
-                settler);
+                        callers,
+                        bootstrapper,
+                        runs,
+                        attempts,
+                        state,
+                        events,
+                        outbox,
+                        idempotency,
+                        unitOfWork,
+                        transitions,
+                        controlService,
+                        interactions,
+                        configuredDelegations,
+                        attemptExecutor,
+                        toolRecovery,
+                        runtimeScheduler,
+                        ids,
+                        time,
+                        awaiter,
+                        resumeCoordinator,
+                        modelOutput,
+                        configuredOwnership,
+                        approvalVerification,
+                        configuredRunInputs,
+                        eventFeed,
+                        eventSubscriptions,
+                        settler)
+                .historyResults(history::sanitize);
     }
 
     private static ResolvedProfile defaultProfile(String id, io.haifa.agent.runtime.api.RuntimeOverrides overrides) {

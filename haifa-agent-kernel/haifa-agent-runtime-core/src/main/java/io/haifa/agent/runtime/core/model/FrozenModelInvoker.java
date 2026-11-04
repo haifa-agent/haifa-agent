@@ -46,6 +46,7 @@ public final class FrozenModelInvoker {
     private final RuntimeEventAppender events;
     private final TimeProvider time;
     private final DefinitionResolver childDefinitions;
+    private final io.haifa.agent.runtime.core.history.HistoryToolProvider history;
 
     public FrozenModelInvoker(
             RuntimeStateRepository state,
@@ -118,16 +119,48 @@ public final class FrozenModelInvoker {
             ActiveContextSnapshots activeContexts,
             DefinitionResolver childDefinitions,
             ModelMessageProjectionPlanner projectionPlanner) {
+        this(
+                state,
+                adapters,
+                ids,
+                output,
+                controls,
+                events,
+                time,
+                imageResolver,
+                audioResolver,
+                activeContexts,
+                childDefinitions,
+                projectionPlanner,
+                null);
+    }
+
+    public FrozenModelInvoker(
+            RuntimeStateRepository state,
+            Map<ModelAdapterKey, AgentChatModel> adapters,
+            IdentifierGenerator ids,
+            RuntimeModelOutputPublisher output,
+            RunControlRegistry controls,
+            RuntimeEventAppender events,
+            TimeProvider time,
+            ModelImageResolver imageResolver,
+            ModelAudioResolver audioResolver,
+            ActiveContextSnapshots activeContexts,
+            DefinitionResolver childDefinitions,
+            ModelMessageProjectionPlanner projectionPlanner,
+            io.haifa.agent.runtime.core.history.HistoryToolProvider history) {
         this.childDefinitions = childDefinitions;
         this.state = Objects.requireNonNull(state, "state must not be null");
         this.adapters = Map.copyOf(Objects.requireNonNull(adapters, "adapters must not be null"));
         this.ids = Objects.requireNonNull(ids, "ids must not be null");
+        this.history = history;
         this.messages = new ModelMessageAssembler(
                 state,
                 imageResolver,
                 audioResolver,
                 Objects.requireNonNull(projectionPlanner, "projectionPlanner must not be null"),
-                activeContexts);
+                activeContexts,
+                history == null ? (run, call) -> call : history::sanitize);
         this.responses = new AgentChatResponseMapper(ids);
         this.output = Objects.requireNonNull(output, "output must not be null");
         this.controls = Objects.requireNonNull(controls, "controls must not be null");
@@ -257,6 +290,7 @@ public final class FrozenModelInvoker {
                     "selected model does not support structured output",
                     null);
         }
+        if (history != null) history.requireCurrentScope(run);
         ModelMessageAssembler.AssemblyResult messageAssembly = messages.assembleWithMetrics(
                 run, context, binding.configuration().model());
         AgentChatRequest request = new AgentChatRequest(

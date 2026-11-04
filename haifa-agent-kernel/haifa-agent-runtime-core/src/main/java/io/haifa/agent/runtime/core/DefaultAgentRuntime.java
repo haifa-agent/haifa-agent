@@ -893,10 +893,23 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         AgentRun run = requireRunForContract(Objects.requireNonNull(runId, "runId must not be null"));
         requireContractCaller(run);
         return state.toolCalls(runId).stream()
+                .map(call -> historyResults.apply(runId, call))
                 .sorted(java.util.Comparator.comparing(io.haifa.agent.core.tool.ToolCall::requestedAt)
                         .thenComparing(call -> call.id().value()))
                 .map(io.haifa.agent.runtime.core.tool.ToolCallViewProjector::project)
                 .toList();
+    }
+
+    private java.util.function.BiFunction<
+                    AgentRunId, io.haifa.agent.core.tool.ToolCall, io.haifa.agent.core.tool.ToolCall>
+            historyResults = (run, call) -> call;
+
+    DefaultAgentRuntime historyResults(
+            java.util.function.BiFunction<
+                            AgentRunId, io.haifa.agent.core.tool.ToolCall, io.haifa.agent.core.tool.ToolCall>
+                    value) {
+        historyResults = value;
+        return this;
     }
 
     @Override
@@ -914,7 +927,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                 throw new io.haifa.agent.runtime.api.RuntimeContractException(
                         io.haifa.agent.runtime.api.RuntimeApiErrorCode.CURSOR_INVALID, "Invalid message page request");
             return unitOfWork.executeReadOnly(() -> io.haifa.agent.runtime.core.message.RunMessageProjector.page(
-                    state, runId, after.exclusiveSequence(), limit));
+                    state, runId, after.exclusiveSequence(), limit, call -> historyResults.apply(runId, call)));
         } catch (io.haifa.agent.runtime.api.RuntimeContractException refusal) {
             throw refusal;
         } catch (IllegalArgumentException invalid) {

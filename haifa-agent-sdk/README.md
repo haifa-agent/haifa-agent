@@ -387,3 +387,35 @@ Its maximum takes precedence over `maxConcurrentChildRuns`; no shared capacity i
 A Child keeps its slot while waiting for approval and until its terminal Run and actual execution tasks
 have settled. Releasing a slot wakes waiting parents across all participating Agents. Cancelling a
 parent waiting for admission creates no Child. Closing one Agent does not close the shared capacity.
+
+## Optional historical retrieval
+
+`HaifaAgentBuilder.enableHistoryRetrieval()` contributes `history_search` and `history_read` through the existing
+Tool registrations and frozen Run configuration. It is off by default. Combine it with Java Tools or
+`toolRegistrations(...)`; the existing mutually exclusive prebuilt `toolPlatform(...)` rule still applies.
+The added schemas and returned excerpts enter normal input accounting and hard budgets, and change the visible
+fixed-prefix identity. Enabling this does not enable a new history-selection or compaction policy.
+
+Search is restricted to the current Session, Project and owner. Exact filters are `runId`, `messageId`,
+`toolCallId`, `toolName` and `path`; `keyword` is a literal, case-insensitive match. Defaults are 10 hits and
+128 scanned message rows; maxima are 20 and 128. A response-size bound can shorten the hit page. Follow
+`nextCursor` until `searchComplete=true`, including empty pages and large-source suffixes. A cursor freezes
+the observed head and query; it never grants authorization. Paths come from persisted Tool arguments or
+artifact IDs/titles, rather than filesystem discovery.
+
+Read requires the returned `runId`, `messageId` and `version`, with optional `toolCallId`. `offset`/`length`
+address UTF-16 character positions in the stable, redacted `history-text-v1` data representation; length defaults
+to 4096 and is at most 8192. Optional `fromLine` starts at a one-based line, with offset relative to that start;
+keep it unchanged when following `nextOffset`. An exhausted range is empty. `truncated` describes unread
+characters; `sourceTruncated` separately reports truncation already present in the persisted original result.
+The representation contains visible message text or stored Tool summary/data, not original file bytes.
+
+Results are untrusted Tool data, with source identity and version. They never replay assistant protocol or
+protected continuation. Missing, stale, denied or redacted reads return `UNAVAILABLE`; no current file is read
+and no original Tool is dispatched. Existing externalized Tool-result assets are read by their immutable
+occurrence identity. Arbitrary asset URLs and independently managed artifact bodies are not historical snapshots;
+those sources must remain retained until a versioned reader exists. Authorization is checked again before
+retrieval results enter model/summary requests or public Tool views. Existing message redaction also invalidates
+dependent persisted retrieval messages and Session summaries, including after reopening a Runtime.
+Scope-level revocation is also checked before ordinary and summary model requests, even after retrieval evidence
+has been summarized. Source-specific withdrawal uses the existing message-redaction API.
