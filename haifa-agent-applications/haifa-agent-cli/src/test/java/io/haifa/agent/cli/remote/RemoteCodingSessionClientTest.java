@@ -385,64 +385,69 @@ class RemoteCodingSessionClientTest {
 
     @Test
     void preservesWhitespaceOutputAndDeliversEventAndOutputFrames() throws Exception {
-        String eventFrame = "event: run-event\ndata: " + FakeCodingHost.JSON.writeValueAsString(event()) + "\n\n";
-        String outputFrame = "event: output\ndata: " + FakeCodingHost.JSON.writeValueAsString(output(" ")) + "\n\n";
-        try (FakeCodingHost host = FakeCodingHost.start(call -> switch (call.method()) {
-            case "initialize" -> FakeCodingHost.Reply.result(FakeCodingHost.initializeResult("client-1", "project-1"));
-            case "run/start" ->
-                FakeCodingHost.Reply.result(map(
-                        "operation",
-                        "submit-turn",
-                        "sessionId",
-                        SESSION.value(),
-                        "runId",
-                        RUN.value(),
-                        "replayed",
-                        false));
-            case "events/subscribe" ->
-                FakeCodingHost.Reply.result(map(
-                        "subscriptionId",
-                        "sub-events",
-                        "sessionId",
-                        SESSION.value(),
-                        "runId",
-                        RUN.value(),
-                        "type",
-                        "run-event"));
-            case "output/subscribe" ->
-                FakeCodingHost.Reply.result(map(
-                        "subscriptionId",
-                        "sub-output",
-                        "sessionId",
-                        SESSION.value(),
-                        "runId",
-                        RUN.value(),
-                        "type",
-                        "output"));
-            default -> FakeCodingHost.Reply.error("REMOTE_METHOD_UNSUPPORTED");
-        })) {
-            host.script("sub-events", List.of(eventFrame), false);
-            host.script("sub-output", List.of(outputFrame), false);
-            try (RemoteCodingSessionClient client = RemoteCodingSessionClient.connect(host.uri())) {
-                client.submit(SESSION, "do work", "start-key");
-                BlockingQueue<AgentRunEvent> events = new LinkedBlockingQueue<>();
-                BlockingQueue<AgentRunOutputEvent> outputs = new LinkedBlockingQueue<>();
-                RunEventSubscription eventSubscription = client.subscribe(RUN, null, events::add);
-                RunOutputSubscription outputSubscription = client.subscribeOutput(RUN, null, outputs::add);
+        for (String ending : List.of("\n", "\r", "\r\n")) {
+            String eventFrame = "event: run-event" + ending + "data: " + FakeCodingHost.JSON.writeValueAsString(event())
+                    + ending + ending;
+            String outputFrame = "event: output" + ending + "data: "
+                    + FakeCodingHost.JSON.writeValueAsString(output(" ")) + ending + ending;
+            try (FakeCodingHost host = FakeCodingHost.start(call -> switch (call.method()) {
+                case "initialize" ->
+                    FakeCodingHost.Reply.result(FakeCodingHost.initializeResult("client-1", "project-1"));
+                case "run/start" ->
+                    FakeCodingHost.Reply.result(map(
+                            "operation",
+                            "submit-turn",
+                            "sessionId",
+                            SESSION.value(),
+                            "runId",
+                            RUN.value(),
+                            "replayed",
+                            false));
+                case "events/subscribe" ->
+                    FakeCodingHost.Reply.result(map(
+                            "subscriptionId",
+                            "sub-events",
+                            "sessionId",
+                            SESSION.value(),
+                            "runId",
+                            RUN.value(),
+                            "type",
+                            "run-event"));
+                case "output/subscribe" ->
+                    FakeCodingHost.Reply.result(map(
+                            "subscriptionId",
+                            "sub-output",
+                            "sessionId",
+                            SESSION.value(),
+                            "runId",
+                            RUN.value(),
+                            "type",
+                            "output"));
+                default -> FakeCodingHost.Reply.error("REMOTE_METHOD_UNSUPPORTED");
+            })) {
+                host.script("sub-events", List.of(eventFrame), false);
+                host.script("sub-output", List.of(outputFrame), false);
+                try (RemoteCodingSessionClient client = RemoteCodingSessionClient.connect(host.uri())) {
+                    client.submit(SESSION, "do work", "start-key");
+                    BlockingQueue<AgentRunEvent> events = new LinkedBlockingQueue<>();
+                    BlockingQueue<AgentRunOutputEvent> outputs = new LinkedBlockingQueue<>();
+                    RunEventSubscription eventSubscription = client.subscribe(RUN, null, events::add);
+                    RunOutputSubscription outputSubscription = client.subscribeOutput(RUN, null, outputs::add);
 
-                AgentRunEvent event = events.poll(5, TimeUnit.SECONDS);
-                AgentRunOutputEvent output = outputs.poll(5, TimeUnit.SECONDS);
-                assertThat(event).isNotNull();
-                assertThat(event.eventType()).isEqualTo("assistant.message-committed");
-                assertThat(event.sessionId()).isEqualTo(SESSION);
-                assertThat(output).isNotNull();
-                assertThat(output.textDelta()).isEqualTo(" ");
-                assertThat(output.sequence()).isEqualTo(1);
+                    AgentRunEvent event = events.poll(5, TimeUnit.SECONDS);
+                    AgentRunOutputEvent output = outputs.poll(5, TimeUnit.SECONDS);
+                    assertThat(event).isNotNull();
+                    assertThat(event.eventType()).isEqualTo("assistant.message-committed");
+                    assertThat(event.sessionId()).isEqualTo(SESSION);
+                    assertThat(output).isNotNull();
+                    assertThat(output.textDelta()).isEqualTo(" ");
+                    assertThat(output.sequence()).isEqualTo(1);
 
-                eventSubscription.close();
-                outputSubscription.close();
-                assertThat(eventSubscription.closed()).isTrue();
-                assertThat(host.calls("run/cancel")).isEmpty();
+                    eventSubscription.close();
+                    outputSubscription.close();
+                    assertThat(eventSubscription.closed()).isTrue();
+                    assertThat(host.calls("run/cancel")).isEmpty();
+                }
             }
         }
     }

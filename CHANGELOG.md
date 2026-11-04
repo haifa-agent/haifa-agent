@@ -5,6 +5,9 @@
 - Remote Coding Terminal now renews its Host context independently of the sidebar and reattaches after
   expiry/restart without replaying commands or cancelling Runs.
 
+- Remote SSE reads no longer pin Java 21 virtual-thread carriers, allowing approvals and other RPCs to
+  progress alongside idle event/output streams on low-core hosts.
+
 - Remote Coding Terminal errors now explain Session/revision conflicts, Host capacity, payload limits and
   expired connections using safe client-owned guidance. Unknown outcomes explicitly warn against blind resends.
 

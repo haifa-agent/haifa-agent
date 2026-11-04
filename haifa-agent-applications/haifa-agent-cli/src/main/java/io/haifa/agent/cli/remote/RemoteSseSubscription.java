@@ -9,7 +9,6 @@ import io.haifa.agent.runtime.api.RunOutputSubscription;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.io.PushbackReader;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.Objects;
@@ -95,9 +94,10 @@ final class RemoteSseSubscription implements RunEventSubscription, RunOutputSubs
                 }
                 stream = body;
             }
-            try (PushbackReader reader = new PushbackReader(new InputStreamReader(body, StandardCharsets.UTF_8), 1)) {
+            try (InputStreamReader reader = new InputStreamReader(body, StandardCharsets.UTF_8)) {
+                SseLines lines = new SseLines(reader);
                 String line;
-                while (!closed && (line = nextLine(reader)) != null) {
+                while (!closed && (line = lines.nextLine()) != null) {
                     if (line.isEmpty()) {
                         if (data.length() > 0) {
                             dispatch(eventName, data.toString());
@@ -150,29 +150,38 @@ final class RemoteSseSubscription implements RunEventSubscription, RunOutputSubs
         }
     }
 
-    private static String nextLine(PushbackReader reader) throws IOException {
-        StringBuilder line = new StringBuilder();
-        int value;
-        boolean read = false;
-        while ((value = reader.read()) != -1) {
-            read = true;
-            char character = (char) value;
-            if (character == '\n') {
-                return line.toString();
-            }
-            if (character == '\r') {
-                int next = reader.read();
-                if (next != '\n' && next != -1) {
-                    reader.unread(next);
-                }
-                return line.toString();
-            }
-            if (line.length() >= MAX_SSE_LINE_CHARACTERS) {
-                throw RemoteRpcTransport.protocolIncompatible();
-            }
-            line.append(character);
+    /**
+     * PushbackReader holds a monitor across read(), which pins Java 21 virtual-thread carriers while an SSE
+     * stream is idle. Keep CR/LF lookahead locally so blocking reads use InputStreamReader's explicit lock.
+     */
+    private static final class SseLines {
+        private final InputStreamReader reader;
+        private boolean skipLineFeed;
+
+        private SseLines(InputStreamReader reader) {
+            this.reader = reader;
         }
-        return read ? line.toString() : null;
+
+        private String nextLine() throws IOException {
+            StringBuilder line = new StringBuilder();
+            int value;
+            boolean read = false;
+            while ((value = reader.read()) != -1) {
+                if (skipLineFeed) {
+                    skipLineFeed = false;
+                    if (value == '\n') continue;
+                }
+                read = true;
+                if (value == '\n') return line.toString();
+                if (value == '\r') {
+                    skipLineFeed = true;
+                    return line.toString();
+                }
+                if (line.length() >= MAX_SSE_LINE_CHARACTERS) throw RemoteRpcTransport.protocolIncompatible();
+                line.append((char) value);
+            }
+            return read ? line.toString() : null;
+        }
     }
 
     private void dispatch(String eventName, String payload) {

@@ -917,3 +917,10 @@ An expired context or restarted Host triggers one reinitialization attempt per c
 observations; the Terminal then reloads the selected Session and reattaches through the existing cursor path.
 No product mutation is retried, no Run is cancelled and no session consent is granted by connection renewal.
 A different project at the same endpoint is refused until an explicit new connection.
+
+## Java 21 SSE scheduling
+
+Remote SSE line framing uses the UTF-8 reader directly with per-stream CR/LF state. A synchronizing
+PushbackReader around an idle stream can pin Java 21 virtual-thread carriers; on low-core hosts, two idle
+observations then prevent concurrent RPC work from progressing. The line reader supports LF, CR and CRLF
+within the existing line/frame bounds and allows idle observations to unmount from their carriers.
