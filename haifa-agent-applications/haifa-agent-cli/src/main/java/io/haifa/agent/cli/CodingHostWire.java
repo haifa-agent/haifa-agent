@@ -1,7 +1,5 @@
 package io.haifa.agent.cli;
 
-import io.haifa.agent.application.project.product.coding.CodingShellExecution;
-
 import io.haifa.agent.application.project.product.coding.CodingCompactionResult;
 import io.haifa.agent.application.project.product.coding.CodingFollowUpReceipt;
 import io.haifa.agent.application.project.product.coding.CodingModelControls;
@@ -17,6 +15,7 @@ import io.haifa.agent.application.project.product.coding.CodingSessionHistoryIte
 import io.haifa.agent.application.project.product.coding.CodingSessionHistoryPage;
 import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
+import io.haifa.agent.application.project.product.coding.CodingShellExecution;
 import io.haifa.agent.application.project.product.coding.CodingShellPlan;
 import io.haifa.agent.application.project.product.coding.CodingShellResult;
 import io.haifa.agent.application.project.product.coding.CodingWorkspaceView;
@@ -285,15 +284,18 @@ final class CodingHostWire {
         return value;
     }
 
-    static Map<String, Object> shellExecution(
-            CodingShellExecution execution, boolean includeResult) {
+    static Map<String, Object> shellExecution(CodingShellExecution execution, boolean includeResult) {
         Map<String, Object> value = map();
         value.put("executionId", execution.executionId());
         value.put("sessionId", execution.sessionId().value());
         value.put("acceptedAtMillis", execution.acceptedAtMillis());
         value.put("state", execution.state().name());
         value.put("cancellationRequested", execution.cancellationRequested());
-        value.put("result", includeResult ? execution.result().map(CodingHostWire::shellResult).orElse(null) : null);
+        value.put(
+                "result",
+                includeResult
+                        ? execution.result().map(CodingHostWire::shellResult).orElse(null)
+                        : null);
         value.put("errorCode", execution.errorCode().orElse(null));
         return value;
     }

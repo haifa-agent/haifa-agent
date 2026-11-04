@@ -30,6 +30,7 @@ public sealed interface TerminalUiAction {
         public ShellCompleted(String command, String summary, String processState, String destination) {
             this(command, summary, processState, destination, "");
         }
+
         public ShellCompleted(String command, String summary, String processState) {
             this(command, summary, processState, "");
         }

@@ -12,5 +12,9 @@ public record CodingShellExecution(
         boolean cancellationRequested,
         Optional<CodingShellResult> result,
         Optional<String> errorCode) {
-    public enum State { RUNNING, COMPLETED, FAILED }
+    public enum State {
+        RUNNING,
+        COMPLETED,
+        FAILED
+    }
 }

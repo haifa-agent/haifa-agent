@@ -1,8 +1,8 @@
 package io.haifa.agent.cli;
 
+import io.haifa.agent.application.project.product.ProjectProductException;
 import io.haifa.agent.application.project.product.coding.CodingShellExecution;
 import io.haifa.agent.application.project.product.coding.CodingShellResult;
-import io.haifa.agent.application.project.product.ProjectProductException;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.tool.api.ToolCancellation;
@@ -30,7 +30,9 @@ final class CliShellExecutions implements AutoCloseable {
 
     record Work(AgentSessionId sessionId, Function<ToolCancellation, CodingShellResult> execute) {}
 
-    CliShellExecutions(TimeProvider time) { this.time = time; }
+    CliShellExecutions(TimeProvider time) {
+        this.time = time;
+    }
 
     synchronized CodingShellExecution start(String id, Supplier<Work> prepare) {
         if (closed) throw unavailable();
@@ -60,8 +62,8 @@ final class CliShellExecutions implements AutoCloseable {
                     entry.error = "SHELL_OUTCOME_UNKNOWN";
                     entry.state = CodingShellExecution.State.FAILED;
                     entry.finishedAt = time.now().toEpochMilli();
-                    entry.done.completeExceptionally(new ProjectProductException(
-                            entry.error, "Shell completion could not be confirmed"));
+                    entry.done.completeExceptionally(
+                            new ProjectProductException(entry.error, "Shell completion could not be confirmed"));
                 }
             }
         });
@@ -70,9 +72,12 @@ final class CliShellExecutions implements AutoCloseable {
 
     CodingShellResult await(String id) {
         CompletableFuture<CodingShellResult> done;
-        synchronized (this) { done = require(id).done; }
-        try { return done.get(); }
-        catch (InterruptedException interrupted) {
+        synchronized (this) {
+            done = require(id).done;
+        }
+        try {
+            return done.get();
+        } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             throw new ProjectProductException("SHELL_OUTCOME_UNKNOWN", "Shell may still be running");
         } catch (java.util.concurrent.ExecutionException failed) {
@@ -104,8 +109,8 @@ final class CliShellExecutions implements AutoCloseable {
             Work work = pending.get();
             if (!work.sessionId().equals(session)) throw unavailable();
             entry = new Entry(id, session, time.now().toEpochMilli());
-            entry.result = new CodingShellResult("CANCELLED", Optional.empty(),
-                    "Shell cancelled before dispatch", Optional.empty(), false, false);
+            entry.result = new CodingShellResult(
+                    "CANCELLED", Optional.empty(), "Shell cancelled before dispatch", Optional.empty(), false, false);
             entry.state = CodingShellExecution.State.COMPLETED;
             entry.finishedAt = time.now().toEpochMilli();
             entry.done.complete(entry.result);
@@ -133,7 +138,10 @@ final class CliShellExecutions implements AutoCloseable {
         if (entries.size() < MAX_RETAINED) return;
         var iterator = entries.values().iterator();
         while (iterator.hasNext()) {
-            if (iterator.next().done.isDone()) { iterator.remove(); return; }
+            if (iterator.next().done.isDone()) {
+                iterator.remove();
+                return;
+            }
         }
         throw new ProjectProductException("SHELL_BUSY", "Shell receipt capacity reached");
     }
@@ -146,7 +154,9 @@ final class CliShellExecutions implements AutoCloseable {
     public void close() {
         synchronized (this) {
             closed = true;
-            entries.values().forEach(e -> { if (!e.done.isDone()) e.cancelled.set(true); });
+            entries.values().forEach(e -> {
+                if (!e.done.isDone()) e.cancelled.set(true);
+            });
             workers.shutdown();
         }
         try {
@@ -171,12 +181,22 @@ final class CliShellExecutions implements AutoCloseable {
         CodingShellResult result;
         String error;
         long finishedAt;
+
         Entry(String id, AgentSessionId session, long acceptedAt) {
-            this.id = id; this.session = session; this.acceptedAt = acceptedAt;
+            this.id = id;
+            this.session = session;
+            this.acceptedAt = acceptedAt;
         }
+
         CodingShellExecution view() {
-            return new CodingShellExecution(id, session, acceptedAt, state, cancelled.get(),
-                    Optional.ofNullable(result), Optional.ofNullable(error));
+            return new CodingShellExecution(
+                    id,
+                    session,
+                    acceptedAt,
+                    state,
+                    cancelled.get(),
+                    Optional.ofNullable(result),
+                    Optional.ofNullable(error));
         }
     }
 }

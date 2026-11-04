@@ -15,9 +15,9 @@ import io.haifa.agent.application.project.product.coding.CodingSessionExportResu
 import io.haifa.agent.application.project.product.coding.CodingSessionHistoryPage;
 import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
+import io.haifa.agent.application.project.product.coding.CodingShellExecution;
 import io.haifa.agent.application.project.product.coding.CodingShellPlan;
 import io.haifa.agent.application.project.product.coding.CodingShellResult;
-import io.haifa.agent.application.project.product.coding.CodingShellExecution;
 import io.haifa.agent.application.project.product.coding.CodingWorkspaceView;
 import io.haifa.agent.application.project.product.coding.client.CodingApprovalPrompt;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationClient;
@@ -740,15 +740,17 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
         if (recoverableShell()) {
             CodingShellExecution receipt = startShell(token, approved);
             while (receipt.state() == CodingShellExecution.State.RUNNING) {
-                try { Thread.sleep(250); }
-                catch (InterruptedException interrupted) {
+                try {
+                    Thread.sleep(250);
+                } catch (InterruptedException interrupted) {
                     Thread.currentThread().interrupt();
                     throw new ProjectProductException("SHELL_OUTCOME_UNKNOWN", "Shell may still be running: " + token);
                 }
                 receipt = shellExecution(receipt.sessionId(), token);
             }
-            return receipt.result().orElseThrow(() -> new ProjectProductException(
-                    "SHELL_OUTCOME_UNKNOWN", "Shell completion could not be confirmed: " + token));
+            return receipt.result()
+                    .orElseThrow(() -> new ProjectProductException(
+                            "SHELL_OUTCOME_UNKNOWN", "Shell completion could not be confirmed: " + token));
         }
         JsonNode result =
                 transport.call("shell/execute", RemoteRpcTransport.params("token", token, "approved", approved), true);
@@ -756,13 +758,15 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
     }
 
     @Override
-    public boolean recoverableShell() { return info.supports("shell-operations"); }
+    public boolean recoverableShell() {
+        return info.supports("shell-operations");
+    }
 
     @Override
     public CodingShellExecution startShell(String token, boolean approved) {
         requireUsable();
-        JsonNode result = transport.call("shell/start",
-                RemoteRpcTransport.params("token", token, "approved", approved), true);
+        JsonNode result =
+                transport.call("shell/start", RemoteRpcTransport.params("token", token, "approved", approved), true);
         return decode(() -> {
             CodingShellExecution receipt = codec.shellExecution(result);
             if (!receipt.executionId().equals(token)) throw RemoteRpcTransport.protocolIncompatible();
@@ -778,8 +782,8 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
     @Override
     public List<CodingShellExecution> shellExecutions(AgentSessionId sessionId) {
         requireUsable();
-        JsonNode result = transport.call("shell/list", RemoteRpcTransport.params(
-                "sessionId", requireSessionId(sessionId)), false);
+        JsonNode result = transport.call(
+                "shell/list", RemoteRpcTransport.params("sessionId", requireSessionId(sessionId)), false);
         return decode(() -> {
             List<CodingShellExecution> values = new ArrayList<>();
             for (JsonNode item : RemoteWireCodec.requiredArray(result, "executions")) {
@@ -798,8 +802,10 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
 
     private CodingShellExecution shellReceipt(String method, AgentSessionId sessionId, String id, boolean mutation) {
         requireUsable();
-        JsonNode result = transport.call(method, RemoteRpcTransport.params(
-                "sessionId", requireSessionId(sessionId), "executionId", id), mutation);
+        JsonNode result = transport.call(
+                method,
+                RemoteRpcTransport.params("sessionId", requireSessionId(sessionId), "executionId", id),
+                mutation);
         return decode(() -> {
             CodingShellExecution value = codec.shellExecution(result);
             if (!value.sessionId().equals(sessionId) || !value.executionId().equals(id)) {

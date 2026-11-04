@@ -533,13 +533,19 @@ public final class ProjectExecutionToolOperations {
             String workdir,
             Duration timeout,
             String idempotencyKey) {
-        return executeUserInitiated(auditRunId, tenant, principal, access, command, workdir, timeout,
-                idempotencyKey, () -> false);
+        return executeUserInitiated(
+                auditRunId, tenant, principal, access, command, workdir, timeout, idempotencyKey, () -> false);
     }
 
     public ToolResult executeUserInitiated(
-            AgentRunId auditRunId, TenantRef tenant, PrincipalRef principal, RunWorkspaceAccess access,
-            String command, String workdir, Duration timeout, String idempotencyKey,
+            AgentRunId auditRunId,
+            TenantRef tenant,
+            PrincipalRef principal,
+            RunWorkspaceAccess access,
+            String command,
+            String workdir,
+            Duration timeout,
+            String idempotencyKey,
             ToolCancellation cancellation) {
         Objects.requireNonNull(cancellation, "cancellation must not be null");
         Objects.requireNonNull(auditRunId, "auditRunId must not be null");

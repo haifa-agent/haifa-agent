@@ -162,14 +162,21 @@ final class CodingHostDispatcher {
                 case "shell/execute" ->
                     CodingHostWire.shellResult(
                             client.executeShell(text(safeParams, "token"), bool(safeParams, "approved")));
-                case "shell/start" -> CodingHostWire.shellExecution(
-                        client.startShell(text(safeParams, "token"), bool(safeParams, "approved")), true);
-                case "shell/get" -> CodingHostWire.shellExecution(
-                        client.shellExecution(session(safeParams), text(safeParams, "executionId")), true);
-                case "shell/list" -> Map.of("executions", client.shellExecutions(session(safeParams)).stream()
-                        .map(value -> CodingHostWire.shellExecution(value, false)).toList());
-                case "shell/cancel" -> CodingHostWire.shellExecution(
-                        client.cancelShell(session(safeParams), text(safeParams, "executionId")), true);
+                case "shell/start" ->
+                    CodingHostWire.shellExecution(
+                            client.startShell(text(safeParams, "token"), bool(safeParams, "approved")), true);
+                case "shell/get" ->
+                    CodingHostWire.shellExecution(
+                            client.shellExecution(session(safeParams), text(safeParams, "executionId")), true);
+                case "shell/list" ->
+                    Map.of(
+                            "executions",
+                            client.shellExecutions(session(safeParams)).stream()
+                                    .map(value -> CodingHostWire.shellExecution(value, false))
+                                    .toList());
+                case "shell/cancel" ->
+                    CodingHostWire.shellExecution(
+                            client.cancelShell(session(safeParams), text(safeParams, "executionId")), true);
                 case "shell/discard" -> {
                     client.discardShell(text(safeParams, "token"));
                     yield Map.of("discarded", true);

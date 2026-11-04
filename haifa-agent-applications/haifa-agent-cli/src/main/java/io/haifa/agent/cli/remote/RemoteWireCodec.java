@@ -1,7 +1,5 @@
 package io.haifa.agent.cli.remote;
 
-import io.haifa.agent.application.project.product.coding.CodingShellExecution;
-
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -20,6 +18,7 @@ import io.haifa.agent.application.project.product.coding.CodingSessionHistoryIte
 import io.haifa.agent.application.project.product.coding.CodingSessionHistoryPage;
 import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
+import io.haifa.agent.application.project.product.coding.CodingShellExecution;
 import io.haifa.agent.application.project.product.coding.CodingShellPlan;
 import io.haifa.agent.application.project.product.coding.CodingShellResult;
 import io.haifa.agent.application.project.product.coding.CodingWorkspaceView;
@@ -352,10 +351,10 @@ final class RemoteWireCodec {
         requireObject(node, "shell execution");
         JsonNode result = node.get("result");
         return new CodingShellExecution(
-                requiredText(node, "executionId"), new AgentSessionId(requiredText(node, "sessionId")),
+                requiredText(node, "executionId"),
+                new AgentSessionId(requiredText(node, "sessionId")),
                 requiredLong(node, "acceptedAtMillis"),
-                enumValue(CodingShellExecution.State.class,
-                        requiredText(node, "state"), "state"),
+                enumValue(CodingShellExecution.State.class, requiredText(node, "state"), "state"),
                 requiredBoolean(node, "cancellationRequested"),
                 result == null || result.isNull() ? Optional.empty() : Optional.of(shellResult(result)),
                 optionalRawText(node, "errorCode"));

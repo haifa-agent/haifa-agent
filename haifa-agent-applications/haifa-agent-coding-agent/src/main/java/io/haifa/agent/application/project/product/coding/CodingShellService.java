@@ -1,8 +1,7 @@
 package io.haifa.agent.application.project.product.coding;
 
-import java.util.List;
-
 import io.haifa.agent.core.session.AgentSessionId;
+import java.util.List;
 
 public interface CodingShellService extends AutoCloseable {
     CodingShellPlan plan(AgentSessionId sessionId, String command, boolean includeInContext);
@@ -11,7 +10,9 @@ public interface CodingShellService extends AutoCloseable {
 
     void discard(String token);
 
-    default boolean recoverable() { return false; }
+    default boolean recoverable() {
+        return false;
+    }
 
     default CodingShellExecution start(String token, boolean approved) {
         throw new UnsupportedOperationException("Recoverable shell execution is unavailable");

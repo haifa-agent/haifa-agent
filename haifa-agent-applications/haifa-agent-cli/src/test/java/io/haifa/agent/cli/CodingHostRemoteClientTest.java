@@ -172,9 +172,11 @@ class CodingHostRemoteClientTest {
                     assertThat(receipt.executionId()).isEqualTo(plan.token());
                     assertThat(receipt.result()).isEmpty(); // List is bounded metadata; get fetches output.
                 });
-                assertThat(reattached.shellExecution(sessionId, plan.token()).result()).contains(shellResult);
+                assertThat(reattached.shellExecution(sessionId, plan.token()).result())
+                        .contains(shellResult);
                 assertThat(reattached.startShell(plan.token(), true).result()).contains(shellResult);
-                assertThat(reattached.cancelShell(sessionId, plan.token()).cancellationRequested()).isFalse();
+                assertThat(reattached.cancelShell(sessionId, plan.token()).cancellationRequested())
+                        .isFalse();
             }
 
             assertThat(client.authentication().apiKeyConnectionSupported()).isFalse();

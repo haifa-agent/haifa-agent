@@ -42,10 +42,33 @@ class RemoteCodingSessionClientTest {
         var initialized = FakeCodingHost.JSON.valueToTree(FakeCodingHost.initializeResult("client-1", "project-1"));
         ((com.fasterxml.jackson.databind.node.ObjectNode) initialized.path("capabilities"))
                 .put("shell-operations", true);
-        var receipt = map("executionId", "known-plan", "sessionId", SESSION.value(), "acceptedAtMillis", NOW,
-                "state", "COMPLETED", "cancellationRequested", false,
-                "result", map("processState", "EXITED", "exitCode", 0, "safeSummary", "late result",
-                        "outputReference", null, "truncated", false, "includedInContext", false), "errorCode", null);
+        var receipt = map(
+                "executionId",
+                "known-plan",
+                "sessionId",
+                SESSION.value(),
+                "acceptedAtMillis",
+                NOW,
+                "state",
+                "COMPLETED",
+                "cancellationRequested",
+                false,
+                "result",
+                map(
+                        "processState",
+                        "EXITED",
+                        "exitCode",
+                        0,
+                        "safeSummary",
+                        "late result",
+                        "outputReference",
+                        null,
+                        "truncated",
+                        false,
+                        "includedInContext",
+                        false),
+                "errorCode",
+                null);
         try (FakeCodingHost host = FakeCodingHost.start(call -> switch (call.method()) {
             case "initialize" -> FakeCodingHost.Reply.result(initialized);
             case "shell/start" -> FakeCodingHost.Reply.dropped();
@@ -58,7 +81,8 @@ class RemoteCodingSessionClientTest {
                         .satisfies(thrown -> assertProductCode(thrown, "REMOTE_OUTCOME_UNKNOWN"));
             }
             try (var reattached = RemoteCodingSessionClient.connect(host.uri())) {
-                assertThat(reattached.shellExecution(SESSION, "known-plan").result()).get()
+                assertThat(reattached.shellExecution(SESSION, "known-plan").result())
+                        .get()
                         .extracting(io.haifa.agent.application.project.product.coding.CodingShellResult::safeSummary)
                         .isEqualTo("late result");
             }

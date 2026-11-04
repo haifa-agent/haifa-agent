@@ -1,9 +1,8 @@
 package io.haifa.agent.cli;
 
-import io.haifa.agent.application.project.product.coding.CodingShellExecution;
-
 import io.haifa.agent.application.project.policy.CodingAgentPolicyAssembly;
 import io.haifa.agent.application.project.product.coding.CodingSessionService;
+import io.haifa.agent.application.project.product.coding.CodingShellExecution;
 import io.haifa.agent.application.project.product.coding.CodingShellPlan;
 import io.haifa.agent.application.project.product.coding.CodingShellResult;
 import io.haifa.agent.application.project.product.coding.CodingShellService;
@@ -138,7 +137,9 @@ final class CliCodingShellService implements CodingShellService {
     }
 
     @Override
-    public boolean recoverable() { return true; }
+    public boolean recoverable() {
+        return true;
+    }
 
     @Override
     public CodingShellExecution start(String token, boolean approved) {
@@ -153,23 +154,26 @@ final class CliCodingShellService implements CodingShellService {
     }
 
     @Override
-    public CodingShellExecution execution(
-            AgentSessionId sessionId, String id) { return executions.get(sessionId, id); }
+    public CodingShellExecution execution(AgentSessionId sessionId, String id) {
+        return executions.get(sessionId, id);
+    }
 
     @Override
-    public List<CodingShellExecution> executions(
-            AgentSessionId sessionId) { return executions.list(sessionId); }
+    public List<CodingShellExecution> executions(AgentSessionId sessionId) {
+        return executions.list(sessionId);
+    }
 
     @Override
-    public CodingShellExecution cancel(
-            AgentSessionId sessionId, String id) {
+    public CodingShellExecution cancel(AgentSessionId sessionId, String id) {
         return executions.cancel(sessionId, id, () -> {
             Pending value = pending.get(id);
             if (value == null || !value.sessionId().equals(sessionId)) {
                 throw new IllegalStateException("Shell request is unavailable");
             }
             pending.remove(id);
-            return new CliShellExecutions.Work(sessionId, ignored -> { throw new IllegalStateException(); });
+            return new CliShellExecutions.Work(sessionId, ignored -> {
+                throw new IllegalStateException();
+            });
         });
     }
 
@@ -179,7 +183,10 @@ final class CliCodingShellService implements CodingShellService {
     }
 
     @Override
-    public void close() { executions.close(); pending.clear(); }
+    public void close() {
+        executions.close();
+        pending.clear();
+    }
 
     private CodingShellResult execute(Pending value, io.haifa.agent.tool.api.ToolCancellation cancellation) {
         var result = operations.executeUserInitiated(

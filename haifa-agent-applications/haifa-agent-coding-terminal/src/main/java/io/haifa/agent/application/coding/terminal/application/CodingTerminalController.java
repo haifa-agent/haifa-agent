@@ -21,9 +21,9 @@ import io.haifa.agent.application.project.product.coding.CodingQueuedMessage;
 import io.haifa.agent.application.project.product.coding.CodingSessionCreateOptions;
 import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
+import io.haifa.agent.application.project.product.coding.CodingShellExecution;
 import io.haifa.agent.application.project.product.coding.CodingShellPlan;
 import io.haifa.agent.application.project.product.coding.CodingShellResult;
-import io.haifa.agent.application.project.product.coding.CodingShellExecution;
 import io.haifa.agent.application.project.product.coding.CodingWorkspaceView;
 import io.haifa.agent.application.project.product.coding.client.CodingApprovalPrompt;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationClient;
@@ -1955,16 +1955,22 @@ public final class CodingTerminalController implements AutoCloseable {
         if (client.recoverableShell()) {
             observedShells.put(plan.sessionId(), plan.token());
             apply(new TerminalUiAction.StatusChanged("Starting Shell " + plan.token()
-                    + "; closing the TUI does not cancel it. /shell to recover; /shell cancel " + plan.token() + " to cancel"));
-            submitEffect(() -> {
-                CodingShellExecution receipt = client.startShell(plan.token(), approved);
-                return () -> { if (isCurrentSelection(token)) showShell(receipt); };
-            }, code -> {
-                if (isCurrentSelection(token)) {
-                    apply(new TerminalUiAction.StatusChanged("Shell " + plan.token()
-                            + " may still be active on Host; /shell " + plan.token() + " queries it without replay"));
-                }
-            });
+                    + "; closing the TUI does not cancel it. /shell to recover; /shell cancel " + plan.token()
+                    + " to cancel"));
+            submitEffect(
+                    () -> {
+                        CodingShellExecution receipt = client.startShell(plan.token(), approved);
+                        return () -> {
+                            if (isCurrentSelection(token)) showShell(receipt);
+                        };
+                    },
+                    code -> {
+                        if (isCurrentSelection(token)) {
+                            apply(new TerminalUiAction.StatusChanged(
+                                    "Shell " + plan.token() + " may still be active on Host; /shell " + plan.token()
+                                            + " queries it without replay"));
+                        }
+                    });
             return;
         }
         apply(new TerminalUiAction.StatusChanged("Running shell command"));
@@ -1989,18 +1995,21 @@ public final class CodingTerminalController implements AutoCloseable {
         shellPolledAtMillis = now;
         shellPollInFlight = true;
         SelectionToken selection = currentSelection();
-        submitMaintenanceEffect(() -> {
-            CodingShellExecution receipt = client.shellExecution(session, id);
-            return () -> {
-                shellPollInFlight = false;
-                if (isCurrentSelection(selection)) showShell(receipt);
-            };
-        }, code -> {
-            shellPollInFlight = false;
-            observedShells.remove(session, id);
-            if (isCurrentSelection(selection)) apply(new TerminalUiAction.StatusChanged(
-                    "Shell " + id + " may still be active; /shell " + id + " to query (" + code + ")"));
-        });
+        submitMaintenanceEffect(
+                () -> {
+                    CodingShellExecution receipt = client.shellExecution(session, id);
+                    return () -> {
+                        shellPollInFlight = false;
+                        if (isCurrentSelection(selection)) showShell(receipt);
+                    };
+                },
+                code -> {
+                    shellPollInFlight = false;
+                    observedShells.remove(session, id);
+                    if (isCurrentSelection(selection))
+                        apply(new TerminalUiAction.StatusChanged(
+                                "Shell " + id + " may still be active; /shell " + id + " to query (" + code + ")"));
+                });
     }
 
     private void showShell(CodingShellExecution receipt) {
@@ -2011,11 +2020,14 @@ public final class CodingTerminalController implements AutoCloseable {
                     + "; /shell cancel " + receipt.executionId() + " to cancel"));
         } else {
             observedShells.remove(receipt.sessionId(), receipt.executionId());
-            String summary = receipt.result().map(CodingShellResult::safeSummary)
-                    .orElse("Shell outcome unknown; do not replay the command. " + receipt.errorCode().orElse(""));
-            String process = receipt.result().map(CodingShellResult::processState).orElse("UNKNOWN");
-            apply(new TerminalUiAction.ShellCompleted("Shell " + receipt.executionId(), summary, process,
-                    executionDestination(), receipt.executionId()));
+            String summary = receipt.result()
+                    .map(CodingShellResult::safeSummary)
+                    .orElse("Shell outcome unknown; do not replay the command. "
+                            + receipt.errorCode().orElse(""));
+            String process =
+                    receipt.result().map(CodingShellResult::processState).orElse("UNKNOWN");
+            apply(new TerminalUiAction.ShellCompleted(
+                    "Shell " + receipt.executionId(), summary, process, executionDestination(), receipt.executionId()));
             apply(new TerminalUiAction.StatusChanged("Shell " + receipt.executionId() + ": " + process));
         }
     }
@@ -2035,25 +2047,33 @@ public final class CodingTerminalController implements AutoCloseable {
         Supplier<Runnable> work = () -> {
             if (id.isEmpty()) {
                 var receipts = client.shellExecutions(session);
-                String summary = receipts.isEmpty() ? "No retained Shell executions for this Session"
-                        : receipts.stream().map(r -> r.executionId() + " " + r.state()
-                                + (r.cancellationRequested() ? " (cancellation requested)" : ""))
-                                .collect(java.util.stream.Collectors.joining("\n"))
+                String summary = receipts.isEmpty()
+                        ? "No retained Shell executions for this Session"
+                        : receipts.stream()
+                                        .map(r -> r.executionId() + " " + r.state()
+                                                + (r.cancellationRequested() ? " (cancellation requested)" : ""))
+                                        .collect(java.util.stream.Collectors.joining("\n"))
                                 + "\n/shell execution-id shows output; /shell cancel execution-id cancels";
                 return () -> {
-                    if (isCurrentSelection(selection)) apply(new TerminalUiAction.ShellCompleted(
-                            "Shell executions", summary, "STATUS", executionDestination(), "receipt-list"));
+                    if (isCurrentSelection(selection))
+                        apply(new TerminalUiAction.ShellCompleted(
+                                "Shell executions", summary, "STATUS", executionDestination(), "receipt-list"));
                 };
             }
-            CodingShellExecution receipt = cancel ? client.cancelShell(session, id) : client.shellExecution(session, id);
-            return () -> { if (isCurrentSelection(selection)) showShell(receipt); };
+            CodingShellExecution receipt =
+                    cancel ? client.cancelShell(session, id) : client.shellExecution(session, id);
+            return () -> {
+                if (isCurrentSelection(selection)) showShell(receipt);
+            };
         };
-        if (cancel) submitControlEffect(work, code -> {
-            if (isCurrentSelection(selection)) apply(new TerminalUiAction.RecoverableFailure(code));
-        });
-        else submitEffect(work, code -> {
-            if (isCurrentSelection(selection)) apply(new TerminalUiAction.RecoverableFailure(code));
-        });
+        if (cancel)
+            submitControlEffect(work, code -> {
+                if (isCurrentSelection(selection)) apply(new TerminalUiAction.RecoverableFailure(code));
+            });
+        else
+            submitEffect(work, code -> {
+                if (isCurrentSelection(selection)) apply(new TerminalUiAction.RecoverableFailure(code));
+            });
     }
 
     private void completeShell(CodingShellPlan plan, CodingShellResult result) {

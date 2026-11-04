@@ -1,7 +1,5 @@
 package io.haifa.agent.application.project.product.coding.client;
 
-import io.haifa.agent.application.project.product.coding.CodingShellExecution;
-
 import io.haifa.agent.application.project.product.coding.CodingCompactionResult;
 import io.haifa.agent.application.project.product.coding.CodingModelOption;
 import io.haifa.agent.application.project.product.coding.CodingModelSelection;
@@ -12,6 +10,7 @@ import io.haifa.agent.application.project.product.coding.CodingSessionExportResu
 import io.haifa.agent.application.project.product.coding.CodingSessionHistoryPage;
 import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
+import io.haifa.agent.application.project.product.coding.CodingShellExecution;
 import io.haifa.agent.application.project.product.coding.CodingShellPlan;
 import io.haifa.agent.application.project.product.coding.CodingShellResult;
 import io.haifa.agent.application.project.product.coding.CodingWorkspaceView;
@@ -159,25 +158,23 @@ public interface CodingSessionClient {
 
     default void discardShell(String token) {}
 
-    default boolean recoverableShell() { return false; }
+    default boolean recoverableShell() {
+        return false;
+    }
 
-    default CodingShellExecution startShell(
-            String token, boolean approved) {
+    default CodingShellExecution startShell(String token, boolean approved) {
         throw new UnsupportedOperationException("Recoverable shell execution is unavailable");
     }
 
-    default CodingShellExecution shellExecution(
-            AgentSessionId sessionId, String executionId) {
+    default CodingShellExecution shellExecution(AgentSessionId sessionId, String executionId) {
         throw new UnsupportedOperationException("Recoverable shell execution is unavailable");
     }
 
-    default List<CodingShellExecution> shellExecutions(
-            AgentSessionId sessionId) {
+    default List<CodingShellExecution> shellExecutions(AgentSessionId sessionId) {
         throw new UnsupportedOperationException("Recoverable shell execution is unavailable");
     }
 
-    default CodingShellExecution cancelShell(
-            AgentSessionId sessionId, String executionId) {
+    default CodingShellExecution cancelShell(AgentSessionId sessionId, String executionId) {
         throw new UnsupportedOperationException("Recoverable shell execution is unavailable");
     }
 

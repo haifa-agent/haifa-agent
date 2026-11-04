@@ -16,8 +16,8 @@ import org.junit.jupiter.api.Test;
 
 class CliShellExecutionsTest {
     private static final AgentSessionId SESSION = new AgentSessionId("shell-session");
-    private static final CodingShellResult RESULT = new CodingShellResult(
-            "EXITED", Optional.of(0), "safe result", Optional.empty(), false, false);
+    private static final CodingShellResult RESULT =
+            new CodingShellResult("EXITED", Optional.of(0), "safe result", Optional.empty(), false, false);
 
     @Test
     void acceptsOnceAndReturnsTheSameOutcomeAfterTheCallerStopsObserving() {
@@ -26,14 +26,21 @@ class CliShellExecutionsTest {
         AtomicInteger dispatches = new AtomicInteger();
         AtomicReference<Instant> now = new AtomicReference<>(Instant.EPOCH);
         try (var executions = new CliShellExecutions(now::get)) {
-            var receipt = executions.start("plan", () -> new CliShellExecutions.Work(SESSION, cancellation -> {
-                dispatches.incrementAndGet(); entered.countDown(); CodingHostTestFixture.await(release); return RESULT;
-            }));
+            var receipt = executions.start(
+                    "plan",
+                    () -> new CliShellExecutions.Work(SESSION, cancellation -> {
+                        dispatches.incrementAndGet();
+                        entered.countDown();
+                        CodingHostTestFixture.await(release);
+                        return RESULT;
+                    }));
             CodingHostTestFixture.await(entered);
             now.set(Instant.ofEpochMilli(35_000));
             assertThat(receipt.executionId()).isEqualTo("plan");
             assertThat(executions.get(SESSION, "plan").state()).isEqualTo(CodingShellExecution.State.RUNNING);
-            executions.start("plan", () -> { throw new AssertionError("one-shot plan consumed twice"); });
+            executions.start("plan", () -> {
+                throw new AssertionError("one-shot plan consumed twice");
+            });
             assertThatThrownBy(() -> executions.get(new AgentSessionId("other"), "plan"))
                     .hasMessageContaining("unavailable");
             release.countDown();
@@ -42,7 +49,9 @@ class CliShellExecutionsTest {
             assertThat(dispatches).hasValue(1);
             now.set(Instant.ofEpochMilli(35_000 + 30 * 60 * 1000));
             assertThat(executions.list(SESSION)).isEmpty();
-        } finally { release.countDown(); }
+        } finally {
+            release.countDown();
+        }
     }
 
     @Test
@@ -50,23 +59,44 @@ class CliShellExecutionsTest {
         CountDownLatch entered = new CountDownLatch(1);
         CountDownLatch cancelled = new CountDownLatch(1);
         try (var executions = new CliShellExecutions(() -> Instant.EPOCH)) {
-            executions.start("running", () -> new CliShellExecutions.Work(SESSION, cancellation -> {
-                entered.countDown();
-                while (!cancellation.isCancellationRequested()) {
-                    try { if (cancelled.await(10, TimeUnit.MILLISECONDS)) break; }
-                    catch (InterruptedException ignored) { Thread.currentThread().interrupt(); break; }
-                }
-                cancelled.countDown();
-                return new CodingShellResult("CANCELLED", Optional.empty(), "cancelled", Optional.empty(), false, false);
-            }));
+            executions.start(
+                    "running",
+                    () -> new CliShellExecutions.Work(SESSION, cancellation -> {
+                        entered.countDown();
+                        while (!cancellation.isCancellationRequested()) {
+                            try {
+                                if (cancelled.await(10, TimeUnit.MILLISECONDS)) break;
+                            } catch (InterruptedException ignored) {
+                                Thread.currentThread().interrupt();
+                                break;
+                            }
+                        }
+                        cancelled.countDown();
+                        return new CodingShellResult(
+                                "CANCELLED", Optional.empty(), "cancelled", Optional.empty(), false, false);
+                    }));
             CodingHostTestFixture.await(entered);
-            assertThat(executions.cancel(SESSION, "running", () -> { throw new AssertionError(); })
-                    .cancellationRequested()).isTrue();
+            assertThat(executions
+                            .cancel(SESSION, "running", () -> {
+                                throw new AssertionError();
+                            })
+                            .cancellationRequested())
+                    .isTrue();
             assertThat(executions.await("running").processState()).isEqualTo("CANCELLED");
-            executions.cancel(SESSION, "before-start", () -> new CliShellExecutions.Work(SESSION,
-                    ignored -> { throw new AssertionError("cancelled plan dispatched"); }));
-            assertThat(executions.start("before-start", () -> { throw new AssertionError(); }).result())
-                    .get().extracting(CodingShellResult::processState).isEqualTo("CANCELLED");
+            executions.cancel(
+                    SESSION,
+                    "before-start",
+                    () -> new CliShellExecutions.Work(SESSION, ignored -> {
+                        throw new AssertionError("cancelled plan dispatched");
+                    }));
+            assertThat(executions
+                            .start("before-start", () -> {
+                                throw new AssertionError();
+                            })
+                            .result())
+                    .get()
+                    .extracting(CodingShellResult::processState)
+                    .isEqualTo("CANCELLED");
         }
     }
 
@@ -74,16 +104,24 @@ class CliShellExecutionsTest {
     void rejectsCapacityBeforeConsumingAnotherPlanAndRetainsUncertainFailures() {
         CountDownLatch release = new CountDownLatch(1);
         try (var executions = new CliShellExecutions(() -> Instant.EPOCH)) {
-            for (int i = 0; i < 8; i++) executions.start("active-" + i,
-                    () -> new CliShellExecutions.Work(SESSION, cancellation -> {
-                        CodingHostTestFixture.await(release); return RESULT;
-                    }));
-            assertThatThrownBy(() -> executions.start("ninth", () -> { throw new AssertionError("plan consumed"); }))
+            for (int i = 0; i < 8; i++)
+                executions.start(
+                        "active-" + i,
+                        () -> new CliShellExecutions.Work(SESSION, cancellation -> {
+                            CodingHostTestFixture.await(release);
+                            return RESULT;
+                        }));
+            assertThatThrownBy(() -> executions.start("ninth", () -> {
+                        throw new AssertionError("plan consumed");
+                    }))
                     .hasMessageContaining("Too many active");
             release.countDown();
             for (int i = 0; i < 8; i++) executions.await("active-" + i);
-            executions.start("uncertain", () -> new CliShellExecutions.Work(SESSION,
-                    ignored -> { throw new IllegalStateException("private detail"); }));
+            executions.start(
+                    "uncertain",
+                    () -> new CliShellExecutions.Work(SESSION, ignored -> {
+                        throw new IllegalStateException("private detail");
+                    }));
             assertThatThrownBy(() -> executions.await("uncertain")).hasMessageContaining("could not be confirmed");
             assertThat(executions.get(SESSION, "uncertain").errorCode()).contains("SHELL_OUTCOME_UNKNOWN");
             for (int i = 0; i < 130; i++) {
@@ -92,6 +130,8 @@ class CliShellExecutionsTest {
                 executions.await(id);
             }
             assertThat(executions.list(SESSION)).hasSize(128);
-        } finally { release.countDown(); }
+        } finally {
+            release.countDown();
+        }
     }
 }
