@@ -304,3 +304,11 @@ Event ID/范围/head/earliest/索引计划、Outbox/Idempotency、Journal 状态
 重启恢复/竞争、Continuation 固定密钥恢复/错误密钥/
 篡改、Skill/Memory/Asset、busy/locked 分类、权限策略，以及数据库/WAL/SHM 中不出现 Credential、
 reasoning、Provider 原文或测试密钥。
+
+## Run transition contention
+
+A Run transition can wait for this adapter's single writer while that writer belongs to another parked virtual
+thread. Runtime's per-Run locking lets the contender unmount on Java 21, so the writer can resume and release its
+slot on low-core hosts. Writer queue fairness, transaction scope, interruption handling and timeout configuration
+are unchanged. A single-carrier child-JVM regression exercises the real SQLite Unit of Work and all three Runtime
+transition paths that acquire the writer under the per-Run lock.
