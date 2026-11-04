@@ -99,11 +99,17 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
     private final Set<RemoteSseSubscription> subscriptions = ConcurrentHashMap.newKeySet();
     private final Map<AgentSessionId, ProjectProductException> observationFailures = new ConcurrentHashMap<>();
     private final Object lifecycleLock = new Object();
+    private final Object connectionLock = new Object();
+    private final String clientName;
+    private final String clientVersion;
+    private volatile ProjectProductException connectionFailure;
     private volatile RemoteCodingClientInfo info;
     private volatile ProjectId projectId;
     private volatile boolean closed;
 
-    private RemoteCodingSessionClient(URI baseUri) {
+    private RemoteCodingSessionClient(URI baseUri, String clientName, String clientVersion) {
+        this.clientName = clientName;
+        this.clientVersion = clientVersion;
         this.transport = new RemoteRpcTransport(baseUri, json);
         this.codec = new RemoteWireCodec(json);
         this.authentication = new RemoteCodingAuthenticationClient(transport, codec);
@@ -119,7 +125,7 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
         URI baseUri = RemoteHostUri.requireLoopbackBase(endpoint);
         String safeName = requireClientText(clientName, "clientName");
         String safeVersion = requireClientText(clientVersion, "clientVersion");
-        RemoteCodingSessionClient client = new RemoteCodingSessionClient(baseUri);
+        RemoteCodingSessionClient client = new RemoteCodingSessionClient(baseUri, safeName, safeVersion);
         try {
             client.initialize(safeName, safeVersion);
             return client;
@@ -164,6 +170,10 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
             }
             String clientId = RemoteWireCodec.requiredText(result, "clientId");
             ProjectId hostProject = new ProjectId(RemoteWireCodec.requiredText(result, "projectId"));
+            if (projectId != null && !projectId.equals(hostProject)) {
+                throw new ProjectProductException(
+                        "REMOTE_HOST_IDENTITY_CHANGED", "The endpoint now belongs to a different project");
+            }
             String hostName = RemoteWireCodec.requiredText(result, "hostName");
             JsonNode operator = RemoteWireCodec.requiredObject(result, "operator");
             String principalType = RemoteWireCodec.requiredText(operator, "principalType");
@@ -209,10 +219,13 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
                             RemoteWireCodec.requiredText(workspace, "executionDirectory")));
                 }
             }
-            this.info = new RemoteCodingClientInfo(
-                    version, hostName, hostProject, clientId, principalType, supported, unsupported, workspaceInfo);
-            this.projectId = hostProject;
-            transport.clientId(clientId);
+            synchronized (lifecycleLock) {
+                if (closed) throw RemoteRpcTransport.unavailable();
+                this.info = new RemoteCodingClientInfo(
+                        version, hostName, hostProject, clientId, principalType, supported, unsupported, workspaceInfo);
+                this.projectId = hostProject;
+                transport.clientId(clientId);
+            }
             return null;
         });
     }
@@ -796,6 +809,7 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
         if (after != null) {
             params.put("afterCursor", cursorParams(after));
         }
+        String contextId = transport.clientId();
         JsonNode acknowledgement = transport.call("events/subscribe", params, false);
         String subscriptionId = decode(() -> subscriptionId(acknowledgement, sessionId, runId, "run-event"));
         RemoteSseSubscription subscription = new RemoteSseSubscription(
@@ -808,7 +822,7 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
                 node -> onEventNode(sessionId, runId, listener, node),
                 failure -> recordObservationFailure(sessionId, failure),
                 this::retire);
-        install(subscription);
+        install(subscription, contextId);
         return subscription;
     }
 
@@ -837,6 +851,7 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
         if (after != null) {
             params.put("afterCursor", after.sequence());
         }
+        String contextId = transport.clientId();
         JsonNode acknowledgement = transport.call("output/subscribe", params, false);
         String subscriptionId = decode(() -> subscriptionId(acknowledgement, sessionId, runId, "output"));
         RemoteSseSubscription subscription = new RemoteSseSubscription(
@@ -849,15 +864,19 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
                 node -> onOutputNode(sessionId, runId, listener, node),
                 failure -> recordObservationFailure(sessionId, failure),
                 this::retire);
-        install(subscription);
+        install(subscription, contextId);
         return subscription;
     }
 
-    private void install(RemoteSseSubscription subscription) {
+    private void install(RemoteSseSubscription subscription, String contextId) {
         synchronized (lifecycleLock) {
             if (closed) {
                 subscription.close();
                 throw RemoteRpcTransport.unavailable();
+            }
+            if (!Objects.equals(contextId, transport.clientId())) {
+                subscription.close();
+                throw new ProjectProductException("CLIENT_CONTEXT_REQUIRED", "Observation context was replaced");
             }
             subscriptions.add(subscription);
             try {
@@ -946,6 +965,43 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
     }
 
     @Override
+    public boolean renewConnection() {
+        synchronized (connectionLock) {
+            requireUsable();
+            try {
+                if (info.supports("client-renewal")) {
+                    JsonNode result = transport.call("client/renew", Map.of(), false);
+                    if (!decode(() -> RemoteWireCodec.requiredBoolean(result, "renewed"))) {
+                        throw RemoteRpcTransport.protocolIncompatible();
+                    }
+                } else {
+                    // Older v1 Hosts already renew on an authenticated, bounded Session read.
+                    // host/ping is public health and intentionally does not renew a client context.
+                    sessions(Map.of("limit", 1));
+                }
+                return false;
+            } catch (ProjectProductException expired) {
+                if (!"CLIENT_CONTEXT_REQUIRED".equals(expired.code())) throw expired;
+                List<RemoteSseSubscription> previous;
+                synchronized (lifecycleLock) {
+                    previous = List.copyOf(subscriptions);
+                }
+                try {
+                    initialize(clientName, clientVersion);
+                } catch (ProjectProductException rejected) {
+                    if ("REMOTE_HOST_IDENTITY_CHANGED".equals(rejected.code())
+                            || "REMOTE_PROTOCOL_INCOMPATIBLE".equals(rejected.code())) {
+                        connectionFailure = rejected;
+                    }
+                    throw rejected;
+                }
+                previous.forEach(RemoteSseSubscription::close);
+                return true;
+            }
+        }
+    }
+
+    @Override
     public List<String> loadedResources() {
         requireUsable();
         return decode(() -> textList(transport.call("resources/loaded", Map.of(), false), "resources"));
@@ -979,6 +1035,7 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
         if (closed) {
             throw RemoteRpcTransport.unavailable();
         }
+        if (connectionFailure != null) throw connectionFailure;
     }
 
     private AgentSessionId sessionForRun(AgentRunId runId) {

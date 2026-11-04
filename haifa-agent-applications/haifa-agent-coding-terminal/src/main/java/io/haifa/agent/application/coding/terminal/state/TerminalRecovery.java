@@ -49,7 +49,7 @@ public record TerminalRecovery(Category category, String code, String action) {
             entry(
                     Category.USER_ACTION_REQUIRED,
                     "CLIENT_CONTEXT_REQUIRED",
-                    "The Host connection context expired or was restarted; exit and reconnect with tui --connect, then reopen the Session. Do not rerun its task to reconnect."),
+                    "The Host connection context expired or was restarted; background connection checks will reinitialize and reopen the Session. If recovery fails, reconnect with tui --connect. Do not rerun its task to reconnect."),
             entry(
                     Category.USER_ACTION_REQUIRED,
                     "REMOTE_OUTCOME_UNKNOWN",
@@ -57,7 +57,11 @@ public record TerminalRecovery(Category category, String code, String action) {
             entry(
                     Category.USER_ACTION_REQUIRED,
                     "REMOTE_TRANSPORT_UNAVAILABLE",
-                    "The Host cannot be reached; check that it is running, then reconnect with tui --connect and reopen the Session."),
+                    "The Host cannot be reached; check that it is running. Background connection checks continue; reconnect with tui --connect and reopen the Session if recovery does not finish."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "REMOTE_HOST_IDENTITY_CHANGED",
+                    "The endpoint now belongs to a different project; check the Host/workspace before connecting again. No command was resent."),
             entry(
                     Category.USER_ACTION_REQUIRED,
                     "REMOTE_PROTOCOL_INCOMPATIBLE",

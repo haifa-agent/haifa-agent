@@ -74,6 +74,7 @@ class CodingHostRemoteClientTest {
                                 .summary());
                 var client = RemoteCodingSessionClient.connect(endpoint(server))) {
             assertThat(client.projectId()).isEqualTo(agent.projectId());
+            assertThat(client.renewConnection()).isFalse();
             assertThat(client.configurationSummary())
                     .contains(
                             "Host config source: explicit --config file",

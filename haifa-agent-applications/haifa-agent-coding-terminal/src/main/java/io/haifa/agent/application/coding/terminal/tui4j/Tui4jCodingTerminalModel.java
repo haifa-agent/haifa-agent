@@ -215,6 +215,7 @@ final class Tui4jCodingTerminalModel implements Model {
             controller.drainEvents();
             // Bounded D6 refresh: the controller rate-limits and skips a hidden sidebar, so this stays off the
             // per-delta path and does not turn every tool event into a session/list call.
+            controller.refreshConnection();
             controller.refreshSessionRows();
             syncComponents();
             command = nextTick();

@@ -118,6 +118,8 @@ public sealed interface TerminalUiAction {
 
     record StatusChanged(String status) implements TerminalUiAction {}
 
+    record ConnectionRestored(String status) implements TerminalUiAction {}
+
     record SelectorOpened(TerminalSelector selector) implements TerminalUiAction {}
 
     record SelectorMoved(int delta) implements TerminalUiAction {}

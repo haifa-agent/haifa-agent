@@ -2,6 +2,9 @@
 
 ## Unreleased - 0.1.5-SNAPSHOT
 
+- Remote Coding Terminal now renews its Host context independently of the sidebar and reattaches after
+  expiry/restart without replaying commands or cancelling Runs.
+
 - Remote Coding Terminal errors now explain Session/revision conflicts, Host capacity, payload limits and
   expired connections using safe client-owned guidance. Unknown outcomes explicitly warn against blind resends.
 

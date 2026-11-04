@@ -30,6 +30,112 @@ import org.junit.jupiter.api.Test;
 
 class CodingTerminalSelectionLifecycleTest {
     @Test
+    void failedConnectionChecksPreserveUnknownOutcomesWithoutAnActiveSession() {
+        var checks = new java.util.concurrent.atomic.AtomicInteger();
+        FakeClient client = new FakeClient(activeView()) {
+            @Override
+            public boolean renewConnection() {
+                if (checks.incrementAndGet() == 1) {
+                    throw new ProjectProductException("REMOTE_TRANSPORT_UNAVAILABLE", "Host unavailable");
+                }
+                return false;
+            }
+        };
+        var pump = new TerminalEventPump(32);
+        var controller = new CodingTerminalController(
+                PROJECT_ID, client, pump, new TerminalUiReducer(), TerminalUiState.initial(80, 24), Runnable::run);
+        pump.offer(new TerminalUiAction.RecoverableFailure("REMOTE_OUTCOME_UNKNOWN"));
+        controller.drainEvents();
+        controller.refreshConnection(100_000);
+        controller.drainEvents();
+        assertThat(controller.state().recoverableError()).contains("REMOTE_OUTCOME_UNKNOWN");
+        assertThat(controller.state().status()).contains("Host connection unavailable");
+        controller.refreshConnection(120_000);
+        controller.drainEvents();
+        assertThat(controller.state().recoverableError()).contains("REMOTE_OUTCOME_UNKNOWN");
+        assertThat(controller.state().session()).isEmpty();
+        assertThat(client.submittedMessages).isEmpty();
+    }
+
+    @Test
+    void hiddenAndVisibleSidebarsRenewInBackgroundAndReattachWithoutBlockingInput() throws Exception {
+        for (boolean visible : List.of(false, true)) {
+            var blocked = new BlockingCall();
+            var maintenance = new ArrayDeque<Runnable>();
+            var checks = new java.util.concurrent.atomic.AtomicInteger();
+            FakeClient client = new FakeClient(activeView()) {
+                @Override
+                public boolean renewConnection() {
+                    if (checks.incrementAndGet() == 1) {
+                        throw new ProjectProductException("REMOTE_TRANSPORT_UNAVAILABLE", "Host unavailable");
+                    }
+                    blocked.block();
+                    return true;
+                }
+            };
+            var pump = new TerminalEventPump(32);
+            var reducer = new TerminalUiReducer();
+            var initial = TerminalUiState.initial(120, 40);
+            if (!visible) initial = reducer.reduce(initial, new TerminalUiAction.SidebarToggled());
+            var controller = new CodingTerminalController(
+                    PROJECT_ID,
+                    client,
+                    CodingAuthenticationClient.unavailable(),
+                    pump,
+                    reducer,
+                    initial,
+                    CodingTerminalConnectionOptions.remoteV1(),
+                    Runnable::run,
+                    Runnable::run,
+                    maintenance::add);
+            controller.open(SESSION_ID);
+            while (!maintenance.isEmpty()) maintenance.removeFirst().run();
+            controller.drainEvents();
+            controller.refreshConnection(100_000);
+            maintenance.removeFirst().run();
+            controller.drainEvents();
+            assertThat(controller.state().recoverableError()).contains("REMOTE_TRANSPORT_UNAVAILABLE");
+            controller.refreshConnection(120_000);
+            controller.refreshConnection(120_001);
+            assertThat(maintenance).hasSize(1);
+            var worker = new Thread(maintenance.removeFirst());
+            worker.start();
+            try {
+                assertThat(blocked.awaitStarted()).isTrue();
+                controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, "next task", 9));
+                pump.offer(new TerminalUiAction.TerminalResized(80, 24));
+                client.emit(event(1, new RunEventPayloads.AssistantTextDelta("generation-1", "live during renewal")));
+                controller.drainEvents();
+                controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
+                controller.refreshConnection(140_000);
+                assertThat(checks).hasValue(2);
+                assertThat(controller.state().editorBuffer()).isEqualTo("next task");
+                assertThat(controller.state().columns()).isEqualTo(80);
+                assertThat(controller.state().transcript())
+                        .anyMatch(item -> item.body().contains("live during renewal"));
+                if (!visible) {
+                    pump.offer(new TerminalUiAction.RecoverableFailure("REMOTE_OUTCOME_UNKNOWN"));
+                    controller.drainEvents();
+                }
+            } finally {
+                blocked.release();
+                worker.join(5_000);
+            }
+            controller.drainEvents();
+            assertThat(controller.state().status()).isEqualTo("Host connection restored");
+            while (!maintenance.isEmpty()) maintenance.removeFirst().run();
+            controller.drainEvents();
+            assertThat(client.reconcileCalls).isEqualTo(1);
+            if (visible) assertThat(controller.state().recoverableError()).isEmpty();
+            else assertThat(controller.state().recoverableError()).contains("REMOTE_OUTCOME_UNKNOWN");
+            assertThat(controller.state().editorBuffer()).isEqualTo("next task");
+            assertThat(client.cancelledRuns).isEmpty();
+            assertThat(client.submittedMessages).isEmpty();
+            controller.close();
+        }
+    }
+
+    @Test
     void remoteShellConfirmationAndExportIdentifyTheHostDestinationWithoutBlockingInput() throws Exception {
         var shellCall = new BlockingCall();
         var exportCall = new BlockingCall();

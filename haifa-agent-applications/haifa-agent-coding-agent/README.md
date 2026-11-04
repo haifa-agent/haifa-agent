@@ -335,3 +335,7 @@ synthesized failure stays with its source message. History remains a display pro
 `CodingSessionClient.configurationSummary()` optionally supplies safe composition-owned configuration facts
 for the environment view. Embedded clients default to an empty list; the Host adapter supplies provenance and
 safe effective-setting summaries without exposing configuration contents or credentials.
+
+`CodingSessionClient.renewConnection()` is a background composition hook. It returns true after transport
+reinitialization when the caller must reload observations; embedded clients return false. Renewal changes no
+Run ownership and never resubmits a product command.
