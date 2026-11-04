@@ -133,7 +133,9 @@ final class RemoteWireCodec {
         boolean earlier = requiredBoolean(node, "earlierHistoryAvailable");
         JsonNode next = node.get("nextBeforeSequence");
         if (next == null) {
-            return new CodingSessionHistoryPage(new AgentSessionId(requiredText(node, "sessionId")), items, earlier);
+            // Old Hosts expose only a recent window; do not advertise a cursor they cannot honor.
+            return new CodingSessionHistoryPage(
+                    new AgentSessionId(requiredText(node, "sessionId")), items, earlier, OptionalLong.empty());
         }
         return new CodingSessionHistoryPage(
                 new AgentSessionId(requiredText(node, "sessionId")),
