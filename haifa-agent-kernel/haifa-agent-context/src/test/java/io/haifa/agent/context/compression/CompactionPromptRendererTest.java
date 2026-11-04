@@ -12,6 +12,17 @@ import org.junit.jupiter.api.Test;
 class CompactionPromptRendererTest {
 
     @Test
+    void advertisedVersionMatchesTheVersionAcceptedByTheValidator() {
+        var properties = (Map<?, ?>) SemanticSummarySchema.jsonSchema().get("properties");
+        assertThat(properties.get("schemaVersion"))
+                .isEqualTo(Map.of(
+                        "type", "string", "enum", List.of(SemanticConversationSummaryV1.CURRENT_SCHEMA_VERSION)));
+        assertThat(CompactionPromptRenderer.systemPrompt())
+                .contains("Set schemaVersion to exactly \"" + SemanticConversationSummaryV1.CURRENT_SCHEMA_VERSION
+                        + "\".");
+    }
+
+    @Test
     void rendersSemanticPreviousSummaryWithoutConstructingInvalidDomainSummary() {
         SemanticConversationSummaryV1 previous = new SemanticConversationSummaryV1(
                 "v1",

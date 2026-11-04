@@ -51,7 +51,9 @@ public final class SemanticSummarySchema {
         decisionSchema.put("additionalProperties", false);
 
         Map<String, Object> rootProperties = new LinkedHashMap<>();
-        rootProperties.put("schemaVersion", Map.of("type", "string"));
+        rootProperties.put(
+                "schemaVersion",
+                Map.of("type", "string", "enum", List.of(SemanticConversationSummaryV1.CURRENT_SCHEMA_VERSION)));
         rootProperties.put("language", Map.of("type", "string"));
         rootProperties.put("goals", Map.of("type", "array", "items", Map.of("$ref", "#/$defs/SummaryItem")));
         rootProperties.put("constraints", Map.of("type", "array", "items", Map.of("$ref", "#/$defs/SummaryItem")));

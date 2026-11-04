@@ -2,6 +2,8 @@
 
 ## Unreleased - 0.1.5-SNAPSHOT
 
+- Align semantic-summary schema and instructions with the accepted v1 version.
+
 - Freeze source/representation boundaries and add a repeatable context-history scale baseline,
   including the existing pre-call failure at the active snapshot bound.
 

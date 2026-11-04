@@ -1,5 +1,8 @@
 # Haifa Agent Context
 
+Semantic summary generation constrains `schemaVersion` to the same `v1` value accepted by validation,
+both in the output JSON Schema and the compiler instructions. Unsupported versions still fail closed.
+
 ## Source and representation boundaries
 
 `ContextProvenance` carries source kind, source ID, source version and content hash. The source

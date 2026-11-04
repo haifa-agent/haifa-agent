@@ -3511,10 +3511,8 @@ class RuntimeCoreTest {
         var policy = io.haifa.agent.context.compression.CompressionPolicy.defaults()
                 .withActiveHistoryBudgetTokens(96_000)
                 .withTailTokenBounds(1000, 4000);
-        var requests = new java.util.ArrayList<io.haifa.agent.model.api.AgentChatRequest>();
         Fixture fixture = fixture(
                 call -> {
-                    requests.add(call);
                     if (call.structuredOutput().isPresent()) return ContextLifecycleHistoryFixture.summary(call);
                     return response(finalDecision("baseline completed"));
                 },
