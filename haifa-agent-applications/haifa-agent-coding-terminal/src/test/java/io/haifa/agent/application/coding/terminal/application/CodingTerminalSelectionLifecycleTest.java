@@ -51,6 +51,10 @@ class CodingTerminalSelectionLifecycleTest {
                                 "Host: /host/project", "main", "Host: /host/checkout", "feat/task")),
                 CodingTerminalConnectionOptions.remoteV1("/host/checkout"),
                 Runnable::run);
+        controller.accept(input(TerminalInput.Kind.EXECUTE_COMMAND, "/session"));
+        assertThat(controller.state().selector()).hasValueSatisfying(selector -> assertThat(selector.options())
+                .contains("No active session", "Directory: Host: /host/project", "Host workspace: /host/checkout"));
+        controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
         controller.open(SESSION_ID);
         controller.accept(input(TerminalInput.Kind.EXECUTE_COMMAND, "/session"));
         assertThat(controller.state().selector()).hasValueSatisfying(selector -> assertThat(selector.options())

@@ -1846,6 +1846,25 @@ public final class CodingTerminalController implements AutoCloseable {
                 });
     }
 
+    private List<String> workspaceSummaryOptions() {
+        List<String> options = new ArrayList<>();
+        if (!state.footer().project().isBlank()) {
+            options.add("Directory: " + state.footer().project());
+        }
+        if (!state.footer().gitBranch().isBlank()) {
+            options.add("Git branch: " + state.footer().gitBranch());
+        }
+        if (!state.footer().worktree().isBlank()) {
+            options.add("Worktree: " + state.footer().worktree());
+            options.add("Worktree branch: "
+                    + (state.footer().worktreeBranch().isBlank()
+                            ? "unavailable"
+                            : state.footer().worktreeBranch()));
+        }
+        if (!executionDestination().isBlank()) options.add(executionDestination());
+        return List.copyOf(options);
+    }
+
     private String executionDestination() {
         return connectionOptions
                 .executionLocation()
@@ -2096,25 +2115,7 @@ public final class CodingTerminalController implements AutoCloseable {
                                     options.add("Session: " + value.summary().displayName());
                                     options.add(
                                             "ID: " + value.summary().sessionId().value());
-                                    if (!state.footer().project().isBlank()) {
-                                        options.add(
-                                                "Directory: " + state.footer().project());
-                                    }
-                                    if (!state.footer().gitBranch().isBlank()) {
-                                        options.add(
-                                                "Git branch: " + state.footer().gitBranch());
-                                    }
-                                    if (!state.footer().worktree().isBlank()) {
-                                        options.add(
-                                                "Worktree: " + state.footer().worktree());
-                                        options.add("Worktree branch: "
-                                                + (state.footer()
-                                                                .worktreeBranch()
-                                                                .isBlank()
-                                                        ? "unavailable"
-                                                        : state.footer().worktreeBranch()));
-                                    }
-                                    if (!executionDestination().isBlank()) options.add(executionDestination());
+                                    options.addAll(workspaceSummaryOptions());
                                     if (!state.footer().model().isBlank()) {
                                         options.add("Model: " + state.footer().model()
                                                 + (state.footer().provider().isBlank()
@@ -2126,7 +2127,10 @@ public final class CodingTerminalController implements AutoCloseable {
                                     }
                                     options.add("Profile: " + value.productProfileRef());
                                 },
-                                () -> options.add("No active session"));
+                                () -> {
+                                    options.add("No active session");
+                                    options.addAll(workspaceSummaryOptions());
+                                });
                 apply(new TerminalUiAction.SelectorOpened(
                         new TerminalSelector("session", "Session & Environment", options, 0)));
             }
