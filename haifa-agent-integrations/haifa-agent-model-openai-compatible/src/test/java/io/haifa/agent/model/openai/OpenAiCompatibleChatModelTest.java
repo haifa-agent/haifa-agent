@@ -96,6 +96,8 @@ class OpenAiCompatibleChatModelTest {
         assertThat(actual.finishReason()).isEqualTo(ModelFinishReason.STOP);
         assertThat(actual.usage().inputTokens()).isEqualTo(12);
         assertThat(actual.usage().cacheHitTokens()).isEqualTo(3);
+        assertThat(actual.usage().cacheWriteTokens()).isEmpty();
+        assertThat(actual.usage().cacheMissTokensKnown()).isTrue();
         assertThat(actual.usage().costKnown()).isFalse();
         JsonNode sent = json.readTree(requestBody.get());
         assertThat(sent.path("model").asText()).isEqualTo("deepseek-v4-pro");

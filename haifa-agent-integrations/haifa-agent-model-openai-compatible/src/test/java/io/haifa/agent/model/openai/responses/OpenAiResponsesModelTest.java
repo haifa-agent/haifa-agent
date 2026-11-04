@@ -82,7 +82,7 @@ class OpenAiResponsesModelTest {
                  "output":[{"id":"msg-1","type":"message","role":"assistant","status":"completed",
                    "content":[{"type":"output_text","text":"ready","annotations":[]}]}],
                  "usage":{"input_tokens":12,"output_tokens":5,
-                   "input_tokens_details":{"cached_tokens":3},
+                   "input_tokens_details":{"cached_tokens":3,"cache_write_tokens":2},
                    "output_tokens_details":{"reasoning_tokens":2}}}
                 """));
         var tool = new ModelToolSpecification("lookup", "1", "Lookup", "schema", "1", Map.of("type", "object"), true);
@@ -101,6 +101,9 @@ class OpenAiResponsesModelTest {
 
         assertThat(actual.content()).isEqualTo("ready");
         assertThat(actual.usage().cacheHitTokens()).isEqualTo(3);
+        assertThat(actual.usage().inputTokens()).isEqualTo(12);
+        assertThat(actual.usage().cacheWriteTokens()).hasValue(2);
+        assertThat(actual.usage().cacheMissTokens()).isEqualTo(7);
         assertThat(actual.usage().reasoningTokens()).isEqualTo(2);
         JsonNode sent = json.readTree(requestBody.get());
         assertThat(sent.path("instructions").asText()).isEqualTo("Be concise");

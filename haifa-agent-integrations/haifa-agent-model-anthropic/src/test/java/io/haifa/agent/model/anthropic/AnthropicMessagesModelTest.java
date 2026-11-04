@@ -729,6 +729,57 @@ class AnthropicMessagesModelTest {
                 maxResponseBytes);
     }
 
+    @Test
+    void officialUsageAddsDisjointCacheLanesAndStreamingReplacesCumulativeCounts() {
+        response.set(
+                Response.json(
+                        200,
+                        """
+                {"id":"usage","type":"message","role":"assistant","model":"claude-test",
+                 "content":[{"type":"text","text":"done"}],"stop_reason":"end_turn",
+                 "usage":{"input_tokens":50,"output_tokens":7,"cache_read_input_tokens":40,"cache_creation_input_tokens":10}}
+                """));
+        var official = snapshot("anthropic", "claude-test", AnthropicMessagesDialects.STANDARD, true, "/", Map.of());
+        var usage = model().invoke(simpleRequest(official)).usage();
+        assertThat(usage.inputTokens()).isEqualTo(100);
+        assertThat(usage.cacheMissTokens()).isEqualTo(50);
+        assertThat(usage.cacheWriteTokens()).hasValue(10);
+        assertThat(usage.inputTokensKnown()).isTrue();
+        response.set(
+                Response.sse(
+                        """
+                event: message_start
+                data: {"type":"message_start","message":{"id":"usage","type":"message","model":"claude-test","content":[],"usage":{"input_tokens":50,"output_tokens":0,"cache_read_input_tokens":40,"cache_creation_input_tokens":10}}}
+
+                event: content_block_start
+                data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":"done"}}
+
+                event: content_block_stop
+                data: {"type":"content_block_stop","index":0}
+
+                event: message_delta
+                data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":50,"output_tokens":7,"cache_read_input_tokens":40,"cache_creation_input_tokens":10}}
+
+                event: message_stop
+                data: {"type":"message_stop"}
+
+                """));
+        var streamed = model().invokeStreaming(simpleRequest(official), event -> ModelStreamControl.CONTINUE)
+                .usage();
+        assertThat(streamed).isEqualTo(usage);
+        response.set(
+                Response.json(
+                        200,
+                        """
+                {"id":"usage","type":"message","role":"assistant","model":"claude-test",
+                 "content":[{"type":"text","text":"done"}],"stop_reason":"end_turn",
+                 "usage":{"input_tokens":50,"output_tokens":7,"cache_read_input_tokens":40,"cache_creation_input_tokens":10}}
+                """));
+        var compatibility =
+                model().invoke(simpleRequest(standardSnapshot(false, Map.of()))).usage();
+        assertThat(compatibility.inputTokensKnown()).isFalse();
+    }
+
     private AgentChatRequest simpleRequest(ResolvedModelSnapshot snapshot) {
         return request(snapshot, List.of(ModelMessage.text(ModelMessageRole.USER, "hello")), List.of(), Map.of());
     }

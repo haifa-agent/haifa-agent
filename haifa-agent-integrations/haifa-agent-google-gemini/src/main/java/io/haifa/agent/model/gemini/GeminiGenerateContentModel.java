@@ -850,11 +850,16 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
     }
 
     private ModelUsage usage(JsonNode node) {
-        return new ModelUsage(
-                nonNegative(node, "promptTokenCount"),
+        return ModelUsage.inclusiveInput(
+                node.hasNonNull("promptTokenCount")
+                        ? java.util.OptionalLong.of(nonNegative(node, "promptTokenCount"))
+                        : java.util.OptionalLong.empty(),
                 nonNegative(node, "candidatesTokenCount"),
-                nonNegative(node, "cachedContentTokenCount"),
-                0,
+                node.hasNonNull("cachedContentTokenCount")
+                        ? java.util.OptionalLong.of(nonNegative(node, "cachedContentTokenCount"))
+                        : java.util.OptionalLong.empty(),
+                java.util.OptionalLong.empty(),
+                java.util.OptionalLong.empty(),
                 nonNegative(node, "thoughtsTokenCount"),
                 false,
                 0);

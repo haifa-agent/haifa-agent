@@ -601,11 +601,38 @@ public final class AnthropicMessagesModel implements AgentChatModel {
     }
 
     private static ModelUsage usage(AgentChatRequest request, JsonNode usage) {
-        if (!usage.isObject()) return ModelUsage.unpriced(0, 0);
-        long input = nonNegativeLong(request, usage, "input_tokens");
+        if (!usage.isObject()) return ModelUsage.unknown();
+        var input = reportedUsage(request, usage, "input_tokens");
+        var read = reportedUsage(request, usage, "cache_read_input_tokens");
+        var write = reportedUsage(request, usage, "cache_creation_input_tokens");
         long output = nonNegativeLong(request, usage, "output_tokens");
-        long cacheRead = nonNegativeLong(request, usage, "cache_read_input_tokens");
-        return new ModelUsage(input, output, cacheRead, Math.max(0, input - cacheRead), 0, false, 0);
+        var model = request.model();
+        boolean officialClaude = "anthropic".equals(model.providerId().value())
+                && AnthropicMessagesDialects.STANDARD.equals(model.dialect());
+        boolean verifiedDeepSeek = "deepseek".equals(model.providerId().value())
+                && AnthropicMessagesDialects.DEEPSEEK.equals(model.dialect())
+                && AnthropicMessagesBindingRegistry.isAdmitted(
+                        model.providerId().value(), model.providerModelId(), model.apiStyle(), model.dialect());
+        if (officialClaude || verifiedDeepSeek) return ModelUsage.exclusiveInput(input, output, read, write);
+        // A compatible API style alone does not establish whether cache lanes are additive.
+        return new ModelUsage(
+                input.orElse(0),
+                output,
+                read.orElse(0),
+                Math.max(0, input.orElse(0) - read.orElse(0)),
+                0,
+                false,
+                0,
+                write,
+                false,
+                read.isPresent(),
+                false);
+    }
+
+    private static java.util.OptionalLong reportedUsage(AgentChatRequest request, JsonNode usage, String field) {
+        return usage.hasNonNull(field)
+                ? java.util.OptionalLong.of(nonNegativeLong(request, usage, field))
+                : java.util.OptionalLong.empty();
     }
 
     private AgentChatResponse parseStream(
@@ -655,9 +682,7 @@ public final class AnthropicMessagesModel implements AgentChatModel {
         private String id;
         private String model;
         private String stopReason;
-        private long inputTokens;
-        private long outputTokens;
-        private long cacheReadTokens;
+        private final com.fasterxml.jackson.databind.node.ObjectNode reportedUsage = json.createObjectNode();
 
         private StreamState(AgentChatRequest request, AnthropicMessagesDialect dialect, ModelStreamSink sink) {
             this.request = request;
@@ -703,8 +728,7 @@ public final class AnthropicMessagesModel implements AgentChatModel {
             if (!message.isObject()) throw malformed(request, "message_start is missing its Message");
             id = text(message, "id", true);
             model = optionalText(message, "model", request.model().providerModelId());
-            inputTokens = nonNegativeLong(request, message.path("usage"), "input_tokens");
-            cacheReadTokens = nonNegativeLong(request, message.path("usage"), "cache_read_input_tokens");
+            mergeUsage(message.path("usage"));
             started = true;
             emit(new ModelStreamEvent.Started(request.callId(), ++emittedIndex));
         }
@@ -801,11 +825,7 @@ public final class AnthropicMessagesModel implements AgentChatModel {
             JsonNode delta = event.path("delta");
             stopReason = text(delta, "stop_reason", true);
             JsonNode usage = event.path("usage");
-            outputTokens = nonNegativeLong(request, usage, "output_tokens");
-            long reportedInput = nonNegativeLong(request, usage, "input_tokens");
-            if (reportedInput > 0) inputTokens = reportedInput;
-            long reportedCache = nonNegativeLong(request, usage, "cache_read_input_tokens");
-            if (reportedCache > 0) cacheReadTokens = reportedCache;
+            mergeUsage(usage);
         }
 
         private void messageStop() {
@@ -886,15 +906,15 @@ public final class AnthropicMessagesModel implements AgentChatModel {
                     request, id, model, parsed, finishReason(request, stopReason, calls), currentUsage(), stopReason);
         }
 
+        private void mergeUsage(JsonNode usage) {
+            for (String field : java.util.List.of(
+                    "input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")) {
+                if (usage.hasNonNull(field)) reportedUsage.put(field, nonNegativeLong(request, usage, field));
+            }
+        }
+
         private ModelUsage currentUsage() {
-            return new ModelUsage(
-                    inputTokens,
-                    outputTokens,
-                    cacheReadTokens,
-                    Math.max(0, inputTokens - cacheReadTokens),
-                    0,
-                    false,
-                    0);
+            return usage(request, reportedUsage);
         }
 
         private ModelInvocationException streamFailure(JsonNode event) {
