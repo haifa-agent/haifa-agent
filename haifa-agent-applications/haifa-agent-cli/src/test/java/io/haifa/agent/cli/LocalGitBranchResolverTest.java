@@ -20,21 +20,7 @@ class LocalGitBranchResolverTest {
                         directory.toAbsolutePath().normalize().toString())
                 .containsEntry("gitBranch", "")
                 .containsEntry("worktree", "");
-        var metadata = new io.haifa.agent.cli.remote.RemoteCodingWorkspaceInfo(
-                wire.get("workingDirectory"),
-                wire.get("gitBranch"),
-                wire.get("worktree"),
-                wire.get("worktreeBranch"),
-                wire.get("executionDirectory"));
-        var info = new io.haifa.agent.cli.remote.RemoteCodingClientInfo(
-                "1",
-                "host",
-                new io.haifa.agent.project.domain.ProjectId("project-1"),
-                "client-1",
-                "local-user",
-                java.util.Set.of(),
-                java.util.Set.of(),
-                java.util.Optional.of(metadata));
+        var info = remoteInfo(wire);
         var context = RemoteCodingTerminalRunner.workspaceContext(info);
         assertThat(context.workingDirectory())
                 .isEqualTo("Host: " + directory.toAbsolutePath().normalize());
@@ -96,5 +82,27 @@ class LocalGitBranchResolverTest {
                 .containsEntry("worktree", worktree.toString())
                 .containsEntry("worktreeBranch", "feat/worktree-branch")
                 .containsEntry("executionDirectory", worktree.toString());
+        Files.writeString(wtMetadata.resolve("HEAD"), "0123456789abcdef\n");
+        var detached = RemoteCodingTerminalRunner.workspaceContext(remoteInfo(CodingHostWorkspace.summary(worktree)));
+        assertThat(detached.worktreeBranch()).contains("unavailable");
+    }
+
+    private static io.haifa.agent.cli.remote.RemoteCodingClientInfo remoteInfo(java.util.Map<String, String> wire) {
+        var metadata = new io.haifa.agent.cli.remote.RemoteCodingWorkspaceInfo(
+                wire.get("workingDirectory"),
+                wire.get("gitBranch"),
+                wire.get("worktree"),
+                wire.get("worktreeBranch"),
+                wire.get("executionDirectory"));
+        var info = new io.haifa.agent.cli.remote.RemoteCodingClientInfo(
+                "1",
+                "host",
+                new io.haifa.agent.project.domain.ProjectId("project-1"),
+                "client-1",
+                "local-user",
+                java.util.Set.of(),
+                java.util.Set.of(),
+                java.util.Optional.of(metadata));
+        return info;
     }
 }

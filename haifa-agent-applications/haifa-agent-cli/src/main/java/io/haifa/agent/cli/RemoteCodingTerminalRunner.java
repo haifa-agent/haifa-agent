@@ -73,7 +73,11 @@ final class RemoteCodingTerminalRunner implements CliRemoteTerminalRunner {
                         "Host: " + value.workingDirectory(),
                         value.gitBranch().isBlank() ? "unavailable (non-Git or detached)" : value.gitBranch(),
                         value.worktree().isBlank() ? "" : "Host: " + value.worktree(),
-                        value.worktreeBranch().isBlank() ? "" : value.worktreeBranch()))
+                        value.worktree().isBlank()
+                                ? ""
+                                : value.worktreeBranch().isBlank()
+                                        ? "unavailable (detached or unreadable)"
+                                        : value.worktreeBranch()))
                 .orElseGet(() -> new TerminalWorkspaceContext(
                         "Host workspace unavailable (older Host)", "Git metadata unavailable", "", ""));
     }
