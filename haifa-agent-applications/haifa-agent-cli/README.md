@@ -899,3 +899,11 @@ The optional `initialize.workspaceContext` is a bounded display snapshot of the 
 workspace and Git/worktree metadata. Remote TUI composition maps it into existing environment surfaces and
 labels Shell/export destinations; it never resolves the client's current directory or Git metadata.
 Older Hosts and non-Git/detached checkouts use explicit unavailable fallbacks.
+
+## Host configuration provenance
+
+Host startup and the remote `/session` panel show a bounded summary of the selected configuration source,
+workspace-overlay policy, effective approval mode/threshold for new Runs and configured tool/model counts.
+The Host ignores implicit repository overlays. Use `host --config <trusted-file>` to select a trusted repository
+file explicitly; it replaces implicit user/workspace inputs and must include durable SQLite configuration.
+The summary exposes neither file contents nor credential values. Older Hosts show an unavailable fallback.
