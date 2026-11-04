@@ -691,7 +691,7 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
     }
 
     private AgentChatResponse response(AgentChatRequest request, JsonNode root, ParsedCandidate parsed) {
-        ModelUsage usage = usage(root.path("usageMetadata"));
+        ModelUsage usage = usage(request, root.path("usageMetadata"));
         Optional<Map<String, Object>> structured = Optional.empty();
         if (request.structuredOutput().isPresent() && parsed.calls().isEmpty()) {
             try {
@@ -849,20 +849,32 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
         }
     }
 
-    private ModelUsage usage(JsonNode node) {
-        return ModelUsage.inclusiveInput(
-                node.hasNonNull("promptTokenCount")
-                        ? java.util.OptionalLong.of(nonNegative(node, "promptTokenCount"))
-                        : java.util.OptionalLong.empty(),
-                nonNegative(node, "candidatesTokenCount"),
-                node.hasNonNull("cachedContentTokenCount")
-                        ? java.util.OptionalLong.of(nonNegative(node, "cachedContentTokenCount"))
-                        : java.util.OptionalLong.empty(),
-                java.util.OptionalLong.empty(),
-                java.util.OptionalLong.empty(),
-                nonNegative(node, "thoughtsTokenCount"),
-                false,
-                0);
+    private ModelUsage usage(AgentChatRequest request, JsonNode node) {
+        try {
+            return ModelUsage.inclusiveInput(
+                    node.hasNonNull("promptTokenCount")
+                            ? java.util.OptionalLong.of(nonNegative(node, "promptTokenCount"))
+                            : java.util.OptionalLong.empty(),
+                    nonNegative(node, "candidatesTokenCount"),
+                    node.hasNonNull("cachedContentTokenCount")
+                            ? java.util.OptionalLong.of(nonNegative(node, "cachedContentTokenCount"))
+                            : java.util.OptionalLong.empty(),
+                    java.util.OptionalLong.empty(),
+                    java.util.OptionalLong.empty(),
+                    nonNegative(node, "thoughtsTokenCount"),
+                    false,
+                    0);
+
+        } catch (IllegalArgumentException | ArithmeticException invalidUsage) {
+            throw failure(
+                    request,
+                    ModelErrorCategory.MALFORMED_RESPONSE,
+                    false,
+                    200,
+                    "invalid_usage",
+                    "invalid input usage",
+                    null);
+        }
     }
 
     private static long nonNegative(JsonNode node, String field) {
@@ -1222,7 +1234,7 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
                     text.toString(),
                     calls,
                     calls.isEmpty() ? finishReason(finish) : ModelFinishReason.TOOL_CALLS,
-                    adapter.usage(usage == null ? json.createObjectNode() : usage),
+                    adapter.usage(request, usage == null ? json.createObjectNode() : usage),
                     "",
                     Map.of("provider", "google-gemini", "candidateIndex", 0),
                     continuation,

@@ -1,5 +1,13 @@
 # Haifa Agent Anthropic Model Integration
 
+## Input accounting
+
+Official `anthropic` / `standard` bindings and registry-admitted DeepSeek Anthropic bindings use
+exclusive uncached input: total = input + cache read + cache creation. Missing fields remain unknown.
+Other compatible providers retain their reported lanes without asserting Claude total semantics.
+Streaming usage snapshots replace cumulative fields, including explicit zeros; they are never added
+together. This change does not enable prompt caching or add cache markers.
+
 `haifa-agent-model-anthropic` 是 Haifa Agent 的 Anthropic Messages (`/v1/messages`) 协议独立适配器模块。它负责 Anthropic 协议下的请求构建、Content Block 映射、Named SSE 事件聚合、流式 Token Usage 提取、Thinking Continuation 状态维护以及方言治理。
 
 `AgentChatRequest.maxOutputTokens` 映射为 Anthropic Messages 的 `max_tokens`。流式响应仍以 Provider 的

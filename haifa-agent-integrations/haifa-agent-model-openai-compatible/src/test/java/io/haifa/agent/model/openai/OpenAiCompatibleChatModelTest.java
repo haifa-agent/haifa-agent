@@ -108,6 +108,25 @@ class OpenAiCompatibleChatModelTest {
     }
 
     @Test
+    void explicitZeroCacheReadWinsOverFallbackAndMissingWritesRemainUnknown() {
+        response.set(
+                Response.json(
+                        200,
+                        """
+                {"id":"zero","model":"deepseek-v4-pro",
+                 "choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"ok"}}],
+                 "usage":{"prompt_tokens":12,"completion_tokens":1,"prompt_cache_hit_tokens":0,
+                          "prompt_tokens_details":{"cached_tokens":7}}}
+                """));
+        var usage = model().invoke(request(List.of(ModelMessage.text(ModelMessageRole.USER, "hello")), List.of()))
+                .usage();
+        assertThat(usage.cacheHitTokensKnown()).isTrue();
+        assertThat(usage.cacheHitTokens()).isZero();
+        assertThat(usage.cacheWriteTokens()).isEmpty();
+        assertThat(usage.cacheMissTokensKnown()).isFalse();
+    }
+
+    @Test
     void sendsStandardOpenAiChatCompletionsRequestWithoutVendorExtensions() throws Exception {
         provider = openAiProvider(
                 URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/v1"));

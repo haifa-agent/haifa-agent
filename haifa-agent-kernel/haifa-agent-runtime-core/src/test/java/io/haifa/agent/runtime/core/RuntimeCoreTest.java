@@ -3450,6 +3450,18 @@ class RuntimeCoreTest {
                 assertThat(diagnostics)
                         .extracting(event -> event.data().get("callKind"))
                         .containsExactly("SUMMARY", "SUMMARY_REGENERATION", "ORDINARY");
+            var usageEvents = fixture.store.eventsFor(run.id()).stream()
+                    .filter(event -> event.type().equals("model.usage-accounted"))
+                    .toList();
+            assertThat(usageEvents.size()).isEqualTo(enabled ? 3 : 0);
+            if (enabled) {
+                assertThat(usageEvents)
+                        .extracting(event -> event.data().get("callKind"))
+                        .containsExactly("SUMMARY", "SUMMARY_REGENERATION", "ORDINARY");
+                assertThat(usageEvents).allSatisfy(event -> assertThat(event.data())
+                        .containsEntry("cacheWriteTokens", "UNKNOWN")
+                        .containsEntry("costWeightedInput", "UNAVAILABLE"));
+            }
             captured.add(requests);
         }
         for (int i = 0; i < 3; i++) {

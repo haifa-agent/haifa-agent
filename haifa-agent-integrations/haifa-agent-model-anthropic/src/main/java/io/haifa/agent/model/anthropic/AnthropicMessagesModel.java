@@ -601,32 +601,37 @@ public final class AnthropicMessagesModel implements AgentChatModel {
     }
 
     private static ModelUsage usage(AgentChatRequest request, JsonNode usage) {
-        if (!usage.isObject()) return ModelUsage.unknown();
-        var input = reportedUsage(request, usage, "input_tokens");
-        var read = reportedUsage(request, usage, "cache_read_input_tokens");
-        var write = reportedUsage(request, usage, "cache_creation_input_tokens");
-        long output = nonNegativeLong(request, usage, "output_tokens");
-        var model = request.model();
-        boolean officialClaude = "anthropic".equals(model.providerId().value())
-                && AnthropicMessagesDialects.STANDARD.equals(model.dialect());
-        boolean verifiedDeepSeek = "deepseek".equals(model.providerId().value())
-                && AnthropicMessagesDialects.DEEPSEEK.equals(model.dialect())
-                && AnthropicMessagesBindingRegistry.isAdmitted(
-                        model.providerId().value(), model.providerModelId(), model.apiStyle(), model.dialect());
-        if (officialClaude || verifiedDeepSeek) return ModelUsage.exclusiveInput(input, output, read, write);
-        // A compatible API style alone does not establish whether cache lanes are additive.
-        return new ModelUsage(
-                input.orElse(0),
-                output,
-                read.orElse(0),
-                Math.max(0, input.orElse(0) - read.orElse(0)),
-                0,
-                false,
-                0,
-                write,
-                false,
-                read.isPresent(),
-                false);
+        try {
+            if (!usage.isObject()) return ModelUsage.unknown();
+            var input = reportedUsage(request, usage, "input_tokens");
+            var read = reportedUsage(request, usage, "cache_read_input_tokens");
+            var write = reportedUsage(request, usage, "cache_creation_input_tokens");
+            long output = nonNegativeLong(request, usage, "output_tokens");
+            var model = request.model();
+            boolean officialClaude = "anthropic".equals(model.providerId().value())
+                    && AnthropicMessagesDialects.STANDARD.equals(model.dialect());
+            boolean verifiedDeepSeek = "deepseek".equals(model.providerId().value())
+                    && AnthropicMessagesDialects.DEEPSEEK.equals(model.dialect())
+                    && AnthropicMessagesBindingRegistry.isAdmitted(
+                            model.providerId().value(), model.providerModelId(), model.apiStyle(), model.dialect());
+            if (officialClaude || verifiedDeepSeek) return ModelUsage.exclusiveInput(input, output, read, write);
+            // A compatible API style alone does not establish whether cache lanes are additive.
+            return new ModelUsage(
+                    input.orElse(0),
+                    output,
+                    read.orElse(0),
+                    Math.max(0, input.orElse(0) - read.orElse(0)),
+                    0,
+                    false,
+                    0,
+                    write,
+                    false,
+                    read.isPresent(),
+                    false);
+
+        } catch (IllegalArgumentException | ArithmeticException invalidUsage) {
+            throw malformed(request, "invalid input usage");
+        }
     }
 
     private static java.util.OptionalLong reportedUsage(AgentChatRequest request, JsonNode usage, String field) {

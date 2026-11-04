@@ -892,46 +892,61 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
     }
 
     private ModelUsage parseUsage(AgentChatRequest request, JsonNode usage) {
-        if (!usage.isObject()) {
+        try {
+            if (!usage.isObject()) {
+                throw failure(
+                        request,
+                        ModelErrorCategory.MALFORMED_RESPONSE,
+                        false,
+                        200,
+                        "missing_usage",
+                        "provider response is missing token usage",
+                        null);
+            }
+            long directCacheHit = nonNegativeLong(request, usage, "prompt_cache_hit_tokens", false);
+            long standardCached = nonNegativeLong(request, usage.path("prompt_tokens_details"), "cached_tokens", false);
+            // The Console gateway also reports billed tokens and a priced cost under a namespaced usage extension.
+            JsonNode consoleTokens = usage.path("opencode").path("tokens");
+            long consoleCacheRead = nonNegativeLong(request, consoleTokens, "cache_read", false);
+            long cacheHitTokens = usage.hasNonNull("prompt_cache_hit_tokens")
+                    ? directCacheHit
+                    : usage.path("prompt_tokens_details").hasNonNull("cached_tokens")
+                            ? standardCached
+                            : consoleCacheRead;
+            long reasoningTokens =
+                    nonNegativeLong(request, usage.path("completion_tokens_details"), "reasoning_tokens", false);
+            if (reasoningTokens == 0) reasoningTokens = nonNegativeLong(request, consoleTokens, "reasoning", false);
+            java.util.OptionalLong costMinorUnits = consoleCostMinorUnits(request, usage);
+            var details = usage.path("prompt_tokens_details");
+            boolean readKnown = usage.hasNonNull("prompt_cache_hit_tokens")
+                    || details.hasNonNull("cached_tokens")
+                    || consoleTokens.hasNonNull("cache_read");
+            var writes = details.hasNonNull("cache_write_tokens")
+                    ? java.util.OptionalLong.of(nonNegativeLong(request, details, "cache_write_tokens", false))
+                    : java.util.OptionalLong.empty();
+            return ModelUsage.inclusiveInput(
+                    java.util.OptionalLong.of(nonNegativeLong(request, usage, "prompt_tokens", true)),
+                    nonNegativeLong(request, usage, "completion_tokens", true),
+                    readKnown ? java.util.OptionalLong.of(cacheHitTokens) : java.util.OptionalLong.empty(),
+                    writes,
+                    usage.hasNonNull("prompt_cache_miss_tokens")
+                            ? java.util.OptionalLong.of(
+                                    nonNegativeLong(request, usage, "prompt_cache_miss_tokens", false))
+                            : java.util.OptionalLong.empty(),
+                    reasoningTokens,
+                    costMinorUnits.isPresent(),
+                    costMinorUnits.orElse(0));
+
+        } catch (IllegalArgumentException | ArithmeticException invalidUsage) {
             throw failure(
                     request,
                     ModelErrorCategory.MALFORMED_RESPONSE,
                     false,
                     200,
-                    "missing_usage",
-                    "provider response is missing token usage",
+                    "invalid_usage",
+                    "invalid input usage",
                     null);
         }
-        long directCacheHit = nonNegativeLong(request, usage, "prompt_cache_hit_tokens", false);
-        long standardCached = nonNegativeLong(request, usage.path("prompt_tokens_details"), "cached_tokens", false);
-        // The Console gateway also reports billed tokens and a priced cost under a namespaced usage extension.
-        JsonNode consoleTokens = usage.path("opencode").path("tokens");
-        long consoleCacheRead = nonNegativeLong(request, consoleTokens, "cache_read", false);
-        long cacheHitTokens = usage.hasNonNull("prompt_cache_hit_tokens")
-                ? directCacheHit
-                : usage.path("prompt_tokens_details").hasNonNull("cached_tokens") ? standardCached : consoleCacheRead;
-        long reasoningTokens =
-                nonNegativeLong(request, usage.path("completion_tokens_details"), "reasoning_tokens", false);
-        if (reasoningTokens == 0) reasoningTokens = nonNegativeLong(request, consoleTokens, "reasoning", false);
-        java.util.OptionalLong costMinorUnits = consoleCostMinorUnits(request, usage);
-        var details = usage.path("prompt_tokens_details");
-        boolean readKnown = usage.hasNonNull("prompt_cache_hit_tokens")
-                || details.hasNonNull("cached_tokens")
-                || consoleTokens.hasNonNull("cache_read");
-        var writes = details.hasNonNull("cache_write_tokens")
-                ? java.util.OptionalLong.of(nonNegativeLong(request, details, "cache_write_tokens", false))
-                : java.util.OptionalLong.empty();
-        return ModelUsage.inclusiveInput(
-                java.util.OptionalLong.of(nonNegativeLong(request, usage, "prompt_tokens", true)),
-                nonNegativeLong(request, usage, "completion_tokens", true),
-                readKnown ? java.util.OptionalLong.of(cacheHitTokens) : java.util.OptionalLong.empty(),
-                writes,
-                usage.hasNonNull("prompt_cache_miss_tokens")
-                        ? java.util.OptionalLong.of(nonNegativeLong(request, usage, "prompt_cache_miss_tokens", false))
-                        : java.util.OptionalLong.empty(),
-                reasoningTokens,
-                costMinorUnits.isPresent(),
-                costMinorUnits.orElse(0));
     }
 
     /**

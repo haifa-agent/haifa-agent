@@ -18,6 +18,11 @@ public record CompactionEvaluationOutcome(
     public static final CompactionEvaluationOutcome NONE =
             new CompactionEvaluationOutcome(null, false, 0L, 0L, 0L, 0, 0.0, 0L, false);
 
+    /** Previous summary's share of summary input; unrelated to any Provider cache. */
+    public double previousSummaryInputShare() {
+        return compactionSummaryCacheHitRate;
+    }
+
     public String semanticCompactionReason() {
         return triggerReason != null ? triggerReason.name() : "NONE";
     }

@@ -149,6 +149,9 @@ public final class SummaryModelInvoker {
         // 8. Invoke outside of DB transaction
         AgentChatResponse response = binding.chatModel().invoke(request);
 
+        io.haifa.agent.runtime.core.model.ModelInputAccounting.recordUsage(
+                events, time, binding, request, isRepair ? "SUMMARY_REGENERATION" : "SUMMARY", response.usage());
+
         // 9. Account for tokens and cost (must record usage even if finishReason != STOP)
         if (response.usage() != null) {
             transitions.usage(

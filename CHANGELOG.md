@@ -2,6 +2,9 @@
 
 ## Unreleased - 0.1.5-SNAPSHOT
 
+- Normalize Provider input and cache write usage with explicit unknown fields, per-call usage diagnostics,
+  optional exact-model price evidence, and a correctly named previous-summary input share.
+
 - Model requests now expose optional aggregate input composition for ordinary, summary and regeneration calls,
   separating visible estimates from unknown Provider overhead without recording request bodies.
 

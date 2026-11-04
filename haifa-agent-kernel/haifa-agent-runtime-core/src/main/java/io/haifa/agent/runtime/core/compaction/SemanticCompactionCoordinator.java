@@ -280,6 +280,7 @@ public final class SemanticCompactionCoordinator {
             eventData.put(
                     "omittedToolResultCount", projectionPlan.prunedToolResults().size());
             eventData.put("compactionSummaryCacheHitRate", 0.0);
+            eventData.put("previousSummaryInputShare", 0.0);
             eventData.put("compactionEvaluationElapsedMillis", elapsed);
             eventData.put("rawActiveTokens", beforeTokens);
             eventData.put("projectedActiveTokens", afterTokens);
@@ -647,6 +648,7 @@ public final class SemanticCompactionCoordinator {
             data.put("omittedToolPayloadTokens", 0L);
             data.put("omittedToolResultCount", 0);
             data.put("compactionSummaryCacheHitRate", cacheHitRate);
+            data.put("previousSummaryInputShare", cacheHitRate);
             data.put("compactionEvaluationElapsedMillis", elapsed);
             data.put("failureCategory", category);
             data.put("validationErrorCode", errorCode);
@@ -1005,6 +1007,7 @@ public final class SemanticCompactionCoordinator {
             data.put("omittedToolPayloadTokens", 0L);
             data.put("omittedToolResultCount", 0);
             data.put("compactionSummaryCacheHitRate", cacheHitRate);
+            data.put("previousSummaryInputShare", cacheHitRate);
             data.put("compactionEvaluationElapsedMillis", elapsedMillis(startNanos));
             data.put("physicalCalls", physicalCalls);
             data.put("estimatedTokens", estimatedTokens);

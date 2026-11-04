@@ -1,5 +1,11 @@
 # Google Gemini Integration
 
+## Input accounting
+
+`generateContent` prompt totals include `cachedContentTokenCount`. Missing total/read fields and
+unreported cache writes remain unknown; usage from the newer Interactions API is not assumed to
+describe this adapter. Cache configuration and Provider requests are unchanged.
+
 Pure Java adapter for the official Gemini `generateContent` protocol. The `standard` binding accepts only Google's
 official HTTPS endpoint and `x-goog-api-key`; the `antigravity-direct` dialect accepts the governed CloudCode PA API
 Prod or Daily endpoint (`https://cloudcode-pa.googleapis.com/v1internal` or

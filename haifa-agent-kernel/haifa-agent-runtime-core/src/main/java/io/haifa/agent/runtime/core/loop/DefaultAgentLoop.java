@@ -357,6 +357,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                                     "forcedRebuildAttempt",
                                     built.context().report().forcedRebuildAttempt()),
                             Map.entry("semanticCompactionReason", compactionOutcome.semanticCompactionReason()),
+                            Map.entry("previousSummaryInputShare", compactionOutcome.previousSummaryInputShare()),
                             Map.entry("tier1PruningBypassedSummary", compactionOutcome.tier1PruningBypassedSummary()),
                             Map.entry(
                                     "projectedActiveHistoryTokensBefore",

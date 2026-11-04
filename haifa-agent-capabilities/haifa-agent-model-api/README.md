@@ -1,5 +1,15 @@
 # Haifa Agent Model API
 
+## Input usage semantics
+
+`ModelUsage` retains the seven-argument constructor. New adapters expose field presence through
+`inputTokensKnown`, `cacheHitTokensKnown`, `cacheMissTokensKnown` and optional `cacheWriteTokens`.
+Unknown numeric lanes retain a compatibility floor; they are not reported zero usage. An incomplete
+exclusive total is the sum of reported lanes and is marked unknown. `unpriced` knows the total only.
+Inclusive totals already contain cache reads/writes; exclusive uncached totals add all three lanes.
+`costWeightedInput` requires all three lanes and exact current model price ratios; missing evidence
+returns unavailable. It is a relative input metric, separate from Provider-reported monetary cost.
+
 ## Binding profiles and effective parameters
 
 `ModelBindingProfile` is the provider-neutral, versioned capability and execution contract for one exact model
