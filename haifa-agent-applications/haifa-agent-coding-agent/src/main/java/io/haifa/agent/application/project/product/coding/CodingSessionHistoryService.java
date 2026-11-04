@@ -116,9 +116,9 @@ public final class CodingSessionHistoryService {
         // Keep a synthesized failure beside its source message: continuation is at message-sequence boundaries.
         OptionalLong next = earlier
                 ? OptionalLong.of(
-                        projected.isEmpty()
+                        visible.isEmpty()
                                 ? cursor.value() + 1
-                                : projected.getFirst().sequence())
+                                : visible.getFirst().sequence())
                 : OptionalLong.empty();
         return new CodingSessionHistoryPage(sessionId, projected, earlier, next);
     }
