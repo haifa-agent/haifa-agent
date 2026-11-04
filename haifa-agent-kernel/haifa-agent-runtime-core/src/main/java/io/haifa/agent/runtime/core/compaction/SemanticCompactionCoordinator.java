@@ -199,16 +199,8 @@ public final class SemanticCompactionCoordinator {
                         .filter(this::visibleToContext)
                         .toList()
                 : activeSnapshot.activeMessages();
-        if (visible.size() < 2) {
-            return CompactionEvaluationOutcome.untriggered(0L, elapsedMillis(startNanos));
-        }
-
         List<List<AgentMessage>> groups =
                 activeSnapshot == null ? atomicGroups(visible) : activeSnapshot.atomicGroups();
-        if (groups.size() < 2) {
-            return CompactionEvaluationOutcome.untriggered(0L, elapsedMillis(startNanos));
-        }
-
         SummarySnapshot summarySnapshot = activeSnapshot == null ? summaries.latestSnapshot(run.sessionId()) : null;
         Optional<ConversationSummary> previousSummary =
                 activeSnapshot == null ? summarySnapshot.latestValid() : activeSnapshot.summary();
@@ -242,6 +234,23 @@ public final class SemanticCompactionCoordinator {
         CompactionTriggerDecision decision = triggerEvaluator.evaluate(
                 contextWindow, outputReserve, fixedPrefix, otherSources, currentTokens, activeGroups.size());
         if (!decision.shouldCompact()) {
+            ContextBudgetBreakdown budget = decision.budgetBreakdown();
+            boolean hasActiveTarget =
+                    policy.activeHistoryBudgetTokens().isPresent() || policy.activeHistoryBudgetPercent() > 0;
+            if (activeGroups.size() < 2
+                    && hasActiveTarget
+                    && budget.softLimitTokens()
+                            < Math.max(0L, budget.availableSessionTokens() - budget.triggerHeadroomTokens())) {
+                // Too few source turns cannot authorize retaining an oversized prior summary in a new Run.
+                invoker.checkControl(run);
+                List<AgentMessage> active =
+                        activeGroups.stream().flatMap(List::stream).toList();
+                long projected = previousSummary
+                                .map(ConversationSummary::estimatedTokens)
+                                .orElse(0)
+                        + projectionPlanner.plan(active, resolver).projectedActiveTokens();
+                requireWithinRetention(projected, budget);
+            }
             return CompactionEvaluationOutcome.untriggered(currentTokens, elapsedMillis(startNanos));
         }
 

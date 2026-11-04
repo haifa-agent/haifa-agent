@@ -959,6 +959,64 @@ class SemanticCompactionFailureTest {
                 .containsExactly(new TextPart("REQUIRED_ITEM_33", "plain"));
     }
 
+    @Test
+    void aLargePriorSummaryCannotBypassRetentionWithOnlyOneNewInputGroup() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AtomicInteger ids = new AtomicInteger();
+        AgentRun previous = CompactionTestSupport.createRun(store, ids);
+        var source = store.initiatingUserMessage(previous.id()).orElseThrow();
+        var policy = CompressionPolicy.defaults().withActiveHistoryBudgetTokens(1000);
+        var compressor = new DeterministicContextCompressor();
+        var seed = compressor
+                .compress(new io.haifa.agent.context.compression.CompressionRequest(
+                        new SummaryId("prior-summary"),
+                        new io.haifa.agent.context.compression.SummaryVersion(1),
+                        previous.sessionId(),
+                        List.of(source),
+                        32,
+                        NOW,
+                        policy.version()))
+                .summary();
+        store.compareAndSet(
+                new ConversationSummary(
+                        seed.id(),
+                        seed.version(),
+                        seed.sessionId(),
+                        seed.coveredFrom(),
+                        seed.coveredThrough(),
+                        seed.sourceMessageIds(),
+                        seed.sourceHash(),
+                        List.of("x".repeat(4500)),
+                        List.of(),
+                        List.of(),
+                        List.of(),
+                        1500,
+                        NOW,
+                        seed.policyVersion(),
+                        seed.compressorVersion(),
+                        seed.securityLabels(),
+                        true),
+                0);
+        AgentRun next = CompactionTestSupport.createRun(store, ids);
+        SemanticCompactionCoordinator coordinator =
+                coordinator(store, () -> "unused-" + ids.incrementAndGet(), new RunControlRegistry(), policy);
+        AtomicInteger calls = new AtomicInteger();
+        assertThatThrownBy(() -> coordinator.evaluateAndCompactIfNeeded(
+                        next,
+                        1,
+                        bindingWithContextWindow(
+                                store,
+                                next,
+                                request -> {
+                                    calls.incrementAndGet();
+                                    return validSummaryResponse();
+                                },
+                                100_000)))
+                .isInstanceOf(ContextBuildException.class);
+        assertThat(calls).hasValue(0);
+        assertThat(store.latestVersion(next.sessionId())).isEqualTo(1);
+    }
+
     private static CompressionPolicy physicalCalls(int maximum) {
         CompressionPolicy p = CompressionPolicy.defaults();
         return new CompressionPolicy(
