@@ -38,6 +38,27 @@ class RemoteCodingSessionClientTest {
     private static final long NOW = 1_700_000_000_123L;
 
     @Test
+    void oldHostsNeedNoOptionalResponseAndUnrequestedSelectionsAreRejected() throws Exception {
+        var initialized = FakeCodingHost.JSON.valueToTree(FakeCodingHost.initializeResult("client-1", "project-1"));
+        try (FakeCodingHost host = FakeCodingHost.start(call -> FakeCodingHost.Reply.result(initialized))) {
+            try (var client = RemoteCodingSessionClient.connect(host.uri())) {
+                assertThat(client.info().optionalCapabilities()).isEmpty();
+                assertThat(host.calls("initialize")
+                                .getFirst()
+                                .params()
+                                .path("optionalCapabilities")
+                                .isArray())
+                        .isTrue();
+            }
+            ((com.fasterxml.jackson.databind.node.ObjectNode) initialized)
+                    .putArray("optionalCapabilities")
+                    .add("unrequested-v1");
+            assertThatThrownBy(() -> RemoteCodingSessionClient.connect(host.uri()))
+                    .satisfies(thrown -> assertProductCode(thrown, "REMOTE_PROTOCOL_INCOMPATIBLE"));
+        }
+    }
+
+    @Test
     void statusFailureAfterShellAdmissionRemainsAnUnknownExecutionOutcome() throws Exception {
         var initialized = FakeCodingHost.JSON.valueToTree(FakeCodingHost.initializeResult("client-1", "project-1"));
         ((com.fasterxml.jackson.databind.node.ObjectNode) initialized.path("capabilities"))

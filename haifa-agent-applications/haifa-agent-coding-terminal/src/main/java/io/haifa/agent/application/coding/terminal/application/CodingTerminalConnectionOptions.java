@@ -51,11 +51,39 @@ public final class CodingTerminalConnectionOptions {
 
     /** Remote display-only execution root, supplied by the Host; never resolved by the terminal. */
     public static CodingTerminalConnectionOptions remoteV1(String executionLocation) {
-        if (executionLocation == null || executionLocation.isBlank()) return REMOTE_V1;
-        if (executionLocation.length() > 4096 || executionLocation.codePoints().anyMatch(Character::isISOControl)) {
+        return remoteV1(executionLocation, false);
+    }
+
+    /** Only implemented, explicitly negotiated preview support may enable this observation lane. */
+    public static CodingTerminalConnectionOptions remoteV1(String executionLocation, boolean previewEnabled) {
+        String location = executionLocation == null || executionLocation.isBlank()
+                ? "unavailable (older Host)"
+                : executionLocation;
+        if (location.length() > 4096 || location.codePoints().anyMatch(Character::isISOControl)) {
             throw new IllegalArgumentException("Invalid execution location display value");
         }
-        return new CodingTerminalConnectionOptions(false, false, false, Optional.of(executionLocation));
+        return new CodingTerminalConnectionOptions(previewEnabled, false, false, Optional.of(location));
+    }
+
+    public Optional<String> unavailableReason(String command) {
+        if (command.equals("/connect") && !credentialSetupEnabled) {
+            return Optional.of(
+                    "Credential setup is unavailable in this remote UI; manage credentials on the trusted Host");
+        }
+        return Optional.empty();
+    }
+
+    public String commandLabel(String command) {
+        Optional<String> unavailable = unavailableReason(command);
+        if (unavailable.isPresent()) return command + " · unavailable: " + unavailable.orElseThrow();
+        if (executionLocation.isEmpty()) return command;
+        if (command.equals("/approval") && !sessionConsentEnabled) {
+            return command + " · Host pending/reopen; session consent unavailable";
+        }
+        return java.util.Set.of("/trust", "/reload", "/export", "/shell", "/account", "/logout", "/model")
+                        .contains(command)
+                ? command + " · Host"
+                : command;
     }
 
     public Optional<String> executionLocation() {

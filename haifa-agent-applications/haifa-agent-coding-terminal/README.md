@@ -601,3 +601,9 @@ Manual Shell commands return a stable execution ID on capable Hosts. `/shell` li
 `/shell ID` reads an outcome after reconnecting, and `/shell cancel ID` explicitly requests cancellation.
 Closing a TUI only stops observation. The current Host retains at most 128 receipts for 30 minutes after
 completion; these receipts do not survive a Host restart. Admission, status and cancellation run off the UI thread.
+
+
+Remote compositions pass negotiated preview support through `CodingTerminalConnectionOptions`; credential
+setup and session consent remain independently disabled. Remote completion omits `/connect`; the command
+palette/help keeps a labeled unavailable entry and identifies supported Host actions. Choosing a labeled
+entry dispatches its canonical command, never its display annotation.

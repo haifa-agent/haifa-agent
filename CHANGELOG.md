@@ -5,6 +5,9 @@
 - Model requests now expose optional aggregate input composition for ordinary, summary and regeneration calls,
   separating visible estimates from unknown Provider overhead without recording request bodies.
 
+- Remote Coding peers can negotiate optional v1 extensions while preserving old-client capability behavior;
+  completion and command help distinguish unavailable credential setup from supported Host operations.
+
 - Run transitions and Host sandbox executions no longer pin Java 21 virtual-thread carriers while waiting
   for the SQLite writer or a process, allowing concurrent Sessions and precise cancellation to progress
   on low-core Coding Hosts.

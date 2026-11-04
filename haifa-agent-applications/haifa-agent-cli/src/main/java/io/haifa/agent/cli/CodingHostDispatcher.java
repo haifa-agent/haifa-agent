@@ -222,6 +222,7 @@ final class CodingHostDispatcher {
         if (!PROTOCOL_VERSION.equals(version)) {
             throw CodingHostException.conflict("CONTRACT_VERSION_UNSUPPORTED", "Unsupported protocol version");
         }
+        var optional = CodingHostCapabilities.negotiate(params, java.util.Set.of());
         Map<String, Object> capabilities = new LinkedHashMap<>();
         capabilities.put("client-renewal", true);
         capabilities.put("session-list", true);
@@ -259,6 +260,8 @@ final class CodingHostDispatcher {
                 workspaceContext.get(),
                 "capabilities",
                 capabilities,
+                "optionalCapabilities",
+                optional,
                 "unsupported",
                 List.of("preview", "session-consent", "credential-write", "credential-login"));
     }

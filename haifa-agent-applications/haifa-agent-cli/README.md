@@ -942,3 +942,14 @@ Old clients/Hosts keep the synchronous Shell endpoint; new clients detect option
 
 Compaction and export remain on their existing APIs: this change adds no speculative generic operation
 store. Their behavior has no executed long-command failure evidence comparable to manual Shell.
+
+
+### Optional remote v1 capabilities
+
+`initialize` accepts a bounded `optionalCapabilities` array and returns only explicitly offered, implemented
+extensions in an array with the same name. An absent response field from an older Host means no extensions.
+Legacy `preview`, `session-consent` and `auth-mutation` booleans remain false for compatibility with old v1
+clients; new features must not flip those legacy bits. Unknown offers are ignored; malformed offers or an
+unrequested Host selection fail the handshake. The current composition offers no unfinished feature.
+Remote completion excludes credential setup; `/commands` and `/help` explain its unavailability and label
+supported Host-side actions. Pending approval/reopen, trust, reload and export remain available.
