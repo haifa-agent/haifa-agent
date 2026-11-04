@@ -1,5 +1,20 @@
 # Haifa Agent Runtime Core
 
+## History baseline and retrieval limits
+
+`ContextLifecycleHistoryFixture` and `RuntimeCoreTest.contextLifecycleBaseline` preserve fixed
+synthetic constraint/decision/evidence while scaling unrelated historical Tool results by 1/10/100.
+The 100x fixture exceeds the 4,096-message active snapshot bound. These are existing-policy baselines,
+not a history-selection optimization or a semantic-quality score. A cold-start page that cannot
+advance a valid summary can still fail before any model request; input accounting then has no
+model-bound event. Snapshot source reads and failed admission must be reported separately.
+
+`SessionMessageRepository` provides cursor windows, ID lookup and supported Run paging. It does
+not expose keyword/full-text retrieval. Tool result externalization retains `structuredData` and
+adds asset references; it is not itself a recoverable model-side historical read API. Runtime has
+no automatic post-terminal summary owner or budget. Terminal Run usage remains immutable and
+model calls stay outside persistence transactions.
+
 `model.usage-accounted` records one returned usage aggregate per physical ordinary/summary/repair
 call, independently of streaming usage updates. Missing input lanes are `UNKNOWN`; cost-weighted
 input defaults to `UNAVAILABLE`. Frozen `haifa.runtime.input_price_ratios` may provide exact

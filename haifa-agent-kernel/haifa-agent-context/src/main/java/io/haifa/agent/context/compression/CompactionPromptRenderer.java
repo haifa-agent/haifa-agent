@@ -16,6 +16,7 @@ public final class CompactionPromptRenderer {
 
             Rules:
             1. Output ONLY valid JSON matching the requested schema. Do not output markdown fences or explanatory text.
+               Set schemaVersion to exactly "v1".
             2. Language: maintain the primary language of the conversation.
             3. Precision: accurately preserve all file paths, symbols, commands, error codes, URLs, identifiers, and numbers.
             4. State Compilation:
