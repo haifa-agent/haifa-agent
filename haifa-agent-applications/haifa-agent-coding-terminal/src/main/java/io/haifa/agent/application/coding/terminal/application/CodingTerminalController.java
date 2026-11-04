@@ -183,6 +183,7 @@ public final class CodingTerminalController implements AutoCloseable {
     private boolean sessionRowsInFlight;
     private long sessionRowsFetchedAtMillis;
     private final CodingTerminalConnectionOptions connectionOptions;
+    private long configurationSummaryRequest;
     private long nextSelectionGeneration;
     private long selectionGeneration;
     private long pendingSelectionGeneration;
@@ -2132,13 +2133,14 @@ public final class CodingTerminalController implements AutoCloseable {
                 apply(new TerminalUiAction.SelectorOpened(
                         new TerminalSelector("session", "Session & Environment", options, 0)));
                 long generation = selectionGeneration;
+                long request = ++configurationSummaryRequest;
                 submitEffect(
                         () -> {
                             List<String> summary = List.copyOf(client.configurationSummary());
-                            return () -> completeConfigurationSummary(generation, summary);
+                            return () -> completeConfigurationSummary(generation, request, summary);
                         },
                         code -> completeConfigurationSummary(
-                                generation, List.of("Host configuration information unavailable")));
+                                generation, request, List.of("Host configuration information unavailable")));
             }
             case SESSIONS -> {
                 // Reuses the reviewed resume selector instead of a parallel Session navigator, so keyboard-only and
@@ -2362,8 +2364,8 @@ public final class CodingTerminalController implements AutoCloseable {
                 });
     }
 
-    private void completeConfigurationSummary(long generation, List<String> summary) {
-        if (generation != selectionGeneration) return;
+    private void completeConfigurationSummary(long generation, long request, List<String> summary) {
+        if (generation != selectionGeneration || request != configurationSummaryRequest) return;
         state.selector().filter(selector -> selector.kind().equals("session")).ifPresent(selector -> {
             List<String> options = new ArrayList<>(selector.options());
             summary.stream().filter(value -> !options.contains(value)).forEach(options::add);

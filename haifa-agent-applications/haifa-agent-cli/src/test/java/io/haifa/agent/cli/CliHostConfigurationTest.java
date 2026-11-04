@@ -30,6 +30,7 @@ class CliHostConfigurationTest {
         var explicitResolved = loader.loadHostConfiguration(
                 CliArguments.parse(new String[] {"--config", explicit.toString()}), workspace, Optional.of(user));
         assertThat(explicitResolved.source()).isEqualTo(CodingHostConfiguration.Source.EXPLICIT_CONFIG);
+        assertThat(explicitResolved.toString()).isEqualTo("CodingHostConfiguration[source=EXPLICIT_CONFIG]");
         assertThat(explicitResolved.configuration().approval()).isEqualTo(ApprovalMode.DENY);
         assertThat(String.join("\n", explicitResolved.summary()))
                 .contains(

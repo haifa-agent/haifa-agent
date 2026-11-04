@@ -10,6 +10,11 @@ record CodingHostConfiguration(CliConfiguration configuration, Source source) {
         Objects.requireNonNull(source, "source must not be null");
     }
 
+    @Override
+    public String toString() {
+        return "CodingHostConfiguration[source=" + source + "]";
+    }
+
     List<String> summary() {
         return List.of(
                 "Host config source: " + source.label,

@@ -118,10 +118,12 @@ class CodingTerminalSelectionLifecycleTest {
 
     @Test
     void sessionConfigurationLoadsInBackgroundWithoutReopeningAClosedSelector() {
+        var configuration = new java.util.concurrent.atomic.AtomicReference<>(
+                List.of("Host config source: explicit --config file", "Workspace config overlay: ignored"));
         FakeClient client = new FakeClient(activeView()) {
             @Override
             public List<String> configurationSummary() {
-                return List.of("Host config source: explicit --config file", "Workspace config overlay: ignored");
+                return configuration.get();
             }
         };
         ArrayDeque<Runnable> effects = new ArrayDeque<>();
@@ -147,6 +149,18 @@ class CodingTerminalSelectionLifecycleTest {
         effects.removeFirst().run();
         controller.drainEvents();
         assertThat(controller.state().selector()).isEmpty();
+        controller.accept(input(TerminalInput.Kind.EXECUTE_COMMAND, "/session"));
+        controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
+        controller.accept(input(TerminalInput.Kind.EXECUTE_COMMAND, "/session"));
+        configuration.set(List.of("Newest Host config"));
+        effects.removeLast().run();
+        controller.drainEvents();
+        configuration.set(List.of("Stale Host config"));
+        effects.removeFirst().run();
+        controller.drainEvents();
+        assertThat(controller.state().selector()).hasValueSatisfying(selector -> assertThat(selector.options())
+                .contains("Newest Host config")
+                .doesNotContain("Stale Host config"));
     }
 
     @Test
