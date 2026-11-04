@@ -567,3 +567,11 @@ row returns to that question; Enter on `Send answer` submits. "Type your own ans
 free-text lane while the card stays pending. The answer is submitted as one part per question
 with format `clarification-answer.v1`, so the Runtime validates it like any other interaction input. "Cancel" answers
 with the `cancel` action, which resumes the run without an answer instead of cancelling it.
+
+## Remote error recovery
+
+Remote Host failures retain their stable reason codes and use terminal-owned recovery text. Missing Sessions,
+revision conflicts, capacity limits, payload bounds and expired contexts explain the appropriate next action.
+`CLIENT_CONTEXT_REQUIRED` calls for reconnecting and reopening the Session, not rerunning its task;
+`REMOTE_OUTCOME_UNKNOWN` warns that the Host may still be executing and requires inspecting the authoritative
+outcome before any resend. Unknown codes use a bounded fallback. Arbitrary Host exception text stays suppressed.

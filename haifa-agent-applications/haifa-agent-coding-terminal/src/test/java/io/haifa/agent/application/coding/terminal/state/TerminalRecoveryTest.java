@@ -52,10 +52,43 @@ class TerminalRecoveryTest {
     }
 
     @Test
+    void remoteFailuresGiveSpecificRecoveryActionsWithoutReplayingCommands() {
+        assertThat(TerminalRecovery.fromCode("SESSION_NOT_FOUND").action()).contains("unavailable", "/resume");
+        assertThat(TerminalRecovery.fromCode("SESSION_REVISION_CONFLICT").action())
+                .contains("changed", "/resume");
+        assertThat(TerminalRecovery.fromCode("INTERACTION_REVISION_CONFLICT").action())
+                .contains("changed", "/approval reopen");
+        assertThat(TerminalRecovery.fromCode("REVISION_CONFLICT").action()).contains("refresh", "review");
+        assertThat(TerminalRecovery.fromCode("HOST_BUSY").action()).contains("capacity", "wait");
+        for (String code : java.util.List.of("PAYLOAD_TOO_LARGE", "REMOTE_PAYLOAD_TOO_LARGE")) {
+            assertThat(TerminalRecovery.fromCode(code).action()).contains("byte limit", "smaller history page");
+        }
+        assertThat(TerminalRecovery.fromCode("CLIENT_CONTEXT_REQUIRED").action())
+                .contains("expired", "tui --connect", "Do not rerun");
+        assertThat(TerminalRecovery.fromCode("REMOTE_OUTCOME_UNKNOWN").action())
+                .contains("may still be executing", "authoritative outcome", "Do not blindly retry");
+        assertThat(TerminalRecovery.fromCode("REMOTE_TRANSPORT_UNAVAILABLE").action())
+                .contains("reconnect", "reopen");
+        assertThat(TerminalRecovery.fromCode("REMOTE_PROTOCOL_INCOMPATIBLE").action())
+                .contains("versions");
+    }
+
+    @Test
+    void malformedOrUnboundedCodesCannotBecomeHostTextInTheUi() {
+        for (String value : new String[] {null, "", "PRIVATE/path", "HOST_BUSY\nPRIVATE", "X".repeat(200)}) {
+            TerminalRecovery recovery = TerminalRecovery.fromCode(value);
+            assertThat(recovery.code()).isEqualTo("REMOTE_HOST_ERROR");
+            assertThat(recovery.displayTitle()).doesNotContain("PRIVATE").hasSizeLessThan(128);
+        }
+    }
+
+    @Test
     void unknownErrorCodeFallsBackSafely() {
         TerminalRecovery unknown = TerminalRecovery.fromCode("SOMETHING_UNEXPECTED");
         assertThat(unknown.category()).isEqualTo(TerminalRecovery.Category.USER_ACTION_REQUIRED);
         assertThat(unknown.code()).isEqualTo("SOMETHING_UNEXPECTED");
-        assertThat(unknown.action()).isEqualTo("Review the request and retry; the editor draft is preserved.");
+        assertThat(unknown.action())
+                .isEqualTo(
+                        "Review the current session state before deciding whether to retry; the editor draft is preserved.");
     }
 }

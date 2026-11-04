@@ -41,6 +41,17 @@ class Tui4jTerminalViewTest {
     private final Tui4jTerminalView view = new Tui4jTerminalView();
 
     @Test
+    void remoteOutcomeUnknownShowsGuidanceWithoutOfferingBlindRetry() {
+        var state = new io.haifa.agent.application.coding.terminal.state.TerminalUiReducer()
+                .reduce(
+                        defaultState(),
+                        new io.haifa.agent.application.coding.terminal.event.TerminalUiAction.RecoverableFailure(
+                                "REMOTE_OUTCOME_UNKNOWN"));
+        String rendered = Strip.strip(view.render(state, transcript(state), editor(120), true, false));
+        assertThat(rendered).contains("REMOTE_OUTCOME_UNKNOWN", "Host may still be executing", "Do not blindly retry");
+    }
+
+    @Test
     void dismissedApprovalShowsTheCommandThatRestoresItsOptions() {
         var state = withTranscript(
                 defaultState(),

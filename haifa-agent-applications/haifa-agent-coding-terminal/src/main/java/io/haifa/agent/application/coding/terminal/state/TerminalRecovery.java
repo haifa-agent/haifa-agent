@@ -14,7 +14,50 @@ public record TerminalRecovery(Category category, String code, String action) {
                     "ACTIVE_RUN_MISMATCH",
                     "The session changed while submitting; retry the message."),
             entry(Category.USER_ACTION_REQUIRED, "SESSION_REQUIRED", "Create or resume a session, then retry."),
-            entry(Category.USER_ACTION_REQUIRED, "SESSION_NOT_FOUND", "Use /resume to choose an available session."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "SESSION_NOT_FOUND",
+                    "The Session is unavailable; use /resume to choose an available session."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "SESSION_REVISION_CONFLICT",
+                    "The Session changed in another operation; reopen it with /resume and review its current state before submitting again."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "INTERACTION_REVISION_CONFLICT",
+                    "The approval or clarification changed; use /approval reopen to review the current request before responding."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "REVISION_CONFLICT",
+                    "The target changed; refresh its current state and review it before submitting again."),
+            entry(
+                    Category.RETRYABLE,
+                    "HOST_BUSY",
+                    "The Host is at command capacity; wait for active commands to finish before retrying this rejected request."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "PAYLOAD_TOO_LARGE",
+                    "The request or response exceeds the Host byte limit; reduce the input or load a smaller history page before retrying."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "REMOTE_PAYLOAD_TOO_LARGE",
+                    "The request or response exceeds the remote byte limit; reduce the input or load a smaller history page before retrying."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "CLIENT_CONTEXT_REQUIRED",
+                    "The Host connection context expired or was restarted; exit and reconnect with tui --connect, then reopen the Session. Do not rerun its task to reconnect."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "REMOTE_OUTCOME_UNKNOWN",
+                    "The Host may still be executing the command; inspect its authoritative outcome before deciding what to do next. Do not blindly retry or resend it."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "REMOTE_TRANSPORT_UNAVAILABLE",
+                    "The Host cannot be reached; check that it is running, then reconnect with tui --connect and reopen the Session."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "REMOTE_PROTOCOL_INCOMPATIBLE",
+                    "The Host and client could not agree on the protocol; check their versions before reconnecting."),
             entry(
                     Category.USER_ACTION_REQUIRED,
                     "RESTORABLE_QUEUE_EMPTY",
@@ -231,13 +274,14 @@ public record TerminalRecovery(Category category, String code, String action) {
     }
 
     public static TerminalRecovery fromCode(String code) {
-        String checked = require(code, "code");
+        String supplied = code == null ? "" : code.strip();
+        String checked = supplied.matches("[A-Z][A-Z0-9_.:-]{0,95}") ? supplied : "REMOTE_HOST_ERROR";
         return KNOWN.getOrDefault(
                 checked,
                 new TerminalRecovery(
                         Category.USER_ACTION_REQUIRED,
                         checked,
-                        "Review the request and retry; the editor draft is preserved."));
+                        "Review the current session state before deciding whether to retry; the editor draft is preserved."));
     }
 
     /** User-facing title; stable capability codes remain available through {@link #code()}. */
