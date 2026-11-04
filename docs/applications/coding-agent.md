@@ -95,6 +95,7 @@ optional exclusive `beforeSequence`. Responses contain `earlierHistoryAvailable`
 
 Each history page is bounded to 512 KiB of serialized UTF-8 JSON, including JSON escaping and page metadata;
 the Host retains the newest complete message-sequence groups and leaves room below its 1 MiB response cap for
-the RPC envelope. State recovery therefore does not fetch transcript history. Other oversized responses retain
+the RPC envelope. Host state RPCs do not fetch transcript history; the TUI loads its bounded history page
+separately. Other oversized responses retain
 the request ID and return `PAYLOAD_TOO_LARGE`. Existing clients can continue requesting recent history without
 a cursor; updated clients can page backwards.
