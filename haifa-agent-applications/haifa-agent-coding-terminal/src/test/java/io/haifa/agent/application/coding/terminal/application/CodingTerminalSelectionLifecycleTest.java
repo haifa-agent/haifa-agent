@@ -30,6 +30,34 @@ import org.junit.jupiter.api.Test;
 
 class CodingTerminalSelectionLifecycleTest {
     @Test
+    void failedConnectionChecksPreserveUnknownOutcomesWithoutAnActiveSession() {
+        var checks = new java.util.concurrent.atomic.AtomicInteger();
+        FakeClient client = new FakeClient(activeView()) {
+            @Override
+            public boolean renewConnection() {
+                if (checks.incrementAndGet() == 1) {
+                    throw new ProjectProductException("REMOTE_TRANSPORT_UNAVAILABLE", "Host unavailable");
+                }
+                return false;
+            }
+        };
+        var pump = new TerminalEventPump(32);
+        var controller = new CodingTerminalController(
+                PROJECT_ID, client, pump, new TerminalUiReducer(), TerminalUiState.initial(80, 24), Runnable::run);
+        pump.offer(new TerminalUiAction.RecoverableFailure("REMOTE_OUTCOME_UNKNOWN"));
+        controller.drainEvents();
+        controller.refreshConnection(100_000);
+        controller.drainEvents();
+        assertThat(controller.state().recoverableError()).contains("REMOTE_OUTCOME_UNKNOWN");
+        assertThat(controller.state().status()).contains("Host connection unavailable");
+        controller.refreshConnection(120_000);
+        controller.drainEvents();
+        assertThat(controller.state().recoverableError()).contains("REMOTE_OUTCOME_UNKNOWN");
+        assertThat(controller.state().session()).isEmpty();
+        assertThat(client.submittedMessages).isEmpty();
+    }
+
+    @Test
     void hiddenAndVisibleSidebarsRenewInBackgroundAndReattachWithoutBlockingInput() throws Exception {
         for (boolean visible : List.of(false, true)) {
             var blocked = new BlockingCall();

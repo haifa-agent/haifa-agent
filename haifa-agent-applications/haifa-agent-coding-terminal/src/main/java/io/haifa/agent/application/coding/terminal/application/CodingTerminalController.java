@@ -1164,7 +1164,14 @@ public final class CodingTerminalController implements AutoCloseable {
                     connectionUnavailable = true;
                     if (!code.equals(connectionFailureCode)) {
                         connectionFailureCode = code;
-                        apply(new TerminalUiAction.RecoverableFailure(code));
+                        if (state.recoverableError()
+                                .filter("REMOTE_OUTCOME_UNKNOWN"::equals)
+                                .isPresent()) {
+                            apply(new TerminalUiAction.StatusChanged(
+                                    "Host connection unavailable; previous command outcome remains unknown"));
+                        } else {
+                            apply(new TerminalUiAction.RecoverableFailure(code));
+                        }
                     }
                 });
     }
