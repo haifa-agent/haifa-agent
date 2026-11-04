@@ -212,7 +212,7 @@ public final class TerminalUiReducer {
                     "shell-" + items.size(),
                     TranscriptItem.Kind.EXECUTION,
                     shell.command(),
-                    shell.summary(),
+                    withDestination(shell.summary(), shell.destination()),
                     shell.processState(),
                     true));
             return copyWithTranscript(state, List.copyOf(items));
@@ -223,8 +223,9 @@ public final class TerminalUiReducer {
                     "export-" + items.size(),
                     TranscriptItem.Kind.RESOURCE,
                     "Session export",
-                    exported.logicalPath() + " · " + exported.messageCount() + " messages"
-                            + (exported.destination().isBlank() ? "" : "\nDestination: " + exported.destination()),
+                    withDestination(
+                            exported.logicalPath() + " · " + exported.messageCount() + " messages",
+                            exported.destination()),
                     "EXPORTED",
                     false));
             return copyWithTranscript(state, List.copyOf(items));
@@ -594,6 +595,19 @@ public final class TerminalUiReducer {
         throw new IllegalArgumentException("Unsupported Terminal UI action");
     }
 
+    private static String withDestination(String body, String destination) {
+        if (destination == null || destination.isBlank()) return body;
+        String prefix = "Destination: " + destination + "\n";
+        if (prefix.length() + body.length() <= TranscriptItem.MAXIMUM_BODY_CHARACTERS) return prefix + body;
+        String marker = "<output truncated; showing tail>\n";
+        int keep = TranscriptItem.MAXIMUM_BODY_CHARACTERS - prefix.length() - marker.length();
+        int start = Math.max(0, body.length() - keep);
+        if (start > 0
+                && Character.isLowSurrogate(body.charAt(start))
+                && Character.isHighSurrogate(body.charAt(start - 1))) start++;
+        return prefix + marker + body.substring(start);
+    }
+
     private static TranscriptItem appendToolPreview(TranscriptItem current, ToolOutputPreview preview) {
         TranscriptItem updated = current.withStatus(current.status(), appendPreview(current.body(), preview));
         return current.toolDetails()
@@ -611,7 +625,7 @@ public final class TerminalUiReducer {
                 preview.outputTruncated() ? "\n" + ToolBodyLines.EXECUTION_OUTPUT_TRUNCATED + "\n" : "";
         String previewDropped = preview.previewDropped() ? "\n" + ToolBodyLines.PREVIEW_OUTPUT_DROPPED + "\n" : "";
         String output = previous + channel + preview.text() + outputTruncated + previewDropped;
-        int maximumOutput = Math.max(0, 16_384 - prefix.length());
+        int maximumOutput = Math.max(0, TranscriptItem.MAXIMUM_BODY_CHARACTERS - prefix.length());
         if (output.length() > maximumOutput) output = output.substring(output.length() - maximumOutput);
         return prefix + output;
     }
