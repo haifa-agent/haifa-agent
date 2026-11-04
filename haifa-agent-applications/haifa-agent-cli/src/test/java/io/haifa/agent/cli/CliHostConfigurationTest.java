@@ -15,6 +15,38 @@ class CliHostConfigurationTest {
     Path directory;
 
     @Test
+    void provenanceIdentifiesDefaultsUserAndExplicitSourcesWithoutConfigContents() throws Exception {
+        Path workspace = Files.createDirectory(directory.resolve("provenance"));
+        var loader = new CliConfigurationLoader();
+        var arguments = CliArguments.parse(new String[] {"-m", "provenance"});
+        assertThat(loader.loadHostConfiguration(arguments, workspace, Optional.empty())
+                        .source())
+                .isEqualTo(CodingHostConfiguration.Source.DEFAULTS);
+        Path user = Files.writeString(directory.resolve("user-source.yaml"), "approval:\n  mode: auto\n");
+        var userResolved = loader.loadHostConfiguration(arguments, workspace, Optional.of(user));
+        assertThat(userResolved.source()).isEqualTo(CodingHostConfiguration.Source.USER_CONFIG);
+        Path explicit = Files.writeString(
+                directory.resolve("private-config.yaml"), "approval:\n  mode: deny\nsynthetic-note: CANARY_SECRET\n");
+        var explicitResolved = loader.loadHostConfiguration(
+                CliArguments.parse(new String[] {"--config", explicit.toString()}), workspace, Optional.of(user));
+        assertThat(explicitResolved.source()).isEqualTo(CodingHostConfiguration.Source.EXPLICIT_CONFIG);
+        assertThat(explicitResolved.toString()).isEqualTo("CodingHostConfiguration[source=EXPLICIT_CONFIG]");
+        assertThat(explicitResolved.configuration().approval()).isEqualTo(ApprovalMode.DENY);
+        Path threshold = Files.writeString(directory.resolve("threshold.yaml"), "approval:\n  threshold: high\n");
+        var thresholdResolved = loader.loadHostConfiguration(
+                CliArguments.parse(new String[] {"--config", threshold.toString()}), workspace, Optional.of(user));
+        assertThat(String.join("\n", thresholdResolved.summary())).contains("ASK; threshold: HIGH");
+        assertThat(String.join("\n", explicitResolved.summary()))
+                .contains(
+                        "explicit --config",
+                        "overlay: ignored",
+                        "DENY",
+                        "Configured built-in tools:",
+                        "Configured models:")
+                .doesNotContain("CANARY_SECRET", explicit.toString(), "synthetic-note");
+    }
+
+    @Test
     void hostConfigurationIgnoresWorkspaceOverlayWhileEmbeddedKeepsIt() throws Exception {
         Path workspace = Files.createDirectory(directory.resolve("workspace"));
         Path workspaceConfiguration =

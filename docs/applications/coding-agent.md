@@ -110,3 +110,20 @@ retains the logical output path alongside its Host destination. No path or Git s
 Git facts are a display snapshot taken when the client connects. Non-Git/detached workspaces and older Hosts
 have explicit unavailable fallbacks. Metadata is bounded and strips terminal control characters; it grants no
 filesystem access and is not used to select a command directory or authorize an operation.
+
+## Host configuration provenance
+
+Host startup prints the configuration source (explicit file, user `~/.haifa-agent/config.yaml`, or built-in
+defaults), the ignored workspace-overlay policy, effective approval mode/threshold for new Runs, and configured tool/model
+counts. The remote `/session` panel loads the same safe summary in the background through `host/configuration`;
+older Hosts show an explicit unavailable fallback. Configuration contents, file paths and credentials are absent.
+
+Host does not implicitly merge `.haifa-agent/config.yaml` from its workspace. To trust that file explicitly:
+
+```powershell
+haifa-coding host --workspace D:/projects/example --config D:/projects/example/.haifa-agent/config.yaml
+```
+
+The explicit file replaces the implicit user/workspace files, matching embedded explicit-config precedence;
+normal environment/CLI overrides still apply. The selected file must supply the Host's required durable SQLite
+configuration. Choosing a repository file is an explicit trust decision; default Host policy is unchanged.

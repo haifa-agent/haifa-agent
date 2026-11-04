@@ -117,6 +117,83 @@ class CodingTerminalSelectionLifecycleTest {
     }
 
     @Test
+    void sessionConfigurationLoadsInBackgroundWithoutReopeningAClosedSelector() throws Exception {
+        var blocked = new BlockingCall();
+        var first = new java.util.concurrent.atomic.AtomicBoolean(true);
+        var configuration = new java.util.concurrent.atomic.AtomicReference<>(
+                List.of("Host config source: explicit --config file", "Workspace config overlay: ignored"));
+        FakeClient client = new FakeClient(activeView()) {
+            @Override
+            public List<String> configurationSummary() {
+                if (first.getAndSet(false)) blocked.block();
+                return configuration.get();
+            }
+        };
+        ArrayDeque<Runnable> effects = new ArrayDeque<>();
+        var pump = new TerminalEventPump(32);
+        var controller = new CodingTerminalController(
+                PROJECT_ID,
+                client,
+                CodingAuthenticationClient.unavailable(),
+                pump,
+                new TerminalUiReducer(),
+                TerminalUiState.initial(120, 40),
+                CodingTerminalConnectionOptions.remoteV1(),
+                Runnable::run,
+                effects::addLast,
+                Runnable::run);
+        controller.open(SESSION_ID);
+        effects.clear();
+        controller.accept(input(TerminalInput.Kind.EXECUTE_COMMAND, "/session"));
+        assertThat(controller.state().selector()).hasValueSatisfying(selector -> assertThat(selector.options())
+                .doesNotContain("Workspace config overlay: ignored"));
+        assertThat(effects).hasSize(1);
+        var worker = new Thread(effects.removeFirst());
+        worker.start();
+        try {
+            assertThat(blocked.awaitStarted()).isTrue();
+            controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, "next task", 9));
+            pump.offer(new TerminalUiAction.TerminalResized(80, 24));
+            client.emit(event(1, new RunEventPayloads.AssistantTextDelta("generation-1", "live during config load")));
+            controller.drainEvents();
+            controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
+            assertThat(controller.state().columns()).isEqualTo(80);
+            assertThat(controller.state().editorBuffer()).isEqualTo("next task");
+            assertThat(controller.state().selector()).isEmpty();
+            assertThat(controller.state().transcript())
+                    .anyMatch(item -> item.body().contains("live during config load"));
+        } finally {
+            blocked.release();
+            worker.join(5_000);
+        }
+        controller.drainEvents();
+        assertThat(controller.state().selector()).isEmpty();
+        controller.accept(input(TerminalInput.Kind.EXECUTE_COMMAND, "/session"));
+        effects.removeLast().run();
+        controller.drainEvents();
+        assertThat(controller.state().selector()).hasValueSatisfying(selector -> assertThat(selector.options())
+                .contains("Host config source: explicit --config file", "Workspace config overlay: ignored"));
+        controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
+        controller.accept(input(TerminalInput.Kind.EXECUTE_COMMAND, "/session"));
+        controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
+        effects.removeFirst().run();
+        controller.drainEvents();
+        assertThat(controller.state().selector()).isEmpty();
+        controller.accept(input(TerminalInput.Kind.EXECUTE_COMMAND, "/session"));
+        controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
+        controller.accept(input(TerminalInput.Kind.EXECUTE_COMMAND, "/session"));
+        configuration.set(List.of("Newest Host config"));
+        effects.removeLast().run();
+        controller.drainEvents();
+        configuration.set(List.of("Stale Host config"));
+        effects.removeFirst().run();
+        controller.drainEvents();
+        assertThat(controller.state().selector()).hasValueSatisfying(selector -> assertThat(selector.options())
+                .contains("Newest Host config")
+                .doesNotContain("Stale Host config"));
+    }
+
+    @Test
     void staleSelectionResultsNeverReplaceTheNewestDisplayedSession() {
         FakeClient client = new FakeClient(sessionView("session-b", "B"));
         AgentSessionId a = new AgentSessionId("session-a");

@@ -194,6 +194,11 @@ public interface CodingSessionClient {
         throw new UnsupportedOperationException("Workspace revocation is unavailable");
     }
 
+    /** Safe composition-owned configuration facts for an environment summary, without credentials or raw config. */
+    default List<String> configurationSummary() {
+        return List.of();
+    }
+
     default List<String> loadedResources() {
         return List.of("Loaded resources: none");
     }

@@ -329,3 +329,9 @@ is the exclusive cursor for `history(sessionId, limit, nextBeforeSequence)`. The
 same authorization and redaction for both reads, scans at most 2,000 source records per page, and returns a
 continuation even for a scan window containing no visible items. `limit` bounds source messages (1–100); a
 synthesized failure stays with its source message. History remains a display projection, not a recovery source.
+
+## Composition-owned configuration summary
+
+`CodingSessionClient.configurationSummary()` optionally supplies safe composition-owned configuration facts
+for the environment view. Embedded clients default to an empty list; the Host adapter supplies provenance and
+safe effective-setting summaries without exposing configuration contents or credentials.

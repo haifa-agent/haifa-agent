@@ -582,3 +582,9 @@ The remote composition supplies display-only Host workspace/Git context to the e
 Session summary. Shell confirmation/results and export cards identify the Host execution location; export
 logical paths remain intact. Narrow displays keep the Host label, while non-Git workspaces and old Hosts have
 explicit unavailable fallbacks. Terminal performs no local filesystem/Git lookup for these facts.
+
+## Host configuration summary
+
+The `/session` environment panel opens immediately and loads composition-owned configuration facts on the
+background effect lane. Remote Hosts report source, workspace-overlay policy and safe approval/tool/model
+summaries; an older Host has an explicit unavailable fallback. Late results never reopen a dismissed panel.
