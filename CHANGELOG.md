@@ -2,6 +2,9 @@
 
 ## Unreleased - 0.1.5-SNAPSHOT
 
+- Return invalid pending Tool requests to the model after approval instead of failing the Coding Agent Run.
+  Completed commands are preserved without replay, and later calls keep their own validation and approval checks.
+
 - A trusted-local auth command repairs model credentials while Coding Host keeps its Runtime/SQLite ownership.
   Remote connection guidance shows the Host/account command and /account refreshes the repaired connection.
 

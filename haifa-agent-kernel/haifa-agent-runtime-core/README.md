@@ -99,6 +99,10 @@ Run 会持久化累计人工等待和当前等待起点；AgentLoop、模型重�
 
 ## Tool outcome convergence
 
+After an approval or intentional pause, pending tools use the same request-rejection handling as a new batch.
+Invalid arguments, denied policy and unsupported authorization protocols return safe Tool results to the model
+so it can repair the request. Completed calls are not replayed, and other pending calls retain their own checks.
+
 Journal retains dispatch evidence and a bounded pending result until the authoritative ToolCall result is saved.
 COMPLETED is only a marker and clears the pending payload. Recovery reads ToolCall first; missing ToolCall/Step/message
 facts can be repaired from an already saved result without dispatching a tool. Unknown outcomes terminate with
