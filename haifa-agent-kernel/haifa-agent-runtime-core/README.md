@@ -41,7 +41,9 @@ an allowlist excluding a reader also retains legacy behavior. These controls nev
 
 The unified path selects sources, confirms saved-result views, prepares the actual model messages, then
 checks one model-window budget including output reserve, safety margin, visible schemas and protocol.
-Optional Memory and other optional items yield before semantic compaction. Required evidence can exceed
+When a large-model minimum headroom would consume the entire available Session capacity, trigger evaluation
+uses the configured percentage instead of creating a zero-token soft threshold. Optional Memory and other
+optional items yield before semantic compaction. Required evidence can exceed
 the soft target within frozen retention and hard admission. A final check before each physical call,
 including a final answer without tools, rejects over-budget input without invoking the Provider.
 Media uses an explicit conservative policy reserve per item; protected continuation uses byte-length

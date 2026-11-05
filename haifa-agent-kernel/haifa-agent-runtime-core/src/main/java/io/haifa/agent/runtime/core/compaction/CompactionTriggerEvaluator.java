@@ -44,6 +44,8 @@ public final class CompactionTriggerEvaluator {
         long calculatedHeadroom = (availableSessionTokens * policy.softTriggerHeadroomPercent()) / 100L;
         long triggerHeadroomTokens =
                 Math.clamp(calculatedHeadroom, (long) policy.minTriggerHeadroom(), (long) policy.maxTriggerHeadroom());
+        // A large-model floor cannot consume a smaller model's entire selected-input capacity.
+        if (triggerHeadroomTokens >= availableSessionTokens) triggerHeadroomTokens = calculatedHeadroom;
         long capacitySoftLimit = computeCapacitySoftLimit(availableSessionTokens, triggerHeadroomTokens);
         long activeBudget;
         if (policy.activeHistoryBudgetTokens().isPresent()) {

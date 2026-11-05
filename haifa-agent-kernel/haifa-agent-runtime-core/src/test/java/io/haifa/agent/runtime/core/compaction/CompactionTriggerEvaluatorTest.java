@@ -7,6 +7,16 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 class CompactionTriggerEvaluatorTest {
+    @Test
+    void smallModelHeadroomDoesNotCreatePressureForAnOtherwiseSmallSelection() {
+        var evaluator = new CompactionTriggerEvaluator(CompressionPolicy.defaults());
+        var budget = io.haifa.agent.context.budget.ContextWindowBudget.capacity(8192, 1024, 409);
+        var small = evaluator.evaluate(budget, 1600, 0, 1000, 3);
+        assertThat(small.shouldCompact()).isFalse();
+        assertThat(small.budgetBreakdown().softLimitTokens()).isGreaterThan(1000);
+        assertThat(small.budgetBreakdown().triggerHeadroomTokens()).isPositive();
+        assertThat(evaluator.evaluate(budget, 1600, 0, 5000, 3).shouldCompact()).isTrue();
+    }
 
     @Test
     void usesTheActualRequestWindowIncludingItsForcedRebuildMargin() {
