@@ -196,8 +196,9 @@ An unavailable or protocol-incompatible Host fails fast with a stable `REMOTE_*`
 embedded Run. When a Run settles while a queued follow-up has already advanced on the Host, the terminal performs one
 bounded reconcile per settled Run to move onto the successor instead of reloading on every delta. Closing this
 terminal, including a process-exit signal such as `SIGTERM`, only closes its own client and observations; it
-never cancels the Host Run, because the thin client claims no process-signal handler that could turn its own
-exit into an interrupt. Only an explicit cancel gesture in the TUI (`Esc`/`Ctrl+C`) sends `run/cancel`.
+never cancels the Host Run. A scoped INT-only bridge copies a highlighted transcript selection; without one,
+an INT signal only detaches the client. TERM retains the JVM exit path. Only an explicit cancel gesture in the
+TUI (`Esc`/`Ctrl+C` delivered as a key, without a selection) sends `run/cancel`.
 ## 构建与运行
 
 ### 本地发行目录（macOS / Linux）

@@ -14,12 +14,49 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
+import sun.misc.Signal;
+import sun.misc.SignalHandler;
 
 class Tui4jTerminalIoTest {
     @Test
-    void remoteThinClientCompositionLeavesProcessSignalsToTheJvm() {
-        // A claimed signal handler turns SIGINT/SIGTERM into one in-app quit message that cancels the active Run,
-        // so a killed remote client would cancel work the Host still owns.
+    void scopedConsoleInterruptReachesTheClientAndRestoresThePreviousHandler() throws Exception {
+        Signal signal = new Signal("INT");
+        // Unix JVMs preserve ignored INT dispositions instead of installing a new Java handler.
+        // Use a catchable baseline so this test does not disable its own signal delivery.
+        SignalHandler baseline = ignored -> {};
+        SignalHandler original = Signal.handle(signal, baseline);
+        try {
+            CompletableFuture<Void> received = new CompletableFuture<>();
+            try (var registration = new TerminalInterruptSignal(() -> received.complete(null))) {
+                Signal.raise(signal);
+                received.get(5, TimeUnit.SECONDS);
+            }
+            assertThat(Signal.handle(signal, baseline)).isSameAs(baseline);
+        } finally {
+            Signal.handle(signal, original);
+        }
+    }
+
+    @Test
+    void closingTheInterruptBridgePreservesTheHandlerRestoredByTerminalCleanup() {
+        Signal signal = new Signal("INT");
+        SignalHandler baseline = ignored -> {};
+        SignalHandler original = Signal.handle(signal, baseline);
+        SignalHandler restored = ignored -> {};
+        try {
+            try (var registration = new TerminalInterruptSignal(() -> {})) {
+                Signal.handle(signal, restored);
+            }
+            assertThat(Signal.handle(signal, baseline)).isSameAs(restored);
+        } finally {
+            Signal.handle(signal, original);
+        }
+    }
+
+    @Test
+    void remoteThinClientCompositionDisablesTheCombinedTerminationHandler() {
+        // tui4j merges INT and TERM into the same message. The remote composition keeps that handler disabled
+        // and installs its own scoped INT-only bridge, so TERM cannot cancel work owned by the Host.
         assertThat(Tui4jTerminalIo.system().withoutSignalHandler()).isFalse();
         assertThat(Tui4jTerminalIo.systemWithoutSignalHandler().withoutSignalHandler())
                 .isTrue();

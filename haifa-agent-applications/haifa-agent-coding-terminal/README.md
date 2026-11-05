@@ -202,6 +202,8 @@ Error、Queued 和 Focus。TrueColor 参考色会按明暗背景自适应；NoCo
   Run 自身的失败仍由红色 Run Summary 表示，不把历史普通失败全部染红。
 - 折叠态耗时始终显示；按 `ctrl+o` 或点击条目可展开/收起。鼠标选中过的条目保持为当前展开目标，
   未选中过条目时回退到最近可展开项。点击仅在鼠标捕获开启时可用，且完成文本选择后不触发展开。
+  工具头在运行期即预留固定宽度的结果元数据列，结算时只更新状态与耗时，不重新裁剪目标或改变后续行位；
+  超长元数据在折叠态截断，展开后仍保留完整事实。
   新 Tool 生命周期投影将业务输出与 `Technical details` 分离：`ctrl+x t`（macOS `⌃X T`）切换当前工具的
   技术信息，包含机器名、关联 ID、原因码、Result Ref 与可得进程状态，以及 `Duration … · N lines · X KB`。
   展开后的业务输出优先使用 Runtime 投影的有界 `outputPreview`（当前为本次实际写入的文件内容或本次调用
@@ -296,9 +298,9 @@ message，也不显示异常类或堆栈。
 - viewport 只在用户主动 PageUp 后停止自动跟随并在新内容到达时显示 `new output below`；Run 状态引起的
   Header、Status 或 Editor 布局高度变化不会误判为用户滚动，PageDown 回到底部后恢复自动跟随；用户
   明确提交新消息或 Steer 时也会恢复自动跟随，避免上一轮回翻状态把新一轮输出持续藏在下方。
-- 终端保持禁用应用级鼠标事件上报（不启用 SGR cell-motion），启动与退出时输出防御性 reset 序列。
-  划词文本选择与系统剪贴板复制由宿主终端（Windows Terminal、VS Code 终端、iTerm2 等）原生接管，
-  支持在整个屏幕任意区域拖拽选中与复制。`PageUp/PageDown` 负责应用拥有的 Transcript 视口翻页导航，
+- 终端默认开启应用级鼠标捕获，Transcript 拖选后 Ctrl+C 通过 Clipboard/OSC 52 复制选区。
+  `HAIFA_TERMINAL_MOUSE=off` 使用宿主终端原生选择；启动与退出均输出防御性 mouse reset 序列。
+  `PageUp/PageDown` 负责应用拥有的 Transcript 视口翻页导航，
   方向键 Up/Down 继续保留单行输入历史和多行光标移动语义。
 
 终端采用 tui4j `Program`、`Model`、`Viewport` 和 `Textarea`。Runtime 回调只写入有界 Action Queue；
@@ -340,8 +342,9 @@ Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、s
 - Escape：若存在 Waiting，只取消 Waiting；否则是活动 Run 的全局取消键（先 arm 再确认）。
   裸 Escape 不得被当作 EOF；Selector 打开时先关闭 Selector。空闲时 Escape 只关闭 Selector；
   Ctrl+C 仍先清空非空 Editor，空 Editor 时取消活动 Run。嵌入式模式下 Ctrl-C 由 Program 接管的
-  SIGINT 处理器转成同一条中断；远程薄客户端不接管任何进程信号，SIGINT/SIGTERM 只结束客户端进程，
-  绝不取消 Host 拥有的 Run，Ctrl+C 则以按键形式走同一条中断路径；
+  SIGINT 处理器转成同一条中断。远程薄客户端只桥接 SIGINT：存在 Transcript 选区时复制并保留草稿，
+  无选区时只退出客户端；SIGTERM 始终使用 JVM 默认退出路径，均不会取消 Host 拥有的 Run。
+  终端直接发送的 Ctrl+C 按键仍优先复制选区，否则走清空草稿/取消活动 Run 的中断路径；
 - `/resume` 选择并打开真实 Session；顶层 `haifa-coding resume`、`resume --last` 和
   `resume <SESSION_ID>` 复用同一产品客户端与打开流程；
 - `/resume <query>` 搜索 Session，`/rename [name]`（兼容 `/name`）使用 revision 重命名，

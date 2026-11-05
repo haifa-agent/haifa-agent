@@ -1742,6 +1742,12 @@ final class Tui4jCodingTerminalModel implements Model {
      * resize with no change does not make the tui4j renderer clear its line cache and repaint.
      */
     Message filterMessage(Message message) {
+        if (message instanceof TerminalInterruptSignal.Interrupted) {
+            if (controller.secureInputRequested()) return null;
+            // A process interrupt without a selection only detaches this client. It must not take
+            // the ordinary key interrupt path, which can cancel a Run owned by the remote Host.
+            return selection.range().isPresent() ? new CtrlCRequestedMessage() : new QuitMessage();
+        }
         if (signalHandlerOwnsInterrupt
                 && message instanceof KeyPressMessage key
                 && key.type() == KeyType.keyETX

@@ -62,10 +62,10 @@ public record Tui4jTerminalIo(
     }
 
     /**
-     * Remote thin-client composition. The client must not claim process signals: tui4j turns a claimed
+     * Remote thin-client composition. The client must not use tui4j's combined process handler: it turns a claimed
      * SIGINT/SIGTERM into one in-app quit message that also cancels the active Run, so a killed client would
-     * cancel work the Host still owns. Without a claimed handler an exit signal stops only this process, and
-     * Ctrl+C remains an ordinary key press handled by the interrupt path.
+     * cancel work the Host still owns. A scoped INT-only bridge preserves selection copying; TERM keeps
+     * the JVM's exit behavior and never becomes a Host cancellation request.
      */
     public static Tui4jTerminalIo systemWithoutSignalHandler() {
         return system(true);
@@ -167,7 +167,9 @@ public record Tui4jTerminalIo(
     void run(Program program) {
         Objects.requireNonNull(program, "program must not be null");
         resetMouseReporting();
-        try {
+        try (var interrupt = withoutSignalHandler && input.isEmpty()
+                ? new TerminalInterruptSignal(() -> program.send(new TerminalInterruptSignal.Interrupted()))
+                : null) {
             // Push the host title so it can be restored on exit (xterm title stack), then claim it.
             writeSequence(SAVE_WINDOW_TITLE);
             writeSequence("\u001B]2;" + WINDOW_TITLE + "\u0007");
