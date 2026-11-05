@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.application.project.product.coding.client.CodingSessionClient;
 import io.haifa.agent.project.domain.ProjectId;
+import io.haifa.coding.host.internal.CodingHostDispatcher;
+import io.haifa.coding.host.internal.CodingHostException;
 import java.lang.reflect.Proxy;
 import org.junit.jupiter.api.Test;
 

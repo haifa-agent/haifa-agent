@@ -9,6 +9,7 @@ import io.haifa.agent.runtime.core.middleware.RuntimePhase;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceScope;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceStatus;
+import io.haifa.coding.host.internal.CliFailureDiagnosticSink;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;

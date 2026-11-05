@@ -166,6 +166,8 @@
                 <version>${project.version}</version>
             </dependency>
             <dependency><groupId>io.haifa</groupId><artifactId>haifa-coding-api</artifactId><version>${project.version}</version></dependency>
+            <dependency><groupId>io.haifa</groupId><artifactId>haifa-coding-host</artifactId><version>${revision}</version></dependency>
+            <dependency><groupId>io.haifa</groupId><artifactId>haifa-coding-client</artifactId><version>${revision}</version></dependency>
             <dependency>
                 <groupId>io.haifa</groupId>
                 <artifactId>haifa-agent-coding-agent</artifactId>

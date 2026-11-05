@@ -79,3 +79,7 @@ Coding 的实验性 `haifa-coding-api` 仍属于 Application 层：公共合同�
 0.1.4 baseline 不宣称已经提供 Distributed Worker / Control Plane、Graph / Workflow Runtime、Enterprise IAM Product 或强内建 Sandbox。
 
 详见 [Runtime 与模块边界](runtime-and-module-boundaries.md)。
+
+Coding 产品装配现位于 `haifa-coding-host`，不依赖 CLI/TUI；公共 owner/options 只使用 JDK/API 类型。
+engine 拥有安全 DTO 映射和 embedded binding；`haifa-coding-client` 仅依赖产品 API/Jackson。CLI 保留
+发行、参数、Terminal 和旧 native 兼容入口。可选浏览器边界见 [Host SDK](../../haifa-agent-applications/haifa-coding-host/README.md)。

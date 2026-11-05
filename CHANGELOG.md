@@ -2,6 +2,11 @@
 
 ## Unreleased - 0.1.5-SNAPSHOT
 
+- Add feature-preview Coding Host and lightweight Java Client SDKs, engine-owned safe product mapping,
+  opt-in same-origin browser pairing/grants and trusted static assets. Preserve native CLI compatibility
+  and keep observation cleanup separate from accepted execution. Add isolated preview publishing and
+  external thin-JAR consumer examples. Browser SDK/UI and TUI migration remain separate work.
+
 - Preserve full current-Run summaries when rebuilding unified working sets, including small soft targets and
   new-task objectives. Record unreadable compaction sources as typed refusals without advancing coverage.
 

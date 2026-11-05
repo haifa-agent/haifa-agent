@@ -112,6 +112,35 @@ class CodingContractTest {
     }
 
     @Test
+    void productCommandsQueriesAndPairingShareTheCrossLanguageFixtures() throws Exception {
+        int executed = 0;
+        for (var fixture :
+                json.readTree(contract.resolve("fixtures/product.json").toFile())) {
+            var root = (com.fasterxml.jackson.databind.node.ObjectNode) json.readTree(
+                    contract.resolve("coding-presentation.schema.json").toFile());
+            root.remove("oneOf");
+            root.put("$ref", "#/$defs/" + fixture.path("schema").asText());
+            var schema = JsonSchemaFactory.getInstance(SpecVersion.VersionFlag.V202012)
+                    .getSchema(root);
+            boolean valid = schema.validate(fixture.path("value")).isEmpty();
+            if (valid && fixture.path("schema").asText().equals("CommandRequest"))
+                try {
+                    CodingProtocolChecks.command(
+                            json.treeToValue(fixture.path("value").path("command"), CodingProtocol.Command.class));
+                } catch (IllegalArgumentException rejected) {
+                    valid = false;
+                }
+            assertThat(valid).isEqualTo(fixture.path("valid").asBoolean());
+            executed++;
+        }
+        assertThat(executed).isEqualTo(10);
+        var grant = new CodingProtocol.BrowserGrant("synthetic-proof-not-real", "client", "host", 1);
+        assertThat(grant.toString()).isEqualTo("BrowserGrant[redacted]");
+        assertThat(new CodingProtocol.PairingRequest("synthetic-proof-not-real", "host").toString())
+                .isEqualTo("PairingRequest[redacted]");
+    }
+
+    @Test
     void publicContractHasNoEngineRuntimeOrDatabaseSignatures() {
         for (Class<?> type : CodingProtocol.class.getDeclaredClasses()) {
             if (!type.isRecord()) continue;

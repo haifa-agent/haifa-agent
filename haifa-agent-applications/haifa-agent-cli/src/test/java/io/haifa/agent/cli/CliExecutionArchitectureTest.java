@@ -13,11 +13,12 @@ class CliExecutionArchitectureTest {
     void concreteLocalProvidersRemainInTheCliAssemblyBoundary() {
         var classes = new ClassFileImporter()
                 .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
-                .importPackages("io.haifa.agent");
+                .importPackages("io.haifa.agent", "io.haifa.coding.host");
 
         noClasses()
                 .that()
-                .resideOutsideOfPackages("io.haifa.agent.cli..", "io.haifa.agent.sandbox.host..")
+                .resideOutsideOfPackages(
+                        "io.haifa.agent.cli..", "io.haifa.coding.host.internal..", "io.haifa.agent.sandbox.host..")
                 .should()
                 .dependOnClassesThat()
                 .resideInAnyPackage("io.haifa.agent.sandbox.host..")

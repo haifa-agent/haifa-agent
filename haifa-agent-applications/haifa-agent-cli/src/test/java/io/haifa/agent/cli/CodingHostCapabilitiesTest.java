@@ -3,6 +3,8 @@ package io.haifa.agent.cli;
 import static org.assertj.core.api.Assertions.*;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.haifa.coding.host.internal.CodingHostCapabilities;
+import io.haifa.coding.host.internal.CodingHostException;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 

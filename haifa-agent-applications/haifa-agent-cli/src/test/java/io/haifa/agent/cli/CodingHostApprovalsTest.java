@@ -9,6 +9,8 @@ import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.core.tool.ToolCallStatus;
 import io.haifa.agent.runtime.api.*;
+import io.haifa.coding.host.internal.CodingHostApprovals;
+import io.haifa.coding.host.internal.CodingHostException;
 import java.lang.reflect.Proxy;
 import java.time.Duration;
 import java.time.Instant;

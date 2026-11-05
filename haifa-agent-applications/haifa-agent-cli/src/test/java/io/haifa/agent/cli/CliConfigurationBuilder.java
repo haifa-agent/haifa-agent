@@ -2,6 +2,8 @@ package io.haifa.agent.cli;
 
 import io.haifa.agent.application.project.persistence.ProjectPersistenceConfiguration;
 import io.haifa.agent.application.project.policy.CodingApprovalThreshold;
+import io.haifa.coding.host.internal.ApprovalMode;
+import io.haifa.coding.host.internal.CliConfiguration;
 import java.time.Duration;
 import java.util.List;
 import java.util.Set;

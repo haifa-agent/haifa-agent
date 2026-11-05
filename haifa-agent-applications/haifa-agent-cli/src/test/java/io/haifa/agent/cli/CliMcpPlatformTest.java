@@ -14,6 +14,8 @@ import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.tool.api.ToolInvocationRequest;
 import io.haifa.agent.tool.core.DefaultToolInvoker;
 import io.haifa.agent.tool.core.ToolCatalogBuilder;
+import io.haifa.coding.host.internal.CliConfiguration;
+import io.haifa.coding.host.internal.CliMcpPlatform;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;

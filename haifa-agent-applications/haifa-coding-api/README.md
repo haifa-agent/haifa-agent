@@ -4,8 +4,10 @@
 presentation reducer and an observation handle. It has no production dependencies. It belongs to the
 Coding application, outside the base SDK BOM. Java compilation requires Java 21.
 
-This is an experimental contract and native Host projection. A network Client, browser authorization,
-browser assets and TUI migration are separate deliveries. Existing native v1 methods remain unchanged.
+This is an experimental product contract. The [Host](../haifa-coding-host/README.md) and
+[Java Client](../haifa-coding-client/README.md) implement safe embedded/native binding and optional
+browser authorization. Browser SDK/UI and TUI migration remain separate deliveries. Existing native
+v1 methods remain unchanged.
 
 ## One schema, two consumers
 
@@ -41,7 +43,7 @@ first pass schema validation and then `CodingProtocolChecks`, as the fixture ent
 ## Snapshot and update semantics
 
 `Snapshot.scope` fixes `viewId`, `hostIncarnation`, `clientId`, `sessionId`, `schemaVersion` and
-`source` (`native` or `browser`). The current Host only creates **native** observations. A view revision
+`source` (`native` or `browser`). Host labels native/embedded observations `native` and grant-bound browser observations `browser`. A view revision
 is a process-local publication number, distinct from Session/model/Run/Interaction CAS revisions,
 history sequence, Run event cursor, output sequence and local UI generation.
 
@@ -89,7 +91,7 @@ full model context do not enter this contract.
 | Displayed message/live text | Engine caps at 8,000 Unicode code points; schema permits entry text up to 16,384 |
 | Approval review content | 16,384 code points plus bounded environment/technical facts; incomplete targets disable sensitive actions |
 | Source output chunk | 32 KiB UTF-8; larger chunks require resync |
-| Preview | Existing separately negotiated transient channel, 4,096 UTF-8 bytes/frame, exact Session/Run/ToolCall/channel |
+| Preview | Existing separately negotiated transient channel, 4,096 UTF-8 bytes of text, 16 KiB serialized frame, exact Session/Run/ToolCall/channel |
 
 `history.hasEarlier`, `beforeSequence`, `complete`, entry `truncated`, live `truncated`, review
 `targetComplete`/`contentTruncated` and preview `outputTruncated`/`previewDropped` describe different
@@ -104,8 +106,8 @@ silently drop facts or raise budgets.
 request, JSON-RPC `id` correlates one transport exchange, and `idempotencyKey` identifies an existing
 domain deduplication boundary. These identities are independent. `Receipt.disposition=accepted`
 means admission, not terminal success. `unknown` remains unknown if existing queries cannot prove an
-outcome. Never resend an uncertain side effect under a new key. B1 does not add a generic operation
-store or a command dispatch endpoint for this declarative record.
+outcome. Never resend an uncertain side effect under a new key. There is no generic operation store. B2 adds finite `Query`/`QueryResult`, `CommandRequest`/
+`CommandResult`, pairing/grant DTOs and `CodingClient`; Host dispatches these through engine mapping.
 
 | Product capability | Contract / existing supported binding | Outcome and migration responsibility |
 | --- | --- | --- |
@@ -125,10 +127,10 @@ store or a command dispatch endpoint for this declarative record.
 
 The Web first phase consumes Session creation/open, input, bounded presentation/history, exact approval,
 clarification, consent and cancellation. The other supported native/TUI behaviors remain required
-compatibility bindings even when absent from that UI. Product mapping and the future lightweight
+compatibility bindings even when absent from that UI. Product mapping and the lightweight
 embedded binding belong to the engine; the old Runtime-bearing remote compatibility bridge stays in
-CLI. B2 must supply the new safe Client methods/result mappings before B4 can remove those old imports;
-this contract module does not itself implement that migration.
+CLI. The new safe Client methods/result mappings are available for the separately authorized TUI migration;
+this contract module does not itself migrate the TUI.
 
 ## Lifetimes and browser boundary
 
@@ -139,8 +141,8 @@ lease, never restore a previous grant. Closing a view releases observation only;
 terminates its views and consent, while already accepted Runs/tools retain their owner.
 
 Browser pairing/grant validation, unique grant-to-client binding and accept/revoke serialization are
-B2 responsibilities and are not enabled by `source=browser` in a DTO. A new browser client must refuse
+implemented in Host and are not enabled by `source=browser` in a DTO. A new browser client must refuse
 an old Host lacking browser authorization rather than fall back to native RPC. Same origin and client ID
-are not authentication. Reconnect with a valid grant requires a fresh client/view and explicit consent;
+are not authentication. Reconnect with a valid grant reuses its bound client and requires a fresh view; it never restores lost consent;
 expired/revoked grants require pairing again. Unknown accepted-command outcomes still require an
 existing exact query or remain unknown. This module opens no browser ingress.

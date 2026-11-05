@@ -4,11 +4,13 @@
 
 - `haifa-coding-api`：仅依赖 JDK 的实验性 Coding 产品合同，包含共享 schema、Java/TS fixtures、
   有界展示 DTO 和原子 reducer；不属于基础 SDK BOM，也不提供网络 Client；
+- `haifa-coding-host`：可复用产品 owner/SQLite 装配、显式可信资源和同源浏览器授权；无 CLI/TUI 依赖；
+- `haifa-coding-client`：仅 API/Jackson 的轻量 Java HTTP/SSE Client，不带 engine/SQLite；
 - `haifa-agent-coding-agent`：Project/Workspace Coding Agent 产品服务，拥有 Session、Queue、Policy 与
   MyBatis/SQLite 产品持久化，不拥有终端；
 - `haifa-agent-coding-terminal`：严格映射评审版低保真原型的 tui4j 单列交互层，只通过
   `CodingSessionClient` 消费产品事实，不装配 Runtime、SQLite、Sandbox 或可执行发行包；
-- `haifa-agent-cli`：最高层生产装配与唯一 shaded 可执行制品，复用同一个 Runtime、Project、
+- `haifa-agent-cli`：参数/终端/发行兼容入口与唯一 shaded 可执行制品，产品装配委托 Host SDK，复用同一个 Runtime、Project、
   Workspace、Policy、Tool、Execution、Persistence 和 `CodingSessionService`，同时提供 Terminal
   默认入口与兼容的 `-m` one-shot 模式。
 - `haifa-agent-personal-assistant-application`：纯 Java Personal 产品用例、Product Profile，以及

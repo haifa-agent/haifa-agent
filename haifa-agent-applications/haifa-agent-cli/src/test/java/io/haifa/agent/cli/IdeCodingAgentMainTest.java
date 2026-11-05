@@ -2,6 +2,9 @@ package io.haifa.agent.cli;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.haifa.coding.host.internal.ApprovalMode;
+import io.haifa.coding.host.internal.CliConfiguration;
+import io.haifa.coding.host.internal.CliConfigurationLoader;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;

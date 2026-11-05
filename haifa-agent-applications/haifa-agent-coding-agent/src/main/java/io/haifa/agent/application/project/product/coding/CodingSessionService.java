@@ -284,7 +284,7 @@ public final class CodingSessionService {
         return new CodingSessionPage(summaries, next, hasMore);
     }
 
-    /** Non-reconciling read used only to capture recovery candidates before existing recovery semantics run. */
+    /** Non-reconciling product-fact read, also used to capture recovery candidates before owner reconciliation. */
     public CodingSessionPage listSessionsForRecovery(ProjectId projectId, int limit) {
         return listSessionsForRecovery(projectId, CodingSessionQuery.firstPage(limit));
     }

@@ -24,6 +24,7 @@ import io.haifa.agent.project.workspace.Workspace;
 import io.haifa.agent.project.workspace.WorkspaceAccessMode;
 import io.haifa.agent.project.workspace.WorkspaceId;
 import io.haifa.agent.project.workspace.WorkspaceRevision;
+import io.haifa.coding.host.internal.LocalFileToolOperations;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;

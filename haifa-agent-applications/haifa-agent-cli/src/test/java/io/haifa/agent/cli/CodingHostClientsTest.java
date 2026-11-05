@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.common.id.UuidV7IdentifierGenerator;
+import io.haifa.coding.host.internal.CodingHostClients;
+import io.haifa.coding.host.internal.CodingHostException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.atomic.AtomicInteger;
