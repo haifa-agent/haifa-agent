@@ -197,6 +197,10 @@ public final class SessionMessageSource {
         workingSets = Objects.requireNonNull(value);
     }
 
+    CompressionPolicy compressionPolicy() {
+        return policy;
+    }
+
     public boolean workingSetEnabled(AgentRun run) {
         return workingSets != null && workingSets.enabled(run);
     }

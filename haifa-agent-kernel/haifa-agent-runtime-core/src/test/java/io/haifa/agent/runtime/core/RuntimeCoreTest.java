@@ -3652,7 +3652,7 @@ class RuntimeCoreTest {
                     captured.add(call);
                     return response(finalDecision("done"));
                 },
-                Map.of(),
+                Map.of(RuntimeControlOptions.CONTEXT_BUDGET_POLICY, RuntimeControlOptions.UNIFIED_CONTEXT_V1),
                 () -> ContextLifecycleHistoryFixture.NOW,
                 new AtomicInteger());
         ContextLifecycleHistoryFixture.append(fixture.store, 32);
@@ -3706,6 +3706,34 @@ class RuntimeCoreTest {
                 .isTrue();
         assertThat(fixture.store.latestVersion(ContextLifecycleHistoryFixture.SESSION))
                 .isZero();
+    }
+
+    @Test
+    void unifiedBudgetRejectsOversizedFixedOrRequiredInputBeforeAnyModelCall() {
+        for (String profile : List.of("tiny-profile", "budget-profile")) {
+            var calls = new AtomicInteger();
+            var fixture = workingSetFixture(
+                    request -> {
+                        calls.incrementAndGet();
+                        return response(finalDecision("unexpected"));
+                    },
+                    Map.of(RuntimeControlOptions.CONTEXT_BUDGET_POLICY, RuntimeControlOptions.UNIFIED_CONTEXT_V1),
+                    () -> ContextLifecycleHistoryFixture.NOW,
+                    new AtomicInteger());
+            String objective = profile.equals("tiny-profile") ? "small request" : "required original ".repeat(2000);
+            var started = fixture.runtime.start(workingSetRequest("budget", objective, profile));
+            fixture.scheduler.runAll();
+            assertThat(fixture.runtime.find(started.runId()).orElseThrow().status())
+                    .isEqualTo(AgentRunStatus.FAILED);
+            assertThat(calls).hasValue(0);
+            assertThat(fixture.store.latestVersion(ContextLifecycleHistoryFixture.SESSION))
+                    .isZero();
+            assertThat(fixture.store
+                            .initiatingUserMessage(started.runId())
+                            .orElseThrow()
+                            .contents())
+                    .containsExactly(new TextPart(objective, "plain"));
+        }
     }
 
     @Test
@@ -3921,7 +3949,11 @@ class RuntimeCoreTest {
                                     new AgentRunLimits(50, 4, 1, 300000, 60000),
                                     id.equals("media-profile")
                                             ? ContextLifecycleHistoryFixture.urlImageModel()
-                                            : DefaultResolvedModelSnapshots.deepSeekV4Pro(),
+                                            : id.equals("budget-profile")
+                                                    ? constrainedContextModel(8192, 1024)
+                                                    : id.equals("tiny-profile")
+                                                            ? constrainedContextModel()
+                                                            : DefaultResolvedModelSnapshots.deepSeekV4Pro(),
                                     Map.of(),
                                     id.equals("seed-profile")
                                             ? withOption(options, RuntimeControlOptions.WORKING_SET_TARGET, 16384)
@@ -4035,6 +4067,10 @@ class RuntimeCoreTest {
     }
 
     private static ResolvedModelSnapshot constrainedContextModel() {
+        return constrainedContextModel(1000, 128);
+    }
+
+    private static ResolvedModelSnapshot constrainedContextModel(int contextWindow, int outputTokens) {
         ResolvedModelSnapshot defaults = DefaultResolvedModelSnapshots.deepSeekV4Pro();
         return ResolvedModelSnapshot.create(
                 defaults.providerId(),
@@ -4050,8 +4086,8 @@ class RuntimeCoreTest {
                 defaults.credentialRef(),
                 defaults.nativeStreaming(),
                 defaults.capabilities(),
-                1_000,
-                128,
+                contextWindow,
+                outputTokens,
                 defaults.providerOptions(),
                 defaults.invocationOptions());
     }

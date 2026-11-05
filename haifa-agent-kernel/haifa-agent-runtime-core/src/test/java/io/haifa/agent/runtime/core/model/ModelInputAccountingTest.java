@@ -38,6 +38,36 @@ class ModelInputAccountingTest {
     }
 
     @Test
+    void admissionAddsSchemaWrappersAndExplicitUnknownMediaAndContinuationReserves() {
+        var model = DefaultResolvedModelSnapshots.deepSeekV4Pro();
+        var protectedMessage = ModelMessage.assistant("visible", List.of(), SensitiveModelReasoning.of("protected"));
+        var media = ModelMessage.user(
+                "diagram", List.of(new ImageUrlPart(java.net.URI.create("https://example.test/image.png"))), List.of());
+        var input = ModelInputAccounting.admissionEstimate(
+                model, List.of(protectedMessage, media), List.of(), Map.of("type", "object"));
+        assertThat(input.multimodalReserve())
+                .isEqualTo(Math.max(
+                        model.maxOutputTokens(),
+                        io.haifa.agent.context.budget.ContextWindowBudget.safetyMargin(model.contextWindow(), false)));
+        assertThat(input.continuationReserve())
+                .isEqualTo(protectedMessage.reasoning().orElseThrow().byteLength());
+        assertThat(input.totalTokens())
+                .isEqualTo(input.visibleTokens() + input.multimodalReserve() + input.continuationReserve());
+        assertThat(input.toString()).doesNotContain("protected");
+        assertThat(RuntimeControlOptions.unifiedContextBudget(Map.of(RuntimeControlOptions.WORKING_SET, true)))
+                .isFalse();
+        assertThat(RuntimeControlOptions.unifiedContextBudget(Map.of(
+                        RuntimeControlOptions.WORKING_SET,
+                        true,
+                        RuntimeControlOptions.CONTEXT_BUDGET_POLICY,
+                        RuntimeControlOptions.UNIFIED_CONTEXT_V1)))
+                .isTrue();
+        assertThat(RuntimeControlOptions.providerOptions(
+                        Map.of(RuntimeControlOptions.CONTEXT_BUDGET_POLICY, RuntimeControlOptions.UNIFIED_CONTEXT_V1)))
+                .isEmpty();
+    }
+
+    @Test
     void exactPriceEvidenceIsValidatedAndNeverForwarded() {
         var prices = Map.<String, Object>of(
                 "modelConfigurationDigest",

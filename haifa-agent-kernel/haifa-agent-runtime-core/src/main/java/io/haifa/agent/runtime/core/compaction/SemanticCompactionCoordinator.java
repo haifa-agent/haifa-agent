@@ -210,22 +210,48 @@ public final class SemanticCompactionCoordinator {
         return evaluateAndCompactIfNeeded(run, iteration, binding, 0);
     }
 
+    public boolean plansAfterSelection(AgentRun run) {
+        return workingSets != null && workingSets.unified(run);
+    }
+
+    public CompactionEvaluationOutcome evaluateSelected(
+            AgentRun run, int iteration, FrozenModelBinding binding, CompactionTriggerDecision selected) {
+        return evaluateAndCompactIfNeeded(run, iteration, binding, 0, selected);
+    }
+
+    public void requireSelectedRetention(long tokens, CompactionTriggerDecision decision) {
+        if (decision.reason() == CompactionTriggerReason.ACTIVE_HISTORY_BUDGET)
+            requireWithinRetention(tokens, decision.budgetBreakdown());
+    }
+
     private CompactionEvaluationOutcome evaluateAndCompactIfNeeded(
             AgentRun run, int iteration, FrozenModelBinding binding, int boundedPageCount) {
+        return evaluateAndCompactIfNeeded(run, iteration, binding, boundedPageCount, null);
+    }
+
+    private CompactionEvaluationOutcome evaluateAndCompactIfNeeded(
+            AgentRun run,
+            int iteration,
+            FrozenModelBinding binding,
+            int boundedPageCount,
+            CompactionTriggerDecision selected) {
         if (history != null) history.requireCurrentScope(run);
         long startNanos = System.nanoTime();
         if (!policy.semanticCompactionEnabled()) {
             return CompactionEvaluationOutcome.NONE;
         }
 
-        if (workingSets != null && workingSets.enabled(run)) {
-            var selected = workingSets.selectedEstimate(
+        if (selected != null && !selected.shouldCompact())
+            return CompactionEvaluationOutcome.untriggered(
+                    selected.budgetBreakdown().currentSessionTokens(), elapsedMillis(startNanos));
+        if (selected == null && workingSets != null && workingSets.enabled(run)) {
+            var selectedEstimate = workingSets.selectedEstimate(
                     run,
                     Math.max(
                             1L,
                             binding.configuration().model().contextWindow()
                                     - binding.configuration().model().maxOutputTokens()));
-            if (selected.isPresent()) {
+            if (selectedEstimate.isPresent()) {
                 var estimator = new HeuristicTokenEstimator();
                 long fixed =
                         HeuristicTokenEstimator.tokens(binding.configuration().agentInstruction())
@@ -237,10 +263,11 @@ public final class SemanticCompactionCoordinator {
                         binding.configuration().model().maxOutputTokens(),
                         fixed,
                         0,
-                        selected.getAsLong(),
+                        selectedEstimate.getAsLong(),
                         2);
                 if (!selectedDecision.shouldCompact())
-                    return CompactionEvaluationOutcome.untriggered(selected.getAsLong(), elapsedMillis(startNanos));
+                    return CompactionEvaluationOutcome.untriggered(
+                            selectedEstimate.getAsLong(), elapsedMillis(startNanos));
             }
             // Excess required evidence follows the existing bounded contiguous recovery path.
         }
@@ -254,7 +281,7 @@ public final class SemanticCompactionCoordinator {
             CompactionEvaluationOutcome pageOutcome =
                     compactTruncatedWindow(run, iteration, binding, activeSnapshot, startNanos);
             CompactionEvaluationOutcome finalOutcome =
-                    evaluateAndCompactIfNeeded(run, iteration, binding, boundedPageCount + 1);
+                    evaluateAndCompactIfNeeded(run, iteration, binding, boundedPageCount + 1, selected);
             return finalOutcome.triggerReason() == null ? pageOutcome : finalOutcome;
         }
         List<AgentMessage> visible = activeSnapshot == null
@@ -294,8 +321,10 @@ public final class SemanticCompactionCoordinator {
         } catch (Exception ignored) {
         }
 
-        CompactionTriggerDecision decision = triggerEvaluator.evaluate(
-                contextWindow, outputReserve, fixedPrefix, otherSources, currentTokens, activeGroups.size());
+        CompactionTriggerDecision decision = selected != null
+                ? selected
+                : triggerEvaluator.evaluate(
+                        contextWindow, outputReserve, fixedPrefix, otherSources, currentTokens, activeGroups.size());
         if (!decision.shouldCompact()) {
             ContextBudgetBreakdown budget = decision.budgetBreakdown();
             boolean hasActiveTarget =
@@ -322,10 +351,20 @@ public final class SemanticCompactionCoordinator {
                 previousSummary.map(ConversationSummary::estimatedTokens).orElse(0);
         List<AgentMessage> activeMessages =
                 activeGroups.stream().flatMap(List::stream).toList();
-        ModelMessageProjectionPlan projectionPlan = projectionPlanner.plan(activeMessages, resolver);
+        ModelMessageProjectionPlan projectionPlan = selected == null
+                ? projectionPlanner.plan(activeMessages, resolver)
+                : projectionPlanner.plan(
+                        activeMessages,
+                        resolver,
+                        activeMessages.stream()
+                                .flatMap(message -> message.contents().stream())
+                                .filter(io.haifa.agent.core.content.ToolCallPart.class::isInstance)
+                                .map(io.haifa.agent.core.content.ToolCallPart.class::cast)
+                                .map(io.haifa.agent.core.content.ToolCallPart::toolCallId)
+                                .collect(java.util.stream.Collectors.toSet()));
         long beforeTokens = prevTokens + projectionPlan.rawActiveTokens();
         long afterTokens = prevTokens + projectionPlan.projectedActiveTokens();
-        if (bypassCompactionRecommended(softLimit, projectionPlan, afterTokens)) {
+        if (selected == null && bypassCompactionRecommended(softLimit, projectionPlan, afterTokens)) {
             long elapsed = elapsedMillis(startNanos);
             log.info(
                     "Bypassing semantic compaction for session {} due to projection pruning: activeBudget={}, saved {} tokens, projected {} < softLimit {}",
@@ -366,7 +405,9 @@ public final class SemanticCompactionCoordinator {
                         CompactionFailureBackoff.Scope.of(run, binding, policy, expectedPreviousVersion),
                         activeMessages)) {
             invoker.checkControl(run);
-            requireWithinRetention(afterTokens, decision.budgetBreakdown());
+            requireWithinRetention(
+                    selected == null ? afterTokens : selected.budgetBreakdown().currentSessionTokens(),
+                    decision.budgetBreakdown());
             return CompactionEvaluationOutcome.untriggered(afterTokens, elapsedMillis(startNanos));
         }
 
@@ -390,13 +431,13 @@ public final class SemanticCompactionCoordinator {
                 currentTokens,
                 decision.budgetBreakdown().resolvedRetainedTailTokens(),
                 startNanos);
-        if (targetPressure) {
-            Optional<ConversationSummary> selected = summaries.latestValid(run.sessionId());
-            List<AgentMessage> remaining = groupsAfterSummary(visible, selected).stream()
+        if (targetPressure && selected == null) {
+            Optional<ConversationSummary> latestSelected = summaries.latestValid(run.sessionId());
+            List<AgentMessage> remaining = groupsAfterSummary(visible, latestSelected).stream()
                     .flatMap(List::stream)
                     .toList();
             long selectedTokens =
-                    selected.map(ConversationSummary::estimatedTokens).orElse(0)
+                    latestSelected.map(ConversationSummary::estimatedTokens).orElse(0)
                             + projectionPlanner.plan(remaining, resolver).projectedActiveTokens();
             requireWithinRetention(selectedTokens, decision.budgetBreakdown());
         }

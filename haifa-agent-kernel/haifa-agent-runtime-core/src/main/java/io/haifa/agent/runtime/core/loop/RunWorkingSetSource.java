@@ -88,6 +88,10 @@ public final class RunWorkingSetSource {
         return names.containsAll(Set.of("history_search", "history_read"));
     }
 
+    public boolean unified(AgentRun run) {
+        return enabled(run) && RuntimeControlOptions.unifiedContextBudget(options(run));
+    }
+
     public SessionMessageSource.MeasuredSelection select(AgentRun run, long hardBudget, String expectedPrefix) {
         return ports.unitOfWork().executeReadOnly(() -> selectSnapshot(run, hardBudget, expectedPrefix));
     }
@@ -608,6 +612,14 @@ public final class RunWorkingSetSource {
     }
 
     public void recordRequest(AgentRun run, AgentChatRequest request, long startedAt) {
+        recordRequest(run, request, startedAt, null);
+    }
+
+    public void recordRequest(
+            AgentRun run,
+            AgentChatRequest request,
+            long startedAt,
+            io.haifa.agent.context.api.AgentContext actualContext) {
         if (!enabled(run)) return;
         var prefix = ModelInputAccounting.prefix(request);
         synchronized (this) {
@@ -615,6 +627,11 @@ public final class RunWorkingSetSource {
             if (draft == null
                     || draft.prefix() == null
                     || !draft.prefix().equals(prefix.get("visibleFixedPrefixIdentity"))) {
+                windows.remove(run.sessionId());
+                return;
+            }
+            if (actualContext != null
+                    && !actualContext.items().containsAll(draft.selection().items())) {
                 windows.remove(run.sessionId());
                 return;
             }

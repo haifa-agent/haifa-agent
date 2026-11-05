@@ -20,6 +20,25 @@ public final class RuntimeControlOptions {
     public static final String WORKING_SET_TARGET = PREFIX + "working_set_target_tokens";
     public static final String WORKING_SET_RETENTION = PREFIX + "working_set_retention_tokens";
     public static final String WORKING_SET_CACHE = PREFIX + "working_set_cache_contract";
+    public static final String CONTEXT_BUDGET_POLICY = PREFIX + "context_budget_policy";
+    public static final String UNIFIED_CONTEXT_V1 = "unified-context-v1";
+    public static final String CONTEXT_PREVIEW_CHARS = PREFIX + "context_preview_chars";
+    public static final String CONTEXT_MIN_SAVING_TOKENS = PREFIX + "context_min_saving_tokens";
+
+    public static boolean unifiedContextBudget(Map<String, Object> options) {
+        Object version = options.get(CONTEXT_BUDGET_POLICY);
+        if (version != null && !UNIFIED_CONTEXT_V1.equals(version) && !"legacy".equals(version))
+            throw new IllegalArgumentException("unsupported context budget policy");
+        return workingSetEnabled(options) && UNIFIED_CONTEXT_V1.equals(version);
+    }
+
+    public static int contextPreviewChars(Map<String, Object> options) {
+        return (int) bounded(options, CONTEXT_PREVIEW_CHARS, 2048, 128, 8192);
+    }
+
+    public static int contextMinSavingTokens(Map<String, Object> options) {
+        return (int) bounded(options, CONTEXT_MIN_SAVING_TOKENS, 256, 1, 8192);
+    }
 
     public static boolean workingSetEnabled(Map<String, Object> options) {
         Object value = options.get(WORKING_SET);
@@ -48,6 +67,9 @@ public final class RuntimeControlOptions {
 
     private static void validateWorkingSet(Map<String, Object> options) {
         workingSetEnabled(options);
+        unifiedContextBudget(options);
+        contextPreviewChars(options);
+        contextMinSavingTokens(options);
         workingSetTarget(options);
         workingSetRetention(options);
         Object contract = options.get(WORKING_SET_CACHE);
@@ -205,7 +227,10 @@ public final class RuntimeControlOptions {
                 || key.equals(WORKING_SET)
                 || key.equals(WORKING_SET_TARGET)
                 || key.equals(WORKING_SET_RETENTION)
-                || key.equals(WORKING_SET_CACHE);
+                || key.equals(WORKING_SET_CACHE)
+                || key.equals(CONTEXT_BUDGET_POLICY)
+                || key.equals(CONTEXT_PREVIEW_CHARS)
+                || key.equals(CONTEXT_MIN_SAVING_TOKENS);
     }
 
     private static OptionalLong positiveLong(Map<String, Object> options, String key) {

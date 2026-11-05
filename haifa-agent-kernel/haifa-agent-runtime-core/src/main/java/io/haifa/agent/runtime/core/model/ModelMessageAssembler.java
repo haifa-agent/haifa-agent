@@ -339,6 +339,35 @@ public final class ModelMessageAssembler {
                                 .count());
     }
 
+    /** Last source check before a prepared request is sent; never resolves or hashes protected bodies. */
+    public void validateSources(AgentRun run, AgentContext context) {
+        if (history != null) history.requireCurrentScope(run);
+        for (var item : context.items()) {
+            if (item.content() instanceof MessageGroupContextContent group) {
+                for (var message : group.messages())
+                    if (state.message(message.id()).filter(message::equals).isEmpty())
+                        throw new io.haifa.agent.runtime.core.storage.OptimisticLockException(
+                                "prepared source changed");
+            } else if (item.content() instanceof io.haifa.agent.context.item.HistoricalExcerptContent excerpt) {
+                if (history == null
+                        || history.refresh(run.id(), excerpt)
+                                .filter(excerpt::equals)
+                                .isEmpty())
+                    throw new io.haifa.agent.runtime.core.storage.OptimisticLockException("prepared excerpt changed");
+            } else if (item.content() instanceof ConversationSummaryContent summary) {
+                if (history == null || !history.validSummary(run.id(), summary.summaryId(), summary.version()))
+                    throw new io.haifa.agent.runtime.core.storage.OptimisticLockException("prepared summary changed");
+            } else if (item.provenance().sourceType().equals("working-set-plan")) {
+                if (history == null
+                        || !history.validPlan(
+                                run.id(),
+                                new AgentRunId(item.provenance().sourceId()),
+                                item.provenance().sourceVersion()))
+                    throw new io.haifa.agent.runtime.core.storage.OptimisticLockException("prepared plan changed");
+            }
+        }
+    }
+
     private ContinuationIndex selectedContinuations(List<AgentMessage> messages) {
         var ids = new HashMap<AgentRunId, Set<AgentMessageId>>();
         for (var message : messages)

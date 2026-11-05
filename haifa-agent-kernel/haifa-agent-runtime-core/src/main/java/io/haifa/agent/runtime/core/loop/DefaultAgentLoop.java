@@ -296,7 +296,7 @@ public final class DefaultAgentLoop implements AgentLoop {
 
             FrozenModelBinding model = models.bind(run);
             CompactionEvaluationOutcome preBuildOutcome = CompactionEvaluationOutcome.NONE;
-            if (compactionCoordinator != null) {
+            if (compactionCoordinator != null && !compactionCoordinator.plansAfterSelection(run)) {
                 preBuildOutcome = evaluateCompaction(run, progress, model);
             }
             ContextBuildExecution buildExecution = buildContext(run, progress, model, preBuildOutcome);
@@ -492,7 +492,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                                         model,
                                         run,
                                         progress.iteration(),
-                                        builtRef[0].context().context(),
+                                        builtRef[0],
                                         modelRequestIdRef[0],
                                         retryAttempt - requestAttemptOffset[0]);
                             } catch (ModelInvocationException contextTooLong) {
@@ -570,12 +570,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                                 }
                                 transitions.usage(run, new AgentRunUsageDelta(0, 0, 0, 1, 0, 0, 0, 0));
                                 return models.invoke(
-                                        model,
-                                        run,
-                                        progress.iteration(),
-                                        builtRef[0].context().context(),
-                                        modelRequestIdRef[0],
-                                        1);
+                                        model, run, progress.iteration(), builtRef[0], modelRequestIdRef[0], 1);
                             }
                         },
                         modelRetryPolicy.policy(),
@@ -1125,7 +1120,20 @@ public final class DefaultAgentLoop implements AgentLoop {
             FrozenModelBinding model,
             CompactionEvaluationOutcome initialOutcome) {
         try {
-            return new ContextBuildExecution(contextBuilder.build(run, progress, model), initialOutcome);
+            var built = contextBuilder.build(run, progress, model);
+            if (compactionCoordinator != null
+                    && built.compactionDecision()
+                            .filter(decision -> decision.shouldCompact())
+                            .isPresent()) {
+                var decision = built.compactionDecision().orElseThrow();
+                var outcome = compactionCoordinator.evaluateSelected(run, progress.iteration(), model, decision);
+                var rebuilt = contextBuilder.build(run, progress, model);
+                rebuilt.preparedInput()
+                        .ifPresent(input ->
+                                compactionCoordinator.requireSelectedRetention(input.sessionTokens(), decision));
+                return new ContextBuildExecution(rebuilt, outcome);
+            }
+            return new ContextBuildExecution(built, initialOutcome);
         } catch (LocalContextOverflowException
                 | ActiveContextCompactionRequiredException
                 | ActiveContextWindowLimitException overflow) {
