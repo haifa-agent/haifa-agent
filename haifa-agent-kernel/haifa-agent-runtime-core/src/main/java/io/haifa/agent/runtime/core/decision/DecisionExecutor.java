@@ -1576,6 +1576,8 @@ public final class DecisionExecutor {
             facts.put("providerId", value.model().providerId().value());
             facts.put("modelId", value.model().providerModelId());
             facts.put("configurationDigest", value.model().configurationDigest());
+            if (value.metadata().get("contextProjectionPhase") instanceof String phase && !phase.isBlank())
+                facts.put("contextProjectionPhase", phase);
         });
         continuation.ifPresent(value -> {
             ModelContinuationRef reference = value.reference();

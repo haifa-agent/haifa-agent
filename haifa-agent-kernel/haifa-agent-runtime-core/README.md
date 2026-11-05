@@ -32,6 +32,38 @@ TTL and identity agreement are prediction inputs only; response usage is the act
 old event/trace field and record accessor remain as compatibility aliases. Provider usage, active
 snapshot reuse and summary rendering metrics are separate.
 
+## Unified model-bound budgeting
+
+SDK `enableRunWorkingSet()` also selects frozen `haifa.runtime.context_budget_policy=unified-context-v1`.
+Runtime-only callers must set that version explicitly alongside working sets and both authorized built-in
+history readers. Missing versions and explicit `legacy` preserve the previous path; disabled selection or
+an allowlist excluding a reader also retains legacy behavior. These controls never reach the Provider.
+
+The unified path selects sources, confirms saved-result views, prepares the actual model messages, then
+checks one model-window budget including output reserve, safety margin, visible schemas and protocol.
+Optional Memory and other optional items yield before semantic compaction. Required evidence can exceed
+the soft target within frozen retention and hard admission. A final check before each physical call,
+including a final answer without tools, rejects over-budget input without invoking the Provider.
+Media uses an explicit conservative policy reserve per item; protected continuation uses byte-length
+metadata only. Actual vendor formatting, media tokenization and cache/cost remain unknown without evidence.
+
+Large saved Tool results first enter the context as a deterministic bounded preview only when the
+individual result exceeds the target/capacity threshold, an authorized reader confirms its saved version,
+and the saving reaches the frozen minimum. `haifa.runtime.context_preview_chars` defaults to 2,048
+(128..8,192); `haifa.runtime.context_min_saving_tokens` defaults to 256 (1..8,192). This is target-pressure
+reduction, not a claim that actual cache-adjusted cost always falls. Original arguments, result records,
+versions and occurrences remain unchanged. Built-in history reader responses are already bounded and are
+not externalized recursively. No reader exists for arbitrary Artifact bodies or old write-argument sections;
+those required contents stay whole and may fail hard admission. Missing saved bodies never produce fake references.
+
+The unified projection does not omit results by age. A stable public context-phase identity changes on
+Steer, summary or required-prefix reselection; protected continuations from an earlier phase are not replayed.
+Their visible completed protocol becomes untrusted historical data with source identities. Same-phase
+continuation retains existing exact-binding rules. Source revalidation still precedes the physical call.
+Selection and previews never advance summary coverage: the existing semantic compactor processes the true
+contiguous source plus the previous valid summary and retains its validation, repair, CAS and recovery limits.
+Terminal automatic summary maintenance remains deferred; terminal Run usage is immutable.
+
 ## Optional Run working sets
 
 SDK `enableRunWorkingSet()` enables history readers and deterministic `run-working-set-v1` selection;

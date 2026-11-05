@@ -556,6 +556,19 @@ class ModelMessageAssemblerTest {
         assertThat(sameModelAssembly.metrics().continuationBatchCount()).isEqualTo(1);
         assertThat(sameModelAssembly.metrics().continuationRecordCount()).isEqualTo(1);
 
+        var rewritten = new ModelMessageAssembler(countingStore)
+                .assemble(RUN_ID, withPhase(context, "rewritten"), previousModel);
+        assertThat(rewritten).allSatisfy(message -> {
+            assertThat(message.reasoning()).isEmpty();
+            assertThat(message.toolCalls()).isEmpty();
+            assertThat(message.role()).isNotEqualTo(ModelMessageRole.TOOL);
+        });
+        assertThat(rewritten).anySatisfy(message -> {
+            assertThat(message.role()).isEqualTo(ModelMessageRole.USER);
+            assertThat(message.content()).contains("haifa", "rejected by the operator");
+        });
+        assertThat(prefetchedResolutions).hasValue(1);
+
         var messages = new ModelMessageAssembler(store).assemble(RUN_ID, context, anthropicModel);
 
         ModelMessage switchedAssistant = messages.stream()
@@ -1163,7 +1176,7 @@ class ModelMessageAssemblerTest {
                         MessageStatus.COMPLETED,
                         MessageVisibility.USER_VISIBLE,
                         List.of(new TextPart("answer", "plain")),
-                        Map.of("modelContinuationId", "ordinary-continuation"),
+                        Map.of("modelContinuationId", "ordinary-continuation", "contextProjectionPhase", "stable"),
                         Instant.EPOCH),
                 new ModelContinuationDraft(
                         new ModelContinuationRef(
@@ -1187,6 +1200,18 @@ class ModelMessageAssemblerTest {
                 .assemble(RUN_ID, context, model)
                 .getLast();
         assertThat(assembled.reasoning().orElseThrow().digest()).isEqualTo(reasoning.digest());
+        assertThat(new ModelMessageAssembler(store)
+                        .assemble(RUN_ID, withPhase(context, "stable"), model)
+                        .getLast()
+                        .reasoning())
+                .contains(reasoning);
+        var rewritten = new ModelMessageAssembler(store)
+                .assemble(RUN_ID, withPhase(context, "rewritten"), model)
+                .getLast();
+        assertThat(rewritten.role()).isEqualTo(ModelMessageRole.USER);
+        assertThat(rewritten.content()).contains("answer");
+        assertThat(rewritten.reasoning()).isEmpty();
+        assertThat(store.message(assistant.id())).contains(assistant);
         var other = ResolvedModelSnapshot.create(
                 model.providerId(),
                 model.providerVersion(),
@@ -1294,6 +1319,25 @@ class ModelMessageAssemblerTest {
                 ContextRetention.KEEP_IF_RELEVANT,
                 ContextSecurity.INTERNAL,
                 new ContextProvenance("test", id, "1", "hash-" + id));
+    }
+
+    private static AgentContext withPhase(AgentContext context, String phase) {
+        return new AgentContext(
+                context.prompts(),
+                context.items().stream()
+                        .map(item -> new ContextItem(
+                                item.id(),
+                                item.type(),
+                                item.content(),
+                                item.estimatedTokens(),
+                                item.priority(),
+                                item.retention(),
+                                new ContextSecurity(Set.of("unified-context", "context-phase:" + phase)),
+                                item.provenance()))
+                        .toList(),
+                context.tools(),
+                context.budget(),
+                context.estimatedInputTokens());
     }
 
     private static ContextWindowBudget budget() {

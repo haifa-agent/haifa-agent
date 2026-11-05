@@ -326,6 +326,24 @@ public final class FrozenModelInvoker {
             FrozenModelBinding binding,
             AgentRun run,
             int iteration,
+            io.haifa.agent.runtime.core.loop.RuntimeContextBuildResult built,
+            ModelRequestId requestId,
+            int physicalAttempt) {
+        return invoke(
+                binding,
+                run,
+                iteration,
+                built.context().context(),
+                requestId,
+                physicalAttempt,
+                List.of(),
+                built.preparedInput());
+    }
+
+    public ModelInvocationResult invokeWithoutTools(
+            FrozenModelBinding binding,
+            AgentRun run,
+            int iteration,
             AgentContext context,
             ModelRequestId requestId,
             int physicalAttempt) {
@@ -442,6 +460,25 @@ public final class FrozenModelInvoker {
                                         messageAssembly.projection().rawActiveTokens(),
                                 "projectedActiveHistoryEstimatedTokens",
                                         messageAssembly.projection().projectedActiveTokens(),
+                                "savedResultViewCount",
+                                        messageAssembly
+                                                .projection()
+                                                .resultViews()
+                                                .size(),
+                                "resultRepresentationReason",
+                                        messageAssembly
+                                                        .projection()
+                                                        .resultViews()
+                                                        .isEmpty()
+                                                ? "UNCHANGED"
+                                                : context.estimatedInputTokens()
+                                                                        + messageAssembly
+                                                                                .projection()
+                                                                                .tokensSavedByPruning()
+                                                                > context.budget()
+                                                                        .availableInputTokens()
+                                                        ? "HARD_CAPACITY"
+                                                        : "TARGET_PRESSURE",
                                 "sourceOccurrences", messageAssembly.sourceOccurrences(),
                                 "repeatedSourceOccurrences", messageAssembly.repeatedSourceOccurrences())));
         Instant startedAt = time.now();
@@ -545,7 +582,8 @@ public final class FrozenModelInvoker {
                             Map.entry("finishReason", response.finishReason().name()),
                             Map.entry("cacheHitTokens", response.usage().cacheHitTokens()),
                             Map.entry("cacheMissTokens", response.usage().cacheMissTokens()),
-                            Map.entry("reasoningTokens", response.usage().reasoningTokens())),
+                            Map.entry("reasoningTokens", response.usage().reasoningTokens()),
+                            Map.entry("contextProjectionPhase", ModelMessageAssembler.contextPhase(run, context))),
                     callId.value(),
                     physicalAttempt,
                     binding.configuration().model(),

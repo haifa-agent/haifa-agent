@@ -238,20 +238,15 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
             prepared = prepareUnified(run, model, middlewareContext.prompts(), tools, budget, items);
         }
         if (prepared.estimatedTokens() > budget.availableInputTokens()) throw new LocalContextOverflowException();
-        long completeTools = items.stream()
-                .filter(item -> item.content() instanceof MessageGroupContextContent)
-                .flatMap(item -> ((MessageGroupContextContent) item.content()).messages().stream())
-                .flatMap(message -> message.contents().stream())
-                .filter(io.haifa.agent.core.content.ToolResultPart.class::isInstance)
-                .count();
-        var decision = new io.haifa.agent.runtime.core.compaction.CompactionTriggerEvaluator(
-                        sessionMessages.compressionPolicy())
-                .evaluate(
-                        prepared.budget(),
-                        prepared.fixedTokens(),
-                        prepared.otherTokens(),
-                        prepared.sessionTokens(),
-                        (int) Math.min(Integer.MAX_VALUE, completeTools + 1));
+        var decision = selectedDecision(prepared, items);
+        if (decision.shouldCompact()
+                && items.stream()
+                        .anyMatch(item -> item.retention() != io.haifa.agent.context.item.ContextRetention.MUST_KEEP)) {
+            items.removeIf(item -> item.retention() != io.haifa.agent.context.item.ContextRetention.MUST_KEEP);
+            memoryItems = List.of();
+            prepared = prepareUnified(run, model, middlewareContext.prompts(), tools, budget, items);
+            decision = selectedDecision(prepared, items);
+        }
         var context = new AgentContext(
                 middlewareContext.prompts(), items, tools, prepared.budget(), prepared.estimatedTokens());
         var built = new ContextBuildResult(
@@ -277,6 +272,24 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
                 identity,
                 java.util.Optional.of(prepared),
                 java.util.Optional.of(decision));
+    }
+
+    private io.haifa.agent.runtime.core.compaction.CompactionTriggerDecision selectedDecision(
+            io.haifa.agent.runtime.core.model.PreparedModelInput prepared, List<ContextItem> items) {
+        long completeTools = items.stream()
+                .filter(item -> item.content() instanceof MessageGroupContextContent)
+                .flatMap(item -> ((MessageGroupContextContent) item.content()).messages().stream())
+                .flatMap(message -> message.contents().stream())
+                .filter(io.haifa.agent.core.content.ToolResultPart.class::isInstance)
+                .count();
+        return new io.haifa.agent.runtime.core.compaction.CompactionTriggerEvaluator(
+                        sessionMessages.compressionPolicy())
+                .evaluate(
+                        prepared.budget(),
+                        prepared.fixedTokens(),
+                        prepared.otherTokens(),
+                        prepared.sessionTokens(),
+                        (int) Math.min(Integer.MAX_VALUE, completeTools + 1));
     }
 
     private io.haifa.agent.runtime.core.model.PreparedModelInput prepareUnified(
@@ -384,7 +397,9 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
                 run.sessionId(),
                 loopContext.iteration(),
                 model.configuration().model().configurationDigest(),
-                RuntimeControlOptions.unifiedContextBudget(model.configuration().modelRequestOptions())
+                sessionMessages.workingSetEnabled(run)
+                                && RuntimeControlOptions.unifiedContextBudget(
+                                        model.configuration().modelRequestOptions())
                         ? io.haifa.agent.runtime.core.model.ModelInputAccounting.ADMISSION_VERSION
                         : budget.estimatorVersion(),
                 "runtime-fit-only-v1",

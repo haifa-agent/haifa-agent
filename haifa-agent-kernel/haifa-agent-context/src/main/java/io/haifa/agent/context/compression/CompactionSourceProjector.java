@@ -38,6 +38,15 @@ public final class CompactionSourceProjector {
     private CompactionSourceProjector() {}
 
     public static ProjectedCompactionSource project(List<AgentMessage> sourceMessages) {
+        return project(sourceMessages, false);
+    }
+
+    /** Full sanitized text for coverage-bearing compaction; callers must hydrate authoritative Tool bodies. */
+    public static ProjectedCompactionSource projectComplete(List<AgentMessage> sourceMessages) {
+        return project(sourceMessages, true);
+    }
+
+    private static ProjectedCompactionSource project(List<AgentMessage> sourceMessages, boolean complete) {
         Objects.requireNonNull(sourceMessages, "sourceMessages must not be null");
 
         Map<String, AgentMessageId> messageAliases = new LinkedHashMap<>();
@@ -71,7 +80,7 @@ public final class CompactionSourceProjector {
                 if (part instanceof TextPart textPart) {
                     String sanitized = sanitize(textPart.text());
                     if (!sanitized.isBlank()) {
-                        contentLines.add(bounded(sanitized, MAX_TEXT_CHARS));
+                        contentLines.add(complete ? sanitized : bounded(sanitized, MAX_TEXT_CHARS));
                     }
                 } else if (part instanceof ToolCallPart callPart) {
                     String toolAlias = String.format(Locale.ROOT, "t%03d", toolIndex++);
@@ -95,15 +104,21 @@ public final class CompactionSourceProjector {
                             Locale.ROOT,
                             "[tool-outcome %s: %s]",
                             toolAlias,
-                            bounded(sanitizedSummary, MAX_TOOL_SUMMARY_CHARS)));
+                            complete ? sanitizedSummary : bounded(sanitizedSummary, MAX_TOOL_SUMMARY_CHARS)));
                 } else if (part instanceof AssetRefPart assetPart) {
+                    if (complete)
+                        throw new IllegalArgumentException("complete compaction requires an asset body reader");
                     contentLines.add(String.format(
                             Locale.ROOT, "[asset-ref: %s]", assetPart.asset().assetId()));
                 } else if (part instanceof ArtifactRefPart artifactPart) {
+                    if (complete)
+                        throw new IllegalArgumentException("complete compaction requires an artifact body reader");
                     contentLines.add(String.format(
                             Locale.ROOT,
                             "[artifact-ref: %s]",
                             artifactPart.artifact().artifactId()));
+                } else if (complete) {
+                    throw new IllegalArgumentException("complete compaction requires readable text sources");
                 }
             }
 

@@ -23,6 +23,7 @@ import io.haifa.agent.model.api.ModelErrorCategory;
 import io.haifa.agent.model.api.ModelInvocationException;
 import io.haifa.agent.model.api.ModelRequestId;
 import io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt;
+import io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions;
 import io.haifa.agent.runtime.core.checkpoint.CheckpointManager;
 import io.haifa.agent.runtime.core.compaction.CompactionEvaluationOutcome;
 import io.haifa.agent.runtime.core.compaction.SemanticCompactionCoordinator;
@@ -666,8 +667,8 @@ public final class DefaultAgentLoop implements AgentLoop {
                 if (budgetLimitRef[0] instanceof RuntimeLimitExceededException limitExceeded) {
                     middleware.apply(RuntimePhase.BEFORE_COMPLETION, middlewareContextRef[0]);
 
-                    Optional<ModelInvocationResult> finalInvocation = budgetLimitedFinalInvocation(
-                            run, progress, model, builtRef[0].context().context(), response, limitExceeded);
+                    Optional<ModelInvocationResult> finalInvocation =
+                            budgetLimitedFinalInvocation(run, progress, model, builtRef[0], response, limitExceeded);
                     decisionExecutor.completeBudgetLimited(
                             run,
                             limitExceeded,
@@ -918,7 +919,7 @@ public final class DefaultAgentLoop implements AgentLoop {
             AgentRun run,
             AgentLoopContext progress,
             FrozenModelBinding model,
-            io.haifa.agent.context.api.AgentContext context,
+            RuntimeContextBuildResult context,
             ModelInvocationResult invocation,
             RuntimeLimitExceededException limit) {
         if (invocation.decision() instanceof FinalAnswerDecision) return Optional.of(invocation);
@@ -1129,8 +1130,11 @@ public final class DefaultAgentLoop implements AgentLoop {
                 var outcome = compactionCoordinator.evaluateSelected(run, progress.iteration(), model, decision);
                 var rebuilt = contextBuilder.build(run, progress, model);
                 rebuilt.preparedInput()
-                        .ifPresent(input ->
-                                compactionCoordinator.requireSelectedRetention(input.sessionTokens(), decision));
+                        .ifPresent(input -> compactionCoordinator.requireSelectedRetention(
+                                input.sessionTokens(),
+                                decision,
+                                RuntimeControlOptions.workingSetRetention(
+                                        model.configuration().modelRequestOptions())));
                 return new ContextBuildExecution(rebuilt, outcome);
             }
             return new ContextBuildExecution(built, initialOutcome);

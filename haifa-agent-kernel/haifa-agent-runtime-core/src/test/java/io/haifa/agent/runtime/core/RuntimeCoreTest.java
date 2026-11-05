@@ -3548,61 +3548,74 @@ class RuntimeCoreTest {
 
     @Test
     void runWorkingSetKeepsScaleOracleWithBoundedReadsAndNoSummaryCalls() {
-        for (String objective :
-                List.of("What was the decision?", "Continue proving bounded reads", "New task: draft unrelated UI")) {
-            Long firstEstimate = null;
-            for (int scale : List.of(1, 10, 100)) {
-                var captured = new ArrayList<AgentChatRequest>();
-                var rowsRead = new AtomicInteger();
-                var fixture = workingSetFixture(
-                        call -> {
-                            captured.add(call);
-                            return response(finalDecision("complete"));
-                        },
-                        Map.of(),
-                        () -> ContextLifecycleHistoryFixture.NOW,
-                        rowsRead);
-                var original =
-                        ContextLifecycleHistoryFixture.append(fixture.store, ContextLifecycleHistoryFixture.N * scale);
-                var accepted = fixture.runtime.start(workingSetRequest("scale", objective));
-                var owner = fixture.store.find(accepted.runId()).orElseThrow();
-                ContextLifecycleHistoryFixture.registerOwner(fixture.store, owner);
-                fixture.scheduler.runAll();
-                assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
-                        .isEqualTo(AgentRunStatus.COMPLETED);
-                assertThat(captured).hasSize(1);
-                var input = captured.getFirst();
-                assertThat(input.structuredOutput()).isEmpty();
-                assertThat(input.messages().stream().anyMatch(m -> m.content().equals(objective)))
-                        .isTrue();
-                assertThat(input.messages().stream()
-                                .anyMatch(m -> m.content().contains(ContextLifecycleHistoryFixture.CONSTRAINT)))
-                        .isTrue();
-                if (!objective.startsWith("New task"))
+        for (boolean unified : List.of(false, true)) {
+            for (String objective : List.of(
+                    "What was the decision?", "Continue proving bounded reads", "New task: draft unrelated UI")) {
+                Long firstEstimate = null;
+                for (int scale : List.of(1, 10, 100)) {
+                    var captured = new ArrayList<AgentChatRequest>();
+                    var rowsRead = new AtomicInteger();
+                    var fixture = workingSetFixture(
+                            call -> {
+                                captured.add(call);
+                                return response(finalDecision("complete"));
+                            },
+                            unified
+                                    ? Map.of(
+                                            io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions
+                                                    .CONTEXT_BUDGET_POLICY,
+                                            io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions
+                                                    .UNIFIED_CONTEXT_V1)
+                                    : Map.of(),
+                            () -> ContextLifecycleHistoryFixture.NOW,
+                            rowsRead);
+                    var original = ContextLifecycleHistoryFixture.append(
+                            fixture.store, ContextLifecycleHistoryFixture.N * scale);
+                    var accepted = fixture.runtime.start(workingSetRequest("scale", objective));
+                    var owner = fixture.store.find(accepted.runId()).orElseThrow();
+                    ContextLifecycleHistoryFixture.registerOwner(fixture.store, owner);
+                    fixture.scheduler.runAll();
+                    assertThat(fixture.runtime
+                                    .find(accepted.runId())
+                                    .orElseThrow()
+                                    .status())
+                            .isEqualTo(AgentRunStatus.COMPLETED);
+                    assertThat(captured).hasSize(1);
+                    var input = captured.getFirst();
+                    assertThat(input.structuredOutput()).isEmpty();
                     assertThat(input.messages().stream()
-                                    .anyMatch(m -> m.content().contains(ContextLifecycleHistoryFixture.DECISION)))
+                                    .anyMatch(m -> m.content().equals(objective)))
                             .isTrue();
-                assertThat(input.messages().stream().anyMatch(m -> m.content().contains("unrelated output")))
-                        .isFalse();
-                assertThat(input.messages().stream()
-                                .anyMatch(m -> m.role() == ModelMessageRole.TOOL
-                                        || m.reasoning().isPresent()))
-                        .isFalse();
-                assertThat(fixture.store.latestVersion(owner.sessionId())).isZero();
-                assertThat(original.stream().allMatch(m -> fixture.store
-                                .message(m.id())
-                                .orElseThrow()
-                                .equals(m)))
-                        .isTrue();
-                assertThat(rowsRead.get()).isLessThanOrEqualTo(256);
-                var event = fixture.store.eventsFor(accepted.runId()).stream()
-                        .filter(e -> e.type().equals("model.input-accounted"))
-                        .findFirst()
-                        .orElseThrow();
-                long estimate = ((Number) event.data().get("modelBoundVisibleEstimatedTokens")).longValue();
-                if (firstEstimate == null) firstEstimate = estimate;
-                assertThat(estimate).isLessThanOrEqualTo(firstEstimate + 128);
-                assertThat(event.data().get("workingSetDecision")).isEqualTo("CACHE_COST_UNAVAILABLE");
+                    assertThat(input.messages().stream()
+                                    .anyMatch(m -> m.content().contains(ContextLifecycleHistoryFixture.CONSTRAINT)))
+                            .isTrue();
+                    if (!objective.startsWith("New task"))
+                        assertThat(input.messages().stream()
+                                        .anyMatch(m -> m.content().contains(ContextLifecycleHistoryFixture.DECISION)))
+                                .isTrue();
+                    assertThat(input.messages().stream()
+                                    .anyMatch(m -> m.content().contains("unrelated output")))
+                            .isFalse();
+                    assertThat(input.messages().stream()
+                                    .anyMatch(m -> m.role() == ModelMessageRole.TOOL
+                                            || m.reasoning().isPresent()))
+                            .isFalse();
+                    assertThat(fixture.store.latestVersion(owner.sessionId())).isZero();
+                    assertThat(original.stream().allMatch(m -> fixture.store
+                                    .message(m.id())
+                                    .orElseThrow()
+                                    .equals(m)))
+                            .isTrue();
+                    assertThat(rowsRead.get()).isLessThanOrEqualTo(256);
+                    var event = fixture.store.eventsFor(accepted.runId()).stream()
+                            .filter(e -> e.type().equals("model.input-accounted"))
+                            .findFirst()
+                            .orElseThrow();
+                    long estimate = ((Number) event.data().get("modelBoundVisibleEstimatedTokens")).longValue();
+                    if (firstEstimate == null) firstEstimate = estimate;
+                    assertThat(estimate).isLessThanOrEqualTo(firstEstimate + 128);
+                    assertThat(event.data().get("workingSetDecision")).isEqualTo("CACHE_COST_UNAVAILABLE");
+                }
             }
         }
     }

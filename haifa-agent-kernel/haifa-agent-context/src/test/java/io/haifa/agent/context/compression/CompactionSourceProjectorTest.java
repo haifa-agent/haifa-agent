@@ -119,7 +119,8 @@ class CompactionSourceProjectorTest {
                 List.of(new TextPart(
                         "Here is the key: sk-abcdef1234567890abcdef12345 and token Bearer my_secret_bearer_token_xyz. "
                                 + "<think>internal reasoning to be stripped</think> "
-                                + "Also PROTECTED_CONTINUATION:opaque_token_state final text.",
+                                + "Also PROTECTED_CONTINUATION:opaque_token_state final text." + "x".repeat(3000)
+                                + " TAIL_PROBE",
                         "plain")),
                 Map.of(),
                 Instant.EPOCH);
@@ -136,5 +137,11 @@ class CompactionSourceProjectorTest {
         assertThat(text).doesNotContain("PROTECTED_CONTINUATION");
         assertThat(text).contains("[REDACTED_CONTINUATION]");
         assertThat(text).contains("final text.");
+        assertThat(text).doesNotContain("TAIL_PROBE");
+        String complete =
+                CompactionSourceProjector.projectComplete(List.of(message)).safeConversationText();
+        assertThat(complete)
+                .contains("TAIL_PROBE", "[REDACTED_KEY]")
+                .doesNotContain("internal reasoning", "sk-abcdef", "opaque_token_state");
     }
 }

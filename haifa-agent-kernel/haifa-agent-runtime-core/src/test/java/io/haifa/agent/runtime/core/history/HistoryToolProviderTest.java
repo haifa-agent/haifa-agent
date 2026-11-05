@@ -57,7 +57,15 @@ class HistoryToolProviderTest {
             String session,
             Optional<io.haifa.agent.core.reference.ProjectRef> project,
             io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext caller) {
-        var runtime = new RuntimeCoreBuilder()
+        return createRun(session, project, caller, Map.of());
+    }
+
+    private AgentRun createRun(
+            String session,
+            Optional<io.haifa.agent.core.reference.ProjectRef> project,
+            io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext caller,
+            Map<String, Object> options) {
+        var builder = new RuntimeCoreBuilder()
                 .persistence(ports)
                 .callers(() -> caller)
                 .scheduler(scheduler)
@@ -72,8 +80,18 @@ class HistoryToolProviderTest {
                 .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator())
                 .publicToolPolicy((a, b, c) -> {
                     throw new AssertionError("No Runtime Tool dispatch expected");
-                })
-                .build();
+                });
+        if (!options.isEmpty())
+            builder.profiles((id, overrides) -> new io.haifa.agent.runtime.core.bootstrap.ResolvedProfile(
+                    id,
+                    "1",
+                    AgentRunType.CHAT,
+                    new AgentRunBudget(1000000, 1000000, 1000000, 32, 64, 8, "USD", 1000000),
+                    new AgentRunLimits(50, 4, 1, 300000, 60000),
+                    io.haifa.agent.runtime.core.bootstrap.DefaultResolvedModelSnapshots.deepSeekV4Pro(),
+                    Map.of(),
+                    options));
+        var runtime = builder.build();
         var accepted = runtime.start(new AgentRunRequest(
                 "key-" + ids.incrementAndGet(),
                 new AgentDefinitionId("agent"),
@@ -483,6 +501,55 @@ class HistoryToolProviderTest {
         store.appendToolCall(changed);
         ref.put("toolCallId", id.value());
         assertThat(invoke("history_read", ref).structuredData()).containsEntry("status", "UNAVAILABLE");
+        assertThat(provider.toolExcerpt(run, source, id, 128)).isEmpty();
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> provider.savedResultForCompaction(run, changed))
+                .isInstanceOf(io.haifa.agent.context.api.ContextBuildException.class);
+    }
+
+    @Test
+    void savedViewsRequirePressureAndMinimumSavingWithoutChangingAuthority() {
+        for (String mode : List.of("small", "minimum-saving", "saved")) {
+            var owner = createRun(
+                    "unified-" + mode,
+                    Optional.empty(),
+                    new io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext(
+                            new io.haifa.agent.core.reference.TenantRef("local"),
+                            new io.haifa.agent.core.reference.PrincipalRef("local-user", "user")),
+                    Map.of(
+                            io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.WORKING_SET,
+                            true,
+                            io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.CONTEXT_BUDGET_POLICY,
+                            io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.UNIFIED_CONTEXT_V1,
+                            io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.CONTEXT_MIN_SAVING_TOKENS,
+                            mode.equals("minimum-saving") ? 8192 : 256));
+            var message =
+                    tool(owner, "same.txt", Map.of("body", "x".repeat(mode.equals("small") ? 300 : 10000)), false);
+            var policy = io.haifa.agent.context.compression.CompressionPolicy.defaults();
+            var compressor = new io.haifa.agent.context.compression.DeterministicContextCompressor();
+            var source = new io.haifa.agent.runtime.core.loop.SessionMessageSource(
+                    store,
+                    store,
+                    compressor,
+                    policy,
+                    () -> "unused",
+                    () -> NOW,
+                    new io.haifa.agent.runtime.core.context.ActiveContextSnapshots(store, store, policy, compressor));
+            var selector = new io.haifa.agent.runtime.core.loop.RunWorkingSetSource(ports, provider, source, () -> NOW);
+            source.workingSets(selector);
+            var selected = source.select(owner, 100000);
+            var views = selected.items().stream()
+                    .filter(item -> item.content() instanceof io.haifa.agent.context.item.MessageGroupContextContent)
+                    .flatMap(item -> ((io.haifa.agent.context.item.MessageGroupContextContent) item.content())
+                            .resultViews().values().stream())
+                    .toList();
+            assertThat(views).hasSize(mode.equals("saved") ? 1 : 0);
+            if (!views.isEmpty()) {
+                assertThat(views.getFirst().text()).hasSizeLessThanOrEqualTo(2048);
+                assertThat(provider.refresh(owner.id(), views.getFirst())).contains(views.getFirst());
+            }
+            assertThat(store.message(message.id())).contains(message);
+            assertThat(store.latestVersion(owner.sessionId())).isZero();
+        }
     }
 
     @Test

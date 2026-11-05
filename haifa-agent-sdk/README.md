@@ -397,7 +397,11 @@ current execution links are retained. Prior sparse history is quoted data with s
 A lightweight handoff uses existing facts and never adds a per-Run summary call or Store.
 In-use read results survive later Tool calls until summary commit or safe reselection. The working-set
 target is a soft objective; required evidence and bounded cache deferral may exceed it while hard budgets
-still apply. See the Runtime Core README for frozen controls, retention, cache predictions and adapter limits.
+still apply. Enabling it also selects `unified-context-v1`: actual model-bound budgeting, readable saved-result
+previews before the first oversized result, and compaction after optional content yields. Explicit frozen
+`haifa.runtime.context_budget_policy=legacy` keeps the previous budgeting/projection path. Existing stored
+snapshots without the version retain their original behavior. See the Runtime Core README for frozen controls,
+retention, cache predictions and adapter limits.
 
 ## Optional historical retrieval
 
