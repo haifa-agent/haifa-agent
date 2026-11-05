@@ -12,16 +12,18 @@ public final class CodingPresentationHistory {
     private CodingPresentationHistory() {}
 
     static Entry entry(CodingSessionHistoryItem item, SecretRedactor redactor) {
+        String display = CodingPresentationText.safe(item.body(), Integer.MAX_VALUE, redactor);
+        int codePoints = display.codePointCount(0, display.length());
         return new Entry(
                 item.id(),
                 item.kind() == CodingSessionHistoryItem.Kind.ERROR ? "notice" : "message",
                 item.sourceRunId().orElse(null),
                 item.kind().name().toLowerCase(java.util.Locale.ROOT),
                 CodingPresentationText.safe(item.title(), 256, redactor),
-                CodingPresentationText.safe(item.body(), 8000, redactor),
+                display.substring(0, display.offsetByCodePoints(0, Math.min(8000, codePoints))),
                 item.status(),
                 item.sequence(),
-                item.truncated(),
+                item.truncated() || codePoints > 8000,
                 null,
                 item.createdAt().toEpochMilli(),
                 null,
@@ -37,7 +39,7 @@ public final class CodingPresentationHistory {
         Long before = source.nextBeforeSequence().isPresent()
                 ? Long.valueOf(source.nextBeforeSequence().getAsLong())
                 : null;
-        boolean complete = source.items().stream().noneMatch(CodingSessionHistoryItem::truncated);
+        boolean complete = entries.stream().noneMatch(Entry::truncated);
         var json = new ObjectMapper();
         while (true) {
             while (entries.size() > 100) {

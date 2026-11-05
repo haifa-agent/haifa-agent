@@ -115,25 +115,16 @@ final class CodingHostServer implements AutoCloseable {
                                             1,
                                             "native"),
                                     local.credentialRedactor(),
-                                    () -> {
-                                        try {
-                                            if (!approvals.available(clientId))
-                                                return new io.haifa.coding.api.CodingProtocol.Consent(
-                                                        "ASK", null, false);
-                                            var status = approvals.status(clientId, sessionId);
-                                            return approvals.available(clientId)
-                                                    ? new io.haifa.coding.api.CodingProtocol.Consent(
-                                                            status.state().name(),
-                                                            status.expiresAt()
-                                                                    .map(java.time.Instant::toEpochMilli)
-                                                                    .orElse(null),
-                                                            true)
-                                                    : new io.haifa.coding.api.CodingProtocol.Consent(
-                                                            "ASK", null, false);
-                                        } catch (CodingHostException unavailable) {
-                                            return new io.haifa.coding.api.CodingProtocol.Consent("ASK", null, false);
-                                        }
-                                    },
+                                    () -> approvals
+                                            .presentationStatus(clientId, sessionId)
+                                            .map(status -> new io.haifa.coding.api.CodingProtocol.Consent(
+                                                    status.state().name(),
+                                                    status.expiresAt()
+                                                            .map(java.time.Instant::toEpochMilli)
+                                                            .orElse(null),
+                                                    true))
+                                            .orElseGet(() ->
+                                                    new io.haifa.coding.api.CodingProtocol.Consent("ASK", null, false)),
                                     String.join("; ", configurationSummary) + "; "
                                             + CodingHostWorkspace.summary(local.workspaceRoot()),
                                     local::presentationEventStart),

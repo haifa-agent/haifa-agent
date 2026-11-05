@@ -19,6 +19,27 @@ import org.junit.jupiter.api.Test;
 
 class CodingHostApprovalsTest {
     @Test
+    void presentationReadsCannotRenewOrReplaceExpiredConsent() {
+        var f = new Fixture();
+        assertThat(f.host.presentationStatus("legacy", f.session)).isEmpty();
+        f.host.initialize("a");
+        f.host.grant("a", f.pending, "grant");
+        f.now.set(Instant.EPOCH.plusSeconds(44));
+        assertThat(f.host.presentationStatus("a", f.session)).hasValueSatisfying(status -> {
+            assertThat(status.state()).isEqualTo(State.ACTIVE);
+            assertThat(status.expiresAt()).contains(Instant.EPOCH.plusSeconds(45));
+        });
+        f.now.set(Instant.EPOCH.plusSeconds(45));
+        assertThat(f.host.presentationStatus("a", f.session)).isEmpty();
+        f.now.set(Instant.EPOCH.plusSeconds(46));
+        assertThat(f.host.presentationStatus("a", f.session)).isEmpty();
+        f.host.renew("a");
+        assertThat(f.host.presentationStatus("a", f.session))
+                .hasValueSatisfying(status -> assertThat(status.state()).isEqualTo(State.ASK));
+        assertThat(f.responses).hasValue(1);
+    }
+
+    @Test
     void renewalExtendsOnlyALiveLeaseAndAMissedDeadlineCannotResurrectConsent() {
         var f = new Fixture();
         f.host.initialize("a");

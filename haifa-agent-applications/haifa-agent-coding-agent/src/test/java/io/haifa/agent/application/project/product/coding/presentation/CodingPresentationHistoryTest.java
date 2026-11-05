@@ -15,6 +15,20 @@ import org.junit.jupiter.api.Test;
 
 class CodingPresentationHistoryTest {
     @Test
+    void reportsDisplayTruncationEvenWhenTheSourceItemWasWithinItsOwnBudget() {
+        var page = CodingPresentationHistory.page(
+                new CodingSessionHistoryPage(
+                        new AgentSessionId("session"),
+                        java.util.List.of(item(1, CodingSessionHistoryItem.Kind.USER, "汉".repeat(9000))),
+                        false,
+                        OptionalLong.empty()),
+                new DefaultSecretRedactor());
+        assertThat(page.entries().getFirst().text()).hasSize(8000);
+        assertThat(page.entries().getFirst().truncated()).isTrue();
+        assertThat(page.history().complete()).isFalse();
+    }
+
+    @Test
     void preservesWholeMessageGroupsWhenFailureNoticesExceedThePageEntryBudget() {
         var items = new ArrayList<CodingSessionHistoryItem>();
         for (int sequence = 1; sequence <= 100; sequence++) {

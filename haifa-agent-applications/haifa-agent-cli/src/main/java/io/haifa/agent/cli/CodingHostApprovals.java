@@ -72,9 +72,15 @@ final class CodingHostApprovals implements AutoCloseable {
         leases.values().forEach(lease -> lease.approvals.reset(sessionId));
     }
 
-    boolean available(String clientId) {
+    /** Read-only projection: an observation must never replace or extend an expired lease. */
+    Optional<CodingSessionApprovalStatus> presentationStatus(String clientId, AgentSessionId sessionId) {
         Lease lease = leases.get(clientId);
-        return lease != null && lease.valid();
+        if (lease == null || !lease.valid()) return Optional.empty();
+        var state = lease.approvals.state(sessionId);
+        if (leases.get(clientId) != lease || !lease.valid()) return Optional.empty();
+        return Optional.of(new CodingSessionApprovalStatus(
+                state,
+                state == CodingSessionApprovalStatus.State.ASK ? Optional.empty() : Optional.of(lease.expiresAt)));
     }
 
     CodingSessionApprovalStatus status(String clientId, AgentSessionId sessionId) {

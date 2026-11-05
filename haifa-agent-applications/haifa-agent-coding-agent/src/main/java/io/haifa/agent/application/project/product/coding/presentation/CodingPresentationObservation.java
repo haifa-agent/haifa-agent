@@ -351,7 +351,10 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                                         ? Long.valueOf(
                                                 history.nextBeforeSequence().getAsLong())
                                         : null),
-                        !windowReduced && history.items().stream().noneMatch(CodingSessionHistoryItem::truncated)),
+                        !windowReduced
+                                && entries.stream()
+                                        .filter(entry -> entry.sequence() != null)
+                                        .noneMatch(Entry::truncated)),
                 live,
                 observedConsent,
                 actions,
