@@ -69,6 +69,14 @@ final class CodingHostClients {
         clients.put(clientId, new Context(time.now(), context.optionalCapabilities()));
     }
 
+    /** Checks an existing observation without treating an SSE heartbeat as client renewal. */
+    synchronized void requireObservation(String clientId) {
+        if (closed) throw CodingHostException.conflict("HOST_SHUTTING_DOWN", "Host is shutting down");
+        expireIdle();
+        if (!clients.containsKey(clientId))
+            throw CodingHostException.conflict("CLIENT_CONTEXT_REQUIRED", "initialize is required for this client");
+    }
+
     synchronized void requireOptional(String clientId, String capability) {
         require(clientId);
         if (!clients.get(clientId).optionalCapabilities().contains(capability)) {

@@ -29,7 +29,7 @@ final class CodingHostPreviewStream {
             streams.put(key, state);
         }
         String safe = state.redaction.accept(state.normalize(preview.text()));
-        if (!state.redaction.awaitingMoreText() && state.escape == 0) streams.remove(key);
+        if (!state.redaction.awaitingMoreText() && !state.display.pending()) streams.remove(key);
         var bounded = BoundedText.of(safe, 4096, 256);
         if (bounded.text().isEmpty() && !preview.outputTruncated()) return null;
         return new ToolOutputPreview(
@@ -43,42 +43,15 @@ final class CodingHostPreviewStream {
 
     private static final class State {
         final DefaultSecretRedactor.Stream redaction;
-        int escape;
-        int escapeLength;
+        final io.haifa.agent.application.project.product.coding.presentation.CodingPresentationText.Stream display =
+                new io.haifa.agent.application.project.product.coding.presentation.CodingPresentationText.Stream();
 
         State(DefaultSecretRedactor.Stream redaction) {
             this.redaction = redaction;
         }
 
         String normalize(String text) {
-            StringBuilder plain = new StringBuilder();
-            for (int cp : text.codePoints().toArray()) {
-                if (escape != 0 && ++escapeLength > 512)
-                    throw new IllegalStateException("Display control limit exceeded");
-                switch (escape) {
-                    case 0 -> {
-                        if (cp == 27) {
-                            escape = 1;
-                            escapeLength = 0;
-                        } else if (cp == '\n' || cp == '\r' || cp == '\t' || !Character.isISOControl(cp))
-                            plain.appendCodePoint(cp);
-                    }
-                    case 1 -> escape = cp == '[' ? 2 : cp == ']' ? 3 : cp >= 0x20 && cp <= 0x2f ? 5 : 0;
-                    case 2 -> {
-                        if (cp >= 0x40 && cp <= 0x7e) escape = 0;
-                    }
-                    case 3 -> {
-                        if (cp == 7) escape = 0;
-                        else if (cp == 27) escape = 4;
-                    }
-                    case 4 -> escape = cp == '\\' ? 0 : cp == 27 ? 4 : 3;
-                    case 5 -> {
-                        if (cp >= 0x30 && cp <= 0x7e) escape = 0;
-                    }
-                    default -> throw new IllegalStateException("Invalid display control state");
-                }
-            }
-            return plain.toString();
+            return display.accept(text);
         }
     }
 }

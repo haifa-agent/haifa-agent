@@ -55,6 +55,7 @@ public final class CodingSessionService {
      */
     private static final Duration ABANDONED_RUN_HEARTBEAT_STALENESS = Duration.ofMinutes(30);
 
+    private final CodingSessionChanges changes = new CodingSessionChanges();
     private final ProjectProductService projectProducts;
     private final ProjectProductSessionStore productSessions;
     private final CodingSessionStore codingSessions;
@@ -142,6 +143,38 @@ public final class CodingSessionService {
         if (abandonedRunHeartbeatStaleness.isNegative() || abandonedRunHeartbeatStaleness.isZero()) {
             throw new IllegalArgumentException("abandonedRunHeartbeatStaleness must be positive");
         }
+    }
+
+    /** Reads only trusted projections for this caller; never prepares or applies consent. */
+    public CodingReviewState reviewState(io.haifa.agent.runtime.api.InteractionView interaction) {
+        TrustedProductCaller caller = callers.current();
+        requireProductSession(interaction.sessionId(), caller);
+        requireOwned(requireActivity(interaction.sessionId(), caller), caller);
+        if (runtime.view(interaction.runId())
+                .filter(view -> view.sessionId().equals(interaction.sessionId()))
+                .isEmpty()) throw conflict("INTERACTION_SCOPE_MISMATCH", "Interaction is unavailable");
+        if (!interaction.kind().equals(io.haifa.agent.runtime.api.InteractionKind.APPROVAL))
+            return new CodingReviewState(true, false, false);
+        if (!interaction.target().type().equals("tool")) return new CodingReviewState(false, true, false);
+        return runtime.toolCalls(interaction.runId()).stream()
+                .filter(call -> call.runId().equals(interaction.runId())
+                        && call.id().value().equals(interaction.target().reference()))
+                .findFirst()
+                .map(call -> new CodingReviewState(
+                        io.haifa.agent.application.project.product.coding.client.CodingSessionApprovals.completeTarget(
+                                call),
+                        call.arguments().truncated(),
+                        io.haifa.agent.application.project.product.coding.client.CodingSessionApprovals
+                                .ordinaryApproval(interaction, runtime)))
+                .orElseGet(() -> new CodingReviewState(false, true, false));
+    }
+
+    /** Authorizes before registering; callers register first, then read their initial snapshot. */
+    public CodingSessionChanges.Registration observeChanges(AgentSessionId sessionId, Runnable listener) {
+        TrustedProductCaller caller = callers.current();
+        requireProductSession(sessionId, caller);
+        requireOwned(requireActivity(sessionId, caller), caller);
+        return changes.observe(sessionId, listener);
     }
 
     public CodingSessionView createSession(
@@ -275,6 +308,12 @@ public final class CodingSessionService {
         return new CodingSessionPage(summaries, next, hasMore);
     }
 
+    /** Pure authority read for derived presentations; the Host owner remains responsible for reconciliation. */
+    public CodingSessionView snapshotSession(AgentSessionId sessionId) {
+        TrustedProductCaller caller = callers.current();
+        return view(requireActivity(sessionId, caller), requireProductSession(sessionId, caller));
+    }
+
     public CodingSessionView openSession(AgentSessionId sessionId) {
         TrustedProductCaller caller = callers.current();
         ProjectProductSession product = requireProductSession(sessionId, caller);
@@ -301,138 +340,168 @@ public final class CodingSessionService {
 
     public CodingModelSelection selectModel(
             AgentSessionId sessionId, String modelId, long expectedRevision, String idempotencyKey) {
-        TrustedProductCaller caller = callers.current();
-        requireProductSession(sessionId, caller);
-        CodingSessionActivity activity = reconcile(requireActivity(sessionId, caller), caller);
-        requireActiveSession(activity);
-        if (activity.activeRunId().isPresent() || activity.activeDispatchKey().isPresent()) {
-            throw conflict("CODING_SESSION_ACTIVE", "Model can only be changed while the Coding Session is idle");
+        try {
+            TrustedProductCaller caller = callers.current();
+            requireProductSession(sessionId, caller);
+            CodingSessionActivity activity = reconcile(requireActivity(sessionId, caller), caller);
+            requireActiveSession(activity);
+            if (activity.activeRunId().isPresent()
+                    || activity.activeDispatchKey().isPresent()) {
+                throw conflict("CODING_SESSION_ACTIVE", "Model can only be changed while the Coding Session is idle");
+            }
+            CodingModelOption selected = requireAvailableModel(caller, modelId);
+            String keyDigest = digest(idempotencyKey(idempotencyKey));
+            String requestDigest = digest(sessionId.value() + "|" + selected.id());
+            CodingModelPreference changed = codingSessions.changeModel(
+                    sessionId, expectedRevision, selected.id(), keyDigest, requestDigest, now());
+            return new CodingModelSelection(selected, changed.revision(), true);
+        } finally {
+            changes.changed(sessionId);
         }
-        CodingModelOption selected = requireAvailableModel(caller, modelId);
-        String keyDigest = digest(idempotencyKey(idempotencyKey));
-        String requestDigest = digest(sessionId.value() + "|" + selected.id());
-        CodingModelPreference changed =
-                codingSessions.changeModel(sessionId, expectedRevision, selected.id(), keyDigest, requestDigest, now());
-        return new CodingModelSelection(selected, changed.revision(), true);
     }
 
     public CodingSessionSummary renameSession(AgentSessionId sessionId, String displayName, long expectedRevision) {
-        TrustedProductCaller caller = callers.current();
-        requireProductSession(sessionId, caller);
-        CodingSessionActivity current = requireActivity(sessionId, caller);
-        if (current.revision() != expectedRevision) {
-            throw conflict("SESSION_REVISION_STALE", "Coding Session revision is stale");
+        try {
+            TrustedProductCaller caller = callers.current();
+            requireProductSession(sessionId, caller);
+            CodingSessionActivity current = requireActivity(sessionId, caller);
+            if (current.revision() != expectedRevision) {
+                throw conflict("SESSION_REVISION_STALE", "Coding Session revision is stale");
+            }
+            return summary(codingSessions.rename(sessionId, expectedRevision, renameDisplayName(displayName), now()));
+        } finally {
+            changes.changed(sessionId);
         }
-        return summary(codingSessions.rename(sessionId, expectedRevision, renameDisplayName(displayName), now()));
     }
 
     public CodingSessionSummary archiveSession(AgentSessionId sessionId, long expectedRevision) {
-        TrustedProductCaller caller = callers.current();
-        requireProductSession(sessionId, caller);
-        CodingSessionActivity current = requireActivity(sessionId, caller);
-        requireLifecycleChange(current, expectedRevision);
-        return summary(sessionLifecycle.archive(sessionId, expectedRevision, now()));
+        try {
+            TrustedProductCaller caller = callers.current();
+            requireProductSession(sessionId, caller);
+            CodingSessionActivity current = requireActivity(sessionId, caller);
+            requireLifecycleChange(current, expectedRevision);
+            return summary(sessionLifecycle.archive(sessionId, expectedRevision, now()));
+        } finally {
+            changes.changed(sessionId);
+        }
     }
 
     public void deleteSession(AgentSessionId sessionId, long expectedRevision) {
-        TrustedProductCaller caller = callers.current();
-        requireProductSession(sessionId, caller);
-        CodingSessionActivity current = requireActivity(sessionId, caller);
-        requireLifecycleChange(current, expectedRevision);
-        sessionLifecycle.delete(sessionId, expectedRevision, now());
+        try {
+            TrustedProductCaller caller = callers.current();
+            requireProductSession(sessionId, caller);
+            CodingSessionActivity current = requireActivity(sessionId, caller);
+            requireLifecycleChange(current, expectedRevision);
+            sessionLifecycle.delete(sessionId, expectedRevision, now());
+        } finally {
+            changes.changed(sessionId);
+        }
     }
 
     public CodingCompactionResult compactSession(AgentSessionId sessionId, String safeInstruction) {
-        TrustedProductCaller caller = callers.current();
-        requireProductSession(sessionId, caller);
-        CodingSessionActivity current = reconcile(requireActivity(sessionId, caller), caller);
-        requireActiveSession(current);
-        if (current.activeRunId().isPresent() || current.activeDispatchKey().isPresent()) {
-            throw conflict("CODING_SESSION_ACTIVE", "Active Coding Session cannot be compacted");
+        try {
+            TrustedProductCaller caller = callers.current();
+            requireProductSession(sessionId, caller);
+            CodingSessionActivity current = reconcile(requireActivity(sessionId, caller), caller);
+            requireActiveSession(current);
+            if (current.activeRunId().isPresent() || current.activeDispatchKey().isPresent()) {
+                throw conflict("CODING_SESSION_ACTIVE", "Active Coding Session cannot be compacted");
+            }
+            if (safeInstruction != null && !safeInstruction.isBlank()) {
+                throw new UnsupportedOperationException("COMPACTION_INSTRUCTION_NOT_SUPPORTED");
+            }
+            return sessionCompactor.compact(sessionId);
+        } finally {
+            changes.changed(sessionId);
         }
-        if (safeInstruction != null && !safeInstruction.isBlank()) {
-            throw new UnsupportedOperationException("COMPACTION_INSTRUCTION_NOT_SUPPORTED");
-        }
-        return sessionCompactor.compact(sessionId);
     }
 
     public CodingSessionCommandReceipt submitTurn(
             AgentSessionId sessionId, String message, List<AssetRef> attachments, String idempotencyKey) {
-        TrustedProductCaller caller = callers.current();
-        ProjectProductSession product = requireProductSession(sessionId, caller);
-        CodingSessionActivity activity = reconcile(requireActivity(sessionId, caller), caller);
-        requireActiveSession(activity);
-        String safeMessage = message(message);
-        List<AssetRef> safeAttachments = attachments(attachments);
-        String keyDigest = digest(idempotencyKey(idempotencyKey));
-        String requestDigest = requestDigest(sessionId.value(), safeMessage, safeAttachments);
-        String dispatchKey = dispatchKey(SUBMIT, callerScope(caller) + "|" + keyDigest);
-        CodingCommandBinding existing = codingSessions.reserveCommand(new CodingCommandBinding(
-                callerScope(caller),
-                SUBMIT,
-                keyDigest,
-                requestDigest,
-                dispatchKey,
-                sessionId,
-                product.projectId(),
-                safeMessage,
-                safeAttachments,
-                Optional.empty(),
-                now()));
-        if (existing.runId().isPresent()) {
+        try {
+            TrustedProductCaller caller = callers.current();
+            ProjectProductSession product = requireProductSession(sessionId, caller);
+            CodingSessionActivity activity = reconcile(requireActivity(sessionId, caller), caller);
+            requireActiveSession(activity);
+            String safeMessage = message(message);
+            List<AssetRef> safeAttachments = attachments(attachments);
+            String keyDigest = digest(idempotencyKey(idempotencyKey));
+            String requestDigest = requestDigest(sessionId.value(), safeMessage, safeAttachments);
+            String dispatchKey = dispatchKey(SUBMIT, callerScope(caller) + "|" + keyDigest);
+            CodingCommandBinding existing = codingSessions.reserveCommand(new CodingCommandBinding(
+                    callerScope(caller),
+                    SUBMIT,
+                    keyDigest,
+                    requestDigest,
+                    dispatchKey,
+                    sessionId,
+                    product.projectId(),
+                    safeMessage,
+                    safeAttachments,
+                    Optional.empty(),
+                    now()));
+            if (existing.runId().isPresent()) {
+                return new CodingSessionCommandReceipt(
+                        SUBMIT, sessionId, existing.runId().orElseThrow(), true);
+            }
+            if (activity.activeRunId().isPresent()) {
+                throw conflict("CODING_SESSION_ACTIVE", "Coding Session already has an active Run");
+            }
+            String modelId = requireModelPreference(sessionId, caller).modelId();
+            requireReadyModel(caller, modelId);
+            codingSessions.reserveActive(sessionId, activity.revision(), existing.dispatchKey(), now());
+            var started = projectProducts.continueSession(
+                    sessionId, existing.message(), existing.attachments(), existing.dispatchKey(), modelId);
+            codingSessions.completeCommand(existing.dispatchKey(), started.run().runId());
+            codingSessions.activateRun(
+                    sessionId,
+                    existing.dispatchKey(),
+                    started.run().runId(),
+                    started.run().version(),
+                    now());
             return new CodingSessionCommandReceipt(
-                    SUBMIT, sessionId, existing.runId().orElseThrow(), true);
+                    SUBMIT, sessionId, started.run().runId(), false);
+        } finally {
+            changes.changed(sessionId);
         }
-        if (activity.activeRunId().isPresent()) {
-            throw conflict("CODING_SESSION_ACTIVE", "Coding Session already has an active Run");
-        }
-        String modelId = requireModelPreference(sessionId, caller).modelId();
-        requireReadyModel(caller, modelId);
-        codingSessions.reserveActive(sessionId, activity.revision(), existing.dispatchKey(), now());
-        var started = projectProducts.continueSession(
-                sessionId, existing.message(), existing.attachments(), existing.dispatchKey(), modelId);
-        codingSessions.completeCommand(existing.dispatchKey(), started.run().runId());
-        codingSessions.activateRun(
-                sessionId,
-                existing.dispatchKey(),
-                started.run().runId(),
-                started.run().version(),
-                now());
-        return new CodingSessionCommandReceipt(SUBMIT, sessionId, started.run().runId(), false);
     }
 
     public RunInputReceipt steer(
             AgentSessionId sessionId, AgentRunId activeRunId, String message, String idempotencyKey) {
-        TrustedProductCaller caller = callers.current();
-        ProjectProductSession product = requireProductSession(sessionId, caller);
-        CodingSessionActivity activity = reconcile(requireActivity(sessionId, caller), caller);
-        requireActiveSession(activity);
-        AgentRunSnapshot active = requireActive(activity, activeRunId);
-        String safeMessage = message(message);
-        String keyDigest = digest(idempotencyKey(idempotencyKey));
-        String requestDigest = requestDigest(activeRunId.value(), safeMessage, List.of());
-        String dispatchKey = dispatchKey(STEER, callerScope(caller) + "|" + keyDigest);
-        CodingCommandBinding binding = codingSessions.reserveCommand(new CodingCommandBinding(
-                callerScope(caller),
-                STEER,
-                keyDigest,
-                requestDigest,
-                dispatchKey,
-                sessionId,
-                product.projectId(),
-                safeMessage,
-                List.of(),
-                Optional.empty(),
-                now()));
-        RunInputReceipt receipt = runtime.submitInput(new RunInputSubmission(
-                new RunInputId(binding.dispatchKey()),
-                active.runId(),
-                OptionalLong.of(active.version()),
-                List.of(new TextPart(binding.message(), "text/plain")),
-                binding.dispatchKey(),
-                now()));
-        codingSessions.completeCommand(binding.dispatchKey(), active.runId());
-        return receipt;
+        try {
+            TrustedProductCaller caller = callers.current();
+            ProjectProductSession product = requireProductSession(sessionId, caller);
+            CodingSessionActivity activity = reconcile(requireActivity(sessionId, caller), caller);
+            requireActiveSession(activity);
+            AgentRunSnapshot active = requireActive(activity, activeRunId);
+            String safeMessage = message(message);
+            String keyDigest = digest(idempotencyKey(idempotencyKey));
+            String requestDigest = requestDigest(activeRunId.value(), safeMessage, List.of());
+            String dispatchKey = dispatchKey(STEER, callerScope(caller) + "|" + keyDigest);
+            CodingCommandBinding binding = codingSessions.reserveCommand(new CodingCommandBinding(
+                    callerScope(caller),
+                    STEER,
+                    keyDigest,
+                    requestDigest,
+                    dispatchKey,
+                    sessionId,
+                    product.projectId(),
+                    safeMessage,
+                    List.of(),
+                    Optional.empty(),
+                    now()));
+            RunInputReceipt receipt = runtime.submitInput(new RunInputSubmission(
+                    new RunInputId(binding.dispatchKey()),
+                    active.runId(),
+                    OptionalLong.of(active.version()),
+                    List.of(new TextPart(binding.message(), "text/plain")),
+                    binding.dispatchKey(),
+                    now()));
+            codingSessions.completeCommand(binding.dispatchKey(), active.runId());
+            return receipt;
+        } finally {
+            changes.changed(sessionId);
+        }
     }
 
     public CodingFollowUpReceipt enqueueFollowUp(
@@ -441,50 +510,58 @@ public final class CodingSessionService {
             String message,
             List<AssetRef> attachments,
             String idempotencyKey) {
-        TrustedProductCaller caller = callers.current();
-        requireProductSession(sessionId, caller);
-        CodingSessionActivity activity = reconcile(requireActivity(sessionId, caller), caller);
-        requireActiveSession(activity);
-        requireActive(activity, activeRunId);
-        String safeMessage = message(message);
-        List<AssetRef> safeAttachments = attachments(attachments);
-        String keyDigest = digest(idempotencyKey(idempotencyKey));
-        String followUpId = identifiers.nextValue();
-        Instant now = now();
-        CodingFollowUp stored = codingSessions.enqueue(new CodingFollowUp(
-                followUpId,
-                sessionId,
-                activeRunId,
-                safeMessage,
-                safeAttachments,
-                keyDigest,
-                requestDigest(activeRunId.value(), safeMessage, safeAttachments),
-                dispatchKey("follow-up", followUpId),
-                CodingFollowUpStatus.PENDING,
-                1,
-                Optional.empty(),
-                now,
-                now,
-                0));
-        return CodingFollowUpReceipt.from(stored);
+        try {
+            TrustedProductCaller caller = callers.current();
+            requireProductSession(sessionId, caller);
+            CodingSessionActivity activity = reconcile(requireActivity(sessionId, caller), caller);
+            requireActiveSession(activity);
+            requireActive(activity, activeRunId);
+            String safeMessage = message(message);
+            List<AssetRef> safeAttachments = attachments(attachments);
+            String keyDigest = digest(idempotencyKey(idempotencyKey));
+            String followUpId = identifiers.nextValue();
+            Instant now = now();
+            CodingFollowUp stored = codingSessions.enqueue(new CodingFollowUp(
+                    followUpId,
+                    sessionId,
+                    activeRunId,
+                    safeMessage,
+                    safeAttachments,
+                    keyDigest,
+                    requestDigest(activeRunId.value(), safeMessage, safeAttachments),
+                    dispatchKey("follow-up", followUpId),
+                    CodingFollowUpStatus.PENDING,
+                    1,
+                    Optional.empty(),
+                    now,
+                    now,
+                    0));
+            return CodingFollowUpReceipt.from(stored);
+        } finally {
+            changes.changed(sessionId);
+        }
     }
 
     public CodingRestoredMessage restoreQueuedMessage(
             AgentSessionId sessionId, String followUpId, long expectedRevision) {
-        TrustedProductCaller caller = callers.current();
-        requireProductSession(sessionId, caller);
-        requireActiveSession(requireActivity(sessionId, caller));
-        CodingFollowUp existing = codingSessions
-                .findFollowUp(followUpId)
-                .filter(value -> value.sessionId().equals(sessionId))
-                .orElseThrow(() -> conflict("FOLLOW_UP_NOT_FOUND", "Follow-up is unavailable"));
-        CodingFollowUp restored = codingSessions.restore(existing.followUpId(), expectedRevision, now());
-        return new CodingRestoredMessage(
-                restored.followUpId(),
-                restored.sessionId(),
-                restored.message(),
-                restored.attachments(),
-                restored.revision());
+        try {
+            TrustedProductCaller caller = callers.current();
+            requireProductSession(sessionId, caller);
+            requireActiveSession(requireActivity(sessionId, caller));
+            CodingFollowUp existing = codingSessions
+                    .findFollowUp(followUpId)
+                    .filter(value -> value.sessionId().equals(sessionId))
+                    .orElseThrow(() -> conflict("FOLLOW_UP_NOT_FOUND", "Follow-up is unavailable"));
+            CodingFollowUp restored = codingSessions.restore(existing.followUpId(), expectedRevision, now());
+            return new CodingRestoredMessage(
+                    restored.followUpId(),
+                    restored.sessionId(),
+                    restored.message(),
+                    restored.attachments(),
+                    restored.revision());
+        } finally {
+            changes.changed(sessionId);
+        }
     }
 
     public List<CodingQueuedMessage> listRestorableMessages(AgentSessionId sessionId, int limit) {
@@ -535,51 +612,58 @@ public final class CodingSessionService {
 
     private Optional<RuntimeCommandResult> abortActiveRun(
             AgentSessionId sessionId, String idempotencyKey, Optional<AgentRunId> requestedRunId) {
-        TrustedProductCaller caller = callers.current();
-        ProjectProductSession product = requireProductSession(sessionId, caller);
-        CodingSessionActivity recorded = requireActivity(sessionId, caller);
-        if (requestedRunId.isPresent()
-                && recorded.activeRunId().filter(requestedRunId.get()::equals).isEmpty()) {
-            // A cancellation that names another Run is refused before any reconciliation: recovery inspects the live
-            // Run's aggregate and dispatch can start the queued successor, so a refused request must never wait on
-            // that work - it would let one client's cancellation block behind another Session's running Run.
-            throw conflict("ACTIVE_RUN_MISMATCH", "Requested Run is not the active Run");
-        }
-        CodingSessionActivity activity = reconcile(recorded, caller);
-        if (activity.activeRunId().isEmpty()) {
-            if (requestedRunId.isPresent()) {
+        try {
+            TrustedProductCaller caller = callers.current();
+            ProjectProductSession product = requireProductSession(sessionId, caller);
+            CodingSessionActivity recorded = requireActivity(sessionId, caller);
+            if (requestedRunId.isPresent()
+                    && recorded.activeRunId()
+                            .filter(requestedRunId.get()::equals)
+                            .isEmpty()) {
+                // A cancellation that names another Run is refused before any reconciliation: recovery inspects the
+                // live
+                // Run's aggregate and dispatch can start the queued successor, so a refused request must never wait on
+                // that work - it would let one client's cancellation block behind another Session's running Run.
                 throw conflict("ACTIVE_RUN_MISMATCH", "Requested Run is not the active Run");
             }
-            // Reconciliation may have just settled an abandoned Run, or the Session was already idle; either way
-            // the caller's cancellation intent is satisfied and there is no live Run to command.
-            return Optional.empty();
+            CodingSessionActivity activity = reconcile(recorded, caller);
+            if (activity.activeRunId().isEmpty()) {
+                if (requestedRunId.isPresent()) {
+                    throw conflict("ACTIVE_RUN_MISMATCH", "Requested Run is not the active Run");
+                }
+                // Reconciliation may have just settled an abandoned Run, or the Session was already idle; either way
+                // the caller's cancellation intent is satisfied and there is no live Run to command.
+                return Optional.empty();
+            }
+            AgentRunSnapshot active = requireActive(activity, requestedRunId.orElseGet(() -> activity.activeRunId()
+                    .orElseThrow()));
+            String keyDigest = digest(idempotencyKey(idempotencyKey));
+            String dispatchKey = dispatchKey(ABORT, callerScope(caller) + "|" + keyDigest);
+            CodingCommandBinding binding = codingSessions.reserveCommand(new CodingCommandBinding(
+                    callerScope(caller),
+                    ABORT,
+                    keyDigest,
+                    requestDigest(active.runId().value(), ABORT, List.of()),
+                    dispatchKey,
+                    sessionId,
+                    product.projectId(),
+                    ABORT,
+                    List.of(),
+                    Optional.empty(),
+                    now()));
+            RuntimeCommandResult result = runtime.command(new RuntimeCommand(
+                    new RuntimeCommandId(binding.dispatchKey()),
+                    active.runId(),
+                    RuntimeCommandType.CANCEL,
+                    io.haifa.agent.runtime.api.RunCancellation.userRequest().arguments(),
+                    OptionalLong.of(active.version()),
+                    binding.dispatchKey(),
+                    now()));
+            codingSessions.completeCommand(binding.dispatchKey(), active.runId());
+            return Optional.of(result);
+        } finally {
+            changes.changed(sessionId);
         }
-        AgentRunSnapshot active = requireActive(
-                activity, requestedRunId.orElseGet(() -> activity.activeRunId().orElseThrow()));
-        String keyDigest = digest(idempotencyKey(idempotencyKey));
-        String dispatchKey = dispatchKey(ABORT, callerScope(caller) + "|" + keyDigest);
-        CodingCommandBinding binding = codingSessions.reserveCommand(new CodingCommandBinding(
-                callerScope(caller),
-                ABORT,
-                keyDigest,
-                requestDigest(active.runId().value(), ABORT, List.of()),
-                dispatchKey,
-                sessionId,
-                product.projectId(),
-                ABORT,
-                List.of(),
-                Optional.empty(),
-                now()));
-        RuntimeCommandResult result = runtime.command(new RuntimeCommand(
-                new RuntimeCommandId(binding.dispatchKey()),
-                active.runId(),
-                RuntimeCommandType.CANCEL,
-                io.haifa.agent.runtime.api.RunCancellation.userRequest().arguments(),
-                OptionalLong.of(active.version()),
-                binding.dispatchKey(),
-                now()));
-        codingSessions.completeCommand(binding.dispatchKey(), active.runId());
-        return Optional.of(result);
     }
 
     public CodingSessionView reconcileSession(AgentSessionId sessionId) {
@@ -589,23 +673,41 @@ public final class CodingSessionService {
     }
 
     private CodingSessionActivity reconcile(CodingSessionActivity activity, TrustedProductCaller caller) {
-        requireOwned(activity, caller);
-        CodingSessionActivity current = activity;
-        if (current.activeRunId().isPresent()) {
-            AgentRunId runId = current.activeRunId().orElseThrow();
-            AgentRunSnapshot snapshot = runtime.find(runId)
-                    .orElseThrow(() -> conflict("ACTIVE_RUN_UNAVAILABLE", "Active Run is unavailable"));
-            if (!snapshot.status().isTerminal() && !settleIfAbandoned(runId)) return current;
-            current = codingSessions.clearActive(current.sessionId(), runId, current.revision(), now());
+        try {
+            requireOwned(activity, caller);
+            CodingSessionActivity current = activity;
+            if (current.activeRunId().isPresent()) {
+                AgentRunId runId = current.activeRunId().orElseThrow();
+                AgentRunSnapshot snapshot = runtime.find(runId)
+                        .orElseThrow(() -> conflict("ACTIVE_RUN_UNAVAILABLE", "Active Run is unavailable"));
+                if (!snapshot.status().isTerminal() && !settleIfAbandoned(runId)) return current;
+                current = codingSessions.clearActive(current.sessionId(), runId, current.revision(), now());
+            }
+            if (current.activeDispatchKey().isPresent()) {
+                return recoverReservedDispatch(current);
+            }
+            if (current.status() != AgentSessionStatus.ACTIVE) return current;
+            Optional<CodingDispatchClaim> claimed =
+                    codingSessions.claimNextForDispatch(current.sessionId(), current.revision(), now());
+            if (claimed.isEmpty()) return current;
+            return dispatchFollowUp(claimed.orElseThrow());
+        } finally {
+            notifyReconciled(activity);
         }
-        if (current.activeDispatchKey().isPresent()) {
-            return recoverReservedDispatch(current);
+    }
+
+    private void notifyReconciled(CodingSessionActivity before) {
+        if (!changes.observed(before.sessionId())) return;
+        boolean changed;
+        try {
+            changed = codingSessions
+                    .findActivity(before.sessionId())
+                    .map(value -> value.revision() != before.revision())
+                    .orElse(true);
+        } catch (RuntimeException unavailable) {
+            changed = true;
         }
-        if (current.status() != AgentSessionStatus.ACTIVE) return current;
-        Optional<CodingDispatchClaim> claimed =
-                codingSessions.claimNextForDispatch(current.sessionId(), current.revision(), now());
-        if (claimed.isEmpty()) return current;
-        return dispatchFollowUp(claimed.orElseThrow());
+        if (changed) changes.changed(before.sessionId());
     }
 
     /**

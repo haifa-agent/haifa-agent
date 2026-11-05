@@ -149,6 +149,7 @@ final class LocalCodingAgent implements AutoCloseable {
     private static final int MAX_APPROVAL_PROMPT_LENGTH = 2_000;
     private static final Set<String> FILE_MUTATION_TOOLS =
             Set.of("file_create", "file_write", "file_patch", "file_delete", "file_move");
+    private final SecretRedactor credentialRedactor;
     private final IdentifierGenerator identifiers;
     private final TimeProvider time;
     private final AgentRuntime runtime;
@@ -192,7 +193,9 @@ final class LocalCodingAgent implements AutoCloseable {
             Optional<CliExecutionPlatform> executionPlatform,
             CodingSessionExportService exporter,
             CodingRunOutcomeProjectionService outcomes,
-            CodingAuthenticationClient authentication) {
+            CodingAuthenticationClient authentication,
+            SecretRedactor credentialRedactor) {
+        this.credentialRedactor = Objects.requireNonNull(credentialRedactor);
         this.identifiers = identifiers;
         this.time = time;
         this.runtime = runtime;
@@ -798,7 +801,8 @@ final class LocalCodingAgent implements AutoCloseable {
                             persistence.ports().state(),
                             webPlatform.credentialBroker().redactor()),
                     outcomeProjection,
-                    authentication);
+                    authentication,
+                    webPlatform.credentialBroker().redactor());
             runtime.addListener(snapshot -> agent.startedRuns.add(snapshot.runId()));
             return agent;
         } catch (RuntimeException | Error exception) {
@@ -1005,6 +1009,20 @@ final class LocalCodingAgent implements AutoCloseable {
 
     InteractionPort interactions() {
         return interactions;
+    }
+
+    io.haifa.agent.runtime.api.RunEventCursor presentationEventStart(AgentRunId runId) {
+        var journal = persistence.ports().events();
+        long head = journal.headSequence(runId).orElse(0);
+        long earliest = journal.earliestSequence(runId).orElse(1);
+        long after = Math.max(earliest - 1, Math.max(0, head - 128));
+        return after == 0
+                ? io.haifa.agent.runtime.api.RunEventCursor.beforeFirst(runId)
+                : new io.haifa.agent.runtime.api.RunEventCursor(runId, "1", java.util.OptionalLong.of(after));
+    }
+
+    io.haifa.agent.credential.api.SecretRedactor credentialRedactor() {
+        return credentialRedactor;
     }
 
     IdentifierGenerator identifiers() {

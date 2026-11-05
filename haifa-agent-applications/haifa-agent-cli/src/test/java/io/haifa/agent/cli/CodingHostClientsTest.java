@@ -12,6 +12,24 @@ import org.junit.jupiter.api.Test;
 
 class CodingHostClientsTest {
     @Test
+    void observationChecksDoNotRenewAnExpiredLogicalClient() {
+        var now = new java.util.concurrent.atomic.AtomicReference<>(java.time.Instant.EPOCH);
+        var expired = new java.util.ArrayList<String>();
+        var clients = new CodingHostClients(
+                new io.haifa.agent.common.id.UuidV7IdentifierGenerator(),
+                now::get,
+                java.time.Duration.ofMinutes(1),
+                4,
+                expired::add);
+        String id = clients.initialize();
+        now.set(java.time.Instant.EPOCH.plusSeconds(59));
+        clients.requireObservation(id);
+        now.set(java.time.Instant.EPOCH.plusSeconds(61));
+        assertThatThrownBy(() -> clients.requireObservation(id)).isInstanceOf(CodingHostException.class);
+        assertThat(expired).containsExactly(id);
+    }
+
+    @Test
     void optionalPreviewIsBoundToTheLogicalClientAndDoesNotTransferOnRenewal() {
         var now = new AtomicReference<>(Instant.EPOCH);
         var clients = new CodingHostClients(new UuidV7IdentifierGenerator(), now::get, Duration.ofMinutes(1));

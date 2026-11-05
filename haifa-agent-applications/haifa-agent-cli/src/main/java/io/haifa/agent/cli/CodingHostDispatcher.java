@@ -38,6 +38,26 @@ import java.util.OptionalLong;
 final class CodingHostDispatcher {
     private static final String PROTOCOL_VERSION = "1";
 
+    static final String PRESENTATION_CAPABILITY = "session-presentation-v1";
+    private io.haifa.agent.credential.api.SecretRedactor presentationRedactor;
+    private java.util.function.BiFunction<
+                    String,
+                    AgentSessionId,
+                    io.haifa.agent.application.project.product.coding.presentation.CodingPresentationObservation>
+            presentationFactory;
+
+    void enablePresentation(
+            java.util.function.BiFunction<
+                            String,
+                            AgentSessionId,
+                            io.haifa.agent.application.project.product.coding.presentation
+                                    .CodingPresentationObservation>
+                    factory,
+            io.haifa.agent.credential.api.SecretRedactor redactor) {
+        this.presentationRedactor = java.util.Objects.requireNonNull(redactor);
+        this.presentationFactory = java.util.Objects.requireNonNull(factory);
+    }
+
     private final CodingHostHistory history = new CodingHostHistory();
 
     private final java.util.function.Supplier<Map<String, String>> workspaceContext;
@@ -107,6 +127,28 @@ final class CodingHostDispatcher {
                 case "session/list" -> listSessions(safeParams);
                 case "session/create" -> createSession(safeParams);
                 case "session/open" -> sessionOpen(safeParams);
+                case "presentation/subscribe" -> {
+                    if (presentationFactory == null)
+                        throw CodingHostException.conflict("PRESENTATION_DISABLED", "Presentation is disabled");
+                    AgentSessionId sessionId = session(safeParams);
+                    requireHostSession(sessionId);
+                    yield subscriptions.subscribePresentation(
+                            clientId, sessionId, () -> presentationFactory.apply(clientId, sessionId));
+                }
+                case "presentation/history" -> {
+                    if (presentationFactory == null)
+                        throw CodingHostException.conflict("PRESENTATION_DISABLED", "Presentation is disabled");
+                    AgentSessionId sessionId = session(safeParams);
+                    requireHostSession(sessionId);
+                    var before = optionalLong(safeParams, "beforeSequence");
+                    var page = before.isPresent()
+                            ? client.history(sessionId, limit(safeParams, 100, 100), before.getAsLong())
+                            : client.history(sessionId, limit(safeParams, 100, 100));
+                    yield io.haifa.agent.application.project.product.coding.presentation.CodingPresentationHistory.page(
+                            page, presentationRedactor);
+                }
+                case "presentation/close" ->
+                    Map.of("closed", subscriptions.unsubscribe(clientId, text(safeParams, "subscriptionId")));
                 case "session/reconcile" -> sessionView(client.reconcile(session(safeParams)));
                 case "session/history" -> historyPage(safeParams);
                 case "session/rename" ->
@@ -257,6 +299,7 @@ final class CodingHostDispatcher {
             throw CodingHostException.conflict("CONTRACT_VERSION_UNSUPPORTED", "Unsupported protocol version");
         }
         var available = new java.util.HashSet<String>();
+        if (presentationFactory != null) available.add(PRESENTATION_CAPABILITY);
         if (subscriptions != null && subscriptions.previewAvailable()) available.add("preview-v1");
         if (approvals != null) available.add(CodingHostApprovals.CAPABILITY);
         var optional = CodingHostCapabilities.negotiate(params, available);

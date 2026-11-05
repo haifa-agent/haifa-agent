@@ -58,7 +58,12 @@ final class CodingHostServer implements AutoCloseable {
     private final AtomicBoolean closed = new AtomicBoolean();
     private final Map<String, Object> recoveryReport;
 
-    private CodingHostServer(StandaloneCodingAgent agent, InetAddress bind, int port, List<String> configurationSummary)
+    private CodingHostServer(
+            StandaloneCodingAgent agent,
+            InetAddress bind,
+            int port,
+            List<String> configurationSummary,
+            boolean presentationEnabled)
             throws IOException {
         this.configurationSummary = List.copyOf(configurationSummary);
         this.agent = Objects.requireNonNull(agent, "agent must not be null");
@@ -94,6 +99,46 @@ final class CodingHostServer implements AutoCloseable {
                 subscriptions,
                 () -> CodingHostWorkspace.summary(local.workspaceRoot()),
                 approvals);
+        if (presentationEnabled) {
+            String incarnation = "host-" + local.identifiers().nextValue();
+            dispatcher.enablePresentation(
+                    (clientId, sessionId) ->
+                            new io.haifa.agent.application.project.product.coding.presentation
+                                    .CodingPresentationObservation(
+                                    local.codingSessions(),
+                                    client,
+                                    new io.haifa.coding.api.CodingProtocol.Scope(
+                                            "view-" + local.identifiers().nextValue(),
+                                            incarnation,
+                                            clientId,
+                                            sessionId.value(),
+                                            1,
+                                            "native"),
+                                    local.credentialRedactor(),
+                                    () -> {
+                                        try {
+                                            if (!approvals.available(clientId))
+                                                return new io.haifa.coding.api.CodingProtocol.Consent(
+                                                        "ASK", null, false);
+                                            var status = approvals.status(clientId, sessionId);
+                                            return approvals.available(clientId)
+                                                    ? new io.haifa.coding.api.CodingProtocol.Consent(
+                                                            status.state().name(),
+                                                            status.expiresAt()
+                                                                    .map(java.time.Instant::toEpochMilli)
+                                                                    .orElse(null),
+                                                            true)
+                                                    : new io.haifa.coding.api.CodingProtocol.Consent(
+                                                            "ASK", null, false);
+                                        } catch (CodingHostException unavailable) {
+                                            return new io.haifa.coding.api.CodingProtocol.Consent("ASK", null, false);
+                                        }
+                                    },
+                                    String.join("; ", configurationSummary) + "; "
+                                            + CodingHostWorkspace.summary(local.workspaceRoot()),
+                                    local::presentationEventStart),
+                    local.credentialRedactor());
+        }
         this.server = HttpServer.create(new InetSocketAddress(bind, port), 16);
         this.executor = Executors.newVirtualThreadPerTaskExecutor();
         try {
@@ -116,6 +161,10 @@ final class CodingHostServer implements AutoCloseable {
     }
 
     static CodingHostServer start(Path workspace, Optional<Path> config, String bind, int port) {
+        return start(workspace, config, bind, port, false);
+    }
+
+    static CodingHostServer start(Path workspace, Optional<Path> config, String bind, int port, boolean presentation) {
         CliArguments cli = new CliArguments(
                 Optional.empty(),
                 Optional.empty(),
@@ -143,7 +192,7 @@ final class CodingHostServer implements AutoCloseable {
         } catch (io.haifa.agent.application.project.persistence.CodingDatabaseOwnershipException exception) {
             throw new IllegalStateException(exception.getMessage(), exception);
         }
-        return start(agent, bind, port, resolved.summary());
+        return start(agent, bind, port, resolved.summary(), presentation);
     }
 
     static CodingHostServer start(StandaloneCodingAgent agent, String bind, int port) {
@@ -169,8 +218,17 @@ final class CodingHostServer implements AutoCloseable {
 
     static CodingHostServer start(
             StandaloneCodingAgent agent, String bind, int port, List<String> configurationSummary) {
+        return start(agent, bind, port, configurationSummary, false);
+    }
+
+    static CodingHostServer start(
+            StandaloneCodingAgent agent,
+            String bind,
+            int port,
+            List<String> configurationSummary,
+            boolean presentationEnabled) {
         try {
-            return new CodingHostServer(agent, loopback(bind), port, configurationSummary);
+            return new CodingHostServer(agent, loopback(bind), port, configurationSummary, presentationEnabled);
         } catch (IOException exception) {
             agent.close();
             throw new IllegalStateException("CA Host listener failed to start", exception);
@@ -294,20 +352,24 @@ final class CodingHostServer implements AutoCloseable {
                             return;
                         }
                         clients.require(clientId);
+                        if (method.startsWith("presentation/"))
+                            clients.requireOptional(clientId, CodingHostDispatcher.PRESENTATION_CAPABILITY);
                         if (method.equals("preview/subscribe")) clients.requireOptional(clientId, "preview-v1");
                         if (method.equals("approval/allowForSession")
                                 || method.equals("approval/resetSession")
                                 || method.equals("approval/status")
                                 || method.equals("client/close"))
                             clients.requireOptional(clientId, CodingHostApprovals.CAPABILITY);
-                        if (method.equals("client/renew")) approvals.renew(clientId);
+                        if (method.equals("client/renew")) {
+                            approvals.renew(clientId);
+                            subscriptions.refreshPresentations();
+                        }
                         if (method.equals("client/close")) clients.remove(clientId);
-                        writeResult(
-                                exchange,
-                                id,
-                                method.equals("host/configuration")
-                                        ? configurationSummary(request.get("params"))
-                                        : dispatcher.dispatch(clientId, method, request.get("params")));
+                        Object result = method.equals("host/configuration")
+                                ? configurationSummary(request.get("params"))
+                                : dispatcher.dispatch(clientId, method, request.get("params"));
+                        if (method.startsWith("approval/")) subscriptions.refreshPresentations();
+                        writeResult(exchange, id, result);
                     }
                 }
             } catch (CodingHostException exception) {
@@ -360,6 +422,13 @@ final class CodingHostServer implements AutoCloseable {
             exchange.sendResponseHeaders(200, 0);
             try (OutputStream output = exchange.getResponseBody()) {
                 while (!subscription.closed()) {
+                    if (subscription.type().equals("presentation")) {
+                        try {
+                            clients.requireObservation(clientId);
+                        } catch (CodingHostException expired) {
+                            break;
+                        }
+                    }
                     Map<String, Object> value = subscription.poll(2, TimeUnit.SECONDS);
                     if (value == null) {
                         output.write(": keep-alive\n\n".getBytes(StandardCharsets.UTF_8));

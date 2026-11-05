@@ -72,6 +72,11 @@ final class CodingHostApprovals implements AutoCloseable {
         leases.values().forEach(lease -> lease.approvals.reset(sessionId));
     }
 
+    boolean available(String clientId) {
+        Lease lease = leases.get(clientId);
+        return lease != null && lease.valid();
+    }
+
     CodingSessionApprovalStatus status(String clientId, AgentSessionId sessionId) {
         Lease lease = lease(clientId);
         var state = lease.approvals.state(sessionId);

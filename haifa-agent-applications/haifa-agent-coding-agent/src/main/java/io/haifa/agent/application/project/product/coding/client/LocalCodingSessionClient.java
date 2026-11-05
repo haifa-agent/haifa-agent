@@ -254,6 +254,12 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
     }
 
     @Override
+    public CodingSessionView presentationSnapshot(AgentSessionId sessionId) {
+        sessions.requireSessionInProject(sessionId, projectId);
+        return scoped(sessions.snapshotSession(sessionId));
+    }
+
+    @Override
     public CodingSessionView reconcile(AgentSessionId sessionId) {
         requireScoped(sessionId);
         return scoped(sessions.reconcileSession(sessionId));

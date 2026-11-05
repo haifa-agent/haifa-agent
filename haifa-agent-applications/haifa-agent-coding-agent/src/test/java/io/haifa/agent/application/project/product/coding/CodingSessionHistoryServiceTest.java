@@ -32,6 +32,21 @@ class CodingSessionHistoryServiceTest {
     private final AtomicInteger authorizations = new AtomicInteger();
 
     @Test
+    void preservesExactRunAssociationAndExplicitTruncationWithoutMatchingText() {
+        var first = new AgentRunId("first-run");
+        var second = new AgentRunId("second-run");
+        append("first-message", first, MessageRole.ASSISTANT, MessageVisibility.USER_VISIBLE, "same answer…");
+        append("second-message", second, MessageRole.ASSISTANT, MessageVisibility.USER_VISIBLE, "same answer…");
+        append("large-message", second, MessageRole.ASSISTANT, MessageVisibility.USER_VISIBLE, "汉".repeat(9000));
+        var items = service(ignored -> Optional.empty()).recent(SESSION_ID, 10).items();
+        assertThat(items)
+                .extracting(CodingSessionHistoryItem::sourceRunId)
+                .containsExactly(Optional.of(first.value()), Optional.of(second.value()), Optional.of(second.value()));
+        assertThat(items).extracting(CodingSessionHistoryItem::truncated).containsExactly(false, false, true);
+        assertThat(items.get(0).id()).isNotEqualTo(items.get(1).id());
+    }
+
+    @Test
     void projectsOnlyRedactedUserVisibleConversationMessages() {
         append("user", new AgentRunId("run-1"), MessageRole.USER, MessageVisibility.USER_VISIBLE, "my secret");
         append("system", new AgentRunId("run-1"), MessageRole.SYSTEM, MessageVisibility.AGENT_VISIBLE, "hidden");
@@ -69,6 +84,8 @@ class CodingSessionHistoryServiceTest {
 
         assertThat(page.items()).hasSize(2);
         assertThat(page.items().getLast().kind()).isEqualTo(CodingSessionHistoryItem.Kind.ERROR);
+        assertThat(page.items().getLast().code()).contains("MODEL_CALL_FAILED");
+        assertThat(page.items().getLast().diagnosticId()).contains("diagnostic-1");
         assertThat(page.items().getLast().body())
                 .isEqualTo("[MODEL_CALL_FAILED] Model call failed · Diagnostic ID: diagnostic-1");
     }

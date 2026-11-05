@@ -51,7 +51,7 @@ public final class CodingSessionHistoryService {
 
     private static Consumer<AgentSessionId> authorizer(CodingSessionService sessions) {
         CodingSessionService checked = Objects.requireNonNull(sessions, "sessions must not be null");
-        return checked::openSession;
+        return checked::snapshotSession;
     }
 
     CodingSessionHistoryService(
@@ -145,7 +145,11 @@ public final class CodingSessionHistoryService {
                                 failureBody(error),
                                 snapshot.status().name(),
                                 sequence,
-                                snapshot.updatedAt())))
+                                snapshot.updatedAt(),
+                                Optional.of(runId.value()),
+                                false,
+                                Optional.of(error.code().wireCode()),
+                                error.optionalDiagnosticId())))
                 .ifPresent(item -> failures.put(runId, item)));
 
         List<CodingSessionHistoryItem> projected = new ArrayList<>();
@@ -172,10 +176,11 @@ public final class CodingSessionHistoryService {
                 .map(TextPart::text)
                 .reduce((left, right) -> left + "\n" + right)
                 .map(redactor::redact)
-                .map(CodingSessionHistoryService::bounded)
                 .orElse("")
                 .strip();
         if (kind.isEmpty() || body.isEmpty()) return Optional.empty();
+        boolean truncated = body.codePointCount(0, body.length()) > MAXIMUM_BODY_CODE_POINTS;
+        body = bounded(body);
         CodingSessionHistoryItem.Kind value = kind.orElseThrow();
         return Optional.of(new CodingSessionHistoryItem(
                 "history-message-" + message.id().value(),
@@ -184,7 +189,9 @@ public final class CodingSessionHistoryService {
                 body,
                 message.status().name(),
                 message.sequence(),
-                message.createdAt()));
+                message.createdAt(),
+                message.runId().map(AgentRunId::value),
+                truncated));
     }
 
     private String failureBody(io.haifa.agent.core.error.AgentError error) {

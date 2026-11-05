@@ -119,6 +119,31 @@ final class CodingHostSubscriptions {
         }
     }
 
+    io.haifa.coding.api.CodingProtocol.Subscribed subscribePresentation(
+            String clientId,
+            AgentSessionId sessionId,
+            java.util.function.Supplier<
+                            io.haifa.agent.application.project.product.coding.presentation
+                                    .CodingPresentationObservation>
+                    factory) {
+        Subscription subscription = reserve(clientId, sessionId, null, "presentation");
+        try {
+            var observation = factory.get();
+            subscription.presentation = observation;
+            subscription.install(observation);
+            return new io.haifa.coding.api.CodingProtocol.Subscribed(subscription.id, observation.initial());
+        } catch (RuntimeException failure) {
+            discard(subscription);
+            throw failure;
+        }
+    }
+
+    void refreshPresentations() {
+        for (var subscription : List.copyOf(subscriptions.values())) {
+            if (subscription.presentation != null) subscription.presentation.refreshConsent();
+        }
+    }
+
     boolean previewAvailable() {
         return previews != io.haifa.agent.execution.api.ToolOutputPreviewPublisher.noop();
     }
@@ -250,6 +275,8 @@ final class CodingHostSubscriptions {
         private final AtomicBoolean attached = new AtomicBoolean();
         private volatile boolean closed;
         private AutoCloseable handle;
+        private volatile io.haifa.agent.application.project.product.coding.presentation.CodingPresentationObservation
+                presentation;
 
         private Subscription(
                 String id,
@@ -306,6 +333,15 @@ final class CodingHostSubscriptions {
         }
 
         Map<String, Object> poll(long timeout, TimeUnit unit) throws InterruptedException {
+            if (presentation != null) {
+                presentation.refreshConsent();
+                var envelope = presentation.poll(Duration.ofNanos(unit.toNanos(timeout)));
+                if (envelope == null) return null;
+                if (envelope instanceof io.haifa.coding.api.CodingProtocol.Resync) discard(this);
+                return new com.fasterxml.jackson.databind.ObjectMapper()
+                        .convertValue(
+                                envelope, new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+            }
             return queue.poll(timeout, unit);
         }
 

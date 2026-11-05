@@ -12,6 +12,7 @@
     <artifactId>haifa-agent-applications</artifactId>
     <packaging>pom</packaging>
     <modules>
+        <module>haifa-coding-api</module>
         <module>haifa-agent-coding-agent</module>
         <module>haifa-agent-coding-terminal</module>
         <module>haifa-agent-cli</module>

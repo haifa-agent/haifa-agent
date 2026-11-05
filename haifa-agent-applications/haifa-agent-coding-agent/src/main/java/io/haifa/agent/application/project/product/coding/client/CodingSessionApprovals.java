@@ -180,6 +180,11 @@ public final class CodingSessionApprovals {
     }
 
     private boolean ordinary(InteractionView interaction) {
+        return ordinaryApproval(interaction, runtime);
+    }
+
+    /** Pure trusted projection check shared with presentation; it does not activate or apply consent. */
+    public static boolean ordinaryApproval(InteractionView interaction, AgentRuntime runtime) {
         if (!interaction.kind().equals(InteractionKind.APPROVAL)
                 || interaction.state() != InteractionState.PENDING
                 || !interaction.inputContract().type().equals(InteractionInputType.NONE)
@@ -196,7 +201,8 @@ public final class CodingSessionApprovals {
                                 .equals(call.arguments().values().get("operationFamily")));
     }
 
-    private static boolean completeTarget(ToolCallView call) {
+    /** Shared trusted-target completeness rule; content-only truncation is distinct from incomplete targets. */
+    public static boolean completeTarget(ToolCallView call) {
         var arguments = call.arguments();
         // Content is data, not a target. Only the trusted projector can certify the other fields.
         // Patch text embeds its paths, so a truncated patch remains an explicit approval.

@@ -1,0 +1,135 @@
+{
+  "kind": "snapshot",
+  "scope": {
+    "viewId": "view-1",
+    "hostIncarnation": "host-1",
+    "clientId": "client-1",
+    "sessionId": "session-1",
+    "schemaVersion": 1,
+    "source": "native"
+  },
+  "revision": 0,
+  "hydration": "ready",
+  "session": {
+    "id": "session-1",
+    "title": "中文 Session",
+    "revision": 0,
+    "status": "fixture",
+    "run": null,
+    "modelId": "fixture",
+    "modelName": "fixture",
+    "context": "fixture",
+    "modelRevision": 0,
+    "modelAvailable": true
+  },
+  "entries": [
+    {
+      "id": "entry-message",
+      "kind": "executable-script",
+      "runId": "run-1",
+      "role": "message",
+      "title": "审阅 / review",
+      "text": "汉字与 emoji 😀 <script>plain text</script>",
+      "status": "PENDING",
+      "sequence": null,
+      "truncated": false,
+      "interaction": null,
+      "occurredAtEpochMillis": null,
+      "toolCallId": null,
+      "interactionId": null,
+      "noticeCode": null,
+      "diagnosticId": null
+    },
+    {
+      "id": "entry-tool",
+      "kind": "tool",
+      "runId": "run-1",
+      "role": "tool",
+      "title": "审阅 / review",
+      "text": "汉字与 emoji 😀 <script>plain text</script>",
+      "status": "PENDING",
+      "sequence": null,
+      "truncated": false,
+      "interaction": null,
+      "occurredAtEpochMillis": null,
+      "toolCallId": "call-1",
+      "interactionId": "interaction-1",
+      "noticeCode": null,
+      "diagnosticId": null
+    },
+    {
+      "id": "entry-interaction",
+      "kind": "interaction",
+      "runId": "run-1",
+      "role": "interaction",
+      "title": "审阅 / review",
+      "text": "汉字与 emoji 😀 <script>plain text</script>",
+      "status": "PENDING",
+      "sequence": null,
+      "truncated": false,
+      "interaction": {
+        "id": "interaction-1",
+        "revision": 7,
+        "kind": "approval",
+        "input": {
+          "type": "fixture",
+          "maximumCharacters": 0,
+          "minimumSelections": 0,
+          "maximumSelections": 0,
+          "options": [],
+          "questions": []
+        },
+        "review": null,
+        "actions": [
+          {
+            "kind": "respond",
+            "target": {
+              "sessionId": "session-1",
+              "runId": "run-1",
+              "interactionId": "interaction-1",
+              "targetRevision": 7
+            },
+            "choice": "approve",
+            "available": false,
+            "reason": "REVIEW_UNAVAILABLE"
+          }
+        ]
+      },
+      "occurredAtEpochMillis": null,
+      "toolCallId": null,
+      "interactionId": null,
+      "noticeCode": null,
+      "diagnosticId": null
+    },
+    {
+      "id": "entry-notice",
+      "kind": "notice",
+      "runId": "run-1",
+      "role": "notice",
+      "title": "审阅 / review",
+      "text": "汉字与 emoji 😀 <script>plain text</script>",
+      "status": "PENDING",
+      "sequence": null,
+      "truncated": false,
+      "interaction": null,
+      "occurredAtEpochMillis": null,
+      "toolCallId": null,
+      "interactionId": null,
+      "noticeCode": null,
+      "diagnosticId": null
+    }
+  ],
+  "history": {
+    "hasEarlier": false,
+    "beforeSequence": null,
+    "complete": false
+  },
+  "live": null,
+  "consent": {
+    "state": "ASK",
+    "expiresAtEpochMillis": null,
+    "available": true
+  },
+  "actions": [],
+  "notices": []
+}

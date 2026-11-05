@@ -44,6 +44,182 @@ class CodingHostServerTest {
     Path directory;
 
     @Test
+    void presentationCarriesExactReviewAndKeepsConsentScopedToItsClient() throws Exception {
+        Path workspace = Files.createDirectory(directory.resolve("presentation-approval"));
+        Path target = workspace.resolve("approved.txt");
+        AtomicInteger modelCalls = new AtomicInteger();
+        AgentChatModel model = request -> modelCalls.incrementAndGet() == 1
+                ? CodingHostTestFixture.toolResponse(
+                        "review-call", "file_create", Map.of("path", target.toString(), "content", "approved body"))
+                : CodingHostTestFixture.response("approved answer");
+        try (var agent = CodingHostTestFixture.openAgent(
+                        workspace,
+                        CodingHostTestFixture.sqliteConfiguration(directory.resolve("review.sqlite"), ApprovalMode.ASK),
+                        model);
+                var server = CodingHostServer.start(agent, "127.0.0.1", 0, List.of("test"), true)) {
+            Rpc first = new Rpc(server.port());
+            Rpc second = new Rpc(server.port());
+            var offered = java.util.Set.of("session-presentation-v1", "session-consent-v1");
+            first.initialize(offered);
+            second.initialize(offered);
+            var created = first.result(
+                    "session/create", params("text", "write approved file", "idempotencyKey", "review-create"));
+            String session = created.path("session").path("sessionId").asText();
+            var run = new AgentRunId(created.path("activeRun").path("runId").asText());
+            var pending = new CompletableFuture<io.haifa.agent.runtime.api.InteractionView>();
+            try (var events = agent.client()
+                    .subscribe(run, io.haifa.agent.runtime.api.RunEventCursor.beforeFirst(run), event -> {
+                        if (event.payload() instanceof io.haifa.agent.runtime.api.RunEventPayloads.InteractionLifecycle)
+                            agent.client().pendingInteraction(run).ifPresent(pending::complete);
+                    })) {
+                var interaction = pending.get(10, TimeUnit.SECONDS);
+                var subscribed = first.result("presentation/subscribe", params("sessionId", session));
+                JsonNode row = null;
+                for (var entry : subscribed.path("snapshot").path("entries"))
+                    if (entry.path("kind").asText().equals("interaction")) row = entry;
+                assertThat(row).isNotNull();
+                assertThat(row.path("interaction")
+                                .path("review")
+                                .path("targetComplete")
+                                .asBoolean())
+                        .isTrue();
+                JsonNode allow = null;
+                for (var action : row.path("interaction").path("actions"))
+                    if (action.path("kind").asText().equals("allowForSession")) allow = action;
+                assertThat(allow).isNotNull();
+                assertThat(allow.path("available").asBoolean()).isTrue();
+                assertThat(allow.path("target").path("interactionId").asText())
+                        .isEqualTo(interaction.requestId().value());
+                assertThat(allow.path("target").path("runId").asText()).isEqualTo(run.value());
+                assertThat(allow.path("target").path("targetRevision").asLong()).isEqualTo(interaction.revision());
+                assertThat(Files.exists(target)).isFalse();
+                var stale = first.error(
+                        "approval/allowForSession",
+                        params(
+                                "sessionId",
+                                session,
+                                "runId",
+                                run.value(),
+                                "interactionId",
+                                interaction.requestId().value(),
+                                "revision",
+                                interaction.revision() + 1,
+                                "idempotencyKey",
+                                "stale-review"));
+                assertThat(stale.path("data").path("reasonCode").asText()).isEqualTo("INTERACTION_REVISION_CONFLICT");
+                first.result(
+                        "approval/allowForSession",
+                        params(
+                                "sessionId",
+                                session,
+                                "runId",
+                                run.value(),
+                                "interactionId",
+                                interaction.requestId().value(),
+                                "revision",
+                                interaction.revision(),
+                                "idempotencyKey",
+                                "valid-review"));
+                awaitTerminal(first, run.value());
+                assertThat(Files.readString(target)).isEqualTo("approved body");
+                var own = first.result("presentation/subscribe", params("sessionId", session));
+                var other = second.result("presentation/subscribe", params("sessionId", session));
+                assertThat(own.path("snapshot").path("consent").path("state").asText())
+                        .isEqualTo("ACTIVE");
+                assertThat(other.path("snapshot").path("consent").path("state").asText())
+                        .isEqualTo("ASK");
+                assertThat(own.path("snapshot").path("scope").path("clientId"))
+                        .isNotEqualTo(other.path("snapshot").path("scope").path("clientId"));
+            }
+        }
+    }
+
+    @Test
+    void negotiatedPresentationBuffersBeforeAttachAndKeepsClientOwnership() throws Exception {
+        Path workspace = Files.createDirectory(directory.resolve("presentation-host"));
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        try (var agent = agent(workspace, request -> {
+                    entered.countDown();
+                    CodingHostTestFixture.await(release);
+                    return CodingHostTestFixture.response("presentation answer");
+                });
+                CodingHostServer server = CodingHostServer.start(agent, "127.0.0.1", 0, List.of("test"), true)) {
+            Rpc rpc = new Rpc(server.port());
+            JsonNode init = rpc.initialize(java.util.Set.of("session-presentation-v1"));
+            assertThat(init.path("optionalCapabilities").toString()).contains("session-presentation-v1");
+            JsonNode created = rpc.result(
+                    "session/create", params("text", "presentation", "idempotencyKey", "presentation-create"));
+            assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+            String session = created.path("session").path("sessionId").asText();
+            JsonNode subscription = rpc.result("presentation/subscribe", params("sessionId", session));
+            String id = subscription.path("subscriptionId").asText();
+            JsonNode snapshot = subscription.path("snapshot");
+            assertThat(snapshot.path("scope").path("clientId")).isEqualTo(init.path("clientId"));
+            rpc.result(
+                    "session/rename",
+                    params(
+                            "sessionId",
+                            session,
+                            "displayName",
+                            "renamed before SSE attach",
+                            "expectedRevision",
+                            snapshot.path("session").path("revision").asLong()));
+            try (var stream = rpc.sse(id).body();
+                    var reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
+                var first = JSON.treeToValue(snapshot, io.haifa.coding.api.CodingProtocol.Snapshot.class);
+                var renamed = CompletableFuture.supplyAsync(() -> {
+                            var state = first;
+                            try {
+                                for (int delivered = 0; delivered < 32; delivered++) {
+                                    var update = JSON.readValue(
+                                            readEventData(reader), io.haifa.coding.api.CodingProtocol.Update.class);
+                                    state = io.haifa.coding.api.CodingPresentationReducer.apply(state, update);
+                                    if (state.session().title().equals("renamed before SSE attach")) return state;
+                                }
+                            } catch (java.io.IOException failure) {
+                                throw new IllegalStateException(failure);
+                            }
+                            throw new AssertionError("Buffered named mutation was not delivered");
+                        })
+                        .get(5, TimeUnit.SECONDS);
+                assertThat(renamed.revision()).isGreaterThan(first.revision());
+                Rpc other = new Rpc(server.port());
+                other.initialize(java.util.Set.of("session-presentation-v1"));
+                assertThat(other.result("presentation/close", params("subscriptionId", id))
+                                .path("closed")
+                                .asBoolean())
+                        .isFalse();
+            } finally {
+                release.countDown();
+            }
+            rpc.result("presentation/close", params("subscriptionId", id));
+            String run = created.path("activeRun").path("runId").asText();
+            awaitTerminal(rpc, run);
+            assertThat(rpc.result("run/get", params("runId", run))
+                            .path("output")
+                            .asText())
+                    .isEqualTo("presentation answer");
+        } finally {
+            release.countDown();
+        }
+    }
+
+    @Test
+    void presentationRemainsDisabledByDefaultEvenWhenOffered() throws Exception {
+        Path workspace = Files.createDirectory(directory.resolve("presentation-disabled"));
+        try (var agent = agent(workspace, request -> CodingHostTestFixture.response("ok"));
+                var server = CodingHostServer.start(agent, "127.0.0.1", 0)) {
+            Rpc rpc = new Rpc(server.port());
+            JsonNode init = rpc.initialize(java.util.Set.of("session-presentation-v1"));
+            assertThat(init.path("optionalCapabilities").toString()).doesNotContain("session-presentation-v1");
+            assertThat(rpc.error("presentation/subscribe", params("sessionId", "unavailable"))
+                            .isObject())
+                    .isTrue();
+        }
+    }
+
+    @Test
     void servesTwoSessionsAndObservationCloseDoesNotCancelRuns() throws Exception {
         Path workspace = Files.createDirectory(directory.resolve("host-workspace"));
         Path alpha = Files.createDirectory(workspace.resolve("alpha"));
@@ -130,11 +306,9 @@ class CodingHostServerTest {
                     .isTrue();
             JsonNode completedB = rpc.result("run/get", params("runId", runB));
             assertThat(completedB.path("output").asText()).isEqualTo("beta-answer");
-            assertThat(rpc.result("session/open", params("sessionId", sessionA))
-                            .path("history")
-                            .path("items")
-                            .size())
-                    .isGreaterThan(0);
+            JsonNode opened = rpc.result("session/open", params("sessionId", sessionA));
+            assertThat(opened.path("historyDeferred").asBoolean()).isTrue();
+            assertThat(opened.path("history").path("items").size()).isZero();
             assertThat(historyBodies(rpc.result("session/history", params("sessionId", sessionA, "limit", 100))))
                     .contains("alpha-answer")
                     .doesNotContain("beta-answer");
@@ -420,8 +594,19 @@ class CodingHostServerTest {
         }
 
         JsonNode initialize() throws Exception {
+            return initialize(java.util.Set.of());
+        }
+
+        JsonNode initialize(java.util.Set<String> capabilities) throws Exception {
             JsonNode result = result(
-                    "initialize", params("protocolVersion", "1", "clientInfo", Map.of("name", "test", "version", "1")));
+                    "initialize",
+                    params(
+                            "protocolVersion",
+                            "1",
+                            "clientInfo",
+                            Map.of("name", "test", "version", "1"),
+                            "optionalCapabilities",
+                            capabilities));
             clientId = result.path("clientId").asText();
             return result;
         }

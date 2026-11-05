@@ -441,8 +441,11 @@ class ProjectPersistenceAssemblyTest {
                     .isInstanceOf(IllegalStateException.class)
                     .hasMessageContaining("another request");
 
+            var changes = new java.util.concurrent.atomic.AtomicInteger();
+            var observation = coding.observeChanges(sessionId, changes::incrementAndGet);
             runtime.settle(firstRunId);
             var reconciled = coding.reconcileSession(sessionId);
+            assertThat(changes).hasValue(1);
             assertThat(reconciled.activeRun()).isPresent();
             assertThat(reconciled.activeRun().orElseThrow().runId()).isNotEqualTo(firstRunId);
             assertThat(reconciled.activeRunTaskSummary()).contains("then update the docs");
@@ -451,6 +454,23 @@ class ProjectPersistenceAssemblyTest {
             RuntimeCommandResult aborted =
                     coding.abortActiveRun(sessionId, "abort-key").orElseThrow();
             assertThat(aborted.status()).isEqualTo(RuntimeCommandStatus.ACCEPTED);
+            assertThat(changes.get()).isGreaterThan(1);
+            int beforeLostReceipt = changes.get();
+            assertThatThrownBy(() -> {
+                        var current = coding.openSession(sessionId);
+                        coding.renameSession(
+                                sessionId,
+                                "accepted before lost receipt",
+                                current.summary().revision());
+                        throw new IllegalStateException("simulated lost receipt");
+                    })
+                    .isInstanceOf(IllegalStateException.class);
+            assertThat(changes.get()).isGreaterThan(beforeLostReceipt);
+            observation.close();
+            int detached = changes.get();
+            var current = coding.openSession(sessionId);
+            coding.renameSession(sessionId, "after detach", current.summary().revision());
+            assertThat(changes).hasValue(detached);
         }
     }
 

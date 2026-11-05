@@ -56,6 +56,11 @@ Spring 不拥有 Runtime 语义。
 
 Coding Agent 与 Personal Assistant 是具体 Product Assembly。
 
+Coding 的实验性 `haifa-coding-api` 仍属于 Application 层：公共合同只依赖 JDK，产品 engine
+拥有事实映射和有界展示发布，CLI Host 负责可选 native 接线。该模块不进入基础 SDK BOM，也不把
+产品审批或展示概念提升到 Core/Runtime。合同与恢复语义见
+[模块 README](../../haifa-agent-applications/haifa-coding-api/README.md)。
+
 产品概念应停留在 Application Layer，除非有独立证据证明某个低层 Invariant 稳定且可复用。
 
 ## Dependency Rule

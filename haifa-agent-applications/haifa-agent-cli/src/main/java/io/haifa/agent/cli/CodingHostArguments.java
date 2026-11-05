@@ -7,8 +7,13 @@ import java.util.Objects;
 import java.util.Optional;
 
 /** Explicit parser for the product-private host mode; it does not widen CliArguments. */
-record CodingHostArguments(Path workspace, Optional<Path> config, String bind, int port, boolean help) {
+record CodingHostArguments(
+        Path workspace, Optional<Path> config, String bind, int port, boolean help, boolean presentation) {
     static final int DEFAULT_PORT = 17_861;
+
+    CodingHostArguments(Path workspace, Optional<Path> config, String bind, int port, boolean help) {
+        this(workspace, config, bind, port, help, false);
+    }
 
     CodingHostArguments {
         Objects.requireNonNull(workspace, "workspace must not be null");
@@ -24,11 +29,13 @@ record CodingHostArguments(Path workspace, Optional<Path> config, String bind, i
         String bind = "127.0.0.1";
         int port = DEFAULT_PORT;
         boolean help = false;
+        boolean presentation = false;
         List<String> values = new ArrayList<>(List.of(arguments));
         for (int index = 0; index < values.size(); index++) {
             String value = values.get(index);
             switch (value) {
                 case "-h", "--help" -> help = true;
+                case "--presentation" -> presentation = true;
                 case "--workspace" -> workspace = Path.of(requireValue(values, ++index, value));
                 case "--config" -> config = Path.of(requireValue(values, ++index, value));
                 case "--bind" -> bind = requireValue(values, ++index, value);
@@ -39,7 +46,7 @@ record CodingHostArguments(Path workspace, Optional<Path> config, String bind, i
         Path absoluteWorkspace = workspace.toAbsolutePath().normalize();
         Optional<Path> absoluteConfig =
                 Optional.ofNullable(config).map(Path::toAbsolutePath).map(Path::normalize);
-        return new CodingHostArguments(absoluteWorkspace, absoluteConfig, bind, port, help);
+        return new CodingHostArguments(absoluteWorkspace, absoluteConfig, bind, port, help, presentation);
     }
 
     CliArguments toCliArguments() {

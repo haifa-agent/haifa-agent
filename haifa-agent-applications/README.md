@@ -2,6 +2,8 @@
 
 面向具体 Agent 产品的高层应用适配层。这里可以组合 Kernel、Context、Execution 与 Runtime API，但不向底层模块反向泄漏产品概念或具体 Provider。
 
+- `haifa-coding-api`：仅依赖 JDK 的实验性 Coding 产品合同，包含共享 schema、Java/TS fixtures、
+  有界展示 DTO 和原子 reducer；不属于基础 SDK BOM，也不提供网络 Client；
 - `haifa-agent-coding-agent`：Project/Workspace Coding Agent 产品服务，拥有 Session、Queue、Policy 与
   MyBatis/SQLite 产品持久化，不拥有终端；
 - `haifa-agent-coding-terminal`：严格映射评审版低保真原型的 tui4j 单列交互层，只通过

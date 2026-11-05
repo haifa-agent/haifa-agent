@@ -408,8 +408,8 @@ public final class HaifaCliMain {
             output.println(hostUsage());
             return 0;
         }
-        try (CodingHostServer server =
-                CodingHostServer.start(host.workspace(), host.config(), host.bind(), host.port())) {
+        try (CodingHostServer server = CodingHostServer.start(
+                host.workspace(), host.config(), host.bind(), host.port(), host.presentation())) {
             output.println("CA Host listening on http://" + host.bind() + ":" + server.port());
             server.configurationSummary().forEach(output::println);
             output.println(
@@ -543,6 +543,7 @@ public final class HaifaCliMain {
     private static String hostUsage() {
         return """
                 Usage: haifa-coding host [options]
+                      --presentation         Enable opt-in native session presentation (browser access stays disabled)
                       --workspace <path>     Workspace root (default: current directory)
                       --config <path>        Explicit Host configuration; otherwise user config only
                       --bind <address>       Loopback address (default: 127.0.0.1)
