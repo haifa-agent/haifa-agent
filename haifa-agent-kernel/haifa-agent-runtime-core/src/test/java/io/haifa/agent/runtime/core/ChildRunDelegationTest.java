@@ -1212,6 +1212,7 @@ class ChildRunDelegationTest {
         if (contextWindow == 32_768) {
             assertThat(childCalls).hasValue(1);
             assertThat(child.status()).isEqualTo(AgentRunStatus.FAILED);
+            assertThat(child.error().orElseThrow().code()).isEqualTo(AgentErrorCode.MODEL_CONTEXT_TOO_LONG);
             assertThat(diagnostic.get())
                     .isInstanceOf(io.haifa.agent.runtime.core.loop.ContextRebuildExhaustedException.class);
         } else {
