@@ -68,10 +68,10 @@ public final class ProjectToolCatalog {
     /** Only explicitly opted-in products contribute the existing Session-scoped historical readers. */
     public ProjectToolCatalog(
             Duration maximumExecutionTimeout, List<ToolDefinition> historyDefinitions, ToolProvider historyProvider) {
-        this.historyDefinitions = List.copyOf(historyDefinitions);
-        this.historyProvider = historyDefinitions.isEmpty()
-                ? historyProvider
-                : Objects.requireNonNull(historyProvider, "historyProvider");
+        this.historyDefinitions =
+                List.copyOf(Objects.requireNonNull(historyDefinitions, "historyDefinitions must not be null"));
+        this.historyProvider =
+                historyDefinitions.isEmpty() ? null : Objects.requireNonNull(historyProvider, "historyProvider");
         this.maximumExecutionTimeout =
                 Objects.requireNonNull(maximumExecutionTimeout, "maximumExecutionTimeout must not be null");
         if (maximumExecutionTimeout.isZero()

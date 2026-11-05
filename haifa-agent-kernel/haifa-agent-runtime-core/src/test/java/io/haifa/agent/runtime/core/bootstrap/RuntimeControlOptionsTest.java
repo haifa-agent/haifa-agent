@@ -11,6 +11,28 @@ class RuntimeControlOptionsTest {
     private static final AgentRunBudget BUDGET = new AgentRunBudget(100, 100, 100, 20, 10, 0, "USD", 0);
 
     @Test
+    void sharedWorkingSetOptInIsBoundedImmutableAndPreservesExplicitOptions() {
+        var input = Map.<String, Object>of("temperature", 0, RuntimeControlOptions.CONTEXT_BUDGET_POLICY, "legacy");
+        var options = RuntimeControlOptions.unifiedWorkingSetOptions(input, 4096);
+        assertThat(options)
+                .containsEntry(RuntimeControlOptions.WORKING_SET, true)
+                .containsEntry(RuntimeControlOptions.WORKING_SET_TARGET, 4096)
+                .containsEntry(RuntimeControlOptions.CONTEXT_BUDGET_POLICY, "legacy")
+                .containsEntry("temperature", 0);
+        assertThat(input).doesNotContainKey(RuntimeControlOptions.WORKING_SET);
+        assertThatThrownBy(() -> options.put("other", true)).isInstanceOf(UnsupportedOperationException.class);
+        assertThat(RuntimeControlOptions.unifiedContextBudget(
+                        RuntimeControlOptions.unifiedWorkingSetOptions(Map.of(), 128)))
+                .isTrue();
+        assertThat(RuntimeControlOptions.workingSetTarget(
+                        RuntimeControlOptions.unifiedWorkingSetOptions(Map.of(), 65536)))
+                .isEqualTo(65536);
+        for (int invalid : new int[] {127, 65537})
+            assertThatThrownBy(() -> RuntimeControlOptions.unifiedWorkingSetOptions(Map.of(), invalid))
+                    .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void freezesAThresholdBelowTheHardBudgetAndRemovesItFromProviderOptions() {
         Map<String, Object> options = Map.of(
                 RuntimeControlOptions.FINALIZE_AFTER_TOOL_CALLS,

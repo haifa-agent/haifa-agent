@@ -450,7 +450,7 @@ final class LocalCodingAgent implements AutoCloseable {
                     "cli-coding",
                     "1.0.0",
                     effectiveCapabilities,
-                    Set.copyOf(configuredTools),
+                    effectiveProjectTools(configuration),
                     "coding-agent-policy-v1");
             configurationService.publish(projectConfiguration);
             ProjectId projectId = workspaceIdentity.projectId();
@@ -1064,6 +1064,12 @@ final class LocalCodingAgent implements AutoCloseable {
             configuredTools.remove("execution_run");
         }
         return Set.copyOf(configuredTools);
+    }
+
+    static Set<String> effectiveProjectTools(CliConfiguration configuration) {
+        var tools = new java.util.HashSet<>(effectiveBuiltInTools(configuration));
+        if (configuration.context().historyRetrieval()) tools.addAll(Set.of("history_search", "history_read"));
+        return Set.copyOf(tools);
     }
 
     private static io.haifa.agent.policy.api.ApprovalMode policyMode(ApprovalMode mode) {

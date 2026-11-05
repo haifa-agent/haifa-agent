@@ -25,6 +25,26 @@ public final class RuntimeControlOptions {
     public static final String CONTEXT_PREVIEW_CHARS = PREFIX + "context_preview_chars";
     public static final String CONTEXT_MIN_SAVING_TOKENS = PREFIX + "context_min_saving_tokens";
 
+    public static final int DEFAULT_WORKING_SET_TARGET = 2048;
+    public static final int MIN_WORKING_SET_TARGET = 128;
+    public static final int MAX_WORKING_SET_TARGET = 65536;
+
+    public static int validateWorkingSetTarget(int targetTokens) {
+        if (targetTokens < MIN_WORKING_SET_TARGET || targetTokens > MAX_WORKING_SET_TARGET)
+            throw new IllegalArgumentException("invalid working set target");
+        return targetTokens;
+    }
+
+    /** Shared additive opt-in for the SDK and product assemblies; explicit caller options win. */
+    public static Map<String, Object> unifiedWorkingSetOptions(Map<String, Object> original, int targetTokens) {
+        validateWorkingSetTarget(targetTokens);
+        var options = new LinkedHashMap<>(original);
+        options.putIfAbsent(WORKING_SET, true);
+        options.putIfAbsent(CONTEXT_BUDGET_POLICY, UNIFIED_CONTEXT_V1);
+        options.putIfAbsent(WORKING_SET_TARGET, targetTokens);
+        return Map.copyOf(options);
+    }
+
     public static boolean unifiedContextBudget(Map<String, Object> options) {
         Object version = options.get(CONTEXT_BUDGET_POLICY);
         if (version != null && !UNIFIED_CONTEXT_V1.equals(version) && !"legacy".equals(version))
@@ -48,7 +68,12 @@ public final class RuntimeControlOptions {
     }
 
     public static long workingSetTarget(Map<String, Object> options) {
-        return bounded(options, WORKING_SET_TARGET, 2048, 128, 65536);
+        return bounded(
+                options,
+                WORKING_SET_TARGET,
+                DEFAULT_WORKING_SET_TARGET,
+                MIN_WORKING_SET_TARGET,
+                MAX_WORKING_SET_TARGET);
     }
 
     public static long workingSetRetention(Map<String, Object> options) {

@@ -210,7 +210,7 @@ final class CliConfigurationLoader {
                 text(values, "policy", defaults.policy()),
                 Math.toIntExact(number(values, "targetTokens", defaults.targetTokens())),
                 bool(values, "historyRetrieval", defaults.historyRetrieval()),
-                bool(values, "automaticMaintenance", false));
+                bool(values, "automaticMaintenance", defaults.automaticMaintenance()));
     }
 
     private static CodingApprovalThreshold compatibleThreshold(ApprovalMode approval) {

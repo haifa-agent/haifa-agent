@@ -639,6 +639,12 @@ binding digest 和内容 digest 的明文格式写入 SQLite，只适用于可�
 `HAIFA_SQLITE_DATABASE_PATH`、`HAIFA_TRANSCRIPT_ROOT` 和
 `HAIFA_CONTINUATION_PROTECTOR_REF`。
 
+`tools.enabled` controls built-in Project tools. The Session-scoped `history_search`/`history_read`
+readers are a separate opt-in controlled together by `context.historyRetrieval`; they are not entries in
+`tools.enabled`. Thus a restricted built-in list may still expose both readers when explicitly enabled.
+Set `context.historyRetrieval: false` to suppress them (and use legacy selection). The effective Project
+configuration includes their aliases; Skill/MCP contributions retain their existing separate controls.
+
 `tools.enabled`、冻结 Tool Binding、模型披露、ToolCall 持久化和 Provider 执行统一使用
 `file_list`、`file_read`、`file_patch`、`workspace_attach`、`execution_run`
 等 Provider-safe 下划线名称，不执行名称转换。`execution_run` 接收完整命令文本、当前授权目录的 `workspaceRef`、该根下的 `relativeWorkdir` 和 timeout；任何本机已安装且可由配置 Shell 解析的非交互 CLI 都走同一生产路径，文档中的具体

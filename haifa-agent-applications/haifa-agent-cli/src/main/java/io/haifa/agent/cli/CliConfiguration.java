@@ -10,6 +10,7 @@ import io.haifa.agent.model.api.ModelReasoningEffort;
 import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.model.openai.AliyunBailianProviderFactory;
 import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
+import io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions;
 import io.haifa.agent.skill.api.SkillAlias;
 import io.haifa.agent.skill.api.SkillOrigin;
 import io.haifa.agent.skill.api.SkillParserMode;
@@ -182,26 +183,26 @@ record CliConfiguration(
     /** Product opt-in; each Run freezes these options through the existing profile resolver. */
     record Context(String policy, int targetTokens, boolean historyRetrieval, boolean automaticMaintenance) {
         Context {
-            if (!Set.of("legacy", "unified-context-v1").contains(policy))
+            if (!Set.of("legacy", RuntimeControlOptions.UNIFIED_CONTEXT_V1).contains(policy))
                 throw new IllegalArgumentException("context.policy must be legacy or unified-context-v1");
-            if (targetTokens < 128 || targetTokens > 65536)
+            try {
+                RuntimeControlOptions.validateWorkingSetTarget(targetTokens);
+            } catch (IllegalArgumentException invalid) {
                 throw new IllegalArgumentException("context.targetTokens must be between 128 and 65536");
-            if (policy.equals("unified-context-v1") && !historyRetrieval)
+            }
+            if (policy.equals(RuntimeControlOptions.UNIFIED_CONTEXT_V1) && !historyRetrieval)
                 throw new IllegalArgumentException("unified context requires context.historyRetrieval");
             if (automaticMaintenance)
                 throw new IllegalArgumentException("context.automaticMaintenance is not supported");
         }
 
         static Context defaults() {
-            return new Context("legacy", 2048, false, false);
+            return new Context("legacy", RuntimeControlOptions.DEFAULT_WORKING_SET_TARGET, false, false);
         }
 
         java.util.Map<String, Object> runtimeOptions() {
             if (policy.equals("legacy")) return java.util.Map.of();
-            return java.util.Map.of(
-                    io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.WORKING_SET, true,
-                    io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.WORKING_SET_TARGET, targetTokens,
-                    io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.CONTEXT_BUDGET_POLICY, policy);
+            return RuntimeControlOptions.unifiedWorkingSetOptions(java.util.Map.of(), targetTokens);
         }
     }
 

@@ -30,10 +30,14 @@ class CodingContextLifecycleTest {
         Path workspace = Files.createDirectory(root.resolve("workspace"));
         Path file = workspace.resolve("evidence.txt");
         Files.writeString(file, "READBACK_V1\n" + "fixture data\n".repeat(3000));
-        var base = sqliteConfiguration(root.resolve("context.db"));
+        var base = CliConfigurationBuilder.from(sqliteConfiguration(root.resolve("context.db")))
+                .enabledTools(java.util.Set.of("file_read"))
+                .build();
         var enabled = CliConfigurationBuilder.from(base)
                 .context(new CliConfiguration.Context("unified-context-v1", 4096, true, false))
                 .build();
+        assertThat(LocalCodingAgent.effectiveProjectTools(enabled))
+                .containsExactlyInAnyOrder("file_read", "history_search", "history_read");
         var calls = new AtomicInteger();
         var requests = new java.util.concurrent.CopyOnWriteArrayList<io.haifa.agent.model.api.AgentChatRequest>();
         var secondCall = new CountDownLatch(1);
@@ -211,6 +215,25 @@ class CodingContextLifecycleTest {
                             .filter(call -> call.toolName().equals("file_read"))
                             .count())
                     .isEqualTo(1);
+            var frozen = state.configuration(original.configurationSnapshot()).orElseThrow();
+            assertThat(frozen.model().contextWindow()).isEqualTo(enabled.model().contextWindow());
+            assertThat(frozen.toolBindings().stream()
+                            .map(binding -> binding.alias().value())
+                            .toList())
+                    .contains("history_search", "history_read");
+            assertThat(frozen.toolBindings().stream()
+                            .map(binding -> binding.alias().value())
+                            .filter(
+                                    io.haifa.agent.application.project.tool.ProjectToolCatalog.BUILT_IN_TOOL_NAMES
+                                            ::contains)
+                            .toList())
+                    .containsExactly("file_read");
+            assertThat(store.ports().events().eventsFor(enabledRun).stream()
+                            .filter(event -> event.type().equals("model.input-accounted"))
+                            .map(event -> event.data().get("admissionEstimatorVersion"))
+                            .toList())
+                    .isNotEmpty()
+                    .containsOnly(io.haifa.agent.runtime.core.model.ModelInputAccounting.ADMISSION_VERSION);
             assertThat(state.configuration(original.configurationSnapshot())
                             .orElseThrow()
                             .modelRequestOptions())
