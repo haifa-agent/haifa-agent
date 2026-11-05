@@ -62,6 +62,9 @@ Their visible completed protocol becomes untrusted historical data with source i
 continuation retains existing exact-binding rules. Source revalidation still precedes the physical call.
 Selection and previews never advance summary coverage: the existing semantic compactor processes the true
 contiguous source plus the previous valid summary and retains its validation, repair, CAS and recovery limits.
+Complete-source summaries may split a long single Run between completed atomic Tool groups. Existing cutoff
+validation still keeps each call/result pair together; the summary's versioned source label allows snapshot
+rebuilds to retain that valid assistant-led tail. Unreadable or unprocessable groups never authorize coverage.
 Terminal automatic summary maintenance remains deferred; terminal Run usage is immutable.
 
 ## Optional Run working sets

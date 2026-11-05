@@ -611,7 +611,7 @@ public final class SemanticCompactionCoordinator {
 
         // Retained-tail selection must measure the authoritative payloads the tail will actually send, not the short
         // reference/summary metadata. Source-summary prompt sizing (nextBatchEnd) stays on its own projected estimate.
-        int split = tailSplit(activeGroups, targetTailBudget, resolver);
+        int split = tailSplit(activeGroups, targetTailBudget, resolver, completeSource);
         if (split <= 0) {
             return CompactionEvaluationOutcome.untriggered(initialEstimatedTokens, elapsedMillis(startNanos));
         }
@@ -650,6 +650,22 @@ public final class SemanticCompactionCoordinator {
                 .flatMap(List::stream)
                 .toList();
 
+        if (completeSource) {
+            var expectedSource = visible.stream()
+                    .filter(message -> message.cursor()
+                                            .compareTo(previousSummary
+                                                    .map(ConversationSummary::coveredThrough)
+                                                    .orElse(MessageCursor.BEFORE_FIRST))
+                                    > 0
+                            && message.cursor()
+                                            .compareTo(sourceToCompact.getLast().cursor())
+                                    <= 0)
+                    .toList();
+            if (!expectedSource.equals(sourceToCompact))
+                throw new ContextBuildException(
+                        ContextBuildFailure.UNSUPPORTED_CONTEXT_CONTENT,
+                        "complete compaction cannot skip an unfinished protocol group");
+        }
         var complete = new HashMap<AgentMessageId, AgentMessage>();
         if (completeSource)
             for (var message : sourceToCompact)
@@ -687,11 +703,12 @@ public final class SemanticCompactionCoordinator {
                 int remaining = (int)
                         Math.min(policy.maxCompactionPhysicalCalls() - physicalCalls, invoker.remainingRunCalls(run));
                 SummaryModelInvoker.requireStructuredOutput(binding);
-                if (minimumBatchCalls(activeGroups, batchStart, safeSplit, available, remaining, projector)
+                if (minimumBatchCalls(
+                                activeGroups, batchStart, safeSplit, available, remaining, projector, completeSource)
                         > remaining) {
                     throw new CompactionBudgetExceededException();
                 }
-                int batchEnd = nextBatchEnd(activeGroups, batchStart, safeSplit, available, projector);
+                int batchEnd = nextBatchEnd(activeGroups, batchStart, safeSplit, available, projector, completeSource);
                 List<SemanticSummaryItem> carryForward = workingSemantic
                         .map(SemanticConversationSummaryV1::mandatoryCarryForwardItems)
                         .orElse(List.of());
@@ -708,10 +725,10 @@ public final class SemanticCompactionCoordinator {
                                     previousSummary, carryForward, projected)
                             : CompactionPromptRenderer.userPrompt(workingSemantic, carryForward, projected);
                     if (SummaryModelInvoker.estimatedInput(systemPrompt, userPrompt) <= available) break;
-                    batchEnd = smallerBatchEnd(activeGroups, batchStart, batchEnd);
+                    batchEnd = smallerBatchEnd(activeGroups, batchStart, batchEnd, completeSource);
                 }
-                int mandatoryLaterCalls =
-                        minimumBatchCalls(activeGroups, batchEnd, safeSplit, available, remaining, projector);
+                int mandatoryLaterCalls = minimumBatchCalls(
+                        activeGroups, batchEnd, safeSplit, available, remaining, projector, completeSource);
                 if (mandatoryLaterCalls + 1 > remaining) throw new CompactionBudgetExceededException();
                 SemanticConversationSummaryV1 candidate;
                 boolean correcting = false;
@@ -865,7 +882,8 @@ public final class SemanticCompactionCoordinator {
                 initialEstimatedTokens,
                 retainedTailTokens,
                 cacheHitRate,
-                startNanos);
+                startNanos,
+                completeSource);
     }
 
     private static boolean recoverableFailure(Exception failure) {
@@ -1067,7 +1085,8 @@ public final class SemanticCompactionCoordinator {
             long initialEstimatedTokens,
             long retainedTailTokens,
             double cacheHitRate,
-            long startNanos) {
+            long startNanos,
+            boolean completeSource) {
         MessageCursor coveredFrom = previousSummary
                 .map(ConversationSummary::coveredFrom)
                 .orElseGet(() -> sourceToCompact.getFirst().cursor());
@@ -1126,7 +1145,7 @@ public final class SemanticCompactionCoordinator {
                 time.now(),
                 policy.version(),
                 "semantic-v1",
-                Set.of("internal"),
+                completeSource ? Set.of("internal", "complete-source-v1") : Set.of("internal"),
                 true,
                 Optional.of(summary),
                 CompactionQuality.SEMANTIC_VALIDATED);
@@ -1579,16 +1598,18 @@ public final class SemanticCompactionCoordinator {
             int split,
             long available,
             int cap,
-            Function<List<AgentMessage>, ProjectedCompactionSource> projector) {
+            Function<List<AgentMessage>, ProjectedCompactionSource> projector,
+            boolean atomicBoundary) {
         int calls = 0;
         while (start < split && calls <= cap) {
-            start = nextBatchEnd(groups, start, split, available, projector);
+            start = nextBatchEnd(groups, start, split, available, projector, atomicBoundary);
             calls++;
         }
         return calls;
     }
 
-    private int smallerBatchEnd(List<List<AgentMessage>> groups, int start, int end) {
+    private int smallerBatchEnd(List<List<AgentMessage>> groups, int start, int end, boolean atomicBoundary) {
+        if (atomicBoundary && end > start + 1) return end - 1;
         for (int index = end - 1; index > start; index--) {
             if (isTurnAnchor(groups.get(index))) return index;
         }
@@ -1600,7 +1621,8 @@ public final class SemanticCompactionCoordinator {
             int start,
             int split,
             long availableTokens,
-            Function<List<AgentMessage>, ProjectedCompactionSource> projector) {
+            Function<List<AgentMessage>, ProjectedCompactionSource> projector,
+            boolean atomicBoundary) {
         if (start < 0 || start >= split) {
             throw new IllegalArgumentException("batch start must be within the compaction range");
         }
@@ -1612,6 +1634,9 @@ public final class SemanticCompactionCoordinator {
         for (int i = start; i < split; i++) {
             long gTokens = HeuristicTokenEstimator.tokens(
                     projector.apply(activeGroups.get(i)).safeConversationText());
+            if (atomicBoundary && gTokens > availableTokens)
+                throw new CompactionBudgetExceededException(
+                        CompactionBudgetExceededException.Code.SUMMARY_INPUT_BUDGET);
             if (i > start && (i - start >= maxBatchGroups || accumulatedTokens + gTokens > maxBatchTokens)) {
                 break;
             }
@@ -1619,6 +1644,7 @@ public final class SemanticCompactionCoordinator {
             boundedIndex = i + 1;
         }
 
+        if (atomicBoundary) return boundedIndex;
         if (boundedIndex >= split) {
             return split;
         }
@@ -1657,7 +1683,10 @@ public final class SemanticCompactionCoordinator {
     }
 
     private int tailSplit(
-            List<List<AgentMessage>> groups, long retainedTailBudget, Function<ToolCallId, ToolCall> resolver) {
+            List<List<AgentMessage>> groups,
+            long retainedTailBudget,
+            Function<ToolCallId, ToolCall> resolver,
+            boolean atomicBoundary) {
         long retained = 0L;
         int candidateSplit = groups.size();
         for (int index = groups.size() - 1; index >= 0; index--) {
@@ -1669,6 +1698,7 @@ public final class SemanticCompactionCoordinator {
             candidateSplit = index;
         }
 
+        if (atomicBoundary) return candidateSplit;
         if (candidateSplit <= 0 || candidateSplit >= groups.size()) {
             return candidateSplit;
         }

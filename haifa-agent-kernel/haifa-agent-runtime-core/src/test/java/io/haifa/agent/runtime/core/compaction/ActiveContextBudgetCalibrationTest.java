@@ -106,8 +106,6 @@ class ActiveContextBudgetCalibrationTest {
         AgentSessionId session = run.sessionId();
 
         for (int i = 1; i <= 4; i++) {
-            store.appendSessionMessage(
-                    draft("sc-user-" + i, session, run.id().value(), MessageRole.USER, "Inspect file " + i));
             ToolCallId callId = new ToolCallId("call-sc-a-" + i);
             ProviderToolCallCorrelationId corrId = new ProviderToolCallCorrelationId("corr-sc-a-" + i);
             Map<String, Object> data = Map.of("largePayload", "data ".repeat(10_000) + " TOOL_TAIL_PROBE");
@@ -160,7 +158,8 @@ class ActiveContextBudgetCalibrationTest {
         AgentChatModel model = request -> {
             llmCalls.incrementAndGet();
             String prompt = request.messages().getLast().content();
-            assertThat(prompt).contains("TOOL_TAIL_PROBE", "ARG_PROBE");
+            assertThat(prompt.contains("TOOL_TAIL_PROBE") && prompt.contains("ARG_PROBE"))
+                    .isTrue();
             return new AgentChatResponse(
                     "res",
                     "model",
@@ -192,6 +191,10 @@ class ActiveContextBudgetCalibrationTest {
         assertThat(blocked.compacted()).isFalse();
         assertThat(llmCalls.get()).isZero();
         assertThat(store.latestVersion(session)).isZero();
+        assertThat(store.eventsFor(run.id()))
+                .filteredOn(event -> event.type().equals("session.compaction-failed"))
+                .singleElement()
+                .satisfies(event -> assertThat(event.data()).containsEntry("failureCode", "SUMMARY_INPUT_BUDGET"));
         var full = coordinator.evaluateSelected(
                 run, 3, createBindingWithContextWindow(store, run, model, 120000), selected);
         assertThat(full.tier1PruningBypassedSummary()).isFalse();
@@ -199,6 +202,13 @@ class ActiveContextBudgetCalibrationTest {
         assertThat(llmCalls.get()).isPositive();
         assertThat(store.latestValid(session).orElseThrow().quality())
                 .isEqualTo(io.haifa.agent.context.compression.CompactionQuality.SEMANTIC_VALIDATED);
+        var snapshot = new io.haifa.agent.runtime.core.context.ActiveContextSnapshots(
+                        store, store, policy, new io.haifa.agent.context.compression.DeterministicContextCompressor())
+                .current(session)
+                .snapshot();
+        assertThat(snapshot.summary()).contains(store.latestValid(session).orElseThrow());
+        assertThat(snapshot.activeMessages()).hasSize(2);
+        assertThat(snapshot.activeMessages().getFirst().role()).isEqualTo(MessageRole.ASSISTANT);
     }
 
     @Test

@@ -831,7 +831,8 @@ class SemanticCompactionFailureTest {
                 if (request.structuredOutput().isPresent()) {
                     int summaryCall = summaries.incrementAndGet();
                     if (multi && summaryCall == 1)
-                        assertThat(request.messages().getLast().content()).contains("ORIGINAL_TAIL_PROBE");
+                        assertThat(request.messages().getLast().content().contains("ORIGINAL_TAIL_PROBE"))
+                                .isTrue();
                     return successfulSummary
                             ? validSummaryResponse(
                                     multi

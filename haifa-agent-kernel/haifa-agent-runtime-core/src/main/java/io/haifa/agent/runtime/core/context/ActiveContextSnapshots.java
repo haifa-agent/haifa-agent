@@ -204,7 +204,9 @@ public final class ActiveContextSnapshots implements MessageRedactionListener {
                 summary.isPresent() ? boundary : null);
         if (summary.isPresent()
                 && !rebuilt.atomicGroups().isEmpty()
-                && rebuilt.atomicGroups().getFirst().getFirst().role() != MessageRole.USER) {
+                && rebuilt.atomicGroups().getFirst().getFirst().role() != MessageRole.USER
+                && !(summary.orElseThrow().securityLabels().contains("complete-source-v1")
+                        && rebuilt.atomicGroups().getFirst().getFirst().role() == MessageRole.ASSISTANT)) {
             rows = state.messagesAfter(sessionId, MessageCursor.BEFORE_FIRST, loadLimit);
             hasMoreHistory = rows.size() > MAX_ACTIVE_MESSAGES;
             rowsRead = rows.size();
