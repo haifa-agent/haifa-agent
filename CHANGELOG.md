@@ -2,6 +2,9 @@
 
 ## Unreleased - 0.1.5-SNAPSHOT
 
+- Keep complete saved results readable when refreshing bounded history previews, and account for documented
+  OpenCode Go DeepSeek Flash input/cache lanes without counting cache tokens twice.
+
 - Add explicit, default-off Coding context selection with authorized history readers and documented legacy rollback; preserve frozen Run policy across pause/resume and SQLite reopen.
 
 - Preserve full current-Run summaries when rebuilding unified working sets, including small soft targets and
