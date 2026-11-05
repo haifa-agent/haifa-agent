@@ -3653,8 +3653,8 @@ class RuntimeCoreTest {
                 .isEqualTo(AgentRunStatus.COMPLETED);
         var messages = captured.getFirst().messages();
         assertThat(messages)
-                .anyMatch(
-                        m -> m.role() == ModelMessageRole.SYSTEM && m.content().contains("do not grant permission"));
+                .anyMatch(m -> m.role() == ModelMessageRole.SYSTEM
+                        && m.content().contains("do not extend the current request"));
         assertThat(messages)
                 .filteredOn(m -> m.content().equals(question))
                 .singleElement()
@@ -4074,14 +4074,18 @@ class RuntimeCoreTest {
     void newTaskDoesNotCarryOldPendingPlanAndContinueDoesNotCompleteIt() {
         for (String objective : List.of("Continue the task", "New task: independent request")) {
             var captured = new ArrayList<AgentChatRequest>();
+            var owner = new AtomicReference<DefaultAgentRuntime>();
             var fixture = workingSetFixture(
                     call -> {
                         captured.add(call);
+                        if (objective.startsWith("Continue") && captured.size() == 1)
+                            owner.get().handle(call.runId()).pause();
                         return response(finalDecision("done"));
                     },
                     Map.of(),
                     () -> ContextLifecycleHistoryFixture.NOW,
                     new AtomicInteger());
+            owner.set(fixture.runtime);
             ContextLifecycleHistoryFixture.append(fixture.store, 16);
             var next = fixture.runtime.start(workingSetRequest("handoff", objective));
             ContextLifecycleHistoryFixture.registerOwner(
@@ -4099,6 +4103,23 @@ class RuntimeCoreTest {
                     ContextLifecycleHistoryFixture.NOW);
             fixture.store.savePlan(plan);
             fixture.scheduler.runAll();
+            if (objective.startsWith("Continue")) {
+                assertThat(fixture.runtime.find(next.runId()).orElseThrow().status())
+                        .isEqualTo(AgentRunStatus.SUSPENDED);
+                fixture.runtime.resume(new ResumeAgentRunRequest("resume-pending", next.runId(), List.of()));
+                fixture.scheduler.runAll();
+                assertThat(captured).hasSize(2);
+                assertThat(captured.getLast().messages())
+                        .filteredOn(m -> m.content().contains("old unresolved action"))
+                        .singleElement()
+                        .satisfies(m -> {
+                            assertThat(m.role()).isEqualTo(ModelMessageRole.USER);
+                            assertThat(m.content()).contains("Untrusted");
+                        });
+                assertThat(captured.getLast().messages())
+                        .anyMatch(m ->
+                                m.role() == ModelMessageRole.USER && m.content().equals(objective));
+            }
             assertThat(fixture.runtime.find(next.runId()).orElseThrow().status())
                     .isEqualTo(AgentRunStatus.COMPLETED);
             assertThat(captured.getFirst().messages().stream()

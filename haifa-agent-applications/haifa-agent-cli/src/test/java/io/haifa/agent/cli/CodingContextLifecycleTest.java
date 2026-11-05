@@ -18,14 +18,16 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 @Tag("slow")
 class CodingContextLifecycleTest {
     @TempDir
     Path root;
 
-    @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(strings = {"read-only", "wide-question", "continue"})
+    @ParameterizedTest
+    @ValueSource(strings = {"read-only", "wide-question", "continue"})
     void sourceNextStepDoesNotReplaceTheTaskOrTheConfiguredToolScope(String scope) throws Exception {
         Path workspace = Files.createDirectory(root.resolve("scope-workspace"));
         Path calculator = workspace.resolve("calculator.py");
@@ -43,6 +45,8 @@ class CodingContextLifecycleTest {
                 .enabledTools(readOnly ? java.util.Set.of("file_read") : java.util.Set.of("file_read", "file_write"))
                 .context(new CliConfiguration.Context("unified-context-v1", 4096, true, false))
                 .build();
+        // Scripted models pin request lanes and configured authority; susceptibility is measured by the separate
+        // evaluation.
         var requests = new java.util.concurrent.CopyOnWriteArrayList<io.haifa.agent.model.api.AgentChatRequest>();
         var calls = new AtomicInteger();
         try (var agent = openAgent(workspace, configuration, request -> {
@@ -75,6 +79,16 @@ class CodingContextLifecycleTest {
                             .toList()
                             .contains("file_write"))
                     .isEqualTo(!readOnly);
+            if (readOnly) {
+                // Undisclosed model output is rejected before a Tool Call exists. The bounded model retry
+                // receives the same disclosed request, without inventing an orphan Tool result.
+                assertThat(requests).hasSize(3);
+                assertThat(requests.getLast().attempt()).isEqualTo(2);
+                assertThat(requests.getLast().iteration())
+                        .isEqualTo(requests.get(1).iteration());
+                assertThat(requests.getLast().messages())
+                        .isEqualTo(requests.get(1).messages());
+            }
             assertThat(Files.readString(calculator)).isEqualTo(continuation ? corrected : original);
         }
     }

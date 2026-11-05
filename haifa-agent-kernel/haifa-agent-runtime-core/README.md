@@ -97,7 +97,7 @@ a valid summary covers them. Actual current/recovery Tool protocol remains group
 Prior sparse text/JSON is a versioned, revalidated USER data excerpt, never protected continuation replay.
 Continue, follow-up, new-task, ambiguous input and checkpoint recovery have deterministic handling;
 old pending plans are recorded handoff data and never become completed because they were omitted.
-Quoted next steps do not authorize work outside the current request. Products must freeze read-only scope
+Quoted next steps do not authorize work outside the current request; already authorized pending work may resume within that scope. Products must freeze read-only scope
 with the existing Run profile Tool allowlist; selection does not infer permissions from natural language.
 Summary handoff is a bounded inferred view (up to 64 source identities, four entries per section), separate from verified original Tool evidence; larger source sets are omitted conservatively.
 
