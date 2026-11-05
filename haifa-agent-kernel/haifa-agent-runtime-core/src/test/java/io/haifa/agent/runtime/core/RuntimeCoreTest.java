@@ -2739,6 +2739,77 @@ class RuntimeCoreTest {
     }
 
     @Test
+    void invalidSiblingAfterApprovalReturnsToTheModelWithoutReplayingCompletedTools() {
+        AtomicInteger modelCalls = new AtomicInteger();
+        AtomicReference<AgentChatRequest> repairRequest = new AtomicReference<>();
+        List<Integer> executed = new ArrayList<>();
+        ToolRequest first =
+                toolRequest("approved-first", "echo", "1.0.0", new ToolArguments("echo.input", "1.0", Map.of("v", 1)));
+        ToolRequest invalid =
+                toolRequest("invalid-sibling", "echo", "1.0.0", new ToolArguments("echo.input", "1.0", Map.of()));
+        ToolRequest later =
+                toolRequest("later-sibling", "echo", "1.0.0", new ToolArguments("echo.input", "1.0", Map.of("v", 3)));
+        ToolRequest repaired = toolRequest(
+                "repaired-sibling", "echo", "1.0.0", new ToolArguments("echo.input", "1.0", Map.of("v", 2)));
+        AgentChatModel model = request -> {
+            int invocation = modelCalls.getAndIncrement();
+            if (invocation == 0) return response(new ToolCallDecision(List.of(first, invalid, later)));
+            if (invocation == 1) {
+                repairRequest.set(request);
+                return response(new ToolCallDecision(List.of(repaired)));
+            }
+            return response(finalDecision("repaired"));
+        };
+        Fixture fixture = fixture(model, builder -> {
+            TestToolPlatform.installWithInputSchema(
+                    builder,
+                    "echo",
+                    "1.0.0",
+                    "echo.input",
+                    Map.of(
+                            "$schema",
+                            ToolSchema.DRAFT_2020_12,
+                            "type",
+                            "object",
+                            "properties",
+                            Map.of("v", Map.of("type", "integer")),
+                            "required",
+                            List.of("v")),
+                    request -> {
+                        executed.add((Integer) request.arguments().values().get("v"));
+                        return new ToolResult(true, "executed", Map.of(), List.of(), List.of(), false);
+                    });
+            return builder.publicToolPolicy((run, binding, request) ->
+                    Integer.valueOf(1).equals(request.arguments().values().get("v"))
+                            ? TestToolPlatform.approvalRequired()
+                            : TestToolPlatform.allow());
+        });
+        var accepted = fixture.runtime.start(request("repair-resumed-sibling"));
+        fixture.scheduler.runAll();
+        var approval = fixture.interactions.pending(accepted.runId()).orElseThrow();
+        fixture.runtime.respond(new InteractionResponse(
+                new InteractionResponseId("repair-sibling-response"),
+                approval.id(),
+                accepted.runId(),
+                InteractionResponseType.APPROVE,
+                List.of(),
+                "repair-sibling-approval-key",
+                Instant.parse("2026-07-21T00:00:00Z")));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(executed).containsExactly(1, 3, 2);
+        assertThat(fixture.store.toolCalls(accepted.runId()))
+                .extracting(call -> call.status().name())
+                .containsExactly("COMPLETED", "CANCELLED", "COMPLETED", "COMPLETED");
+        assertThat(repairRequest.get().messages())
+                .filteredOn(message -> message.role() == ModelMessageRole.TOOL)
+                .extracting(message -> message.content())
+                .anySatisfy(content -> assertThat(content).contains("Repair the tool arguments", "$/v"));
+    }
+
+    @Test
     void multipleApprovalRequiredToolsResumeSequentiallyWithoutRepeatingTheModelCall() {
         AtomicInteger modelCalls = new AtomicInteger();
         List<Integer> executed = new ArrayList<>();
