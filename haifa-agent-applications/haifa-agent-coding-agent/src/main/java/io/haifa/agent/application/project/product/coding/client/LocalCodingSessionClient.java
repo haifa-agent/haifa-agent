@@ -324,7 +324,7 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
 
     @Override
     public List<CodingQueuedMessage> restorableMessages(AgentSessionId sessionId, int limit) {
-        requireScoped(sessionId);
+        sessions.requireSessionInProject(sessionId, projectId);
         return sessions.listRestorableMessages(sessionId, limit);
     }
 
@@ -486,13 +486,13 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
 
     @Override
     public CodingShellExecution shellExecution(AgentSessionId sessionId, String executionId) {
-        requireScoped(sessionId);
+        sessions.requireSessionInProject(sessionId, projectId);
         return shell.orElseThrow().execution(sessionId, executionId);
     }
 
     @Override
     public List<CodingShellExecution> shellExecutions(AgentSessionId sessionId) {
-        requireScoped(sessionId);
+        sessions.requireSessionInProject(sessionId, projectId);
         return shell.orElseThrow().executions(sessionId);
     }
 

@@ -448,6 +448,12 @@ class ProjectPersistenceAssemblyTest {
                     fixture.projectId, coding, runtime, ids, TIME);
             readOnlyClient.history(sessionId, 10);
             readOnlyClient.history(sessionId, 10, 10);
+            readOnlyClient.restorableMessages(sessionId, 10);
+            // This minimal binding has no Shell capability. Even an unavailable fact read must not reconcile.
+            assertThatThrownBy(() -> readOnlyClient.shellExecutions(sessionId))
+                    .isInstanceOf(java.util.NoSuchElementException.class);
+            assertThatThrownBy(() -> readOnlyClient.shellExecution(sessionId, "unavailable"))
+                    .isInstanceOf(java.util.NoSuchElementException.class);
             coding.listSessionsForRecovery(fixture.projectId, CodingSessionQuery.firstPage(10));
             assertThat(coding.snapshotSession(sessionId)
                             .activeRun()
