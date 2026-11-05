@@ -1017,6 +1017,73 @@ class Tui4jTerminalViewTest {
     }
 
     @Test
+    void toolSettlementKeepsTheTargetAndFollowingScreenRowsInPlace() {
+        for (int columns : List.of(60, 80, 100, 120)) {
+            for (String name : List.of("Run Command", "Read File", "Apply Patch")) {
+                var initial = TerminalUiState.initial(columns, 30);
+                List<TranscriptItem> items = new java.util.ArrayList<>();
+                for (int index = 0; index < 35; index++) {
+                    items.add(item(
+                            "before-" + index,
+                            TranscriptItem.Kind.TOOL,
+                            "Read File · before-" + index,
+                            "",
+                            "SUCCEEDED",
+                            false));
+                }
+                int settling = items.size();
+                items.add(item(
+                        "settling",
+                        TranscriptItem.Kind.TOOL,
+                        name + " · target-" + "long-description-".repeat(6),
+                        "",
+                        "STARTED",
+                        false));
+                items.add(item("after", TranscriptItem.Kind.TOOL, "Read File · after-marker", "", "SUCCEEDED", false));
+                var pending = withTranscript(initial, items);
+                Viewport viewport = transcript(pending);
+                Textarea composer = editor(columns);
+                String before = Strip.strip(view.render(pending, viewport, composer, true, false));
+                List<String> beforeRows = before.lines().toList();
+                int row = IntStream.range(0, beforeRows.size())
+                        .filter(index -> beforeRows.get(index).contains("target-"))
+                        .findFirst()
+                        .orElseThrow();
+                String targetBefore = beforeRows
+                        .get(row)
+                        .substring(beforeRows.get(row).indexOf("target-"))
+                        .split(" {2,}", 2)[0];
+
+                var running = items.get(settling);
+                items.set(
+                        settling,
+                        new TranscriptItem(
+                                running.id(),
+                                running.kind(),
+                                running.title(),
+                                "",
+                                "SUCCEEDED",
+                                false,
+                                Optional.empty(),
+                                Optional.of(1_000L),
+                                Optional.of(850L),
+                                Optional.of(0)));
+                var settled = withTranscript(initial, items);
+                viewport.setContent(view.transcriptContent(settled));
+                String after = Strip.strip(view.render(settled, viewport, composer, true, false));
+                List<String> afterRows = after.lines().toList();
+
+                assertThat(afterRows).hasSameSizeAs(beforeRows);
+                assertThat(afterRows.get(row)).contains(targetBefore, "850 ms");
+                assertThat(afterRows.subList(row + 1, afterRows.size()))
+                        .containsExactlyElementsOf(beforeRows.subList(row + 1, beforeRows.size()));
+                assertThat(Strip.strip(view.render(settled, viewport, composer, true, false)))
+                        .isEqualTo(after);
+            }
+        }
+    }
+
+    @Test
     void keepsNonZeroExitCodeWhenTheTargetCannotFit() {
         String target = "x".repeat(120);
         TerminalUiState state = withTranscript(

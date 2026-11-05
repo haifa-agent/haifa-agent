@@ -467,8 +467,8 @@ class Tui4jCodingTerminalModelTest {
 
     @Test
     void remoteThinClientKeepsCtrlCOnTheKeyInterruptPath() {
-        // A remote thin client claims no process signal, so SIGTERM/SIGINT can only stop the client; the keyboard
-        // must still reach the interrupt path or Ctrl+C would silently stop working there.
+        // The remote client's INT-only bridge does not replace raw Ctrl+C keys. The key must still reach
+        // the ordinary interrupt path independently of console signal delivery.
         var thinClient = fixtureWithoutSignalOwnership();
         var embedded = fixture();
         var press = key(KeyType.keyETX);
@@ -481,6 +481,43 @@ class Tui4jCodingTerminalModelTest {
 
         assertThat(thinClient.controller.state().exitRequested()).isTrue();
         assertThat(embedded.controller.state().exitRequested()).isFalse();
+    }
+
+    @Test
+    void remoteCtrlCCopiesSelectionFromEitherAKeyOrConsoleSignalWithoutClearingTheDraft() {
+        for (Message interrupt : List.of(key(KeyType.keyETX), new TerminalInterruptSignal.Interrupted())) {
+            var clipboard = new RecordingClipboard(true);
+            var fixture = fixtureWithClipboard(clipboard, false);
+            seedSelectableTranscript(fixture);
+            fixture.model.update(new PasteMessage("keep this draft"));
+            fixture.model.update(mouse(1, 0, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+            fixture.model.update(mouse(1, 20, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft));
+            fixture.model.update(mouse(1, 20, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
+
+            Message filtered = fixture.model.filterMessage(interrupt);
+            assertThat(filtered).isNotNull().isNotInstanceOf(QuitMessage.class);
+            fixture.model.update(filtered).command().execute();
+
+            assertThat(clipboard.text).isNotNull().isNotBlank();
+            assertThat(fixture.controller.state().editorBuffer()).isEqualTo("keep this draft");
+            assertThat(fixture.controller.state().exitRequested()).isFalse();
+        }
+    }
+
+    @Test
+    void remoteProcessInterruptWithoutSelectionExitsTheClientWithoutInterruptingTheHostRun() {
+        var fixture = fixtureWithoutSignalOwnership();
+        fixture.pump.offer(new TerminalUiAction.RunEventReceived(
+                event(1, new RunEventPayloads.RunLifecycle("RUNNING", 1, "NONE"))));
+        fixture.model.update(new Tui4jCodingTerminalModel.PollMessage());
+        var activeRun = fixture.controller.state().currentRunId();
+        assertThat(activeRun).isPresent();
+
+        Message filtered = fixture.model.filterMessage(new TerminalInterruptSignal.Interrupted());
+
+        assertThat(filtered).isInstanceOf(QuitMessage.class);
+        assertThat(fixture.controller.state().currentRunId()).isEqualTo(activeRun);
+        assertThat(fixture.controller.state().exitRequested()).isFalse();
     }
 
     @Test
@@ -1621,7 +1658,7 @@ class Tui4jCodingTerminalModelTest {
         var fixture = fixture();
         fixture.pump.offer(new TerminalUiAction.RunEventReceived(
                 event(1, new RunEventPayloads.RunLifecycle("RUNNING", 1, "NONE"))));
-        fixture.model.update(new WindowSizeMessage(120, 40));
+        fixture.model.update(new WindowSizeMessage(140, 40));
 
         fixture.pump.offer(new TerminalUiAction.RunEventReceived(event(
                 2,
@@ -1635,7 +1672,7 @@ class Tui4jCodingTerminalModelTest {
                         Optional.empty(),
                         "",
                         "file_patch"))));
-        fixture.model.update(new WindowSizeMessage(120, 40));
+        fixture.model.update(new WindowSizeMessage(140, 40));
         String failed = fixture.model.view();
         assertThat(failed).contains("apply patch", "Not completed: Multiple matches");
         assertThat(failed).doesNotContain("Reason: PATCH_AMBIGUOUS_MATCH");
@@ -1652,7 +1689,7 @@ class Tui4jCodingTerminalModelTest {
                         Optional.empty(),
                         "",
                         "execution_run"))));
-        fixture.model.update(new WindowSizeMessage(120, 40));
+        fixture.model.update(new WindowSizeMessage(140, 40));
         assertThat(fixture.model.view()).contains("Outcome: UNKNOWN", "Target: rm -rf");
     }
 
@@ -2407,7 +2444,7 @@ class Tui4jCodingTerminalModelTest {
         return fixture(System::nanoTime);
     }
 
-    /** A remote thin client: the Program claims no process signals, so the keyboard owns the interrupt. */
+    /** A remote thin client keeps raw Ctrl+C keys on the ordinary interrupt path. */
     private Fixture fixtureWithoutSignalOwnership() {
         var pump = new TerminalEventPump(64);
         var controller = new CodingTerminalController(
@@ -2694,6 +2731,10 @@ class Tui4jCodingTerminalModelTest {
     }
 
     private Fixture fixtureWithClipboard(TerminalClipboard clipboard) {
+        return fixtureWithClipboard(clipboard, true);
+    }
+
+    private Fixture fixtureWithClipboard(TerminalClipboard clipboard, boolean signalHandlerOwnsInterrupt) {
         var pump = new TerminalEventPump(64);
         var controller = new CodingTerminalController(
                 new ProjectId("project-1"),
@@ -2705,7 +2746,8 @@ class Tui4jCodingTerminalModelTest {
         return new Fixture(
                 controller,
                 pump,
-                new Tui4jCodingTerminalModel(controller, pump, System::nanoTime, null, true, clipboard));
+                new Tui4jCodingTerminalModel(
+                        controller, pump, System::nanoTime, null, true, clipboard, signalHandlerOwnsInterrupt));
     }
 
     private static final class RecordingClipboard implements TerminalClipboard {

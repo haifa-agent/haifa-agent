@@ -2,6 +2,9 @@
 
 ## Unreleased - 0.1.5-SNAPSHOT
 
+- Keep Coding Terminal tool-row geometry stable when a call settles, including its metadata column and following rows.
+- Restore Ctrl+C selection copying when a remote terminal delivers a console interrupt, while preserving Host-owned Runs on client termination.
+
 - Return invalid pending Tool requests to the model after approval instead of failing the Coding Agent Run.
   Completed commands are preserved without replay, and later calls keep their own validation and approval checks.
 

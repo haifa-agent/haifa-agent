@@ -904,49 +904,23 @@ final class Tui4jTerminalView {
     private String toolHeader(TranscriptItem item, int availableWidth, boolean collapsed) {
         String name = toolName(item.title());
         String target = toolTarget(item.title());
-        String badge = theme.toolNameBadge(name);
         String glyph = item.exitCode().filter(code -> code != 0).isPresent()
                         && SUCCESS_STATUSES.contains(item.status().toUpperCase(Locale.ROOT))
                 ? theme.muted("○")
                 : styledGlyph(item.status());
-        String metadata = auxiliaryMetadata(item, collapsed);
+        int available = Math.max(1, availableWidth - 1);
+        // Reserve the same metadata column before and after settlement. Otherwise a completed call
+        // re-clips its target, and an over-wide header can wrap inside Viewport before the final clip.
+        int metadataRoom = Math.min(16, available / 3);
+        String metadata = Truncate.truncate(auxiliaryMetadata(item, collapsed), metadataRoom, "…");
+        String badge = theme.toolNameBadge(Truncate.truncate(name, Math.max(1, available - metadataRoom - 8), "…"));
         String chevron = theme.muted(collapsed ? "›" : "⌄");
-
-        int nameWidth = TextWidth.measureCellWidth(name);
-        int targetWidth = TextWidth.measureCellWidth(target);
-        int metadataWidth = TextWidth.measureCellWidth(metadata);
-        int available = Math.max(1, availableWidth);
-        int fixedLeft = 1 + 1 + nameWidth + 2 + (target.isEmpty() ? 0 : 1 + targetWidth);
-        int rightWidth = (metadata.isEmpty() ? 0 : metadataWidth + 1) + 1;
-        if (fixedLeft + 1 + rightWidth > available && !target.isEmpty()) {
-            int maximumTarget = available - (1 + 1 + nameWidth + 2) - 1 - rightWidth;
-            if (maximumTarget < 1) {
-                int fixedWithoutTarget = 1 + 1 + nameWidth + 2;
-                int gap = Math.max(0, available - fixedWithoutTarget - rightWidth);
-                return glyph
-                        + " "
-                        + badge
-                        + " ".repeat(gap)
-                        + (metadata.isEmpty() ? "" : theme.muted(metadata) + " ")
-                        + chevron;
-            }
-            target = Truncate.truncate(target, maximumTarget, "…");
-            targetWidth = TextWidth.measureCellWidth(target);
-            fixedLeft = 1 + 1 + nameWidth + 2 + 1 + targetWidth;
-        }
-
-        int gap = Math.max(0, available - fixedLeft - rightWidth);
-        StringBuilder line = new StringBuilder();
-        line.append(glyph).append(' ').append(badge);
-        if (!target.isEmpty()) {
-            line.append(' ').append(target);
-        }
-        line.append(" ".repeat(gap));
-        if (!metadata.isEmpty()) {
-            line.append(theme.muted(metadata)).append(' ');
-        }
-        line.append(chevron);
-        return line.toString();
+        String left = glyph + " " + badge;
+        int targetRoom = Math.max(0, available - TextWidth.measureCellWidth(left) - metadataRoom - 4);
+        if (!target.isEmpty() && targetRoom > 0) left += " " + Truncate.truncate(target, targetRoom, "…");
+        int gap = Math.max(1, available - TextWidth.measureCellWidth(left) - metadataRoom - 2);
+        String paddedMetadata = metadata + " ".repeat(Math.max(0, metadataRoom - TextWidth.measureCellWidth(metadata)));
+        return Truncate.truncate(left + " ".repeat(gap) + theme.muted(paddedMetadata) + " " + chevron, available, "");
     }
 
     private static String toolName(String title) {
