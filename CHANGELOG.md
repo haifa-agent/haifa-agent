@@ -2,6 +2,9 @@
 
 ## Unreleased - 0.1.5-SNAPSHOT
 
+- Preserve full current-Run summaries when rebuilding unified working sets, including small soft targets and
+  new-task objectives. Record unreadable compaction sources as typed refusals without advancing coverage.
+
 - Keep Coding Terminal tool-row geometry stable when a call settles, including its metadata column and following rows.
 - Restore Ctrl+C selection copying when a remote terminal delivers a console interrupt, while preserving Host-owned Runs on client termination.
 - Unify opt-in working-set admission and compaction around the prepared model input. Add readable saved-result

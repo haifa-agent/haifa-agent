@@ -8,6 +8,7 @@ import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.tool.*;
 import io.haifa.agent.runtime.core.bootstrap.RunAccessValidator;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext;
+import io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions;
 import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
 import io.haifa.agent.runtime.core.tool.ToolCallViewProjector;
 import io.haifa.agent.tool.api.*;
@@ -201,13 +202,20 @@ public final class HistoryToolProvider implements ToolProvider {
         return ports.unitOfWork().executeReadOnly(() -> {
             var run = ports.runs().find(current).orElseThrow(Unavailable::new);
             authorize(run, run.id());
+            // Full unified summaries use the existing active-window bound; legacy handoff limits stay frozen.
+            boolean unified = ports.state()
+                    .configuration(run.configurationSnapshot())
+                    .map(config -> RuntimeControlOptions.unifiedContextBudget(config.modelRequestOptions()))
+                    .orElse(false);
+            int sourceLimit =
+                    unified ? io.haifa.agent.runtime.core.context.ActiveContextSnapshots.MAX_ACTIVE_MESSAGES : 64;
             var summary = ports.conversationSummaries()
                     .latestValid(run.sessionId())
                     .filter(value ->
                             value.id().value().equals(id) && value.version().value() == version);
             if (summary.isEmpty()
                     || summary.get().sourceMessageIds().isEmpty()
-                    || summary.get().sourceMessageIds().size() > 64) return false;
+                    || summary.get().sourceMessageIds().size() > sourceLimit) return false;
             var owners = new HashSet<AgentRunId>();
             for (var source : summary.get().sourceMessageIds()) {
                 var message = ports.state().message(source).orElseThrow(Unavailable::new);

@@ -1,5 +1,12 @@
 package io.haifa.agent.runtime.core.model;
 
+import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.DATA;
+import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.IN_USE;
+import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.PHASE_LABEL_PREFIX;
+import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.PHASE_METADATA_KEY;
+import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.PLAN_SOURCE;
+import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.UNIFIED;
+
 import io.haifa.agent.context.api.AgentContext;
 import io.haifa.agent.context.api.ContextBuildException;
 import io.haifa.agent.context.api.ContextBuildFailure;
@@ -190,7 +197,7 @@ public final class ModelMessageAssembler {
                 .computeIfAbsent(call.runId(), ignored -> new HashMap<>())
                 .put(call.id(), historyResults.apply(runId, call))));
         boolean workingSet = context.items().stream()
-                .anyMatch(item -> item.security().labels().contains("working-set-in-use"));
+                .anyMatch(item -> item.security().labels().contains(IN_USE));
         if (workingSet && reusable.isEmpty()) {
             var ids = new HashMap<AgentRunId, Set<io.haifa.agent.core.tool.ToolCallId>>();
             for (var message : contextMessages) {
@@ -221,7 +228,7 @@ public final class ModelMessageAssembler {
             return null;
         };
         Set<io.haifa.agent.core.tool.ToolCallId> inUse = context.items().stream()
-                .filter(item -> item.security().labels().contains("working-set-in-use"))
+                .filter(item -> item.security().labels().contains(IN_USE))
                 .filter(item -> item.content() instanceof MessageGroupContextContent)
                 .flatMap(item -> ((MessageGroupContextContent) item.content()).messages().stream())
                 .flatMap(message -> message.contents().stream())
@@ -241,7 +248,7 @@ public final class ModelMessageAssembler {
                         throw new IllegalStateException("conflicting result views");
                 });
         boolean selectedBudget = context.items().stream()
-                .anyMatch(item -> item.security().labels().contains("unified-context"));
+                .anyMatch(item -> item.security().labels().contains(UNIFIED));
         ModelMessageProjectionPlan projectionPlan = selectedBudget
                 ? planner.planSelected(contextMessages, toolCallResolver, views)
                 : planner.plan(contextMessages, toolCallResolver, inUse);
@@ -271,8 +278,8 @@ public final class ModelMessageAssembler {
                             priorModelAssistants,
                             projectionPlan,
                             item.security().labels().stream()
-                                    .filter(label -> label.startsWith("context-phase:"))
-                                    .map(label -> label.substring("context-phase:".length()))
+                                    .filter(label -> label.startsWith(PHASE_LABEL_PREFIX))
+                                    .map(label -> label.substring(PHASE_LABEL_PREFIX.length()))
                                     .findFirst()
                                     .orElse(null),
                             rewrittenAssistants);
@@ -302,7 +309,7 @@ public final class ModelMessageAssembler {
                         safe.map(io.haifa.agent.context.item.HistoricalExcerptContent::render)
                                 .orElse("[Historical source unavailable; do not infer its content.]")));
             } else if (item.content() instanceof TextContextContent text) {
-                if (item.provenance().sourceType().equals("working-set-plan")
+                if (item.provenance().sourceType().equals(PLAN_SOURCE)
                         && (history == null
                                 || !history.validPlan(
                                         runId,
@@ -315,7 +322,7 @@ public final class ModelMessageAssembler {
                         ModelMessageRole.SYSTEM,
                         "[memory " + memory.memoryId() + "@" + memory.version() + "]\n" + memory.text()));
             } else if (item.content() instanceof ConversationSummaryContent summary) {
-                boolean handoff = item.security().labels().contains("working-set-data");
+                boolean handoff = item.security().labels().contains(DATA);
                 if (handoff
                         && (history == null || !history.validSummary(runId, summary.summaryId(), summary.version())))
                     throw new io.haifa.agent.runtime.core.storage.OptimisticLockException("historical summary changed");
@@ -391,7 +398,7 @@ public final class ModelMessageAssembler {
             } else if (item.content() instanceof ConversationSummaryContent summary) {
                 if (history == null || !history.validSummary(run.id(), summary.summaryId(), summary.version()))
                     throw new io.haifa.agent.runtime.core.storage.OptimisticLockException("prepared summary changed");
-            } else if (item.provenance().sourceType().equals("working-set-plan")) {
+            } else if (item.provenance().sourceType().equals(PLAN_SOURCE)) {
                 if (history == null
                         || !history.validPlan(
                                 run.id(),
@@ -409,8 +416,8 @@ public final class ModelMessageAssembler {
                                 .anyMatch(message ->
                                         message.runId().filter(run.id()::equals).isPresent()))
                 .flatMap(item -> item.security().labels().stream())
-                .filter(label -> label.startsWith("context-phase:"))
-                .map(label -> label.substring("context-phase:".length()))
+                .filter(label -> label.startsWith(PHASE_LABEL_PREFIX))
+                .map(label -> label.substring(PHASE_LABEL_PREFIX.length()))
                 .findFirst()
                 .orElse("");
     }
@@ -620,7 +627,7 @@ public final class ModelMessageAssembler {
             Set<ModelMessage> rewrittenAssistants) {
         boolean rewritten = phase != null
                 && message.role() == MessageRole.ASSISTANT
-                && !phase.equals(message.metadata().get("contextProjectionPhase"))
+                && !phase.equals(message.metadata().get(PHASE_METADATA_KEY))
                 && (message.metadata().containsKey("modelContinuationId")
                         || continuations.byMessage().containsKey(message.id()));
         AgentRunId messageRunId = message.runId().orElse(currentRunId);

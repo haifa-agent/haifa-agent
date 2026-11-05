@@ -144,4 +144,35 @@ class CompactionSourceProjectorTest {
                 .contains("TAIL_PROBE", "[REDACTED_KEY]")
                 .doesNotContain("internal reasoning", "sk-abcdef", "opaque_token_state");
     }
+
+    @Test
+    void completeSourceRefusesUnreadableMediaAndReferencesWithOneTypedFailure() {
+        List<io.haifa.agent.core.content.ContentPart> unreadable = List.of(
+                new io.haifa.agent.core.content.ImageUrlContentPart(
+                        java.net.URI.create("https://example.test/image.png")),
+                new io.haifa.agent.core.content.AssetRefPart(
+                        new io.haifa.agent.core.reference.AssetRef("asset", "image/png", "image.png")),
+                new io.haifa.agent.core.content.ArtifactRefPart(
+                        new io.haifa.agent.core.reference.ArtifactRef("artifact", "text", "1", "file"),
+                        "saved reference"));
+        for (var part : unreadable) {
+            var message = new AgentMessage(
+                    new AgentMessageId("unreadable"),
+                    new AgentSessionId("session"),
+                    Optional.empty(),
+                    Optional.empty(),
+                    MessageRole.USER,
+                    MessageStatus.COMPLETED,
+                    MessageVisibility.USER_VISIBLE,
+                    1,
+                    List.of(part),
+                    Map.of(),
+                    Instant.EPOCH);
+            org.assertj.core.api.Assertions.assertThatThrownBy(
+                            () -> CompactionSourceProjector.projectComplete(List.of(message)))
+                    .isInstanceOf(io.haifa.agent.context.api.ContextBuildException.class)
+                    .satisfies(error -> assertThat(((io.haifa.agent.context.api.ContextBuildException) error).failure())
+                            .isEqualTo(io.haifa.agent.context.api.ContextBuildFailure.UNSUPPORTED_CONTEXT_CONTENT));
+        }
+    }
 }

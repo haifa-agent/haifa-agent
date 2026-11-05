@@ -1,5 +1,12 @@
 package io.haifa.agent.runtime.core.loop;
 
+import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.DATA;
+import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.IN_USE;
+import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.PHASE_LABEL_PREFIX;
+import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.PLAN_SOURCE;
+import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.SUMMARY_HANDOFF_SOURCE;
+import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.UNIFIED;
+
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.context.budget.HeuristicTokenEstimator;
 import io.haifa.agent.context.compression.ConversationSummary;
@@ -194,9 +201,28 @@ public final class RunWorkingSetSource {
             if (message.role() != MessageRole.USER) throw new LocalContextOverflowException();
             pinnedItems.add(raw(run, List.of(message)));
         }
+        // Once this Run's evidence is covered, its full summary replaces that evidence. It is not a
+        // cross-Run handoff and must survive NEW_TASK classification, soft targets and optional eviction.
+        var requiredSummary = unified(run)
+                ? checkpoint
+                        .filter(value -> value.coveredThrough().value() >= input.sequence())
+                        .map(value -> {
+                            if (!history.validSummary(
+                                    run.id(),
+                                    value.id().value(),
+                                    value.version().value()))
+                                throw new io.haifa.agent.context.api.ContextBuildException(
+                                        io.haifa.agent.context.api.ContextBuildFailure.UNSUPPORTED_CONTEXT_CONTENT,
+                                        "required current-Run summary is unavailable");
+                            return source.requiredSummaryItem(value);
+                        })
+                : Optional.<ContextItem>empty();
         long required = currentItem.estimatedTokens()
-                + pinnedItems.stream().mapToLong(ContextItem::estimatedTokens).sum();
+                + pinnedItems.stream().mapToLong(ContextItem::estimatedTokens).sum()
+                + requiredSummary.map(ContextItem::estimatedTokens).orElse(0);
         List<ContextItem> items = new ArrayList<>();
+        requiredSummary.ifPresent(items::add);
+        int requiredPrefix = items.size();
         boolean samePhase = priorDraft != null
                 && priorDraft.goal().equals(goal.id())
                 && priorDraft.summaryVersion() == summaryVersion
@@ -204,13 +230,15 @@ public final class RunWorkingSetSource {
         if (samePhase) {
             // Preserve bootstrap ordering within a phase; fresh facts are appended, not re-ranked each Tool turn.
             for (var item : priorDraft.selection().items()) {
-                if (item.content() instanceof MessageGroupContextContent) continue;
+                if (item.content() instanceof MessageGroupContextContent
+                        || (requiredSummary.isPresent() && item.content() instanceof ConversationSummaryContent))
+                    continue;
                 try {
                     items.add(revalidate(run, item));
                 } catch (RuntimeException changed) {
                     if (item.retention() == ContextRetention.MUST_KEEP) throw changed;
                     samePhase = false;
-                    items.clear();
+                    items.subList(requiredPrefix, items.size()).clear();
                     break;
                 }
             }
@@ -242,7 +270,9 @@ public final class RunWorkingSetSource {
                 }
             }
             if (!relationship.equals("NEW_TASK")) {
-                var handoff = summaryHandoff(run, checkpoint, Math.max(0L, target - used), relationship);
+                var handoff = requiredSummary.isPresent()
+                        ? Optional.<ContextItem>empty()
+                        : summaryHandoff(run, checkpoint, Math.max(0L, target - used), relationship);
                 if (handoff.isPresent()) {
                     items.add(handoff.get());
                     used += handoff.get().estimatedTokens();
@@ -289,7 +319,7 @@ public final class RunWorkingSetSource {
                     continue;
                 }
                 var labels = new HashSet<>(item.security().labels());
-                labels.add("context-phase:" + phase);
+                labels.add(PHASE_LABEL_PREFIX + phase);
                 phased.add(new ContextItem(
                         item.id(),
                         item.type(),
@@ -490,7 +520,7 @@ public final class RunWorkingSetSource {
         if (item.content() instanceof ConversationSummaryContent value
                 && !history.validSummary(run.id(), value.summaryId(), value.version()))
             throw new OptimisticLockException("summary changed");
-        if (item.provenance().sourceType().equals("working-set-plan")) {
+        if (item.provenance().sourceType().equals(PLAN_SOURCE)) {
             var owner = new AgentRunId(item.provenance().sourceId());
             history.authorizedRun(run, owner);
             if (ports.state()
@@ -569,9 +599,7 @@ public final class RunWorkingSetSource {
                 item.priority(),
                 ContextRetention.MUST_KEEP,
                 new ContextSecurity(
-                        unified(run)
-                                ? Set.of("session-visible", "working-set-in-use", "unified-context")
-                                : Set.of("session-visible", "working-set-in-use")),
+                        unified(run) ? Set.of("session-visible", IN_USE, UNIFIED) : Set.of("session-visible", IN_USE)),
                 item.provenance());
     }
 
@@ -584,7 +612,7 @@ public final class RunWorkingSetSource {
                 tokens,
                 required ? ContextPriority.CRITICAL : ContextPriority.NORMAL,
                 required ? ContextRetention.MUST_KEEP : ContextRetention.KEEP_IF_RELEVANT,
-                new ContextSecurity(Set.of("untrusted-history", "working-set-data")),
+                new ContextSecurity(Set.of("untrusted-history", DATA)),
                 new ContextProvenance(
                         "history-excerpt",
                         value.messageId().value(),
@@ -634,9 +662,9 @@ public final class RunWorkingSetSource {
                 tokens,
                 ContextPriority.NORMAL,
                 ContextRetention.KEEP_IF_RELEVANT,
-                new ContextSecurity(Set.of("untrusted-history", "working-set-data")),
+                new ContextSecurity(Set.of("untrusted-history", DATA)),
                 new ContextProvenance(
-                        "working-set-summary",
+                        SUMMARY_HANDOFF_SOURCE,
                         value.id().value(),
                         Long.toString(value.version().value()),
                         value.sourceHash())));
@@ -666,9 +694,9 @@ public final class RunWorkingSetSource {
                     tokens,
                     ContextPriority.NORMAL,
                     ContextRetention.KEEP_IF_RELEVANT,
-                    new ContextSecurity(Set.of("untrusted-history", "working-set-data")),
+                    new ContextSecurity(Set.of("untrusted-history", DATA)),
                     new ContextProvenance(
-                            "working-set-plan",
+                            PLAN_SOURCE,
                             prior.value(),
                             Long.toString(plan.revision()),
                             io.haifa.agent.tool.api.ToolArgumentsDigest.sha256(

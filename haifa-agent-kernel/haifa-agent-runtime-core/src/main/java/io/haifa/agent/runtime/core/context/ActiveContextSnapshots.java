@@ -1,5 +1,7 @@
 package io.haifa.agent.runtime.core.context;
 
+import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.COMPLETE_SOURCE;
+
 import io.haifa.agent.context.compression.CompressionPolicy;
 import io.haifa.agent.context.compression.ContextCompressor;
 import io.haifa.agent.context.compression.ConversationSummary;
@@ -33,7 +35,7 @@ import java.util.Set;
 
 /** Owns a small LRU of rebuildable active-context projections and incrementally follows committed Session cursors. */
 public final class ActiveContextSnapshots implements MessageRedactionListener {
-    static final int MAX_ACTIVE_MESSAGES = 4096;
+    public static final int MAX_ACTIVE_MESSAGES = 4096;
     static final int MAX_PROTOCOL_LOOKAHEAD = 256;
     static final int MAX_ACTIVE_GROUPS = 4096;
     static final long MAX_ACTIVE_ESTIMATED_TOKENS = 2_000_000L;
@@ -205,7 +207,7 @@ public final class ActiveContextSnapshots implements MessageRedactionListener {
         if (summary.isPresent()
                 && !rebuilt.atomicGroups().isEmpty()
                 && rebuilt.atomicGroups().getFirst().getFirst().role() != MessageRole.USER
-                && !(summary.orElseThrow().securityLabels().contains("complete-source-v1")
+                && !(summary.orElseThrow().securityLabels().contains(COMPLETE_SOURCE)
                         && rebuilt.atomicGroups().getFirst().getFirst().role() == MessageRole.ASSISTANT)) {
             rows = state.messagesAfter(sessionId, MessageCursor.BEFORE_FIRST, loadLimit);
             hasMoreHistory = rows.size() > MAX_ACTIVE_MESSAGES;

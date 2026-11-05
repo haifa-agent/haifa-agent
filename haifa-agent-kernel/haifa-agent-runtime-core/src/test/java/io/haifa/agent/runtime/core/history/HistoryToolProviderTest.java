@@ -244,21 +244,47 @@ class HistoryToolProviderTest {
 
     @Test
     void scopeRevocationBlocksModelDispatchEvenWhenHistoryWasAlreadySummarized() {
+        summarize(run, "prior-summary");
+        deniedScope.set(true);
+        scheduler.runAll();
+        assertThat(store.find(run.id()).orElseThrow().status()).isEqualTo(AgentRunStatus.FAILED);
+    }
+
+    @Test
+    void completeSummaryAuthorizationUsesTheActiveWindowBoundOnlyForUnifiedRuns() {
+        for (String policy :
+                List.of("legacy", io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.UNIFIED_CONTEXT_V1)) {
+            var owner = createRun(
+                    "summary-" + policy,
+                    Optional.empty(),
+                    new io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext(run.tenant(), run.principal()),
+                    Map.of(
+                            io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.WORKING_SET,
+                            true,
+                            io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.CONTEXT_BUDGET_POLICY,
+                            policy));
+            for (int i = 0; i < 64; i++) message(owner, "covered source " + i, MessageVisibility.USER_VISIBLE);
+            var summary = summarize(owner, "bound-" + owner.id().value());
+            assertThat(summary.sourceMessageIds()).hasSize(65);
+            assertThat(provider.validSummary(owner.id(), summary.id().value(), 1))
+                    .isEqualTo(!policy.equals("legacy"));
+        }
+    }
+
+    private io.haifa.agent.context.compression.ConversationSummary summarize(AgentRun owner, String id) {
         var summary = new io.haifa.agent.context.compression.DeterministicContextCompressor()
                 .compress(new io.haifa.agent.context.compression.CompressionRequest(
-                        new io.haifa.agent.context.compression.SummaryId("prior-summary"),
+                        new io.haifa.agent.context.compression.SummaryId(id),
                         new io.haifa.agent.context.compression.SummaryVersion(1),
-                        run.sessionId(),
-                        store.messagesAfter(run.sessionId(), MessageCursor.BEFORE_FIRST, 128),
+                        owner.sessionId(),
+                        store.messagesAfter(owner.sessionId(), MessageCursor.BEFORE_FIRST, 128),
                         4,
                         NOW,
                         io.haifa.agent.context.compression.CompressionPolicy.defaults()
                                 .version()))
                 .summary();
         store.compareAndSetValid(summary, 0);
-        deniedScope.set(true);
-        scheduler.runAll();
-        assertThat(store.find(run.id()).orElseThrow().status()).isEqualTo(AgentRunStatus.FAILED);
+        return summary;
     }
 
     @Test
@@ -508,7 +534,7 @@ class HistoryToolProviderTest {
 
     @Test
     void savedViewsRequirePressureAndMinimumSavingWithoutChangingAuthority() {
-        for (String mode : List.of("small", "minimum-saving", "saved")) {
+        for (String mode : List.of("small", "minimum-saving", "saved", "legacy")) {
             var owner = createRun(
                     "unified-" + mode,
                     Optional.empty(),
@@ -519,7 +545,9 @@ class HistoryToolProviderTest {
                             io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.WORKING_SET,
                             true,
                             io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.CONTEXT_BUDGET_POLICY,
-                            io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.UNIFIED_CONTEXT_V1,
+                            mode.equals("legacy")
+                                    ? "legacy"
+                                    : io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.UNIFIED_CONTEXT_V1,
                             io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.CONTEXT_MIN_SAVING_TOKENS,
                             mode.equals("minimum-saving") ? 8192 : 256));
             var message =
@@ -543,6 +571,13 @@ class HistoryToolProviderTest {
                             .resultViews().values().stream())
                     .toList();
             assertThat(views).hasSize(mode.equals("saved") ? 1 : 0);
+            assertThat(selected.items().stream()
+                            .filter(item ->
+                                    item.content() instanceof io.haifa.agent.context.item.MessageGroupContextContent))
+                    .allSatisfy(item -> assertThat(item.security()
+                                    .labels()
+                                    .contains(io.haifa.agent.runtime.core.context.ContextProjectionMetadata.UNIFIED))
+                            .isEqualTo(!mode.equals("legacy")));
             if (!views.isEmpty()) {
                 assertThat(views.getFirst().text()).hasSizeLessThanOrEqualTo(2048);
                 assertThat(provider.refresh(owner.id(), views.getFirst())).contains(views.getFirst());

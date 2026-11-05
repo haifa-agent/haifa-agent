@@ -57,3 +57,7 @@ available with the structural default, without changing validation or reconcilia
 compaction. `MessageGroupContextContent` may carry occurrence-specific, versioned `HistoricalExcerptContent`
 result views; Runtime confirms readability and scope before projection. Views do not mutate source records or
 summary coverage. Token policy remains an estimate, with unknown Provider lanes kept distinct.
+
+Complete-source projection refuses unreadable media and asset/Artifact bodies with
+`ContextBuildException(UNSUPPORTED_CONTEXT_CONTENT)`. Runtime records source refusal separately from model
+failure and cannot turn it into coverage through deterministic fallback.

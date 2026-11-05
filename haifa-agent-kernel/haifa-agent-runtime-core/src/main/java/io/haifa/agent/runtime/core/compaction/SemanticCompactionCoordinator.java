@@ -1,5 +1,7 @@
 package io.haifa.agent.runtime.core.compaction;
 
+import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.COMPLETE_SOURCE;
+
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.context.api.ContextBuildException;
@@ -650,32 +652,12 @@ public final class SemanticCompactionCoordinator {
                 .flatMap(List::stream)
                 .toList();
 
-        if (completeSource) {
-            var expectedSource = visible.stream()
-                    .filter(message -> message.cursor()
-                                            .compareTo(previousSummary
-                                                    .map(ConversationSummary::coveredThrough)
-                                                    .orElse(MessageCursor.BEFORE_FIRST))
-                                    > 0
-                            && message.cursor()
-                                            .compareTo(sourceToCompact.getLast().cursor())
-                                    <= 0)
-                    .toList();
-            if (!expectedSource.equals(sourceToCompact))
-                throw new ContextBuildException(
-                        ContextBuildFailure.UNSUPPORTED_CONTEXT_CONTENT,
-                        "complete compaction cannot skip an unfinished protocol group");
-        }
         var complete = new HashMap<AgentMessageId, AgentMessage>();
-        if (completeSource)
-            for (var message : sourceToCompact)
-                complete.put(message.id(), hydrateCompactionSource(run, message, resolver));
         Function<List<AgentMessage>, ProjectedCompactionSource> projector = completeSource
                 ? messages -> CompactionSourceProjector.projectComplete(messages.stream()
                         .map(message -> complete.get(message.id()))
                         .toList())
                 : CompactionSourceProjector::project;
-        if (completeSource) projector.apply(sourceToCompact);
 
         long prevSummaryTokens =
                 previousSummary.map(ConversationSummary::estimatedTokens).orElse(0);
@@ -698,7 +680,31 @@ public final class SemanticCompactionCoordinator {
         String systemPrompt = CompactionPromptRenderer.systemPrompt();
         int physicalCalls = 0;
         int batchStart = 0;
+        boolean sourcePrepared = false;
         try {
+            invoker.remainingRunCalls(run);
+            if (completeSource) {
+                var expectedSource = visible.stream()
+                        .filter(message -> message.cursor()
+                                                .compareTo(previousSummary
+                                                        .map(ConversationSummary::coveredThrough)
+                                                        .orElse(MessageCursor.BEFORE_FIRST))
+                                        > 0
+                                && message.cursor()
+                                                .compareTo(sourceToCompact
+                                                        .getLast()
+                                                        .cursor())
+                                        <= 0)
+                        .toList();
+                if (!expectedSource.equals(sourceToCompact))
+                    throw new ContextBuildException(
+                            ContextBuildFailure.UNSUPPORTED_CONTEXT_CONTENT,
+                            "complete compaction cannot skip an unfinished protocol group");
+            }
+            if (completeSource)
+                for (var message : sourceToCompact)
+                    complete.put(message.id(), hydrateCompactionSource(run, message, resolver));
+            sourcePrepared = true;
             while (batchStart < safeSplit) {
                 int remaining = (int)
                         Math.min(policy.maxCompactionPhysicalCalls() - physicalCalls, invoker.remainingRunCalls(run));
@@ -767,6 +773,14 @@ public final class SemanticCompactionCoordinator {
                 projected.toolAliases().values().forEach(id -> historicalDurableRefs.add(id.value()));
                 batchStart = batchEnd;
             }
+            if (completeSource) {
+                ensureSourcesCurrent(sourceToCompact);
+                var fresh = rereadSourceToolCalls(run, sourceToCompact);
+                for (var message : sourceToCompact)
+                    if (!complete.get(message.id()).equals(hydrateCompactionSource(run, message, fresh)))
+                        throw new OptimisticLockException("complete compaction source changed");
+            }
+
         } catch (CancellationObservedException
                 | RuntimeLimitExceededException
                 | RuntimeQuotaExceededException
@@ -780,10 +794,12 @@ public final class SemanticCompactionCoordinator {
             String errorCode = validationErrorCode(ex);
             long elapsed = elapsedMillis(startNanos);
             boolean activeBudget = reason == CompactionTriggerReason.ACTIVE_HISTORY_BUDGET;
-            boolean degraded = activeBudget
-                    || ex instanceof CompactionModelCapabilityException
-                    || policy.allowDeterministicDegradedFallback()
-                    || overflow;
+            boolean sourceRefusal = completeSource && ex instanceof ContextBuildException;
+            boolean degraded = !sourceRefusal
+                    && (activeBudget
+                            || ex instanceof CompactionModelCapabilityException
+                            || policy.allowDeterministicDegradedFallback()
+                            || overflow);
             Map<String, Object> data = new LinkedHashMap<>();
             data.put("evaluationId", evaluationId);
             data.put("reason", reason.name());
@@ -798,11 +814,27 @@ public final class SemanticCompactionCoordinator {
             data.put("compactionEvaluationElapsedMillis", elapsed);
             data.put("failureCategory", category);
             data.put("validationErrorCode", errorCode);
-            data.put("failureStage", failureStage(ex));
+            data.put(
+                    "failureStage",
+                    sourceRefusal ? (sourcePrepared ? "SOURCE_VALIDATION" : "SOURCE_PREPARATION") : failureStage(ex));
             data.put("failureCode", failureCode(ex));
             data.put("physicalCalls", Math.toIntExact(run.usage().modelCalls() - initialModelCalls));
             data.put("degraded", degraded);
             events.append(run.id(), "session.compaction-failed", data, time.now());
+            if (sourceRefusal) {
+                // An unreadable complete range cannot authorize deterministic coverage or a blind retry.
+                recoveryOutcome(
+                        run,
+                        evaluationId,
+                        reason,
+                        new SummaryCommit("NO_REDUCTION", previousSummary, false),
+                        visible,
+                        resolver,
+                        initialEstimatedTokens,
+                        cacheHitRate,
+                        startNanos);
+                throw (ContextBuildException) ex;
+            }
             if (activeBudget
                     || (completeSource && ex instanceof CompactionBudgetExceededException)
                     || (ex instanceof CompactionBudgetExceededException
@@ -856,14 +888,6 @@ public final class SemanticCompactionCoordinator {
             throw (ex instanceof RuntimeException re) ? re : new RuntimeException(ex);
         }
 
-        if (completeSource) {
-            ensureSourcesCurrent(sourceToCompact);
-            var fresh = toolCallResolver(run, null, sourceToCompact);
-            for (var message : sourceToCompact)
-                if (!complete.get(message.id()).equals(hydrateCompactionSource(run, message, fresh)))
-                    throw new OptimisticLockException("complete compaction source changed");
-        }
-
         List<List<AgentMessage>> tailGroups = activeGroups.subList(safeSplit, activeGroups.size());
         long retainedTailTokens = estimateGroups(tailGroups, resolver);
 
@@ -905,6 +929,7 @@ public final class SemanticCompactionCoordinator {
     }
 
     private static String failureCategory(Exception exception) {
+        if (exception instanceof ContextBuildException) return "SOURCE";
         if (exception instanceof CompactionBudgetExceededException) return "PLAN_BUDGET";
         if (exception instanceof CompactionModelCapabilityException) return "MODEL_CAPABILITY";
         return exception instanceof SemanticSummaryValidationException ? "VALIDATION" : "MODEL_OR_RUNTIME";
@@ -918,6 +943,8 @@ public final class SemanticCompactionCoordinator {
     }
 
     private static String failureCode(Exception exception) {
+        if (exception instanceof ContextBuildException source)
+            return source.failure().name();
         if (exception instanceof SemanticSummaryValidationException validation)
             return validation.code().name();
         if (exception instanceof CompactionBudgetExceededException budget)
@@ -1145,7 +1172,7 @@ public final class SemanticCompactionCoordinator {
                 time.now(),
                 policy.version(),
                 "semantic-v1",
-                completeSource ? Set.of("internal", "complete-source-v1") : Set.of("internal"),
+                completeSource ? Set.of("internal", COMPLETE_SOURCE) : Set.of("internal"),
                 true,
                 Optional.of(summary),
                 CompactionQuality.SEMANTIC_VALIDATED);
@@ -1495,6 +1522,14 @@ public final class SemanticCompactionCoordinator {
             AgentRun run, AgentMessage message, Function<ToolCallId, ToolCall> resolver) {
         var parts = new ArrayList<io.haifa.agent.core.content.ContentPart>(message.contents());
         for (var part : message.contents()) {
+            // Validate every part before planning any physical summary call, without concatenating a
+            // second projection of the whole range just to discover unreadable content.
+            if (!(part instanceof io.haifa.agent.core.content.TextPart)
+                    && !(part instanceof io.haifa.agent.core.content.ToolCallPart)
+                    && !(part instanceof io.haifa.agent.core.content.ToolResultPart))
+                throw new ContextBuildException(
+                        ContextBuildFailure.UNSUPPORTED_CONTEXT_CONTENT,
+                        "complete compaction requires readable text sources");
             ToolCallId id = part instanceof io.haifa.agent.core.content.ToolCallPart call
                     ? call.toolCallId()
                     : part instanceof io.haifa.agent.core.content.ToolResultPart result ? result.toolCallId() : null;
@@ -1799,6 +1834,22 @@ public final class SemanticCompactionCoordinator {
             }
             return null;
         };
+    }
+
+    private Function<ToolCallId, ToolCall> rereadSourceToolCalls(AgentRun run, List<AgentMessage> source) {
+        var ids = new HashMap<io.haifa.agent.core.run.AgentRunId, Set<ToolCallId>>();
+        for (var message : source)
+            for (var part : message.contents()) {
+                ToolCallId id = part instanceof ToolCallPart call
+                        ? call.toolCallId()
+                        : part instanceof ToolResultPart result ? result.toolCallId() : null;
+                if (id != null)
+                    ids.computeIfAbsent(message.runId().orElse(run.id()), ignored -> new HashSet<>())
+                            .add(id);
+            }
+        // Revalidate only the occurrences whose bodies were summarized, not every Tool in their owning Runs.
+        var calls = state.toolCallsByIds(ids).stream().collect(Collectors.toMap(ToolCall::id, Function.identity()));
+        return id -> safeHistoryCall(run, calls.get(id));
     }
 
     private ToolCall safeHistoryCall(AgentRun run, ToolCall call) {

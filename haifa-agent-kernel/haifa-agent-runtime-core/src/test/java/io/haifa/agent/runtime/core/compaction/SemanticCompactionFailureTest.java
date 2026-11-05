@@ -811,6 +811,75 @@ class SemanticCompactionFailureTest {
     }
 
     @Test
+    void unreadableCompleteSourceRecordsRefusalWithoutDeterministicCoverageEvenWhenFallbackIsAllowed() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentRun run = createRun(store);
+        AtomicInteger ids = new AtomicInteger();
+        var policy = CompressionPolicy.defaults().withDegradedFallback(true).withTailTokenBounds(5, 5);
+        var previous = new DeterministicContextCompressor()
+                .compress(new io.haifa.agent.context.compression.CompressionRequest(
+                        new SummaryId("previous"),
+                        new io.haifa.agent.context.compression.SummaryVersion(1),
+                        run.sessionId(),
+                        store.messagesAfter(
+                                run.sessionId(), io.haifa.agent.core.message.MessageCursor.BEFORE_FIRST, 100),
+                        4,
+                        NOW,
+                        policy.version()))
+                .summary();
+        store.compareAndSetValid(previous, 0);
+        store.appendSessionMessage(new SessionMessageDraft(
+                new AgentMessageId("image"),
+                run.sessionId(),
+                Optional.of(run.id()),
+                Optional.empty(),
+                MessageRole.USER,
+                MessageStatus.COMPLETED,
+                MessageVisibility.USER_VISIBLE,
+                List.of(new io.haifa.agent.core.content.ImageUrlContentPart(
+                        java.net.URI.create("https://example.test/image.png"))),
+                Map.of(),
+                NOW));
+        appendTurn(store, run, "source-u", "source-a", "source", "evidence ".repeat(500));
+        appendTurn(store, run, "tail-u", "tail-a", "next", "ok");
+        var compactor = coordinator(store, () -> "refused-" + ids.incrementAndGet(), new RunControlRegistry(), policy);
+        var decision = CompactionTriggerDecision.compact(
+                CompactionTriggerReason.SOFT_TOKEN_THRESHOLD,
+                new CompactionTriggerEvaluator(policy).calculateBreakdown(100000, 8192, 0, 0, 90000));
+        var calls = new AtomicInteger();
+        assertThatThrownBy(() -> compactor.evaluateSelected(
+                        run,
+                        1,
+                        binding(store, run, request -> {
+                            calls.incrementAndGet();
+                            return validSummaryResponse();
+                        }),
+                        decision))
+                .isInstanceOf(ContextBuildException.class)
+                .satisfies(error -> assertThat(((ContextBuildException) error).failure())
+                        .isEqualTo(io.haifa.agent.context.api.ContextBuildFailure.UNSUPPORTED_CONTEXT_CONTENT));
+        assertThat(calls).hasValue(0);
+        assertThat(store.latestVersion(run.sessionId())).isEqualTo(1);
+        assertThat(store.latestValid(run.sessionId())).contains(previous);
+        assertThat(store.eventsFor(run.id()))
+                .filteredOn(event -> event.type().equals("session.compaction-failed"))
+                .singleElement()
+                .satisfies(event -> assertThat(event.data())
+                        .containsEntry("failureCategory", "SOURCE")
+                        .containsEntry("failureStage", "SOURCE_PREPARATION")
+                        .containsEntry("failureCode", "UNSUPPORTED_CONTEXT_CONTENT")
+                        .containsEntry("physicalCalls", 0)
+                        .containsEntry("degraded", false));
+        assertThat(store.eventsFor(run.id()))
+                .filteredOn(event -> event.type().equals("session.compaction-recovery"))
+                .singleElement()
+                .satisfies(event -> assertThat(event.data())
+                        .containsEntry("outcome", "NO_REDUCTION")
+                        .containsEntry("committed", false)
+                        .containsEntry("version", 1L));
+    }
+
+    @Test
     void runtimeKeepsOriginalInputAfterSemanticCommitAndAfterBoundedFailure() {
         for (String recovery : List.of("semantic", "bounded", "forced", "oversized", "multi-selected")) {
             boolean multi = recovery.equals("multi-selected");

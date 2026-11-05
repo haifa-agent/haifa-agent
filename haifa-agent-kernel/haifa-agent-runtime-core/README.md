@@ -67,6 +67,17 @@ contiguous source plus the previous valid summary and retains its validation, re
 Complete-source summaries may split a long single Run between completed atomic Tool groups. Existing cutoff
 validation still keeps each call/result pair together; the summary's versioned source label allows snapshot
 rebuilds to retain that valid assistant-led tail. Unreadable or unprocessable groups never authorize coverage.
+When a valid summary covers the current Run, its full semantic representation is required input, even for
+an objective beginning with `New task` or a retained tail larger than the working-set target. It stays in the
+untrusted data lane and participates in hard admission; an optional cross-Run handoff cannot replace it.
+Unrelated new Runs retain the existing sparse-history policy. Summary authorization checks every bounded
+source reference, using the active compaction window bound rather than the smaller handoff candidate limit.
+
+Unreadable complete sources fail with `UNSUPPORTED_CONTEXT_CONTENT`, a `SOURCE_PREPARATION` (or subsequent
+`SOURCE_VALIDATION`) compaction failure and `NO_REDUCTION`. The previous valid summary and coverage remain
+unchanged; source refusal never authorizes deterministic fallback or blind retry. A Run requiring that
+compaction fails explicitly. Only physical model calls consume model-call accounting.
+
 Terminal automatic summary maintenance remains deferred; terminal Run usage is immutable.
 
 ## Optional Run working sets

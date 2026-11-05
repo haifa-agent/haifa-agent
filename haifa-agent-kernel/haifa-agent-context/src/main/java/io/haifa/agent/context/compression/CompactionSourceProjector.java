@@ -107,18 +107,24 @@ public final class CompactionSourceProjector {
                             complete ? sanitizedSummary : bounded(sanitizedSummary, MAX_TOOL_SUMMARY_CHARS)));
                 } else if (part instanceof AssetRefPart assetPart) {
                     if (complete)
-                        throw new IllegalArgumentException("complete compaction requires an asset body reader");
+                        throw new io.haifa.agent.context.api.ContextBuildException(
+                                io.haifa.agent.context.api.ContextBuildFailure.UNSUPPORTED_CONTEXT_CONTENT,
+                                "complete compaction requires an asset body reader");
                     contentLines.add(String.format(
                             Locale.ROOT, "[asset-ref: %s]", assetPart.asset().assetId()));
                 } else if (part instanceof ArtifactRefPart artifactPart) {
                     if (complete)
-                        throw new IllegalArgumentException("complete compaction requires an artifact body reader");
+                        throw new io.haifa.agent.context.api.ContextBuildException(
+                                io.haifa.agent.context.api.ContextBuildFailure.UNSUPPORTED_CONTEXT_CONTENT,
+                                "complete compaction requires an artifact body reader");
                     contentLines.add(String.format(
                             Locale.ROOT,
                             "[artifact-ref: %s]",
                             artifactPart.artifact().artifactId()));
                 } else if (complete) {
-                    throw new IllegalArgumentException("complete compaction requires readable text sources");
+                    throw new io.haifa.agent.context.api.ContextBuildException(
+                            io.haifa.agent.context.api.ContextBuildFailure.UNSUPPORTED_CONTEXT_CONTENT,
+                            "complete compaction requires readable text sources");
                 }
             }
 

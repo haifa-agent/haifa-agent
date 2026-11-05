@@ -1,5 +1,8 @@
 package io.haifa.agent.runtime.core.model;
 
+import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.PHASE_LABEL_PREFIX;
+import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.PHASE_METADATA_KEY;
+import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.UNIFIED;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -1176,7 +1179,7 @@ class ModelMessageAssemblerTest {
                         MessageStatus.COMPLETED,
                         MessageVisibility.USER_VISIBLE,
                         List.of(new TextPart("answer", "plain")),
-                        Map.of("modelContinuationId", "ordinary-continuation", "contextProjectionPhase", "stable"),
+                        Map.of("modelContinuationId", "ordinary-continuation", PHASE_METADATA_KEY, "stable"),
                         Instant.EPOCH),
                 new ModelContinuationDraft(
                         new ModelContinuationRef(
@@ -1332,7 +1335,7 @@ class ModelMessageAssemblerTest {
                                 item.estimatedTokens(),
                                 item.priority(),
                                 item.retention(),
-                                new ContextSecurity(Set.of("unified-context", "context-phase:" + phase)),
+                                new ContextSecurity(Set.of(UNIFIED, PHASE_LABEL_PREFIX + phase)),
                                 item.provenance()))
                         .toList(),
                 context.tools(),

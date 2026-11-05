@@ -1,5 +1,7 @@
 package io.haifa.agent.runtime.core.model;
 
+import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.PHASE_METADATA_KEY;
+
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.context.api.AgentContext;
@@ -583,7 +585,7 @@ public final class FrozenModelInvoker {
                             Map.entry("cacheHitTokens", response.usage().cacheHitTokens()),
                             Map.entry("cacheMissTokens", response.usage().cacheMissTokens()),
                             Map.entry("reasoningTokens", response.usage().reasoningTokens()),
-                            Map.entry("contextProjectionPhase", ModelMessageAssembler.contextPhase(run, context))),
+                            Map.entry(PHASE_METADATA_KEY, ModelMessageAssembler.contextPhase(run, context))),
                     callId.value(),
                     physicalAttempt,
                     binding.configuration().model(),

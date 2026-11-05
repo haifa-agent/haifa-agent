@@ -276,6 +276,8 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
 
     private io.haifa.agent.runtime.core.compaction.CompactionTriggerDecision selectedDecision(
             io.haifa.agent.runtime.core.model.PreparedModelInput prepared, List<ContextItem> items) {
+        // This is a compaction eligibility anchor, not a count of USER turns: a completed Tool group
+        // can provide a safe boundary inside one long Run. The coordinator still validates atomic cutoffs.
         long completeTools = items.stream()
                 .filter(item -> item.content() instanceof MessageGroupContextContent)
                 .flatMap(item -> ((MessageGroupContextContent) item.content()).messages().stream())
