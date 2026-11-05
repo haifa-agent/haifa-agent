@@ -78,6 +78,15 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
         middleware.apply(RuntimePhase.AFTER_CONTEXT_BUILD, middlewareContext);
         List<SkillActivation> activations = addSkillPrompts(run, middlewareContext);
         List<ModelToolSpecification> effectiveTools = skillTools(model, activations);
+        if (sessionMessages.workingSetEnabled(run))
+            middlewareContext.addPrompt(new PromptComponent(
+                    new PromptComponentId("working-set-data-rule"),
+                    RunWorkingSetSource.VERSION,
+                    PromptLayer.TOOL_PROTOCOL,
+                    PromptRole.RUNTIME,
+                    RunWorkingSetSource.DATA_RULE,
+                    true,
+                    java.util.Set.of("working-set", "data-boundary")));
         if (RuntimeControlOptions.finalizeOnly(
                 model.configuration().modelRequestOptions(), run.usage().toolCalls())) {
             effectiveTools = List.of();
@@ -117,8 +126,11 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
                         memorySource.select(run, model, loopContext), budget.availableInputTokens() - requiredTokens);
         long memoryTokens = memoryItems.stream().mapToLong(budget::estimate).sum();
         long sessionTokenBudget = positiveBudget(budget.availableInputTokens() - requiredTokens - memoryTokens);
-        SessionMessageSource.MeasuredSelection measuredSelection =
-                sessionMessages.selectMeasured(run, sessionTokenBudget);
+        SessionMessageSource.MeasuredSelection measuredSelection = sessionMessages.selectMeasured(
+                run,
+                sessionTokenBudget,
+                io.haifa.agent.runtime.core.model.ModelInputAccounting.expectedPrefix(
+                        model, middlewareContext.prompts(), effectiveTools));
         selectionMetrics = selectionMetrics.plus(measuredSelection.metrics());
         SessionMessageSource.Selection selection = measuredSelection.selection();
         ContextAssembly assembly =
@@ -129,7 +141,11 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
         if (assembly.exceeds(budget) && !memoryItems.isEmpty()) {
             memoryItems = List.of();
             sessionTokenBudget = positiveBudget(budget.availableInputTokens() - requiredTokens);
-            measuredSelection = sessionMessages.selectMeasured(run, sessionTokenBudget);
+            measuredSelection = sessionMessages.selectMeasured(
+                    run,
+                    sessionTokenBudget,
+                    io.haifa.agent.runtime.core.model.ModelInputAccounting.expectedPrefix(
+                            model, middlewareContext.prompts(), effectiveTools));
             selectionMetrics = selectionMetrics.plus(measuredSelection.metrics());
             selection = measuredSelection.selection();
             assembly = assemble(selection, middlewareContext.contextItems(), memoryItems, budget, fixedTokens);

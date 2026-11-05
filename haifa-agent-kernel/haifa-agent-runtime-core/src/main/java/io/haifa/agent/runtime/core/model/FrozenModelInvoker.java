@@ -36,6 +36,13 @@ import java.util.Objects;
 
 /** Invokes Model API from the exact immutable adapter/provider/model snapshot frozen for a run. */
 public final class FrozenModelInvoker {
+    private io.haifa.agent.runtime.core.loop.RunWorkingSetSource workingSets;
+
+    public FrozenModelInvoker workingSets(io.haifa.agent.runtime.core.loop.RunWorkingSetSource value) {
+        workingSets = value;
+        return this;
+    }
+
     private final RuntimeStateRepository state;
     private final Map<ModelAdapterKey, AgentChatModel> adapters;
     private final IdentifierGenerator ids;
@@ -155,17 +162,25 @@ public final class FrozenModelInvoker {
         this.ids = Objects.requireNonNull(ids, "ids must not be null");
         this.history = history;
         this.messages = new ModelMessageAssembler(
-                state,
-                imageResolver,
-                audioResolver,
-                Objects.requireNonNull(projectionPlanner, "projectionPlanner must not be null"),
-                activeContexts,
-                history == null ? (run, call) -> call : history::sanitize);
+                        state,
+                        imageResolver,
+                        audioResolver,
+                        Objects.requireNonNull(projectionPlanner, "projectionPlanner must not be null"),
+                        activeContexts,
+                        history == null ? (run, call) -> call : history::sanitize)
+                .historicalData(history);
         this.responses = new AgentChatResponseMapper(ids);
         this.output = Objects.requireNonNull(output, "output must not be null");
         this.controls = Objects.requireNonNull(controls, "controls must not be null");
         this.events = Objects.requireNonNull(events, "events must not be null");
         this.time = Objects.requireNonNull(time, "time must not be null");
+    }
+
+    private Map<String, Object> accountingSelection(AgentRun run, Map<String, Object> existing) {
+        if (workingSets == null || !workingSets.enabled(run)) return existing;
+        var values = new java.util.LinkedHashMap<>(existing);
+        values.putAll(workingSets.evidence(run.id()));
+        return Map.copyOf(values);
     }
 
     public FrozenModelBinding bind(AgentRun run) {
@@ -316,13 +331,15 @@ public final class FrozenModelInvoker {
                 request,
                 "ORDINARY",
                 messageAssembly.sources(),
-                Map.of(
-                        "rawActiveHistoryEstimatedTokens",
-                                messageAssembly.projection().rawActiveTokens(),
-                        "projectedActiveHistoryEstimatedTokens",
-                                messageAssembly.projection().projectedActiveTokens(),
-                        "sourceOccurrences", messageAssembly.sourceOccurrences(),
-                        "repeatedSourceOccurrences", messageAssembly.repeatedSourceOccurrences()));
+                accountingSelection(
+                        run,
+                        Map.of(
+                                "rawActiveHistoryEstimatedTokens",
+                                        messageAssembly.projection().rawActiveTokens(),
+                                "projectedActiveHistoryEstimatedTokens",
+                                        messageAssembly.projection().projectedActiveTokens(),
+                                "sourceOccurrences", messageAssembly.sourceOccurrences(),
+                                "repeatedSourceOccurrences", messageAssembly.repeatedSourceOccurrences())));
         Instant startedAt = time.now();
         appendLifecycle(
                 binding,
@@ -381,6 +398,7 @@ public final class FrozenModelInvoker {
                 return ModelStreamControl.CONTINUE;
             });
             ModelInputAccounting.recordUsage(events, time, binding, request, "ORDINARY", response.usage());
+            if (workingSets != null) workingSets.recordRequest(run, request, startedAt.toEpochMilli());
             RunControlSignal completedSignal = controls.signal(run.id());
             if (completedSignal.stopsExecution()) {
                 if (completedSignal == RunControlSignal.CANCEL || completedSignal == RunControlSignal.TIMEOUT) {

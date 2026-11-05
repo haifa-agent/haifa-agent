@@ -11,7 +11,8 @@ model-bound event. Snapshot source reads and failed admission must be reported s
 
 `SessionMessageRepository` provides cursor windows, ID lookup and supported Run paging. It does
 not expose keyword/full-text retrieval. Tool result externalization retains `structuredData` and
-adds asset references; it is not itself a recoverable model-side historical read API. Runtime has
+adds asset references. Opt-in `history_search` / `history_read` recover the saved text/JSON representation
+and standard immutable Tool-result assets; arbitrary asset or Artifact bodies have no such reader. Runtime has
 no automatic post-terminal summary owner or budget. Terminal Run usage remains immutable and
 model calls stay outside persistence transactions.
 
@@ -24,12 +25,53 @@ need an applicable aggregate ratio; do not supply a guessed single price. These 
 change authoritative Run usage or budgets.
 
 Request evidence includes a canonical visible fixed-instruction/tool prefix identity and start time.
-It never hashes protected reasoning, and is not the full Provider wire prefix. Reuse predictions,
-previous reusable request time and unverified cache configuration remain explicitly unknown.
+It never hashes protected reasoning, and is not the full Provider wire prefix. With the default continuous policy, reuse predictions and previous reusable request time remain unknown.
+The opt-in Run working-set policy can make bounded predictions from caller-supplied frozen contracts.
 TTL and identity agreement are prediction inputs only; response usage is the actual cache evidence.
 `previousSummaryInputShare` is the accurate name for the old `compactionSummaryCacheHitRate`; the
 old event/trace field and record accessor remain as compatibility aliases. Provider usage, active
 snapshot reuse and summary rendering metrics are separate.
+
+## Optional Run working sets
+
+SDK `enableRunWorkingSet()` enables history readers and deterministic `run-working-set-v1` selection;
+Runtime products may freeze `haifa.runtime.working_set=true` with both built-in readers authorized.
+Default behavior stays continuous. An allowlist that excludes either reader retains the legacy path.
+The policy does not create another history, summary, lifecycle state or background model caller.
+
+Selection queries first 32 / previous 64 candidates, up to 16 explicit `[history:message-id]` references,
+and indexed required history. The initiating USER and latest applied USER/Steer stay verbatim even after
+a valid summary covers them. Actual current/recovery Tool protocol remains grouped and correlated.
+Prior sparse text/JSON is a versioned, revalidated USER data excerpt, never protected continuation replay.
+Continue, follow-up, new-task, ambiguous input and checkpoint recovery have deterministic handling;
+old pending plans are recorded handoff data and never become completed because they were omitted.
+Summary handoff is a bounded inferred view (up to 64 source identities, four entries per section), separate from verified original Tool evidence; larger source sets are omitted conservatively.
+
+Project constraints (`Project constraint:` / `项目约束`), imported messages without a Run,
+and source parts without a historical reader are required history, even if a summary covers their cursors. The two built-in stores index these facts.
+At most 64 such records and 4,096 current-tail rows are admitted; unsupported protocol/source or excess
+required content fails closed rather than silently removing it. Summarization/coverage remain governed
+by the existing validated contiguous compressor. Arbitrary media/asset bodies do not gain a reader.
+Third-party stores must implement `requiredHistory` before enabling this policy; no full-history fallback
+is hidden in that query. Override `latestUserMessage` for bounded Run-local Memory selection as well.
+
+`haifa.runtime.working_set_target_tokens` defaults to 2,048 (128..65,536); required input may exceed it.
+`haifa.runtime.working_set_retention_tokens` defaults to 20,000 (128..131,072), capped by hard admission.
+Optional `haifa.runtime.working_set_cache_contract` requires exact `modelConfigurationDigest`, public
+HTTPS `source`, ISO `date`, and `ttlMillis` (1..3,600,000), together with exact-model `input_price_ratios`.
+Unknown cost remains unavailable. Retain/reselect predictions use cache-read/write/uncached lanes,
+not token count alone. Retention requires matching model, instructions/tools/schema, Provider options,
+contract, source versions, authorization and valid summary. It is limited to two deferred physical calls,
+retention capacity and the original physical call's start plus TTL; goal change/Steer/recovery forces
+reselection. Tool protocol, protected continuation and unreadable media do not qualify for v1 cache deferral. Rebuildable caches hold at most
+16 Runs/Sessions and are safely lost on restart. Predictions do not establish actual cache hits or savings.
+
+Results read or retrieved in the current Run after a valid summary stay in use until summary commit or
+safe Steer reselection; Tier 1 does not drop them merely because two newer groups exist. Omission notices
+point to history readers and occurrence IDs, without instructing automatic redispatch. Source withdrawal
+removes the evidence; completed built-in retrievals can supply only their revalidated UNAVAILABLE result.
+Selection/handoff/read never advance summary coverage. Hard admission and forced recovery remain active;
+unifying sparse selection with reduction/coverage is a separate change.
 
 ## Model input accounting
 

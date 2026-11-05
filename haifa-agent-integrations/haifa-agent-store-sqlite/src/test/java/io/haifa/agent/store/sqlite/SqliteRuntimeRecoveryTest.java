@@ -1277,6 +1277,113 @@ class SqliteRuntimeRecoveryTest {
         }
     }
 
+    @Test
+    void workingSetRebuildsAfterReopenAndKeepsOriginalAndLatestInputCoveredBySummary() {
+        AgentRunId runId;
+        long summaryVersion;
+        try (var foundation = SqliteTestSupport.foundation(directory)) {
+            var ports = foundation.persistencePorts(protector());
+            ensureSession(ports);
+            var runtimeRef = new AtomicReference<DefaultAgentRuntime>();
+            var runRef = new AtomicReference<AgentRunId>();
+            var processA = runtime(
+                    ports,
+                    ignored -> {
+                        runtimeRef.get().command(pause(runRef.get()));
+                        return finalResponse("paused at safe point");
+                    },
+                    "ws-a",
+                    new TestIds("ws-a"),
+                    builder -> installWorkingSet(builder, ports));
+            runtimeRef.set(processA.runtime());
+            runId = processA.runtime().start(request("ws-reopen")).runId();
+            runRef.set(runId);
+            processA.scheduler().runAll();
+            assertThat(processA.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.SUSPENDED);
+            ports.state()
+                    .appendSessionMessage(new SessionMessageDraft(
+                            new AgentMessageId("committed-steer"),
+                            SESSION_ID,
+                            Optional.of(runId),
+                            Optional.empty(),
+                            MessageRole.USER,
+                            MessageStatus.COMPLETED,
+                            MessageVisibility.USER_VISIBLE,
+                            List.of(new io.haifa.agent.core.content.TextPart("Use the revised format", "plain")),
+                            Map.of(),
+                            NOW));
+            var messages =
+                    ports.state().messagesAfter(SESSION_ID, io.haifa.agent.core.message.MessageCursor.BEFORE_FIRST, 32);
+            var compressed = new io.haifa.agent.context.compression.DeterministicContextCompressor()
+                    .compress(new io.haifa.agent.context.compression.CompressionRequest(
+                            new io.haifa.agent.context.compression.SummaryId("ws-summary"),
+                            new io.haifa.agent.context.compression.SummaryVersion(1),
+                            SESSION_ID,
+                            messages,
+                            512,
+                            NOW,
+                            io.haifa.agent.context.compression.CompressionPolicy.defaults()
+                                    .version()));
+            ports.conversationSummaries().compareAndSetValid(compressed.summary(), 0);
+            summaryVersion = ports.conversationSummaries().latestVersion(SESSION_ID);
+        }
+        try (var foundation = SqliteTestSupport.foundation(directory)) {
+            var ports = foundation.persistencePorts(protector());
+            ensureSession(ports);
+            var calls = new AtomicInteger();
+            var processB = runtime(
+                    ports,
+                    request -> {
+                        calls.incrementAndGet();
+                        assertThat(request.structuredOutput()).isEmpty();
+                        assertThat(request.messages().stream()
+                                        .filter(m -> m.content().equals("test objective"))
+                                        .count())
+                                .isEqualTo(1);
+                        assertThat(request.messages().stream()
+                                        .filter(m -> m.content().equals("Use the revised format"))
+                                        .count())
+                                .isEqualTo(1);
+                        return finalResponse("recovered working set");
+                    },
+                    "ws-b",
+                    new TestIds("ws-b"),
+                    builder -> installWorkingSet(builder, ports));
+            processB.runtime().resume(new ResumeAgentRunRequest("ws-resume", runId, List.of()));
+            processB.scheduler().runAll();
+            assertThat(processB.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(calls).hasValue(1);
+            assertThat(ports.conversationSummaries().latestVersion(SESSION_ID)).isEqualTo(summaryVersion);
+            assertThat(ports.events().eventsFor(runId).stream()
+                            .filter(e -> e.type().equals("model.input-accounted"))
+                            .reduce((a, b) -> b)
+                            .orElseThrow()
+                            .data())
+                    .containsEntry("workingSetRelation", "RECOVERY");
+        }
+    }
+
+    private static RuntimeCoreBuilder installWorkingSet(RuntimeCoreBuilder builder, RuntimePersistencePorts ports) {
+        var history = new io.haifa.agent.runtime.core.history.HistoryToolProvider(ports);
+        var catalogBuilder = new ToolCatalogBuilder();
+        for (var definition : history.definitions())
+            catalogBuilder.register(new ToolAlias(definition.name().value()), definition, "history", history);
+        var catalog = catalogBuilder.freeze();
+        return builder.toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator())
+                .publicToolPolicy((run, binding, call) -> {
+                    throw new AssertionError("no Tool dispatch expected");
+                })
+                .profiles((id, overrides) -> new io.haifa.agent.runtime.core.bootstrap.ResolvedProfile(
+                        id,
+                        "1",
+                        io.haifa.agent.core.run.AgentRunType.CHAT,
+                        new io.haifa.agent.core.run.AgentRunBudget(100000, 100000, 100000, 8, 8, 0, "USD", 100000),
+                        new io.haifa.agent.core.run.AgentRunLimits(8, 0, 1, 300000, 60000),
+                        io.haifa.agent.runtime.core.bootstrap.DefaultResolvedModelSnapshots.deepSeekV4Pro(),
+                        Map.of(),
+                        Map.of(io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.WORKING_SET, true)));
+    }
+
     private static ToolResult historyInvoke(
             io.haifa.agent.runtime.core.history.HistoryToolProvider history,
             AgentRun run,

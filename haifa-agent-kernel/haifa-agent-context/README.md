@@ -19,9 +19,12 @@ Run-local assembly remains bounded by the selected input cursor, frozen configur
 policy/compressor versions and the selected valid summary version. Selecting source items does
 not advance `ConversationSummary.coveredThrough`; only a valid summary commit changes coverage.
 Read operations and derived projections must not mutate original messages or business state.
-The current Runtime still assembles continuous history with protocol-safe Tool pairs. Sparse
-cross-Run retrieval is not implemented here: future non-contiguous excerpts must enter as
-low-authority data with source identity and without protected continuation or assistant/tool replay.
+Continuous history remains the Runtime default. Its optional Run working-set selector uses
+`HistoricalExcerptContent` for sparse cross-Run data, with Run/message/version/range identity and
+without protected continuation or assistant/tool replay. Runtime revalidates source identity and
+permission at projection. The projection digest is distinct from the original source version.
+`WorkingSetCostPolicy` is a pure three-lane predictor with explicit unavailable prices, retention,
+quality and reuse exits. A predicted saving is not actual Provider cache evidence.
 
 Pure Java context intermediate representation, prompt layering, single-call token budgeting,
 deterministic selection, derived-asset text references, and redacted context tracing.

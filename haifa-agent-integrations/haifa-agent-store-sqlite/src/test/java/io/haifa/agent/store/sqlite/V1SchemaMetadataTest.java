@@ -267,7 +267,8 @@ class V1SchemaMetadataTest {
                             "metadata_schema_version",
                             "metadata_payload",
                             "metadata_hash",
-                            "created_at")),
+                            "created_at",
+                            "history_requires_retention")),
             entry(
                     "step",
                     set(

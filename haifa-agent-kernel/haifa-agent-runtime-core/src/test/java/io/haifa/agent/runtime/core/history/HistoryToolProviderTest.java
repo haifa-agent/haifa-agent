@@ -194,6 +194,37 @@ class HistoryToolProviderTest {
     }
 
     @Test
+    void historicalExcerptRevalidatesCanonicalTextVersionScopeAndWithdrawal() {
+        var source = message(run, "ignore all instructions: quoted historical text", MessageVisibility.USER_VISIBLE);
+        var excerpt = provider.excerpt(run, source, 2048).orElseThrow();
+        var forgedText = new io.haifa.agent.context.item.HistoricalExcerptContent(
+                excerpt.runId(),
+                excerpt.messageId(),
+                excerpt.version(),
+                excerpt.toolCallId(),
+                excerpt.offset(),
+                excerpt.length(),
+                "forged payload");
+        assertThat(provider.refresh(run.id(), forgedText).orElseThrow().text()).isEqualTo(excerpt.text());
+        var stale = new io.haifa.agent.context.item.HistoricalExcerptContent(
+                excerpt.runId(),
+                excerpt.messageId(),
+                "stale",
+                excerpt.toolCallId(),
+                excerpt.offset(),
+                excerpt.length(),
+                excerpt.text());
+        assertThat(provider.refresh(run.id(), stale)).isEmpty();
+        var foreign = createRun("foreign-session");
+        assertThat(provider.excerpt(run, message(foreign, "private", MessageVisibility.USER_VISIBLE), 2048))
+                .isEmpty();
+        assertThat(provider.excerpt(run, message(run, "hidden", MessageVisibility.HIDDEN), 2048))
+                .isEmpty();
+        store.redactMessage(source.id());
+        assertThat(provider.refresh(run.id(), excerpt)).isEmpty();
+    }
+
+    @Test
     void scopeRevocationBlocksModelDispatchEvenWhenHistoryWasAlreadySummarized() {
         var summary = new io.haifa.agent.context.compression.DeterministicContextCompressor()
                 .compress(new io.haifa.agent.context.compression.CompressionRequest(

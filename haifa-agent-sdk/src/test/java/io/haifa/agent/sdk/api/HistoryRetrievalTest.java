@@ -78,7 +78,14 @@ class HistoryRetrievalTest {
 
             public ToolResult invoke(ToolInvocationRequest request) {
                 dispatches.incrementAndGet();
-                return new ToolResult(true, "read completed", Map.of("body", evidence), List.of(), List.of(), true);
+                String path = (String) request.arguments().values().get("path");
+                return new ToolResult(
+                        true,
+                        "read completed",
+                        Map.of("body", path.equals("historic.txt") ? evidence : path),
+                        List.of(),
+                        List.of(),
+                        true);
             }
         };
         var schema = new ToolSchema(
@@ -143,16 +150,39 @@ class HistoryRetrievalTest {
                                 "toolCallId",
                                 entry.get("toolCallId")));
             }
-            assertThat(request.messages().getLast().toolResultData().get("content"))
-                    .isEqualTo("read completed\nbody: " + evidence);
-            return SdkTestFixtures.finalAnswer("Used the historical version");
+            if (step == 4)
+                assertThat(request.messages().getLast().toolResultData().get("content"))
+                        .isEqualTo("read completed\nbody: " + evidence);
+            if (step < 8) return SdkTestFixtures.toolCall("seed_read", Map.of("path", "fresh-" + step + ".txt"));
+            if (step == 9) {
+                assertThat(request.messages().stream()
+                                .anyMatch(m -> m.toolResultData().toString().contains(evidence)))
+                        .isFalse();
+                return SdkTestFixtures.finalAnswer("Source withdrawn");
+            }
+            var toolData = request.messages().stream()
+                    .filter(m -> m.role() == ModelMessageRole.TOOL)
+                    .map(m -> m.toolResultData().toString())
+                    .toList();
+            assertThat(toolData).anyMatch(body -> body.contains(evidence));
+            assertThat(toolData).anyMatch(body -> body.contains("fresh-4.txt"));
+            assertThat(toolData).anyMatch(body -> body.contains("fresh-5.txt"));
+            var historicalTool = store
+                    .messagesAfter(
+                            store.find(request.runId()).orElseThrow().sessionId(), MessageCursor.BEFORE_FIRST, 100)
+                    .stream()
+                    .filter(m -> m.role() == io.haifa.agent.core.message.MessageRole.TOOL)
+                    .findFirst()
+                    .orElseThrow();
+            store.redactMessage(historicalTool.id());
+            return SdkTestFixtures.toolCall("seed_read", Map.of("path", "fresh-8.txt"));
         };
         try (var agent = SdkTestFixtures.builder("history-sdk")
                 .persistence(new InMemoryPersistenceContribution(RuntimePersistencePorts.inMemory(store)))
                 .model(SdkTestFixtures.modelContribution(model))
                 .toolRegistrations(
                         List.of(new ToolRegistration(new ToolAlias("seed_read"), definition, "seed", seedProvider)))
-                .enableHistoryRetrieval()
+                .enableRunWorkingSet(2048)
                 .build()) {
             var seed = agent.conversations().start(new StartConversationCommand("seed", "history", "save fixture"));
             assertThat(agent.runs().await(seed.runId()).status()).isEqualTo(AgentRunStatus.COMPLETED);
@@ -176,14 +206,15 @@ class HistoryRetrievalTest {
                     .submit(new SubmitConversationTurnCommand(
                             session, idle.revision(), "read", "Find the saved evidence"));
             assertThat(agent.runs().await(turn.runId()).status()).isEqualTo(AgentRunStatus.COMPLETED);
-            assertThat(dispatches).hasValue(1);
-            assertThat(calls).hasValue(5);
+            assertThat(dispatches).hasValue(6);
+            assertThat(calls).hasValue(10);
             assertThat(store.latestVersion(session)).isEqualTo(1);
             var source = messages.stream()
                     .filter(message -> message.role() == io.haifa.agent.core.message.MessageRole.TOOL)
                     .findFirst()
                     .orElseThrow();
-            store.redactMessage(source.id());
+            assertThat(store.message(source.id()).orElseThrow().status())
+                    .isEqualTo(io.haifa.agent.core.message.MessageStatus.REDACTED);
             assertThat(agent.runs().toolCalls(turn.runId()).stream().anyMatch(call -> call.result()
                             .map(result -> result.structuredData().toString().contains(evidence))
                             .orElse(false)))

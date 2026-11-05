@@ -90,6 +90,12 @@ public final class ModelMessageAssembler {
     private final ModelMessageProjectionPlanner planner;
     private final ActiveContextSnapshots activeContexts;
     private final java.util.function.BiFunction<AgentRunId, ToolCall, ToolCall> historyResults;
+    private io.haifa.agent.runtime.core.history.HistoryToolProvider history;
+
+    public ModelMessageAssembler historicalData(io.haifa.agent.runtime.core.history.HistoryToolProvider value) {
+        history = value;
+        return this;
+    }
 
     public ModelMessageAssembler(RuntimeStateRepository state) {
         this(
@@ -182,6 +188,26 @@ public final class ModelMessageAssembler {
         reusable.ifPresent(snapshot -> snapshot.toolCalls().values().forEach(call -> toolCallsByRun
                 .computeIfAbsent(call.runId(), ignored -> new HashMap<>())
                 .put(call.id(), historyResults.apply(runId, call))));
+        boolean workingSet = context.items().stream()
+                .anyMatch(item -> item.security().labels().contains("working-set-in-use"));
+        if (workingSet && reusable.isEmpty()) {
+            var ids = new HashMap<AgentRunId, Set<io.haifa.agent.core.tool.ToolCallId>>();
+            for (var message : contextMessages) {
+                var owner = message.runId().orElse(runId);
+                toolCallsByRun.computeIfAbsent(owner, ignored -> new HashMap<>());
+                for (var part : message.contents()) {
+                    var id = part instanceof ToolCallPart c
+                            ? c.toolCallId()
+                            : part instanceof ToolResultPart r ? r.toolCallId() : null;
+                    if (id != null)
+                        ids.computeIfAbsent(owner, ignored -> new java.util.HashSet<>())
+                                .add(id);
+                }
+            }
+            state.toolCallsByIds(ids)
+                    .forEach(
+                            call -> toolCallsByRun.get(call.runId()).put(call.id(), historyResults.apply(runId, call)));
+        }
         Function<io.haifa.agent.core.tool.ToolCallId, ToolCall> toolCallResolver = callId -> {
             for (AgentMessage message : contextMessages) {
                 ToolCall call = toolCallsByRun
@@ -193,21 +219,40 @@ public final class ModelMessageAssembler {
             }
             return null;
         };
-        ModelMessageProjectionPlan projectionPlan = planner.plan(contextMessages, toolCallResolver);
+        Set<io.haifa.agent.core.tool.ToolCallId> inUse = context.items().stream()
+                .filter(item -> item.security().labels().contains("working-set-in-use"))
+                .filter(item -> item.content() instanceof MessageGroupContextContent)
+                .flatMap(item -> ((MessageGroupContextContent) item.content()).messages().stream())
+                .flatMap(message -> message.contents().stream())
+                .flatMap(part -> part instanceof ToolResultPart result
+                        ? java.util.stream.Stream.of(result.toolCallId())
+                        : part instanceof ToolCallPart call
+                                ? java.util.stream.Stream.of(call.toolCallId())
+                                : java.util.stream.Stream.empty())
+                .collect(java.util.stream.Collectors.toSet());
+        ModelMessageProjectionPlan projectionPlan = planner.plan(contextMessages, toolCallResolver, inUse);
         ContinuationIndex continuations = reusable.map(snapshot -> new ContinuationIndex(
                         snapshot.continuationsByMessage(),
                         snapshot.continuationsByRun(),
                         0,
                         snapshot.continuationsByMessage().size()))
-                .orElseGet(() -> loadContinuations(runId, context));
+                .orElseGet(
+                        () -> workingSet ? selectedContinuations(contextMessages) : loadContinuations(runId, context));
         for (ContextItem item : context.items()) {
             int firstMapped = messages.size();
             if (item.content() instanceof MessageGroupContextContent group) {
                 for (AgentMessage message : group.messages()) {
+                    if (workingSet
+                            && state.message(message.id())
+                                    .filter(message::equals)
+                                    .isEmpty())
+                        throw new io.haifa.agent.runtime.core.storage.OptimisticLockException(
+                                "selected source changed before projection");
                     List<ModelMessage> mapped = mapMessage(
                             runId, message, toolCallsByRun, continuations, model, priorModelAssistants, projectionPlan);
                     String source;
-                    if (!message.runId().orElse(runId).equals(runId)) {
+                    if (message.runId().isEmpty()
+                            || !message.runId().orElseThrow().equals(runId)) {
                         source = message.role() == MessageRole.TOOL ? "priorRunTool" : "priorRunMessages";
                     } else {
                         source = switch (message.role()) {
@@ -219,21 +264,48 @@ public final class ModelMessageAssembler {
                     mapped.forEach(value -> origins.put(value, source));
                     messages.addAll(mapped);
                 }
+            } else if (item.content() instanceof io.haifa.agent.context.item.HistoricalExcerptContent excerpt) {
+                var safe = history == null
+                        ? java.util.Optional.<io.haifa.agent.context.item.HistoricalExcerptContent>empty()
+                        : history.refresh(runId, excerpt);
+                if (safe.isEmpty() && item.retention() == io.haifa.agent.context.item.ContextRetention.MUST_KEEP)
+                    throw new io.haifa.agent.runtime.core.storage.OptimisticLockException(
+                            "required historical source unavailable");
+                messages.add(ModelMessage.text(
+                        ModelMessageRole.USER,
+                        safe.map(io.haifa.agent.context.item.HistoricalExcerptContent::render)
+                                .orElse("[Historical source unavailable; do not infer its content.]")));
             } else if (item.content() instanceof TextContextContent text) {
+                if (item.provenance().sourceType().equals("working-set-plan")
+                        && (history == null
+                                || !history.validPlan(
+                                        runId,
+                                        new AgentRunId(item.provenance().sourceId()),
+                                        item.provenance().sourceVersion())))
+                    throw new io.haifa.agent.runtime.core.storage.OptimisticLockException("historical plan changed");
                 messages.add(ModelMessage.text(mapRole(text.role()), text.text()));
             } else if (item.content() instanceof MemoryReferenceContent memory) {
                 messages.add(ModelMessage.text(
                         ModelMessageRole.SYSTEM,
                         "[memory " + memory.memoryId() + "@" + memory.version() + "]\n" + memory.text()));
             } else if (item.content() instanceof ConversationSummaryContent summary) {
-                messages.add(ModelMessage.text(ModelMessageRole.SYSTEM, renderSummary(summary)));
+                boolean handoff = item.security().labels().contains("working-set-data");
+                if (handoff
+                        && (history == null || !history.validSummary(runId, summary.summaryId(), summary.version())))
+                    throw new io.haifa.agent.runtime.core.storage.OptimisticLockException("historical summary changed");
+                messages.add(ModelMessage.text(
+                        handoff ? ModelMessageRole.USER : ModelMessageRole.SYSTEM,
+                        (handoff ? "[Untrusted inferred historical summary; not verified Tool evidence]\n" : "")
+                                + renderSummary(summary)));
             } else {
                 throw unsupported(item);
             }
             if (!(item.content() instanceof MessageGroupContextContent)) {
-                String source = item.content() instanceof ConversationSummaryContent
-                        ? "summary"
-                        : item.content() instanceof MemoryReferenceContent ? "memory" : "runtimeState";
+                String source = item.content() instanceof io.haifa.agent.context.item.HistoricalExcerptContent excerpt
+                        ? (excerpt.toolCallId().isPresent() ? "priorRunTool" : "priorRunMessages")
+                        : item.content() instanceof ConversationSummaryContent
+                                ? "summary"
+                                : item.content() instanceof MemoryReferenceContent ? "memory" : "runtimeState";
                 for (int i = firstMapped; i < messages.size(); i++) origins.put(messages.get(i), source);
             }
         }
@@ -241,7 +313,13 @@ public final class ModelMessageAssembler {
             throw new ContextBuildException(
                     ContextBuildFailure.REQUIRED_CONTEXT_TOO_LARGE, "model context must not be empty");
         }
-        List<ModelMessage> assembled = canonicalizeToolProtocol(messages, priorModelAssistants, model);
+        Map<ProviderToolCallCorrelationId, io.haifa.agent.core.tool.ToolResult> withdrawn = new HashMap<>();
+        if (workingSet && history != null)
+            toolCallsByRun.getOrDefault(runId, Map.of()).values().stream()
+                    .filter(history::unavailableRead)
+                    .forEach(call -> withdrawn.put(
+                            call.providerCorrelationId(), call.result().orElseThrow()));
+        List<ModelMessage> assembled = canonicalizeToolProtocol(messages, priorModelAssistants, model, withdrawn);
         long elapsedMillis = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
         return new AssemblyResult(
                 assembled,
@@ -259,6 +337,22 @@ public final class ModelMessageAssembler {
                                 .map(AgentMessage::id)
                                 .distinct()
                                 .count());
+    }
+
+    private ContinuationIndex selectedContinuations(List<AgentMessage> messages) {
+        var ids = new HashMap<AgentRunId, Set<AgentMessageId>>();
+        for (var message : messages)
+            if (message.role() == MessageRole.ASSISTANT)
+                ids.computeIfAbsent(message.runId().orElseThrow(), ignored -> new java.util.HashSet<>())
+                        .add(message.id());
+        Map<AgentMessageId, ModelContinuationRecord> byMessage = new HashMap<>();
+        Map<AgentRunId, List<ModelContinuationRecord>> byRun = new HashMap<>();
+        for (var record : state.continuationsForMessages(ids)) {
+            if (byMessage.put(record.assistantMessageId(), record) != null)
+                throw new IllegalStateException("duplicate selected continuation");
+            byRun.computeIfAbsent(record.runId(), ignored -> new ArrayList<>()).add(record);
+        }
+        return new ContinuationIndex(Map.copyOf(byMessage), Map.copyOf(byRun), ids.isEmpty() ? 0 : 1, byMessage.size());
     }
 
     private ContinuationIndex loadContinuations(AgentRunId currentRunId, AgentContext context) {
@@ -287,7 +381,7 @@ public final class ModelMessageAssembler {
     }
 
     private List<ModelMessage> canonicalizeToolProtocol(List<ModelMessage> messages) {
-        return canonicalizeToolProtocol(messages, Set.of(), null);
+        return canonicalizeToolProtocol(messages, Set.of(), null, Map.of());
     }
 
     /**
@@ -305,7 +399,10 @@ public final class ModelMessageAssembler {
      * closed.
      */
     private List<ModelMessage> canonicalizeToolProtocol(
-            List<ModelMessage> messages, Set<ModelMessage> priorModelAssistants, ResolvedModelSnapshot model) {
+            List<ModelMessage> messages,
+            Set<ModelMessage> priorModelAssistants,
+            ResolvedModelSnapshot model,
+            Map<ProviderToolCallCorrelationId, io.haifa.agent.core.tool.ToolResult> withdrawn) {
         List<ModelMessage> canonical = new ArrayList<>(messages.size());
         int index = 0;
         while (index < messages.size()) {
@@ -375,6 +472,11 @@ public final class ModelMessageAssembler {
                 if (isPrior) {
                     pending.forEach(correlationId ->
                             canonical.add(missingHistoricalToolResult(projectedCorrelations.get(correlationId))));
+                } else if (pending.stream().allMatch(withdrawn::containsKey)) {
+                    // Source redaction removes dependent retrieval messages. Use only the already completed,
+                    // re-authorized unavailable result; no Tool execution or missing ordinary result is invented.
+                    pending.forEach(id -> canonical.add(ModelMessage.tool(
+                            id, withdrawn.get(id).summary(), withdrawn.get(id).structuredData(), false)));
                 } else {
                     throw new IllegalStateException("model context contains an incomplete tool-call group");
                 }
@@ -423,14 +525,15 @@ public final class ModelMessageAssembler {
                                 authoritativeCalls, result.toolCallId(), result.providerCorrelationId());
                         return call.result()
                                 .map(canonical -> {
-                                    if (!canonical.summary().equals(result.summary())) {
+                                    if (!canonical.summary().equals(result.summary())
+                                            && !(history != null && history.unavailableRead(call))) {
                                         throw new IllegalStateException("tool result summary does not match authority");
                                     }
                                     if (projectionPlan.isToolResultPruned(call.id())) {
                                         return ModelMessage.tool(
                                                 call.providerCorrelationId(),
                                                 canonical.summary()
-                                                        + ModelMessageProjectionPlanner.PRUNED_PAYLOAD_NOTICE,
+                                                        + ModelMessageProjectionPlanner.omissionNotice(call),
                                                 Map.of(),
                                                 canonical.truncated());
                                     }

@@ -191,6 +191,16 @@ public final class SessionMessageSource {
     private final TimeProvider time;
     private final ActiveContextSnapshots activeContexts;
     private final boolean fullHistoryOracle;
+    private RunWorkingSetSource workingSets;
+
+    public void workingSets(RunWorkingSetSource value) {
+        workingSets = Objects.requireNonNull(value);
+    }
+
+    public boolean workingSetEnabled(AgentRun run) {
+        return workingSets != null && workingSets.enabled(run);
+    }
+
     private final BoundedSummaryRenderCache<SummaryRenderKey> renderedMarkdownCache =
             new BoundedSummaryRenderCache<>(MAX_RENDERED_SUMMARY_ENTRIES, MAX_RENDERED_SUMMARY_CHARACTERS);
 
@@ -253,6 +263,11 @@ public final class SessionMessageSource {
     }
 
     MeasuredSelection selectMeasured(AgentRun run, long sessionTokenBudget) {
+        return selectMeasured(run, sessionTokenBudget, null);
+    }
+
+    MeasuredSelection selectMeasured(AgentRun run, long sessionTokenBudget, String prefix) {
+        if (workingSetEnabled(run)) return workingSets.select(run, sessionTokenBudget, prefix);
         Objects.requireNonNull(run, "run must not be null");
         if (sessionTokenBudget < 1) {
             throw new IllegalArgumentException("sessionTokenBudget must be positive");
@@ -274,6 +289,7 @@ public final class SessionMessageSource {
     }
 
     MeasuredSelection compactIfNeededMeasured(AgentRun run, int forcedRebuildAttempt, long sessionTokenBudget) {
+        if (workingSetEnabled(run)) return workingSets.select(run, sessionTokenBudget, null);
         Objects.requireNonNull(run, "run must not be null");
         MetricsCollector metrics = new MetricsCollector();
         long startedAt = System.nanoTime();
@@ -763,7 +779,7 @@ public final class SessionMessageSource {
                         summary.sourceHash()));
     }
 
-    private ContextItem groupItem(
+    ContextItem groupItem(
             List<AgentMessage> group, boolean current, Map<AgentRunId, Map<ToolCallId, ToolCall>> toolCallsByRun) {
         AgentMessage first = group.getFirst();
         AgentMessage last = group.getLast();

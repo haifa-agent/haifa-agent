@@ -73,6 +73,12 @@ import org.slf4j.LoggerFactory;
  * Manages planning, safe projection, model invocation, validation gates, repair, and CAS commit.
  */
 public final class SemanticCompactionCoordinator {
+    private io.haifa.agent.runtime.core.loop.RunWorkingSetSource workingSets;
+
+    public SemanticCompactionCoordinator workingSets(io.haifa.agent.runtime.core.loop.RunWorkingSetSource value) {
+        workingSets = value;
+        return this;
+    }
 
     private static final Logger log = LoggerFactory.getLogger(SemanticCompactionCoordinator.class);
     private static final int MAX_SUMMARY_TOOL_REFERENCES = 256;
@@ -212,6 +218,32 @@ public final class SemanticCompactionCoordinator {
             return CompactionEvaluationOutcome.NONE;
         }
 
+        if (workingSets != null && workingSets.enabled(run)) {
+            var selected = workingSets.selectedEstimate(
+                    run,
+                    Math.max(
+                            1L,
+                            binding.configuration().model().contextWindow()
+                                    - binding.configuration().model().maxOutputTokens()));
+            if (selected.isPresent()) {
+                var estimator = new HeuristicTokenEstimator();
+                long fixed =
+                        HeuristicTokenEstimator.tokens(binding.configuration().agentInstruction())
+                                + binding.tools().stream()
+                                        .mapToLong(estimator::estimate)
+                                        .sum();
+                var selectedDecision = triggerEvaluator.evaluate(
+                        binding.configuration().model().contextWindow(),
+                        binding.configuration().model().maxOutputTokens(),
+                        fixed,
+                        0,
+                        selected.getAsLong(),
+                        2);
+                if (!selectedDecision.shouldCompact())
+                    return CompactionEvaluationOutcome.untriggered(selected.getAsLong(), elapsedMillis(startNanos));
+            }
+            // Excess required evidence follows the existing bounded contiguous recovery path.
+        }
         ActiveContextSnapshot activeSnapshot = activeContexts == null
                 ? null
                 : activeContexts.currentForCompaction(run.sessionId()).snapshot();

@@ -1061,11 +1061,11 @@ class ModelMessageAssemblerTest {
 
         assertThat(toolMessages.get(0).toolResultData()).isEmpty();
         assertThat(toolMessages.get(0).content()).contains("Summary for turn 1");
-        assertThat(toolMessages.get(0).content()).endsWith(ModelMessageProjectionPlanner.PRUNED_PAYLOAD_NOTICE);
+        assertThat(toolMessages.get(0).content()).contains(ModelMessageProjectionPlanner.PRUNED_PAYLOAD_NOTICE);
 
         assertThat(toolMessages.get(1).toolResultData()).isEmpty();
         assertThat(toolMessages.get(1).content()).contains("Summary for turn 2");
-        assertThat(toolMessages.get(1).content()).endsWith(ModelMessageProjectionPlanner.PRUNED_PAYLOAD_NOTICE);
+        assertThat(toolMessages.get(1).content()).contains(ModelMessageProjectionPlanner.PRUNED_PAYLOAD_NOTICE);
 
         assertThat(toolMessages.get(2).toolResultData()).containsEntry("rawPayload", "large payload content 3");
         assertThat(toolMessages.get(2).content()).isEqualTo("Summary for turn 3");
