@@ -1,0 +1,39 @@
+{
+  "name": "@haifa-agent/coding-client",
+  "version": "0.1.5-b3.0",
+  "private": true,
+  "type": "module",
+  "description": "Experimental framework-independent browser Coding product client",
+  "license": "UNLICENSED",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "sideEffects": false,
+  "scripts": {
+    "contract:generate": "node scripts/prepare-contract.mjs",
+    "build": "npm run contract:generate && tsc -p tsconfig.json && vite build && node scripts/check-package.mjs",
+    "typecheck": "npm run contract:generate && tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test --experimental-test-isolation=none test/*.test.mjs",
+    "prepack": "npm run build",
+    "pack:preview": "npm pack --pack-destination artifacts",
+    "lint": "prettier --check src scripts test vite.config.ts"
+  },
+  "engines": {
+    "node": "22.x",
+    "npm": "10.x"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.1",
+    "ajv": "8.17.1",
+    "prettier": "3.6.2",
+    "typescript": "5.9.3",
+    "vite": "8.1.5"
+  }
+}

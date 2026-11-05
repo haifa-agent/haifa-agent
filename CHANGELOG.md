@@ -2,6 +2,10 @@
 
 ## Unreleased - 0.1.5-SNAPSHOT
 
+- Prepare a framework-independent packed Coding browser SDK and same-origin static Web with safe
+  presentation, request correlation and bounded recovery. Add independent tarball consumers and
+  synthetic browser checks; real Host and multi-platform acceptance remain gated.
+
 - Add feature-preview Coding Host and lightweight Java Client SDKs, engine-owned safe product mapping,
   opt-in same-origin browser pairing/grants and trusted static assets. Preserve native CLI compatibility
   and keep observation cleanup separate from accepted execution. Add isolated preview publishing and

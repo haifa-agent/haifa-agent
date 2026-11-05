@@ -1,0 +1,49 @@
+# Coding Web (B3 preparation)
+
+This standalone TypeScript/Vite application consumes only the packed browser SDK. Its source does not
+import the SDK source, CLI/private Java types, the Personal Assistant application or a second RPC
+implementation. It builds trusted static assets for `/browser/`; no Node server, Vite proxy or BFF is
+part of the product runtime. It does not enable Host browser mode automatically.
+
+B2 `ab4a4c11` remains frozen. Independent review/CI and cross-UID HOST-09 are incomplete. The Web
+build and synthetic renderer/package tests are independent preparation; real Host product wiring and
+Windows Chrome/Edge validation remain NOT_RUN/BLOCKED_BY_PREREQUISITE. No B4 release is implied.
+
+Build the SDK tarball first, then install/build this application:
+
+```bash
+cd ../haifa-coding-browser-client
+npm ci
+npm run pack:preview
+cd ../haifa-coding-web
+npm ci
+npm test
+npm run build
+```
+
+After changing the SDK, repack and update the local file dependency/lock integrity with `npm install --save-exact ../haifa-coding-browser-client/artifacts/haifa-agent-coding-client-0.1.5-b3.0.tgz`.
+Fresh builds use the committed lockfiles. The tarball itself is ignored, reproducibly generated, and
+is not a public npm release. A compatible trusted Host owner can later supply `dist` through its
+public `BrowserOptions`; actual end-to-end execution awaits the recorded gate.
+
+The prepared UI includes session search/list/create/open, ordinary input, safe plain-text message/tool
+facts and live output, exact-target approval/structured clarification/cancellation, bounded independent
+history, connection/recovery status and Host/workspace/model context. Approval requires explicit review;
+unknown interaction types are unavailable. It has no editor/file tree/PTY, model-key form or arbitrary
+HTML/Markdown execution. Trusted incoming text uses DOM textContent, never payload HTML.
+
+Drafts, caret, reading position and unfinished interaction input remain in page memory across session
+switches. SDK owns confirmed authority/request correlation/recovery; UI owns rendering and selection
+generations. Late responses cannot change the newly selected session or clear a newer draft. Older
+history is displayed separately from the active snapshot with a bounded four-page window; a shifted
+window is visible. Tool previews are separately bounded and explicitly non-durable.
+
+Pairing takes a challenge from an explicit trusted owner operation and clears the field after exchange.
+The SDK hides the grant in private page memory. Refresh/reopen requires pairing and inspection of
+sessions/history, with no persistent send queue or silent token refresh. Foreground recovery checks
+authority before enabling sensitive actions; an unknown outcome keeps the draft and requires user
+inspection. Closing the page ends observation, while accepted Host execution continues.
+
+The [external consumer](../../examples/coding-browser-ui/README.md) proves separate packed SDK use.
+The independent browser preparation probe is documented in the testing scripts README and keeps its
+scope distinct from real Host/Provider acceptance.

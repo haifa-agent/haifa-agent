@@ -6,7 +6,9 @@ Coding application, outside the base SDK BOM. Java compilation requires Java 21.
 
 This is an experimental product contract. The [Host](../haifa-coding-host/README.md) and
 [Java Client](../haifa-coding-client/README.md) implement safe embedded/native binding and optional
-browser authorization. Browser SDK/UI and TUI migration remain separate deliveries. Existing native
+browser authorization. The [browser SDK](../haifa-coding-browser-client/README.md) and [Web](../haifa-coding-web/README.md)
+now have independently tested feature preparation; real Host acceptance remains gated. TUI migration
+remains a separate delivery. Existing native
 v1 methods remain unchanged.
 
 ## One schema, two consumers
@@ -34,8 +36,9 @@ npm ci
 npm run contract:check
 ```
 
-The private Node tooling validates schema, generated-type freshness and cross-field invariants. It is
-neither a transport nor a publishable npm SDK. Maven tests use the same fixtures and schema, round-trip
+The private Node tooling validates schema, generated-type freshness and cross-field invariants.
+Browser-safe cross-field rules live in `contract/invariants.ts` and are reused by the precompiled
+browser SDK build; the fixture runner remains Node-only. It is not itself a transport/npm SDK. Maven tests use the same fixtures and schema, round-trip
 the Java records and check public signatures. `CodingApiArchitectureTest` checks JDK-only bytecode
 dependencies in the architecture profile. Java constructors check local shape; untrusted JSON must
 first pass schema validation and then `CodingProtocolChecks`, as the fixture entry points demonstrate.

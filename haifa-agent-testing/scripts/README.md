@@ -131,3 +131,22 @@ python3 haifa-agent-testing/scripts/coding-sdk-b2-acceptance.py \
 
 需要 Java 21、Maven、Python Playwright 和实际 Chromium；不会下载浏览器、调用真实 Provider、
 构建正式 Web 或放行 B3/B4。输出 manifest 只记录结构化事实、制品清单与布尔断言。
+
+## Coding B3 独立准备验证（不是 Host 验收）
+
+`coding-browser-b3-preparation.py` 将 packed SDK、Web 和外部 UI 复制到全新的仓库外运行根，
+用冻结锁文件独立构建，再用实际 Chromium 验证无 Node/eval 的包、CJK 分帧、静态布局/键盘，
+以及合成协议响应下的精确目标、文本转义与草稿隔离。静态 fixture server 与 Playwright 路由
+不是 Coding Host；脚本不启动 Runtime/Provider/BFF，也不关闭 B2/B3 的真实 Host 门禁。
+
+```bash
+python3 haifa-agent-testing/scripts/coding-browser-b3-preparation.py \
+  --run-root /tmp/coding-b3-preparation-001 \
+  --expected-sha <exact-source-sha> \
+  --chromium /absolute/path/to/chromium
+```
+
+先生成 SDK tarball，并使两个消费者的锁文件与该 tarball integrity 一致。需要 npm、Python
+Playwright 和实际 Chromium。运行根必须位于仓库外且尚不存在。manifest 明确标记
+`INDEPENDENT_PREPARATION_ONLY_NO_REAL_HOST`，记录版本/hash/断言，不保存 proof/请求正文。
+真正独立 Host + 本地 Provider Stub 和 Windows Chrome/Edge 的验收仍须在 B2 门禁闭合后进行。
