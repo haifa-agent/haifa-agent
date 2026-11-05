@@ -429,12 +429,12 @@ public final class HaifaAgentBuilder {
 
     /** Enables bounded Run selection and its required historical readers. Disabled by default. */
     public HaifaAgentBuilder enableRunWorkingSet() {
-        return enableRunWorkingSet(2048);
+        return enableRunWorkingSet(
+                io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.DEFAULT_WORKING_SET_TARGET);
     }
 
     public HaifaAgentBuilder enableRunWorkingSet(int targetTokens) {
-        if (targetTokens < 128 || targetTokens > 65536)
-            throw new IllegalArgumentException("invalid working set target");
+        io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.validateWorkingSetTarget(targetTokens);
         workingSetTarget = targetTokens;
         historyRetrieval = true;
         return this;
@@ -442,14 +442,8 @@ public final class HaifaAgentBuilder {
 
     private Map<String, Object> workingSetOptions(Map<String, Object> original) {
         if (workingSetTarget == null) return original;
-        var options = new LinkedHashMap<>(original);
-        options.putIfAbsent(io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.WORKING_SET, true);
-        options.putIfAbsent(
-                io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.CONTEXT_BUDGET_POLICY,
-                io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.UNIFIED_CONTEXT_V1);
-        options.putIfAbsent(
-                io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.WORKING_SET_TARGET, workingSetTarget);
-        return Map.copyOf(options);
+        return io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.unifiedWorkingSetOptions(
+                original, workingSetTarget);
     }
 
     public HaifaAgent build() {

@@ -647,3 +647,6 @@ Keyword scans bound rows and source windows, with explicit continuation across b
 load a selected persisted message/result object; this does not provide byte-range disk I/O or a full-text index.
 Unsupported oversized/deep structured representations fail unavailable instead of claiming a complete search.
 No Run-aware selection, Tier 1 retention change or terminal automatic maintenance is enabled here.
+
+Product assemblies and SDK working-set opt-in share `RuntimeControlOptions.unifiedWorkingSetOptions`;
+it validates the shared target range and fills missing controls while preserving explicit profile overrides.

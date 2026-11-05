@@ -2,6 +2,8 @@
 
 ## Unreleased - 0.1.5-SNAPSHOT
 
+- Add explicit, default-off Coding context selection with authorized history readers and documented legacy rollback; preserve frozen Run policy across pause/resume and SQLite reopen.
+
 - Preserve full current-Run summaries when rebuilding unified working sets, including small soft targets and
   new-task objectives. Record unreadable compaction sources as typed refusals without advancing coverage.
 

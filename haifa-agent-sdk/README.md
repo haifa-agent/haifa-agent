@@ -434,3 +434,8 @@ retrieval results enter model/summary requests or public Tool views. Existing me
 dependent persisted retrieval messages and Session summaries, including after reopening a Runtime.
 Scope-level revocation is also checked before ordinary and summary model requests, even after retrieval evidence
 has been summarized. Source-specific withdrawal uses the existing message-redaction API.
+
+Working-set opt-in also applies to named child profiles while preserving each child's Tool allowlist and
+model binding. Parent retrieval permissions do not implicitly grant the child historical readers.
+Coding's standalone assembly exposes the same Runtime strategy through its explicit context configuration;
+it remains disabled by default. Consumer integration coverage is distinct from pending real-model evaluation.

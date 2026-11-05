@@ -159,3 +159,11 @@ return unavailable and consumed tokens cannot dispatch again. Host restart is no
 Cancellation is a request until the broker reports the actual process outcome. Host shutdown requests
 Shell cancellation before closing persistence. Normal asynchronous Agent Runs retain their existing lifecycle.
 Old clients/Hosts keep the synchronous Shell endpoint; new clients detect optional `shell-operations`.
+
+## Opt-in context selection and rollback
+
+The default remains legacy. Coding can explicitly enable `context.policy: unified-context-v1` with
+`context.historyRetrieval: true`; `targetTokens` is a soft target and the model's hard limit still applies.
+The policy freezes per Run. Saved historical results remain readable when selection is rolled back to
+legacy with readers retained. See the [CLI configuration, limits and restart/rollback procedure](../../haifa-agent-applications/haifa-agent-cli/README.md#opt-in-context-selection-and-rollback).
+Real-model evaluation and default enablement remain pending; terminal automatic maintenance is unsupported.
