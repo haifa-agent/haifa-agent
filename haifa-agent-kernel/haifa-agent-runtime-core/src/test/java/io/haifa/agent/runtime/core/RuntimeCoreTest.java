@@ -3971,6 +3971,91 @@ class RuntimeCoreTest {
         }
     }
 
+    @Test
+    @SuppressWarnings("unchecked")
+    void unifiedPressureCommitsTwoSemanticSummariesThenCompletesWithoutRepeatingReads() {
+        var ordinary = new ArrayList<AgentChatRequest>();
+        var summaryCalls = new AtomicInteger();
+        var saved = new java.util.concurrent.atomic.AtomicReference<Map<String, Object>>();
+        String objective = "Continue the requested task using the saved pressure evidence";
+        var fixture = workingSetFixture(
+                call -> {
+                    if (call.structuredOutput().isPresent()) {
+                        summaryCalls.incrementAndGet();
+                        return ContextLifecycleHistoryFixture.summary(call);
+                    }
+                    ordinary.add(call);
+                    assertThat(call.messages())
+                            .anyMatch(m -> m.role() == ModelMessageRole.USER
+                                    && m.content().equals(objective));
+                    if (ordinary.size() == 1)
+                        return response(new ToolCallDecision(List.of(toolRequest(
+                                "find",
+                                "history_search",
+                                "1.0.0",
+                                new ToolArguments("find", "1", Map.of("messageId", "pressure-source"))))));
+                    if (ordinary.size() == 2) {
+                        var entry = ((List<Map<String, Object>>) call.messages()
+                                        .getLast()
+                                        .toolResultData()
+                                        .get("entries"))
+                                .getFirst();
+                        saved.set(Map.of(
+                                "runId",
+                                entry.get("runId"),
+                                "messageId",
+                                entry.get("messageId"),
+                                "version",
+                                entry.get("version")));
+                    }
+                    if (ordinary.size() == 2 || ordinary.size() == 3) {
+                        var args = new java.util.LinkedHashMap<String, Object>(saved.get());
+                        args.put("offset", ordinary.size() == 2 ? 0 : 8192);
+                        args.put("length", 8192);
+                        return response(new ToolCallDecision(List.of(toolRequest(
+                                "read-" + ordinary.size(),
+                                "history_read",
+                                "1.0.0",
+                                new ToolArguments("read", "1", args)))));
+                    }
+                    return response(finalDecision("completed after semantic compaction"));
+                },
+                Map.of(RuntimeControlOptions.CONTEXT_BUDGET_POLICY, RuntimeControlOptions.UNIFIED_CONTEXT_V1),
+                () -> ContextLifecycleHistoryFixture.NOW,
+                new AtomicInteger(),
+                builder -> builder.compressionPolicy(CompressionPolicy.defaults()
+                                .withActiveHistoryBudgetTokens(2000)
+                                .withTailTokenBounds(5, 50))
+                        .publicToolPolicy((run, binding, request) -> TestToolPlatform.allow()));
+        fixture.store.appendSessionMessage(new SessionMessageDraft(
+                new AgentMessageId("pressure-source"),
+                ContextLifecycleHistoryFixture.SESSION,
+                Optional.of(ContextLifecycleHistoryFixture.PRIOR),
+                Optional.empty(),
+                MessageRole.USER,
+                MessageStatus.COMPLETED,
+                MessageVisibility.USER_VISIBLE,
+                List.of(new TextPart("PRESSURE_EVIDENCE " + "saved data ".repeat(3000), "plain")),
+                Map.of(),
+                ContextLifecycleHistoryFixture.NOW));
+        var started = fixture.runtime.start(workingSetRequest("pressure", objective, "summary-profile"));
+        var owner = fixture.store.find(started.runId()).orElseThrow();
+        ContextLifecycleHistoryFixture.registerOwner(fixture.store, owner);
+        fixture.scheduler.runAll();
+        assertThat(fixture.runtime.find(started.runId()).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(ordinary).hasSize(4);
+        assertThat(summaryCalls.get()).isGreaterThanOrEqualTo(2);
+        assertThat(fixture.store.latestVersion(owner.sessionId())).isGreaterThanOrEqualTo(2);
+        assertThat(fixture.store.latestValid(owner.sessionId()).orElseThrow().quality())
+                .isEqualTo(io.haifa.agent.context.compression.CompactionQuality.SEMANTIC_VALIDATED);
+        assertThat(fixture.store.eventsFor(owner.id()))
+                .filteredOn(e -> e.type().equals("session.compaction-recovery")
+                        && Boolean.TRUE.equals(e.data().get("committed"))
+                        && "SEMANTIC_VALIDATED".equals(e.data().get("quality")))
+                .hasSizeGreaterThanOrEqualTo(2);
+        assertThat(fixture.store.toolCalls(owner.id())).hasSize(3);
+    }
+
     private static Map<String, Object> summaryProbeItem(String id, String text) {
         return Map.of("stableItemId", id, "text", text, "confidence", "OBSERVED", "sourceRefs", List.of("m004"));
     }
@@ -3993,6 +4078,13 @@ class RuntimeCoreTest {
             assertThat(fixture.runtime.find(started.runId()).orElseThrow().status())
                     .isEqualTo(AgentRunStatus.FAILED);
             assertThat(calls).hasValue(0);
+            assertThat(fixture.runtime
+                            .find(started.runId())
+                            .orElseThrow()
+                            .error()
+                            .orElseThrow()
+                            .code())
+                    .isEqualTo(AgentErrorCode.MODEL_CONTEXT_TOO_LONG);
             assertThat(fixture.store.latestVersion(ContextLifecycleHistoryFixture.SESSION))
                     .isZero();
             assertThat(fixture.store
@@ -4248,9 +4340,11 @@ class RuntimeCoreTest {
                                             ? ContextLifecycleHistoryFixture.urlImageModel()
                                             : id.equals("budget-profile")
                                                     ? constrainedContextModel(8192, 1024)
-                                                    : id.equals("tiny-profile")
-                                                            ? constrainedContextModel()
-                                                            : DefaultResolvedModelSnapshots.deepSeekV4Pro(),
+                                                    : id.equals("summary-profile")
+                                                            ? constrainedContextModel(32768, 4096)
+                                                            : id.equals("tiny-profile")
+                                                                    ? constrainedContextModel()
+                                                                    : DefaultResolvedModelSnapshots.deepSeekV4Pro(),
                                     Map.of(),
                                     id.equals("seed-profile")
                                             ? withOption(options, RuntimeControlOptions.WORKING_SET_TARGET, 16384)

@@ -73,6 +73,67 @@ class OpenCodeGoOpenAiChatTest {
     }
 
     @Test
+    void summaryRequestUsesJsonObjectAndTheFrozenSchemaWithoutThinkingOptions() throws Exception {
+        String content = "{\"schemaVersion\":\"v1\",\"language\":\"en\",\"goals\":[],\"constraints\":[],"
+                + "\"progress\":{\"completed\":[],\"active\":[],\"blocked\":[]},\"decisions\":[],\"nextSteps\":[],"
+                + "\"criticalContext\":[],\"unresolvedQuestions\":[]}";
+        responseBody.set(syncBody(json.writeValueAsString(content)
+                .substring(1, json.writeValueAsString(content).length() - 1)));
+        var result = model().invoke(summaryRequest());
+        assertThat(result.structuredOutput())
+                .hasValueSatisfying(output -> assertThat(output).containsEntry("schemaVersion", "v1"));
+        var body = readRequestBody();
+        assertThat(body.path("response_format").path("type").asText()).isEqualTo("json_object");
+        assertThat(body.has("thinking") || body.has("reasoning_effort") || body.has("tools"))
+                .isFalse();
+        String contract = body.path("messages")
+                .get(body.path("messages").size() - 1)
+                .path("content")
+                .asText();
+        assertThat(json.readTree(contract.substring(contract.indexOf('{'))))
+                .isEqualTo(json.valueToTree(io.haifa.agent.context.compression.SemanticSummarySchema.jsonSchema()));
+    }
+
+    @Test
+    void summaryParseFailureAndEmptyResponseKeepDistinctNormalizedErrors() {
+        for (String content : List.of("not-json", "[]", "")) {
+            responseBody.set(syncBody(content));
+            assertThatThrownBy(() -> model().invoke(summaryRequest()))
+                    .isInstanceOfSatisfying(io.haifa.agent.model.api.ModelInvocationException.class, failure -> {
+                        assertThat(failure.category())
+                                .isEqualTo(
+                                        content.isEmpty()
+                                                ? io.haifa.agent.model.api.ModelErrorCategory.EMPTY_RESPONSE
+                                                : io.haifa.agent.model.api.ModelErrorCategory.MALFORMED_RESPONSE);
+                        assertThat(failure.providerCode())
+                                .isEqualTo(content.isEmpty() ? "empty_response" : "structured_output_invalid");
+                    });
+        }
+    }
+
+    private AgentChatRequest summaryRequest() {
+        var q = request();
+        return new AgentChatRequest(
+                q.callId(),
+                q.requestId(),
+                q.runId(),
+                q.sessionAffinity(),
+                q.iteration(),
+                q.attempt(),
+                q.model(),
+                q.messages(),
+                List.of(),
+                q.maxOutputTokens(),
+                q.timeout(),
+                q.options(),
+                Optional.of(new io.haifa.agent.core.run.StructuredOutputRequirement(
+                        "json-schema:SemanticConversationSummaryV1",
+                        "sha256:semantic-summary-v1",
+                        "SemanticConversationSummaryV1",
+                        io.haifa.agent.context.compression.SemanticSummarySchema.jsonSchema())));
+    }
+
+    @Test
     void sendsTheDocumentedSessionHeaderOnTheStreamingPath() {
         responseBody.set(
                 """
@@ -279,7 +340,11 @@ class OpenCodeGoOpenAiChatTest {
                 "deepseek-v4.1-flash",
                 "OpenCode Go DeepSeek V4.1 Flash",
                 ModelStatus.ACTIVE,
-                EnumSet.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING, ModelCapability.REASONING),
+                EnumSet.of(
+                        ModelCapability.TEXT_CHAT,
+                        ModelCapability.TOOL_CALLING,
+                        ModelCapability.REASONING,
+                        ModelCapability.STRUCTURED_OUTPUT),
                 1_000_000,
                 384_000,
                 Map.of(),

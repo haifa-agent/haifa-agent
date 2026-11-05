@@ -960,6 +960,13 @@ public final class SemanticCompactionCoordinator {
 
     private static String failureStage(Exception exception) {
         if (exception instanceof CompactionBudgetExceededException) return "PLANNING";
+        if (exception instanceof io.haifa.agent.model.api.ModelInvocationException model) {
+            return switch (model.category()) {
+                case INVALID_REQUEST -> "REQUEST";
+                case MALFORMED_RESPONSE -> "PARSING";
+                default -> "GENERATION";
+            };
+        }
         if (exception instanceof SemanticSummaryValidationException validation) {
             return switch (validation.code()) {
                 case JSON_PARSE_ERROR -> "PARSING";

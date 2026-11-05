@@ -550,7 +550,9 @@ class SessionCompressionCheckpointTest {
             assertThat(tool.providerCorrelationId().value())
                     .isNotEqualTo(tool.idempotencyKey().value());
         });
-        assertThat(traces).anyMatch(trace -> trace.operation().equals("context.forced-rebuild"));
+        assertThat(traces)
+                .filteredOn(trace -> trace.operation().equals("context.forced-rebuild"))
+                .hasSize(1);
         assertThat(traces)
                 .filteredOn(trace -> trace.operation().equals("context.built"))
                 .anySatisfy(trace -> assertThat(trace.safeAttributes())

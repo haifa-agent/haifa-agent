@@ -290,6 +290,13 @@ public final class AttemptExecutor {
         RuntimeQuotaExceededException quotaExceeded = findFailure(error, RuntimeQuotaExceededException.class);
         RuntimeLimitExceededException budgetExceeded = findFailure(error, RuntimeLimitExceededException.class);
         ContextBuildException contextBuild = findFailure(error, ContextBuildException.class);
+        if (contextBuild == null
+                && findFailure(error, io.haifa.agent.runtime.core.loop.ContextRebuildExhaustedException.class)
+                        != null) {
+            contextBuild = new ContextBuildException(
+                    io.haifa.agent.context.api.ContextBuildFailure.REQUIRED_CONTEXT_TOO_LARGE,
+                    "active context remained too long after the bounded rebuild");
+        }
         ModelContinuationException continuationFailure = findFailure(error, ModelContinuationException.class);
         Map<String, Object> details;
         if (continuationFailure != null) {

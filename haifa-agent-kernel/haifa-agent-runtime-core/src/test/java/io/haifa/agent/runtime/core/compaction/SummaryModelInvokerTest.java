@@ -81,6 +81,12 @@ class SummaryModelInvokerTest {
         assertThat(capturedRequest.get()).isNotNull();
         // Capped at 32768, NOT the old hardcoded 4096!
         assertThat(capturedRequest.get().maxOutputTokens()).isEqualTo(32_768);
+        assertThat(capturedRequest.get().tools()).isEmpty();
+        assertThat(capturedRequest.get().structuredOutput()).hasValueSatisfying(requirement -> {
+            assertThat(requirement.responseName()).isEqualTo("SemanticConversationSummaryV1");
+            assertThat(requirement.jsonSchema())
+                    .isEqualTo(io.haifa.agent.context.compression.SemanticSummarySchema.jsonSchema());
+        });
     }
 
     @Test

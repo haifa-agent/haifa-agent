@@ -82,6 +82,11 @@ Unreadable complete sources fail with `UNSUPPORTED_CONTEXT_CONTENT`, a `SOURCE_P
 unchanged; source refusal never authorizes deterministic fallback or blind retry. A Run requiring that
 compaction fails explicitly. Only physical model calls consume model-call accounting.
 
+Compaction failure stages distinguish request rejection, response parsing, empty generation, schema mapping,
+semantic validation, planning, source validation and persistence. A locally exhausted single forced rebuild
+reports `MODEL_CONTEXT_TOO_LONG` even when it escapes through the outer attempt executor. This does not
+admit another call or relax required input, semantic validation, repair or CAS limits.
+
 Terminal automatic summary maintenance remains deferred; terminal Run usage is immutable.
 
 ## Optional Run working sets
