@@ -24,8 +24,10 @@ public final class CodingHosts {
             Path data = options.dataDirectory().toRealPath();
             if (options.browser().isPresent()) {
                 Path assets = options.browser().orElseThrow().assetRoot().toRealPath();
-                if (workspace.startsWith(assets) || data.startsWith(assets))
-                    throw new IllegalArgumentException("ASSET_ROOT_EXPOSES_OWNER_DATA");
+                if (workspace.startsWith(assets)
+                        || data.startsWith(assets)
+                        || assets.startsWith(workspace)
+                        || assets.startsWith(data)) throw new IllegalArgumentException("ASSET_ROOT_EXPOSES_OWNER_DATA");
             }
             var resolved = new CliConfigurationLoader(environment::get)
                     .loadHostConfiguration(ConfigurationInput.of(options.configuration()), workspace);

@@ -173,6 +173,17 @@ def result(reply):
     return reply['body']['result']
 
 
+def await_stream_closed(page, timeout):
+    # Playwright wait_for_function uses eval inside the page, forbidden by the production CSP.
+    # Keep that policy intact and poll a fixed expression through the trusted browser driver.
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if page.evaluate('probe.stream().closed'):
+            return
+        time.sleep(0.05)
+    raise RuntimeError('BROWSER_ESTABLISHED_STREAM_NOT_CLOSED')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--run-root', type=Path, required=True)
@@ -249,17 +260,22 @@ execution:
             page = context.new_page()
             page.goto(owner.endpoint+'/browser/')
             require(page.evaluate('typeof probe') == 'object', 'BROWSER_TRUSTED_ASSET')
+            evidence['stage'] = 'pair'
             paired = page.evaluate('(proof)=>probe.pair(proof)', owner.command('pair', 'pairing'))
+            evidence['stage'] = 'initialize'
             initialized = result(page.evaluate('()=>probe.rpc("initialize",{protocolVersion:"1",clientInfo:{name:"actual-chromium-probe",version:"1"},optionalCapabilities:["coding-product-v1","session-presentation-v1","session-consent-v1"]})'))
             require(initialized['clientId'] == paired['clientId'] and initialized['clientSource'] == 'browser', 'ONE_BOUND_BROWSER_CLIENT')
             stub.mode = 'hold'
-            create = {'command': {'kind': 'command', 'operation': 'create', 'clientRequestId': 'browser-held', 'idempotencyKey': 'browser-held-key', 'target': {'projectId': None, 'sessionId': None, 'runId': None, 'interactionId': None, 'targetRevision': None}, 'text': 'synthetic held operation', 'choice': None, 'optionId': None, 'selections': []}, 'options': {'approved': False, 'includeInContext': False, 'answers': []}}
+            create = {'command': {'kind': 'command', 'operation': 'create', 'clientRequestId': 'browser-held', 'idempotencyKey': 'browser-held-key', 'target': {'projectId': None, 'sessionId': None, 'runId': None, 'interactionId': None, 'targetRevision': None}, 'text': 'synthetic held operation', 'optionId': None, 'executionId': None, 'selections': []}, 'options': {'approved': False, 'includeInContext': False, 'answers': []}}
+            evidence['stage'] = 'create'
             created = result(page.evaluate('(request)=>probe.rpc("product/command",request)', create))
             session, run = created['session']['sessionId'], created['receipt']['runId']
             require(stub.entered.wait(15), 'BROWSER_RUN_ACCEPTED')
+            evidence['stage'] = 'subscribe'
             subscription = result(page.evaluate('(sessionId)=>probe.rpc("presentation/subscribe",{sessionId})', session))
             require(subscription['snapshot']['scope']['source'] == 'browser' and subscription['snapshot']['consent']['state'] == 'ASK', 'BROWSER_SOURCE_AND_CONSENT')
             subid = subscription['subscriptionId']
+            evidence['stage'] = 'attach'
             require(page.evaluate('(id)=>probe.attach(id)', subid) == 200, 'ACTUAL_BROWSER_SSE')
             # Actual native GET without Origin cannot consume browser-owned subscriptions.
             try:
@@ -268,8 +284,11 @@ execution:
             except __import__('urllib.error', fromlist=['HTTPError']).HTTPError as rejected:
                 status = rejected.code
             require(status in (403, 409), 'NATIVE_GET_BROWSER_BYPASS')
+            evidence['stage'] = 'revoke'
             owner.command('revoke '+paired['clientId'], 'revoked')
-            page.wait_for_function('probe.stream().closed', timeout=8000)
+            evidence['stage'] = 'await-revoke-close'
+            await_stream_closed(page, 8)
+            evidence['stage'] = 'revoked-rpc'
             require(page.evaluate('()=>probe.rpc("client/renew")')['status'] == 403, 'REVOKED_RENEW')
             require(page.evaluate('(request)=>probe.rpc("product/command",request)', create)['status'] == 403, 'REVOKED_COMMAND')
             active = client(client_cp, owner, root, 'accepted-after-revoke', 'inspect', session, run)
@@ -281,19 +300,24 @@ execution:
             evidence['checks']['actualBrowserSseRevokeAcceptedRunSurvives'] = True
             require(page.evaluate('probe.storageEmpty()'), 'PROOF_PERSISTED')
             port = int(owner.endpoint.rsplit(':', 1)[1])
+            evidence['stage'] = 'restart'
             owner.close()
             owner = Owner(host_cp, root, config, port, 5)
+            evidence['stage'] = 'old-incarnation'
             require(page.evaluate('()=>probe.rpc("client/renew")')['status'] == 403, 'OLD_INCARNATION_ACCEPTED')
             evidence['checks']['sameOriginRestartRejectsOldGrant'] = True
+            evidence['stage'] = 'pair-after-restart'
             second = page.evaluate('(proof)=>probe.pair(proof)', owner.command('pair', 'pairing'))
             require(second['hostIncarnation'] != paired['hostIncarnation'], 'INCARNATION_NOT_CHANGED')
             result(page.evaluate('()=>probe.rpc("initialize",{protocolVersion:"1",clientInfo:{name:"actual-chromium-probe",version:"1"},optionalCapabilities:["coding-product-v1","session-presentation-v1","session-consent-v1"]})'))
+            evidence['stage'] = 'subscribe-after-restart'
             newsub = result(page.evaluate('(sessionId)=>probe.rpc("presentation/subscribe",{sessionId})', session))
             require(newsub['snapshot']['consent']['state'] == 'ASK', 'CONSENT_RESTORED_ON_RECONNECT')
             page.evaluate('(id)=>probe.attach(id)', newsub['subscriptionId'])
-            page.wait_for_function('probe.stream().closed', timeout=10000)
+            await_stream_closed(page, 10)
             require(page.evaluate('()=>probe.rpc("client/renew")')['status'] == 403, 'EXPIRED_GRANT_ACCEPTED')
             evidence['checks']['actualBrowserSseAbsoluteExpiry'] = True
+            evidence['stage'] = 'reload'
             page.reload()
             require(page.evaluate('probe.storageEmpty()') and page.evaluate('()=>probe.rpc("client/renew")')['status'] == 403, 'RELOAD_RESTORED_PROOF')
             evidence['checks']['pageMemoryOnlyNoSilentRefresh'] = True
@@ -308,6 +332,8 @@ execution:
         evidence['status'] = 'FAIL'
         # Do not dump exception text, request arguments, grants or private launcher replies.
         evidence['failureType'] = type(failure).__name__
+        for safe_code in ('SSE attach failed', 'Pair failed', 'Failed to fetch', 'Timeout', 'Cannot read properties', 'unsafe-eval', 'Refused to evaluate', 'ReferenceError', 'SyntaxError'):
+            if safe_code in str(failure): evidence['probeFailure'] = safe_code
         if isinstance(failure, RuntimeError):
             evidence['failureCode'] = str(failure)
     finally:

@@ -131,6 +131,10 @@ class CodingHostProductTest {
             assertThatThrownBy(() -> fixture.start(Optional.empty()))
                     .hasMessageContaining("HOST_DURABLE_PERSISTENCE_REQUIRED");
             Files.writeString(fixture.config, trusted);
+            var writableAssets = Files.createDirectories(fixture.workspace.resolve("mutable-assets"));
+            Files.writeString(writableAssets.resolve("index.html"), "workspace-controlled");
+            assertThatThrownBy(() -> fixture.start(Optional.of(new BrowserOptions(writableAssets, "index.html"))))
+                    .hasMessage("ASSET_ROOT_EXPOSES_OWNER_DATA");
             assertThatThrownBy(() -> fixture.start(Optional.of(new BrowserOptions(fixture.assets, "missing.html"))))
                     .isInstanceOf(RuntimeException.class);
             try (var host = fixture.start(Optional.empty());

@@ -330,6 +330,7 @@ final class HttpCodingClient implements CodingClient {
     private final class Observation implements CodingPresentationSubscription {
         private final Subscribed subscription;
         private final AtomicBoolean stopped = new AtomicBoolean();
+        private final AtomicBoolean cleanupSent = new AtomicBoolean();
         private final ArrayDeque<Envelope> queue = new ArrayDeque<>();
         private int queuedBytes;
         private volatile InputStream input;
@@ -418,33 +419,50 @@ final class HttpCodingClient implements CodingClient {
                 }
                 default -> throw new IOException("SSE critical kind unsupported");
             }
+            if (envelope instanceof Resync terminal) {
+                resync(terminal.reason());
+                return;
+            }
             int bytes = json.writeValueAsBytes(envelope).length;
+            boolean overflow;
             synchronized (queue) {
                 if (stopped.get()) return;
-                if (queuedBytes + bytes > 512 * 1024) {
-                    resync("CLIENT_QUEUE_OVERFLOW");
-                    return;
+                overflow = queuedBytes + bytes > 512 * 1024;
+                if (!overflow) {
+                    queue.add(envelope);
+                    queuedBytes += bytes;
+                    queue.notifyAll();
                 }
-                queue.add(envelope);
-                queuedBytes += bytes;
-                queue.notifyAll();
             }
-            if (envelope instanceof Resync) stop(false);
+            if (overflow) resync("CLIENT_QUEUE_OVERFLOW");
         }
 
         private void resync(String reason) {
             synchronized (queue) {
-                if (stopped.get()) return;
+                if (!stopped.compareAndSet(false, true)) return;
                 queue.clear();
                 queue.add(new Resync("resync", confirmed.scope().viewId(), reason));
                 queuedBytes = 0;
+                // Closed state and terminal envelope are published atomically to pollers.
                 queue.notifyAll();
             }
-            stop(false);
+            finishStop();
         }
 
         private boolean stop(boolean discard) {
-            if (!stopped.compareAndSet(false, true)) return false;
+            synchronized (queue) {
+                if (!stopped.compareAndSet(false, true)) return false;
+                if (discard) {
+                    queue.clear();
+                    queuedBytes = 0;
+                }
+                queue.notifyAll();
+            }
+            finishStop();
+            return true;
+        }
+
+        private void finishStop() {
             observations.remove(this);
             var stream = input;
             if (stream != null)
@@ -453,14 +471,7 @@ final class HttpCodingClient implements CodingClient {
                 } catch (IOException ignored) {
                 }
             if (attaching != null) attaching.cancel(true);
-            synchronized (queue) {
-                if (discard) {
-                    queue.clear();
-                    queuedBytes = 0;
-                }
-                queue.notifyAll();
-            }
-            return true;
+            closeRemote();
         }
 
         @Override
@@ -495,7 +506,12 @@ final class HttpCodingClient implements CodingClient {
 
         @Override
         public void close() {
-            if (!stop(true)) return;
+            stop(true);
+            closeRemote();
+        }
+
+        private void closeRemote() {
+            if (!cleanupSent.compareAndSet(false, true)) return;
             try {
                 if (!HttpCodingClient.this.closed.get())
                     executor.execute(() -> {
