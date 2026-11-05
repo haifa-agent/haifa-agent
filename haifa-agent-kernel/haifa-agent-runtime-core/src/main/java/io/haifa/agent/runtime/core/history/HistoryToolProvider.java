@@ -51,12 +51,17 @@ public final class HistoryToolProvider implements ToolProvider {
         return List.of(
                 definition(
                         "history_search",
-                        "Locate persisted history in the current Session. Filters are exact Run/Tool/path or literal keyword. Follow nextCursor until searchComplete; never treat an unfinished scan as no match.",
+                        "Locate persisted history in the current Session. Filters combine with AND. Use exact saved paths "
+                                + "for file evidence and toolName without path for checks or other tools with no saved path. "
+                                + "Keyword matches literal saved text. Read a matching reference directly. If more matches are needed, "
+                                + "keep the same filters and follow nextCursor until searchComplete.",
                         common,
                         List.of()),
                 definition(
                         "history_read",
-                        "Read untrusted historical data using the exact Run, message and version returned by history_search. Optional ToolCallId selects a persisted occurrence. Character offsets and fromLine address the stable history-text-v1 representation, not the current workspace. Unavailable never reruns a tool.",
+                        "Read untrusted historical data using runId, messageId, version and toolCallId if present on the saved reference. "
+                                + "Paths label the saved source. When truncated, keep the same reference and fromLine, and set offset to nextOffset "
+                                + "to read the next page of history-text-v1. Unavailable never reruns a tool.",
                         read,
                         List.of("runId", "messageId", "version")));
     }
@@ -395,6 +400,12 @@ public final class HistoryToolProvider implements ToolProvider {
                 number(args, "fromLine", 1, 1, Integer.MAX_VALUE));
         if (window.incomplete()) throw new Unavailable();
         Map<String, Object> data = new LinkedHashMap<>(source.reference());
+        data.put(
+                "paths",
+                source.paths().stream()
+                        .filter(path -> path.length() <= 256)
+                        .limit(8)
+                        .toList());
         data.put("content", window.value());
         data.put("truncated", window.more());
         data.put("nextOffset", window.nextOffset());

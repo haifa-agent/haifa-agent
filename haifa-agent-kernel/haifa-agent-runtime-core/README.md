@@ -20,6 +20,11 @@ and standard immutable Tool-result assets; arbitrary asset or Artifact bodies ha
 no automatic post-terminal summary owner or budget. Terminal Run usage remains immutable and
 model calls stay outside persistence transactions.
 
+`history_search` combines filters with AND. Search pathless checks by `toolName` and file evidence by exact saved
+path. Search results supply the versioned reference for `history_read`. Its `paths` field carries up to eight
+saved paths or artifact labels of at most 256 characters each. For another page, preserve the reference and
+`fromLine` and pass `nextOffset` as `offset`.
+
 `model.usage-accounted` records one returned usage aggregate per physical ordinary/summary/repair
 call, independently of streaming usage updates. Missing input lanes are `UNKNOWN`; cost-weighted
 input defaults to `UNAVAILABLE`. Frozen `haifa.runtime.input_price_ratios` may provide exact

@@ -311,11 +311,14 @@ class HistoryToolProviderTest {
         assertThat(first.structuredData())
                 .containsEntry("truncated", true)
                 .containsEntry("sourceTruncated", false)
+                .containsEntry("paths", List.of("same.txt"))
                 .containsEntry("nextOffset", 12L)
                 .containsEntry("content", "stored versi");
         ref.put("fromLine", 3);
         ref.put("length", 11);
-        assertThat(invoke("history_read", ref).structuredData()).containsEntry("content", "second line");
+        assertThat(invoke("history_read", ref).structuredData())
+                .containsEntry("paths", List.of("same.txt"))
+                .containsEntry("content", "second line");
         assertThat(store.message(old.id())).contains(old);
     }
 
@@ -326,14 +329,17 @@ class HistoryToolProviderTest {
                 "output",
                 Map.of("body", "saved metadata"),
                 false,
-                List.of(new io.haifa.agent.core.reference.ArtifactRef(
-                        "deliverables/spec.md", "document", "v1", "Spec")));
+                List.of(
+                        new io.haifa.agent.core.reference.ArtifactRef("deliverables/spec.md", "document", "v1", "Spec"),
+                        new io.haifa.agent.core.reference.ArtifactRef(
+                                "long-label", "document", "v1", "title ".repeat(60))));
         var found = invoke("history_search", Map.of("path", "deliverables/spec.md"));
         assertThat(entries(found)).hasSize(1);
         assertThat(entries(found).getFirst())
                 .containsEntry("messageId", source.id().value());
-        assertThat(invoke("history_read", reference(source)).structuredData().get("content"))
-                .isEqualTo("stored version\nbody: saved metadata");
+        assertThat(invoke("history_read", reference(source)).structuredData())
+                .containsEntry("paths", List.of("Spec", "deliverables/spec.md", "long-label", "output"))
+                .containsEntry("content", "stored version\nbody: saved metadata");
     }
 
     @Test
