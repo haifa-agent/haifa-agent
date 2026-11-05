@@ -691,7 +691,7 @@ public final class RuntimeCoreBuilder {
                 controls,
                 List.of(new BudgetGuard(), new IterationGuard()),
                 new DefaultRuntimeContextBuilder(
-                        state, middleware, sessionMessageSource, memoryContextSource, skillContentLoader),
+                        state, middleware, sessionMessageSource, memoryContextSource, skillContentLoader, models),
                 models,
                 new DefaultDecisionValidator(new DuplicateToolCallGuard(), new ChildRunGuard()),
                 decisionExecutor,

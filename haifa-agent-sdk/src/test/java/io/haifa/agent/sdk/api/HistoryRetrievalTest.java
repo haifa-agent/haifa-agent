@@ -68,6 +68,8 @@ class HistoryRetrievalTest {
     @SuppressWarnings("unchecked")
     void sdkModelFindsAnArchivedExternalResultAndReadsItsExactVersionWithoutRedispatch() throws Exception {
         String evidence = "historical-evidence-v1";
+        String originalBody = evidence + "\n" + "x".repeat(24000) + "\nEND-v1";
+        var historicDispatches = new AtomicInteger();
         var store = new InMemoryRuntimeStore();
         var dispatches = new AtomicInteger();
         var calls = new AtomicInteger();
@@ -79,10 +81,11 @@ class HistoryRetrievalTest {
             public ToolResult invoke(ToolInvocationRequest request) {
                 dispatches.incrementAndGet();
                 String path = (String) request.arguments().values().get("path");
+                if (path.equals("historic.txt")) historicDispatches.incrementAndGet();
                 return new ToolResult(
                         true,
                         "read completed",
-                        Map.of("body", path.equals("historic.txt") ? evidence : path),
+                        Map.of("body", path.equals("historic.txt") ? originalBody : path),
                         List.of(),
                         List.of(),
                         true);
@@ -125,9 +128,25 @@ class HistoryRetrievalTest {
             assertThat(request.tools())
                     .extracting(ModelToolSpecification::name)
                     .contains("history_search", "history_read");
-            int step = calls.getAndIncrement();
-            if (step == 0) return SdkTestFixtures.toolCall("seed_read", Map.of("path", "historic.txt"));
-            if (step == 1) return SdkTestFixtures.finalAnswer("saved");
+            int ordinal = calls.getAndIncrement();
+            if (ordinal == 0) return SdkTestFixtures.toolCall("seed_read", Map.of("path", "historic.txt"));
+            if (ordinal == 1) {
+                var data = request.messages().getLast().toolResultData();
+                assertThat((String) data.get("content"))
+                        .hasSizeLessThanOrEqualTo(2048)
+                        .startsWith("read completed");
+                var reference = new HashMap<>((Map<String, Object>) data.get("source"));
+                reference.put("offset", "read completed\nbody: ".length() + originalBody.length() - "END-v1".length());
+                reference.put("length", 64);
+                return SdkTestFixtures.toolCall("history_read", reference);
+            }
+            if (ordinal == 2) {
+                assertThat((String)
+                                request.messages().getLast().toolResultData().get("content"))
+                        .startsWith("END-v1");
+                return SdkTestFixtures.finalAnswer("saved");
+            }
+            int step = ordinal - 1;
             if (step == 2) {
                 assertThat(request.messages().stream()
                                 .anyMatch(message -> message.content().contains(evidence)
@@ -152,7 +171,8 @@ class HistoryRetrievalTest {
             }
             if (step == 4)
                 assertThat(request.messages().getLast().toolResultData().get("content"))
-                        .isEqualTo("read completed\nbody: " + evidence);
+                        .asString()
+                        .startsWith("read completed\nbody: " + evidence);
             if (step < 8) return SdkTestFixtures.toolCall("seed_read", Map.of("path", "fresh-" + step + ".txt"));
             if (step == 9) {
                 assertThat(request.messages().stream()
@@ -189,6 +209,13 @@ class HistoryRetrievalTest {
 
             var stored = store.toolCalls(seed.runId()).getFirst();
             assertThat(stored.result().orElseThrow().assets()).hasSize(1);
+            assertThat(stored.result().orElseThrow().structuredData().get("body"))
+                    .isEqualTo(originalBody);
+            assertThat(store.toolCalls(seed.runId()).stream()
+                            .filter(call -> call.toolName().equals("history_read"))
+                            .allMatch(
+                                    call -> call.result().orElseThrow().assets().isEmpty()))
+                    .isTrue();
             var session = seed.record().sessionId();
             var messages = store.messagesAfter(session, MessageCursor.BEFORE_FIRST, 100);
             var compacted = new DeterministicContextCompressor()
@@ -207,7 +234,8 @@ class HistoryRetrievalTest {
                             session, idle.revision(), "read", "Find the saved evidence"));
             assertThat(agent.runs().await(turn.runId()).status()).isEqualTo(AgentRunStatus.COMPLETED);
             assertThat(dispatches).hasValue(6);
-            assertThat(calls).hasValue(10);
+            assertThat(calls).hasValue(11);
+            assertThat(historicDispatches).hasValue(1);
             assertThat(store.latestVersion(session)).isEqualTo(1);
             var source = messages.stream()
                     .filter(message -> message.role() == io.haifa.agent.core.message.MessageRole.TOOL)

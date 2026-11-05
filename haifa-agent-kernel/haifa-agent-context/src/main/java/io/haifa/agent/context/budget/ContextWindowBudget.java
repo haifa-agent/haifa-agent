@@ -23,13 +23,29 @@ public record ContextWindowBudget(
         if (safetyMarginTokens < 0) {
             throw new IllegalArgumentException("safetyMarginTokens must not be negative");
         }
-        long reserve = Math.min((long) model.maxOutputTokens(), (long) requestedOutputTokens);
-        long availableInput = (long) model.contextWindow() - reserve - safetyMarginTokens;
-        if (availableInput < 1) {
+        var budget = capacity(
+                model.contextWindow(),
+                Math.min((long) model.maxOutputTokens(), requestedOutputTokens),
+                safetyMarginTokens);
+        if (budget.availableInputTokens() < 1) {
             throw new ContextBuildException(
                     ContextBuildFailure.MODEL_WINDOW_TOO_SMALL,
                     "model context window cannot fit output reserve and safety margin");
         }
-        return new ContextWindowBudget(model.contextWindow(), reserve, safetyMarginTokens, availableInput);
+        return budget;
+    }
+
+    /** Shared calculation for actual requests and compaction planning; zero means no input can be admitted. */
+    public static ContextWindowBudget capacity(long contextWindow, long outputReserve, long safetyMargin) {
+        if (contextWindow < 1 || outputReserve < 1 || safetyMargin < 0)
+            throw new IllegalArgumentException("invalid context capacity");
+        long afterOutput = outputReserve >= contextWindow ? 0 : contextWindow - outputReserve;
+        long available = safetyMargin >= afterOutput ? 0 : afterOutput - safetyMargin;
+        return new ContextWindowBudget(contextWindow, outputReserve, safetyMargin, available);
+    }
+
+    public static int safetyMargin(long contextWindow, boolean forcedRebuild) {
+        if (contextWindow < 1) throw new IllegalArgumentException("context window must be positive");
+        return (int) Math.min(16_384L, Math.max(256L, contextWindow / (forcedRebuild ? 10L : 20L)));
     }
 }

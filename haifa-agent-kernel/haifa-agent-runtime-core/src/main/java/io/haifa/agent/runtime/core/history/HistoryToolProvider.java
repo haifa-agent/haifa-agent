@@ -8,6 +8,7 @@ import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.tool.*;
 import io.haifa.agent.runtime.core.bootstrap.RunAccessValidator;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext;
+import io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions;
 import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
 import io.haifa.agent.runtime.core.tool.ToolCallViewProjector;
 import io.haifa.agent.tool.api.*;
@@ -97,9 +98,40 @@ public final class HistoryToolProvider implements ToolProvider {
 
     public Optional<io.haifa.agent.context.item.HistoricalExcerptContent> excerpt(
             AgentRun current, AgentMessage message, int length) {
+        return excerpt(current, message, length, "");
+    }
+
+    public Optional<io.haifa.agent.context.item.HistoricalExcerptContent> toolExcerpt(
+            AgentRun current, AgentMessage message, ToolCallId call, int length) {
+        if (message.role() != MessageRole.TOOL) return Optional.empty();
+        return excerpt(current, message, length, call.value());
+    }
+
+    /** Existing immutable result storage, not a new reader or permission grant. */
+    public ToolResult savedResultForCompaction(AgentRun current, ToolCall call) {
+        return ports.unitOfWork().executeReadOnly(() -> {
+            authorize(current, call.runId());
+            var result = sanitize(current, call).result().orElseThrow(Unavailable::new);
+            var asset = result.assets().stream()
+                    .filter(ref ->
+                            ref.assetId().equals("tool-result:" + call.id().value())
+                                    && ref.mimeType().equals("application/vnd.haifa.tool-result"))
+                    .findFirst();
+            if (asset.isEmpty()) return result;
+            return ports.toolResultAssets()
+                    .load(asset.orElseThrow())
+                    .orElseThrow(() -> new io.haifa.agent.context.api.ContextBuildException(
+                            io.haifa.agent.context.api.ContextBuildFailure.UNSUPPORTED_CONTEXT_CONTENT,
+                            "saved compaction result is unavailable"));
+        });
+    }
+
+    private Optional<io.haifa.agent.context.item.HistoricalExcerptContent> excerpt(
+            AgentRun current, AgentMessage message, int length, String selectedCall) {
         return ports.unitOfWork().executeReadOnly(() -> {
             try {
-                Source value = source(current, message.runId().orElseThrow(Unavailable::new), message.id(), "");
+                Source value =
+                        source(current, message.runId().orElseThrow(Unavailable::new), message.id(), selectedCall);
                 if (message.contents().stream()
                         .anyMatch(part -> !(part instanceof TextPart)
                                 && !(part instanceof ToolResultPart)
@@ -117,7 +149,9 @@ public final class HistoryToolProvider implements ToolProvider {
                                 : Optional.empty(),
                         0,
                         length,
-                        window.value()));
+                        window.value(),
+                        value.results().stream().anyMatch(ToolResult::truncated),
+                        window.more()));
             } catch (Unavailable unavailable) {
                 return Optional.empty();
             }
@@ -144,7 +178,9 @@ public final class HistoryToolProvider implements ToolProvider {
                         excerpt.toolCallId(),
                         excerpt.offset(),
                         excerpt.length(),
-                        window.value()));
+                        window.value(),
+                        value.results().stream().anyMatch(ToolResult::truncated),
+                        window.more()));
             } catch (Unavailable unavailable) {
                 return Optional.empty();
             }
@@ -166,13 +202,20 @@ public final class HistoryToolProvider implements ToolProvider {
         return ports.unitOfWork().executeReadOnly(() -> {
             var run = ports.runs().find(current).orElseThrow(Unavailable::new);
             authorize(run, run.id());
+            // Full unified summaries use the existing active-window bound; legacy handoff limits stay frozen.
+            boolean unified = ports.state()
+                    .configuration(run.configurationSnapshot())
+                    .map(config -> RuntimeControlOptions.unifiedContextBudget(config.modelRequestOptions()))
+                    .orElse(false);
+            int sourceLimit =
+                    unified ? io.haifa.agent.runtime.core.context.ActiveContextSnapshots.MAX_ACTIVE_MESSAGES : 64;
             var summary = ports.conversationSummaries()
                     .latestValid(run.sessionId())
                     .filter(value ->
                             value.id().value().equals(id) && value.version().value() == version);
             if (summary.isEmpty()
                     || summary.get().sourceMessageIds().isEmpty()
-                    || summary.get().sourceMessageIds().size() > 64) return false;
+                    || summary.get().sourceMessageIds().size() > sourceLimit) return false;
             var owners = new HashSet<AgentRunId>();
             for (var source : summary.get().sourceMessageIds()) {
                 var message = ports.state().message(source).orElseThrow(Unavailable::new);

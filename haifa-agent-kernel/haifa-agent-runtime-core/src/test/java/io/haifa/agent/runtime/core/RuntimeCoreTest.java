@@ -3548,61 +3548,74 @@ class RuntimeCoreTest {
 
     @Test
     void runWorkingSetKeepsScaleOracleWithBoundedReadsAndNoSummaryCalls() {
-        for (String objective :
-                List.of("What was the decision?", "Continue proving bounded reads", "New task: draft unrelated UI")) {
-            Long firstEstimate = null;
-            for (int scale : List.of(1, 10, 100)) {
-                var captured = new ArrayList<AgentChatRequest>();
-                var rowsRead = new AtomicInteger();
-                var fixture = workingSetFixture(
-                        call -> {
-                            captured.add(call);
-                            return response(finalDecision("complete"));
-                        },
-                        Map.of(),
-                        () -> ContextLifecycleHistoryFixture.NOW,
-                        rowsRead);
-                var original =
-                        ContextLifecycleHistoryFixture.append(fixture.store, ContextLifecycleHistoryFixture.N * scale);
-                var accepted = fixture.runtime.start(workingSetRequest("scale", objective));
-                var owner = fixture.store.find(accepted.runId()).orElseThrow();
-                ContextLifecycleHistoryFixture.registerOwner(fixture.store, owner);
-                fixture.scheduler.runAll();
-                assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
-                        .isEqualTo(AgentRunStatus.COMPLETED);
-                assertThat(captured).hasSize(1);
-                var input = captured.getFirst();
-                assertThat(input.structuredOutput()).isEmpty();
-                assertThat(input.messages().stream().anyMatch(m -> m.content().equals(objective)))
-                        .isTrue();
-                assertThat(input.messages().stream()
-                                .anyMatch(m -> m.content().contains(ContextLifecycleHistoryFixture.CONSTRAINT)))
-                        .isTrue();
-                if (!objective.startsWith("New task"))
+        for (boolean unified : List.of(false, true)) {
+            for (String objective : List.of(
+                    "What was the decision?", "Continue proving bounded reads", "New task: draft unrelated UI")) {
+                Long firstEstimate = null;
+                for (int scale : List.of(1, 10, 100)) {
+                    var captured = new ArrayList<AgentChatRequest>();
+                    var rowsRead = new AtomicInteger();
+                    var fixture = workingSetFixture(
+                            call -> {
+                                captured.add(call);
+                                return response(finalDecision("complete"));
+                            },
+                            unified
+                                    ? Map.of(
+                                            io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions
+                                                    .CONTEXT_BUDGET_POLICY,
+                                            io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions
+                                                    .UNIFIED_CONTEXT_V1)
+                                    : Map.of(),
+                            () -> ContextLifecycleHistoryFixture.NOW,
+                            rowsRead);
+                    var original = ContextLifecycleHistoryFixture.append(
+                            fixture.store, ContextLifecycleHistoryFixture.N * scale);
+                    var accepted = fixture.runtime.start(workingSetRequest("scale", objective));
+                    var owner = fixture.store.find(accepted.runId()).orElseThrow();
+                    ContextLifecycleHistoryFixture.registerOwner(fixture.store, owner);
+                    fixture.scheduler.runAll();
+                    assertThat(fixture.runtime
+                                    .find(accepted.runId())
+                                    .orElseThrow()
+                                    .status())
+                            .isEqualTo(AgentRunStatus.COMPLETED);
+                    assertThat(captured).hasSize(1);
+                    var input = captured.getFirst();
+                    assertThat(input.structuredOutput()).isEmpty();
                     assertThat(input.messages().stream()
-                                    .anyMatch(m -> m.content().contains(ContextLifecycleHistoryFixture.DECISION)))
+                                    .anyMatch(m -> m.content().equals(objective)))
                             .isTrue();
-                assertThat(input.messages().stream().anyMatch(m -> m.content().contains("unrelated output")))
-                        .isFalse();
-                assertThat(input.messages().stream()
-                                .anyMatch(m -> m.role() == ModelMessageRole.TOOL
-                                        || m.reasoning().isPresent()))
-                        .isFalse();
-                assertThat(fixture.store.latestVersion(owner.sessionId())).isZero();
-                assertThat(original.stream().allMatch(m -> fixture.store
-                                .message(m.id())
-                                .orElseThrow()
-                                .equals(m)))
-                        .isTrue();
-                assertThat(rowsRead.get()).isLessThanOrEqualTo(256);
-                var event = fixture.store.eventsFor(accepted.runId()).stream()
-                        .filter(e -> e.type().equals("model.input-accounted"))
-                        .findFirst()
-                        .orElseThrow();
-                long estimate = ((Number) event.data().get("modelBoundVisibleEstimatedTokens")).longValue();
-                if (firstEstimate == null) firstEstimate = estimate;
-                assertThat(estimate).isLessThanOrEqualTo(firstEstimate + 128);
-                assertThat(event.data().get("workingSetDecision")).isEqualTo("CACHE_COST_UNAVAILABLE");
+                    assertThat(input.messages().stream()
+                                    .anyMatch(m -> m.content().contains(ContextLifecycleHistoryFixture.CONSTRAINT)))
+                            .isTrue();
+                    if (!objective.startsWith("New task"))
+                        assertThat(input.messages().stream()
+                                        .anyMatch(m -> m.content().contains(ContextLifecycleHistoryFixture.DECISION)))
+                                .isTrue();
+                    assertThat(input.messages().stream()
+                                    .anyMatch(m -> m.content().contains("unrelated output")))
+                            .isFalse();
+                    assertThat(input.messages().stream()
+                                    .anyMatch(m -> m.role() == ModelMessageRole.TOOL
+                                            || m.reasoning().isPresent()))
+                            .isFalse();
+                    assertThat(fixture.store.latestVersion(owner.sessionId())).isZero();
+                    assertThat(original.stream().allMatch(m -> fixture.store
+                                    .message(m.id())
+                                    .orElseThrow()
+                                    .equals(m)))
+                            .isTrue();
+                    assertThat(rowsRead.get()).isLessThanOrEqualTo(256);
+                    var event = fixture.store.eventsFor(accepted.runId()).stream()
+                            .filter(e -> e.type().equals("model.input-accounted"))
+                            .findFirst()
+                            .orElseThrow();
+                    long estimate = ((Number) event.data().get("modelBoundVisibleEstimatedTokens")).longValue();
+                    if (firstEstimate == null) firstEstimate = estimate;
+                    assertThat(estimate).isLessThanOrEqualTo(firstEstimate + 128);
+                    assertThat(event.data().get("workingSetDecision")).isEqualTo("CACHE_COST_UNAVAILABLE");
+                }
             }
         }
     }
@@ -3652,7 +3665,7 @@ class RuntimeCoreTest {
                     captured.add(call);
                     return response(finalDecision("done"));
                 },
-                Map.of(),
+                Map.of(RuntimeControlOptions.CONTEXT_BUDGET_POLICY, RuntimeControlOptions.UNIFIED_CONTEXT_V1),
                 () -> ContextLifecycleHistoryFixture.NOW,
                 new AtomicInteger());
         ContextLifecycleHistoryFixture.append(fixture.store, 32);
@@ -3706,6 +3719,237 @@ class RuntimeCoreTest {
                 .isTrue();
         assertThat(fixture.store.latestVersion(ContextLifecycleHistoryFixture.SESSION))
                 .isZero();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void unifiedCompactionRebuildKeepsRequiredSummaryAndRefusesUnreadableSources() {
+        for (String objective : List.of("Continue the requested task", "New task: do the requested work")) {
+            for (String scenario : List.of("goals", "constraints", "unreadable")) {
+                boolean constraintsOnly = scenario.equals("constraints"), unreadable = scenario.equals("unreadable");
+                var ordinary = new ArrayList<AgentChatRequest>();
+                var reports = new ArrayList<io.haifa.agent.context.trace.ContextReport>();
+                var summaryCalls = new AtomicInteger();
+                AgentChatModel model = call -> {
+                    if (call.structuredOutput().isPresent()) {
+                        summaryCalls.incrementAndGet();
+                        var original = ContextLifecycleHistoryFixture.summary(call);
+                        var value = new java.util.LinkedHashMap<>(
+                                original.structuredOutput().orElseThrow());
+                        value.put(
+                                "goals",
+                                constraintsOnly
+                                        ? List.of()
+                                        : java.util.stream.IntStream.rangeClosed(1, 5)
+                                                .mapToObj(i -> summaryProbeItem("g" + i, "FACT_" + i))
+                                                .toList());
+                        value.put("constraints", List.of(summaryProbeItem("c1", "CONSTRAINT_PROBE")));
+                        value.put(
+                                "progress",
+                                Map.of(
+                                        "completed",
+                                        List.of(),
+                                        "active",
+                                        List.of(summaryProbeItem("a1", "PROGRESS_PROBE")),
+                                        "blocked",
+                                        List.of()));
+                        value.put("criticalContext", List.of(summaryProbeItem("cc1", "CRITICAL_CONTEXT_PROBE")));
+                        return new AgentChatResponse(
+                                "summary",
+                                call.model().providerModelId(),
+                                "",
+                                List.of(),
+                                ModelFinishReason.STOP,
+                                ModelUsage.unpriced(10, 10),
+                                "",
+                                Map.of(),
+                                Optional.empty(),
+                                Optional.of(value));
+                    }
+                    ordinary.add(call);
+                    if (ordinary.size() == 1)
+                        return response(new ToolCallDecision(List.of(toolRequest(
+                                "search",
+                                "history_search",
+                                "1.0.0",
+                                new ToolArguments("search", "1", Map.of("messageId", "long-saved-evidence"))))));
+                    if (ordinary.size() == 2) {
+                        var entry = ((List<Map<String, Object>>) call.messages()
+                                        .getLast()
+                                        .toolResultData()
+                                        .get("entries"))
+                                .getFirst();
+                        return response(new ToolCallDecision(List.of(toolRequest(
+                                "read",
+                                "history_read",
+                                "1.0.0",
+                                new ToolArguments(
+                                        "read",
+                                        "1",
+                                        Map.of(
+                                                "runId",
+                                                entry.get("runId"),
+                                                "messageId",
+                                                entry.get("messageId"),
+                                                "version",
+                                                entry.get("version"),
+                                                "offset",
+                                                0,
+                                                "length",
+                                                8192))))));
+                    }
+                    return response(finalDecision("done"));
+                };
+                var fixture = workingSetFixture(
+                        model,
+                        Map.of(RuntimeControlOptions.CONTEXT_BUDGET_POLICY, RuntimeControlOptions.UNIFIED_CONTEXT_V1),
+                        () -> ContextLifecycleHistoryFixture.NOW,
+                        new AtomicInteger(),
+                        builder -> builder.compressionPolicy(CompressionPolicy.defaults()
+                                        .withActiveHistoryBudgetTokens(2000)
+                                        .withTailTokenBounds(5, 50))
+                                .publicToolPolicy((run, binding, request) -> TestToolPlatform.allow())
+                                .promptDiagnostics(reports::add));
+                fixture.store.appendSessionMessage(new SessionMessageDraft(
+                        new AgentMessageId("long-saved-evidence"),
+                        ContextLifecycleHistoryFixture.SESSION,
+                        Optional.of(ContextLifecycleHistoryFixture.PRIOR),
+                        Optional.empty(),
+                        MessageRole.USER,
+                        MessageStatus.COMPLETED,
+                        MessageVisibility.USER_VISIBLE,
+                        List.of(new TextPart(
+                                "FACT_1 FACT_2 FACT_3 FACT_4 FACT_5 CONSTRAINT_PROBE PROGRESS_PROBE CRITICAL_CONTEXT_PROBE "
+                                        + "saved data ".repeat(1500),
+                                "plain")),
+                        Map.of(),
+                        ContextLifecycleHistoryFixture.NOW));
+                if (unreadable) {
+                    var policy = CompressionPolicy.defaults();
+                    var previous = new io.haifa.agent.context.compression.DeterministicContextCompressor()
+                            .compress(new io.haifa.agent.context.compression.CompressionRequest(
+                                    new io.haifa.agent.context.compression.SummaryId("previous"),
+                                    new io.haifa.agent.context.compression.SummaryVersion(1),
+                                    ContextLifecycleHistoryFixture.SESSION,
+                                    fixture.store.messagesAfter(
+                                            ContextLifecycleHistoryFixture.SESSION,
+                                            io.haifa.agent.core.message.MessageCursor.BEFORE_FIRST,
+                                            100),
+                                    4,
+                                    ContextLifecycleHistoryFixture.NOW,
+                                    policy.version()))
+                            .summary();
+                    fixture.store.compareAndSetValid(previous, 0);
+                }
+                var request = workingSetRequest("compact-rebuild", objective, unreadable ? "media-profile" : "profile");
+                if (unreadable)
+                    request = new AgentRunRequest(
+                            request.idempotencyKey(),
+                            request.agentDefinitionId(),
+                            request.requestedDefinitionVersion(),
+                            request.productProfileId(),
+                            request.sessionId(),
+                            request.project(),
+                            request.objective(),
+                            List.of(new io.haifa.agent.core.content.ImageUrlContentPart(
+                                    java.net.URI.create("https://example.test/image.png"))),
+                            request.overrides());
+                var accepted = fixture.runtime.start(request);
+                var owner = fixture.store.find(accepted.runId()).orElseThrow();
+                ContextLifecycleHistoryFixture.registerOwner(fixture.store, owner);
+                fixture.scheduler.runAll();
+                if (unreadable) {
+                    assertThat(fixture.runtime.find(owner.id()).orElseThrow().status())
+                            .isEqualTo(AgentRunStatus.FAILED);
+                    assertThat(summaryCalls).hasValue(0);
+                    assertThat(ordinary.size()).isEqualTo(1);
+                    assertThat(fixture.store.latestVersion(owner.sessionId())).isEqualTo(1);
+                    assertThat(fixture.store
+                                    .latestValid(owner.sessionId())
+                                    .orElseThrow()
+                                    .id()
+                                    .value())
+                            .isEqualTo("previous");
+                    assertThat(fixture.store.eventsFor(owner.id()))
+                            .filteredOn(event -> event.type().equals("session.compaction-failed"))
+                            .singleElement()
+                            .satisfies(event -> assertThat(event.data())
+                                    .containsEntry("failureCode", "UNSUPPORTED_CONTEXT_CONTENT"));
+                    continue;
+                }
+                assertThat(fixture.runtime.find(owner.id()).orElseThrow().status())
+                        .isEqualTo(AgentRunStatus.COMPLETED);
+                assertThat(summaryCalls).hasValue(1);
+                assertThat(ordinary.size()).isEqualTo(3);
+                var summary = fixture.store.latestValid(owner.sessionId()).orElseThrow();
+                assertThat(summary.coveredThrough()
+                                .compareTo(fixture.store
+                                        .initiatingUserMessage(owner.id())
+                                        .orElseThrow()
+                                        .cursor()))
+                        .isGreaterThanOrEqualTo(0);
+                String expected = io.haifa.agent.context.compression.SemanticSummaryRenderer.renderMarkdown(
+                        summary.semanticSummary().orElseThrow());
+                assertThat(ordinary.getLast().messages().stream()
+                                .anyMatch(message -> message.role() == ModelMessageRole.USER
+                                        && message.content().contains(expected)))
+                        .isTrue();
+                assertThat(reports.getLast().components()).anySatisfy(component -> {
+                    assertThat(component.sourceId()).isEqualTo(summary.id().value());
+                    assertThat(component.version())
+                            .isEqualTo(Long.toString(summary.version().value()));
+                });
+                assertThat(ordinary.getLast().messages().stream()
+                                .filter(message -> message.content().equals(objective))
+                                .count())
+                        .isEqualTo(1);
+                // The read's 8,192-character tail exceeds the 2,048-token target. It cannot evict the summary.
+                var accounting = fixture.store.eventsFor(owner.id()).stream()
+                        .filter(event -> event.type().equals("model.input-accounted"))
+                        .reduce((first, last) -> last)
+                        .orElseThrow();
+                assertThat(accounting.data()).containsEntry("workingSetTargetException", true);
+                var unrelated = fixture.runtime.start(workingSetRequest("unrelated", "New task: unrelated work"));
+                fixture.scheduler.runAll();
+                assertThat(fixture.runtime.find(unrelated.runId()).orElseThrow().status())
+                        .isEqualTo(AgentRunStatus.COMPLETED);
+                assertThat(ordinary.getLast().messages().stream()
+                                .anyMatch(message -> message.content().contains(expected)))
+                        .isFalse();
+            }
+        }
+    }
+
+    private static Map<String, Object> summaryProbeItem(String id, String text) {
+        return Map.of("stableItemId", id, "text", text, "confidence", "OBSERVED", "sourceRefs", List.of("m004"));
+    }
+
+    @Test
+    void unifiedBudgetRejectsOversizedFixedOrRequiredInputBeforeAnyModelCall() {
+        for (String profile : List.of("tiny-profile", "budget-profile")) {
+            var calls = new AtomicInteger();
+            var fixture = workingSetFixture(
+                    request -> {
+                        calls.incrementAndGet();
+                        return response(finalDecision("unexpected"));
+                    },
+                    Map.of(RuntimeControlOptions.CONTEXT_BUDGET_POLICY, RuntimeControlOptions.UNIFIED_CONTEXT_V1),
+                    () -> ContextLifecycleHistoryFixture.NOW,
+                    new AtomicInteger());
+            String objective = profile.equals("tiny-profile") ? "small request" : "required original ".repeat(2000);
+            var started = fixture.runtime.start(workingSetRequest("budget", objective, profile));
+            fixture.scheduler.runAll();
+            assertThat(fixture.runtime.find(started.runId()).orElseThrow().status())
+                    .isEqualTo(AgentRunStatus.FAILED);
+            assertThat(calls).hasValue(0);
+            assertThat(fixture.store.latestVersion(ContextLifecycleHistoryFixture.SESSION))
+                    .isZero();
+            assertThat(fixture.store
+                            .initiatingUserMessage(started.runId())
+                            .orElseThrow()
+                            .contents())
+                    .containsExactly(new TextPart(objective, "plain"));
+        }
     }
 
     @Test
@@ -3849,6 +4093,15 @@ class RuntimeCoreTest {
 
     private static Fixture workingSetFixture(
             AgentChatModel model, Map<String, Object> additional, TimeProvider clock, AtomicInteger rows) {
+        return workingSetFixture(model, additional, clock, rows, java.util.function.UnaryOperator.identity());
+    }
+
+    private static Fixture workingSetFixture(
+            AgentChatModel model,
+            Map<String, Object> additional,
+            TimeProvider clock,
+            AtomicInteger rows,
+            java.util.function.UnaryOperator<RuntimeCoreBuilder> customizer) {
         return fixture(
                 model,
                 (builder, store) -> {
@@ -3905,7 +4158,7 @@ class RuntimeCoreTest {
                     var options = new java.util.LinkedHashMap<String, Object>(additional);
                     options.put(RuntimeControlOptions.WORKING_SET, true);
                     options.putIfAbsent(RuntimeControlOptions.WORKING_SET_TARGET, 2048);
-                    return builder.persistence(ports)
+                    return customizer.apply(builder.persistence(ports)
                             .toolPlatform(
                                     catalog,
                                     new io.haifa.agent.tool.core.DefaultToolInvoker(catalog),
@@ -3921,14 +4174,18 @@ class RuntimeCoreTest {
                                     new AgentRunLimits(50, 4, 1, 300000, 60000),
                                     id.equals("media-profile")
                                             ? ContextLifecycleHistoryFixture.urlImageModel()
-                                            : DefaultResolvedModelSnapshots.deepSeekV4Pro(),
+                                            : id.equals("budget-profile")
+                                                    ? constrainedContextModel(8192, 1024)
+                                                    : id.equals("tiny-profile")
+                                                            ? constrainedContextModel()
+                                                            : DefaultResolvedModelSnapshots.deepSeekV4Pro(),
                                     Map.of(),
                                     id.equals("seed-profile")
                                             ? withOption(options, RuntimeControlOptions.WORKING_SET_TARGET, 16384)
                                             : id.equals("changed-prefix")
                                                     ? withOption(options, "temperature", 0.5)
                                                     : options))
-                            .compressionPolicy(CompressionPolicy.defaults().withActiveHistoryBudgetTokens(16384));
+                            .compressionPolicy(CompressionPolicy.defaults().withActiveHistoryBudgetTokens(16384)));
                 },
                 clock);
     }
@@ -4035,6 +4292,10 @@ class RuntimeCoreTest {
     }
 
     private static ResolvedModelSnapshot constrainedContextModel() {
+        return constrainedContextModel(1000, 128);
+    }
+
+    private static ResolvedModelSnapshot constrainedContextModel(int contextWindow, int outputTokens) {
         ResolvedModelSnapshot defaults = DefaultResolvedModelSnapshots.deepSeekV4Pro();
         return ResolvedModelSnapshot.create(
                 defaults.providerId(),
@@ -4050,8 +4311,8 @@ class RuntimeCoreTest {
                 defaults.credentialRef(),
                 defaults.nativeStreaming(),
                 defaults.capabilities(),
-                1_000,
-                128,
+                contextWindow,
+                outputTokens,
                 defaults.providerOptions(),
                 defaults.invocationOptions());
     }

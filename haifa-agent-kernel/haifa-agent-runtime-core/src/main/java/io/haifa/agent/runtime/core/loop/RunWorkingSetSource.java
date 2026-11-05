@@ -1,5 +1,12 @@
 package io.haifa.agent.runtime.core.loop;
 
+import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.DATA;
+import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.IN_USE;
+import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.PHASE_LABEL_PREFIX;
+import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.PLAN_SOURCE;
+import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.SUMMARY_HANDOFF_SOURCE;
+import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.UNIFIED;
+
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.context.budget.HeuristicTokenEstimator;
 import io.haifa.agent.context.compression.ConversationSummary;
@@ -86,6 +93,10 @@ public final class RunWorkingSetSource {
                 .map(binding -> binding.alias().value())
                 .collect(Collectors.toSet());
         return names.containsAll(Set.of("history_search", "history_read"));
+    }
+
+    public boolean unified(AgentRun run) {
+        return enabled(run) && RuntimeControlOptions.unifiedContextBudget(options(run));
     }
 
     public SessionMessageSource.MeasuredSelection select(AgentRun run, long hardBudget, String expectedPrefix) {
@@ -190,9 +201,28 @@ public final class RunWorkingSetSource {
             if (message.role() != MessageRole.USER) throw new LocalContextOverflowException();
             pinnedItems.add(raw(run, List.of(message)));
         }
+        // Once this Run's evidence is covered, its full summary replaces that evidence. It is not a
+        // cross-Run handoff and must survive NEW_TASK classification, soft targets and optional eviction.
+        var requiredSummary = unified(run)
+                ? checkpoint
+                        .filter(value -> value.coveredThrough().value() >= input.sequence())
+                        .map(value -> {
+                            if (!history.validSummary(
+                                    run.id(),
+                                    value.id().value(),
+                                    value.version().value()))
+                                throw new io.haifa.agent.context.api.ContextBuildException(
+                                        io.haifa.agent.context.api.ContextBuildFailure.UNSUPPORTED_CONTEXT_CONTENT,
+                                        "required current-Run summary is unavailable");
+                            return source.requiredSummaryItem(value);
+                        })
+                : Optional.<ContextItem>empty();
         long required = currentItem.estimatedTokens()
-                + pinnedItems.stream().mapToLong(ContextItem::estimatedTokens).sum();
+                + pinnedItems.stream().mapToLong(ContextItem::estimatedTokens).sum()
+                + requiredSummary.map(ContextItem::estimatedTokens).orElse(0);
         List<ContextItem> items = new ArrayList<>();
+        requiredSummary.ifPresent(items::add);
+        int requiredPrefix = items.size();
         boolean samePhase = priorDraft != null
                 && priorDraft.goal().equals(goal.id())
                 && priorDraft.summaryVersion() == summaryVersion
@@ -200,13 +230,15 @@ public final class RunWorkingSetSource {
         if (samePhase) {
             // Preserve bootstrap ordering within a phase; fresh facts are appended, not re-ranked each Tool turn.
             for (var item : priorDraft.selection().items()) {
-                if (item.content() instanceof MessageGroupContextContent) continue;
+                if (item.content() instanceof MessageGroupContextContent
+                        || (requiredSummary.isPresent() && item.content() instanceof ConversationSummaryContent))
+                    continue;
                 try {
                     items.add(revalidate(run, item));
                 } catch (RuntimeException changed) {
                     if (item.retention() == ContextRetention.MUST_KEEP) throw changed;
                     samePhase = false;
-                    items.clear();
+                    items.subList(requiredPrefix, items.size()).clear();
                     break;
                 }
             }
@@ -238,7 +270,9 @@ public final class RunWorkingSetSource {
                 }
             }
             if (!relationship.equals("NEW_TASK")) {
-                var handoff = summaryHandoff(run, checkpoint, Math.max(0L, target - used), relationship);
+                var handoff = requiredSummary.isPresent()
+                        ? Optional.<ContextItem>empty()
+                        : summaryHandoff(run, checkpoint, Math.max(0L, target - used), relationship);
                 if (handoff.isPresent()) {
                     items.add(handoff.get());
                     used += handoff.get().estimatedTokens();
@@ -255,6 +289,49 @@ public final class RunWorkingSetSource {
         }
         items.addAll(pinnedItems);
         items.add(currentItem);
+        if (unified(run)) {
+            String phase = io.haifa.agent.tool.api.ToolArgumentsDigest.sha256(new ToolArguments(
+                    "context-phase",
+                    "1",
+                    Map.of(
+                            "run",
+                            run.id().value(),
+                            "goal",
+                            goal.id().value(),
+                            "summaryVersion",
+                            summaryVersion,
+                            "summary",
+                            checkpoint
+                                    .map(value -> value.id().value() + "@"
+                                            + value.version().value())
+                                    .orElse("NONE"),
+                            "bootstrap",
+                            items.stream()
+                                    .filter(item -> !item.id().equals(currentItem.id()))
+                                    .map(item -> item.id().value() + "@"
+                                            + item.provenance().sourceVersion() + ":"
+                                            + item.provenance().contentHash())
+                                    .toList())));
+            var phased = new ArrayList<ContextItem>();
+            for (var item : items) {
+                if (!(item.content() instanceof MessageGroupContextContent)) {
+                    phased.add(item);
+                    continue;
+                }
+                var labels = new HashSet<>(item.security().labels());
+                labels.add(PHASE_LABEL_PREFIX + phase);
+                phased.add(new ContextItem(
+                        item.id(),
+                        item.type(),
+                        item.content(),
+                        item.estimatedTokens(),
+                        item.priority(),
+                        item.retention(),
+                        new ContextSecurity(labels),
+                        item.provenance()));
+            }
+            items = phased;
+        }
         var selected = selection(run, items, head, summaryVersion, hardBudget);
         var decision =
                 new WorkingSetCostPolicy.Decision(false, "CACHE_COST_UNAVAILABLE", Optional.empty(), Optional.empty());
@@ -443,7 +520,7 @@ public final class RunWorkingSetSource {
         if (item.content() instanceof ConversationSummaryContent value
                 && !history.validSummary(run.id(), value.summaryId(), value.version()))
             throw new OptimisticLockException("summary changed");
-        if (item.provenance().sourceType().equals("working-set-plan")) {
+        if (item.provenance().sourceType().equals(PLAN_SOURCE)) {
             var owner = new AgentRunId(item.provenance().sourceId());
             history.authorizedRun(run, owner);
             if (ports.state()
@@ -477,14 +554,52 @@ public final class RunWorkingSetSource {
         messages.forEach(
                 message -> calls.computeIfAbsent(message.runId().orElse(run.id()), ignored -> new HashMap<>()));
         var item = source.groupItem(messages, true, calls);
+        var views = new LinkedHashMap<ToolCallId, HistoricalExcerptContent>();
+        long estimate = item.estimatedTokens();
+        if (unified(run)) {
+            var opts = options(run);
+            var config =
+                    ports.state().configuration(run.configurationSnapshot()).orElseThrow();
+            long sizeTarget = Math.min(
+                    RuntimeControlOptions.workingSetTarget(opts),
+                    io.haifa.agent.context.budget.ContextWindowBudget.calculate(
+                                    config.model(),
+                                    config.model().maxOutputTokens(),
+                                    io.haifa.agent.context.budget.ContextWindowBudget.safetyMargin(
+                                            config.model().contextWindow(), false))
+                            .availableInputTokens());
+            for (var message : messages)
+                for (var part : message.contents()) {
+                    if (!(part instanceof ToolResultPart result)) continue;
+                    var call = calls.getOrDefault(message.runId().orElse(run.id()), Map.of())
+                            .get(result.toolCallId());
+                    if (call == null
+                            || call.result().isEmpty()
+                            || call.toolName().equals("history_search")
+                            || call.toolName().equals("history_read")) continue;
+                    var canonical = call.result().orElseThrow();
+                    long original = (long) HeuristicTokenEstimator.tokens(canonical.summary())
+                            + HeuristicTokenEstimator.tokens(canonical.structuredData());
+                    if (original <= sizeTarget) continue;
+                    var view = history.toolExcerpt(
+                            run, message, result.toolCallId(), RuntimeControlOptions.contextPreviewChars(opts));
+                    if (view.isEmpty()) continue;
+                    long compact = (long) HeuristicTokenEstimator.tokens(HistoricalExcerptContent.previewSummary())
+                            + HeuristicTokenEstimator.tokens(view.orElseThrow().previewData(canonical.successful()));
+                    if (original - compact < RuntimeControlOptions.contextMinSavingTokens(opts)) continue;
+                    views.put(result.toolCallId(), view.orElseThrow());
+                    estimate -= original - compact;
+                }
+        }
         return new ContextItem(
                 item.id(),
                 item.type(),
-                item.content(),
-                item.estimatedTokens(),
+                new MessageGroupContextContent(messages, views),
+                Math.toIntExact(Math.max(1L, estimate)),
                 item.priority(),
                 ContextRetention.MUST_KEEP,
-                new ContextSecurity(Set.of("session-visible", "working-set-in-use")),
+                new ContextSecurity(
+                        unified(run) ? Set.of("session-visible", IN_USE, UNIFIED) : Set.of("session-visible", IN_USE)),
                 item.provenance());
     }
 
@@ -497,7 +612,7 @@ public final class RunWorkingSetSource {
                 tokens,
                 required ? ContextPriority.CRITICAL : ContextPriority.NORMAL,
                 required ? ContextRetention.MUST_KEEP : ContextRetention.KEEP_IF_RELEVANT,
-                new ContextSecurity(Set.of("untrusted-history", "working-set-data")),
+                new ContextSecurity(Set.of("untrusted-history", DATA)),
                 new ContextProvenance(
                         "history-excerpt",
                         value.messageId().value(),
@@ -547,9 +662,9 @@ public final class RunWorkingSetSource {
                 tokens,
                 ContextPriority.NORMAL,
                 ContextRetention.KEEP_IF_RELEVANT,
-                new ContextSecurity(Set.of("untrusted-history", "working-set-data")),
+                new ContextSecurity(Set.of("untrusted-history", DATA)),
                 new ContextProvenance(
-                        "working-set-summary",
+                        SUMMARY_HANDOFF_SOURCE,
                         value.id().value(),
                         Long.toString(value.version().value()),
                         value.sourceHash())));
@@ -579,9 +694,9 @@ public final class RunWorkingSetSource {
                     tokens,
                     ContextPriority.NORMAL,
                     ContextRetention.KEEP_IF_RELEVANT,
-                    new ContextSecurity(Set.of("untrusted-history", "working-set-data")),
+                    new ContextSecurity(Set.of("untrusted-history", DATA)),
                     new ContextProvenance(
-                            "working-set-plan",
+                            PLAN_SOURCE,
                             prior.value(),
                             Long.toString(plan.revision()),
                             io.haifa.agent.tool.api.ToolArgumentsDigest.sha256(
@@ -608,6 +723,14 @@ public final class RunWorkingSetSource {
     }
 
     public void recordRequest(AgentRun run, AgentChatRequest request, long startedAt) {
+        recordRequest(run, request, startedAt, null);
+    }
+
+    public void recordRequest(
+            AgentRun run,
+            AgentChatRequest request,
+            long startedAt,
+            io.haifa.agent.context.api.AgentContext actualContext) {
         if (!enabled(run)) return;
         var prefix = ModelInputAccounting.prefix(request);
         synchronized (this) {
@@ -615,6 +738,11 @@ public final class RunWorkingSetSource {
             if (draft == null
                     || draft.prefix() == null
                     || !draft.prefix().equals(prefix.get("visibleFixedPrefixIdentity"))) {
+                windows.remove(run.sessionId());
+                return;
+            }
+            if (actualContext != null
+                    && !actualContext.items().containsAll(draft.selection().items())) {
                 windows.remove(run.sessionId());
                 return;
             }

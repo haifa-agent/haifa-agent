@@ -1,5 +1,7 @@
 package io.haifa.agent.runtime.core.compaction;
 
+import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.COMPLETE_SOURCE;
+
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.context.api.ContextBuildException;
@@ -210,22 +212,55 @@ public final class SemanticCompactionCoordinator {
         return evaluateAndCompactIfNeeded(run, iteration, binding, 0);
     }
 
+    public boolean plansAfterSelection(AgentRun run) {
+        return workingSets != null && workingSets.unified(run);
+    }
+
+    public CompactionEvaluationOutcome evaluateSelected(
+            AgentRun run, int iteration, FrozenModelBinding binding, CompactionTriggerDecision selected) {
+        return evaluateAndCompactIfNeeded(run, iteration, binding, 0, selected);
+    }
+
+    public void requireSelectedRetention(long tokens, CompactionTriggerDecision decision, long declaredRetention) {
+        if (decision.reason() == CompactionTriggerReason.ACTIVE_HISTORY_BUDGET) {
+            var budget = decision.budgetBreakdown();
+            long allowance =
+                    Math.max(retentionLimit(budget), Math.min(budget.availableSessionTokens(), declaredRetention));
+            if (tokens > allowance)
+                throw new ContextBuildException(
+                        ContextBuildFailure.REQUIRED_CONTEXT_TOO_LARGE,
+                        "Selected history exceeds its frozen retention allowance");
+        }
+    }
+
     private CompactionEvaluationOutcome evaluateAndCompactIfNeeded(
             AgentRun run, int iteration, FrozenModelBinding binding, int boundedPageCount) {
+        return evaluateAndCompactIfNeeded(run, iteration, binding, boundedPageCount, null);
+    }
+
+    private CompactionEvaluationOutcome evaluateAndCompactIfNeeded(
+            AgentRun run,
+            int iteration,
+            FrozenModelBinding binding,
+            int boundedPageCount,
+            CompactionTriggerDecision selected) {
         if (history != null) history.requireCurrentScope(run);
         long startNanos = System.nanoTime();
         if (!policy.semanticCompactionEnabled()) {
             return CompactionEvaluationOutcome.NONE;
         }
 
-        if (workingSets != null && workingSets.enabled(run)) {
-            var selected = workingSets.selectedEstimate(
+        if (selected != null && !selected.shouldCompact())
+            return CompactionEvaluationOutcome.untriggered(
+                    selected.budgetBreakdown().currentSessionTokens(), elapsedMillis(startNanos));
+        if (selected == null && workingSets != null && workingSets.enabled(run)) {
+            var selectedEstimate = workingSets.selectedEstimate(
                     run,
                     Math.max(
                             1L,
                             binding.configuration().model().contextWindow()
                                     - binding.configuration().model().maxOutputTokens()));
-            if (selected.isPresent()) {
+            if (selectedEstimate.isPresent()) {
                 var estimator = new HeuristicTokenEstimator();
                 long fixed =
                         HeuristicTokenEstimator.tokens(binding.configuration().agentInstruction())
@@ -237,10 +272,11 @@ public final class SemanticCompactionCoordinator {
                         binding.configuration().model().maxOutputTokens(),
                         fixed,
                         0,
-                        selected.getAsLong(),
+                        selectedEstimate.getAsLong(),
                         2);
                 if (!selectedDecision.shouldCompact())
-                    return CompactionEvaluationOutcome.untriggered(selected.getAsLong(), elapsedMillis(startNanos));
+                    return CompactionEvaluationOutcome.untriggered(
+                            selectedEstimate.getAsLong(), elapsedMillis(startNanos));
             }
             // Excess required evidence follows the existing bounded contiguous recovery path.
         }
@@ -254,7 +290,7 @@ public final class SemanticCompactionCoordinator {
             CompactionEvaluationOutcome pageOutcome =
                     compactTruncatedWindow(run, iteration, binding, activeSnapshot, startNanos);
             CompactionEvaluationOutcome finalOutcome =
-                    evaluateAndCompactIfNeeded(run, iteration, binding, boundedPageCount + 1);
+                    evaluateAndCompactIfNeeded(run, iteration, binding, boundedPageCount + 1, selected);
             return finalOutcome.triggerReason() == null ? pageOutcome : finalOutcome;
         }
         List<AgentMessage> visible = activeSnapshot == null
@@ -294,8 +330,10 @@ public final class SemanticCompactionCoordinator {
         } catch (Exception ignored) {
         }
 
-        CompactionTriggerDecision decision = triggerEvaluator.evaluate(
-                contextWindow, outputReserve, fixedPrefix, otherSources, currentTokens, activeGroups.size());
+        CompactionTriggerDecision decision = selected != null
+                ? selected
+                : triggerEvaluator.evaluate(
+                        contextWindow, outputReserve, fixedPrefix, otherSources, currentTokens, activeGroups.size());
         if (!decision.shouldCompact()) {
             ContextBudgetBreakdown budget = decision.budgetBreakdown();
             boolean hasActiveTarget =
@@ -322,10 +360,20 @@ public final class SemanticCompactionCoordinator {
                 previousSummary.map(ConversationSummary::estimatedTokens).orElse(0);
         List<AgentMessage> activeMessages =
                 activeGroups.stream().flatMap(List::stream).toList();
-        ModelMessageProjectionPlan projectionPlan = projectionPlanner.plan(activeMessages, resolver);
+        ModelMessageProjectionPlan projectionPlan = selected == null
+                ? projectionPlanner.plan(activeMessages, resolver)
+                : projectionPlanner.plan(
+                        activeMessages,
+                        resolver,
+                        activeMessages.stream()
+                                .flatMap(message -> message.contents().stream())
+                                .filter(io.haifa.agent.core.content.ToolCallPart.class::isInstance)
+                                .map(io.haifa.agent.core.content.ToolCallPart.class::cast)
+                                .map(io.haifa.agent.core.content.ToolCallPart::toolCallId)
+                                .collect(java.util.stream.Collectors.toSet()));
         long beforeTokens = prevTokens + projectionPlan.rawActiveTokens();
         long afterTokens = prevTokens + projectionPlan.projectedActiveTokens();
-        if (bypassCompactionRecommended(softLimit, projectionPlan, afterTokens)) {
+        if (selected == null && bypassCompactionRecommended(softLimit, projectionPlan, afterTokens)) {
             long elapsed = elapsedMillis(startNanos);
             log.info(
                     "Bypassing semantic compaction for session {} due to projection pruning: activeBudget={}, saved {} tokens, projected {} < softLimit {}",
@@ -366,7 +414,9 @@ public final class SemanticCompactionCoordinator {
                         CompactionFailureBackoff.Scope.of(run, binding, policy, expectedPreviousVersion),
                         activeMessages)) {
             invoker.checkControl(run);
-            requireWithinRetention(afterTokens, decision.budgetBreakdown());
+            requireWithinRetention(
+                    selected == null ? afterTokens : selected.budgetBreakdown().currentSessionTokens(),
+                    decision.budgetBreakdown());
             return CompactionEvaluationOutcome.untriggered(afterTokens, elapsedMillis(startNanos));
         }
 
@@ -389,14 +439,15 @@ public final class SemanticCompactionCoordinator {
                 projectionPlan,
                 currentTokens,
                 decision.budgetBreakdown().resolvedRetainedTailTokens(),
-                startNanos);
-        if (targetPressure) {
-            Optional<ConversationSummary> selected = summaries.latestValid(run.sessionId());
-            List<AgentMessage> remaining = groupsAfterSummary(visible, selected).stream()
+                startNanos,
+                selected != null || plansAfterSelection(run));
+        if (targetPressure && selected == null) {
+            Optional<ConversationSummary> latestSelected = summaries.latestValid(run.sessionId());
+            List<AgentMessage> remaining = groupsAfterSummary(visible, latestSelected).stream()
                     .flatMap(List::stream)
                     .toList();
             long selectedTokens =
-                    selected.map(ConversationSummary::estimatedTokens).orElse(0)
+                    latestSelected.map(ConversationSummary::estimatedTokens).orElse(0)
                             + projectionPlanner.plan(remaining, resolver).projectedActiveTokens();
             requireWithinRetention(selectedTokens, decision.budgetBreakdown());
         }
@@ -445,7 +496,8 @@ public final class SemanticCompactionCoordinator {
                 projectionPlan,
                 currentTokens,
                 policy.minTailTokens(),
-                startNanos);
+                startNanos,
+                plansAfterSelection(run));
         if (summaries.latestVersion(run.sessionId()) <= expectedPreviousVersion) {
             throw new IllegalStateException("bounded cold-start compaction made no summary progress");
         }
@@ -532,7 +584,8 @@ public final class SemanticCompactionCoordinator {
                 projectionPlan,
                 currentTokens,
                 policy.minTailTokens(),
-                startNanos);
+                startNanos,
+                plansAfterSelection(run));
     }
 
     private CompactionEvaluationOutcome compactSession(
@@ -549,7 +602,8 @@ public final class SemanticCompactionCoordinator {
             ModelMessageProjectionPlan projectionPlan,
             long initialEstimatedTokens,
             long targetTailBudget,
-            long startNanos) {
+            long startNanos,
+            boolean completeSource) {
         List<List<AgentMessage>> activeGroups = groupsAfterSummary(visible, previousSummary);
         if (activeGroups.isEmpty()) {
             return CompactionEvaluationOutcome.untriggered(initialEstimatedTokens, elapsedMillis(startNanos));
@@ -559,7 +613,7 @@ public final class SemanticCompactionCoordinator {
 
         // Retained-tail selection must measure the authoritative payloads the tail will actually send, not the short
         // reference/summary metadata. Source-summary prompt sizing (nextBatchEnd) stays on its own projected estimate.
-        int split = tailSplit(activeGroups, targetTailBudget, resolver);
+        int split = tailSplit(activeGroups, targetTailBudget, resolver, completeSource);
         if (split <= 0) {
             return CompactionEvaluationOutcome.untriggered(initialEstimatedTokens, elapsedMillis(startNanos));
         }
@@ -598,6 +652,13 @@ public final class SemanticCompactionCoordinator {
                 .flatMap(List::stream)
                 .toList();
 
+        var complete = new HashMap<AgentMessageId, AgentMessage>();
+        Function<List<AgentMessage>, ProjectedCompactionSource> projector = completeSource
+                ? messages -> CompactionSourceProjector.projectComplete(messages.stream()
+                        .map(message -> complete.get(message.id()))
+                        .toList())
+                : CompactionSourceProjector::project;
+
         long prevSummaryTokens =
                 previousSummary.map(ConversationSummary::estimatedTokens).orElse(0);
         long sourceEstimatedTokens = estimateGroups(activeGroups.subList(0, safeSplit));
@@ -619,15 +680,41 @@ public final class SemanticCompactionCoordinator {
         String systemPrompt = CompactionPromptRenderer.systemPrompt();
         int physicalCalls = 0;
         int batchStart = 0;
+        boolean sourcePrepared = false;
         try {
+            invoker.remainingRunCalls(run);
+            if (completeSource) {
+                var expectedSource = visible.stream()
+                        .filter(message -> message.cursor()
+                                                .compareTo(previousSummary
+                                                        .map(ConversationSummary::coveredThrough)
+                                                        .orElse(MessageCursor.BEFORE_FIRST))
+                                        > 0
+                                && message.cursor()
+                                                .compareTo(sourceToCompact
+                                                        .getLast()
+                                                        .cursor())
+                                        <= 0)
+                        .toList();
+                if (!expectedSource.equals(sourceToCompact))
+                    throw new ContextBuildException(
+                            ContextBuildFailure.UNSUPPORTED_CONTEXT_CONTENT,
+                            "complete compaction cannot skip an unfinished protocol group");
+            }
+            if (completeSource)
+                for (var message : sourceToCompact)
+                    complete.put(message.id(), hydrateCompactionSource(run, message, resolver));
+            sourcePrepared = true;
             while (batchStart < safeSplit) {
                 int remaining = (int)
                         Math.min(policy.maxCompactionPhysicalCalls() - physicalCalls, invoker.remainingRunCalls(run));
                 SummaryModelInvoker.requireStructuredOutput(binding);
-                if (minimumBatchCalls(activeGroups, batchStart, safeSplit, available, remaining) > remaining) {
+                if (minimumBatchCalls(
+                                activeGroups, batchStart, safeSplit, available, remaining, projector, completeSource)
+                        > remaining) {
                     throw new CompactionBudgetExceededException();
                 }
-                int batchEnd = nextBatchEnd(activeGroups, batchStart, safeSplit, available);
+                int batchEnd = nextBatchEnd(activeGroups, batchStart, safeSplit, available, projector, completeSource);
                 List<SemanticSummaryItem> carryForward = workingSemantic
                         .map(SemanticConversationSummaryV1::mandatoryCarryForwardItems)
                         .orElse(List.of());
@@ -638,15 +725,16 @@ public final class SemanticCompactionCoordinator {
                     batchSource = activeGroups.subList(batchStart, batchEnd).stream()
                             .flatMap(List::stream)
                             .toList();
-                    projected = CompactionSourceProjector.project(batchSource);
+                    projected = projector.apply(batchSource);
                     userPrompt = batchStart == 0
                             ? CompactionPromptRenderer.userPromptFromConversationSummary(
                                     previousSummary, carryForward, projected)
                             : CompactionPromptRenderer.userPrompt(workingSemantic, carryForward, projected);
                     if (SummaryModelInvoker.estimatedInput(systemPrompt, userPrompt) <= available) break;
-                    batchEnd = smallerBatchEnd(activeGroups, batchStart, batchEnd);
+                    batchEnd = smallerBatchEnd(activeGroups, batchStart, batchEnd, completeSource);
                 }
-                int mandatoryLaterCalls = minimumBatchCalls(activeGroups, batchEnd, safeSplit, available, remaining);
+                int mandatoryLaterCalls = minimumBatchCalls(
+                        activeGroups, batchEnd, safeSplit, available, remaining, projector, completeSource);
                 if (mandatoryLaterCalls + 1 > remaining) throw new CompactionBudgetExceededException();
                 SemanticConversationSummaryV1 candidate;
                 boolean correcting = false;
@@ -685,6 +773,14 @@ public final class SemanticCompactionCoordinator {
                 projected.toolAliases().values().forEach(id -> historicalDurableRefs.add(id.value()));
                 batchStart = batchEnd;
             }
+            if (completeSource) {
+                ensureSourcesCurrent(sourceToCompact);
+                var fresh = rereadSourceToolCalls(run, sourceToCompact);
+                for (var message : sourceToCompact)
+                    if (!complete.get(message.id()).equals(hydrateCompactionSource(run, message, fresh)))
+                        throw new OptimisticLockException("complete compaction source changed");
+            }
+
         } catch (CancellationObservedException
                 | RuntimeLimitExceededException
                 | RuntimeQuotaExceededException
@@ -698,10 +794,12 @@ public final class SemanticCompactionCoordinator {
             String errorCode = validationErrorCode(ex);
             long elapsed = elapsedMillis(startNanos);
             boolean activeBudget = reason == CompactionTriggerReason.ACTIVE_HISTORY_BUDGET;
-            boolean degraded = activeBudget
-                    || ex instanceof CompactionModelCapabilityException
-                    || policy.allowDeterministicDegradedFallback()
-                    || overflow;
+            boolean sourceRefusal = completeSource && ex instanceof ContextBuildException;
+            boolean degraded = !sourceRefusal
+                    && (activeBudget
+                            || ex instanceof CompactionModelCapabilityException
+                            || policy.allowDeterministicDegradedFallback()
+                            || overflow);
             Map<String, Object> data = new LinkedHashMap<>();
             data.put("evaluationId", evaluationId);
             data.put("reason", reason.name());
@@ -716,12 +814,29 @@ public final class SemanticCompactionCoordinator {
             data.put("compactionEvaluationElapsedMillis", elapsed);
             data.put("failureCategory", category);
             data.put("validationErrorCode", errorCode);
-            data.put("failureStage", failureStage(ex));
+            data.put(
+                    "failureStage",
+                    sourceRefusal ? (sourcePrepared ? "SOURCE_VALIDATION" : "SOURCE_PREPARATION") : failureStage(ex));
             data.put("failureCode", failureCode(ex));
             data.put("physicalCalls", Math.toIntExact(run.usage().modelCalls() - initialModelCalls));
             data.put("degraded", degraded);
             events.append(run.id(), "session.compaction-failed", data, time.now());
+            if (sourceRefusal) {
+                // An unreadable complete range cannot authorize deterministic coverage or a blind retry.
+                recoveryOutcome(
+                        run,
+                        evaluationId,
+                        reason,
+                        new SummaryCommit("NO_REDUCTION", previousSummary, false),
+                        visible,
+                        resolver,
+                        initialEstimatedTokens,
+                        cacheHitRate,
+                        startNanos);
+                throw (ContextBuildException) ex;
+            }
             if (activeBudget
+                    || (completeSource && ex instanceof CompactionBudgetExceededException)
                     || (ex instanceof CompactionBudgetExceededException
                             && !policy.allowDeterministicDegradedFallback())) {
                 if (activeBudget && recoverableFailure(ex) && !(ex instanceof CompactionBudgetExceededException)) {
@@ -791,7 +906,8 @@ public final class SemanticCompactionCoordinator {
                 initialEstimatedTokens,
                 retainedTailTokens,
                 cacheHitRate,
-                startNanos);
+                startNanos,
+                completeSource);
     }
 
     private static boolean recoverableFailure(Exception failure) {
@@ -813,6 +929,7 @@ public final class SemanticCompactionCoordinator {
     }
 
     private static String failureCategory(Exception exception) {
+        if (exception instanceof ContextBuildException) return "SOURCE";
         if (exception instanceof CompactionBudgetExceededException) return "PLAN_BUDGET";
         if (exception instanceof CompactionModelCapabilityException) return "MODEL_CAPABILITY";
         return exception instanceof SemanticSummaryValidationException ? "VALIDATION" : "MODEL_OR_RUNTIME";
@@ -826,6 +943,8 @@ public final class SemanticCompactionCoordinator {
     }
 
     private static String failureCode(Exception exception) {
+        if (exception instanceof ContextBuildException source)
+            return source.failure().name();
         if (exception instanceof SemanticSummaryValidationException validation)
             return validation.code().name();
         if (exception instanceof CompactionBudgetExceededException budget)
@@ -993,7 +1112,8 @@ public final class SemanticCompactionCoordinator {
             long initialEstimatedTokens,
             long retainedTailTokens,
             double cacheHitRate,
-            long startNanos) {
+            long startNanos,
+            boolean completeSource) {
         MessageCursor coveredFrom = previousSummary
                 .map(ConversationSummary::coveredFrom)
                 .orElseGet(() -> sourceToCompact.getFirst().cursor());
@@ -1052,7 +1172,7 @@ public final class SemanticCompactionCoordinator {
                 time.now(),
                 policy.version(),
                 "semantic-v1",
-                Set.of("internal"),
+                completeSource ? Set.of("internal", COMPLETE_SOURCE) : Set.of("internal"),
                 true,
                 Optional.of(summary),
                 CompactionQuality.SEMANTIC_VALIDATED);
@@ -1398,31 +1518,146 @@ public final class SemanticCompactionCoordinator {
         return new SemanticDecisionItem(id, item.statement(), item.rationale(), item.status(), item.sourceRefs());
     }
 
+    private AgentMessage hydrateCompactionSource(
+            AgentRun run, AgentMessage message, Function<ToolCallId, ToolCall> resolver) {
+        var parts = new ArrayList<io.haifa.agent.core.content.ContentPart>(message.contents());
+        for (var part : message.contents()) {
+            // Validate every part before planning any physical summary call, without concatenating a
+            // second projection of the whole range just to discover unreadable content.
+            if (!(part instanceof io.haifa.agent.core.content.TextPart)
+                    && !(part instanceof io.haifa.agent.core.content.ToolCallPart)
+                    && !(part instanceof io.haifa.agent.core.content.ToolResultPart))
+                throw new ContextBuildException(
+                        ContextBuildFailure.UNSUPPORTED_CONTEXT_CONTENT,
+                        "complete compaction requires readable text sources");
+            ToolCallId id = part instanceof io.haifa.agent.core.content.ToolCallPart call
+                    ? call.toolCallId()
+                    : part instanceof io.haifa.agent.core.content.ToolResultPart result ? result.toolCallId() : null;
+            if (id == null) continue;
+            var call = resolver.apply(id);
+            if (call == null || !message.runId().equals(Optional.of(call.runId())))
+                throw new OptimisticLockException("complete compaction Tool source is unavailable");
+            var correlation = part instanceof io.haifa.agent.core.content.ToolCallPart request
+                    ? request.providerCorrelationId()
+                    : ((io.haifa.agent.core.content.ToolResultPart) part).providerCorrelationId();
+            if (!call.providerCorrelationId().equals(correlation))
+                throw new OptimisticLockException("complete compaction Tool identity changed");
+            String body;
+            if (part instanceof io.haifa.agent.core.content.ToolCallPart request) {
+                if (!call.toolName().equals(request.toolName())
+                        || !call.toolVersion().equals(request.toolVersion()))
+                    throw new OptimisticLockException("complete compaction Tool definition changed");
+                body = "Authoritative Tool arguments: "
+                        + completeValue(call.arguments().values());
+            } else {
+                if (call.result().isEmpty()) {
+                    if (!Set.of(
+                                    io.haifa.agent.core.tool.ToolCallStatus.DENIED,
+                                    io.haifa.agent.core.tool.ToolCallStatus.CANCELLED,
+                                    io.haifa.agent.core.tool.ToolCallStatus.FAILED,
+                                    io.haifa.agent.core.tool.ToolCallStatus.TIMEOUT)
+                            .contains(call.status()))
+                        throw new OptimisticLockException("complete compaction Tool result is pending");
+                    continue; // The stored, complete protocol result is the whole available source.
+                }
+                var result =
+                        history == null ? call.result().orElseThrow() : history.savedResultForCompaction(run, call);
+                if (!result.artifacts().isEmpty()
+                        || result.assets().stream().anyMatch(asset -> !asset.assetId()
+                                .equals("tool-result:" + call.id().value())))
+                    throw new ContextBuildException(
+                            ContextBuildFailure.UNSUPPORTED_CONTEXT_CONTENT,
+                            "complete compaction requires readable asset and artifact bodies");
+                if (history == null
+                        && result.assets().stream().anyMatch(asset -> asset.assetId()
+                                .equals("tool-result:" + call.id().value())))
+                    throw new ContextBuildException(
+                            ContextBuildFailure.UNSUPPORTED_CONTEXT_CONTENT,
+                            "saved compaction result requires its existing asset reader");
+                body = "Authoritative saved Tool result: " + result.summary() + "\n"
+                        + completeValue(result.structuredData()) + "\nsourceTruncated=" + result.truncated()
+                        + "; assets=" + result.assets() + "; artifacts=" + result.artifacts();
+            }
+            parts.add(new io.haifa.agent.core.content.TextPart(body, "plain"));
+        }
+        return new AgentMessage(
+                message.id(),
+                message.sessionId(),
+                message.runId(),
+                message.parentMessageId(),
+                message.role(),
+                message.status(),
+                message.visibility(),
+                message.sequence(),
+                parts,
+                message.metadata(),
+                message.createdAt());
+    }
+
+    private static String completeValue(Object value) {
+        if (value instanceof Map<?, ?> map)
+            return map.entrySet().stream()
+                    .sorted(java.util.Comparator.comparing(entry -> String.valueOf(entry.getKey())))
+                    .map(entry -> entry.getKey() + ": " + completeValue(entry.getValue()))
+                    .collect(Collectors.joining("\n"));
+        if (value instanceof Set<?> set)
+            return set.stream()
+                    .map(SemanticCompactionCoordinator::completeValue)
+                    .sorted()
+                    .collect(Collectors.joining("\n"));
+        if (value != null && value.getClass().isArray())
+            return java.util.stream.IntStream.range(0, java.lang.reflect.Array.getLength(value))
+                    .mapToObj(index -> completeValue(java.lang.reflect.Array.get(value, index)))
+                    .collect(Collectors.joining("\n"));
+        if (value instanceof List<?> list)
+            return list.stream()
+                    .map(SemanticCompactionCoordinator::completeValue)
+                    .collect(Collectors.joining("\n"));
+        return String.valueOf(value);
+    }
+
     private void ensureSourcesCurrent(List<AgentMessage> source) {
         for (AgentMessage message : source) {
-            if (state.message(message.id()).filter(this::visibleToContext).isEmpty()) {
+            if (state.message(message.id())
+                    .filter(message::equals)
+                    .filter(this::visibleToContext)
+                    .isEmpty()) {
                 throw new OptimisticLockException("compaction source is no longer visible");
             }
         }
     }
 
-    private int minimumBatchCalls(List<List<AgentMessage>> groups, int start, int split, long available, int cap) {
+    private int minimumBatchCalls(
+            List<List<AgentMessage>> groups,
+            int start,
+            int split,
+            long available,
+            int cap,
+            Function<List<AgentMessage>, ProjectedCompactionSource> projector,
+            boolean atomicBoundary) {
         int calls = 0;
         while (start < split && calls <= cap) {
-            start = nextBatchEnd(groups, start, split, available);
+            start = nextBatchEnd(groups, start, split, available, projector, atomicBoundary);
             calls++;
         }
         return calls;
     }
 
-    private int smallerBatchEnd(List<List<AgentMessage>> groups, int start, int end) {
+    private int smallerBatchEnd(List<List<AgentMessage>> groups, int start, int end, boolean atomicBoundary) {
+        if (atomicBoundary && end > start + 1) return end - 1;
         for (int index = end - 1; index > start; index--) {
             if (isTurnAnchor(groups.get(index))) return index;
         }
         throw new CompactionBudgetExceededException(CompactionBudgetExceededException.Code.SUMMARY_INPUT_BUDGET);
     }
 
-    private int nextBatchEnd(List<List<AgentMessage>> activeGroups, int start, int split, long availableTokens) {
+    private int nextBatchEnd(
+            List<List<AgentMessage>> activeGroups,
+            int start,
+            int split,
+            long availableTokens,
+            Function<List<AgentMessage>, ProjectedCompactionSource> projector,
+            boolean atomicBoundary) {
         if (start < 0 || start >= split) {
             throw new IllegalArgumentException("batch start must be within the compaction range");
         }
@@ -1433,7 +1668,10 @@ public final class SemanticCompactionCoordinator {
         int boundedIndex = start;
         for (int i = start; i < split; i++) {
             long gTokens = HeuristicTokenEstimator.tokens(
-                    CompactionSourceProjector.project(activeGroups.get(i)).safeConversationText());
+                    projector.apply(activeGroups.get(i)).safeConversationText());
+            if (atomicBoundary && gTokens > availableTokens)
+                throw new CompactionBudgetExceededException(
+                        CompactionBudgetExceededException.Code.SUMMARY_INPUT_BUDGET);
             if (i > start && (i - start >= maxBatchGroups || accumulatedTokens + gTokens > maxBatchTokens)) {
                 break;
             }
@@ -1441,6 +1679,7 @@ public final class SemanticCompactionCoordinator {
             boundedIndex = i + 1;
         }
 
+        if (atomicBoundary) return boundedIndex;
         if (boundedIndex >= split) {
             return split;
         }
@@ -1479,7 +1718,10 @@ public final class SemanticCompactionCoordinator {
     }
 
     private int tailSplit(
-            List<List<AgentMessage>> groups, long retainedTailBudget, Function<ToolCallId, ToolCall> resolver) {
+            List<List<AgentMessage>> groups,
+            long retainedTailBudget,
+            Function<ToolCallId, ToolCall> resolver,
+            boolean atomicBoundary) {
         long retained = 0L;
         int candidateSplit = groups.size();
         for (int index = groups.size() - 1; index >= 0; index--) {
@@ -1491,6 +1733,7 @@ public final class SemanticCompactionCoordinator {
             candidateSplit = index;
         }
 
+        if (atomicBoundary) return candidateSplit;
         if (candidateSplit <= 0 || candidateSplit >= groups.size()) {
             return candidateSplit;
         }
@@ -1591,6 +1834,22 @@ public final class SemanticCompactionCoordinator {
             }
             return null;
         };
+    }
+
+    private Function<ToolCallId, ToolCall> rereadSourceToolCalls(AgentRun run, List<AgentMessage> source) {
+        var ids = new HashMap<io.haifa.agent.core.run.AgentRunId, Set<ToolCallId>>();
+        for (var message : source)
+            for (var part : message.contents()) {
+                ToolCallId id = part instanceof ToolCallPart call
+                        ? call.toolCallId()
+                        : part instanceof ToolResultPart result ? result.toolCallId() : null;
+                if (id != null)
+                    ids.computeIfAbsent(message.runId().orElse(run.id()), ignored -> new HashSet<>())
+                            .add(id);
+            }
+        // Revalidate only the occurrences whose bodies were summarized, not every Tool in their owning Runs.
+        var calls = state.toolCallsByIds(ids).stream().collect(Collectors.toMap(ToolCall::id, Function.identity()));
+        return id -> safeHistoryCall(run, calls.get(id));
     }
 
     private ToolCall safeHistoryCall(AgentRun run, ToolCall call) {

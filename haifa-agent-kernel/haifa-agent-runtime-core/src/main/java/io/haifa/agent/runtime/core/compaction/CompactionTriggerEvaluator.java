@@ -21,13 +21,41 @@ public final class CompactionTriggerEvaluator {
             long fixedPrefixTokens,
             long otherSourceTokens,
             long currentSessionTokens) {
-        long safetyMarginTokens = Math.min(16_384L, Math.max(256L, contextWindowTokens / 20L));
-        long availableSessionTokens = Math.max(
-                0L,
-                contextWindowTokens - outputReserveTokens - safetyMarginTokens - fixedPrefixTokens - otherSourceTokens);
+        return calculateBreakdown(
+                io.haifa.agent.context.budget.ContextWindowBudget.capacity(
+                        contextWindowTokens,
+                        outputReserveTokens,
+                        io.haifa.agent.context.budget.ContextWindowBudget.safetyMargin(contextWindowTokens, false)),
+                fixedPrefixTokens,
+                otherSourceTokens,
+                currentSessionTokens,
+                false);
+    }
+
+    public ContextBudgetBreakdown calculateBreakdown(
+            io.haifa.agent.context.budget.ContextWindowBudget window,
+            long fixedPrefixTokens,
+            long otherSourceTokens,
+            long currentSessionTokens) {
+        return calculateBreakdown(window, fixedPrefixTokens, otherSourceTokens, currentSessionTokens, true);
+    }
+
+    private ContextBudgetBreakdown calculateBreakdown(
+            io.haifa.agent.context.budget.ContextWindowBudget window,
+            long fixedPrefixTokens,
+            long otherSourceTokens,
+            long currentSessionTokens,
+            boolean unified) {
+        long contextWindowTokens = window.modelContextWindow();
+        long outputReserveTokens = window.outputReserve();
+        long safetyMarginTokens = window.safetyMargin();
+        long availableSessionTokens =
+                Math.max(0L, window.availableInputTokens() - fixedPrefixTokens - otherSourceTokens);
         long calculatedHeadroom = (availableSessionTokens * policy.softTriggerHeadroomPercent()) / 100L;
         long triggerHeadroomTokens =
                 Math.clamp(calculatedHeadroom, (long) policy.minTriggerHeadroom(), (long) policy.maxTriggerHeadroom());
+        // A large-model floor cannot consume a smaller model's entire selected-input capacity.
+        if (unified && triggerHeadroomTokens >= availableSessionTokens) triggerHeadroomTokens = calculatedHeadroom;
         long capacitySoftLimit = computeCapacitySoftLimit(availableSessionTokens, triggerHeadroomTokens);
         long activeBudget;
         if (policy.activeHistoryBudgetTokens().isPresent()) {
@@ -68,6 +96,21 @@ public final class CompactionTriggerEvaluator {
         ContextBudgetBreakdown breakdown = calculateBreakdown(
                 contextWindowTokens, outputReserveTokens, fixedPrefixTokens, otherSourceTokens, currentSessionTokens);
 
+        return evaluate(breakdown, turnCount);
+    }
+
+    public CompactionTriggerDecision evaluate(
+            io.haifa.agent.context.budget.ContextWindowBudget window,
+            long fixedPrefixTokens,
+            long otherSourceTokens,
+            long currentSessionTokens,
+            int turnCount) {
+        return evaluate(
+                calculateBreakdown(window, fixedPrefixTokens, otherSourceTokens, currentSessionTokens), turnCount);
+    }
+
+    private CompactionTriggerDecision evaluate(ContextBudgetBreakdown breakdown, int turnCount) {
+        long currentSessionTokens = breakdown.currentSessionTokens();
         if (!policy.semanticCompactionEnabled()) {
             return CompactionTriggerDecision.doNotCompact(breakdown);
         }

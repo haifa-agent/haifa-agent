@@ -57,6 +57,40 @@ public final class ModelInputAccounting {
         return tokens;
     }
 
+    public static final String ADMISSION_VERSION = "wire-admission-v1";
+
+    public record AdmissionEstimate(long visibleTokens, long multimodalReserve, long continuationReserve) {
+        public long totalTokens() {
+            return Math.addExact(visibleTokens, Math.addExact(multimodalReserve, continuationReserve));
+        }
+    }
+
+    /** Counts only public metadata for protected lanes. Media uses a declared conservative policy reserve, not a tokenizer claim. */
+    public static AdmissionEstimate admissionEstimate(
+            io.haifa.agent.model.api.ResolvedModelSnapshot model,
+            List<ModelMessage> messages,
+            List<io.haifa.agent.model.api.ModelToolSpecification> tools,
+            Map<String, Object> responseSchema) {
+        var estimator = new HeuristicTokenEstimator();
+        long visible =
+                messages.stream().mapToLong(ModelInputAccounting::visibleTokens).sum()
+                        + tools.stream().mapToLong(estimator::estimate).sum()
+                        + (responseSchema.isEmpty() ? 0L : HeuristicTokenEstimator.tokens(responseSchema))
+                        + messages.size() * 6L;
+        long media = messages.stream()
+                .mapToLong(m -> m.images().size() + m.audios().size())
+                .sum();
+        long mediaReserve = media
+                * Math.max(
+                        model.maxOutputTokens(),
+                        io.haifa.agent.context.budget.ContextWindowBudget.safetyMargin(model.contextWindow(), false));
+        long continuation = messages.stream()
+                .mapToLong(m ->
+                        m.reasoning().map(value -> (long) value.byteLength()).orElse(0L))
+                .sum();
+        return new AdmissionEstimate(visible, mediaReserve, continuation);
+    }
+
     public static Map<String, Object> estimate(AgentChatRequest request, Map<String, Long> sources) {
         Map<String, Long> bounded = new LinkedHashMap<>();
         sources.forEach((source, value) -> {
@@ -99,6 +133,15 @@ public final class ModelInputAccounting {
         result.put("protectedMessageCount", protectedMessages);
         result.put("multimodalMessageCount", mediaMessages);
         result.put("wireMessageCount", request.messages().size());
+        var admission = admissionEstimate(
+                request.model(),
+                request.messages(),
+                request.tools(),
+                request.structuredOutput().map(schema -> schema.jsonSchema()).orElse(Map.of()));
+        result.put("admissionEstimatorVersion", ADMISSION_VERSION);
+        result.put("admissionEstimatedTokens", admission.totalTokens());
+        result.put("multimodalReserveTokens", admission.multimodalReserve());
+        result.put("protectedContinuationReserveTokens", admission.continuationReserve());
         return Map.copyOf(result);
     }
 

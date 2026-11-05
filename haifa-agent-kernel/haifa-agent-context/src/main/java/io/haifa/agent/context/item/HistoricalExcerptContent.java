@@ -14,8 +14,50 @@ public record HistoricalExcerptContent(
         Optional<ToolCallId> toolCallId,
         int offset,
         int length,
-        String text)
+        String text,
+        boolean sourceTruncated,
+        boolean truncated)
         implements ContextContent {
+    public HistoricalExcerptContent(
+            AgentRunId runId,
+            AgentMessageId messageId,
+            String version,
+            Optional<ToolCallId> toolCallId,
+            int offset,
+            int length,
+            String text) {
+        this(runId, messageId, version, toolCallId, offset, length, text, false, false);
+    }
+
+    public static String previewSummary() {
+        return "Saved result preview; use history_read with source for another range. This does not re-execute the Tool.";
+    }
+
+    public java.util.Map<String, Object> previewData(boolean successful) {
+        var reference = new java.util.LinkedHashMap<String, Object>();
+        reference.put("runId", runId.value());
+        reference.put("messageId", messageId.value());
+        reference.put("version", version);
+        toolCallId.ifPresent(id -> reference.put("toolCallId", id.value()));
+        return java.util.Map.of(
+                "source",
+                java.util.Map.copyOf(reference),
+                "content",
+                text,
+                "offset",
+                offset,
+                "nextOffset",
+                (long) offset + text.length(),
+                "truncated",
+                truncated,
+                "sourceTruncated",
+                sourceTruncated,
+                "representation",
+                "history-text-v1",
+                "successful",
+                successful);
+    }
+
     public HistoricalExcerptContent {
         Objects.requireNonNull(runId);
         Objects.requireNonNull(messageId);

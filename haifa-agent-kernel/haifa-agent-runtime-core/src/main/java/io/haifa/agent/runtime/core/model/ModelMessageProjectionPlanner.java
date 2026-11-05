@@ -103,6 +103,28 @@ public final class ModelMessageProjectionPlanner {
         return new ModelMessageProjectionPlan(prunedToolResults, rawActiveTokens, projectedActiveTokens, tokensSaved);
     }
 
+    /** Budget-selected views replace only confirmed readable result bodies; no age-based omission applies. */
+    public ModelMessageProjectionPlan planSelected(
+            List<AgentMessage> messages,
+            Function<ToolCallId, ToolCall> resolver,
+            java.util.Map<ToolCallId, io.haifa.agent.context.item.HistoricalExcerptContent> views) {
+        long raw = estimateProjectedTokens(messages, resolver, Set.of());
+        long projected = raw;
+        for (var entry : views.entrySet()) {
+            var call = resolver.apply(entry.getKey());
+            if (call == null || call.result().isEmpty())
+                throw new IllegalStateException("projected Tool result unavailable");
+            var result = call.result().orElseThrow();
+            projected -= HeuristicTokenEstimator.tokens(result.summary())
+                    + HeuristicTokenEstimator.tokens(result.structuredData());
+            projected += HeuristicTokenEstimator.tokens(
+                            io.haifa.agent.context.item.HistoricalExcerptContent.previewSummary())
+                    + HeuristicTokenEstimator.tokens(entry.getValue().previewData(result.successful()));
+        }
+        return new ModelMessageProjectionPlan(
+                Set.of(), raw, Math.max(0, projected), Math.max(0, raw - projected), views);
+    }
+
     private boolean isEligibleGroup(
             AtomicToolGroup group, Function<ToolCallId, ToolCall> toolCallResolver, OperationToolBindings bindings) {
         if (group.toolCallIds().isEmpty()) {

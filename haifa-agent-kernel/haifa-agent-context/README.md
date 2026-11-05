@@ -52,3 +52,12 @@ tool schemas, and recursively structured Tool arguments/results. Its version is 
 carry-forward and safety failures at their owning rule. Its messages and `validationErrors()` may contain
 source details and are not safe telemetry; Runtime emits only bounded codes. Existing constructors remain
 available with the structural default, without changing validation or reconciliation rules.
+
+`ContextWindowBudget` shares capacity and safety-margin calculations with Runtime admission and semantic
+compaction. `MessageGroupContextContent` may carry occurrence-specific, versioned `HistoricalExcerptContent`
+result views; Runtime confirms readability and scope before projection. Views do not mutate source records or
+summary coverage. Token policy remains an estimate, with unknown Provider lanes kept distinct.
+
+Complete-source projection refuses unreadable media and asset/Artifact bodies with
+`ContextBuildException(UNSUPPORTED_CONTEXT_CONTENT)`. Runtime records source refusal separately from model
+failure and cannot turn it into coverage through deterministic fallback.

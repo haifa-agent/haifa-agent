@@ -1,5 +1,7 @@
 package io.haifa.agent.runtime.core.loop;
 
+import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.DATA;
+
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.context.budget.HeuristicTokenEstimator;
@@ -195,6 +197,10 @@ public final class SessionMessageSource {
 
     public void workingSets(RunWorkingSetSource value) {
         workingSets = Objects.requireNonNull(value);
+    }
+
+    CompressionPolicy compressionPolicy() {
+        return policy;
     }
 
     public boolean workingSetEnabled(AgentRun run) {
@@ -720,6 +726,21 @@ public final class SessionMessageSource {
                             winner.coveredThrough().compareTo(source.getLast().cursor()) >= 0)
                     .orElseThrow(() -> conflict);
         }
+    }
+
+    ContextItem requiredSummaryItem(ConversationSummary summary) {
+        var item = summaryItem(summary);
+        var labels = new java.util.HashSet<>(item.security().labels());
+        labels.add(DATA);
+        return new ContextItem(
+                item.id(),
+                item.type(),
+                item.content(),
+                item.estimatedTokens(),
+                item.priority(),
+                ContextRetention.MUST_KEEP,
+                new ContextSecurity(labels),
+                item.provenance());
     }
 
     private ContextItem summaryItem(ConversationSummary summary) {

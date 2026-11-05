@@ -445,6 +445,9 @@ public final class HaifaAgentBuilder {
         var options = new LinkedHashMap<>(original);
         options.putIfAbsent(io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.WORKING_SET, true);
         options.putIfAbsent(
+                io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.CONTEXT_BUDGET_POLICY,
+                io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.UNIFIED_CONTEXT_V1);
+        options.putIfAbsent(
                 io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.WORKING_SET_TARGET, workingSetTarget);
         return Map.copyOf(options);
     }

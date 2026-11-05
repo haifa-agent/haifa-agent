@@ -811,9 +811,79 @@ class SemanticCompactionFailureTest {
     }
 
     @Test
+    void unreadableCompleteSourceRecordsRefusalWithoutDeterministicCoverageEvenWhenFallbackIsAllowed() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentRun run = createRun(store);
+        AtomicInteger ids = new AtomicInteger();
+        var policy = CompressionPolicy.defaults().withDegradedFallback(true).withTailTokenBounds(5, 5);
+        var previous = new DeterministicContextCompressor()
+                .compress(new io.haifa.agent.context.compression.CompressionRequest(
+                        new SummaryId("previous"),
+                        new io.haifa.agent.context.compression.SummaryVersion(1),
+                        run.sessionId(),
+                        store.messagesAfter(
+                                run.sessionId(), io.haifa.agent.core.message.MessageCursor.BEFORE_FIRST, 100),
+                        4,
+                        NOW,
+                        policy.version()))
+                .summary();
+        store.compareAndSetValid(previous, 0);
+        store.appendSessionMessage(new SessionMessageDraft(
+                new AgentMessageId("image"),
+                run.sessionId(),
+                Optional.of(run.id()),
+                Optional.empty(),
+                MessageRole.USER,
+                MessageStatus.COMPLETED,
+                MessageVisibility.USER_VISIBLE,
+                List.of(new io.haifa.agent.core.content.ImageUrlContentPart(
+                        java.net.URI.create("https://example.test/image.png"))),
+                Map.of(),
+                NOW));
+        appendTurn(store, run, "source-u", "source-a", "source", "evidence ".repeat(500));
+        appendTurn(store, run, "tail-u", "tail-a", "next", "ok");
+        var compactor = coordinator(store, () -> "refused-" + ids.incrementAndGet(), new RunControlRegistry(), policy);
+        var decision = CompactionTriggerDecision.compact(
+                CompactionTriggerReason.SOFT_TOKEN_THRESHOLD,
+                new CompactionTriggerEvaluator(policy).calculateBreakdown(100000, 8192, 0, 0, 90000));
+        var calls = new AtomicInteger();
+        assertThatThrownBy(() -> compactor.evaluateSelected(
+                        run,
+                        1,
+                        binding(store, run, request -> {
+                            calls.incrementAndGet();
+                            return validSummaryResponse();
+                        }),
+                        decision))
+                .isInstanceOf(ContextBuildException.class)
+                .satisfies(error -> assertThat(((ContextBuildException) error).failure())
+                        .isEqualTo(io.haifa.agent.context.api.ContextBuildFailure.UNSUPPORTED_CONTEXT_CONTENT));
+        assertThat(calls).hasValue(0);
+        assertThat(store.latestVersion(run.sessionId())).isEqualTo(1);
+        assertThat(store.latestValid(run.sessionId())).contains(previous);
+        assertThat(store.eventsFor(run.id()))
+                .filteredOn(event -> event.type().equals("session.compaction-failed"))
+                .singleElement()
+                .satisfies(event -> assertThat(event.data())
+                        .containsEntry("failureCategory", "SOURCE")
+                        .containsEntry("failureStage", "SOURCE_PREPARATION")
+                        .containsEntry("failureCode", "UNSUPPORTED_CONTEXT_CONTENT")
+                        .containsEntry("physicalCalls", 0)
+                        .containsEntry("degraded", false));
+        assertThat(store.eventsFor(run.id()))
+                .filteredOn(event -> event.type().equals("session.compaction-recovery"))
+                .singleElement()
+                .satisfies(event -> assertThat(event.data())
+                        .containsEntry("outcome", "NO_REDUCTION")
+                        .containsEntry("committed", false)
+                        .containsEntry("version", 1L));
+    }
+
+    @Test
     void runtimeKeepsOriginalInputAfterSemanticCommitAndAfterBoundedFailure() {
-        for (String recovery : List.of("semantic", "bounded", "forced", "oversized")) {
-            boolean successfulSummary = recovery.equals("semantic") || recovery.equals("oversized");
+        for (String recovery : List.of("semantic", "bounded", "forced", "oversized", "multi-selected")) {
+            boolean multi = recovery.equals("multi-selected");
+            boolean successfulSummary = multi || recovery.equals("semantic") || recovery.equals("oversized");
             InMemoryRuntimeStore store = new InMemoryRuntimeStore();
             AtomicInteger ids = new AtomicInteger();
             var scheduler = new ManualExecutionScheduler();
@@ -821,12 +891,23 @@ class SemanticCompactionFailureTest {
             AtomicInteger summaries = new AtomicInteger();
             int window = io.haifa.agent.runtime.core.bootstrap.DefaultResolvedModelSnapshots.deepSeekV4Pro()
                     .contextWindow();
-            String original =
-                    "ORIGINAL_RUN_REQUEST_PROBE " + "q".repeat(recovery.equals("oversized") ? window * 3 : 3100);
+            String original = "ORIGINAL_RUN_REQUEST_PROBE "
+                    + (multi
+                            ? "fact=bounded history; file=SessionMessageSource.java; decision=keep originals; next=verify readers "
+                            : "")
+                    + "q".repeat(recovery.equals("oversized") ? window * 3 : 3100) + " ORIGINAL_TAIL_PROBE";
             AgentChatModel model = request -> {
                 if (request.structuredOutput().isPresent()) {
-                    summaries.incrementAndGet();
-                    return successfulSummary ? validSummaryResponse() : invalidJsonResponse();
+                    int summaryCall = summaries.incrementAndGet();
+                    if (multi && summaryCall == 1)
+                        assertThat(request.messages().getLast().content().contains("ORIGINAL_TAIL_PROBE"))
+                                .isTrue();
+                    return successfulSummary
+                            ? validSummaryResponse(
+                                    multi
+                                            ? "fact=bounded history; file=SessionMessageSource.java; decision=keep originals; next=verify readers"
+                                            : "Keep the objective")
+                            : invalidJsonResponse();
                 }
                 ordinary.add(request);
                 return new AgentChatResponse(
@@ -863,6 +944,58 @@ class SemanticCompactionFailureTest {
             var originalMessage = store.initiatingUserMessage(run.id()).orElseThrow();
             appendTurn(store, run, "u1", "a1", "later user input", "answer");
             appendTurn(store, run, "u2", "a2", "newest user input", "answer");
+            if (multi) {
+                var policy = CompressionPolicy.defaults()
+                        .withActiveHistoryBudgetTokens(1000)
+                        .withTailTokenBounds(5, 50);
+                var compactor =
+                        coordinator(store, () -> "multi-" + ids.incrementAndGet(), new RunControlRegistry(), policy);
+                var selected = new CompactionTriggerEvaluator(policy).evaluate(window, 8192, 100, 0, 1200, 4);
+                long covered = 0;
+                compactor.requireSelectedRetention(1500, selected, 20000);
+                assertThatThrownBy(() -> compactor.requireSelectedRetention(20001, selected, 20000))
+                        .isInstanceOf(ContextBuildException.class);
+                for (int round = 1; round <= 3; round++) {
+                    compactor.evaluateSelected(run, round, binding(store, run, model), selected);
+                    var committed = store.latestValid(run.sessionId()).orElseThrow();
+                    assertThat(committed.version().value()).isEqualTo(round);
+                    assertThat(committed.coveredThrough().value()).isGreaterThan(covered);
+                    covered = committed.coveredThrough().value();
+                    var source = new SessionMessageSource(
+                            store,
+                            store,
+                            new DeterministicContextCompressor(),
+                            policy,
+                            () -> "unused",
+                            () -> NOW,
+                            new ActiveContextSnapshots(store, store, policy, new DeterministicContextCompressor()));
+                    var selection = source.select(run);
+                    assertThat(selection.items().stream()
+                                    .filter(item -> item.content() instanceof MessageGroupContextContent)
+                                    .flatMap(item -> ((MessageGroupContextContent) item.content()).messages().stream()))
+                            .contains(originalMessage);
+                    assertThat(committed.semanticSummary().orElseThrow().goals().stream()
+                                    .map(item -> item.text()))
+                            .containsExactly(
+                                    "fact=bounded history; file=SessionMessageSource.java; decision=keep originals; next=verify readers");
+                    if (round < 3) {
+                        appendTurn(
+                                store,
+                                run,
+                                "multi-u" + round,
+                                "multi-a" + round,
+                                "continue fixed probes",
+                                "source facts remain authoritative " + "detail ".repeat(500));
+                        appendTurn(store, run, "tail-u" + round, "tail-a" + round, "continue", "ok");
+                    }
+                }
+                compactor.evaluateSelected(
+                        run,
+                        4,
+                        binding(store, run, model),
+                        CompactionTriggerDecision.doNotCompact(selected.budgetBreakdown()));
+                assertThat(summaries).hasValue(3);
+            }
             if (recovery.equals("forced")) {
                 coordinator(
                                 store,
@@ -887,7 +1020,7 @@ class SemanticCompactionFailureTest {
                             .count())
                     .isEqualTo(1);
             assertThat(store.find(run.id()).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
-            assertThat(summaries).hasValue(successfulSummary ? 1 : 2);
+            assertThat(summaries).hasValue(multi ? 3 : successfulSummary ? 1 : 2);
             if (!recovery.equals("bounded")) {
                 ConversationSummary selected =
                         store.latestValid(run.sessionId()).orElseThrow();
@@ -911,7 +1044,14 @@ class SemanticCompactionFailureTest {
                                 .filter(message -> message.id().equals(originalMessage.id()))
                                 .count())
                         .isEqualTo(1);
-                if (successfulSummary) {
+                if (multi) {
+                    assertThat(ordinary.getFirst().messages()).anySatisfy(message -> assertThat(message.content())
+                            .contains(
+                                    "fact=bounded history",
+                                    "file=SessionMessageSource.java",
+                                    "decision=keep originals",
+                                    "next=verify readers"));
+                } else if (successfulSummary) {
                     assertThat(ordinary.getFirst().messages().stream()
                                     .anyMatch(message -> message.content().contains("Keep the objective")))
                             .isTrue();

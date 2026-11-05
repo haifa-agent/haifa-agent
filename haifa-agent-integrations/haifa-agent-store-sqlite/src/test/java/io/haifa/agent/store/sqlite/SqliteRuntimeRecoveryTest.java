@@ -1381,7 +1381,11 @@ class SqliteRuntimeRecoveryTest {
                         new io.haifa.agent.core.run.AgentRunLimits(8, 0, 1, 300000, 60000),
                         io.haifa.agent.runtime.core.bootstrap.DefaultResolvedModelSnapshots.deepSeekV4Pro(),
                         Map.of(),
-                        Map.of(io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.WORKING_SET, true)));
+                        Map.of(
+                                io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.WORKING_SET,
+                                true,
+                                io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.CONTEXT_BUDGET_POLICY,
+                                io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.UNIFIED_CONTEXT_V1)));
     }
 
     private static ToolResult historyInvoke(

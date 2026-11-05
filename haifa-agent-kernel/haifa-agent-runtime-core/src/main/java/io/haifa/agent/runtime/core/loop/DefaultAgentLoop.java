@@ -23,6 +23,7 @@ import io.haifa.agent.model.api.ModelErrorCategory;
 import io.haifa.agent.model.api.ModelInvocationException;
 import io.haifa.agent.model.api.ModelRequestId;
 import io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt;
+import io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions;
 import io.haifa.agent.runtime.core.checkpoint.CheckpointManager;
 import io.haifa.agent.runtime.core.compaction.CompactionEvaluationOutcome;
 import io.haifa.agent.runtime.core.compaction.SemanticCompactionCoordinator;
@@ -296,7 +297,7 @@ public final class DefaultAgentLoop implements AgentLoop {
 
             FrozenModelBinding model = models.bind(run);
             CompactionEvaluationOutcome preBuildOutcome = CompactionEvaluationOutcome.NONE;
-            if (compactionCoordinator != null) {
+            if (compactionCoordinator != null && !compactionCoordinator.plansAfterSelection(run)) {
                 preBuildOutcome = evaluateCompaction(run, progress, model);
             }
             ContextBuildExecution buildExecution = buildContext(run, progress, model, preBuildOutcome);
@@ -492,7 +493,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                                         model,
                                         run,
                                         progress.iteration(),
-                                        builtRef[0].context().context(),
+                                        builtRef[0],
                                         modelRequestIdRef[0],
                                         retryAttempt - requestAttemptOffset[0]);
                             } catch (ModelInvocationException contextTooLong) {
@@ -570,12 +571,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                                 }
                                 transitions.usage(run, new AgentRunUsageDelta(0, 0, 0, 1, 0, 0, 0, 0));
                                 return models.invoke(
-                                        model,
-                                        run,
-                                        progress.iteration(),
-                                        builtRef[0].context().context(),
-                                        modelRequestIdRef[0],
-                                        1);
+                                        model, run, progress.iteration(), builtRef[0], modelRequestIdRef[0], 1);
                             }
                         },
                         modelRetryPolicy.policy(),
@@ -671,8 +667,8 @@ public final class DefaultAgentLoop implements AgentLoop {
                 if (budgetLimitRef[0] instanceof RuntimeLimitExceededException limitExceeded) {
                     middleware.apply(RuntimePhase.BEFORE_COMPLETION, middlewareContextRef[0]);
 
-                    Optional<ModelInvocationResult> finalInvocation = budgetLimitedFinalInvocation(
-                            run, progress, model, builtRef[0].context().context(), response, limitExceeded);
+                    Optional<ModelInvocationResult> finalInvocation =
+                            budgetLimitedFinalInvocation(run, progress, model, builtRef[0], response, limitExceeded);
                     decisionExecutor.completeBudgetLimited(
                             run,
                             limitExceeded,
@@ -923,7 +919,7 @@ public final class DefaultAgentLoop implements AgentLoop {
             AgentRun run,
             AgentLoopContext progress,
             FrozenModelBinding model,
-            io.haifa.agent.context.api.AgentContext context,
+            RuntimeContextBuildResult context,
             ModelInvocationResult invocation,
             RuntimeLimitExceededException limit) {
         if (invocation.decision() instanceof FinalAnswerDecision) return Optional.of(invocation);
@@ -1125,7 +1121,23 @@ public final class DefaultAgentLoop implements AgentLoop {
             FrozenModelBinding model,
             CompactionEvaluationOutcome initialOutcome) {
         try {
-            return new ContextBuildExecution(contextBuilder.build(run, progress, model), initialOutcome);
+            var built = contextBuilder.build(run, progress, model);
+            if (compactionCoordinator != null
+                    && built.compactionDecision()
+                            .filter(decision -> decision.shouldCompact())
+                            .isPresent()) {
+                var decision = built.compactionDecision().orElseThrow();
+                var outcome = compactionCoordinator.evaluateSelected(run, progress.iteration(), model, decision);
+                var rebuilt = contextBuilder.build(run, progress, model);
+                rebuilt.preparedInput()
+                        .ifPresent(input -> compactionCoordinator.requireSelectedRetention(
+                                input.sessionTokens(),
+                                decision,
+                                RuntimeControlOptions.workingSetRetention(
+                                        model.configuration().modelRequestOptions())));
+                return new ContextBuildExecution(rebuilt, outcome);
+            }
+            return new ContextBuildExecution(built, initialOutcome);
         } catch (LocalContextOverflowException
                 | ActiveContextCompactionRequiredException
                 | ActiveContextWindowLimitException overflow) {
