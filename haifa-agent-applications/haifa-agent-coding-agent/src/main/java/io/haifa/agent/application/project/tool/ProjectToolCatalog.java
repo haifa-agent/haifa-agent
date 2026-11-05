@@ -35,6 +35,8 @@ public final class ProjectToolCatalog {
     public static final String EXECUTION_RUN = "execution_run";
 
     private final Duration maximumExecutionTimeout;
+    private final List<ToolDefinition> historyDefinitions;
+    private final ToolProvider historyProvider;
     private static final Map<String, String> REQUIRED_CAPABILITY = Map.ofEntries(
             Map.entry("file_list", "file_read"),
             Map.entry("file_stat", "file_read"),
@@ -60,6 +62,16 @@ public final class ProjectToolCatalog {
     }
 
     public ProjectToolCatalog(Duration maximumExecutionTimeout) {
+        this(maximumExecutionTimeout, List.of(), null);
+    }
+
+    /** Only explicitly opted-in products contribute the existing Session-scoped historical readers. */
+    public ProjectToolCatalog(
+            Duration maximumExecutionTimeout, List<ToolDefinition> historyDefinitions, ToolProvider historyProvider) {
+        this.historyDefinitions = List.copyOf(historyDefinitions);
+        this.historyProvider = historyDefinitions.isEmpty()
+                ? historyProvider
+                : Objects.requireNonNull(historyProvider, "historyProvider");
         this.maximumExecutionTimeout =
                 Objects.requireNonNull(maximumExecutionTimeout, "maximumExecutionTimeout must not be null");
         if (maximumExecutionTimeout.isZero()
@@ -253,6 +265,11 @@ public final class ProjectToolCatalog {
                         contribution.definition(),
                         contribution.providerBindingReference(),
                         contribution.provider()));
+        historyDefinitions.forEach(definition -> builder.register(
+                new ToolAlias(definition.name().value()),
+                definition,
+                "runtime-history:" + definition.name().value(),
+                historyProvider));
         return builder.freeze();
     }
 

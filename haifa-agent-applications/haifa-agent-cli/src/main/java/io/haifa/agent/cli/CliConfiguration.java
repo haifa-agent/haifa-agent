@@ -38,7 +38,8 @@ record CliConfiguration(
         long maxToolCalls,
         ProjectPersistenceConfiguration persistence,
         int modelMaxResponseBytes,
-        Duration abandonedRunStaleness) {
+        Duration abandonedRunStaleness,
+        Context context) {
     private static final long DEFAULT_MAX_MODEL_CALLS = 64L;
     static final int DEFAULT_MODEL_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
     static final Duration DEFAULT_ABANDONED_RUN_STALENESS = Duration.ofMinutes(30);
@@ -61,6 +62,7 @@ record CliConfiguration(
     private static final Set<String> DEFAULT_ENVIRONMENT = Set.of("*");
 
     CliConfiguration {
+        context = Objects.requireNonNull(context, "context must not be null");
         model = Objects.requireNonNull(model, "model must not be null");
         availableModels = List.copyOf(Objects.requireNonNull(availableModels, "availableModels must not be null"));
         String selectedModelId = model.id();
@@ -173,7 +175,34 @@ record CliConfiguration(
                 32,
                 ProjectPersistenceConfiguration.memory(),
                 DEFAULT_MODEL_MAX_RESPONSE_BYTES,
-                DEFAULT_ABANDONED_RUN_STALENESS);
+                DEFAULT_ABANDONED_RUN_STALENESS,
+                Context.defaults());
+    }
+
+    /** Product opt-in; each Run freezes these options through the existing profile resolver. */
+    record Context(String policy, int targetTokens, boolean historyRetrieval, boolean automaticMaintenance) {
+        Context {
+            if (!Set.of("legacy", "unified-context-v1").contains(policy))
+                throw new IllegalArgumentException("context.policy must be legacy or unified-context-v1");
+            if (targetTokens < 128 || targetTokens > 65536)
+                throw new IllegalArgumentException("context.targetTokens must be between 128 and 65536");
+            if (policy.equals("unified-context-v1") && !historyRetrieval)
+                throw new IllegalArgumentException("unified context requires context.historyRetrieval");
+            if (automaticMaintenance)
+                throw new IllegalArgumentException("context.automaticMaintenance is not supported");
+        }
+
+        static Context defaults() {
+            return new Context("legacy", 2048, false, false);
+        }
+
+        java.util.Map<String, Object> runtimeOptions() {
+            if (policy.equals("legacy")) return java.util.Map.of();
+            return java.util.Map.of(
+                    io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.WORKING_SET, true,
+                    io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.WORKING_SET_TARGET, targetTokens,
+                    io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.CONTEXT_BUDGET_POLICY, policy);
+        }
     }
 
     record Model(

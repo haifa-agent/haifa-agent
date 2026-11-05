@@ -1,0 +1,228 @@
+package io.haifa.agent.cli;
+
+import static io.haifa.agent.cli.CodingHostTestFixture.*;
+import static org.assertj.core.api.Assertions.assertThat;
+
+import io.haifa.agent.core.run.AgentRunStatus;
+import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.model.api.ModelMessageRole;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Duration;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Tag;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+@Tag("slow")
+class CodingContextLifecycleTest {
+    @TempDir
+    Path root;
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void explicitWorkingSetSupportsSteerAndSavedReadbackAcrossSqliteReopenAndRollback() throws Exception {
+        Path workspace = Files.createDirectory(root.resolve("workspace"));
+        Path file = workspace.resolve("evidence.txt");
+        Files.writeString(file, "READBACK_V1\n" + "fixture data\n".repeat(3000));
+        var base = sqliteConfiguration(root.resolve("context.db"));
+        var enabled = CliConfigurationBuilder.from(base)
+                .context(new CliConfiguration.Context("unified-context-v1", 4096, true, false))
+                .build();
+        var calls = new AtomicInteger();
+        var requests = new java.util.concurrent.CopyOnWriteArrayList<io.haifa.agent.model.api.AgentChatRequest>();
+        var secondCall = new CountDownLatch(1);
+        var suspended = new CountDownLatch(1);
+        var runtimeRef = new AtomicReference<io.haifa.agent.runtime.api.AgentRuntime>();
+        var release = new CountDownLatch(1);
+        var saved = new AtomicReference<Map<String, Object>>();
+        AgentSessionId sessionId;
+        io.haifa.agent.core.run.AgentRunId enabledRun, rollbackRun, defaultRun;
+        try (var agent = openAgent(workspace, enabled, request -> {
+            requests.add(request);
+            return switch (calls.incrementAndGet()) {
+                case 1 ->
+                    toolResponse(
+                            "read-original",
+                            "file_read",
+                            Map.of("path", file.toString(), "maxBytes", 60000, "maxLines", 2000));
+                case 2 -> {
+                    secondCall.countDown();
+                    await(release);
+                    yield response("preliminary answer");
+                }
+                case 3 -> {
+                    // Steer may reselect completed evidence. Read its saved version without repeating file_read.
+                    yield toolResponse("find-original", "history_search", Map.of("keyword", "READBACK_V1"));
+                }
+                case 4 -> {
+                    var entry = ((List<Map<String, Object>>) request.messages()
+                                    .getLast()
+                                    .toolResultData()
+                                    .get("entries"))
+                            .getFirst();
+                    var ref = new HashMap<String, Object>();
+                    for (String key : List.of("runId", "messageId", "version", "toolCallId"))
+                        ref.put(key, entry.get(key));
+                    ref.put("length", 256);
+                    saved.set(Map.copyOf(ref));
+                    yield toolResponse("read-saved", "history_read", saved.get());
+                }
+                case 5 -> {
+                    runtimeRef.get().handle(request.runId()).pause();
+                    yield response("checkpoint with original evidence");
+                }
+                default -> {
+                    yield response("original evidence retained");
+                }
+            };
+        })) {
+            var client = agent.client();
+            runtimeRef.set(agent.localAgent().runtime());
+            runtimeRef.get().addListener(snapshot -> {
+                if (snapshot.status() == AgentRunStatus.SUSPENDED
+                        || snapshot.status().isTerminal()) suspended.countDown();
+            });
+            var session = client.create(agent.projectId(), "Inspect the saved evidence", "start");
+            sessionId = session.summary().sessionId();
+            var run = session.activeRun().orElseThrow().runId();
+            enabledRun = run;
+            try {
+                await(secondCall);
+                client.steer(sessionId, run, "Keep the public interface unchanged", "steer");
+            } finally {
+                release.countDown();
+            }
+            await(suspended);
+            var paused = runtimeRef.get().find(run).orElseThrow();
+            assertThat(paused.status())
+                    .as(
+                            "after model call %s; error code %s",
+                            calls.get(),
+                            paused.error().map(error -> error.code().name()).orElse("none"))
+                    .isEqualTo(AgentRunStatus.SUSPENDED);
+            runtimeRef.get().resume(new io.haifa.agent.runtime.api.ResumeAgentRunRequest("resume", run, List.of()));
+            assertThat(agent.localAgent()
+                            .runtime()
+                            .handle(run)
+                            .awaitCompletion(Duration.ofSeconds(15))
+                            .orElseThrow()
+                            .status())
+                    .isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(calls).hasValue(6);
+            assertThat(requests.stream()
+                            .allMatch(request -> request.tools().stream()
+                                            .map(t -> t.name())
+                                            .toList()
+                                            .containsAll(List.of("history_search", "history_read"))
+                                    && request.options().keySet().stream()
+                                            .noneMatch(key -> key.startsWith("haifa.runtime."))))
+                    .isTrue();
+            assertThat(requests.get(1).messages().getLast().toolResultData().containsKey("source"))
+                    .isTrue();
+            assertThat(requests.get(2).messages().stream()
+                            .filter(m -> m.role() == ModelMessageRole.USER
+                                    && m.content().equals("Keep the public interface unchanged"))
+                            .count())
+                    .isEqualTo(1);
+            assertThat(requests.get(4)
+                            .messages()
+                            .getLast()
+                            .toolResultData()
+                            .get("content")
+                            .toString()
+                            .contains("READBACK_V1"))
+                    .isTrue();
+            assertThat(requests.get(5).messages().stream()
+                            .anyMatch(m -> m.content().contains("READBACK_V1")
+                                    || m.toolResultData().toString().contains("READBACK_V1")))
+                    .isTrue();
+        } finally {
+            release.countDown();
+        }
+
+        Files.writeString(file, "NEW_CURRENT_FILE");
+        var rollback = CliConfigurationBuilder.from(base)
+                .model(base.availableModels().getLast())
+                .context(new CliConfiguration.Context("legacy", 4096, true, false))
+                .build();
+        var rollbackCalls = new AtomicInteger();
+        var rollbackModels = new java.util.concurrent.CopyOnWriteArrayList<String>();
+        try (var agent = openAgent(workspace, rollback, request -> {
+            rollbackModels.add(request.model().modelId().value());
+            if (rollbackCalls.incrementAndGet() == 1)
+                return toolResponse("read-after-reopen", "history_read", saved.get());
+            String content =
+                    request.messages().getLast().toolResultData().get("content").toString();
+            assertThat(content.contains("READBACK_V1") && !content.contains("NEW_CURRENT_FILE"))
+                    .isTrue();
+            return response("saved version survives rollback");
+        })) {
+            var client = agent.client();
+            var reopened = client.open(sessionId);
+            client.selectModel(
+                    sessionId, rollback.model().id(), reopened.model().revision(), "switch-model");
+            client.submit(sessionId, "Read the saved version", "rollback");
+            var run = client.open(sessionId).activeRun().orElseThrow().runId();
+            rollbackRun = run;
+            assertThat(agent.localAgent()
+                            .runtime()
+                            .handle(run)
+                            .awaitCompletion(Duration.ofSeconds(15))
+                            .orElseThrow()
+                            .status())
+                    .isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(rollbackCalls).hasValue(2);
+            assertThat(rollbackModels).containsOnly(rollback.model().id());
+            assertThat(Files.readString(file)).isEqualTo("NEW_CURRENT_FILE");
+        }
+
+        try (var agent = openAgent(workspace, base, request -> {
+            assertThat(request.tools()).noneMatch(tool -> tool.name().startsWith("history_"));
+            return response("default remains legacy");
+        })) {
+            var session = agent.client().create(agent.projectId(), "New unrelated task", "default");
+            var run = session.activeRun().orElseThrow().runId();
+            defaultRun = run;
+            assertThat(agent.localAgent()
+                            .runtime()
+                            .handle(run)
+                            .awaitCompletion(Duration.ofSeconds(15))
+                            .orElseThrow()
+                            .status())
+                    .isEqualTo(AgentRunStatus.COMPLETED);
+        }
+
+        // Reopen the authoritative Store without starting a Run: rollback must not rewrite a frozen policy.
+        var inspectionIds = new AtomicInteger();
+        try (var store = io.haifa.agent.application.project.persistence.ProjectPersistenceAssembly.open(
+                base.persistence(),
+                java.time.Clock.systemUTC(),
+                () -> "inspection-" + inspectionIds.incrementAndGet(),
+                protector())) {
+            var state = store.ports().state();
+            var original = store.ports().runs().find(enabledRun).orElseThrow();
+            assertThat(state.toolCalls(enabledRun).stream()
+                            .filter(call -> call.toolName().equals("file_read"))
+                            .count())
+                    .isEqualTo(1);
+            assertThat(state.configuration(original.configurationSnapshot())
+                            .orElseThrow()
+                            .modelRequestOptions())
+                    .containsEntry("haifa.runtime.context_budget_policy", "unified-context-v1")
+                    .containsEntry("haifa.runtime.working_set_target_tokens", 4096);
+            for (var runId : List.of(rollbackRun, defaultRun)) {
+                var run = store.ports().runs().find(runId).orElseThrow();
+                assertThat(state.configuration(run.configurationSnapshot())
+                                .orElseThrow()
+                                .modelRequestOptions())
+                        .doesNotContainKey("haifa.runtime.working_set");
+            }
+        }
+    }
+}

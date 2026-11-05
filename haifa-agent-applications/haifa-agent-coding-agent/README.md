@@ -363,3 +363,7 @@ Old clients/Hosts keep the synchronous Shell endpoint; new clients detect option
 
 Compaction and export remain on their existing APIs: this change adds no speculative generic operation
 store. Their behavior has no executed long-command failure evidence comparable to manual Shell.
+
+The standalone CLI assembly now supports explicit `context.policy: unified-context-v1` with authorized
+historical readers; the default remains legacy. See the [CLI context configuration and rollback](../haifa-agent-cli/README.md#opt-in-context-selection-and-rollback).
+`ProjectToolCatalog` only contributes the Runtime history provider when the highest-level assembly supplies it.

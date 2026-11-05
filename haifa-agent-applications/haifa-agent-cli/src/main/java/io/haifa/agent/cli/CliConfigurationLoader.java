@@ -198,7 +198,19 @@ final class CliConfigurationLoader {
                 Duration.ofMillis(number(
                         runtime,
                         "abandonedRunStalenessMillis",
-                        defaults.abandonedRunStaleness().toMillis())));
+                        defaults.abandonedRunStaleness().toMillis())),
+                context(object(source, "context")));
+    }
+
+    private static CliConfiguration.Context context(Map<String, Object> values) {
+        if (!Set.of("policy", "targetTokens", "historyRetrieval", "automaticMaintenance")
+                .containsAll(values.keySet())) throw new IllegalArgumentException("unsupported context configuration");
+        var defaults = CliConfiguration.Context.defaults();
+        return new CliConfiguration.Context(
+                text(values, "policy", defaults.policy()),
+                Math.toIntExact(number(values, "targetTokens", defaults.targetTokens())),
+                bool(values, "historyRetrieval", defaults.historyRetrieval()),
+                bool(values, "automaticMaintenance", false));
     }
 
     private static CodingApprovalThreshold compatibleThreshold(ApprovalMode approval) {

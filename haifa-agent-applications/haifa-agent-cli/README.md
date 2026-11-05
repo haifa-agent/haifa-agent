@@ -1044,3 +1044,38 @@ credential. Legacy credential-write/login capability flags remain false. Remote 
 panel containing Host/project, account scope, the runnable local command and refresh steps; it never collects a secret.
 After local repair, reopen `/account` in that remote TUI to read fresh Host connection status, then retry deliberately.
 Credential repair never replays a failed Run or uncertain tool automatically. `/logout` remains an explicit action.
+
+## Opt-in context selection and rollback
+
+Coding keeps the legacy context strategy by default. To use the bounded Run working set and unified
+budget/compaction path, configure the existing product assembly explicitly:
+
+```yaml
+context:
+  policy: unified-context-v1
+  targetTokens: 4096
+  historyRetrieval: true
+```
+
+`targetTokens` is a soft working-set target (128–65536), not the model's hard input limit. Required
+requests, applicable constraints and covering summaries may exceed this target; the final model input
+still has to fit the hard limit. The strategy is frozen when a Run is admitted. A model selection or
+configuration change applies to a later Run; it does not rewrite an admitted Run's policy.
+
+The two read-only tools `history_search` and `history_read` use authorized, versioned results from the
+same Session, including saved large results. They do not reread the current file as an older version or
+rerun a historical action. Their definitions and reads count toward the ordinary input/call budgets.
+Steer and pause/resume continue through the existing Runtime protocol. Steer may reselect completed
+history at its safe point; saved evidence remains readable, and pending protocol associations are retained.
+If required source content becomes unavailable, the Run fails explicitly rather than claiming it was
+successfully summarized.
+
+To roll back selection while retaining saved-result readback, set `context.policy: legacy` and keep
+`context.historyRetrieval: true`, then restart the application. To restore the default tool schema as
+well, set `historyRetrieval: false` or remove the entire context section. Do not disable readers for an
+already admitted Run that still requires them; finish or settle that Run under its frozen assembly first.
+The original history, saved results and committed summaries remain stored. Unknown context options,
+unified selection without readers, invalid targets and `automaticMaintenance: true` are rejected.
+
+This opt-in has deterministic integration coverage. Real-model quality/cost comparisons and product-wide
+default enablement remain pending; automatic summary maintenance after termination is unsupported.
