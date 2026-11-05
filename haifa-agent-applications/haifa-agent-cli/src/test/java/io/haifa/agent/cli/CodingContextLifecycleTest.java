@@ -29,7 +29,8 @@ class CodingContextLifecycleTest {
     void explicitWorkingSetSupportsSteerAndSavedReadbackAcrossSqliteReopenAndRollback() throws Exception {
         Path workspace = Files.createDirectory(root.resolve("workspace"));
         Path file = workspace.resolve("evidence.txt");
-        Files.writeString(file, "READBACK_V1\n" + "fixture data\n".repeat(3000));
+        // Complete source fits file_read limits while its saved result still needs a bounded model preview.
+        Files.writeString(file, "READBACK_V1\n" + ("fixture data ".repeat(3) + "\n").repeat(1000));
         var base = CliConfigurationBuilder.from(sqliteConfiguration(root.resolve("context.db")))
                 .enabledTools(java.util.Set.of("file_read"))
                 .build();

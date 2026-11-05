@@ -134,6 +134,45 @@ class OpenCodeGoOpenAiChatTest {
     }
 
     @Test
+    void mapsExclusiveBilledInputWithoutDoubleCountingCacheLanes() {
+        responseBody.set(syncBody("done")
+                .replace(
+                        "\"completion_tokens\":1",
+                        "\"completion_tokens\":1,\"cost\":0.0412,\"opencode\":{\"tokens\":{"
+                                + "\"input\":1200,\"cache_read\":8000,\"cache_write_5m\":2,\"cache_write_1h\":3}}"));
+
+        var usage = model().invoke(request()).usage();
+
+        assertThat(usage.inputTokensKnown()).isTrue();
+        assertThat(usage.inputTokens()).isEqualTo(9205);
+        assertThat(usage.cacheMissTokens()).isEqualTo(1200);
+        assertThat(usage.cacheMissTokensKnown()).isTrue();
+        assertThat(usage.cacheHitTokens()).isEqualTo(8000);
+        assertThat(usage.cacheWriteTokens()).hasValue(5);
+        assertThat(usage.outputTokens()).isEqualTo(1);
+        assertThat(usage.costMinorUnits()).isEqualTo(4);
+    }
+
+    @Test
+    void explicitZeroBilledLanesAreKnownButMissingWriteLaneIsNotZero() {
+        String body = syncBody("done")
+                .replace(
+                        "\"completion_tokens\":1",
+                        "\"completion_tokens\":1,\"opencode\":{\"tokens\":{"
+                                + "\"input\":0,\"cache_read\":0,\"cache_write_5m\":0,\"cache_write_1h\":0}}");
+        responseBody.set(body);
+        var complete = model().invoke(request()).usage();
+        assertThat(complete.inputTokensKnown()).isTrue();
+        assertThat(complete.inputTokens()).isZero();
+        assertThat(complete.cacheWriteTokens()).hasValue(0);
+
+        responseBody.set(body.replace(",\"cache_write_1h\":0", ""));
+        var incomplete = model().invoke(request()).usage();
+        assertThat(incomplete.inputTokensKnown()).isFalse();
+        assertThat(incomplete.cacheWriteTokens()).isEmpty();
+    }
+
+    @Test
     void sendsTheThinkingContractOnlyWhenReasoningIsEnabled() {
         responseBody.set(syncBody("quiet"));
         model().invoke(request(RUN_ID, Map.of("thinking", "disabled")));

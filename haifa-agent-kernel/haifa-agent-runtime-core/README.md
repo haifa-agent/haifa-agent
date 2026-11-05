@@ -1,5 +1,9 @@
 # Haifa Agent Runtime Core
 
+Saved history previews revalidate source identity before projection. Initial excerpts and refreshed excerpts derive
+both text and source truncation from the materialized result; truncation of an inline asset preview does not mark
+the complete saved source as truncated. Version, current access and withdrawal checks still apply.
+
 ## History baseline and retrieval limits
 
 `ContextLifecycleHistoryFixture` and `RuntimeCoreTest.contextLifecycleBaseline` preserve fixed

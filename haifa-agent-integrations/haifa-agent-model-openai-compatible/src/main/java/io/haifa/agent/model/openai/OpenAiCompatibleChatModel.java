@@ -11,6 +11,7 @@ import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.CredentialResolver;
 import io.haifa.agent.model.api.ImageDataPart;
 import io.haifa.agent.model.api.ImageUrlPart;
+import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelErrorCategory;
 import io.haifa.agent.model.api.ModelErrorMapping;
 import io.haifa.agent.model.api.ModelFinishReason;
@@ -924,6 +925,41 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
             var writes = details.hasNonNull("cache_write_tokens")
                     ? java.util.OptionalLong.of(nonNegativeLong(request, details, "cache_write_tokens", false))
                     : java.util.OptionalLong.empty();
+            // Console's documented billed input excludes cache reads and both cache-write lanes.
+            // Admit only this reviewed Go binding; absent lanes remain unknown, including absent writes.
+            if ("opencode-go".equals(request.model().providerId().value())
+                    && "deepseek-v4.1-flash".equals(request.model().providerModelId())
+                    && ModelApiStyles.OPENAI_CHAT_COMPLETIONS.equals(
+                            request.model().apiStyle())
+                    && OpenAiCompatibleDialects.OPENCODE_GO.equals(
+                            request.model().dialect())
+                    && consoleTokens.isObject()) {
+                var uncached = consoleTokens.hasNonNull("input")
+                        ? java.util.OptionalLong.of(nonNegativeLong(request, consoleTokens, "input", false))
+                        : java.util.OptionalLong.empty();
+                var read = consoleTokens.hasNonNull("cache_read")
+                        ? java.util.OptionalLong.of(consoleCacheRead)
+                        : java.util.OptionalLong.empty();
+                var written = consoleTokens.hasNonNull("cache_write_5m") && consoleTokens.hasNonNull("cache_write_1h")
+                        ? java.util.OptionalLong.of(Math.addExact(
+                                nonNegativeLong(request, consoleTokens, "cache_write_5m", false),
+                                nonNegativeLong(request, consoleTokens, "cache_write_1h", false)))
+                        : java.util.OptionalLong.empty();
+                var billed = ModelUsage.exclusiveInput(
+                        uncached, nonNegativeLong(request, usage, "completion_tokens", true), read, written);
+                return new ModelUsage(
+                        billed.inputTokens(),
+                        billed.outputTokens(),
+                        billed.cacheHitTokens(),
+                        billed.cacheMissTokens(),
+                        reasoningTokens,
+                        costMinorUnits.isPresent(),
+                        costMinorUnits.orElse(0),
+                        billed.cacheWriteTokens(),
+                        billed.inputTokensKnown(),
+                        billed.cacheHitTokensKnown(),
+                        billed.cacheMissTokensKnown());
+            }
             boolean inclusive = ("openai".equals(request.model().providerId().value())
                             && io.haifa.agent.model.api.ModelApiBindingDefinition.STANDARD_DIALECT.equals(
                                     request.model().dialect()))
