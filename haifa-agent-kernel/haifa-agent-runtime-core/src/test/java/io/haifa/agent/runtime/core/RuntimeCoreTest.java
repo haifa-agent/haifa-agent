@@ -3345,6 +3345,62 @@ class RuntimeCoreTest {
                 .failureDiagnostics((context, captured) -> diagnostic.set(captured)));
     }
 
+    @Test
+    void outerContextFailureUsesOneSafeReasonAndPreservesHigherPriorityFailures() {
+        for (String kind : List.of("rebuild", "wrapped", "required", "quota", "limit", "continuation")) {
+            var rebuild =
+                    new io.haifa.agent.runtime.core.loop.ContextRebuildExhaustedException("synthetic diagnostic only");
+            RuntimeException failure =
+                    switch (kind) {
+                        case "wrapped" -> new IllegalStateException("wrapped diagnostic only", rebuild);
+                        case "required" ->
+                            new io.haifa.agent.context.api.ContextBuildException(
+                                    io.haifa.agent.context.api.ContextBuildFailure.REQUIRED_CONTEXT_TOO_LARGE,
+                                    "fixed fixture");
+                        case "quota" ->
+                            new io.haifa.agent.runtime.core.guard.RuntimeQuotaExceededException(
+                                    "inputTokens", 100, 101);
+                        case "limit" -> new RuntimeLimitExceededException("modelCalls", 1, 2);
+                        case "continuation" ->
+                            new io.haifa.agent.runtime.core.model.continuation.ModelContinuationException(
+                                    io.haifa.agent.runtime.core.model.continuation.ModelContinuationFailure
+                                            .BINDING_MISMATCH,
+                                    "fixed fixture");
+                        default -> rebuild;
+                    };
+            if (!kind.equals("rebuild") && !kind.equals("wrapped")) failure.initCause(rebuild);
+            var traces = new ArrayList<RuntimeTraceEvent>();
+            var fixture = fixture(ignored -> response(finalDecision("unused")), builder -> builder.middleware(
+                            throwingMiddleware(RuntimePhase.BEFORE_CONTEXT_BUILD, failure))
+                    .trace(traces::add));
+            var started = fixture.runtime.start(request("classified-" + kind));
+            fixture.scheduler.runAll();
+            var run = fixture.runtime.find(started.runId()).orElseThrow();
+            assertThat(run.status()).isEqualTo(AgentRunStatus.FAILED);
+            var error = run.error().orElseThrow();
+            assertThat(error.code())
+                    .isEqualTo(
+                            switch (kind) {
+                                case "quota" -> AgentErrorCode.RUN_INPUT_QUOTA_EXHAUSTED;
+                                case "limit" -> AgentErrorCode.RUN_EXECUTION_LIMIT_EXCEEDED;
+                                case "continuation" -> AgentErrorCode.CROSS_MODEL_CONTINUATION_INVALID;
+                                default -> AgentErrorCode.MODEL_CONTEXT_TOO_LONG;
+                            });
+            String reason = kind.equals("required")
+                    ? "REQUIRED_CONTEXT_TOO_LARGE"
+                    : kind.equals("rebuild") || kind.equals("wrapped") ? "REBUILD_EXHAUSTED" : null;
+            assertThat(error.details().get("contextFailure")).isEqualTo(reason);
+            assertThat(traces)
+                    .filteredOn(t -> t.operation().equals("runtime.error"))
+                    .singleElement()
+                    .satisfies(t -> {
+                        assertThat(t.safeAttributes().get("contextFailure")).isEqualTo(reason);
+                        assertThat(t.safeAttributes().get("errorCode"))
+                                .isEqualTo(error.code().wireCode());
+                    });
+        }
+    }
+
     private static AgentRuntimeMiddleware throwingMiddleware(RuntimePhase phase, RuntimeException failure) {
         return new AgentRuntimeMiddleware() {
             @Override
@@ -4044,6 +4100,7 @@ class RuntimeCoreTest {
         fixture.scheduler.runAll();
         assertThat(fixture.runtime.find(started.runId()).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
         assertThat(ordinary).hasSize(4);
+        // The lifecycle gate requires at least two checkpoints; batch packing may need more physical summary calls.
         assertThat(summaryCalls.get()).isGreaterThanOrEqualTo(2);
         assertThat(fixture.store.latestVersion(owner.sessionId())).isGreaterThanOrEqualTo(2);
         assertThat(fixture.store.latestValid(owner.sessionId()).orElseThrow().quality())

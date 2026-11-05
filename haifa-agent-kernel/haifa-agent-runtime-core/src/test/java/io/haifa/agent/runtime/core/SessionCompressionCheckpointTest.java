@@ -539,6 +539,16 @@ class SessionCompressionCheckpointTest {
         scheduler.runAll();
 
         assertThat(runtime.find(accepted.runId()).orElseThrow().status()).isEqualTo(AgentRunStatus.FAILED);
+        assertThat(runtime.find(accepted.runId())
+                        .orElseThrow()
+                        .error()
+                        .orElseThrow()
+                        .details())
+                .containsEntry("contextFailure", "REBUILD_EXHAUSTED");
+        assertThat(traces)
+                .filteredOn(t -> t.operation().equals("runtime.error"))
+                .singleElement()
+                .satisfies(t -> assertThat(t.safeAttributes()).containsEntry("contextFailure", "REBUILD_EXHAUSTED"));
         assertThat(modelCalls).hasValue(3);
         assertThat(toolExecutions).hasValue(1);
         assertThat(store.steps(accepted.runId()))

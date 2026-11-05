@@ -90,7 +90,9 @@ class OpenCodeGoOpenAiChatTest {
                 .get(body.path("messages").size() - 1)
                 .path("content")
                 .asText();
-        assertThat(json.readTree(contract.substring(contract.indexOf('{'))))
+        String prefix = "When producing the final answer, return one JSON object that exactly matches this schema: ";
+        assertThat(contract).startsWith(prefix);
+        assertThat(json.readTree(contract.substring(prefix.length())))
                 .isEqualTo(json.valueToTree(io.haifa.agent.context.compression.SemanticSummarySchema.jsonSchema()));
     }
 

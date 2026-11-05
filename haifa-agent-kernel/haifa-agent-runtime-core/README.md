@@ -82,9 +82,13 @@ Unreadable complete sources fail with `UNSUPPORTED_CONTEXT_CONTENT`, a `SOURCE_P
 unchanged; source refusal never authorizes deterministic fallback or blind retry. A Run requiring that
 compaction fails explicitly. Only physical model calls consume model-call accounting.
 
+For compaction model calls, `GENERATION` names the invocation boundary (including Provider/transport failures);
+`failureCode` retains the exact normalized model category and is not a content-quality verdict.
 Compaction failure stages distinguish request rejection, response parsing, empty generation, schema mapping,
 semantic validation, planning, source validation and persistence. A locally exhausted single forced rebuild
-reports `MODEL_CONTEXT_TOO_LONG` even when it escapes through the outer attempt executor. This does not
+reports `MODEL_CONTEXT_TOO_LONG` with `contextFailure=REBUILD_EXHAUSTED` even when it escapes through the outer attempt executor.
+The typed rebuild failure owns that classification; the Run error, structured failure log and `runtime.error` trace
+share the same safe reason, distinct from `REQUIRED_CONTEXT_TOO_LARGE`. This does not
 admit another call or relax required input, semantic validation, repair or CAS limits.
 
 Terminal automatic summary maintenance remains deferred; terminal Run usage is immutable.
