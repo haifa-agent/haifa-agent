@@ -67,9 +67,10 @@ class CodingContextLifecycleTest {
                     .awaitCompletion(Duration.ofSeconds(15))
                     .orElseThrow();
             assertThat(completed.status()).isEqualTo(AgentRunStatus.COMPLETED);
-            assertThat(requests.get(1).messages())
-                    .anyMatch(m ->
-                            m.role() == ModelMessageRole.USER && m.content().equals(objective));
+            assertThat(requests.get(1).messages().stream()
+                            .anyMatch(m -> m.role() == ModelMessageRole.USER
+                                    && m.content().equals(objective)))
+                    .isTrue();
             assertThat(requests.get(1).messages())
                     .filteredOn(m -> m.toolResultData().toString().contains(source))
                     .singleElement()
@@ -82,7 +83,7 @@ class CodingContextLifecycleTest {
             if (readOnly) {
                 // Undisclosed model output is rejected before a Tool Call exists. The bounded model retry
                 // receives the same disclosed request, without inventing an orphan Tool result.
-                assertThat(requests).hasSize(3);
+                assertThat(requests.size()).isEqualTo(3);
                 assertThat(requests.getLast().attempt()).isEqualTo(2);
                 assertThat(requests.getLast().iteration())
                         .isEqualTo(requests.get(1).iteration());

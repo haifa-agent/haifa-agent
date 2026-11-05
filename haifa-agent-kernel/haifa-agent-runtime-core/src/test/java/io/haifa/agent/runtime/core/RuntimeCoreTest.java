@@ -3652,14 +3652,16 @@ class RuntimeCoreTest {
         assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
                 .isEqualTo(AgentRunStatus.COMPLETED);
         var messages = captured.getFirst().messages();
-        assertThat(messages)
-                .anyMatch(m -> m.role() == ModelMessageRole.SYSTEM
-                        && m.content().contains("do not extend the current request"));
+        assertThat(messages.stream()
+                        .anyMatch(m -> m.role() == ModelMessageRole.SYSTEM
+                                && m.content().contains("do not extend the current request")))
+                .isTrue();
         assertThat(messages)
                 .filteredOn(m -> m.content().equals(question))
                 .singleElement()
                 .satisfies(m -> assertThat(m.role()).isEqualTo(ModelMessageRole.USER));
-        assertThat(messages).anyMatch(m -> m.content().contains(ContextLifecycleHistoryFixture.CONSTRAINT));
+        assertThat(messages.stream().anyMatch(m -> m.content().contains(ContextLifecycleHistoryFixture.CONSTRAINT)))
+                .isTrue();
         assertThat(messages)
                 .filteredOn(m -> m.content().contains(nextStep))
                 .singleElement()
@@ -4108,7 +4110,7 @@ class RuntimeCoreTest {
                         .isEqualTo(AgentRunStatus.SUSPENDED);
                 fixture.runtime.resume(new ResumeAgentRunRequest("resume-pending", next.runId(), List.of()));
                 fixture.scheduler.runAll();
-                assertThat(captured).hasSize(2);
+                assertThat(captured.size()).isEqualTo(2);
                 assertThat(captured.getLast().messages())
                         .filteredOn(m -> m.content().contains("old unresolved action"))
                         .singleElement()
