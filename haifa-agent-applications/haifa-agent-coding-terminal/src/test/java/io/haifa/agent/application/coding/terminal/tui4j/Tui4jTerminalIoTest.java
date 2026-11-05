@@ -21,14 +21,17 @@ class Tui4jTerminalIoTest {
     @Test
     void scopedConsoleInterruptReachesTheClientAndRestoresThePreviousHandler() throws Exception {
         Signal signal = new Signal("INT");
-        SignalHandler original = Signal.handle(signal, SignalHandler.SIG_IGN);
+        // Unix JVMs preserve ignored INT dispositions instead of installing a new Java handler.
+        // Use a catchable baseline so this test does not disable its own signal delivery.
+        SignalHandler baseline = ignored -> {};
+        SignalHandler original = Signal.handle(signal, baseline);
         try {
             CompletableFuture<Void> received = new CompletableFuture<>();
             try (var registration = new TerminalInterruptSignal(() -> received.complete(null))) {
                 Signal.raise(signal);
                 received.get(5, TimeUnit.SECONDS);
             }
-            assertThat(Signal.handle(signal, SignalHandler.SIG_IGN)).isSameAs(SignalHandler.SIG_IGN);
+            assertThat(Signal.handle(signal, baseline)).isSameAs(baseline);
         } finally {
             Signal.handle(signal, original);
         }
@@ -37,13 +40,14 @@ class Tui4jTerminalIoTest {
     @Test
     void closingTheInterruptBridgePreservesTheHandlerRestoredByTerminalCleanup() {
         Signal signal = new Signal("INT");
-        SignalHandler original = Signal.handle(signal, SignalHandler.SIG_IGN);
+        SignalHandler baseline = ignored -> {};
+        SignalHandler original = Signal.handle(signal, baseline);
         SignalHandler restored = ignored -> {};
         try {
             try (var registration = new TerminalInterruptSignal(() -> {})) {
                 Signal.handle(signal, restored);
             }
-            assertThat(Signal.handle(signal, SignalHandler.SIG_IGN)).isSameAs(restored);
+            assertThat(Signal.handle(signal, baseline)).isSameAs(restored);
         } finally {
             Signal.handle(signal, original);
         }
