@@ -225,8 +225,11 @@ public final class SummaryModelInvoker {
 
     static long inputBudget(FrozenModelBinding binding) {
         long window = binding.configuration().model().contextWindow();
-        long margin = Math.min(16_384L, Math.max(256L, window / 20L));
-        return Math.max(0L, window - summaryOutputTokens(binding) - margin);
+        return io.haifa.agent.context.budget.ContextWindowBudget.capacity(
+                        window,
+                        summaryOutputTokens(binding),
+                        io.haifa.agent.context.budget.ContextWindowBudget.safetyMargin(window, false))
+                .availableInputTokens();
     }
 
     static long estimatedInput(String systemPrompt, String userPrompt) {

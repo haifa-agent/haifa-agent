@@ -9,6 +9,16 @@ import org.junit.jupiter.api.Test;
 class CompactionTriggerEvaluatorTest {
 
     @Test
+    void usesTheActualRequestWindowIncludingItsForcedRebuildMargin() {
+        var window = io.haifa.agent.context.budget.ContextWindowBudget.capacity(
+                128000, 4096, io.haifa.agent.context.budget.ContextWindowBudget.safetyMargin(128000, true));
+        var evaluator = new CompactionTriggerEvaluator(CompressionPolicy.defaults());
+        var decision = evaluator.evaluate(window, 2000, 1000, 4000, 2);
+        assertThat(decision.budgetBreakdown().safetyMarginTokens()).isEqualTo(window.safetyMargin());
+        assertThat(decision.budgetBreakdown().availableSessionTokens()).isEqualTo(window.availableInputTokens() - 3000);
+    }
+
+    @Test
     @DisplayName("calculateBreakdown correctly bounds headroom and computes soft limit")
     void testCalculateBreakdown() {
         CompressionPolicy policy = CompressionPolicy.defaults().withSemanticCompactionEnabled(true);

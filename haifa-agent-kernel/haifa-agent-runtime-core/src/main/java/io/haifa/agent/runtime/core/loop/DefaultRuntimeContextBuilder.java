@@ -103,9 +103,8 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
                     java.util.Set.of("runtime-control", "finalize-only")));
         }
 
-        int divisor = loopContext.forcedContextRebuildAttempts() > 0 ? 10 : 20;
-        int safetyMargin =
-                Math.min(16_384, Math.max(256, model.configuration().model().contextWindow() / divisor));
+        int safetyMargin = io.haifa.agent.context.budget.ContextWindowBudget.safetyMargin(
+                model.configuration().model().contextWindow(), loopContext.forcedContextRebuildAttempts() > 0);
         TokenBudget budget = TokenBudget.forModel(
                 model.configuration().model(), model.configuration().model().maxOutputTokens(), safetyMargin);
         long fixedTokens =
