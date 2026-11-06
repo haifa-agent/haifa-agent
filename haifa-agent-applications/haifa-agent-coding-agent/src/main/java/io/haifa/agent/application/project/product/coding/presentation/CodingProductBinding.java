@@ -274,13 +274,14 @@ public final class CodingProductBinding implements CodingClient {
                             receipt.runVersion());
                 }
                 case "prepareApproval" -> {
-                    approvals.prepare(pending(target));
-                    try (var view = observe.apply(session(target))) {
-                        result.interaction = view.initial().entries().stream()
-                                .filter(e -> e.interaction() != null)
-                                .findFirst()
-                                .orElse(null);
-                    }
+                    result.interaction = approvals
+                            .prepare(pending(target))
+                            .map(prompt -> CodingPresentationObservation.projectInteraction(
+                                    prompt.interaction(),
+                                    sessions.reviewState(prompt.interaction()),
+                                    prompt.allowForSession(),
+                                    redactor))
+                            .orElse(null);
                     result.operationId = target.interactionId();
                     result.runId = target.runId();
                 }

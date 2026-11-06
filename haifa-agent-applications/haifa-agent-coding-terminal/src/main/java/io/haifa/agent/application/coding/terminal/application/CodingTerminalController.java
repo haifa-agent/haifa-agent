@@ -541,6 +541,10 @@ public final class CodingTerminalController implements AutoCloseable {
         if (next != null) {
             var previous = productSnapshot;
             productSnapshot = next;
+            var history = productHistoryEntries(next);
+            if (previous == null || !history.equals(productHistoryEntries(previous))) {
+                apply(new TerminalUiAction.ProductHistoryUpdated(history));
+            }
             var entries = deliveryEntries(next);
             if (previous == null
                     || !entries.equals(deliveryEntries(previous))
@@ -553,6 +557,12 @@ public final class CodingTerminalController implements AutoCloseable {
             closeProductObservation();
             apply(new TerminalUiAction.RecoverableFailure(failure));
         }
+    }
+
+    private static List<CodingProtocol.Entry> productHistoryEntries(CodingProtocol.Snapshot snapshot) {
+        return snapshot.entries().stream()
+                .filter(entry -> entry.sequence() != null)
+                .toList();
     }
 
     private static List<CodingProtocol.Entry> deliveryEntries(CodingProtocol.Snapshot snapshot) {
@@ -1568,6 +1578,46 @@ public final class CodingTerminalController implements AutoCloseable {
                 new InteractionHydrationRequest(received.event().runId(), lifecycle.requestId(), selection.current()));
     }
 
+    private Optional<CodingApprovalPrompt> prepareTerminalApproval(InteractionView interaction) {
+        if (productClient == null) return client.prepareApproval(interaction);
+        String requestId = UUID.randomUUID().toString();
+        var command = new CodingProtocol.Command(
+                "command",
+                "prepareApproval",
+                requestId,
+                null,
+                new CodingProtocol.CommandTarget(
+                        projectId.value(),
+                        interaction.sessionId().value(),
+                        interaction.runId().value(),
+                        interaction.requestId().value(),
+                        interaction.revision()),
+                null,
+                null,
+                null,
+                List.of());
+        var result = productClient.execute(command);
+        if (!"accepted".equals(result.receipt().disposition())) {
+            throw new CodingClientException(
+                    Objects.requireNonNullElse(result.receipt().reasonCode(), "PRODUCT_ACTION_REJECTED"),
+                    "unknown".equals(result.receipt().disposition()));
+        }
+        if (result.interaction() == null) return Optional.empty();
+        var projected = result.interaction().interaction();
+        if (projected == null
+                || !interaction.requestId().value().equals(projected.id())
+                || interaction.revision() != projected.revision()) {
+            throw new CodingClientException("INTERACTION_TARGET_MISMATCH", false);
+        }
+        var sessionAction = projected.actions().stream()
+                .filter(action -> "allowForSession".equals(action.kind()))
+                .findFirst();
+        return Optional.of(new CodingApprovalPrompt(
+                interaction,
+                sessionAction.filter(CodingProtocol.Action::available).isPresent(),
+                sessionAction.map(CodingProtocol.Action::reason)));
+    }
+
     private void scheduleInteractionHydration(InteractionHydrationRequest request) {
         if (request.equals(interactionHydrationInFlight)
                 || (activeInteraction != null
@@ -1580,7 +1630,7 @@ public final class CodingTerminalController implements AutoCloseable {
         submitControlEffect(
                 () -> {
                     Optional<CodingApprovalPrompt> interaction =
-                            client.pendingInteraction(request.runId()).flatMap(client::prepareApproval);
+                            client.pendingInteraction(request.runId()).flatMap(this::prepareTerminalApproval);
                     return () -> completeInteractionHydration(request, interaction);
                 },
                 code -> {
@@ -2823,7 +2873,7 @@ public final class CodingTerminalController implements AutoCloseable {
             submitControlEffect(
                     () -> {
                         Optional<CodingApprovalPrompt> pending =
-                                client.pendingInteraction(runId).flatMap(client::prepareApproval);
+                                client.pendingInteraction(runId).flatMap(this::prepareTerminalApproval);
                         return () -> {
                             if (!isCurrentSelection(token)) return;
                             if (approvalRunId().filter(runId::equals).isEmpty()) return;
@@ -2853,7 +2903,28 @@ public final class CodingTerminalController implements AutoCloseable {
         apply(new TerminalUiAction.StatusChanged("Resetting session approval"));
         submitControlEffect(
                 () -> {
-                    client.resetSessionApproval(sessionId);
+                    if (productClient == null) {
+                        client.resetSessionApproval(sessionId);
+                    } else {
+                        String requestId = UUID.randomUUID().toString();
+                        var command = new CodingProtocol.Command(
+                                "command",
+                                "resetConsent",
+                                requestId,
+                                null,
+                                new CodingProtocol.CommandTarget(
+                                        projectId.value(), sessionId.value(), null, null, null),
+                                null,
+                                null,
+                                null,
+                                List.of());
+                        var receipt = productClient.execute(command).receipt();
+                        if (!"accepted".equals(receipt.disposition())) {
+                            throw new CodingClientException(
+                                    Objects.requireNonNullElse(receipt.reasonCode(), "PRODUCT_ACTION_REJECTED"),
+                                    "unknown".equals(receipt.disposition()));
+                        }
+                    }
                     return () -> {
                         if (isCurrentSelection(token)) {
                             apply(new TerminalUiAction.StatusChanged("Session approval reset · ask each time"));
@@ -2947,7 +3018,7 @@ public final class CodingTerminalController implements AutoCloseable {
                 .map(value -> new PendingMessage(
                         value.followUpId(), PendingMessage.Kind.FOLLOW_UP, value.summary(), value.revision()))
                 .toList();
-        Optional<CodingApprovalPrompt> approval = view.pendingInteraction().flatMap(client::prepareApproval);
+        Optional<CodingApprovalPrompt> approval = view.pendingInteraction().flatMap(this::prepareTerminalApproval);
         if (view.activeRun().isEmpty()) {
             return new LoadedSession(
                     view,

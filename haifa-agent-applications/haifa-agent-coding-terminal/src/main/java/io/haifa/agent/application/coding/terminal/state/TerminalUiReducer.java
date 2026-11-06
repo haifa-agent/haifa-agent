@@ -140,6 +140,15 @@ public final class TerminalUiReducer {
             }
             return productTranscript(state, items);
         }
+        if (action instanceof TerminalUiAction.ProductHistoryUpdated history) {
+            List<TranscriptItem> items = new ArrayList<>(state.transcript());
+            for (Entry entry : history.entries()) {
+                int index = index(items, entry.id());
+                if (index < 0) items.add(productItem(entry, false));
+                else items.set(index, productItem(entry, items.get(index).expanded()));
+            }
+            return productTranscript(state, items);
+        }
         if (action instanceof TerminalUiAction.ProductHistoryLoaded history) {
             List<TranscriptItem> items = new ArrayList<>();
             Set<String> ids = new HashSet<>();

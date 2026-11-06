@@ -490,64 +490,76 @@ public final class CodingPresentationObservation implements CodingPresentationSu
 
     private Entry interaction(InteractionView value, Consent observedConsent) {
         if (!sessionId.equals(value.sessionId())) throw new IllegalArgumentException("SOURCE_SCOPE_MISMATCH");
+        return projectInteraction(value, reviewState.apply(value), observedConsent.available(), redactor);
+    }
+
+    static Entry projectInteraction(
+            InteractionView value, CodingReviewState completeness, boolean consentAvailable, SecretRedactor redactor) {
         boolean supported = java.util.Set.of("none", "text", "single-choice", "multi-choice")
                         .contains(value.inputContract().type().value())
                 && value.kind().known();
         var contract = value.inputContract();
-        CodingReviewState completeness = reviewState.apply(value);
         Input input = new Input(
                 contract.type().value(),
                 contract.maximumCharacters(),
                 contract.minimumSelections(),
                 contract.maximumSelections(),
                 contract.options().stream()
-                        .map(option -> new InputOption(option.id(), safe(option.label(), 512), null))
+                        .map(option -> new InputOption(
+                                option.id(), CodingPresentationText.safe(option.label(), 512, redactor), null))
                         .toList(),
                 value.clarificationPresentation()
                         .map(p -> p.questions().stream()
                                 .map(q -> new Question(
-                                        safe(q.header(), 32),
-                                        safe(q.question(), 2000),
+                                        CodingPresentationText.safe(q.header(), 32, redactor),
+                                        CodingPresentationText.safe(q.question(), 2000, redactor),
                                         q.multiple(),
                                         q.allowCustom(),
                                         q.options().stream()
                                                 .map(o -> new InputOption(
                                                         o.optionId(),
-                                                        safe(o.label(), 512),
+                                                        CodingPresentationText.safe(o.label(), 512, redactor),
                                                         o.description()
-                                                                .map(t -> safe(t, 512))
+                                                                .map(t -> CodingPresentationText.safe(t, 512, redactor))
                                                                 .orElse(null)))
                                                 .toList()))
                                 .toList())
                         .orElse(List.of()));
         Review review = value.approvalPresentation()
                 .map(p -> new Review(
-                        safe(p.purpose(), 512),
+                        CodingPresentationText.safe(p.purpose(), 512, redactor),
                         p.contentType(),
-                        safe(p.content(), 16384),
+                        CodingPresentationText.safe(p.content(), 16384, redactor),
                         p.environment().stream()
-                                .map(f -> new ReviewFact(safe(f.label(), 64), safe(f.value(), 512)))
+                                .map(f -> new ReviewFact(
+                                        CodingPresentationText.safe(f.label(), 64, redactor),
+                                        CodingPresentationText.safe(f.value(), 512, redactor)))
                                 .toList(),
                         p.technical().stream()
-                                .map(f -> new ReviewFact(safe(f.label(), 64), safe(f.value(), 512)))
+                                .map(f -> new ReviewFact(
+                                        CodingPresentationText.safe(f.label(), 64, redactor),
+                                        CodingPresentationText.safe(f.value(), 512, redactor)))
                                 .toList(),
                         p.risk().orElse(null),
                         completeness.targetComplete(),
                         completeness.contentTruncated()))
                 .orElse(null);
-        String prompt = safe(value.safePrompt(), 16384);
+        String prompt = CodingPresentationText.safe(value.safePrompt(), 16384, redactor);
         boolean complete = prompt.equals(redactor.redact(value.safePrompt()))
                 && supported
                 && (!value.kind().equals(InteractionKind.APPROVAL)
                         || (review != null && completeness.targetComplete()));
         var target = new Target(
-                sessionId.value(), value.runId().value(), value.requestId().value(), value.revision());
+                value.sessionId().value(),
+                value.runId().value(),
+                value.requestId().value(),
+                value.revision());
         List<Action> actions = new ArrayList<>(value.allowedActions().stream()
                 .map(action ->
                         new Action("respond", target, action.value(), complete, complete ? null : "REVIEW_UNAVAILABLE"))
                 .toList());
         if (value.kind().equals(InteractionKind.APPROVAL)) {
-            boolean available = complete && completeness.sessionConsentEligible() && observedConsent.available();
+            boolean available = complete && completeness.sessionConsentEligible() && consentAvailable;
             actions.add(new Action(
                     "allowForSession",
                     target,
@@ -555,16 +567,14 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                     available,
                     available
                             ? null
-                            : (!observedConsent.available()
-                                    ? "SESSION_CONSENT_UNAVAILABLE"
-                                    : "EXACT_APPROVAL_REQUIRED")));
+                            : (!consentAvailable ? "SESSION_CONSENT_UNAVAILABLE" : "EXACT_APPROVAL_REQUIRED")));
         }
         return new Entry(
                 "interaction-" + value.requestId().value(),
                 "interaction",
                 value.runId().value(),
                 "interaction",
-                safe(value.title(), 256),
+                CodingPresentationText.safe(value.title(), 256, redactor),
                 prompt,
                 value.state().name(),
                 null,

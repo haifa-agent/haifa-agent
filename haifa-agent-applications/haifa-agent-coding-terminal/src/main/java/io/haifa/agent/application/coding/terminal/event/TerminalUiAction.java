@@ -27,6 +27,12 @@ public sealed interface TerminalUiAction {
         }
     }
 
+    record ProductHistoryUpdated(List<Entry> entries) implements TerminalUiAction {
+        public ProductHistoryUpdated {
+            entries = List.copyOf(entries);
+        }
+    }
+
     record ProductHistoryLoaded(List<Entry> entries, boolean earlier) implements TerminalUiAction {
         public ProductHistoryLoaded {
             entries = List.copyOf(entries);
