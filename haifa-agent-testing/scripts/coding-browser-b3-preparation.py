@@ -78,6 +78,14 @@ def fixture_snapshot(session,view_id):
         interaction['interaction'].update(kind='approval',input={'type':'none','maximumCharacters':0,'minimumSelections':0,'maximumSelections':0,'options':[],'questions':[]},review={'purpose':'仅合成夹具审批展示','contentType':'File content','content':'synthetic review content','environment':[],'technical':[],'risk':None,'targetComplete':True,'contentTruncated':False})
         interaction['interaction']['actions']=[{'kind':'respond','target':{'sessionId':'A','runId':'run-1','interactionId':'interaction-1','targetRevision':7},'choice':'approve','available':True,'reason':None}]
         value['entries'].append(interaction)
+        options = [
+            {'id': 'first', 'label': 'First fixture option', 'description': None},
+            {'id': 'second', 'label': 'Second fixture option', 'description': None},
+        ]
+        clarification = dict(interaction['interaction'], id='interaction-2', kind='clarification',
+                             review=None, actions=[], input={'type': 'single-choice', 'maximumCharacters': 0,
+                             'minimumSelections': 1, 'maximumSelections': 1, 'options': options, 'questions': []})
+        value['entries'].append(dict(interaction, id='entry-clarification', interaction=clarification))
     return value
 
 
@@ -168,7 +176,14 @@ def main():
             expect(page.locator('#notice')).to_contain_text('已接收操作')
             require(any(c['operation']=='respond' and c['optionId']=='approve' and c['target']['sessionId']=='A' and c['target']['runId']=='run-1' and c['target']['interactionId']=='interaction-1' and c['target']['targetRevision']==7 for c in commands),'EXACT_SYNTHETIC_ACTION')
             receipt['stage']='synthetic-draft-switch'
+            first_option = page.get_by_role('radio', name='First fixture option')
+            second_option = page.get_by_role('radio', name='Second fixture option')
+            second_option.check()
+            first_option.check()
             draft=page.locator('#draft');draft.fill('中文会话 A 草稿');page.get_by_role('button',name='合成测试会话 B',exact=False).click();expect(page.locator('#session-title')).to_have_text('合成测试会话 B');expect(draft).to_have_value('');draft.fill('会话 B 草稿');page.get_by_role('button',name='合成测试会话 A',exact=False).click();expect(draft).to_have_value('中文会话 A 草稿')
+            expect(first_option).to_be_checked()
+            expect(second_option).not_to_be_checked()
+            receipt['checks']['lastRadioSelectionSurvivesRerender'] = True
             require(page.evaluate("localStorage.length===0&&sessionStorage.length===0&&document.cookie==='';"),'BROWSER_STORAGE_USED')
             require(not errors,'PAGE_RUNTIME_ERROR');receipt['checks']['syntheticRendererExactActionSafeTextAndDraftIsolation']=True
             receipt['stage']='synthetic-network-restored'

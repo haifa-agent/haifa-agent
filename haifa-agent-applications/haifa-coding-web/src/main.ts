@@ -217,15 +217,23 @@ function rememberInput(
   key: string,
 ) {
   input.dataset.field = key;
-  const previous = interactionInputs.get(key);
+  const radio =
+    input instanceof HTMLInputElement && input.type === "radio" ? input : null;
+  const storageKey = radio?.name ?? key;
+  const previous = interactionInputs.get(storageKey);
   if (previous) {
-    input.value = previous.value;
-    if (input instanceof HTMLInputElement) input.checked = previous.checked;
+    if (radio) {
+      radio.checked = radio.value === previous.value;
+    } else {
+      input.value = previous.value;
+      if (input instanceof HTMLInputElement) input.checked = previous.checked;
+    }
   }
   input.addEventListener("input", () => {
-    if (!interactionInputs.has(key) && interactionInputs.size >= 512)
+    if (radio && !radio.checked) return;
+    if (!interactionInputs.has(storageKey) && interactionInputs.size >= 512)
       interactionInputs.delete(interactionInputs.keys().next().value!);
-    interactionInputs.set(key, {
+    interactionInputs.set(storageKey, {
       value: input.value,
       checked: input instanceof HTMLInputElement && input.checked,
     });
