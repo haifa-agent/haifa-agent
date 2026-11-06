@@ -1,4 +1,4 @@
-# Coding Web (B3 preparation)
+# Coding Web (local preview)
 
 This standalone TypeScript/Vite application consumes only the packed browser SDK. Its source does not
 import the SDK source, CLI/private Java types, the Personal Assistant application or a second RPC

@@ -6,10 +6,9 @@ request correlation and a same-origin fetch/SSE transport. Its runtime has no No
 Provider SDK, engine, SQLite or runtime schema compiler/eval. Node 22/npm 10 and Python 3 (canonical generation freshness) are build tools only.
 This is a private local preview; `npm pack` is supported, public publication is not part of this task.
 
-B2 is frozen at `ab4a4c11`. Its independent review/CI and HOST-09 gate are still incomplete. The B3
-package, synthetic protocol tests and static Web preparation can proceed independently; actual Host
-product integration and Windows Chrome/Edge acceptance remain blocked/not run. A synthetic fetch
-fixture or loading a static page does not close that gate.
+The package connects to an explicitly enabled [Coding Host](../haifa-coding-host/README.md).
+Package and synthetic renderer tests cover independent consumption. Real Host acceptance separately
+exercises the packed SDK with Windows Chrome, Windows Edge, and Linux Chromium.
 
 ```bash
 npm ci

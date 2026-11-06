@@ -7,9 +7,8 @@ Coding application, outside the base SDK BOM. Java compilation requires Java 21.
 This is an experimental product contract. The [Host](../haifa-coding-host/README.md) and
 [Java Client](../haifa-coding-client/README.md) implement safe embedded/native binding and optional
 browser authorization. The [browser SDK](../haifa-coding-browser-client/README.md) and [Web](../haifa-coding-web/README.md)
-now have independently tested feature preparation; real Host acceptance remains gated. TUI migration
-remains a separate delivery. Existing native
-v1 methods remain unchanged.
+use the same product contract as the opt-in [Terminal](../haifa-agent-coding-terminal/README.md).
+The legacy Terminal continues to use native v1.
 
 ## One schema, two consumers
 
@@ -143,8 +142,7 @@ The Web first phase consumes Session creation/open, input, bounded presentation/
 clarification, consent and cancellation. The other supported native/TUI behaviors remain required
 compatibility bindings even when absent from that UI. Product mapping and the lightweight
 embedded binding belong to the engine; the old Runtime-bearing remote compatibility bridge stays in
-CLI. The new safe Client methods/result mappings are available for the separately authorized TUI migration;
-this contract module does not itself migrate the TUI.
+CLI. The opt-in Terminal uses the product client in both remote and embedded modes.
 
 ## Lifetimes and browser boundary
 

@@ -6,12 +6,12 @@
   有界展示 DTO 和原子 reducer；不属于基础 SDK BOM，也不提供网络 Client；
 - `haifa-coding-host`：可复用产品 owner/SQLite 装配、显式可信资源和同源浏览器授权；无 CLI/TUI 依赖；
 - `haifa-coding-client`：仅 API/Jackson 的轻量 Java HTTP/SSE Client，不带 engine/SQLite；
-- `haifa-coding-browser-client`：基于同一 schema 的浏览器 TS SDK 私有预览；无 Node/框架运行依赖，实际 Host 门禁尚未关闭；
-- `haifa-coding-web`：消费 packed SDK 的同源静态 Web 准备实现，真实 Host/多平台验收待前置门禁；
+- `haifa-coding-browser-client`：基于同一 schema 的浏览器 TS SDK 私有预览；无 Node 或框架运行依赖；
+- `haifa-coding-web`：消费打包 SDK 的同源静态 Web，由显式开启浏览器模式的可信 Host 提供；
 - `haifa-agent-coding-agent`：Project/Workspace Coding Agent 产品服务，拥有 Session、Queue、Policy 与
   MyBatis/SQLite 产品持久化，不拥有终端；
 - `haifa-agent-coding-terminal`：严格映射评审版低保真原型的 tui4j 单列交互层，只通过
-  `CodingSessionClient` 消费产品事实，不装配 Runtime、SQLite、Sandbox 或可执行发行包；
+  `CodingClient` 接入可选产品终端。默认 native 入口继续使用兼容客户端。终端模块不装配 Runtime、SQLite、Sandbox 或可执行发行包；
 - `haifa-agent-cli`：参数/终端/发行兼容入口与唯一 shaded 可执行制品，产品装配委托 Host SDK，复用同一个 Runtime、Project、
   Workspace、Policy、Tool、Execution、Persistence 和 `CodingSessionService`，同时提供 Terminal
   默认入口与兼容的 `-m` one-shot 模式。

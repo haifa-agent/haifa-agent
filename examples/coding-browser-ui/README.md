@@ -10,6 +10,6 @@ presentation through the public SDK. It intentionally offers no approval shortcu
 Runtime requests stay on the page origin; there is no development proxy or BFF. Do not put a grant
 or owner challenge in URLs, logs or browser storage.
 
-Actual Host execution is gated by B2 review/acceptance. The B3 independent build/browser fixture
-checks establish packed-package consumption and browser behavior only, not product acceptance.
+The independent build and synthetic browser checks cover packed-package consumption. Real Host
+acceptance serves this same build through an isolated, browser-enabled owner.
 A reload requires pairing and manual inspection of authority; an unknown create is never replayed.
