@@ -193,9 +193,7 @@ public final class CodingTerminalController implements AutoCloseable {
     private boolean connectionUnavailable;
     private String connectionFailureCode;
     private long connectionCheckedAtMillis;
-    private long nextSelectionGeneration;
-    private long selectionGeneration;
-    private long pendingSelectionGeneration;
+    private final TerminalSelection selection = new TerminalSelection();
     private long nextObservationEpoch;
     private long observationEpoch;
     private long nextOperationEpoch;
@@ -506,26 +504,8 @@ public final class CodingTerminalController implements AutoCloseable {
         return state;
     }
 
-    /** Allocates a new selection transaction; only the newest pending generation may install a view. */
-    private long beginSelection() {
-        long generation = ++nextSelectionGeneration;
-        pendingSelectionGeneration = generation;
-        return generation;
-    }
-
-    private void abandonSelection(long generation) {
-        if (pendingSelectionGeneration == generation) {
-            pendingSelectionGeneration = 0;
-        }
-    }
-
-    private boolean isApplicableLoad(long generation) {
-        return generation == selectionGeneration
-                || (pendingSelectionGeneration != 0 && generation == pendingSelectionGeneration);
-    }
-
     private boolean isCurrentSelection(SelectionToken token) {
-        if (token.generation() != selectionGeneration) return false;
+        if (token.generation() != selection.current()) return false;
         return Objects.equals(
                 token.sessionId(),
                 state.session().map(value -> value.summary().sessionId()).orElse(null));
@@ -533,13 +513,13 @@ public final class CodingTerminalController implements AutoCloseable {
 
     private SelectionToken currentSelection() {
         return new SelectionToken(
-                selectionGeneration,
+                selection.current(),
                 state.session().map(value -> value.summary().sessionId()).orElse(null));
     }
 
     private boolean isCurrentStream(long generation, AgentRunId runId, AgentSessionId sessionId) {
         if (closed) return false;
-        if (generation != 0L && generation != selectionGeneration) return false;
+        if (generation != 0L && generation != selection.current()) return false;
         boolean sameSession = state.session()
                 .map(value -> value.summary().sessionId().equals(sessionId))
                 .orElse(false);
@@ -558,7 +538,7 @@ public final class CodingTerminalController implements AutoCloseable {
 
     private boolean isCurrentOutputStream(long generation, AgentRunId runId) {
         if (closed) return false;
-        if (generation != 0L && generation != selectionGeneration) return false;
+        if (generation != 0L && generation != selection.current()) return false;
         if (runId.equals(outputRunId)
                 || state.currentRunId().filter(runId::equals).isPresent()) return true;
         return generation == 0L && outputRunId == null && state.currentRunId().isEmpty();
@@ -566,7 +546,7 @@ public final class CodingTerminalController implements AutoCloseable {
 
     private boolean isCurrentPreviewStream(long generation, AgentRunId runId) {
         if (closed) return false;
-        if (generation != 0L && generation != selectionGeneration) return false;
+        if (generation != 0L && generation != selection.current()) return false;
         return previewRunId != null && previewRunId.equals(runId);
     }
 
@@ -591,7 +571,7 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private boolean isCurrentStreamScope(long generation, AgentSessionId sessionId, AgentRunId runId) {
-        if (closed || generation != selectionGeneration) return false;
+        if (closed || generation != selection.current()) return false;
         boolean sameSession = state.session()
                 .map(value -> value.summary().sessionId().equals(sessionId))
                 .orElse(false);
@@ -639,9 +619,8 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void completeSelectionFailure(long generation, String code) {
-        boolean pending = pendingSelectionGeneration == generation;
-        abandonSelection(generation);
-        if (!pending && generation != selectionGeneration) return;
+        boolean pending = selection.abandon(generation);
+        if (!pending && generation != selection.current()) return;
         apply(new TerminalUiAction.RecoverableFailure(code));
     }
 
@@ -748,9 +727,9 @@ public final class CodingTerminalController implements AutoCloseable {
     public void completeMessageSubmission(MessageSubmissionResult result) {
         Objects.requireNonNull(result, "result must not be null");
         long generation = result.submission().selectionGeneration();
-        boolean stale = generation != selectionGeneration && generation != pendingSelectionGeneration;
+        boolean stale = generation != selection.current() && generation != selection.pending();
         if (result.failureCode().isPresent()) {
-            abandonSelection(generation);
+            selection.abandon(generation);
             if (stale) return;
             String code = result.failureCode().orElseThrow();
             apply(new TerminalUiAction.UserMessageRejected(result.submission().idempotencyKey()));
@@ -786,14 +765,14 @@ public final class CodingTerminalController implements AutoCloseable {
         }
         try {
             applyLoadedSession(result.loadedSession().orElseThrow());
-            if (selectionGeneration == generation
+            if (selection.current() == generation
                     && result.submission().sessionId().isEmpty()) {
                 pendingNewSessionModelId = null;
             }
         } catch (ProjectProductException exception) {
             apply(new TerminalUiAction.RecoverableFailure(exception.code()));
         }
-        if (selectionGeneration == generation
+        if (selection.current() == generation
                 && state.waiting()
                         .filter(value -> value.phase() == WaitingMessage.Phase.SENDING)
                         .isPresent()) {
@@ -814,13 +793,13 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void openSynchronously(AgentSessionId sessionId) {
-        long generation = beginSelection();
+        long generation = selection.begin();
         LoadedSession loaded;
         try {
             loaded = readSession(
                     client.open(sessionId), generation, Optional.empty(), null, RunOutputCursor.BEFORE_FIRST);
         } catch (RuntimeException exception) {
-            abandonSelection(generation);
+            selection.abandon(generation);
             throw exception;
         }
         applyLoadedSession(loaded);
@@ -860,7 +839,7 @@ public final class CodingTerminalController implements AutoCloseable {
 
     private void startAutomaticLastSessionLoad() {
         automaticLastSessionLoadPending = true;
-        long generation = beginSelection();
+        long generation = selection.begin();
         apply(new TerminalUiAction.StatusChanged("Loading most recent session"));
         submitEffect(
                 () -> {
@@ -879,29 +858,29 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void completeAutomaticLastSessionLoad(long generation, Optional<LoadedSession> loaded) {
-        if (pendingSelectionGeneration != generation) return;
+        if (!selection.isPending(generation)) return;
         if (!automaticLastSessionLoadCanApply()) {
-            abandonSelection(generation);
+            selection.abandon(generation);
             return;
         }
         automaticLastSessionLoadPending = false;
         if (loaded.isPresent()) {
             applyLoadedSession(loaded.orElseThrow());
         } else {
-            abandonSelection(generation);
+            selection.abandon(generation);
             apply(new TerminalUiAction.StatusChanged("Idle"));
         }
         offerAuthenticationOnboarding();
     }
 
     private void completeAutomaticLastSessionLoadFailure(long generation, String code) {
-        if (pendingSelectionGeneration != generation) return;
+        if (!selection.isPending(generation)) return;
         if (!automaticLastSessionLoadCanApply()) {
-            abandonSelection(generation);
+            selection.abandon(generation);
             return;
         }
         automaticLastSessionLoadPending = false;
-        abandonSelection(generation);
+        selection.abandon(generation);
         apply(new TerminalUiAction.RecoverableFailure(code));
         offerAuthenticationOnboarding();
     }
@@ -1282,7 +1261,7 @@ public final class CodingTerminalController implements AutoCloseable {
             return;
         }
         apply(new TerminalUiAction.StatusChanged("Opening session"));
-        long generation = beginSelection();
+        long generation = selection.begin();
         submitEffect(
                 () -> {
                     LoadedSession loaded = readSession(
@@ -1338,7 +1317,7 @@ public final class CodingTerminalController implements AutoCloseable {
             return Optional.empty();
         }
         return Optional.of(
-                new InteractionHydrationRequest(received.event().runId(), lifecycle.requestId(), selectionGeneration));
+                new InteractionHydrationRequest(received.event().runId(), lifecycle.requestId(), selection.current()));
     }
 
     private void scheduleInteractionHydration(InteractionHydrationRequest request) {
@@ -1366,7 +1345,7 @@ public final class CodingTerminalController implements AutoCloseable {
             InteractionHydrationRequest request, Optional<CodingApprovalPrompt> interaction) {
         if (!request.equals(interactionHydrationInFlight)) return;
         interactionHydrationInFlight = null;
-        if (request.generation() != selectionGeneration) return;
+        if (request.generation() != selection.current()) return;
         if (state.currentRunId().filter(request.runId()::equals).isEmpty() || !interactionStillPending(request)) return;
         interaction
                 .filter(value -> value.interaction().requestId().value().equals(request.requestId()))
@@ -1897,13 +1876,13 @@ public final class CodingTerminalController implements AutoCloseable {
         Optional<String> initialModelId = Optional.empty();
         long generation;
         if (awaitingNewSessionMessage || sessionId.isEmpty()) {
-            generation = beginSelection();
+            generation = selection.begin();
             awaitingNewSessionMessage = false;
             sessionId = Optional.empty();
             activeRunId = Optional.empty();
             initialModelId = Optional.ofNullable(pendingNewSessionModelId);
         } else {
-            generation = selectionGeneration;
+            generation = selection.current();
         }
         if (clearEditor) {
             apply(new TerminalUiAction.EditorChanged("", 0));
@@ -2389,7 +2368,7 @@ public final class CodingTerminalController implements AutoCloseable {
                                 });
                 apply(new TerminalUiAction.SelectorOpened(
                         new TerminalSelector("session", "Session & Environment", options, 0)));
-                long generation = selectionGeneration;
+                long generation = selection.current();
                 long request = ++configurationSummaryRequest;
                 submitEffect(
                         () -> {
@@ -2588,7 +2567,7 @@ public final class CodingTerminalController implements AutoCloseable {
                                     .filter(value -> interactionStillPending(new InteractionHydrationRequest(
                                             runId,
                                             value.interaction().requestId().value(),
-                                            selectionGeneration)))
+                                            selection.current())))
                                     .ifPresentOrElse(
                                             this::openInteractionSelector,
                                             () -> apply(new TerminalUiAction.StatusChanged("No approval is pending")));
@@ -2622,7 +2601,7 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void completeConfigurationSummary(long generation, long request, List<String> summary) {
-        if (generation != selectionGeneration || request != configurationSummaryRequest) return;
+        if (generation != selection.current() || request != configurationSummaryRequest) return;
         state.selector().filter(selector -> selector.kind().equals("session")).ifPresent(selector -> {
             List<String> options = new ArrayList<>(selector.options());
             summary.stream().filter(value -> !options.contains(value)).forEach(options::add);
@@ -2754,11 +2733,11 @@ public final class CodingTerminalController implements AutoCloseable {
 
     private void applyLoadedSession(LoadedSession loaded) {
         long generation = loaded.generation();
-        boolean transition = pendingSelectionGeneration != 0 && generation == pendingSelectionGeneration;
-        if (!transition && generation != selectionGeneration) {
+        if (!selection.acceptsLoad(generation)) {
             // A stale load owns no UI subscription yet; it must not detach or cancel the displayed Run.
             return;
         }
+        boolean transition = selection.isPending(generation);
         CodingSessionView previousView = state.session().orElse(null);
         AgentRunId previousRunId = state.currentRunId().orElse(null);
         boolean sameSession = previousView != null
@@ -2781,9 +2760,8 @@ public final class CodingTerminalController implements AutoCloseable {
         subscription = null;
         outputSubscription = null;
         subscriptionPermit = null;
-        selectionGeneration = generation;
+        selection.install(generation);
         if (transition) {
-            pendingSelectionGeneration = 0;
             awaitingNewSessionMessage = false;
             pendingAcknowledgement = null;
             clearOperationsForPreviousSelection();
@@ -4548,7 +4526,7 @@ public final class CodingTerminalController implements AutoCloseable {
                 AgentSessionId sessionId = resumeOptions.get(selected).sessionId();
                 apply(new TerminalUiAction.SelectorClosed());
                 apply(new TerminalUiAction.StatusChanged("Opening session"));
-                long generation = beginSelection();
+                long generation = selection.begin();
                 submitEffect(
                         () -> {
                             LoadedSession loaded = readSession(
@@ -4725,8 +4703,7 @@ public final class CodingTerminalController implements AutoCloseable {
                                     if (!isCurrentSelection(token)) return;
                                     detachSubscriptions();
                                     awaitingNewSessionMessage = true;
-                                    selectionGeneration = 0L;
-                                    pendingSelectionGeneration = 0L;
+                                    selection.clear();
                                     apply(new TerminalUiAction.SessionCleared(
                                             "Session deleted; enter the first message"));
                                 };
@@ -5582,8 +5559,7 @@ public final class CodingTerminalController implements AutoCloseable {
             owned = new java.util.ArrayList<>(ownedObservations);
             ownedObservations.clear();
         }
-        selectionGeneration = 0L;
-        pendingSelectionGeneration = 0L;
+        selection.clear();
         observationEpoch = 0L;
         previewEpoch = 0L;
         RunEventSubscription installed = subscription;
