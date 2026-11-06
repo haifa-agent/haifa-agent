@@ -655,6 +655,9 @@ public final class SemanticCompactionCoordinator {
             return CompactionEvaluationOutcome.untriggered(initialEstimatedTokens, elapsedMillis(startNanos));
         }
 
+        long prevSummaryTokens =
+                previousSummary.map(ConversationSummary::estimatedTokens).orElse(0);
+        String systemPrompt = CompactionPromptRenderer.systemPrompt();
         boolean softComplete = completeSource && reason == CompactionTriggerReason.SOFT_TOKEN_THRESHOLD;
         if (softComplete) {
             long prefixTokens = estimateGroups(activeGroups.subList(0, safeSplit), resolver);
@@ -663,6 +666,14 @@ public final class SemanticCompactionCoordinator {
                             binding.configuration().modelRequestOptions())) {
                 // Even a zero-token summary could not make the removable prefix worth a soft compaction.
                 return CompactionEvaluationOutcome.untriggered(initialEstimatedTokens, elapsedMillis(startNanos));
+            }
+            if (selectedInputFits) {
+                systemPrompt += "\n\nKeep this optional checkpoint under " + (prevSummaryTokens + prefixTokens)
+                        + " estimated tokens in the rendered state, including source references. "
+                        + "Use brief factual phrases and put each fact in its most relevant section. "
+                        + "Cite only the references needed to support each claim. Preserve precise constraints, "
+                        + "required evidence for resumption, and all mandatory carry-forward items even if the "
+                        + "target cannot be met. Return the complete required JSON structure.";
             }
             if (selectedInputFits
                     && previousSummary.isEmpty()
@@ -693,8 +704,6 @@ public final class SemanticCompactionCoordinator {
                         .toList())
                 : CompactionSourceProjector::project;
 
-        long prevSummaryTokens =
-                previousSummary.map(ConversationSummary::estimatedTokens).orElse(0);
         long sourceEstimatedTokens = estimateGroups(activeGroups.subList(0, safeSplit));
         double cacheHitRate = (prevSummaryTokens + sourceEstimatedTokens > 0)
                 ? (double) prevSummaryTokens / (prevSummaryTokens + sourceEstimatedTokens)
@@ -711,7 +720,6 @@ public final class SemanticCompactionCoordinator {
 
         String evaluationId = ids.nextValue();
         long initialModelCalls = run.usage().modelCalls();
-        String systemPrompt = CompactionPromptRenderer.systemPrompt();
         int physicalCalls = 0;
         int batchStart = 0;
         boolean sourcePrepared = false;

@@ -761,12 +761,21 @@ class SemanticCompactionFailureTest {
         appendTurn(store, run, "u3", "a3", "third", "z".repeat(1200));
 
         var calls = new AtomicInteger();
+        var targets = new ArrayList<Long>();
+        var targetPattern =
+                java.util.regex.Pattern.compile("Keep this optional checkpoint under (\\d+) estimated tokens");
         var binding = bindingWithContextWindow(
                 store,
                 run,
-                request -> calls.incrementAndGet() == 1
-                        ? validSummaryResponse("evidence ".repeat(500))
-                        : validSummaryResponse(),
+                request -> {
+                    var target =
+                            targetPattern.matcher(request.messages().getFirst().content());
+                    assertThat(target.find()).isTrue();
+                    targets.add(Long.parseLong(target.group(1)));
+                    return calls.incrementAndGet() == 1
+                            ? validSummaryResponse("evidence ".repeat(500))
+                            : validSummaryResponse();
+                },
                 100_000);
         var soft = CompactionTriggerDecision.compact(
                 CompactionTriggerReason.SOFT_TOKEN_THRESHOLD,
@@ -784,6 +793,8 @@ class SemanticCompactionFailureTest {
         assertThat(calls).hasValue(2);
         assertThat(afterGrowth.compacted()).isTrue();
         assertThat(store.latestValid(run.sessionId())).isPresent();
+        assertThat(targets).hasSize(2);
+        assertThat(targets.getLast()).isGreaterThan(targets.getFirst());
     }
 
     @Test
