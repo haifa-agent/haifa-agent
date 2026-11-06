@@ -749,6 +749,44 @@ class SemanticCompactionFailureTest {
     }
 
     @Test
+    void softCompactionKeepsHistoryWhenTheValidatedCheckpointIsLarger() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentRun run = createRun(store);
+        var ids = new AtomicInteger();
+        var policy = CompressionPolicy.defaults().withTailTokenBounds(5, 50);
+        var compactor =
+                coordinator(store, () -> "non-reducing-" + ids.incrementAndGet(), new RunControlRegistry(), policy);
+        appendTurn(store, run, "u1", "a1", "first", "x".repeat(1200));
+        appendTurn(store, run, "u2", "a2", "second", "y".repeat(1200));
+        appendTurn(store, run, "u3", "a3", "third", "z".repeat(1200));
+
+        var calls = new AtomicInteger();
+        var binding = bindingWithContextWindow(
+                store,
+                run,
+                request -> calls.incrementAndGet() == 1
+                        ? validSummaryResponse("evidence ".repeat(500))
+                        : validSummaryResponse(),
+                100_000);
+        var soft = CompactionTriggerDecision.compact(
+                CompactionTriggerReason.SOFT_TOKEN_THRESHOLD,
+                new ContextBudgetBreakdown(100_000, 8192, 600, 0, 0, 90_000, 3000, 1000, 1000, 1));
+
+        var first = compactor.evaluateSelected(run, 1, binding, soft);
+        assertThat(first.compacted()).isFalse();
+        assertThat(store.latestValid(run.sessionId())).isEmpty();
+
+        compactor.evaluateSelected(run, 2, binding, soft);
+        assertThat(calls).hasValue(1);
+
+        appendTurn(store, run, "u4", "a4", "fourth", "w".repeat(1200));
+        var afterGrowth = compactor.evaluateSelected(run, 3, binding, soft);
+        assertThat(calls).hasValue(2);
+        assertThat(afterGrowth.compacted()).isTrue();
+        assertThat(store.latestValid(run.sessionId())).isPresent();
+    }
+
+    @Test
     void aWholeTurnThatCannotFitIsRejectedWithoutDispatchOrCoverage() {
         InMemoryRuntimeStore store = new InMemoryRuntimeStore();
         AgentRun run = createRun(store);

@@ -45,7 +45,7 @@ final class CompactionFailureBackoff {
         }
     }
 
-    private record Failure(long through, int count, String digest, long expiresAt) {}
+    private record Failure(long through, int count, String digest, long expiresAt, boolean exact) {}
 
     private final TimeProvider time;
     private final long ttlMillis;
@@ -62,7 +62,7 @@ final class CompactionFailureBackoff {
     synchronized boolean contains(Scope scope, List<AgentMessage> active) {
         expire();
         Failure failure = failures.get(scope);
-        if (failure == null) return false;
+        if (failure == null || (failure.exact() && active.size() != failure.count())) return false;
         List<AgentMessage> prefix = active.stream()
                 .takeWhile(m -> m.sequence() <= failure.through())
                 .toList();
@@ -74,6 +74,14 @@ final class CompactionFailureBackoff {
     }
 
     synchronized void record(Scope scope, List<AgentMessage> source) {
+        record(scope, source, false);
+    }
+
+    synchronized void recordExact(Scope scope, List<AgentMessage> source) {
+        record(scope, source, true);
+    }
+
+    private void record(Scope scope, List<AgentMessage> source, boolean exact) {
         expire();
         if (source.isEmpty()) return;
         failures.put(
@@ -82,7 +90,8 @@ final class CompactionFailureBackoff {
                         source.getLast().sequence(),
                         source.size(),
                         digest(source),
-                        Math.addExact(time.now().toEpochMilli(), ttlMillis)));
+                        Math.addExact(time.now().toEpochMilli(), ttlMillis),
+                        exact));
         while (failures.size() > capacity)
             failures.remove(failures.keySet().iterator().next());
     }

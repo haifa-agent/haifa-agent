@@ -105,7 +105,10 @@ Unrelated new Runs retain the existing sparse-history policy. Summary authorizat
 source reference, using the active compaction window bound rather than the smaller handoff candidate limit.
 
 If a complete-source soft compaction has already called the model and a later batch cannot fit, the unchanged
-prefix backs off within the existing time bound. Hard capacity recovery can still evaluate that source.
+prefix backs off within the existing time bound. When the ordinary input fits, a validated soft checkpoint
+that would leave the estimated active history unchanged or larger does not advance coverage. The same
+candidate range backs off, and a larger removable range may be evaluated. Hard capacity recovery can
+still evaluate these sources.
 
 Unreadable complete sources fail with `UNSUPPORTED_CONTEXT_CONTENT`, a `SOURCE_PREPARATION` (or subsequent
 `SOURCE_VALIDATION`) compaction failure and `NO_REDUCTION`. The previous valid summary and coverage remain

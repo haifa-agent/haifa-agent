@@ -942,6 +942,24 @@ public final class SemanticCompactionCoordinator {
 
         List<List<AgentMessage>> tailGroups = activeGroups.subList(safeSplit, activeGroups.size());
         long retainedTailTokens = estimateGroups(tailGroups, resolver);
+        SemanticConversationSummaryV1 candidate = workingSemantic.orElseThrow();
+        int summaryTokens =
+                Math.max(1, HeuristicTokenEstimator.tokens(SemanticSummaryRenderer.renderMarkdown(candidate)));
+        if (softComplete && selectedInputFits && summaryTokens + retainedTailTokens >= initialEstimatedTokens) {
+            // A soft checkpoint must shrink the history it replaces when the current input already fits.
+            invoker.checkControl(run);
+            failureBackoff.recordExact(backoffScope, sourceToCompact);
+            return recoveryOutcome(
+                    run,
+                    evaluationId,
+                    reason,
+                    new SummaryCommit("NO_REDUCTION", previousSummary, false),
+                    visible,
+                    resolver,
+                    initialEstimatedTokens,
+                    cacheHitRate,
+                    startNanos);
+        }
 
         return commitSummary(
                 run,
@@ -950,7 +968,8 @@ public final class SemanticCompactionCoordinator {
                 previousSummary,
                 sourceToCompact,
                 visible,
-                workingSemantic.orElseThrow(),
+                candidate,
+                summaryTokens,
                 reason,
                 physicalCalls,
                 expectedPreviousVersion,
@@ -1164,6 +1183,7 @@ public final class SemanticCompactionCoordinator {
             List<AgentMessage> sourceToCompact,
             List<AgentMessage> visible,
             SemanticConversationSummaryV1 summary,
+            int estimatedTokens,
             CompactionTriggerReason reason,
             int physicalCalls,
             long expectedPreviousVersion,
@@ -1194,8 +1214,6 @@ public final class SemanticCompactionCoordinator {
                 : previousSummary.map(ConversationSummary::coveredSourceCount).orElse(0L)
                         + coverageDeltaMessages.size();
 
-        String markdown = SemanticSummaryRenderer.renderMarkdown(summary);
-        int estimatedTokens = Math.max(1, HeuristicTokenEstimator.tokens(markdown));
         long projectedActiveHistoryTokensAfter = (long) estimatedTokens + retainedTailTokens;
 
         List<String> facts =
