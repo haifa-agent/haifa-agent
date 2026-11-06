@@ -322,7 +322,7 @@ class RemoteCodingSessionClientTest {
     }
 
     @Test
-    void compatibilityTransportUsesTheProductIdentityAndLeavesItsLifecycleToTheOwner() throws Exception {
+    void productTransportRenewsWithoutOpeningACompatibilityClient() throws Exception {
         var initializations = new java.util.concurrent.atomic.AtomicInteger();
         var expired = new java.util.concurrent.atomic.AtomicBoolean();
         try (FakeCodingHost host = FakeCodingHost.start(call -> {
@@ -348,19 +348,14 @@ class RemoteCodingSessionClientTest {
             };
         })) {
             try (var product = CodingClients.connect(host.uri())) {
-                try (var compatibility = RemoteCodingSessionClient.attachToProduct(host.uri(), product)) {
-                    assertThat(initializations).hasValue(1);
-                    assertThat(compatibility.info().clientId())
-                            .isEqualTo(product.connection().clientId());
-                    expired.set(true);
-                    assertThat(product.renew()).isTrue();
-                    assertThat(compatibility.renewConnection()).isTrue();
-                    assertThat(compatibility.info().clientId()).isEqualTo("client-2");
-                    assertThat(initializations).hasValue(2);
-                }
+                assertThat(initializations).hasValue(1);
+                expired.set(true);
+                assertThat(product.renew()).isTrue();
+                assertThat(product.connection().clientId()).isEqualTo("client-2");
+                assertThat(initializations).hasValue(2);
                 assertThat(host.calls("client/close")).isEmpty();
             }
-            assertThat(host.calls("client/info")).hasSize(2);
+            assertThat(host.calls("client/info")).isEmpty();
             assertThat(host.calls("client/close")).hasSize(1);
         }
     }

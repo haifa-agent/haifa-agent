@@ -17,7 +17,18 @@ import java.util.List;
 import java.util.Optional;
 
 public sealed interface TerminalUiAction {
-    record SessionLoaded(CodingSessionView view, List<String> resources) implements TerminalUiAction {}
+    record SessionLoaded(
+            io.haifa.agent.application.coding.terminal.state.TerminalSessionView view,
+            List<String> resources,
+            boolean product)
+            implements TerminalUiAction {
+        public SessionLoaded(CodingSessionView view, List<String> resources) {
+            this(
+                    io.haifa.agent.application.coding.terminal.state.TerminalSessionView.fromLegacy(view),
+                    resources,
+                    false);
+        }
+    }
 
     record HistoryLoaded(CodingSessionHistoryPage history) implements TerminalUiAction {}
 
@@ -139,6 +150,11 @@ public sealed interface TerminalUiAction {
             this(interaction, false);
         }
     }
+
+    record ProductRunSelected(io.haifa.coding.api.CodingProtocol.Run run) implements TerminalUiAction {}
+
+    record ProductActivityChanged(java.util.List<io.haifa.coding.api.CodingProtocol.Entry> entries)
+            implements TerminalUiAction {}
 
     record InteractionCardChanged(
             String id,

@@ -30,6 +30,7 @@ export function createContract(
   function checkSnapshot(value: Snapshot): boolean {
     if (
       value.scope.sessionId !== value.session.id ||
+      (value.activity != null && value.scope.source !== "native") ||
       new Set(value.entries.map((e) => e.id)).size !== value.entries.length
     )
       return false;

@@ -62,7 +62,13 @@ public final class CodingHostServer implements AutoCloseable {
     private final Semaphore controlPermits = new Semaphore(CONTROL_PERMITS);
     private final ObjectMapper json = new ObjectMapper()
             .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
-            .addMixIn(io.haifa.coding.api.CodingProtocol.Entry.class, OptionalToolDetails.class);
+            .addMixIn(io.haifa.coding.api.CodingProtocol.Entry.class, OptionalToolDetails.class)
+            .addMixIn(io.haifa.coding.api.CodingProtocol.Snapshot.class, OptionalActivity.class);
+
+    private interface OptionalActivity {
+        @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+        io.haifa.coding.api.CodingProtocol.ActivityHead activity();
+    }
 
     private interface OptionalToolDetails {
         @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
@@ -158,7 +164,10 @@ public final class CodingHostServer implements AutoCloseable {
                                     local::presentationEventStart,
                                     "native".equals(clientSource(clientId))
                                             && clients.capabilities(clientId)
-                                                    .contains(CodingHostDispatcher.NATIVE_TOOL_DETAILS)),
+                                                    .contains(CodingHostDispatcher.NATIVE_TOOL_DETAILS),
+                                    "native".equals(clientSource(clientId))
+                                            && clients.capabilities(clientId)
+                                                    .contains(CodingHostDispatcher.NATIVE_TERMINAL_ACTIVITY)),
                     local.credentialRedactor());
         }
         this.server = HttpServer.create(new InetSocketAddress(bind, port), 16);
@@ -340,7 +349,8 @@ public final class CodingHostServer implements AutoCloseable {
                 "coding-product-v1",
                 "session-presentation-v1",
                 "session-consent-v1",
-                CodingHostDispatcher.NATIVE_TOOL_DETAILS));
+                CodingHostDispatcher.NATIVE_TOOL_DETAILS,
+                CodingHostDispatcher.NATIVE_TERMINAL_ACTIVITY));
         if (subscriptions.previewAvailable()) offered.add("preview-v1");
         String clientId = clients.initialize(offered);
         approvals.initialize(clientId);
@@ -391,7 +401,8 @@ public final class CodingHostServer implements AutoCloseable {
                                                 new io.haifa.coding.api.CodingProtocol.Consent("ASK", null, false)),
                                 String.join("; ", configurationSummary),
                                 local::presentationEventStart,
-                                capabilities.contains(CodingHostDispatcher.NATIVE_TOOL_DETAILS)),
+                                capabilities.contains(CodingHostDispatcher.NATIVE_TOOL_DETAILS),
+                                capabilities.contains(CodingHostDispatcher.NATIVE_TERMINAL_ACTIVITY)),
                 new io.haifa.agent.application.project.product.coding.presentation.CodingProductBinding.Approvals() {
                     public io.haifa.agent.runtime.api.InteractionResponseReceipt allow(
                             io.haifa.agent.runtime.api.InteractionView pending, String key) {
@@ -444,6 +455,16 @@ public final class CodingHostServer implements AutoCloseable {
             JsonNode params) {
         try {
             return switch (method) {
+                case "product/terminalSession" -> {
+                    var sessionId = params.path("sessionId");
+                    if (!sessionId.isTextual() || sessionId.asText().isBlank()) {
+                        throw CodingHostException.invalidParams("Session id is required");
+                    }
+                    yield binding.terminalSession(sessionId.asText());
+                }
+                case "product/activity" ->
+                    binding.activity(
+                            productJson.treeToValue(params, io.haifa.coding.api.CodingProtocol.ActivityRequest.class));
                 case "product/query" ->
                     binding.query(productJson.treeToValue(params, io.haifa.coding.api.CodingProtocol.Query.class));
                 case "product/command" -> {

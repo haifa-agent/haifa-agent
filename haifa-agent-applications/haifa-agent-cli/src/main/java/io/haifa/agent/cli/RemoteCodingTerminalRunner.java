@@ -43,12 +43,13 @@ final class RemoteCodingTerminalRunner implements CliRemoteTerminalRunner {
     public void run(URI endpoint, CodingTerminalStartup startup, PrintStream output) {
         Tui4jTerminalIo terminalIo = Objects.requireNonNull(terminalIoFactory.get(), "terminal IO must not be null");
         terminalIo.requireInteractive();
-        try (var product = LocalCodingTerminalRunner.productPresentationEnabled()
-                        ? CodingClients.connect(endpoint)
-                        : null;
-                RemoteCodingSessionClient client = product == null
-                        ? connector.apply(endpoint)
-                        : RemoteCodingSessionClient.attachToProduct(endpoint, product)) {
+        if (LocalCodingTerminalRunner.productPresentationEnabled()) {
+            try (var product = CodingClients.connect(endpoint)) {
+                runProduct(endpoint, startup, terminalIo, output, product);
+            }
+            return;
+        }
+        try (var client = connector.apply(endpoint)) {
             RemoteCodingClientInfo info = client.info();
             output.println("Remote CA Host connected: " + endpoint);
             output.println("Host: " + info.hostName() + "  Project: "
@@ -90,11 +91,45 @@ final class RemoteCodingTerminalRunner implements CliRemoteTerminalRunner {
                                                     .orElse(
                                                             "This Host does not advertise a locally managed default credential. "
                                                                     + "Inspect /account and the Host's configured credential source; remote secret entry stays unavailable.")))
-                    .run(product);
+                    .run();
         } catch (ProjectProductException failure) {
             output.println("[" + failure.code() + "] " + failure.getMessage());
             throw failure;
         }
+    }
+
+    private static void runProduct(
+            URI endpoint,
+            CodingTerminalStartup startup,
+            Tui4jTerminalIo terminalIo,
+            PrintStream output,
+            io.haifa.coding.api.CodingClient client) {
+        var info = client.connection();
+        var workspace = client.terminalContext();
+        var context = new TerminalWorkspaceContext(
+                "Host: " + workspace.workingDirectory(),
+                workspace.gitBranch().isBlank() ? "unavailable (non-Git or detached)" : workspace.gitBranch(),
+                workspace.worktree().isBlank() ? "" : "Host: " + workspace.worktree(),
+                workspace.worktree().isBlank()
+                        ? ""
+                        : workspace.worktreeBranch().isBlank()
+                                ? "unavailable (detached or unreadable)"
+                                : workspace.worktreeBranch());
+        boolean preview = info.capabilities().contains("preview-v1");
+        boolean consent = info.capabilities().contains("session-consent-v1");
+        output.println("Remote CA Host connected: " + endpoint);
+        output.println("Host: " + info.displayName() + "  Project: " + info.projectId());
+        output.println(
+                "Tool output preview: " + (preview ? "enabled (Host)" : "unavailable (Host/client compatibility)"));
+        var options = CodingTerminalConnectionOptions.remoteV1(workspace.executionDirectory(), preview, consent);
+        if (!workspace.localManagementCommand().isBlank()) {
+            options = options.withCredentialSetupInstructions("Host: " + endpoint + "\nProject: " + info.projectId()
+                    + "\nRun on the Host as its same OS user:\n" + workspace.localManagementCommand()
+                    + "\nFor a local-development distribution use haifa-coding instead of haifa."
+                    + "\nThen reopen /account in this UI to refresh status; retry deliberately.");
+        }
+        CodingTerminalApplication.runProduct(
+                client, startup, terminalIo, context, new RemoteProductAuthentication(client), options);
     }
 
     static TerminalWorkspaceContext workspaceContext(RemoteCodingClientInfo info) {

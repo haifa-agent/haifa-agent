@@ -38,7 +38,6 @@ import org.junit.jupiter.api.Test;
 class CodingTerminalSelectionLifecycleTest {
     @Test
     void productObservationRendersDeliveryAndCancelUsesTheDisplayedExactTargetWithoutBlocking() throws Exception {
-        var legacy = new FakeClient(activeView());
         var productReady = new java.util.concurrent.CountDownLatch(1);
         var observationClosed = new java.util.concurrent.CountDownLatch(1);
         var requests = new ArrayList<CodingProtocol.Command>();
@@ -105,6 +104,30 @@ class CodingTerminalSelectionLifecycleTest {
                         "cancel", new CodingProtocol.Target(session, "run-1", null, 7L), null, true, null)),
                 List.of());
         var product = new ProductClientFixture() {
+            public CodingProtocol.ActivityPage activity(CodingProtocol.ActivityRequest request) {
+                assertThat(request.afterSequence()).isZero();
+                var detail = new CodingProtocol.ToolDetails(
+                        "execution_run", "Inspect fixture", "NONE", "", null, null, 0L, null, null);
+                var entry = new CodingProtocol.Entry(
+                        "tool-outside-snapshot",
+                        "tool",
+                        "run-1",
+                        "tool",
+                        "Run Command",
+                        "fixture",
+                        "STARTED",
+                        1L,
+                        false,
+                        null,
+                        0L,
+                        "outside",
+                        null,
+                        null,
+                        null,
+                        detail);
+                return new CodingProtocol.ActivityPage(session, "run-1", 0, 1, false, List.of(entry));
+            }
+
             public CodingProtocol.CommandResult execute(CodingProtocol.CommandRequest request) {
                 requests.add(request.command());
                 blockedCommand.block();
@@ -115,7 +138,7 @@ class CodingTerminalSelectionLifecycleTest {
                 assertThat(sessionId).isEqualTo(session);
                 return new CodingPresentationSubscription() {
                     public CodingProtocol.Snapshot initial() {
-                        return snapshot;
+                        return snapshot.withActivity(new CodingProtocol.ActivityHead("run-1", 1));
                     }
 
                     public CodingProtocol.Envelope poll(Duration timeout) throws InterruptedException {
@@ -165,7 +188,7 @@ class CodingTerminalSelectionLifecycleTest {
         };
         try (var controller = new CodingTerminalController(
                 PROJECT_ID,
-                legacy,
+                null,
                 pump,
                 new TerminalUiReducer(),
                 TerminalUiState.initial(120, 40),
@@ -186,13 +209,11 @@ class CodingTerminalSelectionLifecycleTest {
             controller.accept(input(TerminalInput.Kind.EXECUTE_COMMAND, "/history"));
             assertThat(controller.state().transcript().getFirst().body()).isEqualTo("Earlier fixture message");
 
-            legacy.emit(event(
-                    1, new RunEventPayloads.ToolLifecycle("call-1", "Old tool display", "STARTED", "NONE", "", "")));
             pump.offer(new TerminalUiAction.ProductDeliveryChanged(List.of(), List.of("Bounded product window")));
             controller.drainEvents();
             controller.accept(input(TerminalInput.Kind.TOGGLE_EXPANSION, ""));
             assertThat(controller.state().transcript())
-                    .filteredOn(item -> item.id().equals("tool-call-1"))
+                    .filteredOn(item -> item.id().equals("tool-outside"))
                     .singleElement()
                     .satisfies(item -> {
                         assertThat(item.expanded()).isTrue();
@@ -207,10 +228,23 @@ class CodingTerminalSelectionLifecycleTest {
             try {
                 assertThat(blockedCommand.awaitStarted()).isTrue();
                 pump.offer(new TerminalUiAction.TerminalResized(80, 24));
-                legacy.emit(event(
-                        2,
-                        new RunEventPayloads.ResourceAvailable(
-                                "fixture", "file", "Resource during cancel", "READY", "inspect")));
+                pump.offer(new TerminalUiAction.ProductActivityChanged(List.of(new CodingProtocol.Entry(
+                        "resource-fixture",
+                        "notice",
+                        "run-1",
+                        "resource",
+                        "Resource during cancel",
+                        "file · fixture",
+                        "READY",
+                        2L,
+                        false,
+                        null,
+                        0L,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null))));
                 controller.drainEvents();
                 controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
                 controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, "next", 4));
@@ -228,7 +262,6 @@ class CodingTerminalSelectionLifecycleTest {
                 assertThat(command.target())
                         .isEqualTo(new CodingProtocol.CommandTarget(PROJECT_ID.value(), session, "run-1", null, 7L));
             });
-            assertThat(legacy.cancelledRuns).isEmpty();
         }
         assertThat(observationClosed.await(5, java.util.concurrent.TimeUnit.SECONDS))
                 .isTrue();
@@ -236,7 +269,6 @@ class CodingTerminalSelectionLifecycleTest {
 
     @Test
     void acceptedCreateIsRetainedWhileFailedHistoryReadIsRecovered() {
-        var legacy = new FakeClient(activeView());
         var maintenance = new ArrayDeque<Runnable>();
         var commands = new ArrayList<CodingProtocol.Command>();
         var historyReads = new ArrayList<String>();
@@ -273,7 +305,7 @@ class CodingTerminalSelectionLifecycleTest {
         };
         try (var controller = new CodingTerminalController(
                 PROJECT_ID,
-                legacy,
+                null,
                 new TerminalEventPump(32),
                 new TerminalUiReducer(),
                 TerminalUiState.initial(120, 40),
@@ -328,7 +360,7 @@ class CodingTerminalSelectionLifecycleTest {
         };
         try (var controller = new CodingTerminalController(
                 PROJECT_ID,
-                new FakeClient(activeView()),
+                null,
                 pump,
                 new TerminalUiReducer(),
                 TerminalUiState.initial(120, 40),
@@ -460,16 +492,10 @@ class CodingTerminalSelectionLifecycleTest {
                         sessionId, List.of(), new CodingProtocol.History(false, null, true));
             }
         };
-        var legacy = new FakeClient(activeView()) {
-            @Override
-            public Optional<InteractionView> pendingInteraction(AgentRunId runId) {
-                throw new AssertionError("unexpected compatibility hydration");
-            }
-        };
         var control = new ArrayDeque<Runnable>();
         try (var controller = new CodingTerminalController(
                 PROJECT_ID,
-                legacy,
+                null,
                 new TerminalEventPump(32),
                 new TerminalUiReducer(),
                 TerminalUiState.initial(120, 40),
@@ -540,7 +566,7 @@ class CodingTerminalSelectionLifecycleTest {
         };
         try (var controller = new CodingTerminalController(
                 PROJECT_ID,
-                new FakeClient(activeView()),
+                null,
                 new TerminalEventPump(32),
                 new TerminalUiReducer(),
                 TerminalUiState.initial(120, 40),
@@ -571,8 +597,41 @@ class CodingTerminalSelectionLifecycleTest {
                     PROJECT_ID.value(),
                     "1",
                     "Host",
-                    List.of("coding-product-v1", "session-presentation-v1", "native-tool-details-v1"),
+                    List.of("coding-product-v1", "session-presentation-v1", "native-terminal-activity-v1"),
                     "native");
+        }
+
+        public CodingProtocol.TerminalSession terminalSession(String id) {
+            var summary = new CodingProtocol.SessionSummary(
+                    id, PROJECT_ID.value(), "Task", "ACTIVE", "run-1", "RUNNING", 0, 0, 1);
+            var response = new CodingProtocol.ModelControl(
+                    "responseMode", true, false, List.of("RECOMMENDED"), "RECOMMENDED", "Fixture response mode");
+            var effort = new CodingProtocol.ModelControl(
+                    "reasoningEffort", false, true, List.of(), "MEDIUM", "Fixture effort");
+            var model = new CodingProtocol.ModelChoice(
+                    "model",
+                    "Model",
+                    "fixture",
+                    "Fixture",
+                    List.of(),
+                    1000,
+                    100,
+                    "CONNECTED",
+                    "AVAILABLE",
+                    "NORMAL",
+                    "IDLE",
+                    null,
+                    response,
+                    effort,
+                    "RECOMMENDED",
+                    null,
+                    null);
+            return new CodingProtocol.TerminalSession(
+                    summary,
+                    new CodingProtocol.Run("run-1", "RUNNING", 7),
+                    new CodingProtocol.ModelSelection(model, 1, true),
+                    null,
+                    "fixture");
         }
 
         public CodingProtocol.QueryResult query(CodingProtocol.Query query) {

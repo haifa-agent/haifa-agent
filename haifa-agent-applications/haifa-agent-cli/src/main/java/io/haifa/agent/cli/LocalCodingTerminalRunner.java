@@ -1,6 +1,7 @@
 package io.haifa.agent.cli;
 
 import io.haifa.agent.application.coding.terminal.application.CodingTerminalApplication;
+import io.haifa.agent.application.coding.terminal.application.CodingTerminalConnectionOptions;
 import io.haifa.agent.application.coding.terminal.application.CodingTerminalStartup;
 import io.haifa.agent.application.coding.terminal.state.TerminalWorkspaceContext;
 import io.haifa.agent.application.coding.terminal.tui4j.Tui4jTerminalIo;
@@ -43,25 +44,32 @@ final class LocalCodingTerminalRunner implements CliTerminalRunner {
                 StandaloneCodingAgent agent =
                         agentFactory.create(workspace, configuration, executionSink, traceObserver)) {
             LocalGitBranchResolver.GitWorkspaceDetails gitDetails = LocalGitBranchResolver.resolveDetails(workspace);
-            var terminal = new CodingTerminalApplication(
-                    agent.projectId(),
-                    agent.client(),
-                    startup,
-                    terminalIo,
-                    new TerminalWorkspaceContext(
-                            gitDetails.projectPath(),
-                            gitDetails.gitBranch(),
-                            gitDetails.worktreePath(),
-                            gitDetails.worktreeBranch()),
-                    agent.authentication(),
-                    agent.toolOutputPreviewPublisher());
+            var terminalWorkspace = new TerminalWorkspaceContext(
+                    gitDetails.projectPath(),
+                    gitDetails.gitBranch(),
+                    gitDetails.worktreePath(),
+                    gitDetails.worktreeBranch());
             if (productPresentationEnabled()) {
                 try (var host = CodingHostServer.start(agent, "127.0.0.1", 0);
                         var product = host.embeddedClient()) {
-                    terminal.run(product);
+                    CodingTerminalApplication.runProduct(
+                            product,
+                            startup,
+                            terminalIo,
+                            terminalWorkspace,
+                            agent.authentication(),
+                            CodingTerminalConnectionOptions.embedded());
                 }
             } else {
-                terminal.run();
+                new CodingTerminalApplication(
+                                agent.projectId(),
+                                agent.client(),
+                                startup,
+                                terminalIo,
+                                terminalWorkspace,
+                                agent.authentication(),
+                                agent.toolOutputPreviewPublisher())
+                        .run();
             }
         }
     }

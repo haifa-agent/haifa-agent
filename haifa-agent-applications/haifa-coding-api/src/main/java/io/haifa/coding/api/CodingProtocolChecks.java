@@ -10,6 +10,7 @@ public final class CodingProtocolChecks {
 
     public static void snapshot(Snapshot value) {
         if (!value.scope().sessionId().equals(value.session().id())) fail("SESSION_SCOPE_MISMATCH");
+        if (value.activity() != null && !"native".equals(value.scope().source())) fail("ACTIVITY_SCOPE_MISMATCH");
         Set<String> ids = new HashSet<>();
         for (Entry entry : value.entries()) {
             if (!ids.add(entry.id())) fail("DUPLICATE_ENTRY_ID");
@@ -58,6 +59,22 @@ public final class CodingProtocolChecks {
             fail("ACTION_REASON_REQUIRED");
         if (action.kind().equals("cancel") && action.target().runId() == null) fail("EXACT_RUN_REQUIRED");
         if (snapshot.hydration().equals("refreshing") && action.available()) fail("REFRESHING_ACTION_UNAVAILABLE");
+    }
+
+    public static void activity(ActivityRequest request, ActivityPage page) {
+        if (!request.sessionId().equals(page.sessionId())
+                || !request.runId().equals(page.runId())
+                || request.afterSequence() != page.afterSequence()
+                || page.nextSequence() < page.afterSequence()
+                || (page.hasMore() && page.nextSequence() == page.afterSequence())) fail("ACTIVITY_SCOPE_MISMATCH");
+        long previous = page.afterSequence();
+        for (Entry entry : page.entries()) {
+            if (!request.runId().equals(entry.runId())
+                    || entry.sequence() == null
+                    || entry.sequence() <= previous
+                    || entry.sequence() > page.nextSequence()) fail("ACTIVITY_ENTRY_INVALID");
+            previous = entry.sequence();
+        }
     }
 
     public static void command(Command command) {

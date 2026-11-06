@@ -930,6 +930,16 @@
             "maxLength": 512
           },
           "maxItems": 16
+        },
+        "activity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ActivityHead"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     },
@@ -3076,6 +3086,173 @@
           "const": "browser-grant-v1"
         },
         "displayName": {
+          "type": "string",
+          "maxLength": 256
+        }
+      }
+    },
+    "ActivityHead": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runId",
+        "sequence"
+      ],
+      "properties": {
+        "runId": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      }
+    },
+    "ActivityRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sessionId",
+        "runId",
+        "afterSequence"
+      ],
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "runId": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "afterSequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      }
+    },
+    "ActivityPage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sessionId",
+        "runId",
+        "afterSequence",
+        "nextSequence",
+        "hasMore",
+        "entries"
+      ],
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "runId": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "afterSequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "nextSequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "hasMore": {
+          "type": "boolean"
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Entry"
+          },
+          "maxItems": 16
+        }
+      }
+    },
+    "TerminalContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workingDirectory",
+        "gitBranch",
+        "worktree",
+        "worktreeBranch",
+        "executionDirectory",
+        "localManagementCommand"
+      ],
+      "properties": {
+        "workingDirectory": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "gitBranch": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "worktree": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "worktreeBranch": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "executionDirectory": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "localManagementCommand": {
+          "type": "string",
+          "maxLength": 4096
+        }
+      }
+    },
+    "TerminalSession": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "summary",
+        "activeRun",
+        "model",
+        "activeTask",
+        "profile"
+      ],
+      "properties": {
+        "summary": {
+          "$ref": "#/$defs/SessionSummary"
+        },
+        "activeRun": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Run"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model": {
+          "$ref": "#/$defs/ModelSelection"
+        },
+        "activeTask": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 120
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "profile": {
           "type": "string",
           "maxLength": 256
         }

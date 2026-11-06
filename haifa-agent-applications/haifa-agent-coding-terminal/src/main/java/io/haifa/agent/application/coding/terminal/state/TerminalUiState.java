@@ -1,6 +1,5 @@
 package io.haifa.agent.application.coding.terminal.state;
 
-import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.runtime.api.RunEventCursor;
@@ -21,7 +20,7 @@ public record TerminalUiState(
         TerminalFooter footer,
         int columns,
         int rows,
-        Optional<CodingSessionView> session,
+        Optional<TerminalSessionView> session,
         Optional<AgentRunId> currentRunId,
         Optional<RunEventCursor> appliedCursor,
         Set<String> seenEventIds,
@@ -53,7 +52,7 @@ public record TerminalUiState(
             TerminalFooter footer,
             int columns,
             int rows,
-            Optional<CodingSessionView> session,
+            Optional<TerminalSessionView> session,
             Optional<AgentRunId> currentRunId,
             Optional<RunEventCursor> appliedCursor,
             Set<String> seenEventIds,
@@ -353,7 +352,7 @@ public record TerminalUiState(
             TerminalFooter footer,
             int columns,
             int rows,
-            Optional<CodingSessionView> session,
+            Optional<TerminalSessionView> session,
             Optional<AgentRunId> currentRunId,
             Optional<RunEventCursor> appliedCursor,
             Set<String> seenEventIds,
@@ -402,7 +401,7 @@ public record TerminalUiState(
             TerminalFooter footer,
             int columns,
             int rows,
-            Optional<CodingSessionView> session,
+            Optional<TerminalSessionView> session,
             Optional<AgentRunId> currentRunId,
             Optional<RunEventCursor> appliedCursor,
             Set<String> seenEventIds,
@@ -449,7 +448,7 @@ public record TerminalUiState(
             TerminalFooter footer,
             int columns,
             int rows,
-            Optional<CodingSessionView> session,
+            Optional<TerminalSessionView> session,
             Optional<AgentRunId> currentRunId,
             Optional<RunEventCursor> appliedCursor,
             Set<String> seenEventIds,
@@ -494,7 +493,7 @@ public record TerminalUiState(
             TerminalFooter footer,
             int columns,
             int rows,
-            Optional<CodingSessionView> session,
+            Optional<TerminalSessionView> session,
             Optional<AgentRunId> currentRunId,
             Optional<RunEventCursor> appliedCursor,
             Set<String> seenEventIds,
@@ -537,7 +536,7 @@ public record TerminalUiState(
             TerminalFooter footer,
             int columns,
             int rows,
-            Optional<CodingSessionView> session,
+            Optional<TerminalSessionView> session,
             Optional<AgentRunId> currentRunId,
             Optional<RunEventCursor> appliedCursor,
             Set<String> seenEventIds,
@@ -579,7 +578,7 @@ public record TerminalUiState(
             TerminalFooter footer,
             int columns,
             int rows,
-            Optional<CodingSessionView> session,
+            Optional<TerminalSessionView> session,
             Optional<AgentRunId> currentRunId,
             Optional<RunEventCursor> appliedCursor,
             Set<String> seenEventIds,

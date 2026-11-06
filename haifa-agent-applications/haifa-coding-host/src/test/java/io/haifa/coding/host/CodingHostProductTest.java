@@ -23,13 +23,15 @@ class CodingHostProductTest {
                 var embedded = host.embeddedClient();
                 var remote = CodingClients.connect(host.endpoint())) {
             assertThat(remote.connection().displayName()).isEqualTo("Third-party SDK product");
-            assertThat(remote.connection().capabilities()).contains("native-tool-details-v1");
+            assertThat(remote.connection().capabilities())
+                    .contains("native-tool-details-v1", "native-terminal-activity-v1");
             assertThat(embedded.connection().capabilities()).contains("native-tool-details-v1");
             assertThat(remote.connection().projectId())
                     .isEqualTo(embedded.connection().projectId());
             var receipt = remote.execute(create("create-once", "create-key", "first turn"));
             assertThat(receipt.receipt().disposition()).isEqualTo("accepted");
             String session = receipt.session().sessionId();
+            assertThat(remote.terminalSession(session).summary().sessionId()).isEqualTo(session);
             try (var observation = remote.observe(session)) {
                 Snapshot current = observation.initial();
                 boolean completed = false;
@@ -44,6 +46,10 @@ class CodingHostProductTest {
                 }
                 assertThat(completed).isTrue();
                 assertThat(current.scope().source()).isEqualTo("native");
+                assertThat(current.activity()).isNotNull();
+                var page = remote.activity(
+                        new ActivityRequest(session, current.activity().runId(), 0));
+                assertThat(page.entries()).anyMatch(entry -> "run-state".equals(entry.role()));
             }
             assertThat(embedded.history(session, 32, null).entries())
                     .anyMatch(e ->

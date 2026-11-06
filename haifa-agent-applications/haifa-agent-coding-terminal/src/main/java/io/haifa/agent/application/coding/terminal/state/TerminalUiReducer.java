@@ -2,7 +2,6 @@ package io.haifa.agent.application.coding.terminal.state;
 
 import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
 import io.haifa.agent.application.project.product.coding.CodingModelState;
-import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationProgressView;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.execution.api.ExecutionOutputChannel;
@@ -73,7 +72,9 @@ public final class TerminalUiReducer {
                     active.isPresent() ? (sameRun ? state.status() : "THINKING") : "Idle",
                     state.editorBuffer(),
                     state.editorCursor(),
-                    selectorAfterSessionLoad(state.selector(), view),
+                    loaded.product() && sameSession
+                            ? state.selector()
+                            : selectorAfterSessionLoad(state.selector(), view),
                     footer,
                     state.columns(),
                     state.rows(),
@@ -117,6 +118,47 @@ public final class TerminalUiReducer {
                             state.exitRequested())
                     .withWaiting(Optional.empty());
         }
+        if (action instanceof TerminalUiAction.ProductRunSelected selection) {
+            var run = selection.run();
+            var runId = new AgentRunId(run.id());
+            if (state.currentRunId().filter(runId::equals).isPresent()) return state;
+            var prior = state.footer();
+            var footer = new TerminalFooter(
+                    prior.project(),
+                    prior.gitBranch(),
+                    prior.worktree(),
+                    prior.worktreeBranch(),
+                    prior.session(),
+                    prior.metrics(),
+                    prior.provider(),
+                    prior.model(),
+                    run.status(),
+                    prior.sandbox());
+            String status = productRunStatus(run.status(), state.status());
+            return copy(
+                    state,
+                    state.loadedResources(),
+                    state.transcript(),
+                    state.pending(),
+                    status,
+                    state.editorBuffer(),
+                    state.editorCursor(),
+                    state.selector(),
+                    footer,
+                    state.columns(),
+                    state.rows(),
+                    state.session(),
+                    Optional.of(runId),
+                    Optional.empty(),
+                    Set.of(),
+                    state.recoverableError(),
+                    state.activity().advance(""),
+                    state.exitRequested());
+        }
+        if (action instanceof TerminalUiAction.ProductActivityChanged activity) {
+            for (var entry : activity.entries()) state = productActivity(state, entry);
+            return state;
+        }
         if (action instanceof TerminalUiAction.ProductToolsChanged tools) {
             List<TranscriptItem> items = new ArrayList<>(state.transcript());
             for (Entry entry : tools.entries()) {
@@ -137,12 +179,21 @@ public final class TerminalUiReducer {
                         Optional.ofNullable(details.processState()),
                         Optional.ofNullable(details.exitCode()).map(Math::toIntExact),
                         output);
-                putTool(
-                        items,
-                        tool,
-                        entry.runId(),
-                        Optional.ofNullable(details.startedAtEpochMillis()),
-                        Optional.ofNullable(details.durationMillis()));
+                var started = Optional.ofNullable(details.startedAtEpochMillis());
+                int priorIndex = index(items, "tool-" + entry.toolCallId());
+                if (started.isEmpty()
+                        && priorIndex >= 0
+                        && items.get(priorIndex)
+                                .sourceRunId()
+                                .filter(entry.runId()::equals)
+                                .isPresent()) {
+                    started = items.get(priorIndex).startedAtEpochMillis();
+                }
+                var duration = Optional.ofNullable(details.durationMillis());
+                if (duration.isEmpty() && terminalToolStatus(entry.status()) && entry.occurredAtEpochMillis() != null) {
+                    duration = started.map(value -> Math.max(0L, entry.occurredAtEpochMillis() - value));
+                }
+                putTool(items, tool, entry.runId(), started, duration);
             }
             return productTranscript(state, items);
         }
@@ -768,6 +819,165 @@ public final class TerminalUiReducer {
         return "\n" + marker + "\n";
     }
 
+    private static TerminalUiState copyWithActivity(TerminalUiState state, String status, String label) {
+        return copy(
+                state,
+                state.loadedResources(),
+                state.transcript(),
+                state.pending(),
+                status,
+                state.editorBuffer(),
+                state.editorCursor(),
+                state.selector(),
+                state.footer(),
+                state.columns(),
+                state.rows(),
+                state.session(),
+                state.currentRunId(),
+                state.appliedCursor(),
+                state.seenEventIds(),
+                state.recoverableError(),
+                state.activity().advance(label),
+                state.exitRequested());
+    }
+
+    private static String productRunStatus(String status, String previous) {
+        return switch (status) {
+            case "RUNNING" -> previous.equalsIgnoreCase("WORKING") ? "WORKING" : "THINKING";
+            case "WAITING_APPROVAL", "WAITING_INTERACTION" -> "WAITING FOR APPROVAL";
+            default -> status;
+        };
+    }
+
+    private TerminalUiState productActivity(TerminalUiState state, Entry entry) {
+        var run = new AgentRunId(entry.runId());
+        boolean current = state.currentRunId().filter(run::equals).isPresent();
+        var items = new ArrayList<>(state.transcript());
+        var pending = state.pending();
+        var nextRun = state.currentRunId();
+        var footer = state.footer();
+        var failure = state.recoverableError();
+        String status = state.status();
+        switch (entry.role()) {
+            case "tool" -> {
+                state = reduce(state, new TerminalUiAction.ProductToolsChanged(List.of(entry)));
+                if (!current) return state;
+                String next = toolActivityStatus(entry.status(), status);
+                String label = "STARTED".equals(entry.status()) || "RUNNING".equals(entry.status())
+                        ? boundedActivityLabel(entry.title())
+                        : "";
+                return copyWithActivity(state, next, label);
+            }
+            case "run-state" -> {
+                boolean terminal = TERMINAL_RUN_STATUSES.contains(entry.status());
+                String reason = java.util.Objects.requireNonNullElse(entry.noticeCode(), "NONE");
+                if (terminal) {
+                    if ("COMPLETED".equals(entry.status())) markFinalResponse(items, entry.runId());
+                    upsert(
+                            items,
+                            runSummaryItem(
+                                            entry.status(),
+                                            reason,
+                                            Optional.of(entry.text()).filter(value -> !value.isBlank()),
+                                            entry.runId())
+                                    .withSourceRunId(entry.runId()));
+                    if ("FAILED".equals(entry.status())) {
+                        upsert(
+                                items,
+                                new TranscriptItem(
+                                        "run-error-" + entry.runId(),
+                                        TranscriptItem.Kind.ERROR,
+                                        "[" + reason + "] "
+                                                + (entry.text().isBlank() ? "Agent execution failed" : entry.text()),
+                                        entry.diagnosticId() == null
+                                                ? "No diagnostic ID was provided."
+                                                : "Diagnostic ID: " + entry.diagnosticId(),
+                                        entry.status(),
+                                        false));
+                    }
+                }
+                if (current) {
+                    nextRun = terminal ? Optional.empty() : Optional.of(run);
+                    footer = new TerminalFooter(
+                            footer.project(),
+                            footer.gitBranch(),
+                            footer.worktree(),
+                            footer.worktreeBranch(),
+                            footer.session(),
+                            footer.metrics(),
+                            footer.provider(),
+                            footer.model(),
+                            entry.status(),
+                            footer.sandbox());
+                    status = productRunStatus(entry.status(), status);
+                    if ("FAILED".equals(entry.status())) failure = Optional.of(reason);
+                    if (terminal)
+                        pending = pending.stream()
+                                .filter(value -> value.kind() == PendingMessage.Kind.FOLLOW_UP)
+                                .toList();
+                }
+            }
+            case "interaction-state" -> {
+                int index = index(items, entry.id());
+                if (index >= 0) {
+                    var item = items.get(index);
+                    items.set(index, item.withStatus(entry.status(), item.body()));
+                }
+            }
+            case "input-state" -> {
+                if (!current) return state;
+                var changed = new ArrayList<>(pending);
+                int index = pendingIndex(changed, entry.id());
+                if (index >= 0) changed.remove(index);
+                if ("ACCEPTED".equals(entry.status())) {
+                    changed.add(new PendingMessage(
+                            entry.id(),
+                            PendingMessage.Kind.STEER,
+                            entry.text().isBlank()
+                                    ? "Accepted; waiting for a safe application point"
+                                    : "Accepted; waiting for " + entry.text(),
+                            entry.sequence()));
+                    status = "Applying steer";
+                } else if ("APPLIED".equals(entry.status())) {
+                    status = "THINKING";
+                }
+                pending = List.copyOf(changed);
+            }
+            case "resource" ->
+                upsert(
+                        items,
+                        new TranscriptItem(
+                                entry.id(),
+                                TranscriptItem.Kind.RESOURCE,
+                                entry.title(),
+                                entry.text(),
+                                entry.status(),
+                                false));
+            default -> {
+                return state;
+            }
+        }
+        var result = copy(
+                state,
+                state.loadedResources(),
+                List.copyOf(items),
+                pending,
+                status,
+                state.editorBuffer(),
+                state.editorCursor(),
+                state.selector(),
+                footer,
+                state.columns(),
+                state.rows(),
+                state.session(),
+                nextRun,
+                state.appliedCursor(),
+                state.seenEventIds(),
+                failure,
+                state.exitRequested());
+        return status.equals(state.status()) ? result : copyWithActivity(result, status, "");
+    }
+
     private TerminalUiState event(TerminalUiState state, AgentRunEvent event, boolean renderTool) {
         if (state.seenEventIds().contains(event.eventId())) return state;
         if (state.currentRunId().isPresent()
@@ -829,7 +1039,7 @@ public final class TerminalUiReducer {
     }
 
     private static Optional<TerminalSelector> selectorAfterSessionLoad(
-            Optional<TerminalSelector> current, CodingSessionView view) {
+            Optional<TerminalSelector> current, TerminalSessionView view) {
         if (current.isEmpty()) {
             return current;
         }
@@ -844,7 +1054,7 @@ public final class TerminalUiReducer {
         }
         String expected = prefix
                 + view.pendingInteraction()
-                        .map(interaction -> interaction.requestId().value())
+                        .map(TerminalSessionView.Pending::requestId)
                         .orElse("");
         return current.filter(selector -> selector.kind().equals(expected));
     }
@@ -1200,7 +1410,7 @@ public final class TerminalUiReducer {
         return -1;
     }
 
-    private static String modelFooterSummary(CodingSessionView view) {
+    private static String modelFooterSummary(TerminalSessionView view) {
         var model = view.model().model();
         String context = model.contextWindow() >= 1_000_000
                 ? (model.contextWindow() / 1_000_000) + "M"
@@ -1467,29 +1677,36 @@ public final class TerminalUiReducer {
     }
 
     private static TranscriptItem runSummaryItem(RunEventPayloads.RunLifecycle payload, AgentRunEvent event) {
+        return runSummaryItem(
+                payload.status(),
+                payload.reasonCode(),
+                payload.errorMessage(),
+                event.runId().value());
+    }
+
+    private static TranscriptItem runSummaryItem(String status, String reason, Optional<String> error, String runId) {
         Optional<Long> duration = Optional.empty();
         String title =
-                switch (payload.status()) {
+                switch (status) {
                     case "COMPLETED" -> "Run completed";
-                    case "FAILED" -> "Run failed · " + payload.reasonCode();
+                    case "FAILED" -> "Run failed · " + reason;
                     case "CANCELLED" -> "Run cancelled";
                     case "TIMEOUT" -> "Run timed out";
-                    default -> "Run " + payload.status().toLowerCase(Locale.ROOT);
+                    default -> "Run " + status.toLowerCase(Locale.ROOT);
                 };
         List<String> chips = new ArrayList<>();
         duration.ifPresent(value -> chips.add(TerminalDurations.human(value)));
         String chipLine = chips.isEmpty() ? "" : " · " + String.join(" · ", chips);
         List<String> body = new ArrayList<>();
-        body.add("Status: " + payload.status()
-                + ("NONE".equals(payload.reasonCode()) ? "" : " · " + payload.reasonCode()));
-        payload.errorMessage().ifPresent(message -> body.add("Error: " + message));
+        body.add("Status: " + status + ("NONE".equals(reason) ? "" : " · " + reason));
+        error.ifPresent(message -> body.add("Error: " + message));
         duration.ifPresent(value -> body.add("Duration: " + TerminalDurations.human(value)));
         return new TranscriptItem(
-                "run-summary-" + event.runId().value(),
+                "run-summary-" + runId,
                 TranscriptItem.Kind.SUMMARY,
                 title + chipLine,
                 String.join("\n", body),
-                payload.status(),
+                status,
                 false,
                 Optional.empty(),
                 Optional.empty(),
@@ -1639,7 +1856,7 @@ public final class TerminalUiReducer {
             TerminalFooter footer,
             int columns,
             int rows,
-            Optional<io.haifa.agent.application.project.product.coding.CodingSessionView> session,
+            Optional<TerminalSessionView> session,
             Optional<io.haifa.agent.core.run.AgentRunId> runId,
             Optional<io.haifa.agent.runtime.api.RunEventCursor> eventCursor,
             java.util.Set<String> seen,
@@ -1678,7 +1895,7 @@ public final class TerminalUiReducer {
             TerminalFooter footer,
             int columns,
             int rows,
-            Optional<io.haifa.agent.application.project.product.coding.CodingSessionView> session,
+            Optional<TerminalSessionView> session,
             Optional<io.haifa.agent.core.run.AgentRunId> runId,
             Optional<io.haifa.agent.runtime.api.RunEventCursor> eventCursor,
             java.util.Set<String> seen,
@@ -1720,7 +1937,7 @@ public final class TerminalUiReducer {
             TerminalFooter footer,
             int columns,
             int rows,
-            Optional<io.haifa.agent.application.project.product.coding.CodingSessionView> session,
+            Optional<TerminalSessionView> session,
             Optional<io.haifa.agent.core.run.AgentRunId> runId,
             Optional<io.haifa.agent.runtime.api.RunEventCursor> eventCursor,
             java.util.Set<String> seen,
@@ -1765,7 +1982,7 @@ public final class TerminalUiReducer {
             TerminalFooter footer,
             int columns,
             int rows,
-            Optional<io.haifa.agent.application.project.product.coding.CodingSessionView> session,
+            Optional<TerminalSessionView> session,
             Optional<io.haifa.agent.core.run.AgentRunId> runId,
             Optional<io.haifa.agent.runtime.api.RunEventCursor> eventCursor,
             java.util.Set<String> seen,

@@ -138,6 +138,7 @@ export type Snapshot = Readonly<{
   consent: Consent;
   actions: ReadonlyArray<Action>;
   notices: ReadonlyArray<string>;
+  activity?: ActivityHead | null;
 }>;
 export type Update = Readonly<{
   kind: "update";
@@ -476,5 +477,37 @@ export type BrowserInfo = Readonly<{
   protocolVersion: "1";
   browserAuthorization: "browser-grant-v1";
   displayName: string;
+}>;
+export type ActivityHead = Readonly<{
+  runId: string;
+  sequence: number;
+}>;
+export type ActivityRequest = Readonly<{
+  sessionId: string;
+  runId: string;
+  afterSequence: number;
+}>;
+export type ActivityPage = Readonly<{
+  sessionId: string;
+  runId: string;
+  afterSequence: number;
+  nextSequence: number;
+  hasMore: boolean;
+  entries: ReadonlyArray<Entry>;
+}>;
+export type TerminalContext = Readonly<{
+  workingDirectory: string;
+  gitBranch: string;
+  worktree: string;
+  worktreeBranch: string;
+  executionDirectory: string;
+  localManagementCommand: string;
+}>;
+export type TerminalSession = Readonly<{
+  summary: SessionSummary;
+  activeRun: Run | null;
+  model: ModelSelection;
+  activeTask: string | null;
+  profile: string;
 }>;
 export type CodingEnvelope = Snapshot | Update | Resync;

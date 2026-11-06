@@ -293,6 +293,7 @@ public final class CodingHostDispatcher {
         }
     }
 
+    static final String NATIVE_TERMINAL_ACTIVITY = "native-terminal-activity-v1";
     static final String NATIVE_TOOL_DETAILS = "native-tool-details-v1";
 
     private Map<String, Object> initialize(JsonNode params, boolean nativeTransport) {
@@ -304,7 +305,10 @@ public final class CodingHostDispatcher {
         available.add("coding-product-v1");
         if (presentationFactory != null) {
             available.add(PRESENTATION_CAPABILITY);
-            if (nativeTransport) available.add(NATIVE_TOOL_DETAILS);
+            if (nativeTransport) {
+                available.add(NATIVE_TOOL_DETAILS);
+                available.add(NATIVE_TERMINAL_ACTIVITY);
+            }
         }
         if (subscriptions != null && subscriptions.previewAvailable()) available.add("preview-v1");
         if (approvals != null) available.add(CodingHostApprovals.CAPABILITY);

@@ -35,6 +35,7 @@ public final class CodingPresentationObservation implements CodingPresentationSu
     private final AgentSessionId sessionId;
     private final Scope scope;
     private final boolean detailedTools;
+    private final boolean terminalActivity;
     private final SecretRedactor redactor;
     private final Supplier<Consent> consent;
     private final String context;
@@ -62,6 +63,7 @@ public final class CodingPresentationObservation implements CodingPresentationSu
     private AutoCloseable events;
     private AutoCloseable output;
     private AgentRunId watched;
+    private ActivityHead idleActivity;
     private long eventSequence;
     private long outputSequence;
     private String generation = "";
@@ -119,6 +121,7 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                 context,
                 eventStart,
                 sessions::reviewState,
+                false,
                 false);
     }
 
@@ -131,6 +134,19 @@ public final class CodingPresentationObservation implements CodingPresentationSu
             String context,
             java.util.function.Function<AgentRunId, RunEventCursor> eventStart,
             boolean detailedTools) {
+        this(sessions, client, scope, redactor, consent, context, eventStart, detailedTools, false);
+    }
+
+    public CodingPresentationObservation(
+            CodingSessionService sessions,
+            CodingSessionClient client,
+            Scope scope,
+            SecretRedactor redactor,
+            Supplier<Consent> consent,
+            String context,
+            java.util.function.Function<AgentRunId, RunEventCursor> eventStart,
+            boolean detailedTools,
+            boolean terminalActivity) {
         this(
                 listener -> sessions.observeChanges(new AgentSessionId(scope.sessionId()), listener),
                 client,
@@ -140,7 +156,8 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                 context,
                 eventStart,
                 sessions::reviewState,
-                detailedTools);
+                detailedTools,
+                terminalActivity);
     }
 
     CodingPresentationObservation(
@@ -158,7 +175,8 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                 "Host process",
                 RunEventCursor::beforeFirst,
                 interaction -> new CodingReviewState(false, true, false),
-                true);
+                true,
+                false);
     }
 
     private CodingPresentationObservation(
@@ -170,7 +188,9 @@ public final class CodingPresentationObservation implements CodingPresentationSu
             String context,
             java.util.function.Function<AgentRunId, RunEventCursor> eventStart,
             java.util.function.Function<InteractionView, CodingReviewState> reviewState,
-            boolean detailedTools) {
+            boolean detailedTools,
+            boolean terminalActivity) {
+        this.terminalActivity = terminalActivity && "native".equals(scope.source());
         this.detailedTools = detailedTools && "native".equals(scope.source());
         this.reviewState = Objects.requireNonNull(reviewState);
         this.eventStart = Objects.requireNonNull(eventStart);
@@ -186,6 +206,7 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                 Snapshot first = read(0);
                 io.haifa.coding.api.CodingProtocolChecks.snapshot(first);
                 if (bytes(first) > SNAPSHOT_BYTES) throw new IllegalStateException("SNAPSHOT_BUDGET");
+                if (terminalActivity) first = first.withActivity(activityHead());
                 current = first;
                 initial.complete(first);
             });
@@ -295,6 +316,20 @@ public final class CodingPresentationObservation implements CodingPresentationSu
         var view = client.presentationSnapshot(sessionId);
         AgentRunId run = view.activeRun().map(AgentRunSnapshot::runId).orElse(null);
         var history = client.history(sessionId, 31);
+        if (terminalActivity && run == null && watched == null) {
+            idleActivity = history.items().reversed().stream()
+                    .flatMap(item -> item.sourceRunId().stream())
+                    .map(AgentRunId::new)
+                    .filter(id -> client.findRun(id).isPresent())
+                    .findFirst()
+                    .map(id -> new ActivityHead(
+                            id.value(),
+                            client.events(id, RunEventCursor.beforeFirst(id), 1)
+                                    .headCursor()
+                                    .exclusiveSequence()
+                                    .orElse(0L)))
+                    .orElse(null);
+        }
         boolean previousSaved = watched != null
                 && history.items().stream()
                         .anyMatch(item -> item.kind() == CodingSessionHistoryItem.Kind.ASSISTANT
@@ -717,23 +752,7 @@ public final class CodingPresentationObservation implements CodingPresentationSu
         eventSequence = event.sequence();
         if (event.payload() instanceof RunEventPayloads.ToolLifecycle tool) {
             var key = toolEntryId(run, tool.toolCallId());
-            var entry = new Entry(
-                    key,
-                    "tool",
-                    run.value(),
-                    "tool",
-                    safe(tool.displayName(), 256),
-                    safe(tool.targetSummary(), 8000),
-                    tool.status(),
-                    null,
-                    true,
-                    null,
-                    event.occurredAt().toEpochMilli(),
-                    tool.toolCallId(),
-                    null,
-                    null,
-                    null,
-                    detailedTools ? toolDetails(tool, tools.get(key), event) : null);
+            var entry = toolEntry(event, tool, detailedTools, tools.get(key), redactor, null);
             tools.put(key, entry);
             while (tools.size() > 32) tools.remove(tools.keySet().iterator().next());
         } else if (event.payload() instanceof RunEventPayloads.DeliveryLifecycle lifecycle) {
@@ -749,12 +768,121 @@ public final class CodingPresentationObservation implements CodingPresentationSu
             else if (event.payload() instanceof RunEventPayloads.RunLifecycle
                     || event.payload() instanceof RunEventPayloads.InteractionLifecycle
                     || event.payload() instanceof RunEventPayloads.MessageCommitted) publish();
+            else if (terminalActivity && projectActivity(event, redactor) != null) publishLive();
         }
     }
 
-    private ToolDetails toolDetails(RunEventPayloads.ToolLifecycle tool, Entry previous, AgentRunEvent event) {
+    static Entry projectActivity(AgentRunEvent event, SecretRedactor redactor) {
+        if (event.payload() instanceof RunEventPayloads.ToolLifecycle tool) {
+            return toolEntry(event, tool, true, null, redactor, event.sequence());
+        }
+        return switch (event.payload()) {
+            case RunEventPayloads.RunLifecycle run ->
+                activityEntry(
+                        event,
+                        redactor,
+                        "run-state",
+                        "run-" + event.runId().value(),
+                        run.status(),
+                        run.errorMessage().orElse(""),
+                        run.reasonCode(),
+                        run.diagnosticId().orElse(null));
+            case RunEventPayloads.InteractionLifecycle interaction ->
+                activityEntry(
+                        event,
+                        redactor,
+                        "interaction-state",
+                        "interaction-" + interaction.requestId(),
+                        interaction.state(),
+                        "",
+                        null,
+                        null);
+            case RunEventPayloads.RunInputLifecycle input ->
+                activityEntry(
+                        event,
+                        redactor,
+                        "input-state",
+                        input.inputId(),
+                        input.state(),
+                        input.applicationCoordinate(),
+                        null,
+                        null);
+            case RunEventPayloads.ResourceAvailable resource
+            when !"checkpoint".equalsIgnoreCase(resource.kind()) ->
+                activityEntry(
+                        event,
+                        redactor,
+                        "resource",
+                        "resource-" + resource.reference(),
+                        resource.status(),
+                        resource.kind() + " · " + resource.reference(),
+                        resource.title(),
+                        null);
+            default -> null;
+        };
+    }
+
+    private static Entry activityEntry(
+            AgentRunEvent event,
+            SecretRedactor redactor,
+            String role,
+            String id,
+            String status,
+            String text,
+            String label,
+            String diagnostic) {
+        String title = label == null ? "" : CodingPresentationText.safe(label, 256, redactor);
+        return new Entry(
+                CodingPresentationText.safe(id, 256, redactor),
+                "notice",
+                event.runId().value(),
+                role,
+                title,
+                CodingPresentationText.safe(text, 8000, redactor),
+                status,
+                event.sequence(),
+                false,
+                null,
+                event.occurredAt().toEpochMilli(),
+                null,
+                null,
+                "run-state".equals(role) ? title : null,
+                diagnostic,
+                null);
+    }
+
+    private static Entry toolEntry(
+            AgentRunEvent event,
+            RunEventPayloads.ToolLifecycle tool,
+            boolean detailed,
+            Entry previous,
+            SecretRedactor redactor,
+            Long sequence) {
+        return new Entry(
+                toolEntryId(event.runId(), tool.toolCallId()),
+                "tool",
+                event.runId().value(),
+                "tool",
+                CodingPresentationText.safe(tool.displayName(), 256, redactor),
+                CodingPresentationText.safe(tool.targetSummary(), 8000, redactor),
+                tool.status(),
+                sequence,
+                true,
+                null,
+                event.occurredAt().toEpochMilli(),
+                tool.toolCallId(),
+                null,
+                null,
+                null,
+                detailed ? toolDetails(tool, previous, event, redactor) : null);
+    }
+
+    private static ToolDetails toolDetails(
+            RunEventPayloads.ToolLifecycle tool, Entry previous, AgentRunEvent event, SecretRedactor redactor) {
         long occurred = event.occurredAt().toEpochMilli();
-        Long started = previous == null ? null : previous.toolDetails().startedAtEpochMillis();
+        Long started = previous == null || previous.toolDetails() == null
+                ? null
+                : previous.toolDetails().startedAtEpochMillis();
         if (started == null && "STARTED".equals(tool.status())) started = occurred;
         Long duration = started != null && TERMINAL_TOOL_STATUSES.contains(tool.status())
                 ? Math.max(0, occurred - started)
@@ -764,7 +892,7 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                 .flatMap(RunEventPayloads.ToolObservation::outputPreview)
                 .map(value -> {
                     var bounded = io.haifa.agent.runtime.api.display.BoundedText.of(
-                            safe(value.text(), Integer.MAX_VALUE), 4_000, 100);
+                            CodingPresentationText.safe(value.text(), Integer.MAX_VALUE, redactor), 4_000, 100);
                     return new ToolOutput(
                             bounded.text(),
                             value.truncated() || bounded.truncated(),
@@ -773,13 +901,13 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                 })
                 .orElse(null);
         return new ToolDetails(
-                safe(tool.toolName(), 128),
-                safe(tool.intentSummary(), 256),
-                safe(tool.reasonCode(), 128),
-                safe(tool.resultRef(), 512),
+                CodingPresentationText.safe(tool.toolName(), 128, redactor),
+                CodingPresentationText.safe(tool.intentSummary(), 256, redactor),
+                CodingPresentationText.safe(tool.reasonCode(), 128, redactor),
+                CodingPresentationText.safe(tool.resultRef(), 512, redactor),
                 observation
                         .flatMap(RunEventPayloads.ToolObservation::processState)
-                        .map(value -> safe(value, 64))
+                        .map(value -> CodingPresentationText.safe(value, 64, redactor))
                         .orElse(null),
                 observation
                         .flatMap(RunEventPayloads.ToolObservation::exitCode)
@@ -954,7 +1082,12 @@ public final class CodingPresentationObservation implements CodingPresentationSu
         publish(read(current.revision() + 1));
     }
 
+    private ActivityHead activityHead() {
+        return watched == null ? idleActivity : new ActivityHead(watched.value(), eventSequence);
+    }
+
     private void publish(Snapshot next) {
+        if (terminalActivity) next = next.withActivity(activityHead());
         Update update = new Update("update", scope.viewId(), current.revision(), next.revision(), next);
         int length = bytes(update);
         if (detailedTools
@@ -977,7 +1110,7 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                 next.consent(),
                 next.actions(),
                 next.notices());
-        if (current.equals(sameRevision)) return;
+        if (current.equals(sameRevision.withActivity(next.activity()))) return;
         synchronized (outgoing) {
             if (closed()) return;
             if (length > UPDATE_BYTES || queuedBytes + length > QUEUE_BYTES) {
@@ -1070,7 +1203,8 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                         next.live(),
                         next.consent(),
                         next.actions(),
-                        next.notices()));
+                        next.notices(),
+                        next.activity()));
     }
 
     private int bytes(Object value) {

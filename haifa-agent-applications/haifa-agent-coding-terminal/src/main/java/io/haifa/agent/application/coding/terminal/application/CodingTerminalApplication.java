@@ -138,11 +138,6 @@ public final class CodingTerminalApplication {
     }
 
     public void run() {
-        run(null);
-    }
-
-    /** Runs the explicit product presentation path using an independently owned client handle. */
-    public void run(CodingClient product) {
         TerminalEventPump pump = new TerminalEventPump(ACTION_QUEUE_CAPACITY);
         var controller = new CodingTerminalController(
                 projectId,
@@ -153,8 +148,35 @@ public final class CodingTerminalApplication {
                 TerminalUiState.initial(DEFAULT_COLUMNS, DEFAULT_ROWS, workspace),
                 connectionOptions);
         controller.attachToolOutputPreviewPublisher(previewPublisher);
+        run(controller, pump, startup, terminalIo);
+    }
+
+    /** Starts the product terminal without constructing or receiving a legacy transport. */
+    public static void runProduct(
+            CodingClient product,
+            CodingTerminalStartup startup,
+            Tui4jTerminalIo terminalIo,
+            TerminalWorkspaceContext workspace,
+            CodingAuthenticationClient authentication,
+            CodingTerminalConnectionOptions options) {
+        var pump = new TerminalEventPump(ACTION_QUEUE_CAPACITY);
+        var controller = CodingTerminalController.product(
+                new ProjectId(product.connection().projectId()),
+                product,
+                authentication,
+                pump,
+                new TerminalUiReducer(),
+                TerminalUiState.initial(DEFAULT_COLUMNS, DEFAULT_ROWS, workspace),
+                options);
+        run(controller, pump, startup, terminalIo);
+    }
+
+    private static void run(
+            CodingTerminalController controller,
+            TerminalEventPump pump,
+            CodingTerminalStartup startup,
+            Tui4jTerminalIo terminalIo) {
         try (controller) {
-            if (product != null) controller.attachProductClient(product);
             controller.start(startup);
             new Tui4jCodingTerminal(controller, pump, terminalIo).run();
         }

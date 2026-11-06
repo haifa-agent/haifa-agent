@@ -12,7 +12,11 @@ import java.util.concurrent.atomic.AtomicReference;
 final class TerminalProductObservation implements AutoCloseable {
     private final AtomicReference<CodingProtocol.Snapshot> latest = new AtomicReference<>();
     private final AtomicReference<String> failure = new AtomicReference<>();
+    private final java.util.concurrent.ArrayBlockingQueue<CodingProtocol.Entry> activity =
+            new java.util.concurrent.ArrayBlockingQueue<>(512);
     private final Thread reader;
+    private String activityRun;
+    private long activityCursor;
     private volatile String activeViewId;
 
     TerminalProductObservation(CodingClient client, CodingProtocol.ConnectionInfo connection, String session) {
@@ -21,6 +25,12 @@ final class TerminalProductObservation implements AutoCloseable {
 
     CodingProtocol.Snapshot takeSnapshot() {
         return latest.getAndSet(null);
+    }
+
+    java.util.List<CodingProtocol.Entry> takeActivity(int limit) {
+        var entries = new java.util.ArrayList<CodingProtocol.Entry>();
+        activity.drainTo(entries, limit);
+        return java.util.List.copyOf(entries);
     }
 
     String takeFailure() {
@@ -46,7 +56,7 @@ final class TerminalProductObservation implements AutoCloseable {
                         throw new IllegalArgumentException("VIEW_SCOPE_MISMATCH");
                     }
                     activeViewId = scope.viewId();
-                    latest.set(snapshot);
+                    publish(client, session, snapshot);
                     while (!Thread.currentThread().isInterrupted() && !observation.closed()) {
                         var event = observation.poll(Duration.ofSeconds(1));
                         if (event == null) continue;
@@ -64,7 +74,7 @@ final class TerminalProductObservation implements AutoCloseable {
                             var next = CodingPresentationReducer.apply(snapshot, update);
                             if (next != snapshot) {
                                 snapshot = next;
-                                latest.set(snapshot);
+                                publish(client, session, snapshot);
                                 retries = 0;
                             }
                         } catch (IllegalArgumentException invalid) {
@@ -87,6 +97,32 @@ final class TerminalProductObservation implements AutoCloseable {
             failure.set(rejected.code());
         } catch (RuntimeException invalid) {
             failure.set("PRODUCT_OBSERVATION_INVALID");
+        }
+    }
+
+    private void publish(CodingClient client, String session, CodingProtocol.Snapshot snapshot)
+            throws InterruptedException {
+        latest.set(snapshot);
+        var head = snapshot.activity();
+        if (head != null && !head.runId().equals(activityRun)) {
+            if (activityRun != null) readActivity(client, session, Long.MAX_VALUE);
+            activityRun = head.runId();
+            activityCursor = 0;
+        }
+        if (head != null) readActivity(client, session, head.sequence());
+    }
+
+    private void readActivity(CodingClient client, String session, long through) throws InterruptedException {
+        while (activityCursor < through) {
+            var request = new CodingProtocol.ActivityRequest(session, activityRun, activityCursor);
+            var page = client.activity(request);
+            CodingProtocolChecks.activity(request, page);
+            for (var entry : page.entries()) {
+                if (entry.sequence() > through) break;
+                activity.put(entry);
+            }
+            activityCursor = Math.min(through, page.nextSequence());
+            if (!page.hasMore()) return;
         }
     }
 

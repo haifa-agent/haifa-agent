@@ -440,7 +440,8 @@ public final class CodingProtocol {
             Live live,
             Consent consent,
             List<Action> actions,
-            List<String> notices)
+            List<String> notices,
+            ActivityHead activity)
             implements Envelope {
         public Snapshot {
             Objects.requireNonNull(kind, "kind");
@@ -467,6 +468,29 @@ public final class CodingProtocol {
             if (notices.size() > 16) throw new IllegalArgumentException("notices exceeds budget");
             if (notices.stream().anyMatch(item -> item.codePointCount(0, item.length()) > 512))
                 throw new IllegalArgumentException("notices item exceeds budget");
+            if (activity != null) {
+                Objects.requireNonNull(activity, "activity");
+            }
+        }
+
+        public Snapshot(
+                String kind,
+                Scope scope,
+                long revision,
+                String hydration,
+                Session session,
+                List<Entry> entries,
+                History history,
+                Live live,
+                Consent consent,
+                List<Action> actions,
+                List<String> notices) {
+            this(kind, scope, revision, hydration, session, entries, history, live, consent, actions, notices, null);
+        }
+
+        public Snapshot withActivity(ActivityHead head) {
+            return new Snapshot(
+                    kind, scope, revision, hydration, session, entries, history, live, consent, actions, notices, head);
         }
     }
 
@@ -1620,6 +1644,99 @@ public final class CodingProtocol {
             Objects.requireNonNull(displayName, "displayName");
             if (displayName.codePointCount(0, displayName.length()) > 256)
                 throw new IllegalArgumentException("displayName exceeds budget");
+        }
+    }
+
+    public record ActivityHead(String runId, long sequence) {
+        public ActivityHead {
+            Objects.requireNonNull(runId, "runId");
+            if (runId.codePointCount(0, runId.length()) > 256)
+                throw new IllegalArgumentException("runId exceeds budget");
+            if (sequence < 0L || sequence > 9007199254740991L) throw new IllegalArgumentException("Invalid sequence");
+        }
+    }
+
+    public record ActivityRequest(String sessionId, String runId, long afterSequence) {
+        public ActivityRequest {
+            Objects.requireNonNull(sessionId, "sessionId");
+            if (sessionId.codePointCount(0, sessionId.length()) > 256)
+                throw new IllegalArgumentException("sessionId exceeds budget");
+            Objects.requireNonNull(runId, "runId");
+            if (runId.codePointCount(0, runId.length()) > 256)
+                throw new IllegalArgumentException("runId exceeds budget");
+            if (afterSequence < 0L || afterSequence > 9007199254740991L)
+                throw new IllegalArgumentException("Invalid afterSequence");
+        }
+    }
+
+    public record ActivityPage(
+            String sessionId,
+            String runId,
+            long afterSequence,
+            long nextSequence,
+            boolean hasMore,
+            List<Entry> entries) {
+        public ActivityPage {
+            Objects.requireNonNull(sessionId, "sessionId");
+            if (sessionId.codePointCount(0, sessionId.length()) > 256)
+                throw new IllegalArgumentException("sessionId exceeds budget");
+            Objects.requireNonNull(runId, "runId");
+            if (runId.codePointCount(0, runId.length()) > 256)
+                throw new IllegalArgumentException("runId exceeds budget");
+            if (afterSequence < 0L || afterSequence > 9007199254740991L)
+                throw new IllegalArgumentException("Invalid afterSequence");
+            if (nextSequence < 0L || nextSequence > 9007199254740991L)
+                throw new IllegalArgumentException("Invalid nextSequence");
+            entries = List.copyOf(entries);
+            if (entries.size() > 16) throw new IllegalArgumentException("entries exceeds budget");
+        }
+    }
+
+    public record TerminalContext(
+            String workingDirectory,
+            String gitBranch,
+            String worktree,
+            String worktreeBranch,
+            String executionDirectory,
+            String localManagementCommand) {
+        public TerminalContext {
+            Objects.requireNonNull(workingDirectory, "workingDirectory");
+            if (workingDirectory.codePointCount(0, workingDirectory.length()) > 4096)
+                throw new IllegalArgumentException("workingDirectory exceeds budget");
+            Objects.requireNonNull(gitBranch, "gitBranch");
+            if (gitBranch.codePointCount(0, gitBranch.length()) > 4096)
+                throw new IllegalArgumentException("gitBranch exceeds budget");
+            Objects.requireNonNull(worktree, "worktree");
+            if (worktree.codePointCount(0, worktree.length()) > 4096)
+                throw new IllegalArgumentException("worktree exceeds budget");
+            Objects.requireNonNull(worktreeBranch, "worktreeBranch");
+            if (worktreeBranch.codePointCount(0, worktreeBranch.length()) > 4096)
+                throw new IllegalArgumentException("worktreeBranch exceeds budget");
+            Objects.requireNonNull(executionDirectory, "executionDirectory");
+            if (executionDirectory.codePointCount(0, executionDirectory.length()) > 4096)
+                throw new IllegalArgumentException("executionDirectory exceeds budget");
+            Objects.requireNonNull(localManagementCommand, "localManagementCommand");
+            if (localManagementCommand.codePointCount(0, localManagementCommand.length()) > 4096)
+                throw new IllegalArgumentException("localManagementCommand exceeds budget");
+        }
+    }
+
+    public record TerminalSession(
+            SessionSummary summary, Run activeRun, ModelSelection model, String activeTask, String profile) {
+        public TerminalSession {
+            Objects.requireNonNull(summary, "summary");
+            if (activeRun != null) {
+                Objects.requireNonNull(activeRun, "activeRun");
+            }
+            Objects.requireNonNull(model, "model");
+            if (activeTask != null) {
+                Objects.requireNonNull(activeTask, "activeTask");
+                if (activeTask.codePointCount(0, activeTask.length()) > 120)
+                    throw new IllegalArgumentException("activeTask exceeds budget");
+            }
+            Objects.requireNonNull(profile, "profile");
+            if (profile.codePointCount(0, profile.length()) > 256)
+                throw new IllegalArgumentException("profile exceeds budget");
         }
     }
 

@@ -115,16 +115,8 @@ final class RemoteRpcTransport {
         }
     }
 
-    JsonNode readClientInfo(String contextId) {
-        return call("client/info", Map.of(), false, REQUEST_TIMEOUT, contextId);
-    }
-
     private JsonNode call(String method, Map<String, Object> params, boolean mutation, Duration timeout) {
-        return call(method, params, mutation, timeout, clientId);
-    }
-
-    private JsonNode call(
-            String method, Map<String, Object> params, boolean mutation, Duration timeout, String contextId) {
+        String contextId = clientId;
         if (closed) {
             throw unavailable();
         }
