@@ -429,6 +429,35 @@ test("automatic network recovery is bounded and does not create a new client or 
     await client.close();
   }
 });
+test("healthy presentation updates restore the budget for subsequent network interruptions", async () => {
+  const wire = new Wire(),
+    client = await wire.pair(),
+    view = await client.observe("session-1");
+  try {
+    for (let interruption = 0; interruption < 4; interruption++) {
+      const stream = await wire.nextStream();
+      const { revision, scope } = view.snapshot;
+      const delivered = changed(view, () => view.snapshot.revision > revision);
+      wire.frame(stream, wire.update(view, revision, revision + 1));
+      await delivered;
+
+      const recovered = changed(
+        view,
+        () =>
+          view.state === "unavailable" ||
+          (view.state === "live" &&
+            view.snapshot.scope.viewId !== scope.viewId),
+      );
+      stream.close();
+      await recovered;
+      assert.equal(view.state, "live");
+    }
+    assert.equal(wire.subscriptions, 5);
+  } finally {
+    view.close();
+    await client.close();
+  }
+});
 test("unknown request association is not upgraded by observing a terminal Run", () => {
   const tracker = new RequestTracker(),
     c = command();

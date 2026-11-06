@@ -869,6 +869,7 @@ class SessionView implements CodingObservation {
         if (envelope.kind !== "update") return fail("SSE_ENVELOPE_INVALID");
         const next = applyPresentation(this.snapshot, envelope);
         if (next !== this.snapshot) {
+          this.#attempts = 0;
           this.#subscription = freeze({
             ...this.#subscription,
             snapshot: next,

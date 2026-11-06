@@ -53,8 +53,9 @@ associations and stores no command text or durable operation records.
 `observe` starts from a validated immutable snapshot. Matching duplicates are ignored; gaps/resync
 cause a fresh view, while unknown critical content/auth/protocol failures stop automatic recovery.
 The parser handles arbitrary UTF-8 byte splits, CR/LF/CRLF, multiline data, comments and EOF, with
-strict decoding and byte budgets. Network recovery has at most three retries (100/500/1500 ms),
-reuses the valid bound client and never retries mutations. `view.refresh()` is explicit recovery.
+strict decoding and byte budgets. Network recovery has at most three retries (100/500/1500 ms)
+between applied stream updates. It reuses the valid bound client and never retries mutations.
+`view.refresh()` is explicit recovery.
 Callbacks are sequential; there is no unbounded update queue. Snapshot/update bounds remain
 256 KiB/64 KiB; response/request bounds are 1 MiB/256 KiB. RPC timeouts include body reads.
 
