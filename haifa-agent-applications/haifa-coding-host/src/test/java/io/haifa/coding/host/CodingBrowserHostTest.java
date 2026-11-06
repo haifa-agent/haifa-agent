@@ -103,6 +103,25 @@ class CodingBrowserHostTest {
                         .asText());
             assertThat(ids).containsExactly(a.clientId());
             result(rpc(host, b, "initialize", initialize(), origin, null));
+            var logout = new Command(
+                    "command",
+                    "logout",
+                    "browser-logout",
+                    "browser-logout",
+                    new CommandTarget(null, null, null, null, null),
+                    null,
+                    "fixture-connection",
+                    null,
+                    List.of());
+            var rejected = result(rpc(
+                    host,
+                    a,
+                    "product/command",
+                    new CommandRequest(logout, new CommandOptions(false, false, List.of())),
+                    origin,
+                    null));
+            assertThat(rejected.path("receipt").path("disposition").asText()).isEqualTo("rejected");
+            assertThat(rejected.path("receipt").path("reasonCode").asText()).isEqualTo("CAPABILITY_UNSUPPORTED");
             var created = owner.execute(CodingHostProductTest.create("owner-create", "owner-create", "scope test"));
             String session = created.session().sessionId();
             var subscription = result(rpc(host, a, "presentation/subscribe", Map.of("sessionId", session), null, null));
@@ -248,6 +267,18 @@ class CodingBrowserHostTest {
                         .build();
                 var response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
                 assertThat(response.statusCode()).isEqualTo(200);
+                if (!expiry) {
+                    var duplicate = http.send(request, HttpResponse.BodyHandlers.ofString());
+                    assertThat(duplicate.statusCode()).isEqualTo(403);
+                    var stillAttached = http.send(request, HttpResponse.BodyHandlers.ofString());
+                    assertThat(CodingHostFixture.JSON
+                                    .readTree(stillAttached.body())
+                                    .path("error")
+                                    .path("data")
+                                    .path("reasonCode")
+                                    .asText())
+                            .isEqualTo("HOST_SUBSCRIPTION_ATTACHED");
+                }
                 var disconnected = workers.submit(() -> {
                     try (var input = response.body()) {
                         while (input.read() != -1) {}

@@ -35,6 +35,16 @@ class CodingContractTest {
     }
 
     @Test
+    void trustedDeviceLoginInstructionRetainsLocalValuesAndRedactsDiagnostics() {
+        var uri = java.net.URI.create("https://fixture.invalid/device");
+        var instruction = new io.haifa.agent.application.project.product.coding.client.CodingDeviceLoginView(
+                uri, "FIXTURE-CODE", 1);
+        assertThat(instruction.verificationUri()).isEqualTo(uri);
+        assertThat(instruction.userCode()).isEqualTo("FIXTURE-CODE");
+        assertThat(instruction.toString()).doesNotContain("fixture.invalid", "FIXTURE-CODE");
+    }
+
+    @Test
     void sharesFixturesAndAtomicRevisionRulesWithTypeScript() throws Exception {
         var schema = JsonSchemaFactory.getInstance(SpecVersion.VersionFlag.V202012)
                 .getSchema(json.readTree(

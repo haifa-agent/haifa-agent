@@ -141,8 +141,10 @@ class Owner:
 def build_example(kind: str, root: Path, repository: Path, version: str):
     example = root/kind
     shutil.copytree(ROOT/'examples'/'coding-product-sdk'/kind, example)
+    maven = shutil.which('mvn.cmd' if os.name == 'nt' else 'mvn')
+    require(maven is not None, 'EXTERNAL_MAVEN_REQUIRED')
     with (root/(kind+'-maven.log')).open('w') as log:
-        result = subprocess.run(['mvn', '-B', '-ntp', '-Dmaven.repo.local='+str(repository), '-Dcoding.version='+version, 'package', 'org.apache.maven.plugins:maven-dependency-plugin:3.8.1:build-classpath', '-Dmdep.outputFile=classpath.txt', '-DincludeScope=runtime'], cwd=example, stdout=log, stderr=subprocess.STDOUT, timeout=300)
+        result = subprocess.run([maven, '-B', '-ntp', '-Dmaven.repo.local='+str(repository), '-Dcoding.version='+version, 'package', 'org.apache.maven.plugins:maven-dependency-plugin:3.8.1:build-classpath', '-Dmdep.outputFile=classpath.txt', '-DincludeScope=runtime'], cwd=example, stdout=log, stderr=subprocess.STDOUT, timeout=300)
     require(result.returncode == 0, 'EXTERNAL_'+kind.upper()+'_BUILD')
     dependencies = (example/'classpath.txt').read_text().strip().split(os.pathsep)
     require(all(Path(p).is_file() and p.endswith('.jar') for p in dependencies), 'EXTERNAL_JAR_CLASSPATH_REQUIRED')
@@ -246,7 +248,7 @@ persistence:
   protection: NONE
 execution:
   provider: host-guarded
-  shell: bash
+  shell: auto
 ''' % (stub.server.server_port, str(root/'unused-owner-path.sqlite').replace("'", "''")), encoding='utf-8')
         owner = Owner(host_cp, root, config, 0, 120)
         completed = client(client_cp, owner, root, 'approval', 'create')
