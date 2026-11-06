@@ -97,9 +97,10 @@ class OpenCodeGoOpenAiChatTest {
     }
 
     @Test
-    void summaryParseFailureAndEmptyResponseKeepDistinctNormalizedErrors() {
-        for (String content : List.of("not-json", "[]", "")) {
-            responseBody.set(syncBody(content));
+    void summaryParseFailureAndEmptyResponseKeepDistinctNormalizedErrors() throws Exception {
+        for (String content : List.of("not-json", "[]", "{\"progress\":{\"completed\":[null]}}", "")) {
+            String encoded = json.writeValueAsString(content);
+            responseBody.set(syncBody(encoded.substring(1, encoded.length() - 1)));
             assertThatThrownBy(() -> model().invoke(summaryRequest()))
                     .isInstanceOfSatisfying(io.haifa.agent.model.api.ModelInvocationException.class, failure -> {
                         assertThat(failure.category())

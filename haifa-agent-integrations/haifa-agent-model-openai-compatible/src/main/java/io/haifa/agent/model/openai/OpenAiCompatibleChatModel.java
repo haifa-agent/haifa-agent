@@ -619,7 +619,9 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
         if (request.structuredOutput().isEmpty() || !toolCalls.isEmpty()) return java.util.Optional.empty();
         try {
             JsonNode value = json.readTree(content);
-            if (!value.isObject()) throw new IllegalArgumentException("structured output must be an object");
+            if (value == null || !value.isObject() || containsNull(value)) {
+                throw new IllegalArgumentException("structured output must be an object without null values");
+            }
             return java.util.Optional.of(json.convertValue(value, new TypeReference<Map<String, Object>>() {}));
         } catch (JsonProcessingException | IllegalArgumentException exception) {
             throw failure(
@@ -631,6 +633,14 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                     "provider returned invalid structured output",
                     null);
         }
+    }
+
+    private static boolean containsNull(JsonNode node) {
+        if (node.isNull()) return true;
+        for (JsonNode child : node) {
+            if (containsNull(child)) return true;
+        }
+        return false;
     }
 
     private static String requireAdapterType(ModelProviderDefinition provider) {

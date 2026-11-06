@@ -30,8 +30,9 @@ saved paths or artifact labels of at most 256 characters each. For another page,
 For a follow-up with the Run working set enabled, an exact path named in the request gives the saved Tool result
 priority within the bounded history candidates. It remains optional quoted data and uses the same access checks
 and versioned readback as other excerpts.
-Consecutive unified excerpts from one saved Run share its Run identifier in the request. Each excerpt keeps
-its own message identifier, version, range and body, and is revalidated independently.
+Consecutive unified excerpts from one saved Run share its Run identifier in the request. Adjacent saved Tool
+excerpts from that Run share one untrusted data message. Each excerpt keeps its message identifier, version, range
+and body, and is revalidated independently.
 Without an explicit cache contract, historical-only selections use the source-data rule without the
 current Run checkpoint instructions. Current Run checkpoints retain the continuation instructions.
 
