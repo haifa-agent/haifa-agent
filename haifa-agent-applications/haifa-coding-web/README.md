@@ -35,8 +35,9 @@ HTML/Markdown execution. Trusted incoming text uses DOM textContent, never paylo
 Drafts, caret, reading position and unfinished interaction input remain in page memory across session
 switches. SDK owns confirmed authority/request correlation/recovery; UI owns rendering and selection
 generations. Late responses cannot change the newly selected session or clear a newer draft. Older
-history is displayed separately from the active snapshot with a bounded four-page window; a shifted
-window is visible. Tool previews are separately bounded and explicitly non-durable.
+history is displayed in a bounded four-page window. When the live boundary advances, the Web UI
+clears older cached pages and resumes pagination from the new boundary. Tool previews are separately
+bounded and explicitly non-durable.
 
 Pairing takes a challenge from an explicit trusted owner operation and clears the field after exchange.
 The SDK hides the grant in private page memory. Refresh/reopen requires pairing and inspection of
