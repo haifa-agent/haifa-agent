@@ -955,6 +955,15 @@ public final class CodingPresentationObservation implements CodingPresentationSu
     }
 
     private void publish(Snapshot next) {
+        Update update = new Update("update", scope.viewId(), current.revision(), next.revision(), next);
+        int length = bytes(update);
+        if (detailedTools
+                && length > UPDATE_BYTES
+                && next.entries().stream().anyMatch(entry -> entry.toolDetails() != null)) {
+            update = fitNativeUpdate(update);
+            next = update.replacement();
+            length = bytes(update);
+        }
         io.haifa.coding.api.CodingProtocolChecks.snapshot(next);
         Snapshot sameRevision = new Snapshot(
                 "snapshot",
@@ -969,8 +978,6 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                 next.actions(),
                 next.notices());
         if (current.equals(sameRevision)) return;
-        Update update = new Update("update", scope.viewId(), current.revision(), next.revision(), next);
-        int length = bytes(update);
         synchronized (outgoing) {
             if (closed()) return;
             if (length > UPDATE_BYTES || queuedBytes + length > QUEUE_BYTES) {
@@ -982,6 +989,88 @@ public final class CodingPresentationObservation implements CodingPresentationSu
             outgoing.notifyAll();
         }
         current = next;
+    }
+
+    private Update fitNativeUpdate(Update update) {
+        var entries = new ArrayList<>(update.replacement().entries());
+        var history = update.replacement().history();
+        // Keep the identity, status and structured metadata of each tool. Only reduce copied output.
+        for (int index = 0; index < entries.size(); index++) {
+            var entry = entries.get(index);
+            var detail = entry.toolDetails();
+            if (detail == null
+                    || detail.output() == null
+                    || detail.output().text().isEmpty()) continue;
+            var output = detail.output();
+            entries.set(
+                    index,
+                    new Entry(
+                            entry.id(),
+                            entry.kind(),
+                            entry.runId(),
+                            entry.role(),
+                            entry.title(),
+                            entry.text(),
+                            entry.status(),
+                            entry.sequence(),
+                            entry.truncated(),
+                            entry.interaction(),
+                            entry.occurredAtEpochMillis(),
+                            entry.toolCallId(),
+                            entry.interactionId(),
+                            entry.noticeCode(),
+                            entry.diagnosticId(),
+                            new ToolDetails(
+                                    detail.name(),
+                                    detail.intent(),
+                                    detail.reasonCode(),
+                                    detail.resultRef(),
+                                    detail.processState(),
+                                    detail.exitCode(),
+                                    detail.startedAtEpochMillis(),
+                                    detail.durationMillis(),
+                                    new ToolOutput("", true, output.byteCount(), output.lineCount()))));
+            update = replaceWindow(update, entries, history);
+            if (bytes(update) <= UPDATE_BYTES) return update;
+        }
+        // As with the initial snapshot, drop whole history groups and publish a continuation cursor.
+        while (true) {
+            var oldest = entries.stream()
+                    .map(Entry::sequence)
+                    .filter(Objects::nonNull)
+                    .min(Long::compareTo);
+            if (oldest.isEmpty()) return update;
+            long sequence = oldest.orElseThrow();
+            entries.removeIf(entry -> Objects.equals(entry.sequence(), sequence));
+            long before = entries.stream()
+                    .map(Entry::sequence)
+                    .filter(Objects::nonNull)
+                    .min(Long::compareTo)
+                    .orElse(sequence + 1);
+            update = replaceWindow(update, entries, new History(true, before, false));
+            if (bytes(update) <= UPDATE_BYTES) return update;
+        }
+    }
+
+    private static Update replaceWindow(Update update, List<Entry> entries, History history) {
+        var next = update.replacement();
+        return new Update(
+                "update",
+                update.viewId(),
+                update.baseRevision(),
+                update.revision(),
+                new Snapshot(
+                        "snapshot",
+                        next.scope(),
+                        next.revision(),
+                        next.hydration(),
+                        next.session(),
+                        entries,
+                        history,
+                        next.live(),
+                        next.consent(),
+                        next.actions(),
+                        next.notices()));
     }
 
     private int bytes(Object value) {

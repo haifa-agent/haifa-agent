@@ -299,6 +299,60 @@ class CodingPresentationObservationTest {
     }
 
     @Test
+    void nativeToolOutputsShareTheBoundedUpdateWithVisibleHistory() throws Exception {
+        Fixture f = new Fixture();
+        var messages = java.util.stream.IntStream.rangeClosed(1, 5)
+                .mapToObj(i -> new CodingSessionHistoryItem(
+                        "message-" + i,
+                        CodingSessionHistoryItem.Kind.USER,
+                        "You",
+                        "x".repeat(8_000),
+                        "COMPLETED",
+                        i,
+                        Instant.EPOCH,
+                        Optional.empty(),
+                        false))
+                .toList();
+        f.history.set(new CodingSessionHistoryPage(f.session, messages, false, OptionalLong.empty()));
+        try (var observation = f.observe("client")) {
+            observation.initial();
+            Update update = null;
+            for (int i = 1; i <= 8; i++) {
+                f.events
+                        .get()
+                        .onEvent(f.tool(
+                                i,
+                                100L * i,
+                                new RunEventPayloads.ToolLifecycle(
+                                        "call-" + i,
+                                        "Run Command",
+                                        "SUCCEEDED",
+                                        "NONE",
+                                        "safe target",
+                                        "",
+                                        Optional.of(new RunEventPayloads.ToolObservation(
+                                                Optional.of(io.haifa.agent.runtime.api.display.BoundedText.of(
+                                                        "y".repeat(4_000), 4_000, 10)),
+                                                Optional.of("EXITED"),
+                                                Optional.of(0))))));
+                var envelope = observation.poll(Duration.ofSeconds(5));
+                assertThat(envelope).isInstanceOf(Update.class);
+                update = (Update) envelope;
+            }
+            var entries = update.replacement().entries();
+            assertThat(entries)
+                    .filteredOn(entry -> "message".equals(entry.kind()))
+                    .hasSize(5);
+            var tools = entries.stream()
+                    .filter(entry -> entry.toolDetails() != null)
+                    .toList();
+            assertThat(tools).hasSize(8);
+            assertThat(tools.getFirst().toolDetails().output().truncated()).isTrue();
+            assertThat(tools.getLast().toolDetails().output().text()).hasSize(4_000);
+        }
+    }
+
+    @Test
     void deliveryNoticesRetainSourceAndFactsInInitialReplayAndLiveUpdates() throws Exception {
         Fixture f = new Fixture();
         f.replay.set(List.of(f.delivery(
