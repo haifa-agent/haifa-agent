@@ -192,6 +192,7 @@ public final class CodingTerminalController implements AutoCloseable {
     private long sessionRowsFetchedAtMillis;
     private final CodingTerminalConnectionOptions connectionOptions;
     private long configurationSummaryRequest;
+    private long sessionSelectorRequest;
     private boolean connectionCheckInFlight;
     private boolean connectionUnavailable;
     private String connectionFailureCode;
@@ -1100,6 +1101,8 @@ public final class CodingTerminalController implements AutoCloseable {
                 case SESSION -> openForResume(startup.sessionId().orElseThrow(), startup.prompt());
             }
             offerAuthenticationOnboarding();
+        } catch (CodingClientException exception) {
+            apply(new TerminalUiAction.RecoverableFailure(exception.code()));
         } catch (ProjectProductException exception) {
             apply(new TerminalUiAction.RecoverableFailure(exception.code()));
         } catch (IllegalArgumentException
@@ -1781,6 +1784,9 @@ public final class CodingTerminalController implements AutoCloseable {
         Objects.requireNonNull(routingText, "routingText must not be null");
         try {
             acceptGuarded(input, routingText);
+        } catch (CodingClientException exception) {
+            apply(new TerminalUiAction.RecoverableFailure(
+                    exception.outcomeUnknown() ? "REMOTE_OUTCOME_UNKNOWN" : exception.code()));
         } catch (ProjectProductException exception) {
             if ((input.kind() == TerminalInput.Kind.SUBMIT || input.kind() == TerminalInput.Kind.FOLLOW_UP)
                     && !input.text().isBlank()) {
@@ -2602,15 +2608,7 @@ public final class CodingTerminalController implements AutoCloseable {
                 apply(new TerminalUiAction.StatusChanged("New session: enter the first message"));
             }
             case HISTORY -> loadEarlierProductHistory();
-            case RESUME -> {
-                apply(new TerminalUiAction.StatusChanged("Searching sessions"));
-                submitEffect(
-                        () -> {
-                            List<CodingSessionSummary> found = readTerminalSessions(argument, 50);
-                            return () -> showResumeOptions(found);
-                        },
-                        code -> apply(new TerminalUiAction.RecoverableFailure(code)));
-            }
+            case RESUME -> requestSessionSelector(argument);
             case RENAME -> {
                 if (state.session().isEmpty()) {
                     apply(new TerminalUiAction.StatusChanged("No active session to rename"));
@@ -2738,12 +2736,7 @@ public final class CodingTerminalController implements AutoCloseable {
                         code -> completeConfigurationSummary(
                                 generation, request, List.of("Host configuration information unavailable")));
             }
-            case SESSIONS -> {
-                // Reuses the reviewed resume selector instead of a parallel Session navigator, so keyboard-only and
-                // narrow terminals reach the same Session list the sidebar shows.
-                preserveDraft();
-                showResumeOptions(readTerminalSessions(null, TerminalUiState.MAX_SESSION_ROWS));
-            }
+            case SESSIONS -> requestSessionSelector(null);
             case COMMANDS -> openCommandSelector();
             case THEME -> handleThemeCommand(argument);
             case MOUSE -> handleMouseCommand(argument);
@@ -5355,6 +5348,28 @@ public final class CodingTerminalController implements AutoCloseable {
         return separator < 0 ? "" : value.substring(separator + 1).strip();
     }
 
+    private void requestSessionSelector(String search) {
+        long generation = selection.current();
+        long request = ++sessionSelectorRequest;
+        apply(new TerminalUiAction.StatusChanged(search == null ? "Loading sessions" : "Searching sessions"));
+        submitEffect(
+                () -> {
+                    var sessions = readTerminalSessions(search, TerminalUiState.MAX_SESSION_ROWS);
+                    return () -> {
+                        if (request != sessionSelectorRequest
+                                || generation != selection.current()
+                                || state.selector().isPresent()) return;
+                        if (!sessions.isEmpty()) preserveDraft();
+                        showResumeOptions(sessions);
+                    };
+                },
+                code -> {
+                    if (request == sessionSelectorRequest && generation == selection.current()) {
+                        apply(new TerminalUiAction.RecoverableFailure(code));
+                    }
+                });
+    }
+
     private void showResumeOptions(List<CodingSessionSummary> found) {
         resumeOptions = List.copyOf(found);
         var options = resumeOptions.stream()
@@ -5916,9 +5931,12 @@ public final class CodingTerminalController implements AutoCloseable {
                 return;
             }
             observeRunLifecycle(received.event());
-            if (productConnection != null
-                    && productConnection.capabilities().contains("native-tool-details-v1")
-                    && received.event().payload() instanceof RunEventPayloads.ToolLifecycle) {
+            if (productSnapshot != null
+                    && received.event().payload() instanceof RunEventPayloads.ToolLifecycle tool
+                    && productSnapshot.entries().stream()
+                            .anyMatch(entry -> entry.toolDetails() != null
+                                    && tool.toolCallId().equals(entry.toolCallId())
+                                    && received.event().runId().value().equals(entry.runId()))) {
                 action = new TerminalUiAction.RunEventReceived(received.event(), received.selectionGeneration(), false);
             }
         }

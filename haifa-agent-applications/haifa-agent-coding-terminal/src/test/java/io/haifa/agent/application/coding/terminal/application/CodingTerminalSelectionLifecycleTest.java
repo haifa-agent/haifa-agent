@@ -62,23 +62,42 @@ class CodingTerminalSelectionLifecycleTest {
                         "",
                         1,
                         true),
-                List.of(new CodingProtocol.Entry(
-                        "delivery-1",
-                        "notice",
-                        "run-1",
-                        "delivery",
-                        "Budget threshold",
-                        "Usage: 7 / 8",
-                        "THRESHOLD",
-                        null,
-                        false,
-                        null,
-                        null,
-                        null,
-                        null,
-                        "TOKEN_BUDGET",
-                        null,
-                        null)),
+                List.of(
+                        new CodingProtocol.Entry(
+                                "delivery-1",
+                                "notice",
+                                "run-1",
+                                "delivery",
+                                "Budget threshold",
+                                "Usage: 7 / 8",
+                                "THRESHOLD",
+                                null,
+                                false,
+                                null,
+                                null,
+                                null,
+                                null,
+                                "TOKEN_BUDGET",
+                                null,
+                                null),
+                        new CodingProtocol.Entry(
+                                "view-tool-1",
+                                "tool",
+                                "run-1",
+                                "tool",
+                                "Run Command",
+                                "fixture",
+                                "STARTED",
+                                null,
+                                false,
+                                null,
+                                0L,
+                                "call-1",
+                                null,
+                                null,
+                                null,
+                                new CodingProtocol.ToolDetails(
+                                        "execution_run", "Inspect fixture", "NONE", "", null, null, 0L, null, null))),
                 new CodingProtocol.History(true, 5L, true),
                 null,
                 new CodingProtocol.Consent("ASK", null, false),
@@ -167,24 +186,6 @@ class CodingTerminalSelectionLifecycleTest {
             controller.accept(input(TerminalInput.Kind.EXECUTE_COMMAND, "/history"));
             assertThat(controller.state().transcript().getFirst().body()).isEqualTo("Earlier fixture message");
 
-            pump.offer(new TerminalUiAction.ProductToolsChanged(List.of(new CodingProtocol.Entry(
-                    "view-tool-1",
-                    "tool",
-                    "run-1",
-                    "tool",
-                    "Run Command",
-                    "fixture",
-                    "STARTED",
-                    null,
-                    false,
-                    null,
-                    0L,
-                    "call-1",
-                    null,
-                    null,
-                    null,
-                    new CodingProtocol.ToolDetails(
-                            "execution_run", "Inspect fixture", "NONE", "", null, null, 0L, null, null)))));
             legacy.emit(event(
                     1, new RunEventPayloads.ToolLifecycle("call-1", "Old tool display", "STARTED", "NONE", "", "")));
             pump.offer(new TerminalUiAction.ProductDeliveryChanged(List.of(), List.of("Bounded product window")));
@@ -297,6 +298,61 @@ class CodingTerminalSelectionLifecycleTest {
             assertThat(commands).singleElement().satisfies(command -> assertThat(command.operation())
                     .isEqualTo("create"));
             assertThat(historyReads).containsExactly(SESSION_ID.value(), SESSION_ID.value());
+        }
+    }
+
+    @Test
+    void blockedProductSessionSelectorAllowsEditorUpdatesAndReportsReadFailure() throws Exception {
+        var effects = new ArrayDeque<Runnable>();
+        var pump = new TerminalEventPump(32);
+        var read = new BlockingCall();
+        var product = new ProductClientFixture() {
+            public CodingProtocol.QueryResult query(CodingProtocol.Query query) {
+                assertThat(query.operation()).isEqualTo("sessions");
+                assertThat(query.limit()).isEqualTo(50);
+                read.block();
+                throw new CodingClientException("REMOTE_TRANSPORT_UNAVAILABLE", false);
+            }
+
+            public CodingPresentationSubscription observe(String sessionId) {
+                throw new AssertionError("unexpected observation");
+            }
+
+            public CodingProtocol.CommandResult execute(CodingProtocol.CommandRequest request) {
+                throw new AssertionError("unexpected command");
+            }
+
+            public CodingProtocol.HistoryPage history(String sessionId, int limit, Long beforeSequence) {
+                throw new AssertionError("unexpected history");
+            }
+        };
+        try (var controller = new CodingTerminalController(
+                PROJECT_ID,
+                new FakeClient(activeView()),
+                pump,
+                new TerminalUiReducer(),
+                TerminalUiState.initial(120, 40),
+                Runnable::run,
+                effects::add,
+                Runnable::run)) {
+            controller.attachProductClient(product);
+            controller.accept(input(TerminalInput.Kind.EXECUTE_COMMAND, "/sessions"));
+            assertThat(controller.state().status()).isEqualTo("Loading sessions");
+            Thread worker = Thread.ofVirtual().start(effects.removeFirst());
+            try {
+                assertThat(read.awaitStarted()).isTrue();
+                pump.offer(new TerminalUiAction.TerminalResized(80, 24));
+                controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, "draft", 5));
+                assertThat(controller.state().columns()).isEqualTo(80);
+                assertThat(controller.state().editorBuffer()).isEqualTo("draft");
+            } finally {
+                read.release();
+                assertThat(worker.join(Duration.ofSeconds(5))).isTrue();
+            }
+            controller.drainEvents();
+            assertThat(controller.state().recoverableError()).contains("REMOTE_TRANSPORT_UNAVAILABLE");
+            assertThat(controller.state().selector()).isEmpty();
+            assertThat(controller.state().editorBuffer()).isEqualTo("draft");
         }
     }
 

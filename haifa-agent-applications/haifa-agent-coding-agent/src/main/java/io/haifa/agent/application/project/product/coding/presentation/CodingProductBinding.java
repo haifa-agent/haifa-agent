@@ -105,7 +105,9 @@ public final class CodingProductBinding implements CodingClient {
                 var page = sessions.listSessionsForRecovery(
                         new ProjectId(connection.projectId()),
                         new CodingSessionQuery(
-                                Optional.ofNullable(query.search()), Optional.empty(), Math.toIntExact(query.limit())));
+                                Optional.ofNullable(query.search()).filter(value -> !value.isBlank()),
+                                Optional.empty(),
+                                Math.toIntExact(query.limit())));
                 result.sessions = page.items().stream().map(this::summary).toList();
                 result.truncated = page.hasMore();
             }

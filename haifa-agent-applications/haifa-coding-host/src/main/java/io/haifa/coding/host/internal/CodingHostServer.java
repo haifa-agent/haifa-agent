@@ -928,7 +928,7 @@ public final class CodingHostServer implements AutoCloseable {
                             break;
                         }
                     }
-                    Map<String, Object> value = subscription.poll(2, TimeUnit.SECONDS);
+                    var value = subscription.poll(2, TimeUnit.SECONDS);
                     if (value == null) {
                         output.write(": keep-alive\n\n".getBytes(StandardCharsets.UTF_8));
                         output.flush();

@@ -51,8 +51,12 @@ class CodingHostProductTest {
             var models = remote.query(query("models", null, null));
             assertThat(models.models()).hasSize(1);
             assertThat(models.models().getFirst().responseMode().kind()).isNotBlank();
-            assertThat(remote.query(query("sessions", null, null)).sessions())
-                    .anyMatch(s -> s.sessionId().equals(session));
+            var sessions = remote.query(query("sessions", null, null)).sessions();
+            assertThat(sessions).anyMatch(value -> value.sessionId().equals(session));
+            assertThat(remote.query(new Query(
+                                    "sessions", new CommandTarget(null, null, null, null, null), "", 10, null))
+                            .sessions())
+                    .containsExactlyElementsOf(sessions);
             assertThatThrownBy(() -> CodingHosts.start(fixture.options(Optional.empty()), fixture.environment))
                     .isInstanceOfSatisfying(CodingClientException.class, e -> assertThat(e.code())
                             .isEqualTo("DATABASE_OWNED_BY_ANOTHER_PROCESS"));
