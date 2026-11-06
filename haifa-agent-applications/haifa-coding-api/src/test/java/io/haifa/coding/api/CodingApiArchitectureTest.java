@@ -13,11 +13,12 @@ class CodingApiArchitectureTest {
     void productContractDependsOnlyOnJdkAndItsOwnTypes() {
         var imported = new ClassFileImporter()
                 .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
-                .importPackages("io.haifa.coding.api");
+                .importPackages("io.haifa.coding.api", "io.haifa.agent.application.project.product.coding.client");
         classes()
                 .should()
                 .onlyDependOnClassesThat()
-                .resideInAnyPackage("io.haifa.coding.api..", "java..")
+                .resideInAnyPackage(
+                        "io.haifa.coding.api..", "io.haifa.agent.application.project.product.coding.client", "java..")
                 .check(imported);
     }
 }

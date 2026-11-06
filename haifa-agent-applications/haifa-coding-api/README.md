@@ -146,3 +146,11 @@ an old Host lacking browser authorization rather than fall back to native RPC. S
 are not authentication. Reconnect with a valid grant reuses its bound client and requires a fresh view; it never restores lost consent;
 expired/revoked grants require pairing again. Unknown accepted-command outcomes still require an
 existing exact query or remain unknown. This module opens no browser ingress.
+
+## Trusted local authentication
+
+Terminal assembly can supply the JDK-only `CodingAuthenticationClient` independently of
+`CodingClient`. Browser and device login instructions, progress, cancellation and credential input
+stay within that trusted process. The CLI/Host assembly supplies the implementation and owns the
+credential store. The contract retains the existing Java class names for native classpath
+compatibility. The browser wire exposes no interactive login or credential input.

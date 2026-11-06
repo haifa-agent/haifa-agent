@@ -4,7 +4,12 @@ import java.util.List;
 import java.util.Objects;
 import java.util.function.Consumer;
 
-/** Product authentication use cases. Implementations live in the highest application assembly. */
+/**
+ * Trusted local authentication interactions supplied by the application assembly.
+ *
+ * <p>Login, cancellation, authorization URLs and credential input are process-local calls. Execute
+ * blocking interactions off the UI thread. This interface is separate from the Coding wire protocol.
+ */
 public interface CodingAuthenticationClient {
     /** Optional runnable instruction for the Host's trusted-local credential manager; never contains a secret. */
     default java.util.Optional<String> localManagementCommand() {
