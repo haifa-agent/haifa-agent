@@ -46,8 +46,9 @@ embedding and deterministic tests, not a Node transport or an origin proxy.
 `execute` sends a command once and returns accepted/rejected/unknown. Accepted means admission,
 not successful completion. Invalid/lost/stalled replies preserve unknown. Reusing a tracked request ID
 is refused. `inspectRequest` can associate an exact already-known Run fact; it never infers that an
-unknown command caused that state. Current-page tracking is bounded at 128 requests, retains unknown
-associations and stores no command text or durable operation records.
+unknown command caused that state. Current-page tracking is bounded at 128 requests. It can retire
+accepted and rejected receipts to admit later commands, while retaining in-flight and unknown
+associations. It stores no command text or durable operation records.
 
 `observe` starts from a validated immutable snapshot. Matching duplicates are ignored; gaps/resync
 cause a fresh view, while unknown critical content/auth/protocol failures stop automatic recovery.
