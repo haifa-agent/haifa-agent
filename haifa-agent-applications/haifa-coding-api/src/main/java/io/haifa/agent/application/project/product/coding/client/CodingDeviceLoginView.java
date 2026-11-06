@@ -16,4 +16,10 @@ public record CodingDeviceLoginView(URI verificationUri, String userCode, long e
             throw new IllegalArgumentException("device login instruction is invalid");
         }
     }
+
+    @Override
+    public String toString() {
+        return "CodingDeviceLoginView[verificationUri=[REDACTED_AUTH_URL], userCode=[REDACTED_USER_CODE], expiresAtEpochMillis="
+                + expiresAtEpochMillis + "]";
+    }
 }
