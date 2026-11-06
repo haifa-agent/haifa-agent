@@ -19,6 +19,8 @@ import java.util.*;
 public final class HistoryToolProvider implements ToolProvider {
     public static final ToolProviderId ID = new ToolProviderId("haifa-runtime-history");
     private static final String SOURCES = "historySources";
+    private static final int SEARCH_WINDOW_CHARACTERS = 4096;
+    private static final int MAX_SCOPED_SEARCH_WINDOWS = 8;
     private final RuntimePersistencePorts ports;
     private final RunAccessValidator access;
 
@@ -341,14 +343,21 @@ public final class HistoryToolProvider implements ToolProvider {
         List<AgentMessage> page = ports.state().messagesAfter(run.sessionId(), new MessageCursor(after), scans);
         List<Map<String, Object>> hits = new ArrayList<>();
         List<Map<String, Object>> refs = new ArrayList<>();
-        boolean partialSource = false;
+        boolean pendingSearch = false;
+        int remainingWindows = scans;
         int responseCharacters = 512;
         String keyword = text(args, "keyword");
+        boolean scopedKeyword = !keyword.isEmpty()
+                && (!runFilter.isEmpty() || !text(args, "messageId").isEmpty());
         var literal = java.util.regex.Pattern.compile(
                 java.util.regex.Pattern.quote(keyword),
                 java.util.regex.Pattern.CASE_INSENSITIVE | java.util.regex.Pattern.UNICODE_CASE);
         for (AgentMessage message : page) {
             if (message.sequence() > head) break;
+            if (remainingWindows == 0) {
+                pendingSearch = true;
+                break;
+            }
             if ((!text(args, "messageId").isEmpty()
                             && !text(args, "messageId").equals(message.id().value()))
                     || (!runFilter.isEmpty()
@@ -383,9 +392,15 @@ public final class HistoryToolProvider implements ToolProvider {
                 continue;
             }
             source = materialize(source);
-            var window = source.window(offset, 4096 + Math.max(0, keyword.length() - 1), 1);
+            // An exact scope can spend multiple scan units on one source, within the same request budget.
+            int windows = scopedKeyword ? Math.min(remainingWindows, MAX_SCOPED_SEARCH_WINDOWS) : 1;
+            int windowCharacters = windows * SEARCH_WINDOW_CHARACTERS;
+            var window = source.window(offset, windowCharacters + Math.max(0, keyword.length() - 1), 1);
             if (window.incomplete()) throw new Unavailable();
-            var matcher = literal.matcher(window.value());
+            String searched = window.value();
+            int scannedCharacters = Math.min(searched.length(), windowCharacters);
+            remainingWindows -= Math.ceilDiv(Math.max(1, scannedCharacters), SEARCH_WINDOW_CHARACTERS);
+            var matcher = literal.matcher(searched);
             int found = keyword.isEmpty() ? 0 : (matcher.find() ? matcher.start() : -1);
             if (found >= 0) {
                 var ref = source.reference();
@@ -397,14 +412,12 @@ public final class HistoryToolProvider implements ToolProvider {
                         "toolCallIds",
                         source.calls().stream().map(call -> call.id().value()).toList());
                 hit.put("paths", source.paths());
-                hit.put(
-                        "excerpt",
-                        window.value().substring(found, Math.min(window.value().length(), found + 240)));
+                hit.put("excerpt", searched.substring(found, Math.min(searched.length(), found + 240)));
                 hit.put("matchOffset", (long) offset + found);
                 int contribution = hit.toString().length() + ref.toString().length();
                 if (responseCharacters + contribution > 12000) {
                     if (hits.isEmpty()) throw new Unavailable();
-                    partialSource = true;
+                    pendingSearch = true;
                     break;
                 }
                 responseCharacters += contribution;
@@ -413,8 +426,8 @@ public final class HistoryToolProvider implements ToolProvider {
             } else if (window.more()) {
                 // A large single source also has a resumable scan; never silently skip its unsearched suffix.
                 after = message.sequence() - 1;
-                offset = Math.addExact(offset, 4096);
-                partialSource = true;
+                offset = Math.addExact(offset, windowCharacters);
+                pendingSearch = true;
                 break;
             }
             after = message.sequence();
@@ -422,7 +435,7 @@ public final class HistoryToolProvider implements ToolProvider {
             if (hits.size() >= limit) break;
         }
         boolean complete =
-                !partialSource && (after >= head || page.isEmpty() || (page.size() < scans && hits.size() < limit));
+                !pendingSearch && (after >= head || page.isEmpty() || (page.size() < scans && hits.size() < limit));
         return result(Map.of(
                 "entries",
                 hits,

@@ -368,6 +368,42 @@ class HistoryToolProviderTest {
     }
 
     @Test
+    void scopedKeywordSearchFindsLateMatchesAndKeepsBoundedPagesResumable() {
+        var longSource = message(run, "a".repeat(21_414) + "needle", MessageVisibility.USER_VISIBLE);
+        var shortSource = message(run, "another needle", MessageVisibility.USER_VISIBLE);
+        var args = new HashMap<String, Object>(Map.of("runId", run.id().value(), "keyword", "NEEDLE"));
+
+        var complete = invoke("history_search", args);
+        assertThat(complete.structuredData()).containsEntry("searchComplete", true);
+        assertThat(entries(complete))
+                .extracting(entry -> entry.get("messageId"))
+                .containsExactly(longSource.id().value(), shortSource.id().value());
+        assertThat(entries(complete).getFirst()).containsEntry("matchOffset", 21_414L);
+
+        // The fixture's initial user message spends one scan unit before the long source.
+        args.put("scanLimit", 6);
+        var partial = invoke("history_search", args);
+        assertThat(entries(partial)).isEmpty();
+        assertThat(partial.structuredData()).containsEntry("searchComplete", false);
+        args.put("cursor", partial.structuredData().get("nextCursor"));
+        var resumed = invoke("history_search", args);
+        assertThat(entries(resumed)).isEqualTo(entries(complete));
+        assertThat(resumed.structuredData()).containsEntry("searchComplete", true);
+
+        args.remove("cursor");
+        args.put("scanLimit", 7);
+        var first = invoke("history_search", args);
+        assertThat(entries(first)).singleElement().satisfies(entry -> assertThat(entry)
+                .containsEntry("messageId", longSource.id().value()));
+        assertThat(first.structuredData()).containsEntry("searchComplete", false);
+        args.put("cursor", first.structuredData().get("nextCursor"));
+        var next = invoke("history_search", args);
+        assertThat(entries(next)).singleElement().satisfies(entry -> assertThat(entry)
+                .containsEntry("messageId", shortSource.id().value()));
+        assertThat(next.structuredData()).containsEntry("searchComplete", true);
+    }
+
+    @Test
     void searchOutputBudgetResumesWithoutDroppingMatches() {
         for (int i = 0; i < 20; i++) message(run, "budget " + "x".repeat(300), MessageVisibility.USER_VISIBLE);
         var first = invoke("history_search", Map.of("keyword", "budget", "limit", 20));

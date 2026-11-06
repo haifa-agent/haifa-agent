@@ -21,7 +21,9 @@ no automatic post-terminal summary owner or budget. Terminal Run usage remains i
 model calls stay outside persistence transactions.
 
 `history_search` combines filters with AND. Search pathless checks by `toolName` and file evidence by exact saved
-path. Search results supply the versioned reference for `history_read`. Its `paths` field carries up to eight
+path. Keyword searches scoped to an exact Run or message can scan multiple text windows within the same
+`scanLimit`. When the response includes `nextCursor`, continue the search with the same filters.
+Search results supply the versioned reference for `history_read`. Its `paths` field carries up to eight
 saved paths or artifact labels of at most 256 characters each. For another page, preserve the reference and
 `fromLine` and pass `nextOffset` as `offset`.
 
