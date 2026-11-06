@@ -889,7 +889,13 @@ public final class CodingTerminalController implements AutoCloseable {
         try {
             CodingSessionView view;
             if (productClient != null) {
-                view = executeProductMessage(submission);
+                AgentSessionId acceptedSession = executeProductMessage(submission);
+                try {
+                    return MessageSubmissionResult.succeeded(
+                            submission, readSubmissionSession(client.reconcile(acceptedSession), submission));
+                } catch (RuntimeException failure) {
+                    return MessageSubmissionResult.acceptedWithoutView(submission, acceptedSession);
+                }
             } else if (submission.sessionId().isEmpty()) {
                 CodingSessionCreateOptions options = submission
                         .initialModelId()
@@ -907,13 +913,7 @@ public final class CodingTerminalController implements AutoCloseable {
                         true);
                 view = client.reconcile(sessionId);
             }
-            LoadedSession loaded = readSession(
-                    view,
-                    submission.selectionGeneration(),
-                    submission.appliedCursor(),
-                    submission.outputRunId(),
-                    submission.outputCursor());
-            return MessageSubmissionResult.succeeded(submission, loaded);
+            return MessageSubmissionResult.succeeded(submission, readSubmissionSession(view, submission));
         } catch (CodingClientException exception) {
             return MessageSubmissionResult.failed(
                     submission, exception.outcomeUnknown() ? "REMOTE_OUTCOME_UNKNOWN" : exception.code());
@@ -927,7 +927,16 @@ public final class CodingTerminalController implements AutoCloseable {
         }
     }
 
-    private CodingSessionView executeProductMessage(PreparedMessageSubmission submission) {
+    private LoadedSession readSubmissionSession(CodingSessionView view, PreparedMessageSubmission submission) {
+        return readSession(
+                view,
+                submission.selectionGeneration(),
+                submission.appliedCursor(),
+                submission.outputRunId(),
+                submission.outputCursor());
+    }
+
+    private AgentSessionId executeProductMessage(PreparedMessageSubmission submission) {
         String session = submission.sessionId().map(AgentSessionId::value).orElse(null);
         String run = submission.activeRunId().map(AgentRunId::value).orElse(null);
         String operation =
@@ -953,12 +962,7 @@ public final class CodingTerminalController implements AutoCloseable {
         if (session == null && result.session() != null)
             session = result.session().sessionId();
         if (session == null) throw new CodingClientException("PRODUCT_RECEIPT_SCOPE_MISSING", true);
-        try {
-            return client.reconcile(new AgentSessionId(session));
-        } catch (RuntimeException failure) {
-            // The Host already accepted the command. A failed view read cannot make it safe to submit again.
-            throw new CodingClientException("REMOTE_OUTCOME_UNKNOWN", true);
-        }
+        return new AgentSessionId(session);
     }
 
     /** Applies a completed background submission on the single terminal UI thread. */
@@ -966,11 +970,35 @@ public final class CodingTerminalController implements AutoCloseable {
         Objects.requireNonNull(result, "result must not be null");
         long generation = result.submission().selectionGeneration();
         boolean stale = generation != selection.current() && generation != selection.pending();
+        if (result.acceptedSessionWithoutView().isPresent()) {
+            if (stale) return;
+            AgentSessionId accepted = result.acceptedSessionWithoutView().orElseThrow();
+            clearSendingDraft();
+            apply(new TerminalUiAction.StatusChanged("Message accepted; restoring session view"));
+            submitMaintenanceEffect(
+                    () -> {
+                        LoadedSession loaded = readSubmissionSession(client.reconcile(accepted), result.submission());
+                        return () -> completeMessageSubmission(
+                                MessageSubmissionResult.succeeded(result.submission(), loaded));
+                    },
+                    code -> {
+                        if (!selection.acceptsLoad(generation)) return;
+                        selection.abandon(generation);
+                        apply(new TerminalUiAction.StatusChanged(
+                                "Message accepted; use /resume to restore the session"));
+                    });
+            return;
+        }
         if (result.failureCode().isPresent()) {
             selection.abandon(generation);
             if (stale) return;
             String code = result.failureCode().orElseThrow();
             apply(new TerminalUiAction.UserMessageRejected(result.submission().idempotencyKey()));
+            if (productClient != null && "REMOTE_OUTCOME_UNKNOWN".equals(code)) {
+                clearSendingDraft();
+                apply(new TerminalUiAction.RecoverableFailure(code));
+                return;
+            }
             Optional<WaitingMessage> sending =
                     state.waiting().filter(value -> value.phase() == WaitingMessage.Phase.SENDING);
             if (sending.isPresent()) {
@@ -1010,11 +1038,13 @@ public final class CodingTerminalController implements AutoCloseable {
         } catch (ProjectProductException exception) {
             apply(new TerminalUiAction.RecoverableFailure(exception.code()));
         }
-        if (selection.current() == generation
-                && state.waiting()
-                        .filter(value -> value.phase() == WaitingMessage.Phase.SENDING)
-                        .isPresent()) {
-            // Delivered: an in-flight draft must not outlive a successful submission.
+        if (selection.current() == generation) clearSendingDraft();
+    }
+
+    private void clearSendingDraft() {
+        if (state.waiting()
+                .filter(value -> value.phase() == WaitingMessage.Phase.SENDING)
+                .isPresent()) {
             apply(new TerminalUiAction.WaitingChanged(Optional.empty()));
         }
     }
@@ -2519,22 +2549,36 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     public record MessageSubmissionResult(
-            PreparedMessageSubmission submission, Optional<LoadedSession> loadedSession, Optional<String> failureCode) {
+            PreparedMessageSubmission submission,
+            Optional<LoadedSession> loadedSession,
+            Optional<String> failureCode,
+            Optional<AgentSessionId> acceptedSessionWithoutView) {
         public MessageSubmissionResult {
             submission = Objects.requireNonNull(submission, "submission must not be null");
             loadedSession = Objects.requireNonNull(loadedSession, "loadedSession must not be null");
             failureCode = Objects.requireNonNull(failureCode, "failureCode must not be null");
-            if (loadedSession.isPresent() == failureCode.isPresent()) {
+            acceptedSessionWithoutView = Objects.requireNonNull(acceptedSessionWithoutView);
+            int outcomes = (loadedSession.isPresent() ? 1 : 0)
+                    + (failureCode.isPresent() ? 1 : 0)
+                    + (acceptedSessionWithoutView.isPresent() ? 1 : 0);
+            if (outcomes != 1) {
                 throw new IllegalArgumentException("submission result must contain exactly one outcome");
             }
         }
 
         static MessageSubmissionResult succeeded(PreparedMessageSubmission submission, LoadedSession loadedSession) {
-            return new MessageSubmissionResult(submission, Optional.of(loadedSession), Optional.empty());
+            return new MessageSubmissionResult(
+                    submission, Optional.of(loadedSession), Optional.empty(), Optional.empty());
+        }
+
+        static MessageSubmissionResult acceptedWithoutView(
+                PreparedMessageSubmission submission, AgentSessionId sessionId) {
+            return new MessageSubmissionResult(submission, Optional.empty(), Optional.empty(), Optional.of(sessionId));
         }
 
         static MessageSubmissionResult failed(PreparedMessageSubmission submission, String failureCode) {
-            return new MessageSubmissionResult(submission, Optional.empty(), Optional.of(failureCode));
+            return new MessageSubmissionResult(
+                    submission, Optional.empty(), Optional.of(failureCode), Optional.empty());
         }
     }
 

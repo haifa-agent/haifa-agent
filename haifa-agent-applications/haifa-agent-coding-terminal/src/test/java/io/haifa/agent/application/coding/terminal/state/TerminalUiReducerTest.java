@@ -56,6 +56,10 @@ class TerminalUiReducerTest {
             assertThat(item.status()).isEqualTo("STREAMING");
         });
 
+        state = reducer.reduce(
+                state,
+                new TerminalUiAction.RunEventReceived(
+                        event(1, "completed", new RunEventPayloads.RunLifecycle("COMPLETED", 1, "NONE"))));
         var persisted = new io.haifa.coding.api.CodingProtocol.Entry(
                 "history-message-1",
                 "message",
@@ -63,7 +67,7 @@ class TerminalUiReducerTest {
                 "assistant",
                 "Assistant",
                 "confirmed answer",
-                "FINAL",
+                "COMPLETED",
                 8L,
                 false,
                 null,
@@ -75,10 +79,14 @@ class TerminalUiReducerTest {
         var update = new TerminalUiAction.ProductHistoryUpdated(List.of(persisted), null);
         state = reducer.reduce(state, update);
         state = reducer.reduce(state, update);
-        assertThat(state.transcript()).singleElement().satisfies(item -> {
-            assertThat(item.id()).isEqualTo("history-message-1");
-            assertThat(item.body()).isEqualTo("confirmed answer");
-        });
+        assertThat(state.transcript())
+                .filteredOn(item -> item.kind() == TranscriptItem.Kind.ASSISTANT)
+                .singleElement()
+                .satisfies(item -> {
+                    assertThat(item.id()).isEqualTo("history-message-1");
+                    assertThat(item.body()).isEqualTo("confirmed answer");
+                    assertThat(item.status()).isEqualTo("FINAL");
+                });
     }
 
     @Test

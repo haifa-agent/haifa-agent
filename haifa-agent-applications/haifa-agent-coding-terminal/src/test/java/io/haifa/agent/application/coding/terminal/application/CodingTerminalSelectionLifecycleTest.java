@@ -84,22 +84,7 @@ class CodingTerminalSelectionLifecycleTest {
                 List.of(new CodingProtocol.Action(
                         "cancel", new CodingProtocol.Target(session, "run-1", null, 7L), null, true, null)),
                 List.of());
-        var product = new CodingClient() {
-            public CodingProtocol.ConnectionInfo connection() {
-                return new CodingProtocol.ConnectionInfo(
-                        "owner-1",
-                        "client-1",
-                        PROJECT_ID.value(),
-                        "1",
-                        "Host",
-                        List.of("coding-product-v1", "session-presentation-v1"),
-                        "native");
-            }
-
-            public CodingProtocol.QueryResult query(CodingProtocol.Query query) {
-                throw new AssertionError("unexpected query");
-            }
-
+        var product = new ProductClientFixture() {
             public CodingProtocol.CommandResult execute(CodingProtocol.CommandRequest request) {
                 requests.add(request.command());
                 blockedCommand.block();
@@ -129,10 +114,6 @@ class CodingTerminalSelectionLifecycleTest {
                 };
             }
 
-            public CodingPreviewSubscription preview(String sessionId, String runId) {
-                throw new AssertionError("unexpected preview");
-            }
-
             public CodingProtocol.HistoryPage history(String sessionId, int limit, Long beforeSequence) {
                 assertThat(sessionId).isEqualTo(session);
                 if (beforeSequence == null) {
@@ -159,14 +140,6 @@ class CodingTerminalSelectionLifecycleTest {
                                 null,
                                 null)),
                         new CodingProtocol.History(false, null, true));
-            }
-
-            public boolean renew() {
-                return true;
-            }
-
-            public void close() {
-                throw new AssertionError("terminal does not own the client");
             }
         };
         try (var controller = new CodingTerminalController(
@@ -224,6 +197,102 @@ class CodingTerminalSelectionLifecycleTest {
         }
         assertThat(observationClosed.await(5, java.util.concurrent.TimeUnit.SECONDS))
                 .isTrue();
+    }
+
+    @Test
+    void acceptedCreateIsRetainedWhileFailedHistoryReadIsRecovered() {
+        var legacy = new FakeClient(activeView());
+        var maintenance = new ArrayDeque<Runnable>();
+        var commands = new ArrayList<CodingProtocol.Command>();
+        var historyReads = new ArrayList<String>();
+        var product = new ProductClientFixture() {
+            public CodingProtocol.CommandResult execute(CodingProtocol.CommandRequest request) {
+                var command = request.command();
+                commands.add(command);
+                return new CodingProtocol.CommandResult(
+                        new CodingProtocol.Receipt(command.clientRequestId(), "accepted", null, "run-1", null),
+                        new CodingProtocol.SessionSummary(
+                                SESSION_ID.value(), PROJECT_ID.value(), "Task", "ACTIVE", "run-1", "RUNNING", 0, 0, 1),
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null);
+            }
+
+            public CodingPresentationSubscription observe(String sessionId) {
+                throw new CodingClientException("REMOTE_TRANSPORT_UNAVAILABLE", false);
+            }
+
+            public CodingProtocol.HistoryPage history(String sessionId, int limit, Long beforeSequence) {
+                historyReads.add(sessionId);
+                if (historyReads.size() == 1) throw new CodingClientException("REMOTE_TRANSPORT_UNAVAILABLE", false);
+                return new CodingProtocol.HistoryPage(
+                        sessionId, List.of(), new CodingProtocol.History(false, null, true));
+            }
+        };
+        try (var controller = new CodingTerminalController(
+                PROJECT_ID,
+                legacy,
+                new TerminalEventPump(32),
+                new TerminalUiReducer(),
+                TerminalUiState.initial(120, 40),
+                Runnable::run,
+                Runnable::run,
+                maintenance::add)) {
+            controller.attachProductClient(product);
+            var submission = controller
+                    .prepareMessageSubmission(input(TerminalInput.Kind.SUBMIT, "fixture"))
+                    .orElseThrow();
+            controller.completeMessageSubmission(controller.executeMessageSubmission(submission));
+
+            assertThat(controller.state().editorBuffer()).isEmpty();
+            assertThat(controller.state().status()).startsWith("Message accepted");
+            assertThat(controller.state().session()).isEmpty();
+
+            maintenance.removeFirst().run();
+            controller.drainEvents();
+            assertThat(controller.state().session().orElseThrow().summary().sessionId())
+                    .isEqualTo(SESSION_ID);
+            assertThat(controller.state().editorBuffer()).isEmpty();
+            assertThat(commands).singleElement().satisfies(command -> assertThat(command.operation())
+                    .isEqualTo("create"));
+            assertThat(historyReads).containsExactly(SESSION_ID.value(), SESSION_ID.value());
+        }
+    }
+
+    private abstract static class ProductClientFixture implements CodingClient {
+        public CodingProtocol.ConnectionInfo connection() {
+            return new CodingProtocol.ConnectionInfo(
+                    "owner-1",
+                    "client-1",
+                    PROJECT_ID.value(),
+                    "1",
+                    "Host",
+                    List.of("coding-product-v1", "session-presentation-v1"),
+                    "native");
+        }
+
+        public CodingProtocol.QueryResult query(CodingProtocol.Query query) {
+            throw new AssertionError("unexpected query");
+        }
+
+        public CodingPreviewSubscription preview(String sessionId, String runId) {
+            throw new AssertionError("unexpected preview");
+        }
+
+        public boolean renew() {
+            return true;
+        }
+
+        public void close() {
+            throw new AssertionError("terminal does not own the client");
+        }
     }
 
     @Test

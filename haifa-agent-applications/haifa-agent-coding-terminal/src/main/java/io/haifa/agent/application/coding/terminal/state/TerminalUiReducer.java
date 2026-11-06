@@ -143,11 +143,29 @@ public final class TerminalUiReducer {
         if (action instanceof TerminalUiAction.ProductHistoryUpdated history) {
             List<TranscriptItem> items = new ArrayList<>(state.transcript());
             items.removeIf(item -> item.id().startsWith("product-live-"));
+            Set<String> updatedAssistantRuns = new HashSet<>();
             for (Entry entry : history.entries()) {
                 int index = index(items, entry.id());
-                if (index < 0) items.add(productItem(entry, false));
-                else items.set(index, productItem(entry, items.get(index).expanded()));
+                TranscriptItem previous = index < 0 ? null : items.get(index);
+                TranscriptItem next = productItem(entry, previous != null && previous.expanded());
+                if (previous != null
+                        && "FINAL".equals(previous.status())
+                        && previous.sourceRunId().equals(next.sourceRunId())) {
+                    next = next.withStatus("FINAL", next.body());
+                }
+                if (index < 0) items.add(next);
+                else items.set(index, next);
+                if (next.kind() == TranscriptItem.Kind.ASSISTANT) {
+                    next.sourceRunId().ifPresent(updatedAssistantRuns::add);
+                }
             }
+            items.stream()
+                    .filter(item -> item.kind() == TranscriptItem.Kind.SUMMARY && "COMPLETED".equals(item.status()))
+                    .flatMap(item -> item.sourceRunId().stream())
+                    .filter(updatedAssistantRuns::contains)
+                    .distinct()
+                    .toList()
+                    .forEach(runId -> markFinalResponse(items, runId));
             var live = history.live();
             if (live != null && !live.text().isEmpty()) {
                 items.add(new TranscriptItem(
