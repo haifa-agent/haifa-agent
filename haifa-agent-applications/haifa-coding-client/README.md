@@ -17,7 +17,7 @@ for trusted local applications; it is not a browser grant holder.
 
 Commands are sent once. An accepted receipt means admission, not successful completion. Query the
 exact existing Run/outcome/Shell execution after a lost receipt; otherwise preserve unknown. Transport
-failure after possible mutation is `CodingClientException.outcomeUnknown=true`, never an automatic
+failure after possible mutation or a mismatched command receipt leaves the outcome unknown, never an automatic
 retry or a new idempotency key. Invalid/unavailable sensitive actions are refused. Exact interaction
 Session/Run/request/revision comes from authoritative presentation, not displayed text.
 
