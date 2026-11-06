@@ -46,7 +46,9 @@ final class RemoteCodingTerminalRunner implements CliRemoteTerminalRunner {
         try (var product = LocalCodingTerminalRunner.productPresentationEnabled()
                         ? CodingClients.connect(endpoint)
                         : null;
-                RemoteCodingSessionClient client = connector.apply(endpoint)) {
+                RemoteCodingSessionClient client = product == null
+                        ? connector.apply(endpoint)
+                        : RemoteCodingSessionClient.attachToProduct(endpoint, product)) {
             RemoteCodingClientInfo info = client.info();
             output.println("Remote CA Host connected: " + endpoint);
             output.println("Host: " + info.hostName() + "  Project: "

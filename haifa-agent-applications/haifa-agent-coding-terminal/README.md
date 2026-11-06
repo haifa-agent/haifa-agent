@@ -8,12 +8,13 @@ Coding Agent 的 tui4j 交互产品层。布局、信息层级和交互以
 ## 产品协议预览
 
 设置环境变量 `HAIFA_CODING_TUI_PRODUCT=true` 可试用产品协议。远程模式连接以
-`haifa-coding host --presentation` 启动的 Host。嵌入模式在当前 CLI 进程内持有同一 Runtime owner，
+同版本的 `haifa-coding host --presentation` 启动的 Host。远程产品协议和兼容传输共用一个 native
+client identity，由产品连接负责续期和释放。嵌入模式在当前 CLI 进程内持有同一 Runtime owner，
 通过 embedded client 获取快照。两种模式均使用现有终端编辑器和选择器。使用 `/history` 可读取
 更早的有界历史。会话输入、取消和交互响应通过产品命令提交，审批与取消使用当前快照中的精确目标。
 本地登录继续使用可信本地凭据入口。远程模式提供 Host 端管理指引。
 
-本预览仍用兼容会话客户端读取部分会话元数据、实时输出和处理尚未迁移的辅助命令。关闭环境变量
+本预览仍用兼容会话客户端读取部分会话元数据、工具活动和处理尚未迁移的辅助命令。关闭环境变量
 即可使用现有 native 路径。远程模式在 Host 缺少产品能力时显式失败。
 
 ## 自主交付状态

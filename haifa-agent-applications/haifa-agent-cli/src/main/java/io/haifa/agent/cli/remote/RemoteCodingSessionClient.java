@@ -47,6 +47,8 @@ import io.haifa.agent.runtime.api.RunInputReceiptStatus;
 import io.haifa.agent.runtime.api.RunOutputCursor;
 import io.haifa.agent.runtime.api.RunOutputSubscription;
 import io.haifa.agent.runtime.api.RuntimeCommandStatus;
+import io.haifa.coding.api.CodingClient;
+import io.haifa.coding.api.CodingProtocol.ConnectionInfo;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -104,13 +106,16 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
     private final Object connectionLock = new Object();
     private final String clientName;
     private final String clientVersion;
+    private final CodingClient productConnection;
     private volatile ProjectProductException connectionFailure;
     private volatile RemoteCodingClientInfo info;
     private volatile ProjectId projectId;
     private volatile boolean closed;
     private volatile Optional<String> localManagementCommand = Optional.empty();
 
-    private RemoteCodingSessionClient(URI baseUri, String clientName, String clientVersion) {
+    private RemoteCodingSessionClient(
+            URI baseUri, String clientName, String clientVersion, CodingClient productConnection) {
+        this.productConnection = productConnection;
         this.clientName = clientName;
         this.clientVersion = clientVersion;
         this.transport = new RemoteRpcTransport(baseUri, json);
@@ -128,7 +133,7 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
         URI baseUri = RemoteHostUri.requireLoopbackBase(endpoint);
         String safeName = requireClientText(clientName, "clientName");
         String safeVersion = requireClientText(clientVersion, "clientVersion");
-        RemoteCodingSessionClient client = new RemoteCodingSessionClient(baseUri, safeName, safeVersion);
+        RemoteCodingSessionClient client = new RemoteCodingSessionClient(baseUri, safeName, safeVersion, null);
         try {
             client.initialize(safeName, safeVersion);
             return client;
@@ -136,6 +141,32 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
             client.close();
             throw exception;
         }
+    }
+
+    /** Opens the CLI compatibility transport under an already negotiated product identity. */
+    public static RemoteCodingSessionClient attachToProduct(URI endpoint, CodingClient product) {
+        URI baseUri = RemoteHostUri.requireLoopbackBase(endpoint);
+        var client = new RemoteCodingSessionClient(baseUri, "", "", Objects.requireNonNull(product));
+        try {
+            client.attachProductContext(product.connection());
+            return client;
+        } catch (RuntimeException failure) {
+            client.close();
+            throw failure;
+        }
+    }
+
+    private void attachProductContext(ConnectionInfo connection) {
+        if (!"native".equals(connection.source())) throw RemoteRpcTransport.protocolIncompatible();
+        JsonNode result = transport.readClientInfo(connection.clientId());
+        decode(() -> {
+            if (!connection.clientId().equals(RemoteWireCodec.requiredText(result, "clientId"))
+                    || !connection.projectId().equals(RemoteWireCodec.requiredText(result, "projectId"))) {
+                throw RemoteRpcTransport.protocolIncompatible();
+            }
+            return null;
+        });
+        installContext(result, Set.copyOf(connection.capabilities()));
     }
 
     public ProjectId projectId() {
@@ -165,7 +196,10 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
         params.put("protocolVersion", PROTOCOL_VERSION);
         params.put("clientInfo", clientInfo);
         params.put("optionalCapabilities", OPTIONAL_CAPABILITIES);
-        JsonNode result = transport.call("initialize", params, false);
+        installContext(transport.call("initialize", params, false), OPTIONAL_CAPABILITIES);
+    }
+
+    private void installContext(JsonNode result, Set<String> allowedCapabilities) {
         decode(() -> {
             RemoteWireCodec.requireObject(result, "initialize result");
             String version = RemoteWireCodec.requiredText(result, "protocolVersion");
@@ -214,12 +248,12 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
             localManagementCommand = command;
             JsonNode selected = result.get("optionalCapabilities");
             if (selected != null) {
-                if (!selected.isArray() || selected.size() > OPTIONAL_CAPABILITIES.size()) {
+                if (!selected.isArray() || selected.size() > allowedCapabilities.size()) {
                     throw RemoteRpcTransport.protocolIncompatible();
                 }
                 for (JsonNode item : selected) {
                     if (!item.isTextual()
-                            || !OPTIONAL_CAPABILITIES.contains(item.textValue())
+                            || !allowedCapabilities.contains(item.textValue())
                             || !optional.add(item.textValue())) throw RemoteRpcTransport.protocolIncompatible();
                 }
             }
@@ -1210,6 +1244,17 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
     public boolean renewConnection() {
         synchronized (connectionLock) {
             requireUsable();
+            if (productConnection != null) {
+                var connection = productConnection.connection();
+                if (info.clientId().equals(connection.clientId())) return false;
+                List<RemoteSseSubscription> previous;
+                synchronized (lifecycleLock) {
+                    previous = List.copyOf(subscriptions);
+                }
+                attachProductContext(connection);
+                previous.forEach(RemoteSseSubscription::close);
+                return true;
+            }
             try {
                 if (info.supports("client-renewal")) {
                     JsonNode result = transport.call("client/renew", Map.of(), false);
@@ -1270,7 +1315,11 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
             subscription.close();
         }
         try {
-            if (info != null && info.optionalCapabilities().contains("session-consent-v1")) transport.releaseContext();
+            if (productConnection == null
+                    && info != null
+                    && info.optionalCapabilities().contains("session-consent-v1")) {
+                transport.releaseContext();
+            }
         } finally {
             transport.close();
             executor.shutdownNow();

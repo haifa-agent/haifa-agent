@@ -44,7 +44,8 @@ class CodingHostProductTest {
                 assertThat(current.scope().source()).isEqualTo("native");
             }
             assertThat(embedded.history(session, 32, null).entries())
-                    .anyMatch(e -> e.text().equals("sdk-safe-answer"));
+                    .anyMatch(e ->
+                            e.text().equals("sdk-safe-answer") && e.status().equals("FINAL"));
             var models = remote.query(query("models", null, null));
             assertThat(models.models()).hasSize(1);
             assertThat(models.models().getFirst().responseMode().kind()).isNotBlank();

@@ -47,6 +47,34 @@ class CodingSessionHistoryServiceTest {
     }
 
     @Test
+    void preservesPersistedFinalIdentityAcrossHistoryPages() {
+        var run = new AgentRunId("run-1");
+        append("progress", run, MessageRole.ASSISTANT, MessageVisibility.USER_VISIBLE, "progress");
+        append(
+                "answer",
+                run,
+                MessageRole.ASSISTANT,
+                MessageVisibility.USER_VISIBLE,
+                List.of(new TextPart("answer", "plain")),
+                Map.of("final", true, "partial", true));
+        append(
+                "failed",
+                new AgentRunId("failed-run"),
+                MessageRole.ASSISTANT,
+                MessageVisibility.USER_VISIBLE,
+                List.of(new TextPart("failure summary", "plain")),
+                Map.of("final", true, "terminalErrorCode", "MODEL_CALL_FAILED"));
+        var history = service(ignored -> Optional.empty());
+
+        var latest = history.recent(SESSION_ID, 2);
+        assertThat(latest.items()).extracting(CodingSessionHistoryItem::status).containsExactly("FINAL", "COMPLETED");
+        assertThat(history.before(SESSION_ID, latest.nextBeforeSequence().orElseThrow(), 2)
+                        .items())
+                .extracting(CodingSessionHistoryItem::status)
+                .containsExactly("COMPLETED");
+    }
+
+    @Test
     void projectsOnlyRedactedUserVisibleConversationMessages() {
         append("user", new AgentRunId("run-1"), MessageRole.USER, MessageVisibility.USER_VISIBLE, "my secret");
         append("system", new AgentRunId("run-1"), MessageRole.SYSTEM, MessageVisibility.AGENT_VISIBLE, "hidden");
@@ -206,6 +234,16 @@ class CodingSessionHistoryServiceTest {
 
     private void append(
             String id, AgentRunId runId, MessageRole role, MessageVisibility visibility, List<ContentPart> content) {
+        append(id, runId, role, visibility, content, Map.of());
+    }
+
+    private void append(
+            String id,
+            AgentRunId runId,
+            MessageRole role,
+            MessageVisibility visibility,
+            List<ContentPart> content,
+            Map<String, Object> metadata) {
         messages.appendSessionMessage(new SessionMessageDraft(
                 new AgentMessageId(id),
                 SESSION_ID,
@@ -215,7 +253,7 @@ class CodingSessionHistoryServiceTest {
                 MessageStatus.COMPLETED,
                 visibility,
                 content,
-                Map.of(),
+                metadata,
                 Instant.parse("2026-08-07T00:00:00Z")));
     }
 }

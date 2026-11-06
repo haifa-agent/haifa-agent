@@ -303,7 +303,10 @@ public final class CodingHostDispatcher {
         if (presentationFactory != null) available.add(PRESENTATION_CAPABILITY);
         if (subscriptions != null && subscriptions.previewAvailable()) available.add("preview-v1");
         if (approvals != null) available.add(CodingHostApprovals.CAPABILITY);
-        var optional = CodingHostCapabilities.negotiate(params, available);
+        return clientInfo(CodingHostCapabilities.negotiate(params, available));
+    }
+
+    Map<String, Object> clientInfo(java.util.Set<String> optionalCapabilities) {
         Map<String, Object> capabilities = new LinkedHashMap<>();
         capabilities.put("client-renewal", true);
         capabilities.put("session-list", true);
@@ -342,7 +345,7 @@ public final class CodingHostDispatcher {
                 "capabilities",
                 capabilities,
                 "optionalCapabilities",
-                optional,
+                optionalCapabilities,
                 "unsupported",
                 List.of("preview", "session-consent", "credential-write", "credential-login"),
                 "localManagementCommand",

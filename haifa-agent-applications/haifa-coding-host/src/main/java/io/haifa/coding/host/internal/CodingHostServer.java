@@ -841,9 +841,17 @@ public final class CodingHostServer implements AutoCloseable {
                             subscriptions.refreshPresentations();
                         }
                         if (method.equals("client/close")) clients.remove(clientId);
-                        Object result = method.equals("host/configuration")
-                                ? configurationSummary(request.get("params"))
-                                : dispatchProduct(clientId, method, request.get("params"));
+                        Object result;
+                        if (method.equals("client/info")) {
+                            clients.requireOptional(clientId, CodingHostDispatcher.PRESENTATION_CAPABILITY);
+                            var info = new LinkedHashMap<>(dispatcher.clientInfo(clients.capabilities(clientId)));
+                            info.put("clientId", clientId);
+                            result = info;
+                        } else {
+                            result = method.equals("host/configuration")
+                                    ? configurationSummary(request.get("params"))
+                                    : dispatchProduct(clientId, method, request.get("params"));
+                        }
                         if (method.startsWith("approval/")) subscriptions.refreshPresentations();
                         writeResult(exchange, id, result);
                     }

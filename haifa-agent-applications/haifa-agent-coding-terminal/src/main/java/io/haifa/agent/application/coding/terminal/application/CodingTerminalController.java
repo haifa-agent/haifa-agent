@@ -1423,9 +1423,11 @@ public final class CodingTerminalController implements AutoCloseable {
                 : Optional.empty();
         submitMaintenanceEffect(
                 () -> {
+                    if (productClient != null) productClient.renew();
+                    var currentProduct = productClient == null ? null : productClient.connection();
+                    var renewedProduct = Objects.equals(currentProduct, productConnection) ? null : currentProduct;
+                    boolean replacedProduct = renewedProduct != null;
                     boolean replaced = client.renewConnection();
-                    boolean replacedProduct = productClient != null && productClient.renew();
-                    var renewedProduct = replacedProduct ? productClient.connection() : null;
                     var consent = productClient == null
                             ? consentSession.flatMap(client::sessionApprovalStatus)
                             : Optional
