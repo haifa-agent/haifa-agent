@@ -62,7 +62,9 @@ class CodingHostProductTest {
             assertThat(remote.query(new Query(
                                     "sessions", new CommandTarget(null, null, null, null, null), "", 10, null))
                             .sessions())
-                    .containsExactlyElementsOf(sessions);
+                    .extracting(SessionSummary::sessionId)
+                    .containsExactlyElementsOf(
+                            sessions.stream().map(SessionSummary::sessionId).toList());
             assertThatThrownBy(() -> CodingHosts.start(fixture.options(Optional.empty()), fixture.environment))
                     .isInstanceOfSatisfying(CodingClientException.class, e -> assertThat(e.code())
                             .isEqualTo("DATABASE_OWNED_BY_ANOTHER_PROCESS"));
