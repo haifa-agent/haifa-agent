@@ -5589,10 +5589,20 @@ public final class CodingTerminalController implements AutoCloseable {
                 if (clarification.isPresent()) return clarification;
             }
         }
-        return candidates.stream()
+        var selected = candidates.stream()
                 .filter(item -> item.id().equals(activeTranscriptItemId))
-                .findFirst()
-                .or(() -> candidates.stream().reduce((first, second) -> second));
+                .findFirst();
+        if (selected.isPresent()) return selected;
+        if (productClient != null && !technical && state.currentRunId().isPresent()) {
+            String runId = state.currentRunId().orElseThrow().value();
+            var activeTool = candidates.stream()
+                    .filter(item ->
+                            item.kind() == io.haifa.agent.application.coding.terminal.state.TranscriptItem.Kind.TOOL
+                                    && item.sourceRunId().filter(runId::equals).isPresent())
+                    .reduce((first, second) -> second);
+            if (activeTool.isPresent()) return activeTool;
+        }
+        return candidates.stream().reduce((first, second) -> second);
     }
 
     private Optional<String> clarificationSelectorItemId() {

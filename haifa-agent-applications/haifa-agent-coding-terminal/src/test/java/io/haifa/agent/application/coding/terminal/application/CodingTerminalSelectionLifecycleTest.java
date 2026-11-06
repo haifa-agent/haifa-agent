@@ -164,6 +164,17 @@ class CodingTerminalSelectionLifecycleTest {
             controller.accept(input(TerminalInput.Kind.EXECUTE_COMMAND, "/history"));
             assertThat(controller.state().transcript().getFirst().body()).isEqualTo("Earlier fixture message");
 
+            legacy.emit(event(
+                    1,
+                    new RunEventPayloads.ToolLifecycle("call-1", "execution_run", "STARTED", "NONE", "fixture", "")));
+            pump.offer(new TerminalUiAction.ProductDeliveryChanged(List.of(), List.of("Bounded product window")));
+            controller.drainEvents();
+            controller.accept(input(TerminalInput.Kind.TOGGLE_EXPANSION, ""));
+            assertThat(controller.state().transcript())
+                    .filteredOn(item -> item.id().equals("tool-call-1"))
+                    .singleElement()
+                    .satisfies(item -> assertThat(item.expanded()).isTrue());
+
             controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
             controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
             assertThat(controller.state().status()).isEqualTo("Cancelling");
@@ -173,7 +184,7 @@ class CodingTerminalSelectionLifecycleTest {
                 assertThat(blockedCommand.awaitStarted()).isTrue();
                 pump.offer(new TerminalUiAction.TerminalResized(80, 24));
                 legacy.emit(event(
-                        1,
+                        2,
                         new RunEventPayloads.ResourceAvailable(
                                 "fixture", "file", "Resource during cancel", "READY", "inspect")));
                 controller.drainEvents();
