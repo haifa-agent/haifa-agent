@@ -702,7 +702,7 @@ public final class CodingHostServer implements AutoCloseable {
         } catch (IOException disconnected) {
             /* Observation only. */
         } finally {
-            if (context != null && subscriptionId != null) {
+            if (attached) {
                 context.release("sse-" + subscriptionId);
                 context.release("sub-" + subscriptionId);
             }
