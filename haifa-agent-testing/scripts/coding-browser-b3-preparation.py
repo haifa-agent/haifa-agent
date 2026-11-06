@@ -9,6 +9,7 @@ import argparse
 import functools
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -31,9 +32,11 @@ def digest(path):
     with path.open('rb') as stream:return hashlib.file_digest(stream,'sha256').hexdigest()
 
 
-def run(command,cwd,log):
+def run_npm(arguments,cwd,log):
+    npm=shutil.which('npm.cmd' if os.name=='nt' else 'npm')
+    require(npm is not None,'NPM_REQUIRED')
     with log.open('w',encoding='utf-8') as output:
-        completed=subprocess.run(command,cwd=cwd,stdout=output,stderr=subprocess.STDOUT,timeout=300)
+        completed=subprocess.run([npm,*arguments],cwd=cwd,stdout=output,stderr=subprocess.STDOUT,timeout=300)
     require(completed.returncode==0,'EXTERNAL_BUILD_FAILED')
 
 
@@ -49,7 +52,7 @@ class StaticHandler(SimpleHTTPRequestHandler):
         try:
             while not self.stopping.wait(0.2):
                 self.wfile.write(b": synthetic heartbeat\n\n");self.wfile.flush()
-        except (BrokenPipeError,ConnectionResetError):pass
+        except ConnectionError:pass
 
     def log_message(self,*_):pass
     def end_headers(self):
@@ -61,13 +64,13 @@ class StaticHandler(SimpleHTTPRequestHandler):
 
 
 def fixture_snapshot(session,view_id):
-    value=json.loads((ROOT/'haifa-agent-applications/haifa-coding-api/contract/fixtures/snapshot.json').read_text())
+    value=json.loads((ROOT/'haifa-agent-applications/haifa-coding-api/contract/fixtures/snapshot.json').read_text(encoding='utf-8'))
     value['scope'].update(source='browser',sessionId=session,viewId=view_id)
     value['session'].update(id=session,title='合成测试会话 '+session,run=None,context='Synthetic renderer fixture; no Host')
     value['entries']=[]
     value['actions']=[{'kind':'submit','target':{'sessionId':session,'runId':None,'interactionId':None,'targetRevision':None},'choice':None,'available':True,'reason':None}]
     if session=='A':
-        source=json.loads((ROOT/'haifa-agent-applications/haifa-coding-api/contract/fixtures/snapshot.json').read_text())
+        source=json.loads((ROOT/'haifa-agent-applications/haifa-coding-api/contract/fixtures/snapshot.json').read_text(encoding='utf-8'))
         message=source['entries'][0]
         message.update(id='safe-message',text='<img src=x onerror="window.unsafeFixtureExecuted=true"> 中文 😀 \u001b[31m',interactionId=None)
         value['entries'].append(message)
@@ -99,14 +102,14 @@ def main():
         receipt['stage']='external-ui-build'
         copy_project(ROOT/'examples/coding-browser-ui',root/'external-ui')
         (root/'external-ui/vendor').mkdir();shutil.copyfile(package,root/'external-ui/vendor'/NAME)
-        run(['npm','ci','--no-audit','--no-fund'],root/'external-ui',root/'external-ui-install.log')
-        run(['npm','run','build'],root/'external-ui',root/'external-ui-build.log')
+        run_npm(['ci','--no-audit','--no-fund'],root/'external-ui',root/'external-ui-install.log')
+        run_npm(['run','build'],root/'external-ui',root/'external-ui-build.log')
         receipt['stage']='official-web-build'
         copy_project(WEB,root/'official-web')
         (root/'haifa-coding-browser-client/artifacts').mkdir(parents=True)
         shutil.copyfile(package,root/'haifa-coding-browser-client/artifacts'/NAME)
-        run(['npm','ci','--no-audit','--no-fund'],root/'official-web',root/'official-web-install.log')
-        run(['npm','run','build'],root/'official-web',root/'official-web-build.log')
+        run_npm(['ci','--no-audit','--no-fund'],root/'official-web',root/'official-web-install.log')
+        run_npm(['run','build'],root/'official-web',root/'official-web-build.log')
         site=root/'site';shutil.copytree(root/'official-web/dist',site/'browser')
         (site/'sdk').mkdir();(site/'sdk/index.js').write_bytes(sdk_bytes)
         handler=functools.partial(StaticHandler,directory=str(site))
@@ -145,7 +148,7 @@ def main():
             page.screenshot(path=str(root/'unpaired-desktop.png'),full_page=True)
             require(page.evaluate("typeof process==='undefined'&&typeof Buffer==='undefined'"),'NODE_GLOBAL_IN_BROWSER')
             receipt['stage']='browser-pure-protocol'
-            fixture=json.loads((ROOT/'haifa-agent-applications/haifa-coding-api/contract/fixtures/snapshot.json').read_text())
+            fixture=json.loads((ROOT/'haifa-agent-applications/haifa-coding-api/contract/fixtures/snapshot.json').read_text(encoding='utf-8'))
             pure=page.evaluate('''async(value)=>{const sdk=await import('/sdk/index.js');const bytes=new TextEncoder().encode('event: presentation\\r\\ndata: 中文 😀\\r\\n\\r\\n');const stream=new ReadableStream({start(c){for(const b of bytes)c.enqueue(Uint8Array.of(b));c.close();}});const frames=[];for await(const data of sdk.readSse(stream,'presentation',4096,new AbortController().signal))frames.push(data);return{valid:sdk.checkEnvelope(value),frames};}''',fixture)
             require(pure=={'valid':True,'frames':['中文 😀']},'BROWSER_PURE_PROTOCOL')
             receipt['checks']['packedSdkExecutesWithoutNodeOrEvalUnderCsp']=True
