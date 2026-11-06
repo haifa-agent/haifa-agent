@@ -52,7 +52,7 @@ class StaticHandler(SimpleHTTPRequestHandler):
         try:
             while not self.stopping.wait(0.2):
                 self.wfile.write(b": synthetic heartbeat\n\n");self.wfile.flush()
-        except (BrokenPipeError,ConnectionResetError):pass
+        except ConnectionError:pass
 
     def log_message(self,*_):pass
     def end_headers(self):
