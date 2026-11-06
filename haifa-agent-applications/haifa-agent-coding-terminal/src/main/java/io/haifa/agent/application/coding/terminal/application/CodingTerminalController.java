@@ -542,8 +542,10 @@ public final class CodingTerminalController implements AutoCloseable {
             var previous = productSnapshot;
             productSnapshot = next;
             var history = productHistoryEntries(next);
-            if (previous == null || !history.equals(productHistoryEntries(previous))) {
-                apply(new TerminalUiAction.ProductHistoryUpdated(history));
+            if (previous == null
+                    || !history.equals(productHistoryEntries(previous))
+                    || !Objects.equals(next.live(), previous.live())) {
+                apply(new TerminalUiAction.ProductHistoryUpdated(history, next.live()));
             }
             var entries = deliveryEntries(next);
             if (previous == null
@@ -1629,8 +1631,9 @@ public final class CodingTerminalController implements AutoCloseable {
         interactionHydrationInFlight = request;
         submitControlEffect(
                 () -> {
-                    Optional<CodingApprovalPrompt> interaction =
-                            client.pendingInteraction(request.runId()).flatMap(this::prepareTerminalApproval);
+                    Optional<CodingApprovalPrompt> interaction = client.pendingInteraction(request.runId())
+                            .filter(pending -> pending.requestId().value().equals(request.requestId()))
+                            .flatMap(this::prepareTerminalApproval);
                     return () -> completeInteractionHydration(request, interaction);
                 },
                 code -> {
@@ -2188,7 +2191,7 @@ public final class CodingTerminalController implements AutoCloseable {
         if (clearEditor) {
             apply(new TerminalUiAction.EditorChanged("", 0));
         }
-        apply(new TerminalUiAction.UserMessageCommitted(key, text));
+        if (productClient == null) apply(new TerminalUiAction.UserMessageCommitted(key, text));
         apply(new TerminalUiAction.StatusChanged("Submitting"));
         return new PreparedMessageSubmission(
                 text,
@@ -3271,10 +3274,12 @@ public final class CodingTerminalController implements AutoCloseable {
                         runId,
                         eventCursor,
                         event -> pump.offer(new TerminalUiAction.RunEventReceived(event, generation)));
-                nextOutput = client.subscribeOutput(
-                        runId,
-                        outputAfter,
-                        event -> pump.offer(new TerminalUiAction.RunOutputReceived(event, generation)));
+                if (productClient == null) {
+                    nextOutput = client.subscribeOutput(
+                            runId,
+                            outputAfter,
+                            event -> pump.offer(new TerminalUiAction.RunOutputReceived(event, generation)));
+                }
             } catch (RuntimeException exception) {
                 closeSubscriptions(nextEvent, nextOutput);
                 releaseObservation(permit);
@@ -3293,7 +3298,7 @@ public final class CodingTerminalController implements AutoCloseable {
                 owned = !closed;
                 if (owned) {
                     ownedObservations.add(createdEvent);
-                    ownedObservations.add(createdOutput);
+                    if (createdOutput != null) ownedObservations.add(createdOutput);
                 }
             }
             if (!owned) {
@@ -3327,7 +3332,7 @@ public final class CodingTerminalController implements AutoCloseable {
         boolean ownedOutput;
         synchronized (observationLock) {
             ownedEvent = ownedObservations.remove(nextEvent);
-            ownedOutput = ownedObservations.remove(nextOutput);
+            ownedOutput = nextOutput != null && ownedObservations.remove(nextOutput);
         }
         if (!ownedEvent && !ownedOutput) {
             // Teardown already closed this handoff and released its permit.
@@ -5792,7 +5797,9 @@ public final class CodingTerminalController implements AutoCloseable {
     private void apply(TerminalUiAction action) {
         if (closed) return;
         if (action instanceof TerminalUiAction.RunEventReceived received) {
-            if (productClient != null && received.event().payload() instanceof RunEventPayloads.DeliveryLifecycle) {
+            if (productClient != null
+                    && (received.event().payload() instanceof RunEventPayloads.DeliveryLifecycle
+                            || received.event().payload() instanceof RunEventPayloads.AssistantTextDelta)) {
                 return;
             }
             if (!isCurrentStream(
@@ -5804,6 +5811,7 @@ public final class CodingTerminalController implements AutoCloseable {
             observeRunLifecycle(received.event());
         }
         if (action instanceof TerminalUiAction.RunOutputReceived received) {
+            if (productClient != null) return;
             if (!isCurrentOutputStream(
                     received.selectionGeneration(), received.event().runId())) {
                 return;

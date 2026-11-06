@@ -12,6 +12,7 @@ import io.haifa.agent.runtime.api.AgentRunOutputEvent;
 import io.haifa.agent.runtime.api.InteractionResponseReceipt;
 import io.haifa.agent.runtime.api.InteractionView;
 import io.haifa.coding.api.CodingProtocol.Entry;
+import io.haifa.coding.api.CodingProtocol.Live;
 import java.util.List;
 import java.util.Optional;
 
@@ -27,7 +28,7 @@ public sealed interface TerminalUiAction {
         }
     }
 
-    record ProductHistoryUpdated(List<Entry> entries) implements TerminalUiAction {
+    record ProductHistoryUpdated(List<Entry> entries, Live live) implements TerminalUiAction {
         public ProductHistoryUpdated {
             entries = List.copyOf(entries);
         }

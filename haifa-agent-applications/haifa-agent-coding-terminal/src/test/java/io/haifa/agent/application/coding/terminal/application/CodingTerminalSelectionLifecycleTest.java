@@ -199,14 +199,17 @@ class CodingTerminalSelectionLifecycleTest {
             try {
                 assertThat(blockedCommand.awaitStarted()).isTrue();
                 pump.offer(new TerminalUiAction.TerminalResized(80, 24));
-                legacy.emit(event(1, new RunEventPayloads.AssistantTextDelta("generation-1", "output during cancel")));
+                legacy.emit(event(
+                        1,
+                        new RunEventPayloads.ResourceAvailable(
+                                "fixture", "file", "Resource during cancel", "READY", "inspect")));
                 controller.drainEvents();
                 controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
                 controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, "next", 4));
                 assertThat(controller.state().columns()).isEqualTo(80);
                 assertThat(controller.state().editorBuffer()).isEqualTo("next");
                 assertThat(controller.state().transcript())
-                        .anyMatch(item -> item.body().contains("output during cancel"));
+                        .anyMatch(item -> item.title().equals("Resource during cancel"));
             } finally {
                 blockedCommand.release();
                 assertThat(worker.join(Duration.ofSeconds(5))).isTrue();

@@ -45,6 +45,43 @@ import org.junit.jupiter.api.Test;
 
 class TerminalUiReducerTest {
     @Test
+    void persistedProductAnswerReplacesTheTransientLiveGeneration() {
+        var reducer = new TerminalUiReducer();
+        var state = TerminalUiState.initial(100, 30);
+        var live = new io.haifa.coding.api.CodingProtocol.Live(
+                "run-1", "generation-1", 3, "partial answer", false, "model-call-1", 1);
+        state = reducer.reduce(state, new TerminalUiAction.ProductHistoryUpdated(List.of(), live));
+        assertThat(state.transcript()).singleElement().satisfies(item -> {
+            assertThat(item.body()).isEqualTo("partial answer");
+            assertThat(item.status()).isEqualTo("STREAMING");
+        });
+
+        var persisted = new io.haifa.coding.api.CodingProtocol.Entry(
+                "history-message-1",
+                "message",
+                "run-1",
+                "assistant",
+                "Assistant",
+                "confirmed answer",
+                "FINAL",
+                8L,
+                false,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null);
+        var update = new TerminalUiAction.ProductHistoryUpdated(List.of(persisted), null);
+        state = reducer.reduce(state, update);
+        state = reducer.reduce(state, update);
+        assertThat(state.transcript()).singleElement().satisfies(item -> {
+            assertThat(item.id()).isEqualTo("history-message-1");
+            assertThat(item.body()).isEqualTo("confirmed answer");
+        });
+    }
+
+    @Test
     void restoringConnectionClearsOnlyConnectionErrors() {
         var reducer = new TerminalUiReducer();
         var state = TerminalUiState.initial(120, 40);

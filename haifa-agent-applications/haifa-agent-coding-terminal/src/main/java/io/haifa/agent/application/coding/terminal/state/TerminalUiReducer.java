@@ -142,10 +142,22 @@ public final class TerminalUiReducer {
         }
         if (action instanceof TerminalUiAction.ProductHistoryUpdated history) {
             List<TranscriptItem> items = new ArrayList<>(state.transcript());
+            items.removeIf(item -> item.id().startsWith("product-live-"));
             for (Entry entry : history.entries()) {
                 int index = index(items, entry.id());
                 if (index < 0) items.add(productItem(entry, false));
                 else items.set(index, productItem(entry, items.get(index).expanded()));
+            }
+            var live = history.live();
+            if (live != null && !live.text().isEmpty()) {
+                items.add(new TranscriptItem(
+                                "product-live-assistant",
+                                TranscriptItem.Kind.ASSISTANT,
+                                "Assistant",
+                                live.text() + (live.truncated() ? "\n[Live preview truncated]" : ""),
+                                "STREAMING",
+                                true)
+                        .withSourceRunId(live.runId()));
             }
             return productTranscript(state, items);
         }
@@ -1018,6 +1030,7 @@ public final class TerminalUiReducer {
         for (int index = items.size() - 1; index >= 0; index--) {
             TranscriptItem item = items.get(index);
             if (item.kind() == TranscriptItem.Kind.ASSISTANT
+                    && !item.id().startsWith("product-live-")
                     && item.sourceRunId().filter(runId::equals).isPresent()) {
                 items.set(index, item.withStatus("FINAL", item.body()));
                 return;
