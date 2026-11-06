@@ -46,7 +46,10 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
             RunWorkingSetSource.VERSION,
             PromptLayer.TOOL_PROTOCOL,
             PromptRole.RUNTIME,
-            RunWorkingSetSource.DATA_RULE,
+            RunWorkingSetSource.DATA_RULE
+                    + " After a current Run checkpoint, resume at the first unfinished step. Count its recorded "
+                    + "successful reads as completed inspection steps. Read again only if the current request requires it, "
+                    + "the source changed, or exact evidence is missing.",
             true,
             java.util.Set.of("working-set", "data-boundary"));
 
