@@ -108,6 +108,8 @@ public final class SummaryModelInvoker {
         ModelRequestId requestId = new ModelRequestId(ids.nextValue());
         Map<String, Object> options = new HashMap<>(
                 RuntimeControlOptions.providerOptions(binding.configuration().modelRequestOptions()));
+        // The summary has its own schema, separate from the ordinary turn's response format.
+        options.remove("response_format");
 
         StructuredOutputRequirement structuredRequirement = new StructuredOutputRequirement(
                 "json-schema:SemanticConversationSummaryV1",

@@ -98,6 +98,7 @@ Unreadable complete sources fail with `UNSUPPORTED_CONTEXT_CONTENT`, a `SOURCE_P
 unchanged; source refusal never authorizes deterministic fallback or blind retry. A Run requiring that
 compaction fails explicitly. Only physical model calls consume model-call accounting.
 
+Compaction calls use the semantic summary schema in place of the Run's ordinary response format.
 For compaction model calls, `GENERATION` names the invocation boundary (including Provider/transport failures);
 `failureCode` retains the exact normalized model category and is not a content-quality verdict.
 Compaction failure stages distinguish request rejection, response parsing, empty generation, schema mapping,

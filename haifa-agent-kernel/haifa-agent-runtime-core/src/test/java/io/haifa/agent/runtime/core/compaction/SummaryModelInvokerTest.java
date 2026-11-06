@@ -24,6 +24,7 @@ import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.model.FrozenModelBinding;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -74,7 +75,9 @@ class SummaryModelInvokerTest {
                     Optional.of(VALID_SUMMARY_MAP));
         };
 
-        FrozenModelBinding binding = bindingWithMaxOutput(store, run, chatModel, 65_536);
+        Map<String, Object> responseFormat = Map.of("type", "json_object");
+        FrozenModelBinding binding = bindingWithMaxOutput(
+                store, run, chatModel, 65_536, Map.of("response_format", responseFormat, "temperature", 0.1));
 
         invoker.invoke(binding, run, 1, "system prompt", "user prompt", 1, false);
 
@@ -82,6 +85,10 @@ class SummaryModelInvokerTest {
         // Capped at 32768, NOT the old hardcoded 4096!
         assertThat(capturedRequest.get().maxOutputTokens()).isEqualTo(32_768);
         assertThat(capturedRequest.get().tools()).isEmpty();
+        assertThat(capturedRequest.get().options())
+                .doesNotContainKey("response_format")
+                .containsEntry("temperature", 0.1);
+        assertThat(binding.configuration().modelRequestOptions()).containsEntry("response_format", responseFormat);
         assertThat(capturedRequest.get().structuredOutput()).hasValueSatisfying(requirement -> {
             assertThat(requirement.responseName()).isEqualTo("SemanticConversationSummaryV1");
             assertThat(requirement.jsonSchema())
@@ -260,8 +267,19 @@ class SummaryModelInvokerTest {
 
     private static FrozenModelBinding bindingWithMaxOutput(
             InMemoryRuntimeStore store, AgentRun run, AgentChatModel model, int maxOutputTokens) {
+        return bindingWithMaxOutput(store, run, model, maxOutputTokens, Map.of());
+    }
+
+    private static FrozenModelBinding bindingWithMaxOutput(
+            InMemoryRuntimeStore store,
+            AgentRun run,
+            AgentChatModel model,
+            int maxOutputTokens,
+            Map<String, Object> requestOptions) {
         RuntimeConfigurationSnapshot configuration =
                 store.configuration(run.configurationSnapshot()).orElseThrow();
+        Map<String, Object> options = new HashMap<>(configuration.modelRequestOptions());
+        options.putAll(requestOptions);
         ResolvedModelSnapshot original = configuration.model();
         ResolvedModelSnapshot resized = ResolvedModelSnapshot.create(
                 original.providerId(),
@@ -300,7 +318,7 @@ class SummaryModelInvokerTest {
                 configuration.overrides(),
                 configuration.capabilities(),
                 resized,
-                configuration.modelRequestOptions(),
+                options,
                 configuration.structuredOutput());
         return new FrozenModelBinding(resizedConfiguration, model, List.of());
     }
