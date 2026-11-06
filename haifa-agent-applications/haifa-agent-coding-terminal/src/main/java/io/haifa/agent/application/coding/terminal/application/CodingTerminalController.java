@@ -541,14 +541,6 @@ public final class CodingTerminalController implements AutoCloseable {
         if (next != null) {
             var previous = productSnapshot;
             productSnapshot = next;
-            if (previous == null) {
-                productHistoryBefore = next.history().beforeSequence();
-                apply(new TerminalUiAction.ProductHistoryLoaded(
-                        next.entries().stream()
-                                .filter(entry -> entry.sequence() != null)
-                                .toList(),
-                        productHistoryBefore != null));
-            }
             var entries = deliveryEntries(next);
             if (previous == null
                     || !entries.equals(deliveryEntries(previous))
@@ -586,12 +578,7 @@ public final class CodingTerminalController implements AutoCloseable {
         apply(new TerminalUiAction.StatusChanged("Loading earlier history"));
         submitEffect(
                 () -> {
-                    var page = productClient.history(session, 25, before);
-                    if (!session.equals(page.sessionId())
-                            || page.history().beforeSequence() != null
-                                    && page.history().beforeSequence() >= before) {
-                        throw new CodingClientException("INVALID_HISTORY_SCOPE", false);
-                    }
+                    var page = readProductHistory(session, 25, before);
                     return () -> {
                         if (productObservation != observation) return;
                         productHistoryPending = false;
@@ -607,6 +594,17 @@ public final class CodingTerminalController implements AutoCloseable {
                     productHistoryPending = false;
                     apply(new TerminalUiAction.RecoverableFailure(code));
                 });
+    }
+
+    private CodingProtocol.HistoryPage readProductHistory(String session, int limit, Long before) {
+        var page = productClient.history(session, limit, before);
+        var next = page.history().beforeSequence();
+        if (!session.equals(page.sessionId())
+                || (before != null && next != null && next >= before)
+                || !page.history().hasEarlier() && next != null) {
+            throw new CodingClientException("INVALID_HISTORY_SCOPE", false);
+        }
+        return page;
     }
 
     private void executeProductAction(
@@ -1384,8 +1382,14 @@ public final class CodingTerminalController implements AutoCloseable {
         submitMaintenanceEffect(
                 () -> {
                     boolean replaced = client.renewConnection();
-                    if (productClient != null) productClient.renew();
-                    var consent = consentSession.flatMap(client::sessionApprovalStatus);
+                    boolean replacedProduct = productClient != null && productClient.renew();
+                    var renewedProduct = replacedProduct ? productClient.connection() : null;
+                    var consent = productClient == null
+                            ? consentSession.flatMap(client::sessionApprovalStatus)
+                            : Optional
+                                    .<io.haifa.agent.application.project.product.coding.client
+                                                    .CodingSessionApprovalStatus>
+                                            empty();
                     return () -> {
                         consent.ifPresent(value -> {
                             AgentSessionId id = consentSession.orElseThrow();
@@ -1411,11 +1415,23 @@ public final class CodingTerminalController implements AutoCloseable {
                             }
                         });
                         connectionCheckInFlight = false;
-                        if (replaced || connectionUnavailable) {
+                        if (renewedProduct != null) {
+                            productConnection = renewedProduct;
+                            closeProductObservation();
+                            closePreviewSubscription();
+                        }
+                        if (replaced || replacedProduct || connectionUnavailable) {
                             connectionUnavailable = false;
                             connectionFailureCode = null;
                             apply(new TerminalUiAction.ConnectionRestored("Host connection restored"));
-                            if (replaced) scheduleReconcile(true);
+                        }
+                        if (replaced
+                                || replacedProduct
+                                || (productClient != null
+                                        && productObservation == null
+                                        && state.session().isPresent()
+                                        && !awaitingNewSessionMessage)) {
+                            scheduleReconcile(true);
                         }
                     };
                 },
@@ -1503,6 +1519,8 @@ public final class CodingTerminalController implements AutoCloseable {
     public void drainEvents() {
         try {
             drainEventsGuarded();
+        } catch (CodingClientException exception) {
+            apply(new TerminalUiAction.RecoverableFailure(exception.code()));
         } catch (ProjectProductException exception) {
             apply(new TerminalUiAction.RecoverableFailure(exception.code()));
         }
@@ -2922,6 +2940,9 @@ public final class CodingTerminalController implements AutoCloseable {
                 ? client.history(view.summary().sessionId(), HISTORY_LIMIT)
                 : io.haifa.agent.application.project.product.coding.CodingSessionHistoryPage.empty(
                         view.summary().sessionId());
+        CodingProtocol.HistoryPage productHistory = productClient == null
+                ? null
+                : readProductHistory(view.summary().sessionId().value(), HISTORY_LIMIT, null);
         List<PendingMessage> pending = client.restorableMessages(view.summary().sessionId(), 100).stream()
                 .map(value -> new PendingMessage(
                         value.followUpId(), PendingMessage.Kind.FOLLOW_UP, value.summary(), value.revision()))
@@ -2933,6 +2954,7 @@ public final class CodingTerminalController implements AutoCloseable {
                     generation,
                     resources,
                     history,
+                    productHistory,
                     pending,
                     List.of(),
                     null,
@@ -2972,6 +2994,7 @@ public final class CodingTerminalController implements AutoCloseable {
                 generation,
                 resources,
                 history,
+                productHistory,
                 pending,
                 List.copyOf(events),
                 runId,
@@ -3033,7 +3056,14 @@ public final class CodingTerminalController implements AutoCloseable {
         interactionHydrationInFlight = null;
         apply(new TerminalUiAction.SessionLoaded(loaded.view(), loaded.resources()));
         if (productClient != null) {
+            boolean newProductSession =
+                    !loaded.view().summary().sessionId().value().equals(productSession);
             observeProductSession(loaded.view().summary().sessionId().value());
+            if (newProductSession) {
+                var page = loaded.productHistory();
+                productHistoryBefore = page.history().beforeSequence();
+                apply(new TerminalUiAction.ProductHistoryLoaded(page.entries(), productHistoryBefore != null));
+            }
         } else if (!sameSession) {
             apply(new TerminalUiAction.HistoryLoaded(loaded.history()));
         }
@@ -3251,9 +3281,36 @@ public final class CodingTerminalController implements AutoCloseable {
         apply(new TerminalUiAction.RecoverableFailure(code));
     }
 
+    private ToolOutputPreviewPublisher.ToolOutputPreviewSubscription subscribeProductPreview(
+            String session, AgentRunId run, long generation) {
+        var subscription = productClient.preview(session, run.value());
+        Thread reader = Thread.ofVirtual().name("terminal-product-preview").start(() -> {
+            try (subscription) {
+                while (!Thread.currentThread().isInterrupted() && !subscription.closed()) {
+                    var frame = subscription.poll(java.time.Duration.ofSeconds(1));
+                    if (frame == null) continue;
+                    if (!session.equals(frame.sessionId()) || !run.value().equals(frame.runId())) return;
+                    var preview = new io.haifa.agent.execution.api.ToolOutputPreview(
+                            run,
+                            new io.haifa.agent.core.tool.ToolCallId(frame.toolCallId()),
+                            io.haifa.agent.execution.api.ExecutionOutputChannel.valueOf(frame.channel()),
+                            frame.text(),
+                            frame.outputTruncated(),
+                            frame.previewDropped());
+                    pump.offer(new TerminalUiAction.ToolOutputPreviewReceived(preview, generation));
+                }
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+            }
+        });
+        return reader::interrupt;
+    }
+
     private void replacePreviewSubscription(AgentRunId runId, long generation) {
-        boolean enabled =
-                connectionOptions.toolOutputPreviewEnabled() && previewPublisher != ToolOutputPreviewPublisher.noop();
+        boolean enabled = productClient == null
+                ? connectionOptions.toolOutputPreviewEnabled() && previewPublisher != ToolOutputPreviewPublisher.noop()
+                : productSession != null && productConnection.capabilities().contains("preview-v1");
+        String session = productSession;
         if (enabled
                 && Objects.equals(previewRunId, runId)
                 && previewSubscription != null
@@ -3285,9 +3342,12 @@ public final class CodingTerminalController implements AutoCloseable {
             }
             ToolOutputPreviewPublisher.ToolOutputPreviewSubscription next;
             try {
-                next = previewPublisher.subscribe(
-                        runId,
-                        preview -> pump.offer(new TerminalUiAction.ToolOutputPreviewReceived(preview, generation)));
+                next = productClient == null
+                        ? previewPublisher.subscribe(
+                                runId,
+                                preview ->
+                                        pump.offer(new TerminalUiAction.ToolOutputPreviewReceived(preview, generation)))
+                        : subscribeProductPreview(session, runId, generation);
             } catch (RuntimeException exception) {
                 releaseObservation(permit);
                 String code = safeFailureCode(exception);
@@ -5913,6 +5973,7 @@ public final class CodingTerminalController implements AutoCloseable {
             long generation,
             List<String> resources,
             io.haifa.agent.application.project.product.coding.CodingSessionHistoryPage history,
+            CodingProtocol.HistoryPage productHistory,
             List<PendingMessage> pending,
             List<AgentRunEvent> events,
             AgentRunId subscribeRunId,

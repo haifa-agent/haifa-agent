@@ -133,6 +133,10 @@ class CodingTerminalSelectionLifecycleTest {
 
             public CodingProtocol.HistoryPage history(String sessionId, int limit, Long beforeSequence) {
                 assertThat(sessionId).isEqualTo(session);
+                if (beforeSequence == null) {
+                    return new CodingProtocol.HistoryPage(
+                            session, List.of(), new CodingProtocol.History(true, 5L, true));
+                }
                 assertThat(beforeSequence).isEqualTo(5L);
                 return new CodingProtocol.HistoryPage(
                         session,
