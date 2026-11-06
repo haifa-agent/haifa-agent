@@ -878,7 +878,10 @@ $("compose-form").addEventListener("submit", (event) => {
   event.preventDefault();
   void (async () => {
     if (!client || $<HTMLButtonElement>("send").disabled) return;
-    const session = state.selected,
+    const requester = client,
+      connection = connectionGeneration,
+      selection = state.generation,
+      session = state.selected,
       text = draft.value,
       current = view,
       key = sessionKey(session);
@@ -888,13 +891,19 @@ $("compose-form").addEventListener("submit", (event) => {
     try {
       const result = current
         ? await current.act(action("submit")!, { text })
-        : await client.createSession(text);
+        : await requester.createSession(text);
+      if (requester !== client || connection !== connectionGeneration) return;
       acknowledge(result, session);
       if (result.receipt.disposition === "accepted") {
         state.accepted(session, text);
-        if (state.selected === session) restoreDraft();
+        if (state.current(selection, session)) restoreDraft();
         await refreshList();
-        if (!current && result.session && state.selected === null)
+        if (
+          !current &&
+          result.session &&
+          connection === connectionGeneration &&
+          state.current(selection, null)
+        )
           await selectSession(result.session.sessionId);
       }
     } catch (error) {

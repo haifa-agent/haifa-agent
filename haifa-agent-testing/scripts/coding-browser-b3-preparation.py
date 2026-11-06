@@ -63,6 +63,12 @@ class StaticHandler(SimpleHTTPRequestHandler):
         super().end_headers()
 
 
+def fixture_summary(session):
+    return {'sessionId': session, 'projectId': 'project-1', 'title': '合成测试会话 ' + session,
+            'status': 'ACTIVE', 'runId': None, 'runStatus': None, 'queuedCount': 0,
+            'lastActivityAtEpochMillis': 0, 'revision': 0}
+
+
 def fixture_snapshot(session,view_id):
     value=json.loads((ROOT/'haifa-agent-applications/haifa-coding-api/contract/fixtures/snapshot.json').read_text(encoding='utf-8'))
     value['scope'].update(source='browser',sessionId=session,viewId=view_id)
@@ -123,7 +129,7 @@ def main():
         handler=functools.partial(StaticHandler,directory=str(site))
         server=ThreadingHTTPServer(('127.0.0.1',0),handler);thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
         origin='http://127.0.0.1:'+str(server.server_port)
-        network=[];commands=[];subscriptions=0;offline=False
+        network=[];commands=[];subscriptions=0;offline=False;pending_create=[]
         def protocol(route):
             nonlocal subscriptions
             request=route.request;path=request.url.split(origin,1)[-1]
@@ -138,12 +144,16 @@ def main():
             else:
                 id_=data['id'];method=data['method'];network.append(method)
                 if method=='initialize':result={'protocolVersion':'1','hostIncarnation':'host-1','clientId':'client-1','projectId':'project-1','displayName':'Synthetic browser fixture','clientSource':'browser','browserAuthorization':'browser-grant-v1','optionalCapabilities':['coding-product-v1','session-presentation-v1','session-consent-v1']}
-                elif method=='product/query':result={'sessions':[{'sessionId':s,'projectId':'project-1','title':'合成测试会话 '+s,'status':'ACTIVE','runId':None,'runStatus':None,'queuedCount':0,'lastActivityAtEpochMillis':0,'revision':0} for s in ('A','B')],'run':None,'outcome':None,'models':[],'queuedMessages':[],'shellExecutions':[],'workspaces':[],'lines':[],'authentication':None,'truncated':False}
+                elif method=='product/query':result={'sessions':[fixture_summary(session) for session in ('A', 'B')],'run':None,'outcome':None,'models':[],'queuedMessages':[],'shellExecutions':[],'workspaces':[],'lines':[],'authentication':None,'truncated':False}
                 elif method=='presentation/subscribe':
                     subscriptions+=1;result={'subscriptionId':'subscription-'+str(subscriptions),'snapshot':fixture_snapshot(data['params']['sessionId'],'view-'+str(subscriptions))}
                 elif method=='product/command':
                     command=data['params']['command'];commands.append({'operation':command['operation'],'target':command['target'],'optionId':command['optionId']})
                     result={'receipt':{'clientRequestId':command['clientRequestId'],'disposition':'accepted','operationId':'synthetic-operation','runId':'run-1','reasonCode':None},'session':None,'queuedMessage':None,'restoredMessage':None,'shellPlan':None,'shellExecution':None,'shellResult':None,'compaction':None,'export':None,'modelSelection':None,'interactionReceipt':None,'interaction':None}
+                    if command['operation'] == 'create':
+                        result['session'] = fixture_summary('A')
+                        pending_create.append((route, {'jsonrpc': '2.0', 'id': id_, 'result': result}))
+                        return
                 elif method=='client/renew':
                     if offline:
                         route.abort('internetdisconnected');return
@@ -196,6 +206,21 @@ def main():
             expect(page.locator('#session-subtitle')).to_have_text('基于当前工作区的会话与任务')
             require(subscriptions>previous_subscriptions,'VISIBLE_VIEW_NOT_RESTORED')
             receipt['checks']['visibleViewRecoversWhenNetworkReturns']=True
+            receipt['stage'] = 'synthetic-late-create'
+            page.locator('#new-session').click()
+            draft.fill('Older fixture request')
+            page.locator('#send').click()
+            page.get_by_role('button', name='合成测试会话 A', exact=False).click()
+            expect(page.locator('#session-title')).to_have_text('合成测试会话 A')
+            page.locator('#new-session').click()
+            draft.fill('Newer compose draft')
+            require(len(pending_create) == 1, 'CREATE_FIXTURE_REQUEST_NOT_HELD')
+            create_route, create_reply = pending_create.pop()
+            create_route.fulfill(status=200, content_type='application/json', body=json.dumps(create_reply))
+            expect(page.locator('#send')).to_be_enabled()
+            expect(page.locator('#session-title')).to_have_text('从一个想法开始')
+            expect(draft).to_have_value('Newer compose draft')
+            receipt['checks']['lateCreateDoesNotNavigateAcrossSelectionGenerations'] = True
             page.unroute('**/browser/v1/**');context.close()
             receipt['stage']='narrow-layout'
             mobile=browser.new_context(viewport={'width':390,'height':844});page=mobile.new_page();page.goto(origin+'/browser/');expect(page.locator('#menu')).to_be_visible()
