@@ -241,7 +241,10 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                 publish();
                 return;
             }
-            if (!value.equals(current.consent()))
+            if (!value.equals(current.consent())) {
+                var actions = new ArrayList<>(current.actions());
+                actions.removeIf(action -> "resetConsent".equals(action.kind()));
+                consentReset(value, !"ready".equals(current.hydration())).ifPresent(actions::add);
                 publish(new Snapshot(
                         "snapshot",
                         scope,
@@ -254,9 +257,20 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                         current.history(),
                         current.live(),
                         value,
-                        current.actions(),
+                        actions,
                         current.notices()));
+            }
         });
+    }
+
+    private Optional<Action> consentReset(Consent value, boolean syncing) {
+        if (!value.available() || "ASK".equals(value.state())) return Optional.empty();
+        return Optional.of(new Action(
+                "resetConsent",
+                new Target(sessionId.value(), null, null, null),
+                null,
+                !syncing,
+                syncing ? "SOURCE_REFRESHING" : null));
     }
 
     private Entry consentAvailability(Entry entry, Consent consent) {
@@ -413,14 +427,7 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                 null,
                 submit,
                 submit ? null : (syncing ? "SOURCE_REFRESHING" : (running ? "RUN_ACTIVE" : "SESSION_INACTIVE"))));
-        if (observedConsent.available() && !"ASK".equals(observedConsent.state())) {
-            actions.add(new Action(
-                    "resetConsent",
-                    new Target(sessionId.value(), null, null, null),
-                    null,
-                    !syncing,
-                    syncing ? "SOURCE_REFRESHING" : null));
-        }
+        consentReset(observedConsent, syncing).ifPresent(actions::add);
         Snapshot result = new Snapshot(
                 "snapshot",
                 scope,
@@ -1105,10 +1112,8 @@ public final class CodingPresentationObservation implements CodingPresentationSu
         if (terminalActivity) next = next.withActivity(activityHead());
         Update update = new Update("update", scope.viewId(), current.revision(), next.revision(), next);
         int length = bytes(update);
-        if (detailedTools
-                && length > UPDATE_BYTES
-                && next.entries().stream().anyMatch(entry -> entry.toolDetails() != null)) {
-            update = fitNativeUpdate(update);
+        if (length > UPDATE_BYTES) {
+            update = fitUpdate(update);
             next = update.replacement();
             length = bytes(update);
         }
@@ -1139,7 +1144,7 @@ public final class CodingPresentationObservation implements CodingPresentationSu
         current = next;
     }
 
-    private Update fitNativeUpdate(Update update) {
+    private Update fitUpdate(Update update) {
         var entries = new ArrayList<>(update.replacement().entries());
         var history = update.replacement().history();
         // Keep the identity, status and structured metadata of each tool. Only reduce copied output.

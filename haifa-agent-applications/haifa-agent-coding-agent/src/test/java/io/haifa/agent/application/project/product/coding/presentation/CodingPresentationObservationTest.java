@@ -72,28 +72,32 @@ class CodingPresentationObservationTest {
     }
 
     @Test
-    void byteBudgetOverflowRequiresResyncAndClosesOnlyObservation() throws Exception {
+    void oversizedBrowserUpdateKeepsLiveOutputAndAnEarlierHistoryCursor() throws Exception {
         Fixture f = new Fixture();
-        try (var observation = f.observe("client")) {
-            observation.initial();
-            List<CodingSessionHistoryItem> items = new ArrayList<>();
-            for (int i = 0; i < 3; i++)
-                items.add(new CodingSessionHistoryItem(
-                        "message-" + i,
-                        CodingSessionHistoryItem.Kind.USER,
-                        "You",
-                        "汉".repeat(8000),
-                        "COMPLETED",
-                        i + 1,
-                        Instant.EPOCH,
-                        Optional.of("run"),
-                        false));
-            f.history.set(new CodingSessionHistoryPage(f.session, items, false, OptionalLong.empty()));
-            f.source.get().run();
-            assertThat(observation.poll(Duration.ofSeconds(5))).isInstanceOf(Resync.class);
-            assertThat(observation.closed()).isTrue();
+        List<CodingSessionHistoryItem> items = new ArrayList<>();
+        for (int i = 0; i < 3; i++)
+            items.add(new CodingSessionHistoryItem(
+                    "message-" + i,
+                    CodingSessionHistoryItem.Kind.USER,
+                    "You",
+                    "汉".repeat(8000),
+                    "COMPLETED",
+                    i + 1,
+                    Instant.EPOCH,
+                    Optional.of("run"),
+                    false));
+        f.history.set(new CodingSessionHistoryPage(f.session, items, false, OptionalLong.empty()));
+        try (var observation = f.observe("client", "browser")) {
+            assertThat(observation.initial().entries()).hasSize(3);
+            f.emit(1, "live answer ");
+            var update = (Update) observation.poll(Duration.ofSeconds(5));
+            assertThat(update.replacement().live().text()).contains("live answer");
+            assertThat(update.replacement().entries())
+                    .extracting(Entry::sequence)
+                    .containsExactly(2L, 3L);
+            assertThat(update.replacement().history()).isEqualTo(new History(true, 2L, false));
+            assertThat(observation.closed()).isFalse();
         }
-        assertThat(f.closes).hasValue(3);
     }
 
     @Test
@@ -175,13 +179,22 @@ class CodingPresentationObservationTest {
     }
 
     @Test
-    void activeConsentPublishesAnExactSessionResetAction() {
+    void consentRefreshAddsAndRemovesTheExactSessionResetAction() throws Exception {
         Fixture f = new Fixture();
-        f.consent.set(new Consent("ACTIVE", 1000L, true));
-        try (var observation = f.observe("client")) {
-            assertThat(observation.initial().actions())
+        Consent ask = new Consent("ASK", null, true);
+        f.consent.set(ask);
+        try (var observation = f.observe("client", "browser")) {
+            assertThat(observation.initial().actions()).noneMatch(action -> "resetConsent".equals(action.kind()));
+            f.consent.set(new Consent("ACTIVE", 1000L, true));
+            observation.refreshConsent();
+            var active = (Update) observation.poll(Duration.ofSeconds(5));
+            assertThat(active.replacement().actions())
                     .contains(new Action(
                             "resetConsent", new Target(f.session.value(), null, null, null), null, true, null));
+            f.consent.set(ask);
+            observation.refreshConsent();
+            var reset = (Update) observation.poll(Duration.ofSeconds(5));
+            assertThat(reset.replacement().actions()).noneMatch(action -> "resetConsent".equals(action.kind()));
         }
     }
 
@@ -606,13 +619,17 @@ class CodingPresentationObservationTest {
         final AtomicReference<Consent> consent = new AtomicReference<>(new Consent("ASK", null, false));
 
         CodingPresentationObservation observe(String clientId) {
+            return observe(clientId, "native");
+        }
+
+        CodingPresentationObservation observe(String clientId, String sourceKind) {
             return new CodingPresentationObservation(
                     listener -> {
                         source.set(listener);
                         return closes::incrementAndGet;
                     },
                     client,
-                    new Scope("view", "host", clientId, session.value(), 1, "native"),
+                    new Scope("view", "host", clientId, session.value(), 1, sourceKind),
                     new DefaultSecretRedactor(),
                     consent::get);
         }
