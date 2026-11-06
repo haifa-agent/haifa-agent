@@ -173,6 +173,12 @@ class CodingPresentationObservationTest {
     @Test
     void largeInitialHistoryStaysUsableWithExplicitUtf8BudgetDegradation() throws Exception {
         Fixture f = new Fixture();
+        f.replay.set(java.util.stream.LongStream.rangeClosed(1, 9)
+                .mapToObj(sequence -> f.delivery(
+                        sequence,
+                        new RunEventPayloads.DeliveryLifecycle(
+                                "BUDGET", "BUDGET_THRESHOLD_REACHED", "REMAINING_20_PERCENT", List.of(), 19, 0)))
+                .toList());
         List<CodingSessionHistoryItem> items = new ArrayList<>();
         for (int i = 1; i <= 31; i++)
             items.add(new CodingSessionHistoryItem(
@@ -193,6 +199,7 @@ class CodingPresentationObservationTest {
             assertThat(snapshot.entries()).isNotEmpty();
             assertThat(snapshot.history().hasEarlier()).isTrue();
             assertThat(snapshot.history().complete()).isFalse();
+            assertThat(snapshot.notices()).contains("Earlier delivery events may be outside the view window.");
             assertThat(snapshot.actions()).allMatch(action -> !action.available());
         }
     }

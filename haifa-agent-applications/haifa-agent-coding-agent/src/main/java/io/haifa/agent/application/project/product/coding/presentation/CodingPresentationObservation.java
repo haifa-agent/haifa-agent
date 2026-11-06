@@ -378,8 +378,9 @@ public final class CodingPresentationObservation implements CodingPresentationSu
             boolean omittedHistory = result.history().hasEarlier();
             if (removable >= 0) {
                 Long sequence = smaller.get(removable).sequence();
-                if (sequence == null) smaller.remove(removable);
-                else {
+                if (sequence == null) {
+                    deliveryWindowReduced |= smaller.remove(removable).role().equals("delivery");
+                } else {
                     smaller.removeIf(entry -> sequence.equals(entry.sequence()));
                     omittedHistory = true;
                 }
@@ -410,7 +411,8 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                             .map(action ->
                                     new Action(action.kind(), action.target(), action.choice(), false, "VIEW_BUDGET"))
                             .toList(),
-                    List.of("View window reduced to UTF-8 budget; omitted history and review data are incomplete."));
+                    deliveryNotices(List.of(
+                            "View window reduced to UTF-8 budget; earlier entries or review data may be incomplete.")));
             if (reduced && removable < 0 && bytes(result) > SNAPSHOT_BYTES)
                 throw new IllegalStateException("CRITICAL_REVIEW_BUDGET");
             reduced = true;
