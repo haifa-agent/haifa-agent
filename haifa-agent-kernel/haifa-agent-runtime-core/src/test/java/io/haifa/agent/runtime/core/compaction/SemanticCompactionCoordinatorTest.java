@@ -1521,6 +1521,46 @@ class SemanticCompactionCoordinatorTest {
     }
 
     @Test
+    void selectedSoftCompactionFoldsShortOpeningWithTheOversizedAtomicGroup() {
+        var store = new InMemoryRuntimeStore();
+        var ids = new AtomicInteger();
+        var coordinator = coordinator(store, () -> "deferred-" + ids.incrementAndGet(), CompressionPolicy.defaults());
+        var run = createAndSaveRun(store);
+        var session = run.sessionId();
+        var opening = store.appendSessionMessage(
+                draft("opening", session, run.id().value(), MessageRole.USER, "setup ".repeat(200)));
+        var oversized = store.appendSessionMessage(
+                draft("first-group", session, run.id().value(), MessageRole.ASSISTANT, "first evidence ".repeat(450)));
+        var requests = new ArrayList<AgentChatRequest>();
+        var binding = createBindingWithContextWindow(
+                store,
+                run,
+                request -> {
+                    requests.add(request);
+                    return response("folded", VALID_SUMMARY_JSON);
+                },
+                12_288);
+        var selected = CompactionTriggerDecision.compact(
+                CompactionTriggerReason.SOFT_TOKEN_THRESHOLD,
+                new ContextBudgetBreakdown(12_288, 256, 615, 300, 0, 11_117, 8_000, 3_117, 4_000, 1_000));
+
+        coordinator.evaluateSelected(run, 1, binding, selected);
+
+        assertThat(requests).isEmpty();
+        assertThat(store.latestValid(session)).isEmpty();
+
+        store.appendSessionMessage(draft(
+                "second-group", session, run.id().value(), MessageRole.ASSISTANT, "second evidence ".repeat(450)));
+        coordinator.evaluateSelected(run, 2, binding, selected);
+
+        assertThat(requests).hasSize(1);
+        assertThat(store.latestValid(session)).hasValueSatisfying(summary -> {
+            assertThat(summary.coveredThrough()).isEqualTo(oversized.cursor());
+            assertThat(summary.sourceMessageIds()).contains(opening.id(), oversized.id());
+        });
+    }
+
+    @Test
     void multiBatchCompactionCommitsTheWholeEvictedRangeOnce() {
         InMemoryRuntimeStore store = new InMemoryRuntimeStore();
         AtomicInteger idGen = new AtomicInteger();

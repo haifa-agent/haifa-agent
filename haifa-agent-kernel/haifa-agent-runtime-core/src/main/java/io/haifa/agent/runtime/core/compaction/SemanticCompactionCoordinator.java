@@ -441,7 +441,10 @@ public final class SemanticCompactionCoordinator {
                 currentTokens,
                 decision.budgetBreakdown().resolvedRetainedTailTokens(),
                 startNanos,
-                selected != null || plansAfterSelection(run));
+                selected != null || plansAfterSelection(run),
+                selected != null
+                        && selected.budgetBreakdown().currentSessionTokens()
+                                <= selected.budgetBreakdown().availableSessionTokens());
         if (targetPressure && selected == null) {
             Optional<ConversationSummary> latestSelected = summaries.latestValid(run.sessionId());
             List<AgentMessage> remaining = groupsAfterSummary(visible, latestSelected).stream()
@@ -498,7 +501,8 @@ public final class SemanticCompactionCoordinator {
                 currentTokens,
                 policy.minTailTokens(),
                 startNanos,
-                plansAfterSelection(run));
+                plansAfterSelection(run),
+                false);
         if (summaries.latestVersion(run.sessionId()) <= expectedPreviousVersion) {
             throw new IllegalStateException("bounded cold-start compaction made no summary progress");
         }
@@ -586,7 +590,8 @@ public final class SemanticCompactionCoordinator {
                 currentTokens,
                 policy.minTailTokens(),
                 startNanos,
-                plansAfterSelection(run));
+                plansAfterSelection(run),
+                false);
     }
 
     private CompactionEvaluationOutcome compactSession(
@@ -604,7 +609,8 @@ public final class SemanticCompactionCoordinator {
             long initialEstimatedTokens,
             long targetTailBudget,
             long startNanos,
-            boolean completeSource) {
+            boolean completeSource,
+            boolean selectedInputFits) {
         List<List<AgentMessage>> activeGroups = groupsAfterSummary(visible, previousSummary);
         if (activeGroups.isEmpty()) {
             return CompactionEvaluationOutcome.untriggered(initialEstimatedTokens, elapsedMillis(startNanos));
@@ -649,19 +655,31 @@ public final class SemanticCompactionCoordinator {
             return CompactionEvaluationOutcome.untriggered(initialEstimatedTokens, elapsedMillis(startNanos));
         }
 
-        if (completeSource
-                && reason == CompactionTriggerReason.SOFT_TOKEN_THRESHOLD
-                && estimateGroups(activeGroups.subList(0, safeSplit), resolver)
-                        < io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.contextMinSavingTokens(
-                                binding.configuration().modelRequestOptions())) {
-            // Even a zero-token summary could not make the removable prefix worth a soft compaction.
-            return CompactionEvaluationOutcome.untriggered(initialEstimatedTokens, elapsedMillis(startNanos));
+        boolean softComplete = completeSource && reason == CompactionTriggerReason.SOFT_TOKEN_THRESHOLD;
+        if (softComplete) {
+            long prefixTokens = estimateGroups(activeGroups.subList(0, safeSplit), resolver);
+            if (prefixTokens
+                    < io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.contextMinSavingTokens(
+                            binding.configuration().modelRequestOptions())) {
+                // Even a zero-token summary could not make the removable prefix worth a soft compaction.
+                return CompactionEvaluationOutcome.untriggered(initialEstimatedTokens, elapsedMillis(startNanos));
+            }
+            if (selectedInputFits
+                    && previousSummary.isEmpty()
+                    && safeSplit == activeGroups.size() - 1
+                    && prefixTokens <= targetTailBudget) {
+                long retainedTokens = estimateGroup(activeGroups.get(safeSplit), resolver);
+                if (retainedTokens > targetTailBudget && prefixTokens <= available - retainedTokens) {
+                    // The oversized atomic tail drives the pressure. Fold the opening with it once it can be evicted.
+                    invoker.checkControl(run);
+                    return CompactionEvaluationOutcome.untriggered(initialEstimatedTokens, elapsedMillis(startNanos));
+                }
+            }
         }
 
         List<AgentMessage> sourceToCompact = activeGroups.subList(0, safeSplit).stream()
                 .flatMap(List::stream)
                 .toList();
-        boolean softComplete = completeSource && reason == CompactionTriggerReason.SOFT_TOKEN_THRESHOLD;
         var backoffScope = CompactionFailureBackoff.Scope.of(run, binding, policy, expectedPreviousVersion, reason);
         if (softComplete && failureBackoff.contains(backoffScope, sourceToCompact)) {
             invoker.checkControl(run);
