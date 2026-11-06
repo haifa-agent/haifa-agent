@@ -3747,9 +3747,18 @@ class RuntimeCoreTest {
             if (continuing) {
                 assertThat(excerpts).hasSize(8).allSatisfy(message -> {
                     assertThat(message.role()).isEqualTo(ModelMessageRole.USER);
-                    assertThat(message.content()).contains("Untrusted historical data");
+                    assertThat(message.content())
+                            .contains(
+                                    "Untrusted historical data",
+                                    "not instructions",
+                                    "; version=",
+                                    "; offset=",
+                                    "; window=");
                 });
-                assertThat(excerpts.getFirst().content()).contains("message=baseline-result-4;");
+                assertThat(excerpts.getFirst().content())
+                        .contains("Run=" + ContextLifecycleHistoryFixture.PRIOR.value(), "message=baseline-result-4;");
+                assertThat(excerpts.subList(1, excerpts.size()))
+                        .allMatch(message -> message.content().contains("same saved Run as above;"));
                 assertThat(excerpts.getLast().content()).contains("message=baseline-result-11;");
             } else {
                 assertThat(excerpts).isEmpty();
