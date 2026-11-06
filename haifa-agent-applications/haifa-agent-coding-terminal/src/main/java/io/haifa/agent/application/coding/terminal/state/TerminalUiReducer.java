@@ -426,20 +426,27 @@ public final class TerminalUiReducer {
                     .map(ClarificationDetails::toApprovalDetails)
                     .orElseGet(() -> ApprovalDetails.from(
                             interaction, presented.allowForSession(), presented.sessionApprovalUnavailableReason()));
+            return reduce(
+                    state,
+                    new TerminalUiAction.InteractionCardChanged(
+                            "interaction-" + interaction.requestId().value(),
+                            interaction.state().name(),
+                            clarification.isPresent(),
+                            details));
+        }
+        if (action instanceof TerminalUiAction.InteractionCardChanged card) {
+            var details = card.details();
             List<TranscriptItem> items = new ArrayList<>(state.transcript());
-            String id = "interaction-" + interaction.requestId().value();
-            int existing = index(items, id);
+            int existing = index(items, card.id());
             boolean expanded = existing >= 0 && items.get(existing).expanded();
             upsert(
                     items,
                     new TranscriptItem(
-                            id,
-                            clarification.isPresent()
-                                    ? TranscriptItem.Kind.CLARIFICATION
-                                    : TranscriptItem.Kind.APPROVAL,
-                            (clarification.isPresent() ? "Clarification · " : "Approval · ") + details.title(),
+                            card.id(),
+                            card.clarification() ? TranscriptItem.Kind.CLARIFICATION : TranscriptItem.Kind.APPROVAL,
+                            (card.clarification() ? "Clarification · " : "Approval · ") + details.title(),
                             details.content(),
-                            interaction.state().name(),
+                            card.status(),
                             expanded,
                             Optional.of(details)));
             return copyWithTranscript(state, List.copyOf(items));

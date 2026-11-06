@@ -140,6 +140,13 @@ public sealed interface TerminalUiAction {
         }
     }
 
+    record InteractionCardChanged(
+            String id,
+            String status,
+            boolean clarification,
+            io.haifa.agent.application.coding.terminal.state.ApprovalDetails details)
+            implements TerminalUiAction {}
+
     record InteractionReceiptReceived(InteractionResponseReceipt receipt) implements TerminalUiAction {}
 
     record UserMessageCommitted(String id, String text) implements TerminalUiAction {}

@@ -357,6 +357,158 @@ class CodingTerminalSelectionLifecycleTest {
     }
 
     @Test
+    void productPendingApprovalUsesProjectedTargetAndNeverHydratesThroughTheCompatibilityClient() throws Exception {
+        String session = SESSION_ID.value();
+        var target = new CodingProtocol.Target(session, "run-1", "request-1", 3L);
+        var entry = new CodingProtocol.Entry(
+                "interaction-request-1",
+                "interaction",
+                target.runId(),
+                "interaction",
+                "Inspect workspace",
+                "Read one fixture file",
+                "PENDING",
+                null,
+                false,
+                new CodingProtocol.Interaction(
+                        target.interactionId(),
+                        target.targetRevision(),
+                        "approval",
+                        new CodingProtocol.Input("none", 0, 0, 0, List.of(), List.of()),
+                        new CodingProtocol.Review(
+                                "Inspect workspace",
+                                "text/plain",
+                                "Read one fixture file",
+                                List.of(),
+                                List.of(),
+                                null,
+                                true,
+                                false),
+                        List.of(new CodingProtocol.Action("respond", target, "approve", true, null))),
+                0L,
+                null,
+                null,
+                null,
+                null,
+                null);
+        var snapshot = new CodingProtocol.Snapshot(
+                "snapshot",
+                new CodingProtocol.Scope("view-1", "owner-1", "client-1", session, 1, "native"),
+                1,
+                "ready",
+                new CodingProtocol.Session(
+                        session,
+                        "Task",
+                        1,
+                        "ACTIVE",
+                        new CodingProtocol.Run("run-1", "RUNNING", 7),
+                        "model",
+                        "Model",
+                        "",
+                        1,
+                        true),
+                List.of(entry),
+                new CodingProtocol.History(false, null, true),
+                null,
+                new CodingProtocol.Consent("ASK", null, false),
+                List.of(),
+                List.of());
+        var productReady = new java.util.concurrent.CountDownLatch(1);
+        var commands = new ArrayList<CodingProtocol.Command>();
+        var product = new ProductClientFixture() {
+            public CodingProtocol.CommandResult execute(CodingProtocol.CommandRequest request) {
+                var command = request.command();
+                commands.add(command);
+                return new CodingProtocol.CommandResult(
+                        new CodingProtocol.Receipt(command.clientRequestId(), "accepted", null, null, null),
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        command.operation().equals("prepareApproval") ? entry : null);
+            }
+
+            public CodingPresentationSubscription observe(String sessionId) {
+                assertThat(sessionId).isEqualTo(session);
+                return new CodingPresentationSubscription() {
+                    public CodingProtocol.Snapshot initial() {
+                        return snapshot;
+                    }
+
+                    public CodingProtocol.Envelope poll(Duration timeout) throws InterruptedException {
+                        productReady.countDown();
+                        new java.util.concurrent.CountDownLatch(1).await();
+                        return null;
+                    }
+
+                    public boolean closed() {
+                        return false;
+                    }
+
+                    public void close() {}
+                };
+            }
+
+            public CodingProtocol.HistoryPage history(String sessionId, int limit, Long beforeSequence) {
+                return new CodingProtocol.HistoryPage(
+                        sessionId, List.of(), new CodingProtocol.History(false, null, true));
+            }
+        };
+        var legacy = new FakeClient(activeView()) {
+            @Override
+            public Optional<InteractionView> pendingInteraction(AgentRunId runId) {
+                throw new AssertionError("unexpected compatibility hydration");
+            }
+        };
+        var control = new ArrayDeque<Runnable>();
+        try (var controller = new CodingTerminalController(
+                PROJECT_ID,
+                legacy,
+                new TerminalEventPump(32),
+                new TerminalUiReducer(),
+                TerminalUiState.initial(120, 40),
+                control::add,
+                Runnable::run,
+                Runnable::run)) {
+            controller.attachProductClient(product);
+            controller.open(SESSION_ID);
+            assertThat(productReady.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                    .isTrue();
+            controller.drainEvents();
+            assertThat(control).hasSize(1);
+            assertThat(commands).isEmpty();
+            control.removeFirst().run();
+            controller.drainEvents();
+            assertThat(controller.state().selector()).hasValueSatisfying(selector -> {
+                assertThat(selector.kind()).isEqualTo("interaction:request-1");
+                assertThat(selector.options()).containsExactly("Allow once");
+            });
+            assertThat(controller.state().transcript()).anySatisfy(item -> {
+                assertThat(item.id()).isEqualTo(entry.id());
+                assertThat(item.body()).isEqualTo("Read one fixture file");
+            });
+            controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+            assertThat(controller.state().status()).isEqualTo("Approving");
+            control.removeFirst().run();
+            assertThat(commands)
+                    .extracting(CodingProtocol.Command::operation)
+                    .containsExactly("prepareApproval", "respond");
+            assertThat(commands).allSatisfy(command -> {
+                assertThat(command.target().sessionId()).isEqualTo(target.sessionId());
+                assertThat(command.target().runId()).isEqualTo(target.runId());
+                assertThat(command.target().interactionId()).isEqualTo(target.interactionId());
+                assertThat(command.target().targetRevision()).isEqualTo(target.targetRevision());
+            });
+        }
+    }
+
+    @Test
     void productReloadAndWorkspaceRevokeUseScopedCommands() {
         var commands = new ArrayList<CodingProtocol.Command>();
         var product = new ProductClientFixture() {
@@ -365,7 +517,17 @@ class CodingTerminalSelectionLifecycleTest {
                 commands.add(command);
                 return new CodingProtocol.CommandResult(
                         new CodingProtocol.Receipt(command.clientRequestId(), "accepted", null, null, null),
-                        null, null, null, null, null, null, null, null, null, null, null);
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null);
             }
 
             public CodingPresentationSubscription observe(String sessionId) {
@@ -390,7 +552,8 @@ class CodingTerminalSelectionLifecycleTest {
             assertThat(controller.state().loadedResources()).containsExactly("Product resource");
             controller.accept(input(TerminalInput.Kind.EXECUTE_COMMAND, "/trust revoke workspace-1"));
             assertThat(controller.state().status()).isEqualTo("Workspace access revoked");
-            assertThat(commands).extracting(CodingProtocol.Command::operation)
+            assertThat(commands)
+                    .extracting(CodingProtocol.Command::operation)
                     .containsExactly("resourcesReload", "workspaceRevoke");
             assertThat(commands).allSatisfy(command -> {
                 assertThat(command.target().projectId()).isEqualTo(PROJECT_ID.value());
