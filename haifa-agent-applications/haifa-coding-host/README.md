@@ -49,6 +49,7 @@ capabilities, Host incarnation, display identity and `clientSource=browser`.
 `product/query` accepts the generated `Query`; `product/command` accepts `CommandRequest`.
 Browser clients cannot remove stored model credentials through the product logout command. Native
 Java clients and embedded clients retain the logout operation.
+A duplicate SSE attach is rejected while the original stream keeps its subscription.
 All optional record fields are explicit nulls. SSE presentation events carry the canonical update
 or resync envelope; preview events carry the separate canonical transient Preview.
 
