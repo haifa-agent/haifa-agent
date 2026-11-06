@@ -179,6 +179,34 @@ class CodingPresentationObservationTest {
     }
 
     @Test
+    void completeWindowsFileReviewRetainsItsResponseActions() {
+        String content = "first line\r\nsecond line";
+        var interaction = new InteractionView(
+                new InteractionRequestId("write-review"),
+                new AgentRunId("run"),
+                new AgentSessionId("session"),
+                1,
+                InteractionKind.APPROVAL,
+                InteractionState.PENDING,
+                "Write file",
+                content,
+                List.of(InteractionAction.REJECT, InteractionAction.APPROVE),
+                InteractionInputContract.NONE,
+                new InteractionTargetView("tool", "call", Optional.empty(), Optional.empty(), "Write file"),
+                new InteractionRequesterView("operator", "Operator"),
+                Instant.EPOCH,
+                Optional.empty(),
+                new InteractionConsequenceView("Allow", "Reject", "Expire"),
+                Optional.of(new ApprovalPresentation(
+                        "Write file", "Update a file", "text", content, List.of(), List.of(), Optional.empty())));
+        var projected = CodingPresentationObservation.projectInteraction(
+                interaction, new CodingReviewState(true, false, true), true, new DefaultSecretRedactor());
+        assertThat(projected.text()).isEqualTo("first line\nsecond line");
+        assertThat(projected.truncated()).isFalse();
+        assertThat(projected.interaction().actions()).hasSize(3).allMatch(Action::available);
+    }
+
+    @Test
     void consentRefreshAddsAndRemovesTheExactSessionResetAction() throws Exception {
         Fixture f = new Fixture();
         Consent ask = new Consent("ASK", null, true);

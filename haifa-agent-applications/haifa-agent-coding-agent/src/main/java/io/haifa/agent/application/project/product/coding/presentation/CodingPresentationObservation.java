@@ -634,8 +634,9 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                         completeness.targetComplete(),
                         completeness.contentTruncated()))
                 .orElse(null);
-        String prompt = CodingPresentationText.safe(value.safePrompt(), 16384, redactor);
-        boolean complete = prompt.equals(redactor.redact(value.safePrompt()))
+        String sourcePrompt = CodingPresentationText.normalizeLineEndings(value.safePrompt());
+        String prompt = CodingPresentationText.safe(sourcePrompt, 16384, redactor);
+        boolean complete = prompt.equals(redactor.redact(sourcePrompt))
                 && supported
                 && (!value.kind().equals(InteractionKind.APPROVAL)
                         || (review != null && completeness.targetComplete()));

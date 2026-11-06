@@ -9,13 +9,17 @@ public final class CodingPresentationText {
     static String safe(String value, int maximum, SecretRedactor redactor) {
         String normalized;
         try {
-            normalized = new Stream().accept(value).replace("\r", "\n");
+            normalized = normalizeLineEndings(new Stream().accept(value));
         } catch (IllegalStateException malformed) {
             return "[Display content unavailable]";
         }
         String redacted = redactor.redact(normalized);
         return redacted.substring(
                 0, redacted.offsetByCodePoints(0, Math.min(maximum, redacted.codePointCount(0, redacted.length()))));
+    }
+
+    static String normalizeLineEndings(String value) {
+        return value.replace("\r\n", "\n").replace('\r', '\n');
     }
 
     public static final class Stream {
