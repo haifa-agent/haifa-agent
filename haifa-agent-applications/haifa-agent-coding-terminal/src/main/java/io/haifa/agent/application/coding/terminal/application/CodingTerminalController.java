@@ -2639,7 +2639,13 @@ public final class CodingTerminalController implements AutoCloseable {
                 apply(new TerminalUiAction.StatusChanged("Reloading resources"));
                 submitEffect(
                         () -> {
-                            List<String> resources = client.reloadResources();
+                            List<String> resources;
+                            if (productClient == null) {
+                                resources = client.reloadResources();
+                            } else {
+                                executeTerminalProduct("resourcesReload", null, null, null);
+                                resources = queryTerminalProduct("resources", null, 100).lines();
+                            }
                             return () -> {
                                 apply(new TerminalUiAction.ResourcesChanged(resources));
                                 apply(new TerminalUiAction.StatusChanged("Resources reloaded for future new Runs"));
@@ -2957,24 +2963,7 @@ public final class CodingTerminalController implements AutoCloseable {
                     if (productClient == null) {
                         client.resetSessionApproval(sessionId);
                     } else {
-                        String requestId = UUID.randomUUID().toString();
-                        var command = new CodingProtocol.Command(
-                                "command",
-                                "resetConsent",
-                                requestId,
-                                null,
-                                new CodingProtocol.CommandTarget(
-                                        projectId.value(), sessionId.value(), null, null, null),
-                                null,
-                                null,
-                                null,
-                                List.of());
-                        var receipt = productClient.execute(command).receipt();
-                        if (!"accepted".equals(receipt.disposition())) {
-                            throw new CodingClientException(
-                                    Objects.requireNonNullElse(receipt.reasonCode(), "PRODUCT_ACTION_REJECTED"),
-                                    "unknown".equals(receipt.disposition()));
-                        }
+                        executeTerminalProduct("resetConsent", sessionId, null, null);
                     }
                     return () -> {
                         if (isCurrentSelection(token)) {
@@ -3029,7 +3018,11 @@ public final class CodingTerminalController implements AutoCloseable {
         apply(new TerminalUiAction.StatusChanged("Revoking workspace access"));
         submitEffect(
                 () -> {
-                    client.revokeWorkspace(workspaceRef);
+                    if (productClient == null) {
+                        client.revokeWorkspace(workspaceRef);
+                    } else {
+                        executeTerminalProduct("workspaceRevoke", null, null, workspaceRef);
+                    }
                     return () -> apply(new TerminalUiAction.StatusChanged("Workspace access revoked"));
                 },
                 code -> apply(new TerminalUiAction.RecoverableFailure(code)));
@@ -3067,12 +3060,67 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private CodingProtocol.QueryResult queryTerminalProduct(String operation, String search, int limit) {
+        return queryTerminalProduct(operation, null, search, limit);
+    }
+
+    private CodingProtocol.QueryResult queryTerminalProduct(
+            String operation, AgentSessionId sessionId, String search, int limit) {
         return productClient.query(new CodingProtocol.Query(
+                operation, terminalProductTarget(sessionId, null), search, limit, null));
+    }
+
+    private CodingProtocol.CommandTarget terminalProductTarget(AgentSessionId sessionId, Long revision) {
+        return new CodingProtocol.CommandTarget(
+                projectId.value(), sessionId == null ? null : sessionId.value(), null, null, revision);
+    }
+
+    private CodingProtocol.CommandResult executeTerminalProduct(
+            String operation, AgentSessionId sessionId, Long revision, String optionId) {
+        String requestId = UUID.randomUUID().toString();
+        var result = productClient.execute(new CodingProtocol.Command(
+                "command",
                 operation,
-                new CodingProtocol.CommandTarget(projectId.value(), null, null, null, null),
-                search,
-                limit,
-                null));
+                requestId,
+                requestId,
+                terminalProductTarget(sessionId, revision),
+                null,
+                optionId,
+                null,
+                List.of()));
+        var receipt = result.receipt();
+        if (!"accepted".equals(receipt.disposition())) {
+            throw new CodingClientException(
+                    Objects.requireNonNullElse(receipt.reasonCode(), "PRODUCT_ACTION_REJECTED"),
+                    "unknown".equals(receipt.disposition()));
+        }
+        return result;
+    }
+
+    private List<CodingQueuedMessage> readTerminalQueue(AgentSessionId sessionId) {
+        if (productClient == null) return client.restorableMessages(sessionId, 100);
+        return queryTerminalProduct("queuedMessages", sessionId, null, 100).queuedMessages().stream()
+                .map(value -> {
+                    if (!sessionId.value().equals(value.sessionId())) {
+                        throw new CodingClientException("SESSION_SCOPE_MISMATCH", false);
+                    }
+                    return new CodingQueuedMessage(value.id(), sessionId, value.summary(), value.sequence(),
+                            value.revision());
+                })
+                .toList();
+    }
+
+    private String restoreTerminalMessage(CodingQueuedMessage queued) {
+        if (productClient == null) {
+            return client.restore(queued.sessionId(), queued.followUpId(), queued.revision()).message();
+        }
+        var restored = executeTerminalProduct("restore", queued.sessionId(), queued.revision(), queued.followUpId())
+                .restoredMessage();
+        if (restored == null
+                || !queued.sessionId().value().equals(restored.sessionId())
+                || !queued.followUpId().equals(restored.id())) {
+            throw new CodingClientException("PRODUCT_RECEIPT_SCOPE_MISSING", true);
+        }
+        return restored.text();
     }
 
     private static String workspaceOption(CodingWorkspaceView workspace) {
@@ -3107,7 +3155,7 @@ public final class CodingTerminalController implements AutoCloseable {
         CodingProtocol.HistoryPage productHistory = productClient == null
                 ? null
                 : readProductHistory(view.summary().sessionId().value(), HISTORY_LIMIT, null);
-        List<PendingMessage> pending = client.restorableMessages(view.summary().sessionId(), 100).stream()
+        List<PendingMessage> pending = readTerminalQueue(view.summary().sessionId()).stream()
                 .map(value -> new PendingMessage(
                         value.followUpId(), PendingMessage.Kind.FOLLOW_UP, value.summary(), value.revision()))
                 .toList();
@@ -3599,7 +3647,7 @@ public final class CodingTerminalController implements AutoCloseable {
         apply(new TerminalUiAction.StatusChanged("Loading queued messages"));
         submitEffect(
                 () -> {
-                    List<CodingQueuedMessage> found = client.restorableMessages(sessionId, 100);
+                    List<CodingQueuedMessage> found = readTerminalQueue(sessionId);
                     return () -> {
                         if (isCurrentSelection(token)) showRestoreOptions(found);
                     };
@@ -5055,11 +5103,11 @@ public final class CodingTerminalController implements AutoCloseable {
                 apply(new TerminalUiAction.StatusChanged("Restoring queued message"));
                 submitEffect(
                         () -> {
-                            var restored = client.restore(queued.sessionId(), queued.followUpId(), queued.revision());
+                            String restored = restoreTerminalMessage(queued);
                             return () -> {
                                 if (!isCurrentSelection(token)) return;
                                 apply(new TerminalUiAction.EditorChanged(
-                                        restored.message(), restored.message().length()));
+                                        restored, restored.length()));
                                 scheduleReconcile();
                             };
                         },

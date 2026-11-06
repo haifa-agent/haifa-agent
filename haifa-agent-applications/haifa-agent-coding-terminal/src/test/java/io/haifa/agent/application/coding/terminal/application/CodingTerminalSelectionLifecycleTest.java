@@ -356,6 +356,50 @@ class CodingTerminalSelectionLifecycleTest {
         }
     }
 
+    @Test
+    void productReloadAndWorkspaceRevokeUseScopedCommands() {
+        var commands = new ArrayList<CodingProtocol.Command>();
+        var product = new ProductClientFixture() {
+            public CodingProtocol.CommandResult execute(CodingProtocol.CommandRequest request) {
+                var command = request.command();
+                commands.add(command);
+                return new CodingProtocol.CommandResult(
+                        new CodingProtocol.Receipt(command.clientRequestId(), "accepted", null, null, null),
+                        null, null, null, null, null, null, null, null, null, null, null);
+            }
+
+            public CodingPresentationSubscription observe(String sessionId) {
+                throw new AssertionError("unexpected observation");
+            }
+
+            public CodingProtocol.HistoryPage history(String sessionId, int limit, Long beforeSequence) {
+                throw new AssertionError("unexpected history");
+            }
+        };
+        try (var controller = new CodingTerminalController(
+                PROJECT_ID,
+                new FakeClient(activeView()),
+                new TerminalEventPump(32),
+                new TerminalUiReducer(),
+                TerminalUiState.initial(120, 40),
+                Runnable::run,
+                Runnable::run,
+                Runnable::run)) {
+            controller.attachProductClient(product);
+            controller.accept(input(TerminalInput.Kind.EXECUTE_COMMAND, "/reload"));
+            assertThat(controller.state().loadedResources()).containsExactly("Product resource");
+            controller.accept(input(TerminalInput.Kind.EXECUTE_COMMAND, "/trust revoke workspace-1"));
+            assertThat(controller.state().status()).isEqualTo("Workspace access revoked");
+            assertThat(commands).extracting(CodingProtocol.Command::operation)
+                    .containsExactly("resourcesReload", "workspaceRevoke");
+            assertThat(commands).allSatisfy(command -> {
+                assertThat(command.target().projectId()).isEqualTo(PROJECT_ID.value());
+                assertThat(command.target().sessionId()).isNull();
+            });
+            assertThat(commands.getLast().optionId()).isEqualTo("workspace-1");
+        }
+    }
+
     private abstract static class ProductClientFixture implements CodingClient {
         public CodingProtocol.ConnectionInfo connection() {
             return new CodingProtocol.ConnectionInfo(
@@ -369,8 +413,11 @@ class CodingTerminalSelectionLifecycleTest {
         }
 
         public CodingProtocol.QueryResult query(CodingProtocol.Query query) {
-            assertThat(query.operation()).isEqualTo("resources");
+            assertThat(query.operation()).isIn("resources", "queuedMessages");
             assertThat(query.target().projectId()).isEqualTo(PROJECT_ID.value());
+            if (query.operation().equals("queuedMessages")) {
+                assertThat(query.target().sessionId()).isEqualTo(SESSION_ID.value());
+            }
             return new CodingProtocol.QueryResult(
                     List.of(),
                     null,
