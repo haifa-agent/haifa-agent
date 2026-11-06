@@ -341,6 +341,62 @@ class SemanticCompactionFailureTest {
     }
 
     @Test
+    void nativeSummaryFailuresAreClassifiedWithoutRepairOrCoverage() {
+        for (var category : List.of(
+                io.haifa.agent.model.api.ModelErrorCategory.INVALID_REQUEST,
+                io.haifa.agent.model.api.ModelErrorCategory.MALFORMED_RESPONSE,
+                io.haifa.agent.model.api.ModelErrorCategory.EMPTY_RESPONSE)) {
+            var store = new InMemoryRuntimeStore();
+            var run = createRun(store);
+            var ids = new AtomicInteger();
+            var policy = CompressionPolicy.defaults()
+                    .withActiveHistoryBudgetTokens(1000)
+                    .withTailTokenBounds(5, 50);
+            var coordinator =
+                    coordinator(store, () -> "native-" + ids.incrementAndGet(), new RunControlRegistry(), policy);
+            appendTurn(store, run, "u1", "a1", "one", "evidence one ".repeat(100));
+            appendTurn(store, run, "u2", "a2", "two", "evidence two");
+            var calls = new AtomicInteger();
+            var failure = new io.haifa.agent.model.api.ModelInvocationException(
+                    category,
+                    false,
+                    200,
+                    "fixture",
+                    new io.haifa.agent.model.api.ModelCallId("summary"),
+                    "fixed fixture failure",
+                    null);
+            var binding = bindingWithContextWindow(
+                    store,
+                    run,
+                    request -> {
+                        calls.incrementAndGet();
+                        throw failure;
+                    },
+                    100_000);
+            var selected = new CompactionTriggerEvaluator(policy).evaluate(100_000, 256, 100, 0, 1200, 4);
+            if (category == io.haifa.agent.model.api.ModelErrorCategory.INVALID_REQUEST)
+                assertThatThrownBy(() -> coordinator.evaluateSelected(run, 1, binding, selected))
+                        .isSameAs(failure);
+            else coordinator.evaluateSelected(run, 1, binding, selected);
+            assertThat(calls).hasValue(1);
+            assertThat(store.latestVersion(run.sessionId())).isZero();
+            assertThat(store.eventsFor(run.id()))
+                    .filteredOn(e -> e.type().equals("session.compaction-failed"))
+                    .singleElement()
+                    .satisfies(e -> assertThat(e.data())
+                            .containsEntry("physicalCalls", 1)
+                            .containsEntry("failureCode", category.name())
+                            .containsEntry(
+                                    "failureStage",
+                                    category == io.haifa.agent.model.api.ModelErrorCategory.INVALID_REQUEST
+                                            ? "REQUEST"
+                                            : category == io.haifa.agent.model.api.ModelErrorCategory.MALFORMED_RESPONSE
+                                                    ? "PARSING"
+                                                    : "GENERATION"));
+        }
+    }
+
+    @Test
     void generationAndMappingFailuresEmitOnlyTheirStableCodes() {
         for (String kind : List.of("MAPPING", "EMPTY", "FINISH")) {
             InMemoryRuntimeStore store = new InMemoryRuntimeStore();

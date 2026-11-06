@@ -30,6 +30,9 @@ request options into the ordinary Runtime configuration snapshot. `AgentRuns.sta
 single Runtime start path; a profile is selection data, not a second executor or product-specific Run state machine.
 Profiles may also freeze an optional Tool allowlist. An absent allowlist inherits the Agent definition, an explicit
 empty allowlist freezes no Tools, and a non-empty allowlist must be a subset of the Agent definition.
+For a read-only question, select an explicit read-only profile on start/submit rather than inheriting a broad
+Agent Tool set. A next step quoted in a document or historical handoff does not authorize a write;
+a continuation that needs writes must select the trusted profile that permits them.
 
 面向上层 Agent 产品的纯 Java 高层装配与应用边界。`HaifaAgent` 表示装配完成、可被宿主长期持有
 并负责资源生命周期的产品 Runtime 实例；它不是 Agent Definition，也不是某一次 Run。SDK 通过可信
@@ -434,3 +437,8 @@ retrieval results enter model/summary requests or public Tool views. Existing me
 dependent persisted retrieval messages and Session summaries, including after reopening a Runtime.
 Scope-level revocation is also checked before ordinary and summary model requests, even after retrieval evidence
 has been summarized. Source-specific withdrawal uses the existing message-redaction API.
+
+Working-set opt-in also applies to named child profiles while preserving each child's Tool allowlist and
+model binding. Parent retrieval permissions do not implicitly grant the child historical readers.
+Coding's standalone assembly exposes the same Runtime strategy through its explicit context configuration;
+it remains disabled by default. Consumer integration coverage is distinct from pending real-model evaluation.

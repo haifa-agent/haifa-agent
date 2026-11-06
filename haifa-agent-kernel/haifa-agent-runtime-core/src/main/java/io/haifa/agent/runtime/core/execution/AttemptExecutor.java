@@ -290,6 +290,8 @@ public final class AttemptExecutor {
         RuntimeQuotaExceededException quotaExceeded = findFailure(error, RuntimeQuotaExceededException.class);
         RuntimeLimitExceededException budgetExceeded = findFailure(error, RuntimeLimitExceededException.class);
         ContextBuildException contextBuild = findFailure(error, ContextBuildException.class);
+        var rebuildExhausted =
+                findFailure(error, io.haifa.agent.runtime.core.loop.ContextRebuildExhaustedException.class);
         ModelContinuationException continuationFailure = findFailure(error, ModelContinuationException.class);
         Map<String, Object> details;
         if (continuationFailure != null) {
@@ -308,19 +310,23 @@ public final class AttemptExecutor {
                     "used", budgetExceeded.used());
         } else if (contextBuild != null) {
             details = Map.of("contextFailure", contextBuild.failure().name());
+        } else if (rebuildExhausted != null) {
+            details = rebuildExhausted.details();
         } else {
             details = Map.of();
         }
-        return new AgentError(
-                classifiedErrorCode(
-                        quotaExceeded,
-                        budgetExceeded,
-                        contextBuild,
-                        continuationFailure,
-                        findFailure(error, StorageException.class) != null),
-                details,
-                ids.nextValue(),
-                time.now());
+        AgentErrorCode code = classifiedErrorCode(
+                quotaExceeded,
+                budgetExceeded,
+                contextBuild,
+                continuationFailure,
+                findFailure(error, StorageException.class) != null);
+        if (continuationFailure == null
+                && quotaExceeded == null
+                && budgetExceeded == null
+                && contextBuild == null
+                && rebuildExhausted != null) code = rebuildExhausted.errorCode();
+        return new AgentError(code, details, ids.nextValue(), time.now());
     }
 
     static AgentErrorCode classifiedErrorCode(
@@ -390,7 +396,7 @@ public final class AttemptExecutor {
             AgentError attemptError,
             RuntimeException error) {
         List<String> failureTypes = failureTypes(error);
-        ContextBuildException contextBuild = findFailure(error, ContextBuildException.class);
+        String contextFailure = String.valueOf(attemptError.details().getOrDefault("contextFailure", ""));
         LOGGER.warn(
                 "event=runtime.failure runId={} attemptId={} errorCode={} diagnosticId={} failureTypes={} contextFailure={}",
                 run.id().value(),
@@ -398,7 +404,19 @@ public final class AttemptExecutor {
                 attemptError.code().wireCode(),
                 attemptError.diagnosticId() == null ? "" : attemptError.diagnosticId(),
                 failureTypes,
-                contextBuild == null ? "" : contextBuild.failure().name());
+                contextFailure);
+        var attributes = new java.util.LinkedHashMap<String, Object>(Map.of(
+                "errorCode",
+                attemptError.code().wireCode(),
+                "diagnosticId",
+                attemptError.diagnosticId() == null ? "" : attemptError.diagnosticId(),
+                "exceptionType",
+                failureTypes.getFirst(),
+                "rootExceptionType",
+                failureTypes.getLast(),
+                "failureTypes",
+                failureTypes));
+        if (!contextFailure.isEmpty()) attributes.put("contextFailure", contextFailure);
         RuntimeTraceEvent context = new RuntimeTraceEvent(
                 traceContext.traceId(),
                 run.id(),
@@ -412,12 +430,7 @@ public final class AttemptExecutor {
                 "runtime.error",
                 RuntimeTraceScope.ATTEMPT,
                 RuntimeTraceStatus.FAILURE,
-                Map.of(
-                        "errorCode", attemptError.code().wireCode(),
-                        "diagnosticId", attemptError.diagnosticId() == null ? "" : attemptError.diagnosticId(),
-                        "exceptionType", failureTypes.getFirst(),
-                        "rootExceptionType", failureTypes.getLast(),
-                        "failureTypes", failureTypes),
+                attributes,
                 time.now());
         recordTrace(context);
         try {

@@ -2,15 +2,15 @@
 
 ## Unreleased - 0.1.5-SNAPSHOT
 
-- Prepare a framework-independent packed Coding browser SDK and same-origin static Web with safe
-  presentation, request correlation and bounded recovery. Add independent tarball consumers and
-  synthetic browser checks; real Host and multi-platform acceptance remain gated.
-- Reject stored model credential logout from Coding Host browser clients.
+- Add preview Coding product contracts, a lightweight Java Client and Host, a packed browser SDK,
+  and same-origin Web. Add isolated preview publishing and independent Maven and npm consumer examples.
+- Route the opt-in Terminal through product observation, history, and exact commands while retaining
+  trusted local sign-in and legacy native rollback. Keep browser grants separate from local credentials.
 
-- Add feature-preview Coding Host and lightweight Java Client SDKs, engine-owned safe product mapping,
-  opt-in same-origin browser pairing/grants and trusted static assets. Preserve native CLI compatibility
-  and keep observation cleanup separate from accepted execution. Add isolated preview publishing and
-  external thin-JAR consumer examples. Browser SDK/UI and TUI migration remain separate work.
+- Keep complete saved results readable when refreshing bounded history previews, and account for documented
+  OpenCode Go DeepSeek Flash input/cache lanes without counting cache tokens twice.
+
+- Add explicit, default-off Coding context selection with authorized history readers and documented legacy rollback; preserve frozen Run policy across pause/resume and SQLite reopen.
 
 - Preserve full current-Run summaries when rebuilding unified working sets, including small soft targets and
   new-task objectives. Record unreadable compaction sources as typed refusals without advancing coverage.

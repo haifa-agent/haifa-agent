@@ -1,5 +1,9 @@
 # Haifa Agent Runtime Core
 
+Saved history previews revalidate source identity before projection. Initial excerpts and refreshed excerpts derive
+both text and source truncation from the materialized result; truncation of an inline asset preview does not mark
+the complete saved source as truncated. Version, current access and withdrawal checks still apply.
+
 ## History baseline and retrieval limits
 
 `ContextLifecycleHistoryFixture` and `RuntimeCoreTest.contextLifecycleBaseline` preserve fixed
@@ -78,6 +82,15 @@ Unreadable complete sources fail with `UNSUPPORTED_CONTEXT_CONTENT`, a `SOURCE_P
 unchanged; source refusal never authorizes deterministic fallback or blind retry. A Run requiring that
 compaction fails explicitly. Only physical model calls consume model-call accounting.
 
+For compaction model calls, `GENERATION` names the invocation boundary (including Provider/transport failures);
+`failureCode` retains the exact normalized model category and is not a content-quality verdict.
+Compaction failure stages distinguish request rejection, response parsing, empty generation, schema mapping,
+semantic validation, planning, source validation and persistence. A locally exhausted single forced rebuild
+reports `MODEL_CONTEXT_TOO_LONG` with `contextFailure=REBUILD_EXHAUSTED` even when it escapes through the outer attempt executor.
+The typed rebuild failure owns that classification; the Run error, structured failure log and `runtime.error` trace
+share the same safe reason, distinct from `REQUIRED_CONTEXT_TOO_LARGE`. This does not
+admit another call or relax required input, semantic validation, repair or CAS limits.
+
 Terminal automatic summary maintenance remains deferred; terminal Run usage is immutable.
 
 ## Optional Run working sets
@@ -93,6 +106,8 @@ a valid summary covers them. Actual current/recovery Tool protocol remains group
 Prior sparse text/JSON is a versioned, revalidated USER data excerpt, never protected continuation replay.
 Continue, follow-up, new-task, ambiguous input and checkpoint recovery have deterministic handling;
 old pending plans are recorded handoff data and never become completed because they were omitted.
+Quoted next steps do not authorize work outside the current request; already authorized pending work may resume within that scope. Products must freeze read-only scope
+with the existing Run profile Tool allowlist; selection does not infer permissions from natural language.
 Summary handoff is a bounded inferred view (up to 64 source identities, four entries per section), separate from verified original Tool evidence; larger source sets are omitted conservatively.
 
 Project constraints (`Project constraint:` / `项目约束`), imported messages without a Run,
@@ -647,3 +662,6 @@ Keyword scans bound rows and source windows, with explicit continuation across b
 load a selected persisted message/result object; this does not provide byte-range disk I/O or a full-text index.
 Unsupported oversized/deep structured representations fail unavailable instead of claiming a complete search.
 No Run-aware selection, Tier 1 retention change or terminal automatic maintenance is enabled here.
+
+Product assemblies and SDK working-set opt-in share `RuntimeControlOptions.unifiedWorkingSetOptions`;
+it validates the shared target range and fills missing controls while preserving explicit profile overrides.

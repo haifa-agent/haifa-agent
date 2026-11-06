@@ -9,6 +9,16 @@ DeepSeek hit/miss and Console fields retain their distinct field-presence semant
 zero takes precedence over another fallback field. Usage is not summed across streaming snapshots.
 No cache enablement, retention settings or price defaults are introduced.
 
+For the exact OpenCode Go DeepSeek V4.1 Flash Chat binding, documented `usage.opencode.tokens.input` is exclusive
+uncached input. Total input is the sum of that value, `cache_read`, `cache_write_5m` and `cache_write_1h`, only when
+all lanes are present. Explicit zeros are known; missing write fields remain unknown. The standard prompt counter
+is not added again. This does not establish a Provider cache TTL or make the rounded monetary cost a token price.
+
+For Go summary calls, the existing non-standard dialect sends `response_format: json_object` plus the frozen
+JSON Schema as a system instruction, with thinking disabled unless explicitly frozen otherwise. This is
+not a native strict-schema guarantee. Local contracts distinguish malformed structured content from an empty
+response; valid JSON still requires the Runtime semantic validator before coverage can be committed.
+
 ## Profile factory
 
 `OpenAiCompatibleModelProfileFactory` derives a versioned binding profile from an already resolved snapshot. It

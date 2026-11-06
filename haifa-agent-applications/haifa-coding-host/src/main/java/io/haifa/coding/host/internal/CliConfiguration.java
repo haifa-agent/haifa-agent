@@ -10,6 +10,7 @@ import io.haifa.agent.model.api.ModelReasoningEffort;
 import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.model.openai.AliyunBailianProviderFactory;
 import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
+import io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions;
 import io.haifa.agent.skill.api.SkillAlias;
 import io.haifa.agent.skill.api.SkillOrigin;
 import io.haifa.agent.skill.api.SkillParserMode;
@@ -38,7 +39,8 @@ public record CliConfiguration(
         long maxToolCalls,
         ProjectPersistenceConfiguration persistence,
         int modelMaxResponseBytes,
-        Duration abandonedRunStaleness) {
+        Duration abandonedRunStaleness,
+        Context context) {
     private static final long DEFAULT_MAX_MODEL_CALLS = 64L;
     public static final int DEFAULT_MODEL_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
     public static final Duration DEFAULT_ABANDONED_RUN_STALENESS = Duration.ofMinutes(30);
@@ -61,6 +63,7 @@ public record CliConfiguration(
     private static final Set<String> DEFAULT_ENVIRONMENT = Set.of("*");
 
     public CliConfiguration {
+        context = Objects.requireNonNull(context, "context must not be null");
         model = Objects.requireNonNull(model, "model must not be null");
         availableModels = List.copyOf(Objects.requireNonNull(availableModels, "availableModels must not be null"));
         String selectedModelId = model.id();
@@ -173,7 +176,34 @@ public record CliConfiguration(
                 32,
                 ProjectPersistenceConfiguration.memory(),
                 DEFAULT_MODEL_MAX_RESPONSE_BYTES,
-                DEFAULT_ABANDONED_RUN_STALENESS);
+                DEFAULT_ABANDONED_RUN_STALENESS,
+                Context.defaults());
+    }
+
+    /** Product opt-in; each Run freezes these options through the existing profile resolver. */
+    public record Context(String policy, int targetTokens, boolean historyRetrieval, boolean automaticMaintenance) {
+        public Context {
+            if (!Set.of("legacy", RuntimeControlOptions.UNIFIED_CONTEXT_V1).contains(policy))
+                throw new IllegalArgumentException("context.policy must be legacy or unified-context-v1");
+            try {
+                RuntimeControlOptions.validateWorkingSetTarget(targetTokens);
+            } catch (IllegalArgumentException invalid) {
+                throw new IllegalArgumentException("context.targetTokens must be between 128 and 65536");
+            }
+            if (policy.equals(RuntimeControlOptions.UNIFIED_CONTEXT_V1) && !historyRetrieval)
+                throw new IllegalArgumentException("unified context requires context.historyRetrieval");
+            if (automaticMaintenance)
+                throw new IllegalArgumentException("context.automaticMaintenance is not supported");
+        }
+
+        public static Context defaults() {
+            return new Context("legacy", RuntimeControlOptions.DEFAULT_WORKING_SET_TARGET, false, false);
+        }
+
+        public java.util.Map<String, Object> runtimeOptions() {
+            if (policy.equals("legacy")) return java.util.Map.of();
+            return RuntimeControlOptions.unifiedWorkingSetOptions(java.util.Map.of(), targetTokens);
+        }
     }
 
     public record Model(

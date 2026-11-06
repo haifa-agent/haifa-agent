@@ -160,10 +160,22 @@ Cancellation is a request until the broker reports the actual process outcome. H
 Shell cancellation before closing persistence. Normal asynchronous Agent Runs retain their existing lifecycle.
 Old clients/Hosts keep the synchronous Shell endpoint; new clients detect optional `shell-operations`.
 
-## Browser SDK 与同源 Web 准备实现
+## Coding product SDK, Web and Terminal preview
 
-实验性 [浏览器 SDK](../../haifa-agent-applications/haifa-coding-browser-client/README.md) 复用唯一产品
-schema，可生成私有 npm tarball；[Coding Web](../../haifa-agent-applications/haifa-coding-web/README.md)
-及[独立 UI 样例](../../examples/coding-browser-ui/README.md)只消费该包。浏览器直接使用同源 Host，
-构建后的资源不需要 Node/BFF。当前只完成独立协议/构建/合成渲染验证；真实 Host 产品联调、
-跨平台浏览器与完整发布门禁尚未关闭，不代表已交付 Alpha 或已迁移 Terminal。
+The [browser SDK](../../haifa-agent-applications/haifa-coding-browser-client/README.md) uses the shared
+product contract. [Coding Web](../../haifa-agent-applications/haifa-coding-web/README.md) and the
+[independent UI example](../../examples/coding-browser-ui/README.md) consume its npm tarball and connect
+directly to the same-origin Host. Node is used at build time.
+
+The opt-in [Terminal product path](../../haifa-agent-applications/haifa-agent-coding-terminal/README.md)
+uses the Java product client in remote and embedded mode. The existing native entry remains the default.
+See the [Java SDK examples](../../examples/coding-product-sdk/README.md) for explicit Host ownership
+and standalone Client consumption.
+
+## Opt-in context selection and rollback
+
+The default remains legacy. Coding can explicitly enable `context.policy: unified-context-v1` with
+`context.historyRetrieval: true`; `targetTokens` is a soft target and the model's hard limit still applies.
+The policy freezes per Run. Saved historical results remain readable when selection is rolled back to
+legacy with readers retained. See the [CLI configuration, limits and restart/rollback procedure](../../haifa-agent-applications/haifa-agent-cli/README.md#opt-in-context-selection-and-rollback).
+Real-model evaluation and default enablement remain pending; terminal automatic maintenance is unsupported.

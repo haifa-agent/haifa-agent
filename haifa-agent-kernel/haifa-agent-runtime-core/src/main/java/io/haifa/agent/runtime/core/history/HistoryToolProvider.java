@@ -169,7 +169,8 @@ public final class HistoryToolProvider implements ToolProvider {
                         excerpt.messageId(),
                         excerpt.toolCallId().map(ToolCallId::value).orElse(""));
                 if (!value.version().equals(excerpt.version())) return Optional.empty();
-                var window = materialize(value).window(excerpt.offset(), excerpt.length(), 1);
+                value = materialize(value);
+                var window = value.window(excerpt.offset(), excerpt.length(), 1);
                 if (window.incomplete()) return Optional.empty();
                 return Optional.of(new io.haifa.agent.context.item.HistoricalExcerptContent(
                         excerpt.runId(),

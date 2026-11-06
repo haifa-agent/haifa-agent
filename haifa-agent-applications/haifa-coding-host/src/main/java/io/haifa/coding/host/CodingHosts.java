@@ -59,7 +59,8 @@ public final class CodingHosts {
                     c.maxToolCalls(),
                     persistence,
                     c.modelMaxResponseBytes(),
-                    c.abandonedRunStaleness());
+                    c.abandonedRunStaleness(),
+                    c.context());
             var agent = StandaloneCodingAgents.openConfigured(workspace, configuration, environment);
             try {
                 return new CodingHost(CodingHostServer.start(agent, options, resolved.summary()));

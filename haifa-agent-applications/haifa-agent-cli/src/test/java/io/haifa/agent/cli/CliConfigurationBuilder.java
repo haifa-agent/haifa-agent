@@ -41,6 +41,7 @@ final class CliConfigurationBuilder {
         private ProjectPersistenceConfiguration persistence;
         private int modelMaxResponseBytes;
         private Duration abandonedRunStaleness;
+        private CliConfiguration.Context context;
 
         private Builder(CliConfiguration base) {
             this.model = base.model();
@@ -59,6 +60,7 @@ final class CliConfigurationBuilder {
             this.persistence = base.persistence();
             this.modelMaxResponseBytes = base.modelMaxResponseBytes();
             this.abandonedRunStaleness = base.abandonedRunStaleness();
+            this.context = base.context();
         }
 
         Builder model(CliConfiguration.Model value) {
@@ -144,6 +146,11 @@ final class CliConfigurationBuilder {
             return this;
         }
 
+        Builder context(CliConfiguration.Context value) {
+            this.context = value;
+            return this;
+        }
+
         CliConfiguration build() {
             return new CliConfiguration(
                     model,
@@ -161,7 +168,8 @@ final class CliConfigurationBuilder {
                     maxToolCalls,
                     persistence,
                     modelMaxResponseBytes,
-                    abandonedRunStaleness);
+                    abandonedRunStaleness,
+                    context);
         }
     }
 }

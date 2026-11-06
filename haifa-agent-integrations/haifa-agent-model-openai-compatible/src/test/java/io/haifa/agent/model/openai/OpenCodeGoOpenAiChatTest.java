@@ -73,6 +73,69 @@ class OpenCodeGoOpenAiChatTest {
     }
 
     @Test
+    void summaryRequestUsesJsonObjectAndTheFrozenSchemaWithoutThinkingOptions() throws Exception {
+        String content = "{\"schemaVersion\":\"v1\",\"language\":\"en\",\"goals\":[],\"constraints\":[],"
+                + "\"progress\":{\"completed\":[],\"active\":[],\"blocked\":[]},\"decisions\":[],\"nextSteps\":[],"
+                + "\"criticalContext\":[],\"unresolvedQuestions\":[]}";
+        responseBody.set(syncBody(json.writeValueAsString(content)
+                .substring(1, json.writeValueAsString(content).length() - 1)));
+        var result = model().invoke(summaryRequest());
+        assertThat(result.structuredOutput())
+                .hasValueSatisfying(output -> assertThat(output).containsEntry("schemaVersion", "v1"));
+        var body = readRequestBody();
+        assertThat(body.path("response_format").path("type").asText()).isEqualTo("json_object");
+        assertThat(body.has("thinking") || body.has("reasoning_effort") || body.has("tools"))
+                .isFalse();
+        String contract = body.path("messages")
+                .get(body.path("messages").size() - 1)
+                .path("content")
+                .asText();
+        String prefix = "When producing the final answer, return one JSON object that exactly matches this schema: ";
+        assertThat(contract).startsWith(prefix);
+        assertThat(json.readTree(contract.substring(prefix.length())))
+                .isEqualTo(json.valueToTree(io.haifa.agent.context.compression.SemanticSummarySchema.jsonSchema()));
+    }
+
+    @Test
+    void summaryParseFailureAndEmptyResponseKeepDistinctNormalizedErrors() {
+        for (String content : List.of("not-json", "[]", "")) {
+            responseBody.set(syncBody(content));
+            assertThatThrownBy(() -> model().invoke(summaryRequest()))
+                    .isInstanceOfSatisfying(io.haifa.agent.model.api.ModelInvocationException.class, failure -> {
+                        assertThat(failure.category())
+                                .isEqualTo(
+                                        content.isEmpty()
+                                                ? io.haifa.agent.model.api.ModelErrorCategory.EMPTY_RESPONSE
+                                                : io.haifa.agent.model.api.ModelErrorCategory.MALFORMED_RESPONSE);
+                        assertThat(failure.providerCode())
+                                .isEqualTo(content.isEmpty() ? "empty_response" : "structured_output_invalid");
+                    });
+        }
+    }
+
+    private AgentChatRequest summaryRequest() {
+        var q = request();
+        return new AgentChatRequest(
+                q.callId(),
+                q.requestId(),
+                q.runId(),
+                q.sessionAffinity(),
+                q.iteration(),
+                q.attempt(),
+                q.model(),
+                q.messages(),
+                List.of(),
+                q.maxOutputTokens(),
+                q.timeout(),
+                q.options(),
+                Optional.of(new io.haifa.agent.core.run.StructuredOutputRequirement(
+                        "json-schema:SemanticConversationSummaryV1",
+                        "sha256:semantic-summary-v1",
+                        "SemanticConversationSummaryV1",
+                        io.haifa.agent.context.compression.SemanticSummarySchema.jsonSchema())));
+    }
+
+    @Test
     void sendsTheDocumentedSessionHeaderOnTheStreamingPath() {
         responseBody.set(
                 """
@@ -131,6 +194,45 @@ class OpenCodeGoOpenAiChatTest {
         assertThat(usage.inputTokensKnown()).isFalse();
         assertThat(usage.cacheWriteTokens()).isEmpty();
         assertThat(usage.reasoningTokens()).isEqualTo(120);
+    }
+
+    @Test
+    void mapsExclusiveBilledInputWithoutDoubleCountingCacheLanes() {
+        responseBody.set(syncBody("done")
+                .replace(
+                        "\"completion_tokens\":1",
+                        "\"completion_tokens\":1,\"cost\":0.0412,\"opencode\":{\"tokens\":{"
+                                + "\"input\":1200,\"cache_read\":8000,\"cache_write_5m\":2,\"cache_write_1h\":3}}"));
+
+        var usage = model().invoke(request()).usage();
+
+        assertThat(usage.inputTokensKnown()).isTrue();
+        assertThat(usage.inputTokens()).isEqualTo(9205);
+        assertThat(usage.cacheMissTokens()).isEqualTo(1200);
+        assertThat(usage.cacheMissTokensKnown()).isTrue();
+        assertThat(usage.cacheHitTokens()).isEqualTo(8000);
+        assertThat(usage.cacheWriteTokens()).hasValue(5);
+        assertThat(usage.outputTokens()).isEqualTo(1);
+        assertThat(usage.costMinorUnits()).isEqualTo(4);
+    }
+
+    @Test
+    void explicitZeroBilledLanesAreKnownButMissingWriteLaneIsNotZero() {
+        String body = syncBody("done")
+                .replace(
+                        "\"completion_tokens\":1",
+                        "\"completion_tokens\":1,\"opencode\":{\"tokens\":{"
+                                + "\"input\":0,\"cache_read\":0,\"cache_write_5m\":0,\"cache_write_1h\":0}}");
+        responseBody.set(body);
+        var complete = model().invoke(request()).usage();
+        assertThat(complete.inputTokensKnown()).isTrue();
+        assertThat(complete.inputTokens()).isZero();
+        assertThat(complete.cacheWriteTokens()).hasValue(0);
+
+        responseBody.set(body.replace(",\"cache_write_1h\":0", ""));
+        var incomplete = model().invoke(request()).usage();
+        assertThat(incomplete.inputTokensKnown()).isFalse();
+        assertThat(incomplete.cacheWriteTokens()).isEmpty();
     }
 
     @Test
@@ -240,7 +342,11 @@ class OpenCodeGoOpenAiChatTest {
                 "deepseek-v4.1-flash",
                 "OpenCode Go DeepSeek V4.1 Flash",
                 ModelStatus.ACTIVE,
-                EnumSet.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING, ModelCapability.REASONING),
+                EnumSet.of(
+                        ModelCapability.TEXT_CHAT,
+                        ModelCapability.TOOL_CALLING,
+                        ModelCapability.REASONING,
+                        ModelCapability.STRUCTURED_OUTPUT),
                 1_000_000,
                 384_000,
                 Map.of(),

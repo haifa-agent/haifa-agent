@@ -453,7 +453,7 @@ public final class LocalCodingAgent implements AutoCloseable {
                     "cli-coding",
                     "1.0.0",
                     effectiveCapabilities,
-                    Set.copyOf(configuredTools),
+                    effectiveProjectTools(configuration),
                     "coding-agent-policy-v1");
             configurationService.publish(projectConfiguration);
             ProjectId projectId = workspaceIdentity.projectId();
@@ -575,7 +575,13 @@ public final class LocalCodingAgent implements AutoCloseable {
                     configuration.skills().allowedAliases().isEmpty()
                             ? List.of()
                             : new SkillToolProvider(skillService).contributions();
-            var catalog = new ProjectToolCatalog(configuration.execution().maximumTimeout())
+            var historyProvider = configuration.context().historyRetrieval()
+                    ? new io.haifa.agent.runtime.core.history.HistoryToolProvider(persistence.ports())
+                    : null;
+            var catalog = new ProjectToolCatalog(
+                            configuration.execution().maximumTimeout(),
+                            historyProvider == null ? List.of() : historyProvider.definitions(),
+                            historyProvider)
                     .freeze(
                             Set.copyOf(configuredTools),
                             effectiveCapabilities,
@@ -596,6 +602,14 @@ public final class LocalCodingAgent implements AutoCloseable {
             List<RuntimeTraceEvent> traces = new CopyOnWriteArrayList<>();
             var outcomeProjection = new CodingRunOutcomeProjectionService(
                     persistence.ports().events(), persistence.ports().runs());
+            var runtimeOptions = new java.util.HashMap<String, Object>(
+                    configuration.context().runtimeOptions());
+            runtimeOptions.put(RuntimeControlOptions.MAX_REASONING_BYTES, 512 * 1024);
+            runtimeOptions.put(
+                    RuntimeControlOptions.MAX_REASONING_DURATION_MILLIS,
+                    Math.min(
+                            Duration.ofMinutes(5).toMillis(),
+                            configuration.timeout().toMillis()));
             var runtimeBuilder = persistence
                     .configure(new RuntimeCoreBuilder())
                     .identifierGenerator(identifiers)
@@ -725,13 +739,7 @@ public final class LocalCodingAgent implements AutoCloseable {
                                     .orElseThrow(() -> new IllegalArgumentException(
                                             "MODEL_SELECTION_REQUIRED: configured model is unavailable")),
                             Map.of(),
-                            Map.of(
-                                    RuntimeControlOptions.MAX_REASONING_BYTES,
-                                    512 * 1024,
-                                    RuntimeControlOptions.MAX_REASONING_DURATION_MILLIS,
-                                    Math.min(
-                                            Duration.ofMinutes(5).toMillis(),
-                                            configuration.timeout().toMillis()))))
+                            Map.copyOf(runtimeOptions)))
                     .build();
             persistence.attachProjection(runtime);
             TrustedProductCallerProvider callers = () -> new TrustedProductCaller(tenant, principal);
@@ -1076,6 +1084,12 @@ public final class LocalCodingAgent implements AutoCloseable {
             configuredTools.remove("execution_run");
         }
         return Set.copyOf(configuredTools);
+    }
+
+    static Set<String> effectiveProjectTools(CliConfiguration configuration) {
+        var tools = new java.util.HashSet<>(effectiveBuiltInTools(configuration));
+        if (configuration.context().historyRetrieval()) tools.addAll(Set.of("history_search", "history_read"));
+        return Set.copyOf(tools);
     }
 
     private static io.haifa.agent.policy.api.ApprovalMode policyMode(ApprovalMode mode) {

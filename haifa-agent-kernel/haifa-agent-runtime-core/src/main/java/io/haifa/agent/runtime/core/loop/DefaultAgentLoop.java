@@ -825,7 +825,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                 default -> AgentErrorCode.RUN_BUDGET_EXCEEDED;
             };
         }
-        if (error instanceof ContextRebuildExhaustedException) return AgentErrorCode.MODEL_CONTEXT_TOO_LONG;
+        if (error instanceof ContextRebuildExhaustedException exhausted) return exhausted.errorCode();
         if (!(error instanceof ModelInvocationException modelError)) {
             // A persistence failure that interrupted the step says nothing about the provider call it interrupted.
             return findFailure(error, StorageException.class) == null
@@ -1066,6 +1066,8 @@ public final class DefaultAgentLoop implements AgentLoop {
     }
 
     private static Map<String, Object> modelErrorDetails(RuntimeException error) {
+        if (findFailure(error, ModelContinuationException.class) == null
+                && error instanceof ContextRebuildExhaustedException exhausted) return exhausted.details();
         Map<String, Object> details = new LinkedHashMap<>();
         ModelContinuationException continuationFailure = findFailure(error, ModelContinuationException.class);
         if (continuationFailure != null) {

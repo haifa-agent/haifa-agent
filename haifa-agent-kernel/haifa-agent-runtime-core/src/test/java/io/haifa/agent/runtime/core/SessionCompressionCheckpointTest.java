@@ -539,6 +539,16 @@ class SessionCompressionCheckpointTest {
         scheduler.runAll();
 
         assertThat(runtime.find(accepted.runId()).orElseThrow().status()).isEqualTo(AgentRunStatus.FAILED);
+        assertThat(runtime.find(accepted.runId())
+                        .orElseThrow()
+                        .error()
+                        .orElseThrow()
+                        .details())
+                .containsEntry("contextFailure", "REBUILD_EXHAUSTED");
+        assertThat(traces)
+                .filteredOn(t -> t.operation().equals("runtime.error"))
+                .singleElement()
+                .satisfies(t -> assertThat(t.safeAttributes()).containsEntry("contextFailure", "REBUILD_EXHAUSTED"));
         assertThat(modelCalls).hasValue(3);
         assertThat(toolExecutions).hasValue(1);
         assertThat(store.steps(accepted.runId()))
@@ -550,7 +560,9 @@ class SessionCompressionCheckpointTest {
             assertThat(tool.providerCorrelationId().value())
                     .isNotEqualTo(tool.idempotencyKey().value());
         });
-        assertThat(traces).anyMatch(trace -> trace.operation().equals("context.forced-rebuild"));
+        assertThat(traces)
+                .filteredOn(trace -> trace.operation().equals("context.forced-rebuild"))
+                .hasSize(1);
         assertThat(traces)
                 .filteredOn(trace -> trace.operation().equals("context.built"))
                 .anySatisfy(trace -> assertThat(trace.safeAttributes())
