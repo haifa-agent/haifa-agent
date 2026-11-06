@@ -589,6 +589,106 @@ class CodingTerminalSelectionLifecycleTest {
         }
     }
 
+    @Test
+    void healthyProductRevisionRefreshesMetadataWithoutReadingHistoryAgain() throws Exception {
+        String session = SESSION_ID.value();
+        var initial = metadataSnapshot(session, 1, "Task");
+        var changed = metadataSnapshot(session, 2, "Renamed");
+        var pollStarted = new java.util.concurrent.CountDownLatch(1);
+        var changeReady = new java.util.concurrent.CountDownLatch(1);
+        var changeRead = new java.util.concurrent.CountDownLatch(1);
+        var metadataReads = new java.util.concurrent.atomic.AtomicInteger();
+        var historyReads = new java.util.concurrent.atomic.AtomicInteger();
+        var product = new ProductClientFixture() {
+            @Override
+            public CodingProtocol.TerminalSession terminalSession(String id) {
+                var original = super.terminalSession(id);
+                int reads = metadataReads.incrementAndGet();
+                var summary = new CodingProtocol.SessionSummary(
+                        id, PROJECT_ID.value(), reads == 1 ? "Task" : "Renamed", "ACTIVE", null, null, 0, 0, reads);
+                return new CodingProtocol.TerminalSession(summary, null, original.model(), null, "fixture");
+            }
+
+            @Override
+            public CodingPresentationSubscription observe(String id) {
+                return new CodingPresentationSubscription() {
+                    private boolean sent;
+
+                    public CodingProtocol.Snapshot initial() {
+                        return initial;
+                    }
+
+                    public CodingProtocol.Envelope poll(Duration timeout) throws InterruptedException {
+                        if (sent) {
+                            changeRead.countDown();
+                            new java.util.concurrent.CountDownLatch(1).await();
+                            return null;
+                        }
+                        pollStarted.countDown();
+                        changeReady.await();
+                        sent = true;
+                        return new CodingProtocol.Update("update", "view-1", 1, 2, changed);
+                    }
+
+                    public boolean closed() {
+                        return false;
+                    }
+
+                    public void close() {}
+                };
+            }
+
+            @Override
+            public CodingProtocol.CommandResult execute(CodingProtocol.CommandRequest request) {
+                throw new AssertionError("unexpected command");
+            }
+
+            @Override
+            public CodingProtocol.HistoryPage history(String id, int limit, Long beforeSequence) {
+                historyReads.incrementAndGet();
+                return new CodingProtocol.HistoryPage(id, List.of(), new CodingProtocol.History(false, null, true));
+            }
+        };
+        try (var controller = new CodingTerminalController(
+                PROJECT_ID,
+                null,
+                new TerminalEventPump(32),
+                new TerminalUiReducer(),
+                TerminalUiState.initial(120, 40),
+                Runnable::run,
+                Runnable::run,
+                Runnable::run)) {
+            controller.attachProductClient(product);
+            controller.open(SESSION_ID);
+            assertThat(pollStarted.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                    .isTrue();
+            controller.drainEvents();
+            changeReady.countDown();
+            assertThat(changeRead.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                    .isTrue();
+            controller.drainEvents();
+            assertThat(controller.state().session().orElseThrow().summary().displayName())
+                    .isEqualTo("Renamed");
+            assertThat(metadataReads).hasValue(2);
+            assertThat(historyReads).hasValue(1);
+        }
+    }
+
+    private static CodingProtocol.Snapshot metadataSnapshot(String session, long revision, String title) {
+        return new CodingProtocol.Snapshot(
+                "snapshot",
+                new CodingProtocol.Scope("view-1", "owner-1", "client-1", session, 1, "native"),
+                revision,
+                "ready",
+                new CodingProtocol.Session(session, title, revision, "ACTIVE", null, "model", "Model", "", 1, true),
+                List.of(),
+                new CodingProtocol.History(false, null, true),
+                null,
+                new CodingProtocol.Consent("ASK", null, false),
+                List.of(),
+                List.of());
+    }
+
     private abstract static class ProductClientFixture implements CodingClient {
         public CodingProtocol.ConnectionInfo connection() {
             return new CodingProtocol.ConnectionInfo(

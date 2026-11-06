@@ -151,6 +151,15 @@ public sealed interface TerminalUiAction {
         }
     }
 
+    record ProductSessionChanged(
+            io.haifa.agent.application.coding.terminal.state.TerminalSessionView view,
+            List<io.haifa.agent.application.coding.terminal.state.PendingMessage> pending)
+            implements TerminalUiAction {
+        public ProductSessionChanged {
+            pending = List.copyOf(pending);
+        }
+    }
+
     record ProductRunSelected(io.haifa.coding.api.CodingProtocol.Run run) implements TerminalUiAction {}
 
     record ProductActivityChanged(java.util.List<io.haifa.coding.api.CodingProtocol.Entry> entries)

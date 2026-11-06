@@ -201,6 +201,7 @@ public final class CodingTerminalController implements AutoCloseable {
     private boolean connectionUnavailable;
     private String connectionFailureCode;
     private long connectionCheckedAtMillis;
+    private final Map<SelectionToken, Long> productMetadataInFlight = new java.util.HashMap<>();
     private final TerminalSelection selection = new TerminalSelection();
     private CodingClient productClient;
     private CodingProtocol.ConnectionInfo productConnection;
@@ -571,6 +572,50 @@ public final class CodingTerminalController implements AutoCloseable {
         productHistoryPending = false;
     }
 
+    private void refreshProductSessionFacts() {
+        var observation = productObservation;
+        var snapshot = productSnapshot;
+        var token = currentSelection();
+        if (observation == null
+                || snapshot == null
+                || token.sessionId() == null
+                || isOperationInFlight(productMetadataInFlight, token)) return;
+        var requested = snapshot.session();
+        long operation = beginOperation(productMetadataInFlight, token);
+        submitMaintenanceEffect(
+                () -> {
+                    var view = reconcileTerminalView(token.sessionId());
+                    var pending = readPendingQueue(token.sessionId());
+                    return () -> {
+                        completeOperation(productMetadataInFlight, token, operation);
+                        if (productObservation != observation || !isCurrentSelection(token)) return;
+                        apply(new TerminalUiAction.ProductSessionChanged(view, pending));
+                        if (productSnapshot != null
+                                && !productSnapshot.session().equals(requested)
+                                && productFactsNeedRefresh(productSnapshot.session())) refreshProductSessionFacts();
+                    };
+                },
+                code -> {
+                    completeOperation(productMetadataInFlight, token, operation);
+                    if (productObservation == observation && isCurrentSelection(token)) {
+                        apply(new TerminalUiAction.RecoverableFailure(code));
+                    }
+                });
+    }
+
+    private boolean productFactsNeedRefresh(CodingProtocol.Session observed) {
+        return state.session()
+                .map(displayed -> observed.revision() > displayed.summary().revision()
+                        || observed.modelRevision() != displayed.model().revision()
+                        || !Objects.equals(
+                                observed.run() == null ? null : observed.run().id(),
+                                displayed
+                                        .activeRun()
+                                        .map(value -> value.runId().value())
+                                        .orElse(null)))
+                .orElse(false);
+    }
+
     private void drainProductObservation() {
         var observation = productObservation;
         if (observation == null) return;
@@ -590,12 +635,7 @@ public final class CodingTerminalController implements AutoCloseable {
                     apply(new TerminalUiAction.ProductRunSelected(run));
                 }
             }
-            metadataChanged = state.session()
-                    .map(displayed ->
-                            next.session().revision() > displayed.summary().revision()
-                                    || next.session().modelRevision()
-                                            != displayed.model().revision())
-                    .orElse(false);
+            metadataChanged = productFactsNeedRefresh(next.session());
             var history = productHistoryEntries(next);
             if (previous == null
                     || !history.equals(productHistoryEntries(previous))
@@ -630,10 +670,9 @@ public final class CodingTerminalController implements AutoCloseable {
         AgentRunId currentRun = state.currentRunId().orElse(null);
         if (!Objects.equals(previousRun, currentRun)) {
             replacePreviewSubscription(currentRun, selection.current());
-            if (currentRun != null) metadataChanged = true;
         }
         if (metadataChanged && productSnapshot != null && "ready".equals(productSnapshot.hydration()))
-            scheduleReconcile();
+            refreshProductSessionFacts();
         String failure = observation.takeFailure();
         if (failure != null) {
             closeProductObservation();
@@ -846,6 +885,7 @@ public final class CodingTerminalController implements AutoCloseable {
 
     private void clearOperationsForPreviousSelection() {
         reconcilesInFlight.clear();
+        productMetadataInFlight.clear();
         acknowledgementsInFlight.clear();
         modelSwitchesInFlight.clear();
     }

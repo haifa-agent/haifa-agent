@@ -120,6 +120,56 @@ public final class TerminalUiReducer {
                             state.exitRequested())
                     .withWaiting(Optional.empty());
         }
+        if (action instanceof TerminalUiAction.ProductSessionChanged update) {
+            var view = update.view();
+            var displayed = state.session().orElse(null);
+            if (displayed == null
+                    || !view.summary().sessionId().equals(displayed.summary().sessionId())
+                    || view.summary().revision() < displayed.summary().revision()
+                    || view.model().revision() < displayed.model().revision()) return state;
+            var prior = state.footer();
+            boolean showingRun =
+                    view.activeRun().map(TerminalSessionView.Run::runId).equals(state.currentRunId())
+                            && state.currentRunId().isPresent();
+            String task = showingRun
+                    ? "task: " + view.activeRunTaskSummary().orElse("description unavailable")
+                    : state.currentRunId().isPresent()
+                            ? prior.session()
+                            : "session: " + view.summary().displayName();
+            var footer = new TerminalFooter(
+                    prior.project(),
+                    prior.gitBranch(),
+                    prior.worktree(),
+                    prior.worktreeBranch(),
+                    task,
+                    "queue: " + view.summary().queuedCount(),
+                    view.model().model().providerDisplayName(),
+                    modelFooterSummary(view),
+                    prior.runStatus(),
+                    prior.sandbox());
+            var pending = new ArrayList<>(update.pending());
+            state.pending().stream()
+                    .filter(value -> value.kind() == PendingMessage.Kind.STEER)
+                    .forEach(pending::add);
+            return copy(
+                    state,
+                    state.loadedResources(),
+                    state.transcript(),
+                    List.copyOf(pending),
+                    state.status(),
+                    state.editorBuffer(),
+                    state.editorCursor(),
+                    state.selector(),
+                    footer,
+                    state.columns(),
+                    state.rows(),
+                    Optional.of(view),
+                    state.currentRunId(),
+                    state.appliedCursor(),
+                    state.seenEventIds(),
+                    state.recoverableError(),
+                    state.exitRequested());
+        }
         if (action instanceof TerminalUiAction.ProductRunSelected selection) {
             var run = selection.run();
             var runId = new AgentRunId(run.id());
