@@ -20,7 +20,7 @@ npm run pack:preview
 `artifacts/haifa-agent-coding-client-0.1.5-b3.0.tgz` contains a browser ESM bundle and declarations.
 Consumers install that tarball; they do not alias this source tree. Build copies canonical generated
 B1/B2 types and browser-safe shared invariants, and precompiles the one API JSON Schema with Ajv.
-Generated build inputs and artifacts are ignored. The existing Node contract runner uses those same
+The pack command creates the output directory on a clean checkout. Generated build inputs and artifacts are ignored. The existing Node contract runner uses those same
 invariants and fixtures. No second schema or Java lifecycle implementation is introduced.
 
 ```ts

@@ -9,6 +9,7 @@ import argparse
 import functools
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -31,9 +32,11 @@ def digest(path):
     with path.open('rb') as stream:return hashlib.file_digest(stream,'sha256').hexdigest()
 
 
-def run(command,cwd,log):
+def run_npm(arguments,cwd,log):
+    npm=shutil.which('npm.cmd' if os.name=='nt' else 'npm')
+    require(npm is not None,'NPM_REQUIRED')
     with log.open('w',encoding='utf-8') as output:
-        completed=subprocess.run(command,cwd=cwd,stdout=output,stderr=subprocess.STDOUT,timeout=300)
+        completed=subprocess.run([npm,*arguments],cwd=cwd,stdout=output,stderr=subprocess.STDOUT,timeout=300)
     require(completed.returncode==0,'EXTERNAL_BUILD_FAILED')
 
 
@@ -99,14 +102,14 @@ def main():
         receipt['stage']='external-ui-build'
         copy_project(ROOT/'examples/coding-browser-ui',root/'external-ui')
         (root/'external-ui/vendor').mkdir();shutil.copyfile(package,root/'external-ui/vendor'/NAME)
-        run(['npm','ci','--no-audit','--no-fund'],root/'external-ui',root/'external-ui-install.log')
-        run(['npm','run','build'],root/'external-ui',root/'external-ui-build.log')
+        run_npm(['ci','--no-audit','--no-fund'],root/'external-ui',root/'external-ui-install.log')
+        run_npm(['run','build'],root/'external-ui',root/'external-ui-build.log')
         receipt['stage']='official-web-build'
         copy_project(WEB,root/'official-web')
         (root/'haifa-coding-browser-client/artifacts').mkdir(parents=True)
         shutil.copyfile(package,root/'haifa-coding-browser-client/artifacts'/NAME)
-        run(['npm','ci','--no-audit','--no-fund'],root/'official-web',root/'official-web-install.log')
-        run(['npm','run','build'],root/'official-web',root/'official-web-build.log')
+        run_npm(['ci','--no-audit','--no-fund'],root/'official-web',root/'official-web-install.log')
+        run_npm(['run','build'],root/'official-web',root/'official-web-build.log')
         site=root/'site';shutil.copytree(root/'official-web/dist',site/'browser')
         (site/'sdk').mkdir();(site/'sdk/index.js').write_bytes(sdk_bytes)
         handler=functools.partial(StaticHandler,directory=str(site))

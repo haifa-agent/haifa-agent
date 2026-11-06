@@ -22,7 +22,7 @@
     "typecheck": "npm run contract:generate && tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test --experimental-test-isolation=none test/*.test.mjs",
     "prepack": "npm run build",
-    "pack:preview": "npm pack --pack-destination artifacts",
+    "pack:preview": "node -e \"require('node:fs').mkdirSync('artifacts', { recursive: true })\" && npm pack --pack-destination artifacts",
     "lint": "prettier --check src scripts test vite.config.ts"
   },
   "engines": {
