@@ -32,9 +32,11 @@ priority within the bounded history candidates. It remains optional quoted data 
 and versioned readback as other excerpts.
 Consecutive unified excerpts from one saved Run share its Run identifier in the request. Adjacent saved Tool
 excerpts from that Run share one untrusted data message. Each excerpt keeps its message identifier, version, range
-and body, and is revalidated independently.
-Without an explicit cache contract, historical-only selections use the source-data rule without the
-current Run checkpoint instructions. Current Run checkpoints retain the continuation instructions.
+and body, and is revalidated independently. A saved Tool excerpt is marked full only when it starts at the
+beginning and neither the stored source nor the selected window is truncated.
+Without an explicit cache contract, historical-only selections share coordinate column names across adjacent
+excerpts with simple identifiers and explain when full saved evidence can be reused for a source the current request
+confirms unchanged. Current Run checkpoints retain the continuation instructions.
 
 Without an explicit cache contract, unified working-set requests with only current Run messages omit
 the historical-data instruction. The instruction remains for saved excerpts, summaries and history

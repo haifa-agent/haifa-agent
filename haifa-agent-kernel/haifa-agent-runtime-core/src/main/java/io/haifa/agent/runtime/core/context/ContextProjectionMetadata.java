@@ -11,6 +11,7 @@ public final class ContextProjectionMetadata {
     public static final String PLAN_SOURCE = "working-set-plan";
     public static final String SUMMARY_HANDOFF_SOURCE = "working-set-summary";
     public static final String CURRENT_RUN_SUMMARY = "working-set-current-run-summary";
+    public static final String HISTORY_SOURCE_RULE_ID = "working-set-history-source-rule";
 
     private ContextProjectionMetadata() {}
 }

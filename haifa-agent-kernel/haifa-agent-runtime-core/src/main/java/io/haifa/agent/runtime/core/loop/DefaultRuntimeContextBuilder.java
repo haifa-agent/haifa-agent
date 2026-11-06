@@ -1,6 +1,7 @@
 package io.haifa.agent.runtime.core.loop;
 
 import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.CURRENT_RUN_SUMMARY;
+import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.HISTORY_SOURCE_RULE_ID;
 
 import io.haifa.agent.context.api.AgentContext;
 import io.haifa.agent.context.api.ContextBuildException;
@@ -43,8 +44,10 @@ import java.util.Objects;
 /** Builds trusted Context IR from frozen run state and persisted facts. */
 public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder {
     private static final int MAX_SKILL_DESCRIPTION_CHARS = 240;
-    private static final PromptComponent HISTORY_SOURCE_RULE =
-            historyRule("working-set-history-source-rule", RunWorkingSetSource.DATA_RULE);
+    private static final PromptComponent HISTORY_SOURCE_RULE = historyRule(
+            HISTORY_SOURCE_RULE_ID,
+            RunWorkingSetSource.DATA_RULE
+                    + " Reuse full saved Tool evidence when the current request confirms the source is unchanged.");
     private static final PromptComponent HISTORY_DATA_RULE = historyRule(
             "working-set-data-rule",
             RunWorkingSetSource.DATA_RULE
