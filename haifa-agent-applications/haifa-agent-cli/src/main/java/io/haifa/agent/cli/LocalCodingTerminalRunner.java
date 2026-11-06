@@ -43,20 +43,31 @@ final class LocalCodingTerminalRunner implements CliTerminalRunner {
                 StandaloneCodingAgent agent =
                         agentFactory.create(workspace, configuration, executionSink, traceObserver)) {
             LocalGitBranchResolver.GitWorkspaceDetails gitDetails = LocalGitBranchResolver.resolveDetails(workspace);
-            new CodingTerminalApplication(
-                            agent.projectId(),
-                            agent.client(),
-                            startup,
-                            terminalIo,
-                            new TerminalWorkspaceContext(
-                                    gitDetails.projectPath(),
-                                    gitDetails.gitBranch(),
-                                    gitDetails.worktreePath(),
-                                    gitDetails.worktreeBranch()),
-                            agent.authentication(),
-                            agent.toolOutputPreviewPublisher())
-                    .run();
+            var terminal = new CodingTerminalApplication(
+                    agent.projectId(),
+                    agent.client(),
+                    startup,
+                    terminalIo,
+                    new TerminalWorkspaceContext(
+                            gitDetails.projectPath(),
+                            gitDetails.gitBranch(),
+                            gitDetails.worktreePath(),
+                            gitDetails.worktreeBranch()),
+                    agent.authentication(),
+                    agent.toolOutputPreviewPublisher());
+            if (productPresentationEnabled()) {
+                try (var host = CodingHostServer.start(agent, "127.0.0.1", 0);
+                        var product = host.embeddedClient()) {
+                    terminal.run(product);
+                }
+            } else {
+                terminal.run();
+            }
         }
+    }
+
+    static boolean productPresentationEnabled() {
+        return "true".equalsIgnoreCase(System.getenv("HAIFA_CODING_TUI_PRODUCT"));
     }
 
     @FunctionalInterface

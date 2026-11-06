@@ -11,6 +11,7 @@ import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.AgentRunOutputEvent;
 import io.haifa.agent.runtime.api.InteractionResponseReceipt;
 import io.haifa.agent.runtime.api.InteractionView;
+import io.haifa.coding.api.CodingProtocol.Entry;
 import java.util.List;
 import java.util.Optional;
 
@@ -18,6 +19,19 @@ public sealed interface TerminalUiAction {
     record SessionLoaded(CodingSessionView view, List<String> resources) implements TerminalUiAction {}
 
     record HistoryLoaded(CodingSessionHistoryPage history) implements TerminalUiAction {}
+
+    record ProductDeliveryChanged(List<Entry> entries, List<String> notices) implements TerminalUiAction {
+        public ProductDeliveryChanged {
+            entries = List.copyOf(entries);
+            notices = List.copyOf(notices);
+        }
+    }
+
+    record ProductHistoryLoaded(List<Entry> entries, boolean earlier) implements TerminalUiAction {
+        public ProductHistoryLoaded {
+            entries = List.copyOf(entries);
+        }
+    }
 
     record SessionCleared(String status) implements TerminalUiAction {}
 

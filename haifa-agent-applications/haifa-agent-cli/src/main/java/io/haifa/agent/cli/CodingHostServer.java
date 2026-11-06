@@ -45,6 +45,10 @@ final class CodingHostServer implements AutoCloseable {
         return io.haifa.coding.host.internal.CodingHostServer.oversizedResponse(json, response);
     }
 
+    io.haifa.coding.api.CodingClient embeddedClient() {
+        return delegate.embeddedClient();
+    }
+
     int port() {
         return delegate.port();
     }

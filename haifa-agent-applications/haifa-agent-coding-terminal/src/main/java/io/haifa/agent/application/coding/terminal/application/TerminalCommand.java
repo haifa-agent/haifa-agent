@@ -4,6 +4,7 @@ public enum TerminalCommand {
     MESSAGE,
     NEW,
     RESUME,
+    HISTORY,
     RENAME,
     ARCHIVE,
     DELETE,

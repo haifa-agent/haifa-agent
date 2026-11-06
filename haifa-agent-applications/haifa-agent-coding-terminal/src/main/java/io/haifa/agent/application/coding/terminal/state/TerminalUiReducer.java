@@ -11,6 +11,7 @@ import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.AgentRunOutputEvent;
 import io.haifa.agent.runtime.api.AgentRunOutputEventType;
 import io.haifa.agent.runtime.api.RunEventPayloads;
+import io.haifa.coding.api.CodingProtocol.Entry;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -115,6 +116,49 @@ public final class TerminalUiReducer {
                             Optional.empty(),
                             state.exitRequested())
                     .withWaiting(Optional.empty());
+        }
+        if (action instanceof TerminalUiAction.ProductDeliveryChanged delivery) {
+            List<TranscriptItem> items = new ArrayList<>(state.transcript());
+            var previous = new java.util.HashMap<String, TranscriptItem>();
+            items.removeIf(item -> {
+                if (!item.id().startsWith("delivery-")) return false;
+                previous.put(item.id(), item);
+                return true;
+            });
+            for (Entry entry : delivery.entries()) {
+                var old = previous.get(entry.id());
+                items.add(productItem(entry, old == null || old.expanded()));
+            }
+            if (!delivery.notices().isEmpty()) {
+                items.add(new TranscriptItem(
+                        "delivery-window",
+                        TranscriptItem.Kind.RESOURCE,
+                        "Delivery notices",
+                        String.join("\n", delivery.notices()),
+                        "NOTICE",
+                        true));
+            }
+            return productTranscript(state, items);
+        }
+        if (action instanceof TerminalUiAction.ProductHistoryLoaded history) {
+            List<TranscriptItem> items = new ArrayList<>();
+            Set<String> ids = new HashSet<>();
+            for (Entry entry : history.entries()) {
+                if (ids.add(entry.id())) items.add(productItem(entry, false));
+            }
+            state.transcript().stream()
+                    .filter(item -> !item.id().equals("history-earlier") && ids.add(item.id()))
+                    .forEach(items::add);
+            if (history.earlier()) {
+                items.addFirst(new TranscriptItem(
+                        "history-earlier",
+                        TranscriptItem.Kind.RESOURCE,
+                        "Earlier history",
+                        "Use /history to read the previous page.",
+                        "RESTORED",
+                        true));
+            }
+            return productTranscript(state, items);
         }
         if (action instanceof TerminalUiAction.HistoryLoaded loaded) {
             if (state.session()
@@ -857,6 +901,61 @@ public final class TerminalUiReducer {
 
     private static boolean isInternalCheckpoint(RunEventPayloads.ResourceAvailable payload) {
         return "checkpoint".equalsIgnoreCase(payload.kind());
+    }
+
+    private static TerminalUiState productTranscript(TerminalUiState state, List<TranscriptItem> transcript) {
+        return copy(
+                state,
+                state.loadedResources(),
+                transcript,
+                state.pending(),
+                state.status(),
+                state.editorBuffer(),
+                state.editorCursor(),
+                state.selector(),
+                state.footer(),
+                state.columns(),
+                state.rows(),
+                state.session(),
+                state.currentRunId(),
+                state.appliedCursor(),
+                state.seenEventIds(),
+                state.recoverableError(),
+                state.exitRequested());
+    }
+
+    private static TranscriptItem productItem(Entry entry, boolean expanded) {
+        var kind =
+                switch (entry.kind()) {
+                    case "message" ->
+                        switch (entry.role()) {
+                            case "user" -> TranscriptItem.Kind.USER;
+                            case "assistant" -> TranscriptItem.Kind.ASSISTANT;
+                            default -> TranscriptItem.Kind.ERROR;
+                        };
+                    case "tool" -> TranscriptItem.Kind.TOOL;
+                    default -> TranscriptItem.Kind.RESOURCE;
+                };
+        String text = entry.text() + (entry.truncated() ? "\n[Presentation truncated]" : "");
+        int maximum = TranscriptItem.MAXIMUM_BODY_CHARACTERS;
+        if (text.length() > maximum) {
+            int end = Character.isHighSurrogate(text.charAt(maximum - 1)) ? maximum - 1 : maximum;
+            text = text.substring(0, end);
+        }
+        var item = new TranscriptItem(
+                entry.id(),
+                kind,
+                boundedProductLabel(entry.title(), 256, entry.kind()),
+                text,
+                boundedProductLabel(entry.status(), 64, "RESTORED"),
+                expanded);
+        return entry.runId() == null ? item : item.withSourceRunId(entry.runId());
+    }
+
+    private static String boundedProductLabel(String label, int length, String fallback) {
+        if (label.isBlank()) return fallback;
+        if (label.length() <= length) return label;
+        return label.substring(0, Character.isHighSurrogate(label.charAt(length - 1)) ? length - 1 : length);
     }
 
     private static TranscriptItem historyItem(

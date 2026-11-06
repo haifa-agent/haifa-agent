@@ -22,13 +22,189 @@ import io.haifa.agent.execution.api.ToolOutputPreview;
 import io.haifa.agent.execution.api.ToolOutputPreviewPublisher;
 import io.haifa.agent.runtime.api.InteractionView;
 import io.haifa.agent.runtime.api.RunEventPayloads;
+import io.haifa.coding.api.CodingClient;
+import io.haifa.coding.api.CodingClientException;
+import io.haifa.coding.api.CodingPresentationSubscription;
+import io.haifa.coding.api.CodingPreviewSubscription;
+import io.haifa.coding.api.CodingProtocol;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class CodingTerminalSelectionLifecycleTest {
+    @Test
+    void productObservationRendersDeliveryAndCancelUsesTheDisplayedExactTargetWithoutBlocking() throws Exception {
+        var legacy = new FakeClient(activeView());
+        var productReady = new java.util.concurrent.CountDownLatch(1);
+        var observationClosed = new java.util.concurrent.CountDownLatch(1);
+        var requests = new ArrayList<CodingProtocol.Command>();
+        var control = new ArrayDeque<Runnable>();
+        var pump = new TerminalEventPump(32);
+        String session = SESSION_ID.value();
+        var snapshot = new CodingProtocol.Snapshot(
+                "snapshot",
+                new CodingProtocol.Scope("view-1", "owner-1", "client-1", session, 1, "native"),
+                1,
+                "ready",
+                new CodingProtocol.Session(
+                        session,
+                        "Task",
+                        1,
+                        "ACTIVE",
+                        new CodingProtocol.Run("run-1", "RUNNING", 7),
+                        "model",
+                        "Model",
+                        "",
+                        1,
+                        true),
+                List.of(new CodingProtocol.Entry(
+                        "delivery-1",
+                        "notice",
+                        "run-1",
+                        "delivery",
+                        "Budget threshold",
+                        "Usage: 7 / 8",
+                        "THRESHOLD",
+                        null,
+                        false,
+                        null,
+                        null,
+                        null,
+                        null,
+                        "TOKEN_BUDGET",
+                        null)),
+                new CodingProtocol.History(true, 5L, true),
+                null,
+                new CodingProtocol.Consent("ASK", null, false),
+                List.of(new CodingProtocol.Action(
+                        "cancel", new CodingProtocol.Target(session, "run-1", null, 7L), null, true, null)),
+                List.of());
+        var product = new CodingClient() {
+            public CodingProtocol.ConnectionInfo connection() {
+                return new CodingProtocol.ConnectionInfo(
+                        "owner-1",
+                        "client-1",
+                        PROJECT_ID.value(),
+                        "1",
+                        "Host",
+                        List.of("coding-product-v1", "session-presentation-v1"),
+                        "native");
+            }
+
+            public CodingProtocol.QueryResult query(CodingProtocol.Query query) {
+                throw new AssertionError("unexpected query");
+            }
+
+            public CodingProtocol.CommandResult execute(CodingProtocol.CommandRequest request) {
+                requests.add(request.command());
+                throw new CodingClientException("ACTIVE_RUN_MISMATCH", false);
+            }
+
+            public CodingPresentationSubscription observe(String sessionId) {
+                assertThat(sessionId).isEqualTo(session);
+                return new CodingPresentationSubscription() {
+                    public CodingProtocol.Snapshot initial() {
+                        return snapshot;
+                    }
+
+                    public CodingProtocol.Envelope poll(Duration timeout) throws InterruptedException {
+                        productReady.countDown();
+                        new java.util.concurrent.CountDownLatch(1).await();
+                        return null;
+                    }
+
+                    public boolean closed() {
+                        return false;
+                    }
+
+                    public void close() {
+                        observationClosed.countDown();
+                    }
+                };
+            }
+
+            public CodingPreviewSubscription preview(String sessionId, String runId) {
+                throw new AssertionError("unexpected preview");
+            }
+
+            public CodingProtocol.HistoryPage history(String sessionId, int limit, Long beforeSequence) {
+                assertThat(sessionId).isEqualTo(session);
+                assertThat(beforeSequence).isEqualTo(5L);
+                return new CodingProtocol.HistoryPage(
+                        session,
+                        List.of(new CodingProtocol.Entry(
+                                "history-4",
+                                "message",
+                                null,
+                                "user",
+                                "User",
+                                "Earlier fixture message",
+                                "RESTORED",
+                                4L,
+                                false,
+                                null,
+                                null,
+                                null,
+                                null,
+                                null,
+                                null)),
+                        new CodingProtocol.History(false, null, true));
+            }
+
+            public boolean renew() {
+                return true;
+            }
+
+            public void close() {
+                throw new AssertionError("terminal does not own the client");
+            }
+        };
+        try (var controller = new CodingTerminalController(
+                PROJECT_ID,
+                legacy,
+                pump,
+                new TerminalUiReducer(),
+                TerminalUiState.initial(120, 40),
+                control::add,
+                Runnable::run,
+                Runnable::run)) {
+            controller.attachProductClient(product);
+            controller.open(SESSION_ID);
+            assertThat(productReady.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                    .isTrue();
+            controller.drainEvents();
+            assertThat(controller.state().transcript()).anySatisfy(item -> {
+                assertThat(item.title()).isEqualTo("Budget threshold");
+                assertThat(item.body()).isEqualTo("Usage: 7 / 8");
+            });
+
+            controller.accept(input(TerminalInput.Kind.EXECUTE_COMMAND, "/history"));
+            assertThat(controller.state().transcript().getFirst().body()).isEqualTo("Earlier fixture message");
+
+            controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
+            controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
+            assertThat(controller.state().status()).isEqualTo("Cancelling");
+            assertThat(requests).isEmpty();
+            pump.offer(new TerminalUiAction.TerminalResized(80, 24));
+            controller.drainEvents();
+            assertThat(controller.state().columns()).isEqualTo(80);
+            control.removeFirst().run();
+            controller.drainEvents();
+            assertThat(requests).singleElement().satisfies(command -> {
+                assertThat(command.operation()).isEqualTo("cancel");
+                assertThat(command.target())
+                        .isEqualTo(new CodingProtocol.CommandTarget(PROJECT_ID.value(), session, "run-1", null, 7L));
+            });
+            assertThat(legacy.cancelledRuns).isEmpty();
+        }
+        assertThat(observationClosed.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                .isTrue();
+    }
+
     @Test
     void remoteConnectShowsCompleteLocalInstructionsWithoutCollectingSecretsAndCanBeDismissed() {
         var client = new FakeClient(activeView());

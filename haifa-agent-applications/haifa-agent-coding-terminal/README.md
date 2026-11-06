@@ -5,10 +5,21 @@ Coding Agent 的 tui4j 交互产品层。布局、信息层级和交互以
 `docs/prompts/19-coding-agent-terminal-ui-ux-refactor-prompt.md` 为准；模型连接流程同时遵守
 `docs/prd/28-coding-agent-model-authentication-and-codex-subscription-login-prd.md`；界面支持响应式双栏工作区与可折叠信息侧栏（Ctrl+X B 切换），不自行发明无序扩展 UI。
 
+## 产品协议预览
+
+设置环境变量 `HAIFA_CODING_TUI_PRODUCT=true` 可试用产品协议。远程模式连接以
+`haifa-coding host --presentation` 启动的 Host。嵌入模式在当前 CLI 进程内持有同一 Runtime owner，
+通过 embedded client 获取快照。两种模式均使用现有终端编辑器和选择器。使用 `/history` 可读取
+更早的有界历史。会话输入、取消和交互响应通过产品命令提交，审批与取消使用当前快照中的精确目标。
+本地登录继续使用可信本地凭据入口。远程模式提供 Host 端管理指引。
+
+本预览仍用兼容会话客户端读取部分会话元数据、实时输出和处理尚未迁移的辅助命令。关闭环境变量
+即可使用现有 native 路径。远程模式在 Host 缺少产品能力时显式失败。
+
 ## 自主交付状态
 
-Terminal 只消费 Runtime API 的 `DeliveryLifecycle` 安全 DTO，不读取 Runtime Store、SQLite、模型正文或
-Tool 原始输出来推断交付状态。`completion.deferred` 的 `phase` 由 Runtime 中性发布为 `COMPLETION`，
+产品协议预览从展示快照直接读取 DeliveryLifecycle 卡片。兼容入口消费 Runtime API 的
+`DeliveryLifecycle` 安全 DTO。两种入口均依赖明确的交付事实。`completion.deferred` 的 `phase` 由 Runtime 中性发布为 `COMPLETION`，
 Terminal 统一显示 Completion deferred，不再把 Runtime 的 blocker code 猜测成 Recovering 或 Verifying；
 `budget.threshold-reached` 显示 Budget threshold；卡片只包含
 稳定 reason code、缺失 Evidence code、实际限制资源、当前用量/冻结上限、剩余百分比和纠偏次数，

@@ -8,6 +8,7 @@ import io.haifa.agent.application.coding.terminal.tui4j.Tui4jTerminalIo;
 import io.haifa.agent.application.project.product.ProjectProductException;
 import io.haifa.agent.cli.remote.RemoteCodingClientInfo;
 import io.haifa.agent.cli.remote.RemoteCodingSessionClient;
+import io.haifa.coding.client.CodingClients;
 import java.io.PrintStream;
 import java.net.URI;
 import java.util.Objects;
@@ -42,7 +43,10 @@ final class RemoteCodingTerminalRunner implements CliRemoteTerminalRunner {
     public void run(URI endpoint, CodingTerminalStartup startup, PrintStream output) {
         Tui4jTerminalIo terminalIo = Objects.requireNonNull(terminalIoFactory.get(), "terminal IO must not be null");
         terminalIo.requireInteractive();
-        try (RemoteCodingSessionClient client = connector.apply(endpoint)) {
+        try (var product = LocalCodingTerminalRunner.productPresentationEnabled()
+                        ? CodingClients.connect(endpoint)
+                        : null;
+                RemoteCodingSessionClient client = connector.apply(endpoint)) {
             RemoteCodingClientInfo info = client.info();
             output.println("Remote CA Host connected: " + endpoint);
             output.println("Host: " + info.hostName() + "  Project: "
@@ -84,7 +88,7 @@ final class RemoteCodingTerminalRunner implements CliRemoteTerminalRunner {
                                                     .orElse(
                                                             "This Host does not advertise a locally managed default credential. "
                                                                     + "Inspect /account and the Host's configured credential source; remote secret entry stays unavailable.")))
-                    .run();
+                    .run(product);
         } catch (ProjectProductException failure) {
             output.println("[" + failure.code() + "] " + failure.getMessage());
             throw failure;

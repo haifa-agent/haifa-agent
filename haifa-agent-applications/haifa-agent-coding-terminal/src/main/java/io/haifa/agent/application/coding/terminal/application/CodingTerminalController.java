@@ -44,6 +44,9 @@ import io.haifa.agent.runtime.api.RunEventPayloads;
 import io.haifa.agent.runtime.api.RunEventSubscription;
 import io.haifa.agent.runtime.api.RunOutputCursor;
 import io.haifa.agent.runtime.api.RunOutputSubscription;
+import io.haifa.coding.api.CodingClient;
+import io.haifa.coding.api.CodingClientException;
+import io.haifa.coding.api.CodingProtocol;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
@@ -194,6 +197,14 @@ public final class CodingTerminalController implements AutoCloseable {
     private String connectionFailureCode;
     private long connectionCheckedAtMillis;
     private final TerminalSelection selection = new TerminalSelection();
+    private CodingClient productClient;
+    private CodingProtocol.ConnectionInfo productConnection;
+    private TerminalProductObservation productObservation;
+    private String productSession;
+    private CodingProtocol.Snapshot productSnapshot;
+    private Long productHistoryBefore;
+    private int productHistoryPages;
+    private boolean productHistoryPending;
     private long nextObservationEpoch;
     private long observationEpoch;
     private long nextOperationEpoch;
@@ -496,6 +507,184 @@ public final class CodingTerminalController implements AutoCloseable {
         return mouseReportingEnabled;
     }
 
+    void attachProductClient(CodingClient product) {
+        this.productConnection = product.connection();
+        if (!productConnection.projectId().equals(projectId.value())
+                || !productConnection
+                        .capabilities()
+                        .containsAll(List.of("coding-product-v1", "session-presentation-v1"))) {
+            throw new CodingClientException("PRODUCT_CAPABILITY_UNSUPPORTED", false);
+        }
+        this.productClient = product;
+    }
+
+    private void observeProductSession(String sessionId) {
+        if (productClient == null || sessionId.equals(productSession)) return;
+        closeProductObservation();
+        productSession = sessionId;
+        productObservation = new TerminalProductObservation(productClient, productConnection, sessionId);
+    }
+
+    private void closeProductObservation() {
+        if (productObservation != null) productObservation.close();
+        productObservation = null;
+        productSession = null;
+        productSnapshot = null;
+        productHistoryBefore = null;
+        productHistoryPages = 0;
+        productHistoryPending = false;
+    }
+
+    private void drainProductObservation() {
+        if (productObservation == null) return;
+        var next = productObservation.takeSnapshot();
+        if (next != null) {
+            var previous = productSnapshot;
+            productSnapshot = next;
+            if (previous == null) {
+                productHistoryBefore = next.history().beforeSequence();
+                apply(new TerminalUiAction.ProductHistoryLoaded(
+                        next.entries().stream()
+                                .filter(entry -> entry.sequence() != null)
+                                .toList(),
+                        productHistoryBefore != null));
+            }
+            var entries = deliveryEntries(next);
+            if (previous == null
+                    || !entries.equals(deliveryEntries(previous))
+                    || !next.notices().equals(previous.notices())) {
+                apply(new TerminalUiAction.ProductDeliveryChanged(entries, next.notices()));
+            }
+        }
+        String failure = productObservation.takeFailure();
+        if (failure != null) {
+            closeProductObservation();
+            apply(new TerminalUiAction.RecoverableFailure(failure));
+        }
+    }
+
+    private static List<CodingProtocol.Entry> deliveryEntries(CodingProtocol.Snapshot snapshot) {
+        return snapshot.entries().stream()
+                .filter(entry -> "notice".equals(entry.kind()) && "delivery".equals(entry.role()))
+                .toList();
+    }
+
+    private void loadEarlierProductHistory() {
+        if (productObservation == null || productSnapshot == null) {
+            apply(new TerminalUiAction.RecoverableFailure("PRODUCT_VIEW_NOT_READY"));
+            return;
+        }
+        if (productHistoryPending) return;
+        if (productHistoryBefore == null || productHistoryPages >= 6) {
+            apply(new TerminalUiAction.StatusChanged("No earlier history in the available window"));
+            return;
+        }
+        var observation = productObservation;
+        String session = productSession;
+        Long before = productHistoryBefore;
+        productHistoryPending = true;
+        apply(new TerminalUiAction.StatusChanged("Loading earlier history"));
+        submitEffect(
+                () -> {
+                    var page = productClient.history(session, 25, before);
+                    if (!session.equals(page.sessionId())
+                            || page.history().beforeSequence() != null
+                                    && page.history().beforeSequence() >= before) {
+                        throw new CodingClientException("INVALID_HISTORY_SCOPE", false);
+                    }
+                    return () -> {
+                        if (productObservation != observation) return;
+                        productHistoryPending = false;
+                        productHistoryPages++;
+                        productHistoryBefore = page.history().beforeSequence();
+                        apply(new TerminalUiAction.ProductHistoryLoaded(
+                                page.entries(), productHistoryBefore != null && productHistoryPages < 6));
+                        apply(new TerminalUiAction.StatusChanged("Earlier history loaded"));
+                    };
+                },
+                code -> {
+                    if (productObservation != observation) return;
+                    productHistoryPending = false;
+                    apply(new TerminalUiAction.RecoverableFailure(code));
+                });
+    }
+
+    private void executeProductAction(
+            String operation,
+            String choice,
+            String session,
+            String run,
+            String interaction,
+            Long revision,
+            List<CodingProtocol.QuestionAnswer> answers) {
+        var snapshot = productSnapshot;
+        if (snapshot == null
+                || productObservation == null
+                || !productObservation.hasAuthority(snapshot.scope().viewId())
+                || !snapshot.scope().sessionId().equals(session)
+                || !"ready".equals(snapshot.hydration())) {
+            apply(new TerminalUiAction.RecoverableFailure("PRODUCT_VIEW_NOT_READY"));
+            return;
+        }
+        var candidates = interaction == null
+                ? snapshot.actions().stream()
+                : snapshot.entries().stream()
+                        .map(CodingProtocol.Entry::interaction)
+                        .filter(Objects::nonNull)
+                        .filter(value -> value.id().equals(interaction))
+                        .flatMap(value -> value.actions().stream());
+        var action = candidates
+                .filter(value ->
+                        value.available() && value.kind().equals(operation) && Objects.equals(value.choice(), choice))
+                .filter(value -> value.target().sessionId().equals(session)
+                        && Objects.equals(value.target().runId(), run)
+                        && Objects.equals(value.target().interactionId(), interaction)
+                        && (revision == null || Objects.equals(value.target().targetRevision(), revision)))
+                .findFirst()
+                .orElse(null);
+        if (action == null) {
+            apply(new TerminalUiAction.RecoverableFailure("PRODUCT_ACTION_UNAVAILABLE"));
+            return;
+        }
+        var target = action.target();
+        String requestId = UUID.randomUUID().toString();
+        var command = new CodingProtocol.Command(
+                "command",
+                action.kind(),
+                requestId,
+                requestId,
+                new CodingProtocol.CommandTarget(
+                        productConnection.projectId(),
+                        target.sessionId(),
+                        target.runId(),
+                        target.interactionId(),
+                        target.targetRevision()),
+                null,
+                action.choice(),
+                null,
+                List.of());
+        var request =
+                new CodingProtocol.CommandRequest(command, new CodingProtocol.CommandOptions(false, false, answers));
+        var token = currentSelection();
+        submitControlEffect(
+                () -> {
+                    var receipt = productClient.execute(request).receipt();
+                    return () -> {
+                        if (!isCurrentSelection(token)) return;
+                        switch (receipt.disposition()) {
+                            case "accepted" -> apply(new TerminalUiAction.StatusChanged("Accepted; waiting for Host"));
+                            case "unknown" -> apply(new TerminalUiAction.RecoverableFailure("REMOTE_OUTCOME_UNKNOWN"));
+                            default ->
+                                apply(new TerminalUiAction.RecoverableFailure(
+                                        Objects.requireNonNullElse(receipt.reasonCode(), "PRODUCT_ACTION_REJECTED")));
+                        }
+                    };
+                },
+                code -> {
+                    if (isCurrentSelection(token)) apply(new TerminalUiAction.RecoverableFailure(code));
+                });
+    }
+
     public void initializeMouseReporting(boolean enabled) {
         mouseReportingEnabled = enabled;
     }
@@ -689,7 +878,9 @@ public final class CodingTerminalController implements AutoCloseable {
         Objects.requireNonNull(submission, "submission must not be null");
         try {
             CodingSessionView view;
-            if (submission.sessionId().isEmpty()) {
+            if (productClient != null) {
+                view = executeProductMessage(submission);
+            } else if (submission.sessionId().isEmpty()) {
                 CodingSessionCreateOptions options = submission
                         .initialModelId()
                         .map(CodingSessionCreateOptions::withInitialModel)
@@ -713,6 +904,9 @@ public final class CodingTerminalController implements AutoCloseable {
                     submission.outputRunId(),
                     submission.outputCursor());
             return MessageSubmissionResult.succeeded(submission, loaded);
+        } catch (CodingClientException exception) {
+            return MessageSubmissionResult.failed(
+                    submission, exception.outcomeUnknown() ? "REMOTE_OUTCOME_UNKNOWN" : exception.code());
         } catch (ProjectProductException exception) {
             return MessageSubmissionResult.failed(submission, exception.code());
         } catch (IllegalArgumentException
@@ -720,6 +914,40 @@ public final class CodingTerminalController implements AutoCloseable {
                 | SecurityException
                 | UnsupportedOperationException exception) {
             return MessageSubmissionResult.failed(submission, safeFailureCode(exception));
+        }
+    }
+
+    private CodingSessionView executeProductMessage(PreparedMessageSubmission submission) {
+        String session = submission.sessionId().map(AgentSessionId::value).orElse(null);
+        String run = submission.activeRunId().map(AgentRunId::value).orElse(null);
+        String operation =
+                session == null ? "create" : run == null ? "submit" : submission.followUp() ? "followUp" : "steer";
+        var command = new CodingProtocol.Command(
+                "command",
+                operation,
+                submission.idempotencyKey(),
+                submission.idempotencyKey(),
+                new CodingProtocol.CommandTarget(productConnection.projectId(), session, run, null, null),
+                submission.text(),
+                submission.initialModelId().orElse(null),
+                null,
+                List.of());
+        var result = productClient.execute(command);
+        if ("unknown".equals(result.receipt().disposition())) {
+            throw new CodingClientException("REMOTE_OUTCOME_UNKNOWN", true);
+        }
+        if (!"accepted".equals(result.receipt().disposition())) {
+            throw new CodingClientException(
+                    Objects.requireNonNullElse(result.receipt().reasonCode(), "PRODUCT_ACTION_REJECTED"), false);
+        }
+        if (session == null && result.session() != null)
+            session = result.session().sessionId();
+        if (session == null) throw new CodingClientException("PRODUCT_RECEIPT_SCOPE_MISSING", true);
+        try {
+            return client.reconcile(new AgentSessionId(session));
+        } catch (RuntimeException failure) {
+            // The Host already accepted the command. A failed view read cannot make it safe to submit again.
+            throw new CodingClientException("REMOTE_OUTCOME_UNKNOWN", true);
         }
     }
 
@@ -1156,6 +1384,7 @@ public final class CodingTerminalController implements AutoCloseable {
         submitMaintenanceEffect(
                 () -> {
                     boolean replaced = client.renewConnection();
+                    if (productClient != null) productClient.renew();
                     var consent = consentSession.flatMap(client::sessionApprovalStatus);
                     return () -> {
                         consent.ifPresent(value -> {
@@ -1283,6 +1512,7 @@ public final class CodingTerminalController implements AutoCloseable {
         drainDeferredCleanup();
         tryObservationRecovery();
         drainEffectCompletions();
+        drainProductObservation();
         boolean reconcile = pump.consumeOverflow();
         for (TerminalUiAction action : pump.drain(PAGE_SIZE)) {
             apply(action);
@@ -1382,6 +1612,9 @@ public final class CodingTerminalController implements AutoCloseable {
                 Runnable completion;
                 try {
                     completion = Objects.requireNonNull(work.get(), "effect completion must not be null");
+                } catch (CodingClientException exception) {
+                    String code = exception.outcomeUnknown() ? "REMOTE_OUTCOME_UNKNOWN" : exception.code();
+                    completion = () -> failure.accept(code);
                 } catch (ProjectProductException exception) {
                     completion = () -> failure.accept(exception.code());
                 } catch (IllegalArgumentException
@@ -2246,6 +2479,7 @@ public final class CodingTerminalController implements AutoCloseable {
                 }
                 apply(new TerminalUiAction.StatusChanged("New session: enter the first message"));
             }
+            case HISTORY -> loadEarlierProductHistory();
             case RESUME -> {
                 apply(new TerminalUiAction.StatusChanged("Searching sessions"));
                 submitEffect(
@@ -2480,6 +2714,19 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private boolean cancelCurrentRunIfPresent() {
+        if (productClient != null) {
+            if (state.currentRunId().isEmpty() || state.session().isEmpty()) return false;
+            apply(new TerminalUiAction.StatusChanged("Cancelling"));
+            executeProductAction(
+                    "cancel",
+                    null,
+                    state.session().orElseThrow().summary().sessionId().value(),
+                    state.currentRunId().orElseThrow().value(),
+                    null,
+                    null,
+                    List.of());
+            return true;
+        }
         if (state.currentRunId().isEmpty()) {
             if (state.session().isEmpty()) return false;
             AgentSessionId sessionId = state.session().orElseThrow().summary().sessionId();
@@ -2671,7 +2918,10 @@ public final class CodingTerminalController implements AutoCloseable {
             AgentRunId previousOutputRunId,
             RunOutputCursor previousOutputCursor) {
         List<String> resources = client.loadedResources();
-        var history = client.history(view.summary().sessionId(), HISTORY_LIMIT);
+        var history = productClient == null
+                ? client.history(view.summary().sessionId(), HISTORY_LIMIT)
+                : io.haifa.agent.application.project.product.coding.CodingSessionHistoryPage.empty(
+                        view.summary().sessionId());
         List<PendingMessage> pending = client.restorableMessages(view.summary().sessionId(), 100).stream()
                 .map(value -> new PendingMessage(
                         value.followUpId(), PendingMessage.Kind.FOLLOW_UP, value.summary(), value.revision()))
@@ -2782,7 +3032,11 @@ public final class CodingTerminalController implements AutoCloseable {
         activeInteraction = null;
         interactionHydrationInFlight = null;
         apply(new TerminalUiAction.SessionLoaded(loaded.view(), loaded.resources()));
-        if (!sameSession) apply(new TerminalUiAction.HistoryLoaded(loaded.history()));
+        if (productClient != null) {
+            observeProductSession(loaded.view().summary().sessionId().value());
+        } else if (!sameSession) {
+            apply(new TerminalUiAction.HistoryLoaded(loaded.history()));
+        }
         apply(new TerminalUiAction.PendingChanged(loaded.pending()));
         for (AgentRunEvent event : loaded.events()) {
             apply(new TerminalUiAction.RunEventReceived(event));
@@ -3426,6 +3680,10 @@ public final class CodingTerminalController implements AutoCloseable {
         activeInteraction = null;
         apply(new TerminalUiAction.SelectorClosed());
         apply(new TerminalUiAction.StatusChanged("Dismissing questions"));
+        if (productClient != null) {
+            executeProductClarification(draft, "cancel", List.of());
+            return;
+        }
         SelectionToken token = currentSelection();
         String idempotencyKey = UUID.randomUUID().toString();
         submitControlEffect(
@@ -3449,6 +3707,18 @@ public final class CodingTerminalController implements AutoCloseable {
         activeInteraction = null;
         apply(new TerminalUiAction.SelectorClosed());
         apply(new TerminalUiAction.StatusChanged("Submitting answer"));
+        if (productClient != null) {
+            var answers = new ArrayList<CodingProtocol.QuestionAnswer>();
+            for (int index = 0; index < draft.questionCount(); index++) {
+                String custom = draft.customAnswers().get(index);
+                answers.add(new CodingProtocol.QuestionAnswer(
+                        draft.questions().get(index).header(),
+                        draft.selections().get(index),
+                        custom.isBlank() ? null : custom));
+            }
+            executeProductClarification(draft, "submit", List.copyOf(answers));
+            return;
+        }
         java.util.List<io.haifa.agent.core.content.ContentPart> parts =
                 ClarificationDetails.answerParts(draft.selections(), draft.customAnswers());
         SelectionToken token = currentSelection();
@@ -3465,6 +3735,19 @@ public final class CodingTerminalController implements AutoCloseable {
                 code -> {
                     if (isCurrentSelection(token)) handleInteractionResponseFailure(code);
                 });
+    }
+
+    private void executeProductClarification(
+            ClarificationDraft draft, String choice, List<CodingProtocol.QuestionAnswer> answers) {
+        var interaction = draft.interaction();
+        executeProductAction(
+                "respond",
+                choice,
+                interaction.sessionId().value(),
+                interaction.runId().value(),
+                interaction.requestId().value(),
+                interaction.revision(),
+                answers);
     }
 
     /** The answer draft of one pending clarification; question order and the free-text lane stay separate. */
@@ -4760,6 +5043,17 @@ public final class CodingTerminalController implements AutoCloseable {
                                 ? "Rejecting"
                                 : action.equals(InteractionAction.APPROVE) ? "Approving" : "Submitting response"));
                 activeInteraction = null;
+                if (productClient != null) {
+                    executeProductAction(
+                            forSession ? "allowForSession" : "respond",
+                            forSession ? "approve" : action.value(),
+                            interaction.sessionId().value(),
+                            interaction.runId().value(),
+                            interaction.requestId().value(),
+                            interaction.revision(),
+                            List.of());
+                    return;
+                }
                 SelectionToken token = currentSelection();
                 String idempotencyKey = UUID.randomUUID().toString();
                 submitControlEffect(
@@ -5367,6 +5661,9 @@ public final class CodingTerminalController implements AutoCloseable {
     private void apply(TerminalUiAction action) {
         if (closed) return;
         if (action instanceof TerminalUiAction.RunEventReceived received) {
+            if (productClient != null && received.event().payload() instanceof RunEventPayloads.DeliveryLifecycle) {
+                return;
+            }
             if (!isCurrentStream(
                     received.selectionGeneration(),
                     received.event().runId(),
@@ -5486,6 +5783,7 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void detachSubscriptions() {
+        closeProductObservation();
         RunEventSubscription previous = subscription;
         RunOutputSubscription previousOutput = outputSubscription;
         ObservationPermit previousPermit = subscriptionPermit;
@@ -5559,6 +5857,7 @@ public final class CodingTerminalController implements AutoCloseable {
             owned = new java.util.ArrayList<>(ownedObservations);
             ownedObservations.clear();
         }
+        closeProductObservation();
         selection.clear();
         observationEpoch = 0L;
         previewEpoch = 0L;
