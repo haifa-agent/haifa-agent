@@ -64,13 +64,13 @@ class StaticHandler(SimpleHTTPRequestHandler):
 
 
 def fixture_snapshot(session,view_id):
-    value=json.loads((ROOT/'haifa-agent-applications/haifa-coding-api/contract/fixtures/snapshot.json').read_text())
+    value=json.loads((ROOT/'haifa-agent-applications/haifa-coding-api/contract/fixtures/snapshot.json').read_text(encoding='utf-8'))
     value['scope'].update(source='browser',sessionId=session,viewId=view_id)
     value['session'].update(id=session,title='合成测试会话 '+session,run=None,context='Synthetic renderer fixture; no Host')
     value['entries']=[]
     value['actions']=[{'kind':'submit','target':{'sessionId':session,'runId':None,'interactionId':None,'targetRevision':None},'choice':None,'available':True,'reason':None}]
     if session=='A':
-        source=json.loads((ROOT/'haifa-agent-applications/haifa-coding-api/contract/fixtures/snapshot.json').read_text())
+        source=json.loads((ROOT/'haifa-agent-applications/haifa-coding-api/contract/fixtures/snapshot.json').read_text(encoding='utf-8'))
         message=source['entries'][0]
         message.update(id='safe-message',text='<img src=x onerror="window.unsafeFixtureExecuted=true"> 中文 😀 \u001b[31m',interactionId=None)
         value['entries'].append(message)
@@ -148,7 +148,7 @@ def main():
             page.screenshot(path=str(root/'unpaired-desktop.png'),full_page=True)
             require(page.evaluate("typeof process==='undefined'&&typeof Buffer==='undefined'"),'NODE_GLOBAL_IN_BROWSER')
             receipt['stage']='browser-pure-protocol'
-            fixture=json.loads((ROOT/'haifa-agent-applications/haifa-coding-api/contract/fixtures/snapshot.json').read_text())
+            fixture=json.loads((ROOT/'haifa-agent-applications/haifa-coding-api/contract/fixtures/snapshot.json').read_text(encoding='utf-8'))
             pure=page.evaluate('''async(value)=>{const sdk=await import('/sdk/index.js');const bytes=new TextEncoder().encode('event: presentation\\r\\ndata: 中文 😀\\r\\n\\r\\n');const stream=new ReadableStream({start(c){for(const b of bytes)c.enqueue(Uint8Array.of(b));c.close();}});const frames=[];for await(const data of sdk.readSse(stream,'presentation',4096,new AbortController().signal))frames.push(data);return{valid:sdk.checkEnvelope(value),frames};}''',fixture)
             require(pure=={'valid':True,'frames':['中文 😀']},'BROWSER_PURE_PROTOCOL')
             receipt['checks']['packedSdkExecutesWithoutNodeOrEvalUnderCsp']=True
