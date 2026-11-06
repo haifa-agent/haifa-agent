@@ -267,6 +267,18 @@ class CodingBrowserHostTest {
                         .build();
                 var response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
                 assertThat(response.statusCode()).isEqualTo(200);
+                if (!expiry) {
+                    var duplicate = http.send(request, HttpResponse.BodyHandlers.ofString());
+                    assertThat(duplicate.statusCode()).isEqualTo(403);
+                    var stillAttached = http.send(request, HttpResponse.BodyHandlers.ofString());
+                    assertThat(CodingHostFixture.JSON
+                                    .readTree(stillAttached.body())
+                                    .path("error")
+                                    .path("data")
+                                    .path("reasonCode")
+                                    .asText())
+                            .isEqualTo("HOST_SUBSCRIPTION_ATTACHED");
+                }
                 var disconnected = workers.submit(() -> {
                     try (var input = response.body()) {
                         while (input.read() != -1) {}
