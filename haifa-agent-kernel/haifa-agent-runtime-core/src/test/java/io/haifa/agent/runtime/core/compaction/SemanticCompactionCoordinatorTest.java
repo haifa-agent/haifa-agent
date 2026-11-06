@@ -1461,6 +1461,50 @@ class SemanticCompactionCoordinatorTest {
     }
 
     @Test
+    void selectedSoftCompactionWaitsForUsefulCoverageAndPacksItInOneRequest() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AtomicInteger ids = new AtomicInteger();
+        var policy = CompressionPolicy.defaults();
+        var coordinator = coordinator(store, () -> "selected-" + ids.incrementAndGet(), policy);
+        var run = createAndSaveRun(store);
+        var session = run.sessionId();
+        var original =
+                store.messagesAfter(session, MessageCursor.BEFORE_FIRST, 1).getFirst();
+        var prefix = store.appendSessionMessage(
+                draft("short-prefix", session, run.id().value(), MessageRole.USER, "Refactor authentication"));
+        var material = store.appendSessionMessage(
+                draft("large-source", session, run.id().value(), MessageRole.ASSISTANT, "material ".repeat(2_600)));
+        var requests = new ArrayList<AgentChatRequest>();
+        var binding = createBindingWithContextWindow(
+                store,
+                run,
+                request -> {
+                    requests.add(request);
+                    return response("selected-soft", VALID_SUMMARY_JSON);
+                },
+                12_288);
+        var selected = CompactionTriggerDecision.compact(
+                CompactionTriggerReason.SOFT_TOKEN_THRESHOLD,
+                new ContextBudgetBreakdown(12_288, 256, 615, 300, 0, 11_117, 8_000, 3_117, 8_000, 1));
+
+        coordinator.evaluateSelected(run, 1, binding, selected);
+
+        assertThat(requests).isEmpty();
+        assertThat(store.latestValid(session)).isEmpty();
+
+        store.appendSessionMessage(
+                draft("retained-tail", session, run.id().value(), MessageRole.USER, "Keep this active"));
+        coordinator.evaluateSelected(run, 2, binding, selected);
+
+        assertThat(requests).hasSize(1);
+        assertThat(store.latestValid(session)).hasValueSatisfying(summary -> {
+            assertThat(summary.quality()).isEqualTo(CompactionQuality.SEMANTIC_VALIDATED);
+            assertThat(summary.coveredThrough()).isEqualTo(material.cursor());
+            assertThat(summary.sourceMessageIds()).containsExactly(original.id(), prefix.id(), material.id());
+        });
+    }
+
+    @Test
     void multiBatchCompactionCommitsTheWholeEvictedRangeOnce() {
         InMemoryRuntimeStore store = new InMemoryRuntimeStore();
         AtomicInteger idGen = new AtomicInteger();

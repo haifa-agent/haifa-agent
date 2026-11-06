@@ -76,6 +76,10 @@ contiguous source plus the previous valid summary and retains its validation, re
 Complete-source summaries may split a long single Run between completed atomic Tool groups. Existing cutoff
 validation still keeps each call/result pair together; the summary's versioned source label allows snapshot
 rebuilds to retain that valid assistant-led tail. Unreadable or unprocessable groups never authorize coverage.
+For the unified soft threshold, a removable prefix smaller than the configured minimum saving waits
+for more eligible source. Complete-source batching checks the full rendered request, including the
+previous summary and carry-forward items, before dispatch. Source-only estimates do not reserve a
+fixed fraction of the window for those fields.
 When a valid summary covers the current Run, its full semantic representation is required input, even for
 an objective beginning with `New task` or a retained tail larger than the working-set target. It stays in the
 untrusted data lane and participates in hard admission; an optional cross-Run handoff cannot replace it.

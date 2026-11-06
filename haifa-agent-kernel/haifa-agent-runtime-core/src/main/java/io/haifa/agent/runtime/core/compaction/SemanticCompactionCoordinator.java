@@ -648,6 +648,15 @@ public final class SemanticCompactionCoordinator {
             return CompactionEvaluationOutcome.untriggered(initialEstimatedTokens, elapsedMillis(startNanos));
         }
 
+        if (completeSource
+                && reason == CompactionTriggerReason.SOFT_TOKEN_THRESHOLD
+                && estimateGroups(activeGroups.subList(0, safeSplit), resolver)
+                        < io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.contextMinSavingTokens(
+                                binding.configuration().modelRequestOptions())) {
+            // Even a zero-token summary could not make the removable prefix worth a soft compaction.
+            return CompactionEvaluationOutcome.untriggered(initialEstimatedTokens, elapsedMillis(startNanos));
+        }
+
         List<AgentMessage> sourceToCompact = activeGroups.subList(0, safeSplit).stream()
                 .flatMap(List::stream)
                 .toList();
@@ -1669,7 +1678,11 @@ public final class SemanticCompactionCoordinator {
             throw new IllegalArgumentException("batch start must be within the compaction range");
         }
         int maxBatchGroups = 40;
-        long maxBatchTokens = Math.max(1L, (availableTokens / 5) * 3 + (availableTokens % 5) * 3 / 5);
+        // The complete-source planner checks the rendered request with carry-forward before dispatch.
+        // Its source-only call bound must allow groups that can fit together in that exact check.
+        long maxBatchTokens = atomicBoundary
+                ? availableTokens
+                : Math.max(1L, (availableTokens / 5) * 3 + (availableTokens % 5) * 3 / 5);
 
         long accumulatedTokens = 0L;
         int boundedIndex = start;
