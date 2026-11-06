@@ -173,6 +173,12 @@ class CodingPresentationObservationTest {
     @Test
     void largeInitialHistoryStaysUsableWithExplicitUtf8BudgetDegradation() throws Exception {
         Fixture f = new Fixture();
+        f.replay.set(java.util.stream.LongStream.rangeClosed(1, 9)
+                .mapToObj(sequence -> f.delivery(
+                        sequence,
+                        new RunEventPayloads.DeliveryLifecycle(
+                                "BUDGET", "BUDGET_THRESHOLD_REACHED", "REMAINING_20_PERCENT", List.of(), 19, 0)))
+                .toList());
         List<CodingSessionHistoryItem> items = new ArrayList<>();
         for (int i = 1; i <= 31; i++)
             items.add(new CodingSessionHistoryItem(
@@ -193,6 +199,7 @@ class CodingPresentationObservationTest {
             assertThat(snapshot.entries()).isNotEmpty();
             assertThat(snapshot.history().hasEarlier()).isTrue();
             assertThat(snapshot.history().complete()).isFalse();
+            assertThat(snapshot.notices()).contains("Earlier delivery events may be outside the view window.");
             assertThat(snapshot.actions()).allMatch(action -> !action.available());
         }
     }
@@ -239,6 +246,47 @@ class CodingPresentationObservationTest {
                         .isEqualTo(i);
                 assertThat(update.replacement().entries()).hasSize(32);
             }
+            assertThat(f.reads).hasValue(reads);
+        }
+    }
+
+    @Test
+    void deliveryNoticesRetainSourceAndFactsInInitialReplayAndLiveUpdates() throws Exception {
+        Fixture f = new Fixture();
+        f.replay.set(List.of(f.delivery(
+                1,
+                new RunEventPayloads.DeliveryLifecycle(
+                        "BUDGET",
+                        "BUDGET_THRESHOLD_REACHED",
+                        "REMAINING_20_PERCENT",
+                        List.of(),
+                        19,
+                        0,
+                        "TOKENS",
+                        81,
+                        100))));
+        try (var observation = f.observe("client")) {
+            var initial = observation.initial();
+            var threshold = initial.entries().getLast();
+            assertThat(threshold.kind()).isEqualTo("notice");
+            assertThat(threshold.runId()).isEqualTo(f.run.value());
+            assertThat(threshold.title()).isEqualTo("Budget threshold");
+            assertThat(threshold.noticeCode()).isEqualTo("REMAINING_20_PERCENT");
+            assertThat(threshold.text()).contains("Limiting resource: TOKENS", "Usage: 81 / 100", "Remaining: 19%");
+            int reads = f.reads.get();
+
+            f.events
+                    .get()
+                    .onEvent(f.delivery(
+                            2,
+                            new RunEventPayloads.DeliveryLifecycle(
+                                    "COMPLETION", "DEFERRED", "EVIDENCE_REQUIRED", List.of("VERIFICATION"), 17, 2)));
+            var update = (Update) observation.poll(Duration.ofSeconds(5));
+            var deferred = update.replacement().entries().getLast();
+            assertThat(deferred.title()).isEqualTo("Completion deferred");
+            assertThat(deferred.noticeCode()).isEqualTo("EVIDENCE_REQUIRED");
+            assertThat(deferred.text()).contains("Missing: VERIFICATION", "Repair: 2", "Remaining: 17%");
+            assertThat(update.replacement().entries()).contains(threshold);
             assertThat(f.reads).hasValue(reads);
         }
     }
@@ -316,6 +364,7 @@ class CodingPresentationObservationTest {
         final AgentRunId run = new AgentRunId("run");
         final AtomicReference<AgentRunId> selected = new AtomicReference<>(run);
         final AtomicReference<AgentRunEventListener> events = new AtomicReference<>();
+        final AtomicReference<List<AgentRunEvent>> replay = new AtomicReference<>(List.of());
         final AtomicReference<String> title = new AtomicReference<>("initial");
         final AtomicReference<Runnable> source = new AtomicReference<>();
         final AtomicReference<Runnable> beforeRead = new AtomicReference<>();
@@ -356,8 +405,13 @@ class CodingPresentationObservationTest {
                                 "profile");
                     }
                     case "history" -> history.get();
-                    case "events" ->
-                        new RunEventPage(List.of(), (RunEventCursor) args[1], (RunEventCursor) args[1], false);
+                    case "events" -> {
+                        var items = replay.get();
+                        var next = items.isEmpty()
+                                ? (RunEventCursor) args[1]
+                                : items.getLast().cursor();
+                        yield new RunEventPage(items, next, next, false);
+                    }
                     case "findRun" -> Optional.of(runView((AgentRunId) args[0]));
                     case "subscribe" -> {
                         events.set((AgentRunEventListener) args[2]);
@@ -396,6 +450,21 @@ class CodingPresentationObservationTest {
                     new Scope("view", "host", clientId, session.value(), 1, "native"),
                     new DefaultSecretRedactor(),
                     () -> new Consent("ASK", null, false));
+        }
+
+        AgentRunEvent delivery(long sequence, RunEventPayloads.DeliveryLifecycle payload) {
+            return new AgentRunEvent(
+                    "delivery-" + sequence,
+                    "delivery.notice",
+                    "1",
+                    run,
+                    session,
+                    sequence,
+                    new RunEventCursor(run, "1", OptionalLong.of(sequence)),
+                    Instant.EPOCH,
+                    Optional.empty(),
+                    Optional.empty(),
+                    payload);
         }
 
         void emit(long sequence, String text) {

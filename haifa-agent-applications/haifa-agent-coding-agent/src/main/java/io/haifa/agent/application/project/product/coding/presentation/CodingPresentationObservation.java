@@ -41,6 +41,10 @@ public final class CodingPresentationObservation implements CodingPresentationSu
     private final CompletableFuture<Snapshot> initial = new CompletableFuture<>();
     private final ArrayDeque<Envelope> outgoing = new ArrayDeque<>();
     private final Map<String, Entry> tools = new LinkedHashMap<>();
+    private static final int DELIVERY_LIMIT = 8;
+    private static final String DELIVERY_WINDOW_NOTICE = "Earlier delivery events may be outside the view window.";
+    private final ArrayDeque<Entry> delivery = new ArrayDeque<>();
+    private boolean deliveryWindowReduced;
     private int queuedBytes;
     private CodingSessionChanges.Registration sessionHandle;
     private AutoCloseable events;
@@ -358,9 +362,9 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                 live,
                 observedConsent,
                 actions,
-                List.of(
+                deliveryNotices(List.of(
                         "Only safe visible text and bounded tool summaries are projected; non-text content is unavailable.",
-                        "Transient preview is separate. Live text requires a streaming-capable credential redactor."));
+                        "Transient preview is separate. Live text requires a streaming-capable credential redactor.")));
         boolean reduced = false;
         while (bytes(result) > SNAPSHOT_BYTES) {
             List<Entry> smaller = new ArrayList<>(result.entries());
@@ -374,8 +378,9 @@ public final class CodingPresentationObservation implements CodingPresentationSu
             boolean omittedHistory = result.history().hasEarlier();
             if (removable >= 0) {
                 Long sequence = smaller.get(removable).sequence();
-                if (sequence == null) smaller.remove(removable);
-                else {
+                if (sequence == null) {
+                    deliveryWindowReduced |= smaller.remove(removable).role().equals("delivery");
+                } else {
                     smaller.removeIf(entry -> sequence.equals(entry.sequence()));
                     omittedHistory = true;
                 }
@@ -406,7 +411,8 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                             .map(action ->
                                     new Action(action.kind(), action.target(), action.choice(), false, "VIEW_BUDGET"))
                             .toList(),
-                    List.of("View window reduced to UTF-8 budget; omitted history and review data are incomplete."));
+                    deliveryNotices(List.of(
+                            "View window reduced to UTF-8 budget; earlier entries or review data may be incomplete.")));
             if (reduced && removable < 0 && bytes(result) > SNAPSHOT_BYTES)
                 throw new IllegalStateException("CRITICAL_REVIEW_BUDGET");
             reduced = true;
@@ -586,7 +592,9 @@ public final class CodingPresentationObservation implements CodingPresentationSu
         liveText = "";
         generation = "";
         liveTruncated = false;
-        var tail = client.events(run, eventStart.apply(run), 128);
+        var start = eventStart.apply(run);
+        deliveryWindowReduced |= start.exclusiveSequence().orElse(0) > 0;
+        var tail = client.events(run, start, 128);
         for (var event : tail.items()) acceptEvent(run, event, false);
         eventSequence =
                 Math.max(eventSequence, tail.nextCursor().exclusiveSequence().orElse(0));
@@ -675,9 +683,16 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                     null);
             tools.put(entry.id(), entry);
             while (tools.size() > 32) tools.remove(tools.keySet().iterator().next());
+        } else if (event.payload() instanceof RunEventPayloads.DeliveryLifecycle lifecycle) {
+            if (delivery.size() == DELIVERY_LIMIT) {
+                delivery.removeFirst();
+                deliveryWindowReduced = true;
+            }
+            delivery.addLast(deliveryEntry(event, lifecycle));
         }
         if (publish && current != null) {
-            if (event.payload() instanceof RunEventPayloads.ToolLifecycle) publishTools();
+            if (event.payload() instanceof RunEventPayloads.ToolLifecycle
+                    || event.payload() instanceof RunEventPayloads.DeliveryLifecycle) publishRecentEvents();
             else if (event.payload() instanceof RunEventPayloads.RunLifecycle
                     || event.payload() instanceof RunEventPayloads.InteractionLifecycle
                     || event.payload() instanceof RunEventPayloads.MessageCommitted) publish();
@@ -711,10 +726,53 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                 current.notices()));
     }
 
+    private Entry deliveryEntry(AgentRunEvent event, RunEventPayloads.DeliveryLifecycle value) {
+        String code = safe(value.reasonCode(), 128);
+        List<String> lines = new ArrayList<>();
+        lines.add("Reason: " + code);
+        if (value.attempt() > 0) lines.add("Repair: " + value.attempt());
+        if (!"NONE".equals(value.limitingResource())) {
+            lines.add("Limiting resource: " + value.limitingResource());
+            lines.add("Usage: " + value.limitingUsed() + " / " + value.limitingLimit());
+        }
+        lines.add("Remaining: " + value.remainingPercent() + "%");
+        if (!value.missingEvidence().isEmpty()) {
+            lines.add("Missing: " + String.join(", ", value.missingEvidence()));
+        }
+        String body = safe(String.join("\n", lines), Integer.MAX_VALUE);
+        return new Entry(
+                sourceEntryId("delivery", event.runId(), event.eventId()),
+                "notice",
+                event.runId().value(),
+                "delivery",
+                "BUDGET".equals(value.phase()) ? "Budget threshold" : "Completion deferred",
+                head(body, 1024),
+                safe(value.status(), 64),
+                null,
+                body.codePointCount(0, body.length()) > 1024,
+                null,
+                event.occurredAt().toEpochMilli(),
+                null,
+                null,
+                code.isEmpty() ? null : code,
+                null);
+    }
+
+    private List<String> deliveryNotices(List<String> notices) {
+        if (!deliveryWindowReduced || notices.contains(DELIVERY_WINDOW_NOTICE)) return notices;
+        var result = new ArrayList<>(notices);
+        result.add(DELIVERY_WINDOW_NOTICE);
+        return result;
+    }
+
     private static String toolEntryId(AgentRunId run, String toolCallId) {
-        String identity = run.value().length() + ":" + run.value() + toolCallId.length() + ":" + toolCallId;
+        return sourceEntryId("tool", run, toolCallId);
+    }
+
+    private static String sourceEntryId(String kind, AgentRunId run, String sourceId) {
+        String identity = run.value().length() + ":" + run.value() + sourceId.length() + ":" + sourceId;
         try {
-            return "tool-"
+            return kind + "-"
                     + java.util.HexFormat.of()
                             .formatHex(java.security.MessageDigest.getInstance("SHA-256")
                                     .digest(identity.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
@@ -750,7 +808,7 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                 .map(this::linkInteraction)
                 .toList();
         List<Entry> retained = new ArrayList<>(history);
-        int capacity = 32 - recent.size() - (interaction == null ? 0 : 1);
+        int capacity = 32 - recent.size() - delivery.size() - (interaction == null ? 0 : 1);
         boolean reduced = retained.size() > capacity;
         Long removed = null;
         while (retained.size() > capacity) {
@@ -765,14 +823,17 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                 .findFirst()
                 .orElse(removed == null ? null : removed + 1);
         retained.addAll(recent);
+        retained.addAll(delivery);
         if (interaction != null) retained.add(interaction);
         return new Window(retained, reduced, before);
     }
 
-    private void publishTools() {
+    private void publishRecentEvents() {
         Window window = window(
                 current.entries().stream()
-                        .filter(e -> !e.kind().equals("tool") && !e.kind().equals("interaction"))
+                        .filter(e -> !e.kind().equals("tool")
+                                && !e.kind().equals("interaction")
+                                && !e.role().equals("delivery"))
                         .toList(),
                 current.entries().stream()
                         .filter(e -> e.kind().equals("interaction"))
@@ -793,7 +854,7 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                 current.live(),
                 current.consent(),
                 current.actions(),
-                current.notices()));
+                deliveryNotices(current.notices())));
     }
 
     private void publish() {
