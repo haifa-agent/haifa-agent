@@ -48,9 +48,11 @@ public final class TerminalUiReducer {
             boolean sameRun = sameSession && state.currentRunId().equals(active);
             List<TranscriptItem> transcript = sameSession ? state.transcript() : List.of();
             java.util.Set<String> seen = sameRun ? state.seenEventIds() : java.util.Set.of();
-            Optional<io.haifa.agent.runtime.api.RunEventCursor> cursor = sameRun
-                    ? state.appliedCursor()
-                    : active.map(io.haifa.agent.runtime.api.RunEventCursor::beforeFirst);
+            Optional<io.haifa.agent.runtime.api.RunEventCursor> cursor = loaded.product()
+                    ? Optional.empty()
+                    : sameRun
+                            ? state.appliedCursor()
+                            : active.map(io.haifa.agent.runtime.api.RunEventCursor::beforeFirst);
             var footer = new TerminalFooter(
                     state.footer().project(),
                     state.footer().gitBranch(),
