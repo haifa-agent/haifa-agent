@@ -18,6 +18,10 @@ new tool or credential SPI. Database ownership conflicts fail without takeover.
 releases its observations and consent; it does not close Host or cancel accepted execution. Only
 `owner.close()` closes the assembly. Legacy standalone/native compatibility remains in CLI.
 
+The native terminal capability adds `product/terminalSession` and `product/activity` to a negotiated
+native connection. The Host verifies both Session ownership and Run membership before returning a
+bounded activity page. The browser grant does not authorize these operations.
+
 ## Optional same-origin browser boundary
 
 Web mode is disabled unless the trusted owner supplies `BrowserOptions(assetRoot, entryPoint)`.

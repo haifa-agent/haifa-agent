@@ -8,17 +8,17 @@ Coding Agent 的 tui4j 交互产品层。布局、信息层级和交互以
 ## 产品协议预览
 
 设置环境变量 `HAIFA_CODING_TUI_PRODUCT=true` 可试用产品协议。远程模式连接以
-同版本的 `haifa-coding host --presentation` 启动的 Host。远程产品协议和兼容传输共用一个 native
-client identity，由产品连接负责续期和释放。嵌入模式在当前 CLI 进程内持有同一 Runtime owner，
-通过 embedded client 获取快照。两种模式均使用现有终端编辑器和选择器。使用 `/history` 可读取
-更早的有界历史。会话输入、取消和交互响应通过产品命令提交，审批与取消使用当前快照中的精确目标。
-本地登录继续使用可信本地凭据入口。远程模式提供 Host 端管理指引。
+`haifa-coding host --presentation` 启动并支持 `native-terminal-activity-v1` 的 Host。
+远程和嵌入模式均使用单个 `CodingClient`，由装配层分别持有连接和 Host owner。关闭观察或
+远程终端只释放订阅与客户端资源。终止已经接纳的 Run 或 Shell 需要显式取消。
 
-会话列表、搜索、已加载资源、待恢复队列和工作区摘要使用产品查询。队列恢复、资源重载、
-工作区撤销和审批租约重置使用产品命令。待处理审批和澄清的选择器来自产品观察的精确目标与
-产品准备回执。协商到 `native-tool-details-v1` 时，工具卡从产品快照读取有界结果、技术详情
-和时间信息。当前快照提供近期工具窗口。会话装载、Runtime 事件、窗口外工具活动及部分辅助操作
-仍使用兼容传输。关闭环境变量即可使用现有 native 路径。
+会话装载、搜索、模型、资源、工作区和待恢复队列来自产品查询。会话输入、精确取消、
+交互响应、恢复、重命名、归档、删除、导出、压缩和受管 Shell 使用产品命令。产品快照
+提供待处理审批、澄清、正文和 DeliveryLifecycle。原生活动游标支持分批补读工具详情、
+Run 收尾、输入和交互状态。工具实时输出使用独立预览通道，`/history` 分页读取会话消息。
+
+本地登录使用可信本地凭据入口。远程账号状态与注销走产品接口，登录与密钥录入在
+可信 Host 执行。关闭环境变量可启动旧 native 入口。
 
 ## 自主交付状态
 
@@ -41,7 +41,7 @@ haifa-agent-cli
         v
 haifa-agent-coding-terminal
   tui4j Program/Model、Viewport、Textarea、Selector、Reducer、View
-  只通过 coding-agent 模块公开的 CodingSessionClient 读取和提交产品事实
+  产品入口使用 CodingClient，旧 native 入口使用 CodingSessionClient
         |
         v
 haifa-agent-coding-agent

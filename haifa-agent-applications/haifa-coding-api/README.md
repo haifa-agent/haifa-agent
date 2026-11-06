@@ -30,6 +30,12 @@ The Host omits the extension for browsers and clients that did not negotiate it.
 includes bounded redacted output, a safe result reference, process state, signed exit code and
 timestamps only when observed. It does not grant tool or result access.
 
+`native-terminal-activity-v1` adds `CodingClient.terminalSession` and `CodingClient.activity`.
+The session read returns safe model and task display facts. Native snapshots may include an activity
+watermark. An activity page is scoped to a Session and a Run, with an exclusive sequence cursor and
+at most 16 source events. The cursor advances over source events that have no terminal projection.
+This capability is available to native and embedded clients. Browser responses omit the watermark.
+
 Run the same fixtures in both languages:
 
 ```bash
