@@ -77,7 +77,7 @@ persistence:
   protection: NONE
 execution:
   provider: host-guarded
-  shell: bash
+  shell: auto
 """
                         .formatted(
                                 model.getAddress().getPort(),

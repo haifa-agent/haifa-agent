@@ -47,6 +47,8 @@ Browser RPC supports `initialize`, `product/query`, `product/command`, `presenta
 `session-presentation-v1`, `session-consent-v1`, `preview-v1`. The response identifies the selected
 capabilities, Host incarnation, display identity and `clientSource=browser`.
 `product/query` accepts the generated `Query`; `product/command` accepts `CommandRequest`.
+Browser clients cannot remove stored model credentials through the product logout command. Native
+Java clients and embedded clients retain the logout operation.
 All optional record fields are explicit nulls. SSE presentation events carry the canonical update
 or resync envelope; preview events carry the separate canonical transient Preview.
 

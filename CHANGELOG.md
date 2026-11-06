@@ -2,6 +2,8 @@
 
 ## Unreleased - 0.1.5-SNAPSHOT
 
+- Reject stored model credential logout from Coding Host browser clients.
+
 - Add feature-preview Coding Host and lightweight Java Client SDKs, engine-owned safe product mapping,
   opt-in same-origin browser pairing/grants and trusted static assets. Preserve native CLI compatibility
   and keep observation cleanup separate from accepted execution. Add isolated preview publishing and

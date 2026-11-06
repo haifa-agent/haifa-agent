@@ -115,7 +115,7 @@ Manifest。
 
 ## Coding SDK B2 外部消费与真实浏览器
 
-`coding-sdk-b2-acceptance.py` 复制两个最小 Java 样例到全新的仓库外目录，使用产品预览仓中的
+在 Windows 或 Linux 上，`coding-sdk-b2-acceptance.py` 复制两个最小 Java 样例到全新的仓库外目录，使用产品预览仓中的
 真实 JAR/POM 构建独立 Host/Client JVM。Python Playwright 驱动已安装 Chromium 的同源 fetch/SSE；
 独立本地 Provider Stub 覆盖 exact approval、已接纳 Run 在撤销后继续、已建 SSE 撤销/绝对过期、
 同端口重启拒绝旧 grant，以及页面内存凭据。owner challenge 的私有控制管道不会写入证据。

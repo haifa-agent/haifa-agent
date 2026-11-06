@@ -312,7 +312,8 @@ public final class CodingProductBinding implements CodingClient {
                 case "workspaceRevoke" -> legacy.revokeWorkspace(required(command.optionId()));
                 case "resourcesReload" -> legacy.reloadResources();
                 case "logout" -> {
-                    if (!authentication.logout(required(command.optionId()))) result.rejected("CONNECTION_NOT_FOUND");
+                    if ("browser".equals(connection.source())) result.rejected("CAPABILITY_UNSUPPORTED");
+                    else if (!authentication.logout(required(command.optionId()))) result.rejected("CONNECTION_NOT_FOUND");
                 }
                 default -> result.rejected("COMMAND_UNSUPPORTED");
             }
