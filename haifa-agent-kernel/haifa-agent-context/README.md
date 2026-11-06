@@ -2,6 +2,8 @@
 
 Semantic summary generation constrains `schemaVersion` to the same `v1` value accepted by validation,
 both in the output JSON Schema and the compiler instructions. Unsupported versions still fail closed.
+When a mandatory carry-forward item is already present in the previous semantic summary, the compiler
+prompt labels its text and sources there and lists only its stable ID in the carry-forward block.
 
 ## Source and representation boundaries
 

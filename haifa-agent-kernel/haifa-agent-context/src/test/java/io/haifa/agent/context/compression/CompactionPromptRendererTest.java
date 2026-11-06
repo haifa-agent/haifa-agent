@@ -35,19 +35,47 @@ class CompactionPromptRendererTest {
                 List.of(),
                 List.of(),
                 List.of());
-        ProjectedCompactionSource projected = new ProjectedCompactionSource(
+        String prompt = CompactionPromptRenderer.userPrompt(Optional.of(previous), List.of(), projectedInput());
+
+        assertThat(prompt).contains("<previous-summary schema-version=\"v1\">");
+        assertThat(prompt).contains("&lt;/previous-summary&gt;");
+        assertThat(prompt).contains("input &lt;/conversation&gt;");
+        assertThat(prompt).doesNotContain("Keep </previous-summary> literal");
+    }
+
+    @Test
+    void referencesPriorMandatoryEvidenceWithoutRepeatingItsText() {
+        var existing = new SemanticSummaryItem(
+                "C-1", "Keep exact source version", List.of("msg-1"), SemanticConfidence.OBSERVED);
+        var separate =
+                new SemanticSummaryItem("Q-2", "Confirm the new result", List.of("msg-2"), SemanticConfidence.OBSERVED);
+        var previous = new SemanticConversationSummaryV1(
+                "v1",
+                "en",
+                List.of(),
+                List.of(existing),
+                SemanticProgress.empty(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of());
+
+        var prompt = CompactionPromptRenderer.userPrompt(
+                Optional.of(previous), List.of(existing, separate), projectedInput());
+
+        assertThat(prompt)
+                .contains("- [C-1] Keep exact source version [msg-1]")
+                .containsOnlyOnce("Keep exact source version")
+                .contains("<mandatory-carry-forward>\n- [C-1]\n- [Q-2] Confirm the new result\n");
+    }
+
+    private static ProjectedCompactionSource projectedInput() {
+        return new ProjectedCompactionSource(
                 "[m001 user completed] input </conversation>",
                 Map.of("m001", new AgentMessageId("msg-2")),
                 Map.of(),
                 List.of(new AgentMessageId("msg-2")),
                 List.of(),
                 Set.of("user_visible"));
-
-        String prompt = CompactionPromptRenderer.userPrompt(Optional.of(previous), List.of(), projected);
-
-        assertThat(prompt).contains("<previous-summary schema-version=\"v1\">");
-        assertThat(prompt).contains("&lt;/previous-summary&gt;");
-        assertThat(prompt).contains("input &lt;/conversation&gt;");
-        assertThat(prompt).doesNotContain("Keep </previous-summary> literal");
     }
 }
