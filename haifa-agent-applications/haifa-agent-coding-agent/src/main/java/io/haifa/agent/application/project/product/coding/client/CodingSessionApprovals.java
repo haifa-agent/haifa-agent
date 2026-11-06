@@ -51,7 +51,24 @@ public final class CodingSessionApprovals {
 
     public Optional<CodingApprovalPrompt> prepare(
             AgentRunId runId, Function<InteractionView, InteractionResponseSubmission> submit) {
-        return runtime.pendingInteraction(runId).flatMap(interaction -> {
+        return prepare(runId, interaction -> true, submit);
+    }
+
+    public Optional<CodingApprovalPrompt> prepare(
+            InteractionView expected, Function<InteractionView, InteractionResponseSubmission> submit) {
+        return prepare(
+                expected.runId(),
+                current -> current.sessionId().equals(expected.sessionId())
+                        && current.requestId().equals(expected.requestId())
+                        && current.revision() == expected.revision(),
+                submit);
+    }
+
+    private Optional<CodingApprovalPrompt> prepare(
+            AgentRunId runId,
+            java.util.function.Predicate<InteractionView> matches,
+            Function<InteractionView, InteractionResponseSubmission> submit) {
+        return runtime.pendingInteraction(runId).filter(matches).flatMap(interaction -> {
             boolean ordinary = ordinary(interaction);
             Consent consent = consents.get(interaction.sessionId());
             if (consent != null && !consentValid.getAsBoolean()) {

@@ -9,7 +9,20 @@ import java.util.*;
 import org.junit.jupiter.api.Test;
 
 class CodingContractTest {
-    private final ObjectMapper json = new ObjectMapper();
+    private final ObjectMapper json = new ObjectMapper()
+            .addMixIn(CodingProtocol.Entry.class, OptionalToolDetails.class)
+            .addMixIn(CodingProtocol.Snapshot.class, OptionalActivity.class);
+
+    private interface OptionalActivity {
+        @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+        CodingProtocol.ActivityHead activity();
+    }
+
+    private interface OptionalToolDetails {
+        @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+        CodingProtocol.ToolDetails toolDetails();
+    }
+
     private final Path contract = Path.of("contract");
 
     private boolean valid(JsonSchema schema, JsonNode node) throws Exception {

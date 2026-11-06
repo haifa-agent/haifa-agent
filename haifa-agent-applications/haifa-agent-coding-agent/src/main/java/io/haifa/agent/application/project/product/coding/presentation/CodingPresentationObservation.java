@@ -19,10 +19,23 @@ import java.util.function.Supplier;
 public final class CodingPresentationObservation implements CodingPresentationSubscription {
     private static final int SNAPSHOT_BYTES = 256 * 1024;
     private static final int UPDATE_BYTES = 64 * 1024;
+    private static final Set<String> TERMINAL_TOOL_STATUSES = Set.of(
+            "COMPLETED",
+            "SUCCEEDED",
+            "FAILED",
+            "ERROR",
+            "CANCELLED",
+            "TIMEOUT",
+            "DENIED",
+            "REJECTED",
+            "OUTCOME_UNKNOWN",
+            "SHELL COMMAND DENIED");
     private static final int QUEUE_BYTES = 512 * 1024;
     private final CodingSessionClient client;
     private final AgentSessionId sessionId;
     private final Scope scope;
+    private final boolean detailedTools;
+    private final boolean terminalActivity;
     private final SecretRedactor redactor;
     private final Supplier<Consent> consent;
     private final String context;
@@ -50,6 +63,7 @@ public final class CodingPresentationObservation implements CodingPresentationSu
     private AutoCloseable events;
     private AutoCloseable output;
     private AgentRunId watched;
+    private ActivityHead idleActivity;
     private long eventSequence;
     private long outputSequence;
     private String generation = "";
@@ -106,7 +120,44 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                 consent,
                 context,
                 eventStart,
-                sessions::reviewState);
+                sessions::reviewState,
+                false,
+                false);
+    }
+
+    public CodingPresentationObservation(
+            CodingSessionService sessions,
+            CodingSessionClient client,
+            Scope scope,
+            SecretRedactor redactor,
+            Supplier<Consent> consent,
+            String context,
+            java.util.function.Function<AgentRunId, RunEventCursor> eventStart,
+            boolean detailedTools) {
+        this(sessions, client, scope, redactor, consent, context, eventStart, detailedTools, false);
+    }
+
+    public CodingPresentationObservation(
+            CodingSessionService sessions,
+            CodingSessionClient client,
+            Scope scope,
+            SecretRedactor redactor,
+            Supplier<Consent> consent,
+            String context,
+            java.util.function.Function<AgentRunId, RunEventCursor> eventStart,
+            boolean detailedTools,
+            boolean terminalActivity) {
+        this(
+                listener -> sessions.observeChanges(new AgentSessionId(scope.sessionId()), listener),
+                client,
+                scope,
+                redactor,
+                consent,
+                context,
+                eventStart,
+                sessions::reviewState,
+                detailedTools,
+                terminalActivity);
     }
 
     CodingPresentationObservation(
@@ -123,7 +174,9 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                 consent,
                 "Host process",
                 RunEventCursor::beforeFirst,
-                interaction -> new CodingReviewState(false, true, false));
+                interaction -> new CodingReviewState(false, true, false),
+                true,
+                false);
     }
 
     private CodingPresentationObservation(
@@ -134,7 +187,11 @@ public final class CodingPresentationObservation implements CodingPresentationSu
             Supplier<Consent> consent,
             String context,
             java.util.function.Function<AgentRunId, RunEventCursor> eventStart,
-            java.util.function.Function<InteractionView, CodingReviewState> reviewState) {
+            java.util.function.Function<InteractionView, CodingReviewState> reviewState,
+            boolean detailedTools,
+            boolean terminalActivity) {
+        this.terminalActivity = terminalActivity && "native".equals(scope.source());
+        this.detailedTools = detailedTools && "native".equals(scope.source());
         this.reviewState = Objects.requireNonNull(reviewState);
         this.eventStart = Objects.requireNonNull(eventStart);
         this.context = Objects.requireNonNull(context);
@@ -149,6 +206,7 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                 Snapshot first = read(0);
                 io.haifa.coding.api.CodingProtocolChecks.snapshot(first);
                 if (bytes(first) > SNAPSHOT_BYTES) throw new IllegalStateException("SNAPSHOT_BUDGET");
+                if (terminalActivity) first = first.withActivity(activityHead());
                 current = first;
                 initial.complete(first);
             });
@@ -234,7 +292,8 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                 entry.toolCallId(),
                 entry.interactionId(),
                 entry.noticeCode(),
-                entry.diagnosticId());
+                entry.diagnosticId(),
+                null);
     }
 
     private void enqueue(Runnable action) {
@@ -257,6 +316,20 @@ public final class CodingPresentationObservation implements CodingPresentationSu
         var view = client.presentationSnapshot(sessionId);
         AgentRunId run = view.activeRun().map(AgentRunSnapshot::runId).orElse(null);
         var history = client.history(sessionId, 31);
+        if (terminalActivity && run == null && watched == null) {
+            idleActivity = history.items().reversed().stream()
+                    .flatMap(item -> item.sourceRunId().stream())
+                    .map(AgentRunId::new)
+                    .filter(id -> client.findRun(id).isPresent())
+                    .findFirst()
+                    .map(id -> new ActivityHead(
+                            id.value(),
+                            client.events(id, RunEventCursor.beforeFirst(id), 1)
+                                    .headCursor()
+                                    .exclusiveSequence()
+                                    .orElse(0L)))
+                    .orElse(null);
+        }
         boolean previousSaved = watched != null
                 && history.items().stream()
                         .anyMatch(item -> item.kind() == CodingSessionHistoryItem.Kind.ASSISTANT
@@ -455,7 +528,8 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                 entry.toolCallId(),
                 entry.interactionId(),
                 entry.noticeCode(),
-                entry.diagnosticId());
+                entry.diagnosticId(),
+                null);
     }
 
     private Entry unavailable(Entry value) {
@@ -485,69 +559,82 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                 value.toolCallId(),
                 value.interactionId(),
                 value.noticeCode(),
-                value.diagnosticId());
+                value.diagnosticId(),
+                null);
     }
 
     private Entry interaction(InteractionView value, Consent observedConsent) {
         if (!sessionId.equals(value.sessionId())) throw new IllegalArgumentException("SOURCE_SCOPE_MISMATCH");
+        return projectInteraction(value, reviewState.apply(value), observedConsent.available(), redactor);
+    }
+
+    static Entry projectInteraction(
+            InteractionView value, CodingReviewState completeness, boolean consentAvailable, SecretRedactor redactor) {
         boolean supported = java.util.Set.of("none", "text", "single-choice", "multi-choice")
                         .contains(value.inputContract().type().value())
                 && value.kind().known();
         var contract = value.inputContract();
-        CodingReviewState completeness = reviewState.apply(value);
         Input input = new Input(
                 contract.type().value(),
                 contract.maximumCharacters(),
                 contract.minimumSelections(),
                 contract.maximumSelections(),
                 contract.options().stream()
-                        .map(option -> new InputOption(option.id(), safe(option.label(), 512), null))
+                        .map(option -> new InputOption(
+                                option.id(), CodingPresentationText.safe(option.label(), 512, redactor), null))
                         .toList(),
                 value.clarificationPresentation()
                         .map(p -> p.questions().stream()
                                 .map(q -> new Question(
-                                        safe(q.header(), 32),
-                                        safe(q.question(), 2000),
+                                        CodingPresentationText.safe(q.header(), 32, redactor),
+                                        CodingPresentationText.safe(q.question(), 2000, redactor),
                                         q.multiple(),
                                         q.allowCustom(),
                                         q.options().stream()
                                                 .map(o -> new InputOption(
                                                         o.optionId(),
-                                                        safe(o.label(), 512),
+                                                        CodingPresentationText.safe(o.label(), 512, redactor),
                                                         o.description()
-                                                                .map(t -> safe(t, 512))
+                                                                .map(t -> CodingPresentationText.safe(t, 512, redactor))
                                                                 .orElse(null)))
                                                 .toList()))
                                 .toList())
                         .orElse(List.of()));
         Review review = value.approvalPresentation()
                 .map(p -> new Review(
-                        safe(p.purpose(), 512),
+                        CodingPresentationText.safe(p.purpose(), 512, redactor),
                         p.contentType(),
-                        safe(p.content(), 16384),
+                        CodingPresentationText.safe(p.content(), 16384, redactor),
                         p.environment().stream()
-                                .map(f -> new ReviewFact(safe(f.label(), 64), safe(f.value(), 512)))
+                                .map(f -> new ReviewFact(
+                                        CodingPresentationText.safe(f.label(), 64, redactor),
+                                        CodingPresentationText.safe(f.value(), 512, redactor)))
                                 .toList(),
                         p.technical().stream()
-                                .map(f -> new ReviewFact(safe(f.label(), 64), safe(f.value(), 512)))
+                                .map(f -> new ReviewFact(
+                                        CodingPresentationText.safe(f.label(), 64, redactor),
+                                        CodingPresentationText.safe(f.value(), 512, redactor)))
                                 .toList(),
                         p.risk().orElse(null),
                         completeness.targetComplete(),
                         completeness.contentTruncated()))
                 .orElse(null);
-        String prompt = safe(value.safePrompt(), 16384);
+        String prompt = CodingPresentationText.safe(value.safePrompt(), 16384, redactor);
         boolean complete = prompt.equals(redactor.redact(value.safePrompt()))
                 && supported
                 && (!value.kind().equals(InteractionKind.APPROVAL)
                         || (review != null && completeness.targetComplete()));
         var target = new Target(
-                sessionId.value(), value.runId().value(), value.requestId().value(), value.revision());
+                value.sessionId().value(),
+                value.runId().value(),
+                value.requestId().value(),
+                value.revision());
         List<Action> actions = new ArrayList<>(value.allowedActions().stream()
                 .map(action ->
                         new Action("respond", target, action.value(), complete, complete ? null : "REVIEW_UNAVAILABLE"))
                 .toList());
         if (value.kind().equals(InteractionKind.APPROVAL)) {
-            boolean available = complete && completeness.sessionConsentEligible() && observedConsent.available();
+            boolean available = complete && completeness.sessionConsentEligible() && consentAvailable;
             actions.add(new Action(
                     "allowForSession",
                     target,
@@ -555,16 +642,14 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                     available,
                     available
                             ? null
-                            : (!observedConsent.available()
-                                    ? "SESSION_CONSENT_UNAVAILABLE"
-                                    : "EXACT_APPROVAL_REQUIRED")));
+                            : (!consentAvailable ? "SESSION_CONSENT_UNAVAILABLE" : "EXACT_APPROVAL_REQUIRED")));
         }
         return new Entry(
                 "interaction-" + value.requestId().value(),
                 "interaction",
                 value.runId().value(),
                 "interaction",
-                safe(value.title(), 256),
+                CodingPresentationText.safe(value.title(), 256, redactor),
                 prompt,
                 value.state().name(),
                 null,
@@ -577,6 +662,7 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                         review,
                         actions),
                 value.createdAt().toEpochMilli(),
+                null,
                 null,
                 null,
                 null,
@@ -665,23 +751,9 @@ public final class CodingPresentationObservation implements CodingPresentationSu
         if (!run.equals(watched) || event.sequence() <= eventSequence) return;
         eventSequence = event.sequence();
         if (event.payload() instanceof RunEventPayloads.ToolLifecycle tool) {
-            var entry = new Entry(
-                    toolEntryId(run, tool.toolCallId()),
-                    "tool",
-                    run.value(),
-                    "tool",
-                    safe(tool.displayName(), 256),
-                    safe(tool.targetSummary(), 8000),
-                    tool.status(),
-                    null,
-                    true,
-                    null,
-                    event.occurredAt().toEpochMilli(),
-                    tool.toolCallId(),
-                    null,
-                    null,
-                    null);
-            tools.put(entry.id(), entry);
+            var key = toolEntryId(run, tool.toolCallId());
+            var entry = toolEntry(event, tool, detailedTools, tools.get(key), redactor, null);
+            tools.put(key, entry);
             while (tools.size() > 32) tools.remove(tools.keySet().iterator().next());
         } else if (event.payload() instanceof RunEventPayloads.DeliveryLifecycle lifecycle) {
             if (delivery.size() == DELIVERY_LIMIT) {
@@ -696,7 +768,160 @@ public final class CodingPresentationObservation implements CodingPresentationSu
             else if (event.payload() instanceof RunEventPayloads.RunLifecycle
                     || event.payload() instanceof RunEventPayloads.InteractionLifecycle
                     || event.payload() instanceof RunEventPayloads.MessageCommitted) publish();
+            else if (terminalActivity && projectActivity(event, redactor) != null) publishLive();
         }
+    }
+
+    static Entry projectActivity(AgentRunEvent event, SecretRedactor redactor) {
+        if (event.payload() instanceof RunEventPayloads.ToolLifecycle tool) {
+            return toolEntry(event, tool, true, null, redactor, event.sequence());
+        }
+        return switch (event.payload()) {
+            case RunEventPayloads.RunLifecycle run ->
+                activityEntry(
+                        event,
+                        redactor,
+                        "run-state",
+                        "run-" + event.runId().value(),
+                        run.status(),
+                        run.errorMessage().orElse(""),
+                        run.reasonCode(),
+                        run.diagnosticId().orElse(null));
+            case RunEventPayloads.InteractionLifecycle interaction ->
+                activityEntry(
+                        event,
+                        redactor,
+                        "interaction-state",
+                        "interaction-" + interaction.requestId(),
+                        interaction.state(),
+                        "",
+                        null,
+                        null);
+            case RunEventPayloads.RunInputLifecycle input ->
+                activityEntry(
+                        event,
+                        redactor,
+                        "input-state",
+                        input.inputId(),
+                        input.state(),
+                        input.applicationCoordinate(),
+                        null,
+                        null);
+            case RunEventPayloads.ResourceAvailable resource
+            when !"checkpoint".equalsIgnoreCase(resource.kind()) ->
+                activityEntry(
+                        event,
+                        redactor,
+                        "resource",
+                        "resource-" + resource.reference(),
+                        resource.status(),
+                        resource.kind() + " · " + resource.reference(),
+                        resource.title(),
+                        null);
+            default -> null;
+        };
+    }
+
+    private static Entry activityEntry(
+            AgentRunEvent event,
+            SecretRedactor redactor,
+            String role,
+            String id,
+            String status,
+            String text,
+            String label,
+            String diagnostic) {
+        String title = label == null ? "" : CodingPresentationText.safe(label, 256, redactor);
+        return new Entry(
+                CodingPresentationText.safe(id, 256, redactor),
+                "notice",
+                event.runId().value(),
+                role,
+                title,
+                CodingPresentationText.safe(text, 8000, redactor),
+                status,
+                event.sequence(),
+                false,
+                null,
+                event.occurredAt().toEpochMilli(),
+                null,
+                null,
+                "run-state".equals(role) ? title : null,
+                diagnostic,
+                null);
+    }
+
+    private static Entry toolEntry(
+            AgentRunEvent event,
+            RunEventPayloads.ToolLifecycle tool,
+            boolean detailed,
+            Entry previous,
+            SecretRedactor redactor,
+            Long sequence) {
+        return new Entry(
+                toolEntryId(event.runId(), tool.toolCallId()),
+                "tool",
+                event.runId().value(),
+                "tool",
+                CodingPresentationText.safe(tool.displayName(), 256, redactor),
+                CodingPresentationText.safe(tool.targetSummary(), 8000, redactor),
+                tool.status(),
+                sequence,
+                true,
+                null,
+                event.occurredAt().toEpochMilli(),
+                tool.toolCallId(),
+                null,
+                null,
+                null,
+                detailed ? toolDetails(tool, previous, event, redactor, sequence != null) : null);
+    }
+
+    private static ToolDetails toolDetails(
+            RunEventPayloads.ToolLifecycle tool,
+            Entry previous,
+            AgentRunEvent event,
+            SecretRedactor redactor,
+            boolean activityPage) {
+        long occurred = event.occurredAt().toEpochMilli();
+        Long started = previous == null || previous.toolDetails() == null
+                ? null
+                : previous.toolDetails().startedAtEpochMillis();
+        if (started == null && "STARTED".equals(tool.status())) started = occurred;
+        Long duration = started != null && TERMINAL_TOOL_STATUSES.contains(tool.status())
+                ? Math.max(0, occurred - started)
+                : null;
+        var observation = tool.observation();
+        var output = observation
+                .flatMap(RunEventPayloads.ToolObservation::outputPreview)
+                .map(value -> {
+                    var bounded = io.haifa.agent.runtime.api.display.BoundedText.of(
+                            CodingPresentationText.safe(value.text(), Integer.MAX_VALUE, redactor),
+                            activityPage ? 16_384 : 4_000,
+                            activityPage ? 200 : 100);
+                    return new ToolOutput(
+                            bounded.text(),
+                            value.truncated() || bounded.truncated(),
+                            value.byteCount(),
+                            value.lineCount());
+                })
+                .orElse(null);
+        return new ToolDetails(
+                CodingPresentationText.safe(tool.toolName(), 128, redactor),
+                CodingPresentationText.safe(tool.intentSummary(), 256, redactor),
+                CodingPresentationText.safe(tool.reasonCode(), 128, redactor),
+                CodingPresentationText.safe(tool.resultRef(), 512, redactor),
+                observation
+                        .flatMap(RunEventPayloads.ToolObservation::processState)
+                        .map(value -> CodingPresentationText.safe(value, 64, redactor))
+                        .orElse(null),
+                observation
+                        .flatMap(RunEventPayloads.ToolObservation::exitCode)
+                        .map(Integer::longValue)
+                        .orElse(null),
+                started,
+                duration,
+                output);
     }
 
     private Live live() {
@@ -755,6 +980,7 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                 null,
                 null,
                 code.isEmpty() ? null : code,
+                null,
                 null);
     }
 
@@ -797,7 +1023,8 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                 entry.toolCallId(),
                 entry.id().equals(pendingToolKey) ? pendingInteractionId : null,
                 entry.noticeCode(),
-                entry.diagnosticId());
+                entry.diagnosticId(),
+                entry.toolDetails());
     }
 
     private record Window(List<Entry> entries, boolean reduced, Long before) {}
@@ -861,7 +1088,21 @@ public final class CodingPresentationObservation implements CodingPresentationSu
         publish(read(current.revision() + 1));
     }
 
+    private ActivityHead activityHead() {
+        return watched == null ? idleActivity : new ActivityHead(watched.value(), eventSequence);
+    }
+
     private void publish(Snapshot next) {
+        if (terminalActivity) next = next.withActivity(activityHead());
+        Update update = new Update("update", scope.viewId(), current.revision(), next.revision(), next);
+        int length = bytes(update);
+        if (detailedTools
+                && length > UPDATE_BYTES
+                && next.entries().stream().anyMatch(entry -> entry.toolDetails() != null)) {
+            update = fitNativeUpdate(update);
+            next = update.replacement();
+            length = bytes(update);
+        }
         io.haifa.coding.api.CodingProtocolChecks.snapshot(next);
         Snapshot sameRevision = new Snapshot(
                 "snapshot",
@@ -875,9 +1116,7 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                 next.consent(),
                 next.actions(),
                 next.notices());
-        if (current.equals(sameRevision)) return;
-        Update update = new Update("update", scope.viewId(), current.revision(), next.revision(), next);
-        int length = bytes(update);
+        if (current.equals(sameRevision.withActivity(next.activity()))) return;
         synchronized (outgoing) {
             if (closed()) return;
             if (length > UPDATE_BYTES || queuedBytes + length > QUEUE_BYTES) {
@@ -889,6 +1128,89 @@ public final class CodingPresentationObservation implements CodingPresentationSu
             outgoing.notifyAll();
         }
         current = next;
+    }
+
+    private Update fitNativeUpdate(Update update) {
+        var entries = new ArrayList<>(update.replacement().entries());
+        var history = update.replacement().history();
+        // Keep the identity, status and structured metadata of each tool. Only reduce copied output.
+        for (int index = 0; index < entries.size(); index++) {
+            var entry = entries.get(index);
+            var detail = entry.toolDetails();
+            if (detail == null
+                    || detail.output() == null
+                    || detail.output().text().isEmpty()) continue;
+            var output = detail.output();
+            entries.set(
+                    index,
+                    new Entry(
+                            entry.id(),
+                            entry.kind(),
+                            entry.runId(),
+                            entry.role(),
+                            entry.title(),
+                            entry.text(),
+                            entry.status(),
+                            entry.sequence(),
+                            entry.truncated(),
+                            entry.interaction(),
+                            entry.occurredAtEpochMillis(),
+                            entry.toolCallId(),
+                            entry.interactionId(),
+                            entry.noticeCode(),
+                            entry.diagnosticId(),
+                            new ToolDetails(
+                                    detail.name(),
+                                    detail.intent(),
+                                    detail.reasonCode(),
+                                    detail.resultRef(),
+                                    detail.processState(),
+                                    detail.exitCode(),
+                                    detail.startedAtEpochMillis(),
+                                    detail.durationMillis(),
+                                    new ToolOutput("", true, output.byteCount(), output.lineCount()))));
+            update = replaceWindow(update, entries, history);
+            if (bytes(update) <= UPDATE_BYTES) return update;
+        }
+        // As with the initial snapshot, drop whole history groups and publish a continuation cursor.
+        while (true) {
+            var oldest = entries.stream()
+                    .map(Entry::sequence)
+                    .filter(Objects::nonNull)
+                    .min(Long::compareTo);
+            if (oldest.isEmpty()) return update;
+            long sequence = oldest.orElseThrow();
+            entries.removeIf(entry -> Objects.equals(entry.sequence(), sequence));
+            long before = entries.stream()
+                    .map(Entry::sequence)
+                    .filter(Objects::nonNull)
+                    .min(Long::compareTo)
+                    .orElse(sequence + 1);
+            update = replaceWindow(update, entries, new History(true, before, false));
+            if (bytes(update) <= UPDATE_BYTES) return update;
+        }
+    }
+
+    private static Update replaceWindow(Update update, List<Entry> entries, History history) {
+        var next = update.replacement();
+        return new Update(
+                "update",
+                update.viewId(),
+                update.baseRevision(),
+                update.revision(),
+                new Snapshot(
+                        "snapshot",
+                        next.scope(),
+                        next.revision(),
+                        next.hydration(),
+                        next.session(),
+                        entries,
+                        history,
+                        next.live(),
+                        next.consent(),
+                        next.actions(),
+                        next.notices(),
+                        next.activity()));
     }
 
     private int bytes(Object value) {

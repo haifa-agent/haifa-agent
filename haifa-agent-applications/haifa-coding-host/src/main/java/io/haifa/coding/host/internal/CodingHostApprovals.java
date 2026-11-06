@@ -58,7 +58,7 @@ public final class CodingHostApprovals implements AutoCloseable {
         return lease(clientId)
                 .approvals
                 .prepare(
-                        pending.runId(),
+                        pending,
                         interaction -> submission(
                                 interaction,
                                 "session-approval:" + interaction.requestId().value()));

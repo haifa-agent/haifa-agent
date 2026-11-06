@@ -7,12 +7,15 @@ final class ToolPresentation {
     private ToolPresentation() {}
 
     static String displayName(RunEventPayloads.ToolLifecycle lifecycle) {
-        String displayName = lifecycle.displayName();
-        return lifecycle.toolName().isBlank() ? legacyDisplayName(displayName) : displayName;
+        return displayName(lifecycle.displayName(), lifecycle.toolName());
     }
 
-    static String machineName(RunEventPayloads.ToolLifecycle lifecycle) {
-        return lifecycle.toolName().isBlank() ? lifecycle.displayName() : lifecycle.toolName();
+    static String displayName(String displayName, String machineName) {
+        return machineName.isBlank() ? legacyDisplayName(displayName) : displayName;
+    }
+
+    static String machineName(String displayName, String machineName) {
+        return machineName.isBlank() ? displayName : machineName;
     }
 
     static String statusSuffix(String status, String reasonCode) {

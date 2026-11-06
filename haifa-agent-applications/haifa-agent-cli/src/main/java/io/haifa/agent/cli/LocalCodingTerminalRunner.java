@@ -1,6 +1,7 @@
 package io.haifa.agent.cli;
 
 import io.haifa.agent.application.coding.terminal.application.CodingTerminalApplication;
+import io.haifa.agent.application.coding.terminal.application.CodingTerminalConnectionOptions;
 import io.haifa.agent.application.coding.terminal.application.CodingTerminalStartup;
 import io.haifa.agent.application.coding.terminal.state.TerminalWorkspaceContext;
 import io.haifa.agent.application.coding.terminal.tui4j.Tui4jTerminalIo;
@@ -43,20 +44,38 @@ final class LocalCodingTerminalRunner implements CliTerminalRunner {
                 StandaloneCodingAgent agent =
                         agentFactory.create(workspace, configuration, executionSink, traceObserver)) {
             LocalGitBranchResolver.GitWorkspaceDetails gitDetails = LocalGitBranchResolver.resolveDetails(workspace);
-            new CodingTerminalApplication(
-                            agent.projectId(),
-                            agent.client(),
+            var terminalWorkspace = new TerminalWorkspaceContext(
+                    gitDetails.projectPath(),
+                    gitDetails.gitBranch(),
+                    gitDetails.worktreePath(),
+                    gitDetails.worktreeBranch());
+            if (productPresentationEnabled()) {
+                try (var host = CodingHostServer.start(agent, "127.0.0.1", 0);
+                        var product = host.embeddedClient()) {
+                    CodingTerminalApplication.runProduct(
+                            product,
                             startup,
                             terminalIo,
-                            new TerminalWorkspaceContext(
-                                    gitDetails.projectPath(),
-                                    gitDetails.gitBranch(),
-                                    gitDetails.worktreePath(),
-                                    gitDetails.worktreeBranch()),
+                            terminalWorkspace,
                             agent.authentication(),
-                            agent.toolOutputPreviewPublisher())
-                    .run();
+                            CodingTerminalConnectionOptions.embedded());
+                }
+            } else {
+                new CodingTerminalApplication(
+                                agent.projectId(),
+                                agent.client(),
+                                startup,
+                                terminalIo,
+                                terminalWorkspace,
+                                agent.authentication(),
+                                agent.toolOutputPreviewPublisher())
+                        .run();
+            }
         }
+    }
+
+    static boolean productPresentationEnabled() {
+        return "true".equalsIgnoreCase(System.getenv("HAIFA_CODING_TUI_PRODUCT"));
     }
 
     @FunctionalInterface

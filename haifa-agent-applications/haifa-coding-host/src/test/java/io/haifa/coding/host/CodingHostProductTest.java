@@ -23,11 +23,15 @@ class CodingHostProductTest {
                 var embedded = host.embeddedClient();
                 var remote = CodingClients.connect(host.endpoint())) {
             assertThat(remote.connection().displayName()).isEqualTo("Third-party SDK product");
+            assertThat(remote.connection().capabilities())
+                    .contains("native-tool-details-v1", "native-terminal-activity-v1");
+            assertThat(embedded.connection().capabilities()).contains("native-tool-details-v1");
             assertThat(remote.connection().projectId())
                     .isEqualTo(embedded.connection().projectId());
             var receipt = remote.execute(create("create-once", "create-key", "first turn"));
             assertThat(receipt.receipt().disposition()).isEqualTo("accepted");
             String session = receipt.session().sessionId();
+            assertThat(remote.terminalSession(session).summary().sessionId()).isEqualTo(session);
             try (var observation = remote.observe(session)) {
                 Snapshot current = observation.initial();
                 boolean completed = false;
@@ -42,14 +46,23 @@ class CodingHostProductTest {
                 }
                 assertThat(completed).isTrue();
                 assertThat(current.scope().source()).isEqualTo("native");
+                assertThat(current.activity()).isNotNull();
+                var page = remote.activity(
+                        new ActivityRequest(session, current.activity().runId(), 0));
+                assertThat(page.entries()).anyMatch(entry -> "run-state".equals(entry.role()));
             }
             assertThat(embedded.history(session, 32, null).entries())
-                    .anyMatch(e -> e.text().equals("sdk-safe-answer"));
+                    .anyMatch(e ->
+                            e.text().equals("sdk-safe-answer") && e.status().equals("FINAL"));
             var models = remote.query(query("models", null, null));
             assertThat(models.models()).hasSize(1);
             assertThat(models.models().getFirst().responseMode().kind()).isNotBlank();
-            assertThat(remote.query(query("sessions", null, null)).sessions())
-                    .anyMatch(s -> s.sessionId().equals(session));
+            var sessions = remote.query(query("sessions", null, null)).sessions();
+            assertThat(sessions).anyMatch(value -> value.sessionId().equals(session));
+            assertThat(remote.query(new Query(
+                                    "sessions", new CommandTarget(null, null, null, null, null), "", 10, null))
+                            .sessions())
+                    .containsExactlyElementsOf(sessions);
             assertThatThrownBy(() -> CodingHosts.start(fixture.options(Optional.empty()), fixture.environment))
                     .isInstanceOfSatisfying(CodingClientException.class, e -> assertThat(e.code())
                             .isEqualTo("DATABASE_OWNED_BY_ANOTHER_PROCESS"));

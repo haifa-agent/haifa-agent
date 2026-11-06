@@ -26,6 +26,18 @@ public interface CodingClient extends AutoCloseable {
 
     HistoryPage history(String sessionId, int limit, Long beforeSequence);
 
+    default TerminalContext terminalContext() {
+        throw new CodingClientException("PRODUCT_CAPABILITY_UNSUPPORTED", false);
+    }
+
+    default TerminalSession terminalSession(String sessionId) {
+        throw new CodingClientException("PRODUCT_CAPABILITY_UNSUPPORTED", false);
+    }
+
+    default ActivityPage activity(ActivityRequest request) {
+        throw new CodingClientException("PRODUCT_CAPABILITY_UNSUPPORTED", false);
+    }
+
     boolean renew();
 
     @Override

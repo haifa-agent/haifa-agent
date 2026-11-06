@@ -105,7 +105,9 @@ public final class CodingProductBinding implements CodingClient {
                 var page = sessions.listSessionsForRecovery(
                         new ProjectId(connection.projectId()),
                         new CodingSessionQuery(
-                                Optional.ofNullable(query.search()), Optional.empty(), Math.toIntExact(query.limit())));
+                                Optional.ofNullable(query.search()).filter(value -> !value.isBlank()),
+                                Optional.empty(),
+                                Math.toIntExact(query.limit())));
                 result.sessions = page.items().stream().map(this::summary).toList();
                 result.truncated = page.hasMore();
             }
@@ -142,7 +144,14 @@ public final class CodingProductBinding implements CodingClient {
                         .toList();
                 result.truncated = values.size() > 100;
             }
-            case "logicalPaths" -> result.lines = lines(legacy.logicalPaths());
+            case "logicalPaths" -> {
+                var prefix = Objects.requireNonNullElse(query.search(), "");
+                result.lines = lines(legacy.logicalPaths().stream()
+                        .map(value -> value.replace('\\', '/'))
+                        .filter(value -> value.startsWith(prefix))
+                        .limit(query.limit())
+                        .toList());
+            }
             case "resources" -> result.lines = lines(legacy.loadedResources());
             case "configuration" -> result.lines = lines(configuration.get());
             case "authentication" -> result.authentication = authentication();
@@ -245,7 +254,7 @@ public final class CodingProductBinding implements CodingClient {
                             value.through().value());
                 }
                 case "export" -> {
-                    var value = legacy.export(session(target), required(command.text()));
+                    var value = legacy.export(session(target), command.text() == null ? "" : command.text());
                     result.export =
                             new Export(safe(value.logicalPath(), 4096), value.messageCount(), value.schemaVersion());
                 }
@@ -274,13 +283,14 @@ public final class CodingProductBinding implements CodingClient {
                             receipt.runVersion());
                 }
                 case "prepareApproval" -> {
-                    approvals.prepare(pending(target));
-                    try (var view = observe.apply(session(target))) {
-                        result.interaction = view.initial().entries().stream()
-                                .filter(e -> e.interaction() != null)
-                                .findFirst()
-                                .orElse(null);
-                    }
+                    result.interaction = approvals
+                            .prepare(pending(target))
+                            .map(prompt -> CodingPresentationObservation.projectInteraction(
+                                    prompt.interaction(),
+                                    sessions.reviewState(prompt.interaction()),
+                                    prompt.allowForSession(),
+                                    redactor))
+                            .orElse(null);
                     result.operationId = target.interactionId();
                     result.runId = target.runId();
                 }
@@ -397,6 +407,56 @@ public final class CodingProductBinding implements CodingClient {
                 source.close();
             }
         };
+    }
+
+    @Override
+    public TerminalSession terminalSession(String sessionId) {
+        requireNativeTerminal();
+        scope(new CommandTarget(null, sessionId, null, null, null));
+        var view = legacy.presentationSnapshot(new AgentSessionId(sessionId));
+        return new TerminalSession(
+                summary(view.summary()),
+                view.activeRun()
+                        .map(run -> new Run(run.runId().value(), run.status().name(), run.version()))
+                        .orElse(null),
+                new ModelSelection(
+                        model(view.model().model()),
+                        view.model().revision(),
+                        view.model().available()),
+                view.activeRunTaskSummary().map(value -> safe(value, 120)).orElse(null),
+                safe(view.productProfileRef(), 256));
+    }
+
+    @Override
+    public ActivityPage activity(ActivityRequest request) {
+        requireNativeTerminal();
+        scope(new CommandTarget(null, request.sessionId(), request.runId(), null, null));
+        var run = new AgentRunId(request.runId());
+        var cursor = request.afterSequence() == 0
+                ? RunEventCursor.beforeFirst(run)
+                : new RunEventCursor(run, "1", OptionalLong.of(request.afterSequence()));
+        var page = legacy.events(run, cursor, 16);
+        var entries = page.items().stream()
+                .map(event -> CodingPresentationObservation.projectActivity(event, redactor))
+                .filter(Objects::nonNull)
+                .toList();
+        var result = new ActivityPage(
+                request.sessionId(),
+                request.runId(),
+                request.afterSequence(),
+                page.nextCursor().exclusiveSequence().orElse(request.afterSequence()),
+                page.hasMore(),
+                entries);
+        CodingProtocolChecks.activity(request, result);
+        return result;
+    }
+
+    private void requireNativeTerminal() {
+        requireOpen();
+        if ("browser".equals(connection.source())
+                || !connection.capabilities().contains("native-terminal-activity-v1")) {
+            throw new CodingClientException("PRODUCT_CAPABILITY_UNSUPPORTED", false);
+        }
     }
 
     @Override

@@ -119,7 +119,7 @@ public final class CodingHostDispatcher {
                 params == null ? com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode() : params;
         if (!safeParams.isObject()) throw CodingHostException.invalidParams("params must be an object");
         try {
-            if (method.equals("initialize")) return initialize(safeParams);
+            if (method.equals("initialize")) return initialize(safeParams, clientId == null);
             if (method.equals("host/ping")) return ping();
             return switch (method) {
                 case "client/renew" -> Map.of("renewed", true);
@@ -293,17 +293,29 @@ public final class CodingHostDispatcher {
         }
     }
 
-    private Map<String, Object> initialize(JsonNode params) {
+    static final String NATIVE_TERMINAL_ACTIVITY = "native-terminal-activity-v1";
+    static final String NATIVE_TOOL_DETAILS = "native-tool-details-v1";
+
+    private Map<String, Object> initialize(JsonNode params, boolean nativeTransport) {
         String version = optionalText(params, "protocolVersion").orElse("");
         if (!PROTOCOL_VERSION.equals(version)) {
             throw CodingHostException.conflict("CONTRACT_VERSION_UNSUPPORTED", "Unsupported protocol version");
         }
         var available = new java.util.HashSet<String>();
         available.add("coding-product-v1");
-        if (presentationFactory != null) available.add(PRESENTATION_CAPABILITY);
+        if (presentationFactory != null) {
+            available.add(PRESENTATION_CAPABILITY);
+            if (nativeTransport) {
+                available.add(NATIVE_TOOL_DETAILS);
+                available.add(NATIVE_TERMINAL_ACTIVITY);
+            }
+        }
         if (subscriptions != null && subscriptions.previewAvailable()) available.add("preview-v1");
         if (approvals != null) available.add(CodingHostApprovals.CAPABILITY);
-        var optional = CodingHostCapabilities.negotiate(params, available);
+        return clientInfo(CodingHostCapabilities.negotiate(params, available));
+    }
+
+    Map<String, Object> clientInfo(java.util.Set<String> optionalCapabilities) {
         Map<String, Object> capabilities = new LinkedHashMap<>();
         capabilities.put("client-renewal", true);
         capabilities.put("session-list", true);
@@ -342,7 +354,7 @@ public final class CodingHostDispatcher {
                 "capabilities",
                 capabilities,
                 "optionalCapabilities",
-                optional,
+                optionalCapabilities,
                 "unsupported",
                 List.of("preview", "session-consent", "credential-write", "credential-login"),
                 "localManagementCommand",

@@ -251,6 +251,132 @@ class CodingPresentationObservationTest {
     }
 
     @Test
+    void nativeToolProjectionPreservesTimingExitAndBoundedResultAcrossUpdates() throws Exception {
+        Fixture f = new Fixture();
+        try (var observation = f.observe("client")) {
+            observation.initial();
+            f.events
+                    .get()
+                    .onEvent(f.tool(
+                            1,
+                            100,
+                            new RunEventPayloads.ToolLifecycle(
+                                    "call", "Run Command", "STARTED", "NONE", "fixture command", "")));
+            observation.poll(Duration.ofSeconds(5));
+            f.events
+                    .get()
+                    .onEvent(f.tool(
+                            2,
+                            350,
+                            new RunEventPayloads.ToolLifecycle(
+                                    "call",
+                                    "Run Command",
+                                    "FAILED",
+                                    "NONE",
+                                    "fixture command",
+                                    "result-1",
+                                    Optional.of(new RunEventPayloads.ToolObservation(
+                                            Optional.of(io.haifa.agent.runtime.api.display.BoundedText.of(
+                                                    "fixture result", 1024, 10)),
+                                            Optional.of("EXITED"),
+                                            Optional.of(17))),
+                                    "Check fixture",
+                                    "execution_run")));
+            var update = (Update) observation.poll(Duration.ofSeconds(5));
+            assertThat(update.replacement().entries())
+                    .filteredOn(entry -> entry.kind().equals("tool"))
+                    .singleElement()
+                    .satisfies(entry -> {
+                        assertThat(entry.toolCallId()).isEqualTo("call");
+                        var details = entry.toolDetails();
+                        assertThat(details.startedAtEpochMillis()).isEqualTo(100L);
+                        assertThat(details.durationMillis()).isEqualTo(250L);
+                        assertThat(details.exitCode()).isEqualTo(17L);
+                        assertThat(details.resultRef()).isEqualTo("result-1");
+                        assertThat(details.output().text()).isEqualTo("fixture result");
+                    });
+        }
+    }
+
+    @Test
+    void nativeToolOutputsShareTheBoundedUpdateWithVisibleHistory() throws Exception {
+        Fixture f = new Fixture();
+        var messages = java.util.stream.IntStream.rangeClosed(1, 5)
+                .mapToObj(i -> new CodingSessionHistoryItem(
+                        "message-" + i,
+                        CodingSessionHistoryItem.Kind.USER,
+                        "You",
+                        "x".repeat(8_000),
+                        "COMPLETED",
+                        i,
+                        Instant.EPOCH,
+                        Optional.empty(),
+                        false))
+                .toList();
+        f.history.set(new CodingSessionHistoryPage(f.session, messages, false, OptionalLong.empty()));
+        try (var observation = f.observe("client")) {
+            observation.initial();
+            Update update = null;
+            for (int i = 1; i <= 8; i++) {
+                f.events
+                        .get()
+                        .onEvent(f.tool(
+                                i,
+                                100L * i,
+                                new RunEventPayloads.ToolLifecycle(
+                                        "call-" + i,
+                                        "Run Command",
+                                        "SUCCEEDED",
+                                        "NONE",
+                                        "safe target",
+                                        "",
+                                        Optional.of(new RunEventPayloads.ToolObservation(
+                                                Optional.of(io.haifa.agent.runtime.api.display.BoundedText.of(
+                                                        "y".repeat(4_000), 4_000, 10)),
+                                                Optional.of("EXITED"),
+                                                Optional.of(0))))));
+                var envelope = observation.poll(Duration.ofSeconds(5));
+                assertThat(envelope).isInstanceOf(Update.class);
+                update = (Update) envelope;
+            }
+            var entries = update.replacement().entries();
+            assertThat(entries)
+                    .filteredOn(entry -> "message".equals(entry.kind()))
+                    .hasSize(5);
+            var tools = entries.stream()
+                    .filter(entry -> entry.toolDetails() != null)
+                    .toList();
+            assertThat(tools).hasSize(8);
+            assertThat(tools.getFirst().toolDetails().output().truncated()).isTrue();
+            assertThat(tools.getLast().toolDetails().output().text()).hasSize(4_000);
+        }
+    }
+
+    @Test
+    void pagedToolActivityKeepsThePreviouslySupportedOutputBudget() {
+        Fixture fixture = new Fixture();
+        String output = "safe output ".repeat(900);
+        var event = fixture.tool(
+                1,
+                2,
+                new RunEventPayloads.ToolLifecycle(
+                        "tool-1",
+                        "Run Command",
+                        "COMPLETED",
+                        "NONE",
+                        "safe target",
+                        "",
+                        Optional.of(new RunEventPayloads.ToolObservation(
+                                Optional.of(io.haifa.agent.runtime.api.display.BoundedText.of(output, 16_384, 200)),
+                                Optional.of("EXITED"),
+                                Optional.of(0)))));
+        var pageEntry = CodingPresentationObservation.projectActivity(
+                event, io.haifa.agent.credential.api.SecretRedactor.noop());
+        assertThat(pageEntry.toolDetails().output().text()).isEqualTo(output);
+        assertThat(pageEntry.toolDetails().output().truncated()).isFalse();
+    }
+
+    @Test
     void deliveryNoticesRetainSourceAndFactsInInitialReplayAndLiveUpdates() throws Exception {
         Fixture f = new Fixture();
         f.replay.set(List.of(f.delivery(
@@ -450,6 +576,21 @@ class CodingPresentationObservationTest {
                     new Scope("view", "host", clientId, session.value(), 1, "native"),
                     new DefaultSecretRedactor(),
                     () -> new Consent("ASK", null, false));
+        }
+
+        AgentRunEvent tool(long sequence, long occurredAt, RunEventPayloads.ToolLifecycle payload) {
+            return new AgentRunEvent(
+                    "tool-" + sequence,
+                    "tool.lifecycle",
+                    "1",
+                    run,
+                    session,
+                    sequence,
+                    new RunEventCursor(run, "1", OptionalLong.of(sequence)),
+                    Instant.ofEpochMilli(occurredAt),
+                    Optional.empty(),
+                    Optional.empty(),
+                    payload);
         }
 
         AgentRunEvent delivery(long sequence, RunEventPayloads.DeliveryLifecycle payload) {

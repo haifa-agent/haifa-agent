@@ -16,6 +16,7 @@ import io.haifa.coding.host.internal.CodingHostSubscriptions;
 import java.lang.reflect.Proxy;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -46,9 +47,9 @@ class CodingHostSubscriptionsTest {
                     .accept(new io.haifa.agent.execution.api.ToolOutputPreview(
                             run, tool, io.haifa.agent.execution.api.ExecutionOutputChannel.STDOUT, text, false, false));
         }
-        var first = attached.poll(1, java.util.concurrent.TimeUnit.SECONDS);
+        var first = (Map<?, ?>) attached.poll(1, java.util.concurrent.TimeUnit.SECONDS);
         assertThat(first).isNotNull();
-        var second = attached.poll(0, java.util.concurrent.TimeUnit.SECONDS);
+        var second = (Map<?, ?>) attached.poll(0, java.util.concurrent.TimeUnit.SECONDS);
         String visible = first.get("text").toString()
                 + (second == null ? "" : second.get("text").toString());
         assertThat(visible).contains("[REDACTED]").doesNotContain("synthetic-split-value");
@@ -80,7 +81,8 @@ class CodingHostSubscriptionsTest {
         String first = subscriptions.subscribePreview("client-preview", session, run);
         var attached = subscriptions.attach("client-preview", first);
         receiver.get().accept(preview);
-        assertThat(attached.poll(1, java.util.concurrent.TimeUnit.SECONDS)).containsEntry("text", "chunk");
+        var chunk = (Map<?, ?>) attached.poll(1, java.util.concurrent.TimeUnit.SECONDS);
+        assertThat(chunk.get("text")).isEqualTo("chunk");
         receiver.get().accept(preview);
         receiver.get().accept(preview);
         assertThat(attached.closed()).isTrue();

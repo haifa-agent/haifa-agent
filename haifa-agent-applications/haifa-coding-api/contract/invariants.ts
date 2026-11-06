@@ -30,6 +30,7 @@ export function createContract(
   function checkSnapshot(value: Snapshot): boolean {
     if (
       value.scope.sessionId !== value.session.id ||
+      (value.activity != null && value.scope.source !== "native") ||
       new Set(value.entries.map((e) => e.id)).size !== value.entries.length
     )
       return false;
@@ -58,6 +59,8 @@ export function createContract(
     }
     for (const entry of value.entries) {
       if (entry.kind === "tool" && (!entry.toolCallId || !entry.runId))
+        return false;
+      if (entry.toolDetails != null && (entry.kind !== "tool" || value.scope.source !== "native"))
         return false;
       if (entry.interactionId) {
         const linked = value.entries.find(

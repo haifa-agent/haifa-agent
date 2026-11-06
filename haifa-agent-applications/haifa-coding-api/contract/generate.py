@@ -28,7 +28,7 @@ for name,spec in schema['$defs'].items():
     j+=['    public record '+name+'('+fields+')'+(' implements Envelope' if name in ['Snapshot','Update','Resync'] else '')+' {','        public '+name+' {']
     t+=['export type '+name+' = Readonly<{']
     for k,v in props.items():
-        t+=['  '+k+': '+ts_type(v)+';']
+        t+=['  '+k+('' if k in spec['required'] else '?')+': '+ts_type(v)+';']
         optional='anyOf' in v
         actual=v['anyOf'][0] if optional else v
         if optional:j+=['            if ('+k+' != null) {']
@@ -50,6 +50,11 @@ for name,spec in schema['$defs'].items():
             j+=[prefix+'if (!('+test+')) throw new IllegalArgumentException("Invalid '+k+'");']
         if optional:j+=['            }']
     j+=['        }']
+    if name == 'Snapshot':
+        previous_fields = ', '.join(java_type(v)+' '+k for k,v in props.items() if k != 'activity')
+        previous_args = ', '.join(k for k in props if k != 'activity')
+        j += ['        public Snapshot('+previous_fields+') { this('+previous_args+', null); }',
+              '        public Snapshot withActivity(ActivityHead head) { return new Snapshot('+previous_args+', head); }']
     if any(prop.get('$comment', '').startswith('Sensitive proof;') for prop in props.values()):
         j += ['        @Override public String toString() { return "'+name+'[redacted]"; }']
     j+=['    }'];t+=['}>;']

@@ -22,13 +22,783 @@ import io.haifa.agent.execution.api.ToolOutputPreview;
 import io.haifa.agent.execution.api.ToolOutputPreviewPublisher;
 import io.haifa.agent.runtime.api.InteractionView;
 import io.haifa.agent.runtime.api.RunEventPayloads;
+import io.haifa.coding.api.CodingClient;
+import io.haifa.coding.api.CodingClientException;
+import io.haifa.coding.api.CodingPresentationSubscription;
+import io.haifa.coding.api.CodingPreviewSubscription;
+import io.haifa.coding.api.CodingProtocol;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class CodingTerminalSelectionLifecycleTest {
+    @Test
+    void productObservationRendersDeliveryAndCancelUsesTheDisplayedExactTargetWithoutBlocking() throws Exception {
+        var productReady = new java.util.concurrent.CountDownLatch(1);
+        var observationClosed = new java.util.concurrent.CountDownLatch(1);
+        var requests = new ArrayList<CodingProtocol.Command>();
+        var blockedCommand = new BlockingCall();
+        var control = new ArrayDeque<Runnable>();
+        var pump = new TerminalEventPump(32);
+        String session = SESSION_ID.value();
+        var snapshot = new CodingProtocol.Snapshot(
+                "snapshot",
+                new CodingProtocol.Scope("view-1", "owner-1", "client-1", session, 1, "native"),
+                1,
+                "ready",
+                new CodingProtocol.Session(
+                        session,
+                        "Task",
+                        1,
+                        "ACTIVE",
+                        new CodingProtocol.Run("run-1", "RUNNING", 7),
+                        "model",
+                        "Model",
+                        "",
+                        1,
+                        true),
+                List.of(
+                        new CodingProtocol.Entry(
+                                "delivery-1",
+                                "notice",
+                                "run-1",
+                                "delivery",
+                                "Budget threshold",
+                                "Usage: 7 / 8",
+                                "THRESHOLD",
+                                null,
+                                false,
+                                null,
+                                null,
+                                null,
+                                null,
+                                "TOKEN_BUDGET",
+                                null,
+                                null),
+                        new CodingProtocol.Entry(
+                                "view-tool-1",
+                                "tool",
+                                "run-1",
+                                "tool",
+                                "Run Command",
+                                "fixture",
+                                "STARTED",
+                                null,
+                                false,
+                                null,
+                                0L,
+                                "call-1",
+                                null,
+                                null,
+                                null,
+                                new CodingProtocol.ToolDetails(
+                                        "execution_run", "Inspect fixture", "NONE", "", null, null, 0L, null, null))),
+                new CodingProtocol.History(true, 5L, true),
+                null,
+                new CodingProtocol.Consent("ASK", null, false),
+                List.of(new CodingProtocol.Action(
+                        "cancel", new CodingProtocol.Target(session, "run-1", null, 7L), null, true, null)),
+                List.of());
+        var product = new ProductClientFixture() {
+            public CodingProtocol.ActivityPage activity(CodingProtocol.ActivityRequest request) {
+                assertThat(request.afterSequence()).isZero();
+                var detail = new CodingProtocol.ToolDetails(
+                        "execution_run", "Inspect fixture", "NONE", "", null, null, 0L, null, null);
+                var entry = new CodingProtocol.Entry(
+                        "tool-outside-snapshot",
+                        "tool",
+                        "run-1",
+                        "tool",
+                        "Run Command",
+                        "fixture",
+                        "STARTED",
+                        1L,
+                        false,
+                        null,
+                        0L,
+                        "outside",
+                        null,
+                        null,
+                        null,
+                        detail);
+                return new CodingProtocol.ActivityPage(session, "run-1", 0, 1, false, List.of(entry));
+            }
+
+            public CodingProtocol.CommandResult execute(CodingProtocol.CommandRequest request) {
+                requests.add(request.command());
+                blockedCommand.block();
+                return new CodingProtocol.CommandResult(
+                        new CodingProtocol.Receipt(
+                                request.command().clientRequestId(), "accepted", null, "run-1", null),
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null);
+            }
+
+            public CodingPresentationSubscription observe(String sessionId) {
+                assertThat(sessionId).isEqualTo(session);
+                return new CodingPresentationSubscription() {
+                    public CodingProtocol.Snapshot initial() {
+                        return snapshot.withActivity(new CodingProtocol.ActivityHead("run-1", 1));
+                    }
+
+                    public CodingProtocol.Envelope poll(Duration timeout) throws InterruptedException {
+                        productReady.countDown();
+                        new java.util.concurrent.CountDownLatch(1).await();
+                        return null;
+                    }
+
+                    public boolean closed() {
+                        return false;
+                    }
+
+                    public void close() {
+                        observationClosed.countDown();
+                    }
+                };
+            }
+
+            public CodingProtocol.HistoryPage history(String sessionId, int limit, Long beforeSequence) {
+                assertThat(sessionId).isEqualTo(session);
+                if (beforeSequence == null) {
+                    return new CodingProtocol.HistoryPage(
+                            session, List.of(), new CodingProtocol.History(true, 5L, true));
+                }
+                assertThat(beforeSequence).isEqualTo(5L);
+                return new CodingProtocol.HistoryPage(
+                        session,
+                        List.of(new CodingProtocol.Entry(
+                                "history-4",
+                                "message",
+                                null,
+                                "user",
+                                "User",
+                                "Earlier fixture message",
+                                "RESTORED",
+                                4L,
+                                false,
+                                null,
+                                null,
+                                null,
+                                null,
+                                null,
+                                null,
+                                null)),
+                        new CodingProtocol.History(false, null, true));
+            }
+        };
+        try (var controller = new CodingTerminalController(
+                PROJECT_ID,
+                null,
+                pump,
+                new TerminalUiReducer(),
+                TerminalUiState.initial(120, 40),
+                control::add,
+                Runnable::run,
+                Runnable::run)) {
+            controller.attachProductClient(product);
+            controller.open(SESSION_ID);
+            assertThat(controller.state().loadedResources()).containsExactly("Product resource");
+            assertThat(productReady.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                    .isTrue();
+            controller.drainEvents();
+            assertThat(controller.state().transcript()).anySatisfy(item -> {
+                assertThat(item.title()).isEqualTo("Budget threshold");
+                assertThat(item.body()).isEqualTo("Usage: 7 / 8");
+            });
+
+            controller.accept(input(TerminalInput.Kind.EXECUTE_COMMAND, "/history"));
+            assertThat(controller.state().transcript().getFirst().body()).isEqualTo("Earlier fixture message");
+
+            pump.offer(new TerminalUiAction.ProductDeliveryChanged(List.of(), List.of("Bounded product window")));
+            controller.drainEvents();
+            controller.accept(input(TerminalInput.Kind.TOGGLE_EXPANSION, ""));
+            assertThat(controller.state().transcript())
+                    .filteredOn(item -> item.id().equals("tool-outside"))
+                    .singleElement()
+                    .satisfies(item -> {
+                        assertThat(item.expanded()).isTrue();
+                        assertThat(item.title()).isEqualTo("Run Command · Inspect fixture");
+                    });
+
+            controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
+            controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
+            assertThat(controller.state().status()).isEqualTo("Cancelling");
+            assertThat(requests).isEmpty();
+            Thread worker = Thread.ofVirtual().start(control.removeFirst());
+            try {
+                assertThat(blockedCommand.awaitStarted()).isTrue();
+                pump.offer(new TerminalUiAction.TerminalResized(80, 24));
+                pump.offer(new TerminalUiAction.ProductActivityChanged(List.of(new CodingProtocol.Entry(
+                        "resource-fixture",
+                        "notice",
+                        "run-1",
+                        "resource",
+                        "Resource during cancel",
+                        "file · fixture",
+                        "READY",
+                        2L,
+                        false,
+                        null,
+                        0L,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null))));
+                controller.drainEvents();
+                controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
+                controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, "next", 4));
+                assertThat(controller.state().columns()).isEqualTo(80);
+                assertThat(controller.state().editorBuffer()).isEqualTo("next");
+                assertThat(controller.state().transcript())
+                        .anyMatch(item -> item.title().equals("Resource during cancel"));
+                pump.offer(new TerminalUiAction.ProductActivityChanged(List.of(new CodingProtocol.Entry(
+                        "run-run-1",
+                        "notice",
+                        "run-1",
+                        "run-state",
+                        "RUN_CANCELLED",
+                        "",
+                        "CANCELLED",
+                        3L,
+                        false,
+                        null,
+                        0L,
+                        null,
+                        null,
+                        "RUN_CANCELLED",
+                        null,
+                        null))));
+                controller.drainEvents();
+                assertThat(controller.state().status()).isEqualTo("CANCELLED");
+            } finally {
+                blockedCommand.release();
+                assertThat(worker.join(Duration.ofSeconds(5))).isTrue();
+            }
+            controller.drainEvents();
+            assertThat(controller.state().status()).isEqualTo("CANCELLED");
+            assertThat(requests).singleElement().satisfies(command -> {
+                assertThat(command.operation()).isEqualTo("cancel");
+                assertThat(command.target())
+                        .isEqualTo(new CodingProtocol.CommandTarget(PROJECT_ID.value(), session, "run-1", null, 7L));
+            });
+        }
+        assertThat(observationClosed.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                .isTrue();
+    }
+
+    @Test
+    void acceptedCreateIsRetainedWhileFailedHistoryReadIsRecovered() {
+        var maintenance = new ArrayDeque<Runnable>();
+        var commands = new ArrayList<CodingProtocol.Command>();
+        var historyReads = new ArrayList<String>();
+        var product = new ProductClientFixture() {
+            public CodingProtocol.CommandResult execute(CodingProtocol.CommandRequest request) {
+                var command = request.command();
+                commands.add(command);
+                return new CodingProtocol.CommandResult(
+                        new CodingProtocol.Receipt(command.clientRequestId(), "accepted", null, "run-1", null),
+                        new CodingProtocol.SessionSummary(
+                                SESSION_ID.value(), PROJECT_ID.value(), "Task", "ACTIVE", "run-1", "RUNNING", 0, 0, 1),
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null);
+            }
+
+            public CodingPresentationSubscription observe(String sessionId) {
+                throw new CodingClientException("REMOTE_TRANSPORT_UNAVAILABLE", false);
+            }
+
+            public CodingProtocol.HistoryPage history(String sessionId, int limit, Long beforeSequence) {
+                historyReads.add(sessionId);
+                if (historyReads.size() == 1) throw new CodingClientException("REMOTE_TRANSPORT_UNAVAILABLE", false);
+                return new CodingProtocol.HistoryPage(
+                        sessionId, List.of(), new CodingProtocol.History(false, null, true));
+            }
+        };
+        try (var controller = new CodingTerminalController(
+                PROJECT_ID,
+                null,
+                new TerminalEventPump(32),
+                new TerminalUiReducer(),
+                TerminalUiState.initial(120, 40),
+                Runnable::run,
+                Runnable::run,
+                maintenance::add)) {
+            controller.attachProductClient(product);
+            var submission = controller
+                    .prepareMessageSubmission(input(TerminalInput.Kind.SUBMIT, "fixture"))
+                    .orElseThrow();
+            controller.completeMessageSubmission(controller.executeMessageSubmission(submission));
+
+            assertThat(controller.state().editorBuffer()).isEmpty();
+            assertThat(controller.state().status()).startsWith("Message accepted");
+            assertThat(controller.state().session()).isEmpty();
+
+            maintenance.removeFirst().run();
+            controller.drainEvents();
+            assertThat(controller.state().session().orElseThrow().summary().sessionId())
+                    .isEqualTo(SESSION_ID);
+            assertThat(controller.state().editorBuffer()).isEmpty();
+            assertThat(commands).singleElement().satisfies(command -> assertThat(command.operation())
+                    .isEqualTo("create"));
+            assertThat(historyReads).containsExactly(SESSION_ID.value(), SESSION_ID.value());
+        }
+    }
+
+    @Test
+    void blockedProductSessionSelectorAllowsEditorUpdatesAndReportsReadFailure() throws Exception {
+        var effects = new ArrayDeque<Runnable>();
+        var pump = new TerminalEventPump(32);
+        var read = new BlockingCall();
+        var product = new ProductClientFixture() {
+            public CodingProtocol.QueryResult query(CodingProtocol.Query query) {
+                assertThat(query.operation()).isEqualTo("sessions");
+                assertThat(query.limit()).isEqualTo(50);
+                read.block();
+                throw new CodingClientException("REMOTE_TRANSPORT_UNAVAILABLE", false);
+            }
+
+            public CodingPresentationSubscription observe(String sessionId) {
+                throw new AssertionError("unexpected observation");
+            }
+
+            public CodingProtocol.CommandResult execute(CodingProtocol.CommandRequest request) {
+                throw new AssertionError("unexpected command");
+            }
+
+            public CodingProtocol.HistoryPage history(String sessionId, int limit, Long beforeSequence) {
+                throw new AssertionError("unexpected history");
+            }
+        };
+        try (var controller = new CodingTerminalController(
+                PROJECT_ID,
+                null,
+                pump,
+                new TerminalUiReducer(),
+                TerminalUiState.initial(120, 40),
+                Runnable::run,
+                effects::add,
+                Runnable::run)) {
+            controller.attachProductClient(product);
+            controller.accept(input(TerminalInput.Kind.EXECUTE_COMMAND, "/sessions"));
+            assertThat(controller.state().status()).isEqualTo("Loading sessions");
+            Thread worker = Thread.ofVirtual().start(effects.removeFirst());
+            try {
+                assertThat(read.awaitStarted()).isTrue();
+                pump.offer(new TerminalUiAction.TerminalResized(80, 24));
+                controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, "draft", 5));
+                assertThat(controller.state().columns()).isEqualTo(80);
+                assertThat(controller.state().editorBuffer()).isEqualTo("draft");
+            } finally {
+                read.release();
+                assertThat(worker.join(Duration.ofSeconds(5))).isTrue();
+            }
+            controller.drainEvents();
+            assertThat(controller.state().recoverableError()).contains("REMOTE_TRANSPORT_UNAVAILABLE");
+            assertThat(controller.state().selector()).isEmpty();
+            assertThat(controller.state().editorBuffer()).isEqualTo("draft");
+        }
+    }
+
+    @Test
+    void productPendingApprovalUsesProjectedTargetAndNeverHydratesThroughTheCompatibilityClient() throws Exception {
+        String session = SESSION_ID.value();
+        var target = new CodingProtocol.Target(session, "run-1", "request-1", 3L);
+        var entry = new CodingProtocol.Entry(
+                "interaction-request-1",
+                "interaction",
+                target.runId(),
+                "interaction",
+                "Inspect workspace",
+                "Read one fixture file",
+                "PENDING",
+                null,
+                false,
+                new CodingProtocol.Interaction(
+                        target.interactionId(),
+                        target.targetRevision(),
+                        "approval",
+                        new CodingProtocol.Input("none", 0, 0, 0, List.of(), List.of()),
+                        new CodingProtocol.Review(
+                                "Inspect workspace",
+                                "text/plain",
+                                "Read one fixture file",
+                                List.of(),
+                                List.of(),
+                                null,
+                                true,
+                                false),
+                        List.of(new CodingProtocol.Action("respond", target, "approve", true, null))),
+                0L,
+                null,
+                null,
+                null,
+                null,
+                null);
+        var snapshot = new CodingProtocol.Snapshot(
+                "snapshot",
+                new CodingProtocol.Scope("view-1", "owner-1", "client-1", session, 1, "native"),
+                1,
+                "ready",
+                new CodingProtocol.Session(
+                        session,
+                        "Task",
+                        1,
+                        "ACTIVE",
+                        new CodingProtocol.Run("run-1", "RUNNING", 7),
+                        "model",
+                        "Model",
+                        "",
+                        1,
+                        true),
+                List.of(entry),
+                new CodingProtocol.History(false, null, true),
+                null,
+                new CodingProtocol.Consent("ASK", null, false),
+                List.of(),
+                List.of());
+        var productReady = new java.util.concurrent.CountDownLatch(1);
+        var commands = new ArrayList<CodingProtocol.Command>();
+        var product = new ProductClientFixture() {
+            public CodingProtocol.CommandResult execute(CodingProtocol.CommandRequest request) {
+                var command = request.command();
+                commands.add(command);
+                return new CodingProtocol.CommandResult(
+                        new CodingProtocol.Receipt(command.clientRequestId(), "accepted", null, null, null),
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        command.operation().equals("prepareApproval") ? entry : null);
+            }
+
+            public CodingPresentationSubscription observe(String sessionId) {
+                assertThat(sessionId).isEqualTo(session);
+                return new CodingPresentationSubscription() {
+                    public CodingProtocol.Snapshot initial() {
+                        return snapshot;
+                    }
+
+                    public CodingProtocol.Envelope poll(Duration timeout) throws InterruptedException {
+                        productReady.countDown();
+                        new java.util.concurrent.CountDownLatch(1).await();
+                        return null;
+                    }
+
+                    public boolean closed() {
+                        return false;
+                    }
+
+                    public void close() {}
+                };
+            }
+
+            public CodingProtocol.HistoryPage history(String sessionId, int limit, Long beforeSequence) {
+                return new CodingProtocol.HistoryPage(
+                        sessionId, List.of(), new CodingProtocol.History(false, null, true));
+            }
+        };
+        var control = new ArrayDeque<Runnable>();
+        try (var controller = new CodingTerminalController(
+                PROJECT_ID,
+                null,
+                new TerminalEventPump(32),
+                new TerminalUiReducer(),
+                TerminalUiState.initial(120, 40),
+                control::add,
+                Runnable::run,
+                Runnable::run)) {
+            controller.attachProductClient(product);
+            controller.open(SESSION_ID);
+            assertThat(productReady.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                    .isTrue();
+            controller.drainEvents();
+            assertThat(control).hasSize(1);
+            assertThat(commands).isEmpty();
+            control.removeFirst().run();
+            controller.drainEvents();
+            assertThat(controller.state().selector()).hasValueSatisfying(selector -> {
+                assertThat(selector.kind()).isEqualTo("interaction:request-1");
+                assertThat(selector.options()).containsExactly("Allow once");
+            });
+            assertThat(controller.state().transcript()).anySatisfy(item -> {
+                assertThat(item.id()).isEqualTo(entry.id());
+                assertThat(item.body()).isEqualTo("Read one fixture file");
+            });
+            controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+            assertThat(controller.state().status()).isEqualTo("Approving");
+            control.removeFirst().run();
+            assertThat(commands)
+                    .extracting(CodingProtocol.Command::operation)
+                    .containsExactly("prepareApproval", "respond");
+            assertThat(commands).allSatisfy(command -> {
+                assertThat(command.target().sessionId()).isEqualTo(target.sessionId());
+                assertThat(command.target().runId()).isEqualTo(target.runId());
+                assertThat(command.target().interactionId()).isEqualTo(target.interactionId());
+                assertThat(command.target().targetRevision()).isEqualTo(target.targetRevision());
+            });
+        }
+    }
+
+    @Test
+    void productReloadAndWorkspaceRevokeUseScopedCommands() {
+        var commands = new ArrayList<CodingProtocol.Command>();
+        var product = new ProductClientFixture() {
+            public CodingProtocol.CommandResult execute(CodingProtocol.CommandRequest request) {
+                var command = request.command();
+                commands.add(command);
+                return new CodingProtocol.CommandResult(
+                        new CodingProtocol.Receipt(command.clientRequestId(), "accepted", null, null, null),
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null);
+            }
+
+            public CodingPresentationSubscription observe(String sessionId) {
+                throw new AssertionError("unexpected observation");
+            }
+
+            public CodingProtocol.HistoryPage history(String sessionId, int limit, Long beforeSequence) {
+                throw new AssertionError("unexpected history");
+            }
+        };
+        try (var controller = new CodingTerminalController(
+                PROJECT_ID,
+                null,
+                new TerminalEventPump(32),
+                new TerminalUiReducer(),
+                TerminalUiState.initial(120, 40),
+                Runnable::run,
+                Runnable::run,
+                Runnable::run)) {
+            controller.attachProductClient(product);
+            controller.accept(input(TerminalInput.Kind.EXECUTE_COMMAND, "/reload"));
+            assertThat(controller.state().loadedResources()).containsExactly("Product resource");
+            controller.accept(input(TerminalInput.Kind.EXECUTE_COMMAND, "/trust revoke workspace-1"));
+            assertThat(controller.state().status()).isEqualTo("Workspace access revoked");
+            assertThat(commands)
+                    .extracting(CodingProtocol.Command::operation)
+                    .containsExactly("resourcesReload", "workspaceRevoke");
+            assertThat(commands).allSatisfy(command -> {
+                assertThat(command.target().projectId()).isEqualTo(PROJECT_ID.value());
+                assertThat(command.target().sessionId()).isNull();
+            });
+            assertThat(commands.getLast().optionId()).isEqualTo("workspace-1");
+        }
+    }
+
+    @Test
+    void healthyProductRevisionRefreshesMetadataWithoutReadingHistoryAgain() throws Exception {
+        String session = SESSION_ID.value();
+        var initial = metadataSnapshot(session, 1, "Task");
+        var changed = metadataSnapshot(session, 2, "Renamed");
+        var pollStarted = new java.util.concurrent.CountDownLatch(1);
+        var changeReady = new java.util.concurrent.CountDownLatch(1);
+        var changeRead = new java.util.concurrent.CountDownLatch(1);
+        var metadataReads = new java.util.concurrent.atomic.AtomicInteger();
+        var historyReads = new java.util.concurrent.atomic.AtomicInteger();
+        var product = new ProductClientFixture() {
+            @Override
+            public CodingProtocol.TerminalSession terminalSession(String id) {
+                var original = super.terminalSession(id);
+                int reads = metadataReads.incrementAndGet();
+                var summary = new CodingProtocol.SessionSummary(
+                        id, PROJECT_ID.value(), reads == 1 ? "Task" : "Renamed", "ACTIVE", null, null, 0, 0, reads);
+                return new CodingProtocol.TerminalSession(summary, null, original.model(), null, "fixture");
+            }
+
+            @Override
+            public CodingPresentationSubscription observe(String id) {
+                return new CodingPresentationSubscription() {
+                    private boolean sent;
+
+                    public CodingProtocol.Snapshot initial() {
+                        return initial;
+                    }
+
+                    public CodingProtocol.Envelope poll(Duration timeout) throws InterruptedException {
+                        if (sent) {
+                            changeRead.countDown();
+                            new java.util.concurrent.CountDownLatch(1).await();
+                            return null;
+                        }
+                        pollStarted.countDown();
+                        changeReady.await();
+                        sent = true;
+                        return new CodingProtocol.Update("update", "view-1", 1, 2, changed);
+                    }
+
+                    public boolean closed() {
+                        return false;
+                    }
+
+                    public void close() {}
+                };
+            }
+
+            @Override
+            public CodingProtocol.CommandResult execute(CodingProtocol.CommandRequest request) {
+                throw new AssertionError("unexpected command");
+            }
+
+            @Override
+            public CodingProtocol.HistoryPage history(String id, int limit, Long beforeSequence) {
+                historyReads.incrementAndGet();
+                return new CodingProtocol.HistoryPage(id, List.of(), new CodingProtocol.History(false, null, true));
+            }
+        };
+        try (var controller = new CodingTerminalController(
+                PROJECT_ID,
+                null,
+                new TerminalEventPump(32),
+                new TerminalUiReducer(),
+                TerminalUiState.initial(120, 40),
+                Runnable::run,
+                Runnable::run,
+                Runnable::run)) {
+            controller.attachProductClient(product);
+            controller.open(SESSION_ID);
+            assertThat(pollStarted.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                    .isTrue();
+            controller.drainEvents();
+            changeReady.countDown();
+            assertThat(changeRead.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                    .isTrue();
+            controller.drainEvents();
+            assertThat(controller.state().session().orElseThrow().summary().displayName())
+                    .isEqualTo("Renamed");
+            assertThat(metadataReads).hasValue(2);
+            assertThat(historyReads).hasValue(1);
+        }
+    }
+
+    private static CodingProtocol.Snapshot metadataSnapshot(String session, long revision, String title) {
+        return new CodingProtocol.Snapshot(
+                "snapshot",
+                new CodingProtocol.Scope("view-1", "owner-1", "client-1", session, 1, "native"),
+                revision,
+                "ready",
+                new CodingProtocol.Session(session, title, revision, "ACTIVE", null, "model", "Model", "", 1, true),
+                List.of(),
+                new CodingProtocol.History(false, null, true),
+                null,
+                new CodingProtocol.Consent("ASK", null, false),
+                List.of(),
+                List.of());
+    }
+
+    private abstract static class ProductClientFixture implements CodingClient {
+        public CodingProtocol.ConnectionInfo connection() {
+            return new CodingProtocol.ConnectionInfo(
+                    "owner-1",
+                    "client-1",
+                    PROJECT_ID.value(),
+                    "1",
+                    "Host",
+                    List.of("coding-product-v1", "session-presentation-v1", "native-terminal-activity-v1"),
+                    "native");
+        }
+
+        public CodingProtocol.TerminalSession terminalSession(String id) {
+            var summary = new CodingProtocol.SessionSummary(
+                    id, PROJECT_ID.value(), "Task", "ACTIVE", "run-1", "RUNNING", 0, 0, 1);
+            var response = new CodingProtocol.ModelControl(
+                    "responseMode", true, false, List.of("RECOMMENDED"), "RECOMMENDED", "Fixture response mode");
+            var effort = new CodingProtocol.ModelControl(
+                    "reasoningEffort", false, true, List.of(), "MEDIUM", "Fixture effort");
+            var model = new CodingProtocol.ModelChoice(
+                    "model",
+                    "Model",
+                    "fixture",
+                    "Fixture",
+                    List.of(),
+                    1000,
+                    100,
+                    "CONNECTED",
+                    "AVAILABLE",
+                    "NORMAL",
+                    "IDLE",
+                    null,
+                    response,
+                    effort,
+                    "RECOMMENDED",
+                    null,
+                    null);
+            return new CodingProtocol.TerminalSession(
+                    summary,
+                    new CodingProtocol.Run("run-1", "RUNNING", 7),
+                    new CodingProtocol.ModelSelection(model, 1, true),
+                    null,
+                    "fixture");
+        }
+
+        public CodingProtocol.QueryResult query(CodingProtocol.Query query) {
+            assertThat(query.operation()).isIn("resources", "queuedMessages");
+            assertThat(query.target().projectId()).isEqualTo(PROJECT_ID.value());
+            if (query.operation().equals("queuedMessages")) {
+                assertThat(query.target().sessionId()).isEqualTo(SESSION_ID.value());
+            }
+            return new CodingProtocol.QueryResult(
+                    List.of(),
+                    null,
+                    null,
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    List.of("Product resource"),
+                    null,
+                    false);
+        }
+
+        public CodingPreviewSubscription preview(String sessionId, String runId) {
+            throw new AssertionError("unexpected preview");
+        }
+
+        public boolean renew() {
+            return true;
+        }
+
+        public void close() {
+            throw new AssertionError("terminal does not own the client");
+        }
+    }
+
     @Test
     void remoteConnectShowsCompleteLocalInstructionsWithoutCollectingSecretsAndCanBeDismissed() {
         var client = new FakeClient(activeView());

@@ -332,15 +332,13 @@ public final class CodingHostSubscriptions {
             return sessionId;
         }
 
-        public Map<String, Object> poll(long timeout, TimeUnit unit) throws InterruptedException {
+        public Object poll(long timeout, TimeUnit unit) throws InterruptedException {
             if (presentation != null) {
                 presentation.refreshConsent();
                 var envelope = presentation.poll(Duration.ofNanos(unit.toNanos(timeout)));
                 if (envelope == null) return null;
                 if (envelope instanceof io.haifa.coding.api.CodingProtocol.Resync) discard(this);
-                return new com.fasterxml.jackson.databind.ObjectMapper()
-                        .convertValue(
-                                envelope, new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+                return envelope;
             }
             return queue.poll(timeout, unit);
         }

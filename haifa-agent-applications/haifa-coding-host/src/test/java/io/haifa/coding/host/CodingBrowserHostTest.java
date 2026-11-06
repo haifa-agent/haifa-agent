@@ -97,10 +97,12 @@ class CodingBrowserHostTest {
                             .statusCode())
                     .isEqualTo(403);
             var ids = new HashSet<String>();
-            for (int i = 0; i < 18; i++)
-                ids.add(result(rpc(host, a, "initialize", initialize(), origin, null))
-                        .path("clientId")
-                        .asText());
+            for (int i = 0; i < 18; i++) {
+                var initialized = result(rpc(host, a, "initialize", initialize(), origin, null));
+                ids.add(initialized.path("clientId").asText());
+                assertThat(initialized.path("optionalCapabilities").toString())
+                        .doesNotContain("native-tool-details-v1");
+            }
             assertThat(ids).containsExactly(a.clientId());
             result(rpc(host, b, "initialize", initialize(), origin, null));
             var logout = new Command(
@@ -349,7 +351,11 @@ class CodingBrowserHostTest {
                 "protocolVersion",
                 "1",
                 "optionalCapabilities",
-                List.of("coding-product-v1", "session-presentation-v1", "session-consent-v1"));
+                List.of(
+                        "coding-product-v1",
+                        "session-presentation-v1",
+                        "session-consent-v1",
+                        "native-tool-details-v1"));
     }
 
     private HttpResponse<String> rpc(

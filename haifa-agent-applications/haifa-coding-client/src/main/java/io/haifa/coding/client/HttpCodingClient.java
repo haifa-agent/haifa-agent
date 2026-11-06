@@ -14,8 +14,13 @@ import java.util.concurrent.atomic.*;
 
 /** One negotiated native context; mutations are sent once and unknown outcomes are never replayed. */
 final class HttpCodingClient implements CodingClient {
-    private static final Set<String> OFFERED =
-            Set.of("coding-product-v1", "session-presentation-v1", "session-consent-v1", "preview-v1");
+    private static final Set<String> OFFERED = Set.of(
+            "coding-product-v1",
+            "session-presentation-v1",
+            "session-consent-v1",
+            "preview-v1",
+            "native-tool-details-v1",
+            "native-terminal-activity-v1");
     private static final Set<String> REQUIRED = Set.of("coding-product-v1", "session-presentation-v1");
     private static final int RESPONSE_BYTES = 1024 * 1024, REQUEST_BYTES = 256 * 1024;
     private final ObjectMapper json = new ObjectMapper()
@@ -39,6 +44,7 @@ final class HttpCodingClient implements CodingClient {
     private final Set<Observation> observations = ConcurrentHashMap.newKeySet();
     private final Set<PreviewObservation> previews = ConcurrentHashMap.newKeySet();
     private volatile ConnectionInfo connection;
+    private volatile TerminalContext terminalContext;
     private volatile String clientId;
     private volatile boolean canCloseClient;
 
@@ -101,6 +107,16 @@ final class HttpCodingClient implements CodingClient {
             throw failure("PRODUCT_CAPABILITY_UNSUPPORTED", false);
         String project = text(result, "projectId");
         if (expectedProject != null && !expectedProject.equals(project)) throw failure("HOST_PROJECT_CHANGED", false);
+        if (selected.contains("native-terminal-activity-v1")) {
+            var workspace = result.path("workspaceContext");
+            terminalContext = new TerminalContext(
+                    workspace.path("workingDirectory").asText(),
+                            workspace.path("gitBranch").asText(),
+                    workspace.path("worktree").asText(),
+                            workspace.path("worktreeBranch").asText(),
+                    workspace.path("executionDirectory").asText(),
+                            result.path("localManagementCommand").asText());
+        }
         connection = new ConnectionInfo(
                 text(result, "hostIncarnation"),
                 clientId,
@@ -154,6 +170,38 @@ final class HttpCodingClient implements CodingClient {
                     null,
                     null);
         }
+    }
+
+    @Override
+    public TerminalContext terminalContext() {
+        requireOpen();
+        var context = terminalContext;
+        if (context == null) throw failure("PRODUCT_CAPABILITY_UNSUPPORTED", false);
+        return context;
+    }
+
+    @Override
+    public TerminalSession terminalSession(String sessionId) {
+        requireOpen();
+        var result = decode(
+                call("product/terminalSession", Map.of("sessionId", sessionId), false, true), TerminalSession.class);
+        if (!sessionId.equals(result.summary().sessionId())
+                || !connection.projectId().equals(result.summary().projectId())) {
+            throw failure("SESSION_SCOPE_MISMATCH", false);
+        }
+        return result;
+    }
+
+    @Override
+    public ActivityPage activity(ActivityRequest request) {
+        requireOpen();
+        var page = decode(call("product/activity", request, false, true), ActivityPage.class);
+        try {
+            CodingProtocolChecks.activity(request, page);
+        } catch (IllegalArgumentException invalid) {
+            throw failure("ACTIVITY_SCOPE_MISMATCH", false);
+        }
+        return page;
     }
 
     @Override
@@ -282,10 +330,32 @@ final class HttpCodingClient implements CodingClient {
 
     private <T> T decode(JsonNode node, Class<T> type) {
         try {
+            if (type == Subscribed.class) supplySnapshotDefaults(node.path("snapshot"));
+            if (type == Update.class) supplySnapshotDefaults(node.path("replacement"));
+            if (type == ActivityPage.class) supplyToolDetailsDefaults(node.path("entries"));
+            if (type == HistoryPage.class) supplyToolDetailsDefaults(node.path("entries"));
+            if (type == CommandResult.class) supplyToolDetailsDefault(node.path("interaction"));
             return json.treeToValue(node, type);
         } catch (com.fasterxml.jackson.core.JsonProcessingException invalid) {
             throw failure("PROTOCOL_INCOMPATIBLE", false);
         }
+    }
+
+    private static void supplySnapshotDefaults(JsonNode node) {
+        if (node instanceof com.fasterxml.jackson.databind.node.ObjectNode snapshot && !snapshot.has("activity")) {
+            snapshot.putNull("activity");
+        }
+        supplyToolDetailsDefaults(node.path("entries"));
+    }
+
+    // The negotiated native extension is the only Entry slot allowed to be omitted on the v1 wire.
+    private static void supplyToolDetailsDefaults(JsonNode entries) {
+        if (entries.isArray()) entries.forEach(HttpCodingClient::supplyToolDetailsDefault);
+    }
+
+    private static void supplyToolDetailsDefault(JsonNode entry) {
+        if (entry instanceof com.fasterxml.jackson.databind.node.ObjectNode object && !object.has("toolDetails"))
+            object.putNull("toolDetails");
     }
 
     private static String text(JsonNode node, String name) {
