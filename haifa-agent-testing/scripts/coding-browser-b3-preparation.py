@@ -115,7 +115,7 @@ def main():
         handler=functools.partial(StaticHandler,directory=str(site))
         server=ThreadingHTTPServer(('127.0.0.1',0),handler);thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
         origin='http://127.0.0.1:'+str(server.server_port)
-        network=[];commands=[];subscriptions=0
+        network=[];commands=[];subscriptions=0;offline=False
         def protocol(route):
             nonlocal subscriptions
             request=route.request;path=request.url.split(origin,1)[-1]
@@ -136,7 +136,10 @@ def main():
                 elif method=='product/command':
                     command=data['params']['command'];commands.append({'operation':command['operation'],'target':command['target'],'optionId':command['optionId']})
                     result={'receipt':{'clientRequestId':command['clientRequestId'],'disposition':'accepted','operationId':'synthetic-operation','runId':'run-1','reasonCode':None},'session':None,'queuedMessage':None,'restoredMessage':None,'shellPlan':None,'shellExecution':None,'shellResult':None,'compaction':None,'export':None,'modelSelection':None,'interactionReceipt':None,'interaction':None}
-                elif method=='client/renew':result={'renewed':True}
+                elif method=='client/renew':
+                    if offline:
+                        route.abort('internetdisconnected');return
+                    result={'renewed':True}
                 else:result={'closed':True}
             route.fulfill(status=200,content_type='application/json',body=json.dumps({'jsonrpc':'2.0','id':id_,'result':result}))
         receipt['stage']='browser-launch'
@@ -168,6 +171,16 @@ def main():
             draft=page.locator('#draft');draft.fill('中文会话 A 草稿');page.get_by_role('button',name='合成测试会话 B',exact=False).click();expect(page.locator('#session-title')).to_have_text('合成测试会话 B');expect(draft).to_have_value('');draft.fill('会话 B 草稿');page.get_by_role('button',name='合成测试会话 A',exact=False).click();expect(draft).to_have_value('中文会话 A 草稿')
             require(page.evaluate("localStorage.length===0&&sessionStorage.length===0&&document.cookie==='';"),'BROWSER_STORAGE_USED')
             require(not errors,'PAGE_RUNTIME_ERROR');receipt['checks']['syntheticRendererExactActionSafeTextAndDraftIsolation']=True
+            receipt['stage']='synthetic-network-restored'
+            previous_subscriptions=subscriptions
+            offline=True
+            page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
+            expect(page.locator('#connection-label')).to_have_text('连接暂时中断')
+            offline=False
+            page.evaluate("window.dispatchEvent(new Event('online'))")
+            expect(page.locator('#session-subtitle')).to_have_text('基于当前工作区的会话与任务')
+            require(subscriptions>previous_subscriptions,'VISIBLE_VIEW_NOT_RESTORED')
+            receipt['checks']['visibleViewRecoversWhenNetworkReturns']=True
             page.unroute('**/browser/v1/**');context.close()
             receipt['stage']='narrow-layout'
             mobile=browser.new_context(viewport={'width':390,'height':844});page=mobile.new_page();page.goto(origin+'/browser/');expect(page.locator('#menu')).to_be_visible()

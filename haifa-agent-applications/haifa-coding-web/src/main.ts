@@ -945,10 +945,15 @@ for (const button of document.querySelectorAll<HTMLButtonElement>(
     draft.focus();
     scheduleRender();
   };
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible" && client?.state === "connected")
+function recoverVisibleConnection() {
+  if (
+    document.visibilityState === "visible" &&
+    (client?.state === "connected" || client?.state === "offline")
+  )
     void recover();
-});
+}
+document.addEventListener("visibilitychange", recoverVisibleConnection);
+window.addEventListener("online", recoverVisibleConnection);
 setInterval(() => {
   if (document.visibilityState === "visible" && client?.state === "connected")
     void client.renew().catch((error) => {
