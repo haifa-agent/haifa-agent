@@ -19,11 +19,16 @@ JSON Schema Draft 2020-12, schema version **1**. `contract/generate.py generate`
 also packaged as `io/haifa/coding/api/coding-presentation.schema.json`. Package versions do not select a
 wire version. Changing incompatible required fields requires a new schema/capability version.
 
-All record fields are required on the wire; optional values use explicit `null`. Numbers are nonnegative
+Base record fields are required on the wire; nullable base values use explicit `null`. Numbers are nonnegative
 safe integers (at most 2^53 − 1), and timestamps are UTC epoch milliseconds. Unknown object fields,
 envelope kinds, critical entry kinds or schema versions are rejected before application. Strings are
 plain display text: consumers must escape them, never execute HTML, terminal escapes or scripts, and
 treat unfamiliar content/input/action types as unavailable. Display text and hashes confer no authority.
+
+The opt-in native capability `native-tool-details-v1` extends tool entries with `toolDetails`.
+The Host omits the extension for browsers and clients that did not negotiate it. The detail
+includes bounded redacted output, a safe result reference, process state, signed exit code and
+timestamps only when observed. It does not grant tool or result access.
 
 Run the same fixtures in both languages:
 
