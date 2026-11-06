@@ -155,7 +155,8 @@ public final class CodingProtocol {
     public record ToolOutput(String text, boolean truncated, long byteCount, long lineCount) {
         public ToolOutput {
             Objects.requireNonNull(text, "text");
-            if (text.codePointCount(0, text.length()) > 4000) throw new IllegalArgumentException("text exceeds budget");
+            if (text.codePointCount(0, text.length()) > 16384)
+                throw new IllegalArgumentException("text exceeds budget");
             if (byteCount < 0L || byteCount > 9007199254740991L)
                 throw new IllegalArgumentException("Invalid byteCount");
             if (lineCount < 0L || lineCount > 9007199254740991L)

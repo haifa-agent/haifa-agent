@@ -353,6 +353,30 @@ class CodingPresentationObservationTest {
     }
 
     @Test
+    void pagedToolActivityKeepsThePreviouslySupportedOutputBudget() {
+        Fixture fixture = new Fixture();
+        String output = "safe output ".repeat(900);
+        var event = fixture.tool(
+                1,
+                2,
+                new RunEventPayloads.ToolLifecycle(
+                        "tool-1",
+                        "Run Command",
+                        "COMPLETED",
+                        "NONE",
+                        "safe target",
+                        "",
+                        Optional.of(new RunEventPayloads.ToolObservation(
+                                Optional.of(io.haifa.agent.runtime.api.display.BoundedText.of(output, 16_384, 200)),
+                                Optional.of("EXITED"),
+                                Optional.of(0)))));
+        var pageEntry = CodingPresentationObservation.projectActivity(
+                event, io.haifa.agent.credential.api.SecretRedactor.noop());
+        assertThat(pageEntry.toolDetails().output().text()).isEqualTo(output);
+        assertThat(pageEntry.toolDetails().output().truncated()).isFalse();
+    }
+
+    @Test
     void deliveryNoticesRetainSourceAndFactsInInitialReplayAndLiveUpdates() throws Exception {
         Fixture f = new Fixture();
         f.replay.set(List.of(f.delivery(

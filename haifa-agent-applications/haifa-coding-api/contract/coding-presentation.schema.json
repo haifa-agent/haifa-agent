@@ -335,7 +335,7 @@
       "properties": {
         "text": {
           "type": "string",
-          "maxLength": 4000
+          "maxLength": 16384
         },
         "truncated": {
           "type": "boolean"

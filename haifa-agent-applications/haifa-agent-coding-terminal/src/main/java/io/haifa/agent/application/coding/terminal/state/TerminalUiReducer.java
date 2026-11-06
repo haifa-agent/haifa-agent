@@ -975,6 +975,14 @@ public final class TerminalUiReducer {
                     var item = items.get(index);
                     items.set(index, item.withStatus(entry.status(), item.body()));
                 }
+                if (current) {
+                    status = switch (entry.status()) {
+                        case "PENDING", "REQUESTED" -> "WAITING FOR APPROVAL";
+                        case "RESPONDED", "APPROVED", "APPLIED" -> "WORKING";
+                        case "REJECTED", "EXPIRED", "CANCELLED" -> "THINKING";
+                        default -> status;
+                    };
+                }
             }
             case "input-state" -> {
                 if (!current) return state;

@@ -801,7 +801,9 @@ public final class CodingTerminalController implements AutoCloseable {
                     return () -> {
                         if (!isCurrentSelection(token)) return;
                         switch (receipt.disposition()) {
-                            case "accepted" -> apply(new TerminalUiAction.StatusChanged("Accepted; waiting for Host"));
+                            case "accepted" -> {
+                                /* The product observation owns the next visible state. */
+                            }
                             case "unknown" -> apply(new TerminalUiAction.RecoverableFailure("REMOTE_OUTCOME_UNKNOWN"));
                             default ->
                                 apply(new TerminalUiAction.RecoverableFailure(

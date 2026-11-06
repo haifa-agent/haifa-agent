@@ -131,7 +131,20 @@ class CodingTerminalSelectionLifecycleTest {
             public CodingProtocol.CommandResult execute(CodingProtocol.CommandRequest request) {
                 requests.add(request.command());
                 blockedCommand.block();
-                throw new CodingClientException("ACTIVE_RUN_MISMATCH", false);
+                return new CodingProtocol.CommandResult(
+                        new CodingProtocol.Receipt(
+                                request.command().clientRequestId(), "accepted", null, "run-1", null),
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null);
             }
 
             public CodingPresentationSubscription observe(String sessionId) {
@@ -252,11 +265,31 @@ class CodingTerminalSelectionLifecycleTest {
                 assertThat(controller.state().editorBuffer()).isEqualTo("next");
                 assertThat(controller.state().transcript())
                         .anyMatch(item -> item.title().equals("Resource during cancel"));
+                pump.offer(new TerminalUiAction.ProductActivityChanged(List.of(new CodingProtocol.Entry(
+                        "run-run-1",
+                        "notice",
+                        "run-1",
+                        "run-state",
+                        "RUN_CANCELLED",
+                        "",
+                        "CANCELLED",
+                        3L,
+                        false,
+                        null,
+                        0L,
+                        null,
+                        null,
+                        "RUN_CANCELLED",
+                        null,
+                        null))));
+                controller.drainEvents();
+                assertThat(controller.state().status()).isEqualTo("CANCELLED");
             } finally {
                 blockedCommand.release();
                 assertThat(worker.join(Duration.ofSeconds(5))).isTrue();
             }
             controller.drainEvents();
+            assertThat(controller.state().status()).isEqualTo("CANCELLED");
             assertThat(requests).singleElement().satisfies(command -> {
                 assertThat(command.operation()).isEqualTo("cancel");
                 assertThat(command.target())

@@ -874,11 +874,15 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                 null,
                 null,
                 null,
-                detailed ? toolDetails(tool, previous, event, redactor) : null);
+                detailed ? toolDetails(tool, previous, event, redactor, sequence != null) : null);
     }
 
     private static ToolDetails toolDetails(
-            RunEventPayloads.ToolLifecycle tool, Entry previous, AgentRunEvent event, SecretRedactor redactor) {
+            RunEventPayloads.ToolLifecycle tool,
+            Entry previous,
+            AgentRunEvent event,
+            SecretRedactor redactor,
+            boolean activityPage) {
         long occurred = event.occurredAt().toEpochMilli();
         Long started = previous == null || previous.toolDetails() == null
                 ? null
@@ -892,7 +896,9 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                 .flatMap(RunEventPayloads.ToolObservation::outputPreview)
                 .map(value -> {
                     var bounded = io.haifa.agent.runtime.api.display.BoundedText.of(
-                            CodingPresentationText.safe(value.text(), Integer.MAX_VALUE, redactor), 4_000, 100);
+                            CodingPresentationText.safe(value.text(), Integer.MAX_VALUE, redactor),
+                            activityPage ? 16_384 : 4_000,
+                            activityPage ? 200 : 100);
                     return new ToolOutput(
                             bounded.text(),
                             value.truncated() || bounded.truncated(),
