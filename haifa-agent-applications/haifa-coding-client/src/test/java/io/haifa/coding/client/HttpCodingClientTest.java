@@ -115,6 +115,41 @@ class HttpCodingClientTest {
     }
 
     @Test
+    void aMismatchedCommandReceiptStaysUnknownWithoutReplay() throws Exception {
+        try (var host = new WireHost();
+                var client = CodingClients.connect(host.endpoint())) {
+            host.mutationResult = new CommandResult(
+                    new Receipt("foreign-request", "accepted", "other-run", "other-run", null),
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null);
+            var command = new Command(
+                    "command",
+                    "create",
+                    "local-request",
+                    "domain-key",
+                    new CommandTarget(null, null, null, null, null),
+                    "synthetic input",
+                    null,
+                    null,
+                    List.of());
+            var receipt = client.execute(command).receipt();
+            assertThat(receipt.disposition()).isEqualTo("unknown");
+            assertThat(receipt.clientRequestId()).isEqualTo("local-request");
+            assertThat(receipt.runId()).isNull();
+            assertThat(host.mutations).hasValue(1);
+        }
+    }
+
+    @Test
     @org.junit.jupiter.api.Timeout(10)
     void stalledMutationBodyHasABoundedUnknownOutcomeWithoutReplay() throws Exception {
         try (var host = new WireHost();
@@ -162,6 +197,7 @@ class HttpCodingClientTest {
                 Path.of("../haifa-coding-api/contract/fixtures/snapshot.json").toFile());
         volatile List<byte[]> frames = List.of();
         volatile boolean dropMutation, stallMutation, legacy;
+        volatile CommandResult mutationResult;
 
         WireHost() throws Exception {
             server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -207,7 +243,7 @@ class HttpCodingClientTest {
                             }
                             return;
                         }
-                        value = Map.of();
+                        value = mutationResult == null ? Map.of() : mutationResult;
                     } else value = Map.of("closed", true, "renewed", true);
                     var reply = new LinkedHashMap<String, Object>();
                     reply.put("jsonrpc", "2.0");

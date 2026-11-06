@@ -15,6 +15,7 @@ const empty = (): Draft => ({
 });
 export class WorkspaceState {
   #drafts = new Map<string, Draft>();
+  #preparedApprovals = new Set<string>();
   #selection: string | null = null;
   #generation = 0;
   #workspace: string | null = null;
@@ -22,6 +23,7 @@ export class WorkspaceState {
     if (this.#workspace !== null && this.#workspace !== projectId)
       this.#drafts.clear();
     this.#workspace = projectId;
+    this.#preparedApprovals.clear();
     this.#selection = null;
     this.#generation++;
   }
@@ -49,6 +51,15 @@ export class WorkspaceState {
     const value = { ...this.get(session), ...patch };
     if (value.text.length > 16384) throw Error("DRAFT_TOO_LARGE");
     this.#drafts.set(key, Object.freeze(value));
+  }
+  claimApprovalPreparation(exactTarget: string): boolean {
+    if (
+      this.#preparedApprovals.has(exactTarget) ||
+      this.#preparedApprovals.size >= 128
+    )
+      return false;
+    this.#preparedApprovals.add(exactTarget);
+    return true;
   }
   accepted(session: string | null, sentText: string): void {
     if (this.get(session).text === sentText)

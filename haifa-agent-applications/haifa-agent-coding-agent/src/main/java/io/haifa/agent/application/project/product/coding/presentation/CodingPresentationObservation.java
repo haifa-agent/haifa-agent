@@ -312,6 +312,16 @@ public final class CodingPresentationObservation implements CodingPresentationSu
         }
     }
 
+    private static boolean finalAnswerSaved(CodingSessionHistoryPage history, AgentRunId run) {
+        return run != null
+                && history.items().stream()
+                        .anyMatch(item -> item.kind() == CodingSessionHistoryItem.Kind.ASSISTANT
+                                && "FINAL".equals(item.status())
+                                && item.sourceRunId()
+                                        .filter(run.value()::equals)
+                                        .isPresent());
+    }
+
     private Snapshot read(long revision) {
         var view = client.presentationSnapshot(sessionId);
         AgentRunId run = view.activeRun().map(AgentRunSnapshot::runId).orElse(null);
@@ -330,12 +340,7 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                                     .orElse(0L)))
                     .orElse(null);
         }
-        boolean previousSaved = watched != null
-                && history.items().stream()
-                        .anyMatch(item -> item.kind() == CodingSessionHistoryItem.Kind.ASSISTANT
-                                && item.sourceRunId()
-                                        .filter(watched.value()::equals)
-                                        .isPresent());
+        boolean previousSaved = finalAnswerSaved(history, watched);
         boolean handoffPending =
                 run != null && !run.equals(watched) && watched != null && !liveText.isEmpty() && !previousSaved;
         if (run != null && !run.equals(watched) && !handoffPending) watch(run);
@@ -358,12 +363,7 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                 pending.map(value -> interaction(value, observedConsent)).orElse(null));
         entries = window.entries();
         boolean windowReduced = window.reduced();
-        boolean savedLive = watched != null
-                && history.items().stream()
-                        .anyMatch(item -> item.kind() == CodingSessionHistoryItem.Kind.ASSISTANT
-                                && item.sourceRunId()
-                                        .filter(watched.value()::equals)
-                                        .isPresent());
+        boolean savedLive = finalAnswerSaved(history, watched);
         if (savedLive) {
             savedRuns.add(watched);
             while (savedRuns.size() > 32) savedRuns.remove(savedRuns.iterator().next());
@@ -413,6 +413,14 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                 null,
                 submit,
                 submit ? null : (syncing ? "SOURCE_REFRESHING" : (running ? "RUN_ACTIVE" : "SESSION_INACTIVE"))));
+        if (observedConsent.available() && !"ASK".equals(observedConsent.state())) {
+            actions.add(new Action(
+                    "resetConsent",
+                    new Target(sessionId.value(), null, null, null),
+                    null,
+                    !syncing,
+                    syncing ? "SOURCE_REFRESHING" : null));
+        }
         Snapshot result = new Snapshot(
                 "snapshot",
                 scope,
@@ -717,7 +725,8 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                     liveDisplay = new CodingPresentationText.Stream();
                 }
                 liveTruncated |= gap;
-                if (event.type() == AgentRunOutputEventType.RUN_OUTPUT_FAILED
+                if (event.type() == AgentRunOutputEventType.ASSISTANT_TEXT_COMMITTED
+                        || event.type() == AgentRunOutputEventType.RUN_OUTPUT_FAILED
                         || event.type() == AgentRunOutputEventType.RUN_OUTPUT_SUPERSEDED) {
                     liveText = "";
                     generation = "";

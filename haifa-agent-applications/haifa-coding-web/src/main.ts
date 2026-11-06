@@ -605,6 +605,62 @@ function render() {
   renderTranscript();
   renderContext();
   startPreview();
+  void applySessionConsent();
+}
+async function applySessionConsent() {
+  const current = view,
+    requester = client;
+  if (
+    !current ||
+    !requester ||
+    requester.state !== "connected" ||
+    document.visibilityState !== "visible" ||
+    current.state !== "live" ||
+    current.snapshot.hydration !== "ready" ||
+    current.snapshot.consent.state !== "ACTIVE" ||
+    busy.has(sessionKey(current.snapshot.scope.sessionId))
+  )
+    return;
+  const snapshot = current.snapshot;
+  const action = snapshot.entries
+    .filter(
+      (entry) =>
+        reviewSupported(entry) &&
+        entry.interaction?.review?.targetComplete &&
+        !entry.interaction.review.contentTruncated,
+    )
+    .flatMap((entry) => entry.interaction?.actions ?? [])
+    .find((candidate) => candidate.kind === "allowForSession" && candidate.available);
+  if (!action) return;
+  const target = action.target;
+  const key = JSON.stringify([
+    target.sessionId,
+    target.runId,
+    target.interactionId,
+    target.targetRevision,
+  ]);
+  if (!state.claimApprovalPreparation(key)) return;
+  const requestId = crypto.randomUUID();
+  try {
+    const result = await requester.execute({
+      command: {
+        kind: "command",
+        operation: "prepareApproval",
+        clientRequestId: requestId,
+        idempotencyKey: requestId,
+        target: { projectId: requester.connection.projectId, ...target },
+        text: null,
+        optionId: null,
+        executionId: null,
+        selections: [],
+      },
+      options: { approved: false, includeInContext: false, answers: [] },
+    });
+    if (requester === client && result.receipt.disposition === "unknown")
+      acknowledge(result, target.sessionId);
+  } catch (error) {
+    if (requester === client && view === current) message(explain(error), true);
+  }
 }
 async function refreshList() {
   if (!client || client.state !== "connected") return;

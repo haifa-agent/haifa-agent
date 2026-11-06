@@ -47,3 +47,16 @@ test("workspace changes isolate local drafts and invalidate old selection genera
   assert.equal(state.get("session-1").text, "");
   assert.equal(state.current(old, "session-1"), false);
 });
+
+test("an exact consent preparation is not replayed when an observation reopens", () => {
+  const state = new WorkspaceState();
+  state.bindWorkspace("project");
+  state.select("session-A");
+  assert.equal(state.claimApprovalPreparation("session-A/run-A/approval/1"), true);
+  state.select("session-B");
+  state.select("session-A");
+  assert.equal(state.claimApprovalPreparation("session-A/run-A/approval/1"), false);
+  assert.equal(state.claimApprovalPreparation("session-A/run-A/approval/2"), true);
+  state.bindWorkspace("project");
+  assert.equal(state.claimApprovalPreparation("session-A/run-A/approval/1"), true);
+});

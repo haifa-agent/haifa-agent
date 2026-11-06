@@ -118,7 +118,7 @@ class CodingPresentationObservationTest {
                             CodingSessionHistoryItem.Kind.ASSISTANT,
                             "Assistant",
                             "authoritative final answer",
-                            "COMPLETED",
+                            "FINAL",
                             1,
                             Instant.EPOCH,
                             Optional.of(f.run.value()),
@@ -145,6 +145,43 @@ class CodingPresentationObservationTest {
             Update barrier = (Update) observation.poll(Duration.ofSeconds(5));
             assertThat(barrier.revision()).isEqualTo(committed.revision() + 1);
             assertThat(barrier.replacement().live()).isNull();
+        }
+    }
+
+    @Test
+    void savedToolCommentaryDoesNotRetireTheRunsNextOutputGeneration() throws Exception {
+        Fixture f = new Fixture();
+        f.history.set(new CodingSessionHistoryPage(
+                f.session,
+                List.of(new CodingSessionHistoryItem(
+                        "tool-commentary",
+                        CodingSessionHistoryItem.Kind.ASSISTANT,
+                        "Assistant",
+                        "I will inspect the workspace.",
+                        "COMPLETED",
+                        1,
+                        Instant.EPOCH,
+                        Optional.of(f.run.value()),
+                        false)),
+                false,
+                OptionalLong.empty()));
+        try (var observation = f.observe("client")) {
+            assertThat(observation.initial().entries())
+                    .anyMatch(entry -> entry.id().equals("tool-commentary"));
+            f.emit(1, "Here is the result. ");
+            var update = (Update) observation.poll(Duration.ofSeconds(5));
+            assertThat(update.replacement().live().text()).contains("Here is the result.");
+        }
+    }
+
+    @Test
+    void activeConsentPublishesAnExactSessionResetAction() {
+        Fixture f = new Fixture();
+        f.consent.set(new Consent("ACTIVE", 1000L, true));
+        try (var observation = f.observe("client")) {
+            assertThat(observation.initial().actions())
+                    .contains(new Action(
+                            "resetConsent", new Target(f.session.value(), null, null, null), null, true, null));
         }
     }
 
@@ -566,6 +603,8 @@ class CodingPresentationObservationTest {
                     default -> throw new AssertionError("Observation cannot invoke " + method.getName());
                 });
 
+        final AtomicReference<Consent> consent = new AtomicReference<>(new Consent("ASK", null, false));
+
         CodingPresentationObservation observe(String clientId) {
             return new CodingPresentationObservation(
                     listener -> {
@@ -575,7 +614,7 @@ class CodingPresentationObservationTest {
                     client,
                     new Scope("view", "host", clientId, session.value(), 1, "native"),
                     new DefaultSecretRedactor(),
-                    () -> new Consent("ASK", null, false));
+                    consent::get);
         }
 
         AgentRunEvent tool(long sequence, long occurredAt, RunEventPayloads.ToolLifecycle payload) {

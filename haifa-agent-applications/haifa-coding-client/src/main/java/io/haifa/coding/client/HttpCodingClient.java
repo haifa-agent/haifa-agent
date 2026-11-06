@@ -149,11 +149,22 @@ final class HttpCodingClient implements CodingClient {
         CodingProtocolChecks.command(request.command());
         try {
             JsonNode value = call("product/command", request, true, true);
+            CommandResult result;
             try {
-                return decode(value, CommandResult.class);
+                result = decode(value, CommandResult.class);
             } catch (CodingClientException invalid) {
                 throw failure("COMMAND_REPLY_INVALID", true);
             }
+            String targetSession = request.command().target().sessionId();
+            if (!request.command().clientRequestId().equals(result.receipt().clientRequestId())
+                    || (result.session() != null
+                            && (!connection.projectId().equals(result.session().projectId())
+                                    || (targetSession != null
+                                            && !targetSession.equals(
+                                                    result.session().sessionId()))))) {
+                throw failure("COMMAND_REPLY_INVALID", true);
+            }
+            return result;
         } catch (CodingClientException failure) {
             if (!failure.outcomeUnknown()) throw failure;
             return new CommandResult(
